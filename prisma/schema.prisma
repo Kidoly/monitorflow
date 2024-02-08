@@ -1,0 +1,40 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Metrics {
+  id             Int      @id @default(autoincrement())
+  date           DateTime @default(now())
+  startTime      DateTime
+  totalMemory    String
+  usedMemory     String
+  totalSwap      String
+  usedSwap       String
+  systemName     String
+  kernelVersion  String
+  osVersion      String
+  hostName       String
+  cpuCount       Int
+  cpuName        String
+  disksNumbers   Int
+  disks          String
+  networks       String
+  components     Bytes?
+  processesCount Int
+  processes      Bytes?
+  monitor        Bytes?
+}
+
+model User {
+  id       Int    @id @default(autoincrement())
+  email    String @unique
+  password String
+}
