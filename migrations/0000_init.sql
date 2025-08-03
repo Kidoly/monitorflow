@@ -134,3 +134,7 @@ ALTER TABLE sensor_reading SET (
 );
 
 SELECT add_compression_policy('sensor_reading', INTERVAL '30 days');
+
+ALTER TABLE sensor
+ADD CONSTRAINT unique_sensor_device
+UNIQUE (device_uid, sensor_type, name);

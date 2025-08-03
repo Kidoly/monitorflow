@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode
 };
 use serde::Deserialize;
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use std::{env, net::SocketAddr};
 use chrono::{DateTime, Utc};
 use dotenv::dotenv;
@@ -61,107 +61,126 @@ async fn collect_handler(
     State(state): State<AppState>,
     Json(payload): Json<CollectPayload>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let device_uid = match uuid::Uuid::parse_str(&payload.device_uid) {
+    let device_uid = match Uuid::parse_str(&payload.device_uid) {
         Ok(uid) => uid,
         Err(_) => return Err((StatusCode::BAD_REQUEST, "Invalid UUID".into())),
     };
+
     let mut tx = state.db.begin().await.map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to begin transaction: {}", e))
     })?;
+
     // Insert device if not exists
-    sqlx::query(
+    sqlx::query!(
         r#"
         INSERT INTO device (uid, name, device_type, display_name)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (uid) DO NOTHING
         "#,
+        device_uid,
+        payload.name,
+        payload.device_type,
+        payload.name
     )
-    .bind(&device_uid)
-    .bind(&payload.name)
-    .bind(&payload.device_type)
-    .bind(&payload.name)
     .execute(&mut *tx)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Device insert error: {}", e)))?;
+
     for metric in &payload.metrics {
-        // Insert sensor if not exists
-        let sensor = sqlx::query(
+        // Attempt to insert sensor and get the ID
+        let sensor_id = match sqlx::query_scalar!(
             r#"
-            INSERT INTO sensor (device_uid, sensor_type, name, display_name)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT DO NOTHING
+            INSERT INTO sensor (device_uid, sensor_type, name)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (device_uid, sensor_type, name) DO NOTHING
             RETURNING id
             "#,
+            device_uid,
+            metric.sensor,
+            metric.sensor
         )
-        .bind(device_uid)
-        .bind(&metric.sensor)
-        .bind(&metric.sensor)
-        .bind(&metric.sensor)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Sensor insert error: {}", e)))?;
-        let sensor_id: i32 = if let Some(row) = sensor {
-            row.get("id")
-        } else {
-            sqlx::query("SELECT id FROM sensor WHERE device_uid = $1 AND sensor_type = $2")
-                .bind(device_uid)
-                .bind(&metric.sensor)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(|e| {
-                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Sensor lookup failed: {}", e))
-                })?
-                .get("id")
+        .await {
+            Ok(sensor) => sensor,
+            Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Sensor insert error: {}", e))),
         };
+
+        let sensor_id = match sensor_id {
+            Some(id) => id,
+            None => {
+                match sqlx::query_scalar!(
+                    r#"SELECT id FROM sensor WHERE device_uid = $1 AND sensor_type = $2"#,
+                    device_uid,
+                    metric.sensor
+                )
+                .fetch_one(&mut *tx)
+                .await {
+                    Ok(id) => id,
+                    Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get sensor ID: {}", e))),
+                }
+            }
+        };
+
         for reading in &metric.readings {
-            // Insert channel if not exists
-            let channel = sqlx::query(
+            // Check if the channel already exists
+            let channel_id = match sqlx::query_scalar!(
                 r#"
-                INSERT INTO channel (sensor_id, name)
-                VALUES ($1, $2)
-                ON CONFLICT DO NOTHING
-                RETURNING id
+                SELECT id FROM channel WHERE sensor_id = $1 AND name = $2
                 "#,
+                sensor_id,
+                reading.channel
             )
-            .bind(sensor_id)
-            .bind(&reading.channel)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Channel insert error: {}", e)))?;
-            let channel_id: i32 = if let Some(row) = channel {
-                row.get("id")
-            } else {
-                sqlx::query("SELECT id FROM channel WHERE sensor_id = $1 AND name = $2")
-                    .bind(sensor_id)
-                    .bind(&reading.channel)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(|e| {
-                        (StatusCode::INTERNAL_SERVER_ERROR, format!("Channel lookup failed: {}", e))
-                    })?
-                    .get("id")
+            .await {
+                Ok(channel) => channel,
+                Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Channel lookup error: {}", e))),
             };
-            // Insert reading
-            sqlx::query(
+
+            let channel_id = match channel_id {
+                Some(id) => id,
+                None => {
+                    match sqlx::query_scalar!(
+                        r#"
+                        INSERT INTO channel (sensor_id, name)
+                        VALUES ($1, $2)
+                        RETURNING id
+                        "#,
+                        sensor_id,
+                        reading.channel
+                    )
+                    .fetch_one(&mut *tx)
+                    .await {
+                        Ok(id) => id,
+                        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get channel ID: {}", e))),
+                    }
+                }
+            };
+
+            // Insert reading with conflict handling
+            match sqlx::query!(
                 r#"
                 INSERT INTO sensor_reading (sensor_id, channel_id, timestamp, value)
                 VALUES ($1, $2, $3, $4)
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (sensor_id, channel_id, timestamp)
+                DO UPDATE SET value = EXCLUDED.value
                 "#,
+                sensor_id,
+                channel_id,
+                reading.timestamp,
+                reading.value
             )
-            .bind(sensor_id)
-            .bind(channel_id)
-            .bind(reading.timestamp)
-            .bind(reading.value)
             .execute(&mut *tx)
-            .await
-            .map_err(|e| {
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("Reading insert error: {}", e))
-            })?;
+            .await {
+                Ok(_) => (),
+                Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Reading insert error: {}", e))),
+            };
         }
     }
+
     tx.commit()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Transaction commit failed: {}", e)))?;
+
     Ok(StatusCode::OK)
 }
+
