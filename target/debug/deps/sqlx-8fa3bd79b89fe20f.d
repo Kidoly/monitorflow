@@ -1,0 +1,12 @@
+/home/kidoly/codes/rust/monitorflow/target/debug/deps/libsqlx-8fa3bd79b89fe20f.rmeta: /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/lib.rs /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/any/mod.rs /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/macros/mod.rs /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/ty_match.rs /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/spec_error.rs /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/lib.md /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/macros/test.md /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/any/install_drivers_note.md
+
+/home/kidoly/codes/rust/monitorflow/target/debug/deps/sqlx-8fa3bd79b89fe20f.d: /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/lib.rs /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/any/mod.rs /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/macros/mod.rs /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/ty_match.rs /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/spec_error.rs /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/lib.md /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/macros/test.md /home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/any/install_drivers_note.md
+
+/home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/lib.rs:
+/home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/any/mod.rs:
+/home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/macros/mod.rs:
+/home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/ty_match.rs:
+/home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/spec_error.rs:
+/home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/lib.md:
+/home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/macros/test.md:
+/home/kidoly/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/any/install_drivers_note.md:
