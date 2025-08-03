@@ -3,7 +3,8 @@ use axum::{
     Router,
     Json,
     extract::State,
-    http::StatusCode
+    http::StatusCode,
+    response::IntoResponse,
 };
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -12,6 +13,8 @@ use chrono::{DateTime, Utc};
 use dotenv::dotenv;
 use tokio::net::TcpListener;
 use uuid::Uuid;
+use tracing::{info, error};
+use axum::http::header;
 
 #[derive(Clone)]
 struct AppState {
@@ -21,16 +24,20 @@ struct AppState {
 #[tokio::main]
 async fn main() {
     dotenv().ok();
+    tracing_subscriber::fmt::init();
+
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let db = PgPool::connect(&database_url)
         .await
         .expect("Failed to connect to database");
     let state = AppState { db };
+
     let app = Router::new()
         .route("/collect", post(collect_handler))
         .with_state(state);
+
     let addr: SocketAddr = "0.0.0.0:8000".parse().unwrap();
-    println!("🚀 Backend listening on {}", addr);
+    info!("🚀 Backend listening on {}", addr);
     let listener = TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
@@ -60,18 +67,26 @@ struct CollectPayload {
 async fn collect_handler(
     State(state): State<AppState>,
     Json(payload): Json<CollectPayload>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     let device_uid = match Uuid::parse_str(&payload.device_uid) {
         Ok(uid) => uid,
-        Err(_) => return Err((StatusCode::BAD_REQUEST, "Invalid UUID".into())),
+        Err(_) => {
+            error!("Invalid UUID format");
+            return Err((StatusCode::BAD_REQUEST, "Invalid UUID".into()));
+        }
     };
 
-    let mut tx = state.db.begin().await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to begin transaction: {}", e))
-    })?;
+    let mut tx = match state.db.begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            error!("Failed to begin transaction: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "Failed to begin transaction".into()));
+        }
+    };
+
 
     // Insert device if not exists
-    sqlx::query!(
+    if let Err(e) = sqlx::query!(
         r#"
         INSERT INTO device (uid, name, device_type, display_name)
         VALUES ($1, $2, $3, $4)
@@ -83,11 +98,12 @@ async fn collect_handler(
         payload.name
     )
     .execute(&mut *tx)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Device insert error: {}", e)))?;
+    .await {
+        error!("Device insert error: {}", e);
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, "Device insert error".into()));
+    }
 
     for metric in &payload.metrics {
-        // Attempt to insert sensor and get the ID
         let sensor_id = match sqlx::query_scalar!(
             r#"
             INSERT INTO sensor (device_uid, sensor_type, name)
@@ -102,27 +118,30 @@ async fn collect_handler(
         .fetch_optional(&mut *tx)
         .await {
             Ok(sensor) => sensor,
-            Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Sensor insert error: {}", e))),
+            Err(e) => {
+                error!("Sensor insert error: {}", e);
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, "Sensor insert error".into()));
+            }
         };
 
         let sensor_id = match sensor_id {
             Some(id) => id,
-            None => {
-                match sqlx::query_scalar!(
-                    r#"SELECT id FROM sensor WHERE device_uid = $1 AND sensor_type = $2"#,
-                    device_uid,
-                    metric.sensor
-                )
-                .fetch_one(&mut *tx)
-                .await {
-                    Ok(id) => id,
-                    Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get sensor ID: {}", e))),
+            None => match sqlx::query_scalar!(
+                r#"SELECT id FROM sensor WHERE device_uid = $1 AND sensor_type = $2"#,
+                device_uid,
+                metric.sensor
+            )
+            .fetch_one(&mut *tx)
+            .await {
+                Ok(id) => id,
+                Err(e) => {
+                    error!("Failed to get sensor ID: {}", e);
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, "Failed to get sensor ID".into()));
                 }
-            }
+            },
         };
 
         for reading in &metric.readings {
-            // Check if the channel already exists
             let channel_id = match sqlx::query_scalar!(
                 r#"
                 SELECT id FROM channel WHERE sensor_id = $1 AND name = $2
@@ -133,31 +152,34 @@ async fn collect_handler(
             .fetch_optional(&mut *tx)
             .await {
                 Ok(channel) => channel,
-                Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Channel lookup error: {}", e))),
+                Err(e) => {
+                    error!("Channel lookup error: {}", e);
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, "Channel lookup error".into()));
+                }
             };
 
             let channel_id = match channel_id {
                 Some(id) => id,
-                None => {
-                    match sqlx::query_scalar!(
-                        r#"
-                        INSERT INTO channel (sensor_id, name)
-                        VALUES ($1, $2)
-                        RETURNING id
-                        "#,
-                        sensor_id,
-                        reading.channel
-                    )
-                    .fetch_one(&mut *tx)
-                    .await {
-                        Ok(id) => id,
-                        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get channel ID: {}", e))),
+                None => match sqlx::query_scalar!(
+                    r#"
+                    INSERT INTO channel (sensor_id, name)
+                    VALUES ($1, $2)
+                    RETURNING id
+                    "#,
+                    sensor_id,
+                    reading.channel
+                )
+                .fetch_one(&mut *tx)
+                .await {
+                    Ok(id) => id,
+                    Err(e) => {
+                        error!("Failed to get channel ID: {}", e);
+                        return Err((StatusCode::INTERNAL_SERVER_ERROR, "Failed to get channel ID".into()));
                     }
-                }
+                },
             };
 
-            // Insert reading with conflict handling
-            match sqlx::query!(
+            if let Err(e) = sqlx::query!(
                 r#"
                 INSERT INTO sensor_reading (sensor_id, channel_id, timestamp, value)
                 VALUES ($1, $2, $3, $4)
@@ -171,16 +193,16 @@ async fn collect_handler(
             )
             .execute(&mut *tx)
             .await {
-                Ok(_) => (),
-                Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Reading insert error: {}", e))),
-            };
+                error!("Reading insert error: {}", e);
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, "Reading insert error".into()));
+            }
         }
     }
 
-    tx.commit()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Transaction commit failed: {}", e)))?;
+    if let Err(e) = tx.commit().await {
+        error!("Transaction commit failed: {}", e);
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, "Transaction commit failed".into()));
+    }
 
     Ok(StatusCode::OK)
 }
-
