@@ -8,10 +8,10 @@ use clap::{Args, Parser, Subcommand};
 use monitorflow_common::config::{self, ServerConfig};
 use monitorflow_common::logging;
 use monitorflow_common::tls::{Identity, PeerRole};
+use monitorflow_server::api::{self, ApiSettings, ApiState};
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
 use monitorflow_server::db;
 use monitorflow_server::enroll::{self, token};
-use monitorflow_server::api::{self, ApiSettings, ApiState};
 use monitorflow_server::grpc::{
     self, AgentStreamService, DenyRelayedAgents, Registry, StreamSettings,
 };

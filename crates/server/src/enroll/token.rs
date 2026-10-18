@@ -1,5 +1,5 @@
 //! One-time enrollment tokens: generation, hashing and creation in
-//! `enrollment_tokens` (ADR-0006). Only the SHA-256 of the secret is stored.
+//! `enrollment_tokens` (ADR-0007). Only the SHA-256 of the secret is stored.
 
 use std::time::Duration;
 
