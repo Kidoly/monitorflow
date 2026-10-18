@@ -13,6 +13,8 @@ use monitorflow_common::proto::v1::Envelope;
 use monitorflow_common::tls::PeerRole;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::ca::Serial;
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RegistryError {
     #[error("peer {0} is not connected")]
@@ -52,6 +54,9 @@ pub struct PeerInfo {
     pub via_relay: Option<String>,
     /// Assigned by [`Registry::register`]; unique for the process lifetime.
     pub connection: u64,
+    /// Serial of the connection's client certificate: the relay's when
+    /// relayed. Changes when a peer reconnects with a renewed certificate.
+    pub cert_serial: Option<Serial>,
     pub agent_version: String,
     pub hostname: String,
     pub connected_at: DateTime<Utc>,
@@ -212,6 +217,7 @@ mod tests {
             role: PeerRole::Agent,
             via_relay: None,
             connection: 0,
+            cert_serial: None,
             agent_version: "0.1.0".into(),
             hostname: "host".into(),
             connected_at: now,

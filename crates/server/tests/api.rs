@@ -367,6 +367,7 @@ db_tests! {
                     role: PeerRole::Agent,
                     via_relay: Some("relay-1".into()),
                     connection: 0,
+                    cert_serial: None,
                     agent_version: "0.1.0".into(),
                     hostname: "web-1".into(),
                     connected_at: connected,

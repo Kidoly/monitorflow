@@ -84,6 +84,11 @@ impl CertificateAuthority {
         Ok(())
     }
 
+    /// True if `serial` was revoked with [`Self::revoke`].
+    pub fn is_revoked(&self, serial: &Serial) -> bool {
+        self.lock().revoked.iter().any(|r| &r.serial == serial)
+    }
+
     /// A new DER CRL listing every revoked serial, valid from now for
     /// [`CaOptions::crl_validity`], with a CRL number one above the last.
     pub fn crl(&self) -> Result<CertificateRevocationListDer<'static>, CaError> {

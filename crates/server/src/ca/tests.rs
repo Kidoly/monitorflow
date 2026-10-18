@@ -309,10 +309,12 @@ fn revocations_appear_in_signed_crls_and_persist() {
     let issued = ca
         .issue(&csr, &identity(PeerRole::Agent, "a1"), None, &[])
         .unwrap();
+    assert!(!ca.is_revoked(&issued.serial));
     ca.revoke(&issued.serial, RevocationReason::KeyCompromise)
         .unwrap();
     ca.revoke(&issued.serial, RevocationReason::Superseded)
         .unwrap();
+    assert!(ca.is_revoked(&issued.serial));
     let (number, serials, _, _) = parse_crl(&ca.crl().unwrap());
     assert_eq!(number, 2);
     assert_eq!(serials, vec![issued.serial.clone()]);

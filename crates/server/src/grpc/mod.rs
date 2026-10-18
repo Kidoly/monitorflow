@@ -1,5 +1,6 @@
-//! gRPC ingress: the `AgentService::Stream` endpoint and the registry of
-//! connected agents and relays.
+//! gRPC ingress: the `AgentService::Stream` endpoint, the registry of
+//! connected agents and relays, and `CertificateService` on the same mTLS
+//! listener.
 
 mod inventory;
 mod policy;
@@ -17,6 +18,8 @@ use rustls::ServerConfig as TlsServerConfig;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tonic::transport::Server;
+
+use crate::renew::Renewer;
 
 pub use inventory::{AcceptedHello, DbInventory, Inventory, InventoryError, NoInventory};
 pub use policy::{AllowAllRelayedAgents, DbRelayPolicy, DenyRelayedAgents, RelayPolicy};
@@ -67,10 +70,22 @@ pub async fn serve(
     service: AgentStreamService,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), tonic::transport::Error> {
+    serve_with_renewer(listener, tls, service, None, shutdown).await
+}
+
+/// [`serve`], plus `CertificateService` when `renewer` is set (ADR-0010).
+pub async fn serve_with_renewer(
+    listener: TcpListener,
+    tls: watch::Receiver<Arc<TlsServerConfig>>,
+    service: AgentStreamService,
+    renewer: Option<Renewer>,
+    shutdown: impl Future<Output = ()>,
+) -> Result<(), tonic::transport::Error> {
     let registry = service.registry().clone();
     let incoming = tls::incoming(listener, tls, AcceptOptions::default());
     Server::builder()
         .add_service(AgentServiceServer::new(service))
+        .add_optional_service(renewer.map(Renewer::into_service))
         .serve_with_incoming_shutdown(incoming, async move {
             shutdown.await;
             registry.close_all();

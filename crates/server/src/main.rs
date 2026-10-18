@@ -17,6 +17,7 @@ use monitorflow_server::enroll::{self, server_cert, token, Enroller, FailureLimi
 use monitorflow_server::grpc::{
     self, AgentStreamService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
 };
+use monitorflow_server::renew::Renewer;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch;
@@ -147,6 +148,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_inventory(Arc::new(DbInventory::new(pool.clone())));
     let api_state = ApiState::new(pool.clone(), registry, ApiSettings::from_config(&config));
+    let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
     // One signal stops every listener and the CRL timer.
@@ -170,9 +172,15 @@ async fn main() -> anyhow::Result<()> {
     );
     tokio::try_join!(
         async {
-            grpc::serve(listener, tls_config, service, until_stopped())
-                .await
-                .context("gRPC server")
+            grpc::serve_with_renewer(
+                listener,
+                tls_config,
+                service,
+                Some(renewer),
+                until_stopped(),
+            )
+            .await
+            .context("gRPC server")
         },
         async {
             enroll::serve(
