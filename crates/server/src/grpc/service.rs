@@ -21,6 +21,7 @@ use tokio::time::{sleep, timeout, Instant};
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status, Streaming};
 
+use super::inventory::{AcceptedHello, Inventory, InventoryError, NoInventory};
 use super::policy::RelayPolicy;
 use super::registry::{CloseReason, Counters, PeerInfo, Registry};
 use super::StreamSettings;
@@ -49,6 +50,10 @@ pub enum HandshakeError {
         peer: PeerIdentity,
         agent_id: String,
     },
+    #[error("invalid Hello: {0}")]
+    BadHello(String),
+    #[error(transparent)]
+    Inventory(#[from] InventoryError),
 }
 
 impl From<HandshakeError> for Status {
@@ -64,7 +69,12 @@ impl From<HandshakeError> for Status {
             HandshakeError::ClosedBeforeHello
             | HandshakeError::NotHello
             | HandshakeError::BadVersion(_)
-            | HandshakeError::BadAgentId(_) => Status::invalid_argument(message),
+            | HandshakeError::BadAgentId(_)
+            | HandshakeError::BadHello(_) => Status::invalid_argument(message),
+            HandshakeError::Inventory(InventoryError::Db(_)) => {
+                Status::unavailable("inventory unavailable; retry later")
+            }
+            HandshakeError::Inventory(_) => Status::permission_denied(message),
         }
     }
 }
@@ -90,29 +100,66 @@ fn check_version(peer: &str) -> Result<(), HandshakeError> {
     }
 }
 
+/// Values stored in the `servers` row (ADR-0008); the schema accepts these
+/// `os_family` values only.
+const OS_FAMILIES: [&str; 2] = ["debian", "rhel"];
+const MAX_HOSTNAME: usize = 253;
+const MAX_VERSION: usize = 128;
+
+/// Checks the fields of an agent's Hello that go into its `servers` row.
+fn check_agent_hello(hello: &Hello) -> Result<(), HandshakeError> {
+    let bad = |why: String| Err(HandshakeError::BadHello(why));
+    if !OS_FAMILIES.contains(&hello.os_family.as_str()) {
+        return bad(format!(
+            "os_family `{}` must be one of {}",
+            hello.os_family.escape_debug(),
+            OS_FAMILIES.join(", ")
+        ));
+    }
+    if hello.hostname.is_empty() || hello.hostname.len() > MAX_HOSTNAME {
+        return bad(format!("hostname must be 1 to {MAX_HOSTNAME} bytes"));
+    }
+    if hello.os_version.len() > MAX_VERSION || hello.agent_version.len() > MAX_VERSION {
+        return bad(format!(
+            "os_version and agent_version must be at most {MAX_VERSION} bytes"
+        ));
+    }
+    Ok(())
+}
+
 /// The `AgentService` implementation of the central server.
 #[derive(Clone)]
 pub struct AgentStreamService {
     registry: Registry,
     policy: Arc<dyn RelayPolicy>,
+    inventory: Arc<dyn Inventory>,
     settings: StreamSettings,
 }
 
 impl AgentStreamService {
+    /// A service that records nothing in the inventory; the server adds a
+    /// [`DbInventory`](super::DbInventory) with [`Self::with_inventory`].
     pub fn new(registry: Registry, policy: Arc<dyn RelayPolicy>, settings: StreamSettings) -> Self {
         Self {
             registry,
             policy,
+            inventory: Arc::new(NoInventory),
             settings,
         }
+    }
+
+    pub fn with_inventory(mut self, inventory: Arc<dyn Inventory>) -> Self {
+        self.inventory = inventory;
+        self
     }
 
     pub fn registry(&self) -> &Registry {
         &self.registry
     }
 
-    /// Waits for `Hello` and checks it against the peer's certificate.
-    /// Returns its sequence, the Hello, and the relay speaking for the agent.
+    /// Waits for `Hello`, checks it against the peer's certificate and
+    /// records it in the inventory. Returns its sequence, the Hello, and the
+    /// relay speaking for the agent.
     async fn handshake(
         &self,
         peer: &PeerIdentity,
@@ -148,6 +195,15 @@ impl AgentStreamService {
             }
             PeerRole::Agent | PeerRole::Server => unreachable!("handled above"),
         };
+        let accepted = AcceptedHello {
+            peer,
+            hello: &hello,
+            via_relay: via_relay.as_deref(),
+        };
+        if accepted.role() == PeerRole::Agent {
+            check_agent_hello(&hello)?;
+        }
+        self.inventory.hello(accepted).await?;
         Ok((first.sequence, hello, via_relay))
     }
 }
@@ -172,7 +228,13 @@ impl AgentService for AgentStreamService {
                         hello_agent_id = %agent_id,
                         "Hello agent_id not allowed for this certificate"
                     ),
-                    HandshakeError::ServerRole => tracing::warn!(%peer, %error, "stream refused"),
+                    HandshakeError::ServerRole
+                    | HandshakeError::Inventory(
+                        InventoryError::Revoked { .. } | InventoryError::NotEnrolled { .. },
+                    ) => tracing::warn!(%peer, %error, "stream refused"),
+                    HandshakeError::Inventory(InventoryError::Db(_)) => {
+                        tracing::error!(%peer, %error, "stream refused")
+                    }
                     _ => tracing::info!(%peer, %error, "stream refused"),
                 }
                 return Err(error.into());
@@ -180,13 +242,14 @@ impl AgentService for AgentStreamService {
         };
 
         let now = Utc::now();
+        let role = if via_relay.is_some() {
+            PeerRole::Agent
+        } else {
+            peer.role()
+        };
         let info = PeerInfo {
             id: hello.agent_id,
-            role: if via_relay.is_some() {
-                PeerRole::Agent
-            } else {
-                peer.role()
-            },
+            role,
             via_relay,
             connection: 0,
             agent_version: hello.agent_version,
@@ -208,9 +271,14 @@ impl AgentService for AgentStreamService {
         let connection = Connection {
             registry: self.registry.clone(),
             id,
+            role,
             number: registration.connection,
             last_sequence: sequence,
             counters: Counters::default(),
+            inventory: self.inventory.clone(),
+            // The Hello just wrote last_seen_at.
+            last_recorded: Instant::now(),
+            last_seen_interval: self.settings.last_seen_interval,
         };
         tokio::spawn(connection.run(
             inbound,
@@ -251,9 +319,13 @@ impl Stream for Outbound {
 struct Connection {
     registry: Registry,
     id: String,
+    role: PeerRole,
     number: u64,
     last_sequence: u64,
     counters: Counters,
+    inventory: Arc<dyn Inventory>,
+    last_recorded: Instant,
+    last_seen_interval: Duration,
 }
 
 impl Connection {
@@ -314,12 +386,31 @@ impl Connection {
         } else {
             self.last_sequence = envelope.sequence;
             self.handle(envelope.sequence, envelope.payload);
+            self.record_seen();
         }
         let (sequence, counters) = (self.last_sequence, self.counters);
         self.registry.update(&self.id, self.number, |info| {
             info.last_seen = now;
             info.last_sequence = sequence;
             info.counters = counters;
+        });
+    }
+
+    /// Writes `last_seen_at` at most once per `last_seen_interval`. Any
+    /// accepted envelope counts, not only heartbeats. The write runs in its
+    /// own task so a slow database never stalls the stream; a failure is
+    /// logged and the next interval tries again.
+    fn record_seen(&mut self) {
+        let now = Instant::now();
+        if now.duration_since(self.last_recorded) < self.last_seen_interval {
+            return;
+        }
+        self.last_recorded = now;
+        let (inventory, role, id) = (self.inventory.clone(), self.role, self.id.clone());
+        tokio::spawn(async move {
+            if let Err(error) = inventory.seen(role, &id).await {
+                tracing::warn!(agent_id = %id, %role, %error, "could not record last_seen_at");
+            }
         });
     }
 
@@ -389,5 +480,45 @@ mod tests {
             server: PROTOCOL_VERSION,
         };
         assert_eq!(code(mismatch), Code::FailedPrecondition);
+        let revoked = InventoryError::Revoked {
+            role: PeerRole::Agent,
+            id: "web-01".into(),
+        };
+        assert_eq!(code(revoked.into()), Code::PermissionDenied);
+        let status = Status::from(HandshakeError::from(InventoryError::Db(
+            sqlx::Error::PoolClosed,
+        )));
+        assert_eq!(status.code(), Code::Unavailable);
+        assert!(!status.message().contains("pool"), "{status}");
+    }
+
+    fn agent_hello(os_family: &str, hostname: &str) -> Hello {
+        Hello {
+            agent_id: "web-01".into(),
+            hostname: hostname.into(),
+            os_family: os_family.into(),
+            ..Hello::default()
+        }
+    }
+
+    #[test]
+    fn agent_hello_needs_a_known_os_family_and_a_hostname() {
+        assert!(check_agent_hello(&agent_hello("debian", "web-01")).is_ok());
+        assert!(check_agent_hello(&agent_hello("rhel", "web-01")).is_ok());
+        for (os_family, hostname) in [
+            ("", "web-01"),
+            ("Debian", "web-01"),
+            ("windows", "web-01"),
+            ("debian", ""),
+            ("debian", &"a".repeat(MAX_HOSTNAME + 1)),
+        ] {
+            let error = check_agent_hello(&agent_hello(os_family, hostname)).unwrap_err();
+            assert_eq!(Status::from(error).code(), tonic::Code::InvalidArgument);
+        }
+        let long = Hello {
+            os_version: "x".repeat(MAX_VERSION + 1),
+            ..agent_hello("debian", "web-01")
+        };
+        assert!(check_agent_hello(&long).is_err());
     }
 }

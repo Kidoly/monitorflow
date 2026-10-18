@@ -14,11 +14,13 @@ use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{EnrollRequest, EnrollResponse, Envelope, Hello};
 use monitorflow_common::tls::{self, EnrollmentToken, Identity, PeerIdentity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
+use monitorflow_server::api::{self, auth::CSRF_HEADER, users, ApiSettings, ApiState, Role};
 use monitorflow_server::ca::{CaOptions, CertificateAuthority, ServerName};
+use monitorflow_server::db;
 use monitorflow_server::enroll::token::{self, Creator, TokenError, TokenRequest};
 use monitorflow_server::enroll::{self, EnrollError, Enroller, FailureLimiter};
 use monitorflow_server::grpc::{
-    self, AgentStreamService, DenyRelayedAgents, Registry, StreamSettings,
+    self, AgentStreamService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
 };
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
 use rustls::pki_types::CertificateDer;
@@ -28,6 +30,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Code;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -184,9 +187,10 @@ impl Server {
         let registry = Registry::default();
         let service = AgentStreamService::new(
             registry.clone(),
-            Arc::new(DenyRelayedAgents),
+            Arc::new(DbRelayPolicy::new(pool.clone())),
             StreamSettings::default(),
-        );
+        )
+        .with_inventory(Arc::new(DbInventory::new(pool.clone())));
         tokio::spawn(grpc::serve(
             grpc_listener,
             rx,
@@ -226,7 +230,112 @@ impl Server {
     }
 }
 
+/// `GET /api/servers` as a new viewer.
+async fn list_servers(pool: &PgPool, registry: Registry) -> serde_json::Value {
+    let password = monitorflow_common::redact::Secret::new("correct horse battery");
+    users::create_user(pool, "viewer", &password, Role::Viewer, "test")
+        .await
+        .unwrap();
+    let app = api::router(ApiState::new(
+        pool.clone(),
+        registry,
+        ApiSettings::default(),
+    ));
+    let login = axum::http::Request::post("/api/auth/login")
+        .header("content-type", "application/json")
+        .header(CSRF_HEADER, "1")
+        .body(axum::body::Body::from(
+            serde_json::json!({ "username": "viewer", "password": password.expose() }).to_string(),
+        ))
+        .unwrap();
+    let response = app.clone().oneshot(login).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let cookie = response.headers()["set-cookie"].to_str().unwrap();
+    let cookie = cookie.split(';').next().unwrap().to_owned();
+    let list = axum::http::Request::get("/api/servers")
+        .header("cookie", cookie)
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = app.oneshot(list).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
+async fn enroll_as(
+    pki: &Pki,
+    pool: &PgPool,
+    role: PeerRole,
+    peer_id: &str,
+    site: &str,
+) -> Result<enroll::Enrolled, EnrollError> {
+    let site_id = token::site_id(pool, site, true).await.unwrap().unwrap();
+    let request = TokenRequest {
+        role,
+        ..request(site_id, peer_id)
+    };
+    let created = token::create(pool, pki.fingerprint(), &request)
+        .await
+        .unwrap();
+    let csr = csr(&KeyPair::generate().unwrap(), peer_id, vec![]);
+    pki.enroller(pool)
+        .enroll(created.token.to_secret_string().expose(), &csr, None)
+        .await
+}
+
 db_tests! {
+    #[sqlx::test]
+    async fn relay_enrollment_creates_its_row_in_the_token_site(pool: PgPool) {
+        let pki = Pki::new();
+        enroll_as(&pki, &pool, PeerRole::Relay, "relay-1", "paris").await.unwrap();
+        let (site, revoked): (String, bool) = sqlx::query_as(
+            "SELECT si.name, r.revoked_at IS NOT NULL FROM relays r JOIN sites si ON si.id = r.site_id
+             WHERE r.peer_id = 'relay-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((site.as_str(), revoked), ("paris", false));
+        assert_eq!(count(&pool, "SELECT count(*) FROM audit_log WHERE action = 'relay.create' AND target_id = 'relay-1'").await, 1);
+
+        // An enrolled agent of its site may be relayed before its first Hello.
+        enroll_as(&pki, &pool, PeerRole::Agent, "web-01", "paris").await.unwrap();
+        enroll_as(&pki, &pool, PeerRole::Agent, "web-02", "lyon").await.unwrap();
+        assert!(db::relay_may_speak_for(&pool, "relay-1", "web-01").await.unwrap());
+        assert!(!db::relay_may_speak_for(&pool, "relay-1", "web-02").await.unwrap());
+
+        // Enrolling again in the same site keeps the row and does not audit
+        // a second creation.
+        enroll_as(&pki, &pool, PeerRole::Relay, "relay-1", "paris").await.unwrap();
+        assert_eq!(count(&pool, "SELECT count(*) FROM relays").await, 1);
+        assert_eq!(count(&pool, "SELECT count(*) FROM audit_log WHERE action = 'relay.create'").await, 1);
+    }
+
+    #[sqlx::test]
+    async fn enrollment_cannot_move_or_revive_a_peer(pool: PgPool) {
+        let pki = Pki::new();
+        enroll_as(&pki, &pool, PeerRole::Relay, "relay-1", "paris").await.unwrap();
+        refused(enroll_as(&pki, &pool, PeerRole::Relay, "relay-1", "lyon").await);
+
+        let paris = token::site_id(&pool, "paris", false).await.unwrap().unwrap();
+        sqlx::query("INSERT INTO servers (peer_id, site_id, hostname, os_family) VALUES ('web-01', $1, 'web-01', 'debian')")
+            .bind(paris)
+            .execute(&pool)
+            .await
+            .unwrap();
+        refused(enroll_as(&pki, &pool, PeerRole::Agent, "web-01", "lyon").await);
+        enroll_as(&pki, &pool, PeerRole::Agent, "web-01", "paris").await.unwrap();
+
+        sqlx::query("UPDATE servers SET revoked_at = now()").execute(&pool).await.unwrap();
+        sqlx::query("UPDATE relays SET revoked_at = now()").execute(&pool).await.unwrap();
+        refused(enroll_as(&pki, &pool, PeerRole::Agent, "web-01", "paris").await);
+        refused(enroll_as(&pki, &pool, PeerRole::Relay, "relay-1", "paris").await);
+        // Refusals roll back: only the two accepted enrollments issued one.
+        assert_eq!(count(&pool, "SELECT count(*) FROM certificates").await, 2);
+    }
+
     #[sqlx::test]
     async fn sites_are_created_only_on_request(pool: PgPool) {
         assert_eq!(token::site_id(&pool, "paris", false).await.unwrap(), None);
@@ -436,6 +545,7 @@ db_tests! {
             protocol_version: PROTOCOL_VERSION.into(),
             agent_version: "0.1.0".into(),
             hostname: "web-01.example".into(),
+            os_family: "debian".into(),
             ..Default::default()
         };
         tx.send(Envelope { sequence: 1, payload: Some(Payload::Hello(hello)) }).await.unwrap();
@@ -449,6 +559,16 @@ db_tests! {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(server.registry.get("web-01").unwrap().role, PeerRole::Agent);
+
+        // The Hello created the inventory row: the API lists it, online.
+        let servers = list_servers(&pool, server.registry.clone()).await;
+        let servers = servers["servers"].as_array().unwrap();
+        assert_eq!(servers.len(), 1, "{servers:?}");
+        assert_eq!(servers[0]["peer_id"], "web-01");
+        assert_eq!(servers[0]["hostname"], "web-01.example");
+        assert_eq!(servers[0]["site_name"], "paris");
+        assert_eq!(servers[0]["os_family"], "debian");
+        assert_eq!(servers[0]["status"], "online");
     }
 
     #[sqlx::test]

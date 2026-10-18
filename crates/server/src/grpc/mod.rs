@@ -1,6 +1,7 @@
 //! gRPC ingress: the `AgentService::Stream` endpoint and the registry of
 //! connected agents and relays.
 
+mod inventory;
 mod policy;
 mod registry;
 mod service;
@@ -17,6 +18,7 @@ use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tonic::transport::Server;
 
+pub use inventory::{AcceptedHello, DbInventory, Inventory, InventoryError, NoInventory};
 pub use policy::{AllowAllRelayedAgents, DbRelayPolicy, DenyRelayedAgents, RelayPolicy};
 pub use registry::{CloseReason, Counters, PeerInfo, Registration, Registry, RegistryError};
 pub use service::{AgentStreamService, HandshakeError, Outbound};
@@ -30,6 +32,8 @@ pub struct StreamSettings {
     pub heartbeat_timeout: Duration,
     /// Envelopes queued towards one peer before [`Registry::send`] waits.
     pub outbound_capacity: usize,
+    /// Minimum time between two `last_seen_at` writes for one stream.
+    pub last_seen_interval: Duration,
 }
 
 impl Default for StreamSettings {
@@ -38,6 +42,7 @@ impl Default for StreamSettings {
             hello_timeout: Duration::from_secs(10),
             heartbeat_timeout: Duration::from_secs(ServerConfig::default().heartbeat_timeout),
             outbound_capacity: 64,
+            last_seen_interval: Duration::from_secs(60),
         }
     }
 }

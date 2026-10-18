@@ -13,7 +13,7 @@ use monitorflow_common::tls::{
 };
 use rcgen::CertificateSigningRequestParams;
 use rustls::ServerConfig as TlsServerConfig;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tonic::transport::Server;
@@ -22,6 +22,7 @@ use uuid::Uuid;
 
 use super::limiter::{FailureLimiter, UNKNOWN_SOURCE};
 use super::{ca_fingerprint, token};
+use crate::api::audit::{self, Event};
 use crate::ca::{CertificateAuthority, IssuedCert};
 
 /// Largest request accepted: a token and a CSR fit in a few KiB.
@@ -126,6 +127,7 @@ impl Enroller {
         };
         let identity =
             PeerIdentity::new(role, &peer_id).map_err(|e| EnrollError::Internal(e.to_string()))?;
+        let new_relay = prepare_inventory(&mut tx, role, &peer_id, site_id).await?;
 
         let (ca, csr, id) = (self.ca.clone(), csr_pem.to_owned(), identity.clone());
         let cert = tokio::task::spawn_blocking(move || ca.issue(&csr, &id, None, &[]))
@@ -160,9 +162,69 @@ impl Enroller {
         .bind(details.to_string())
         .execute(&mut *tx)
         .await?;
+        if let Some(relay_id) = new_relay {
+            let actor = identity.uri();
+            audit::record(
+                &mut *tx,
+                Event {
+                    actor_kind: "peer",
+                    actor_id: &actor,
+                    action: "relay.create",
+                    target: Some(("relay", &peer_id)),
+                    details: serde_json::json!({ "relay_id": relay_id, "site_id": site_id }),
+                },
+            )
+            .await?;
+        }
         tx.commit().await?;
         tracing::info!(peer = %identity, serial = %cert.serial, ?source, "enrolled a peer");
         Ok(Enrolled { identity, cert })
+    }
+}
+
+/// Checks the peer's inventory row before its certificate is issued
+/// (ADR-0008): a revoked row, or a row in another site than the token's,
+/// refuses the enrollment. A relay without a row gets one in the token's
+/// site; its ID is returned. Agents get theirs at their first Hello.
+async fn prepare_inventory(
+    tx: &mut Transaction<'_, Postgres>,
+    role: PeerRole,
+    peer_id: &str,
+    site_id: Uuid,
+) -> Result<Option<Uuid>, EnrollError> {
+    let sql = match role {
+        PeerRole::Relay => {
+            "SELECT site_id, revoked_at IS NOT NULL FROM relays WHERE peer_id = $1 FOR UPDATE"
+        }
+        _ => "SELECT site_id, revoked_at IS NOT NULL FROM servers WHERE peer_id = $1 FOR UPDATE",
+    };
+    let existing: Option<(Uuid, bool)> = sqlx::query_as(sql)
+        .bind(peer_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    match existing {
+        Some((existing_site, revoked)) if revoked || existing_site != site_id => {
+            tracing::warn!(
+                %role,
+                peer_id,
+                revoked,
+                %existing_site,
+                token_site = %site_id,
+                "enrollment refused: the peer's inventory row is revoked or in another site"
+            );
+            Err(EnrollError::Refused)
+        }
+        None if role == PeerRole::Relay => {
+            let relay_id = sqlx::query_scalar(
+                "INSERT INTO relays (peer_id, site_id, name) VALUES ($1, $2, $1) RETURNING id",
+            )
+            .bind(peer_id)
+            .bind(site_id)
+            .fetch_one(&mut **tx)
+            .await?;
+            Ok(Some(relay_id))
+        }
+        _ => Ok(None),
     }
 }
 
