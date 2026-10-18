@@ -40,6 +40,11 @@ impl SessionToken {
         Self(bytes.iter().map(|b| format!("{b:02x}")).collect())
     }
 
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> Self {
+        Self::generate()
+    }
+
     /// Accepts only the exact format [`SessionToken::generate`] produces.
     fn parse(value: &str) -> Option<Self> {
         let valid = value.len() == 2 * TOKEN_BYTES
