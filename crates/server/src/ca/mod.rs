@@ -1,15 +1,17 @@
-//! Built-in certificate authority: issues short-lived peer certificates.
-//! Revocation comes in a follow-up. See `docs/architecture.md` §4 and ADR-0004.
+//! Built-in certificate authority: issues short-lived peer certificates and
+//! maintains the revocation list. See `docs/architecture.md` §4 and ADR-0004.
 //!
 //! Pure Rust and file-backed: everything lives in one directory, typically
 //! `<data_dir>/ca/`:
 //!
 //! - `ca-key.pem`: ECDSA P-256 root key, PKCS#8, mode 0600;
-//! - `ca-cert.pem`: self-signed root certificate.
+//! - `ca-cert.pem`: self-signed root certificate;
+//! - `revocations.json`: revoked serials and the last CRL number.
 //!
 //! Every write goes to a temporary file that is then renamed. Methods do
 //! blocking file I/O; call them from `spawn_blocking` in async code.
 
+mod revocation;
 mod store;
 
 #[cfg(test)]
@@ -22,6 +24,7 @@ use std::net::IpAddr;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use monitorflow_common::tls::{PeerIdentity, PeerRole};
@@ -37,8 +40,12 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::{debug, info};
 
+pub use revocation::RevocationReason;
+use revocation::Revocations;
+
 pub const KEY_FILE: &str = "ca-key.pem";
 pub const CERT_FILE: &str = "ca-cert.pem";
+pub const REVOCATIONS_FILE: &str = "revocations.json";
 
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);
 /// How far `not_before` is backdated, for peers whose clock runs late.
@@ -107,6 +114,8 @@ pub struct CaOptions {
     /// Validity of issued certificates when [`CertificateAuthority::issue`]
     /// gets none.
     pub cert_validity: Duration,
+    /// Time from a CRL's `this_update` to its `next_update`.
+    pub crl_validity: Duration,
 }
 
 impl Default for CaOptions {
@@ -115,6 +124,7 @@ impl Default for CaOptions {
             common_name: "MonitorFlow CA".into(),
             ca_validity: 3650 * DAY,
             cert_validity: 7 * DAY,
+            crl_validity: DAY,
         }
     }
 }
@@ -216,6 +226,7 @@ pub struct CertificateAuthority {
     /// rcgen needs it to sign. Its own signature is never published.
     issuer: Certificate,
     key: KeyPair,
+    revocations: Mutex<Revocations>,
 }
 
 impl fmt::Debug for CertificateAuthority {
@@ -270,12 +281,15 @@ impl CertificateAuthority {
         check_key_matches(cert_der.contents(), &key)
             .map_err(|why| CaError::corrupt(&key_path, why))?;
         let issuer = params.self_signed(&key).map_err(CaError::signing)?;
+
+        let revocations = revocation::load(&dir.join(REVOCATIONS_FILE))?;
         Ok(Self {
             dir: dir.to_owned(),
             options,
             cert_pem,
             issuer,
             key,
+            revocations: Mutex::new(revocations),
         })
     }
 

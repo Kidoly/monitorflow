@@ -195,6 +195,22 @@ async fn revoked_client_is_rejected() {
 }
 
 #[tokio::test]
+async fn expired_crl_rejects_every_client() {
+    let pki = Pki::new();
+    let url = pki
+        .serve(Serve {
+            crls: vec![pki.ca.crl_until(&[], 2021)],
+            ..Serve::default()
+        })
+        .await;
+    let err = who_am_i(&url, pki.client(&pki.ca.client("agent-ok", 11)))
+        .await
+        .unwrap_err();
+    // rustls reports an expired CRL to the client as an unknown CA.
+    assert!(err.contains("UnknownCA"), "{err}");
+}
+
+#[tokio::test]
 async fn client_that_does_not_trust_the_server_is_rejected() {
     let pki = Pki::new();
     let url = pki.serve(Serve::default()).await;

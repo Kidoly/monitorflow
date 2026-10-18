@@ -11,6 +11,7 @@ use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use tempfile::TempDir;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use x509_parser::prelude::{FromDer, X509Certificate};
+use x509_parser::revocation_list::CertificateRevocationList;
 
 use super::*;
 
@@ -279,6 +280,57 @@ fn rejects_a_tampered_csr() {
     assert!(matches!(err, CaError::InvalidCsr(_)), "{err}");
 }
 
+fn parse_crl(der: &[u8]) -> (u64, Vec<Serial>, i64, i64) {
+    let (_, crl) = CertificateRevocationList::from_der(der).unwrap();
+    let number = crl.crl_number().unwrap().to_u64_digits();
+    let serials = crl
+        .iter_revoked_certificates()
+        .map(|r| Serial::from_bytes(r.raw_serial()))
+        .collect();
+    let this_update = crl.last_update().timestamp();
+    let next_update = crl.next_update().unwrap().timestamp();
+    (
+        number.first().copied().unwrap_or(0),
+        serials,
+        this_update,
+        next_update,
+    )
+}
+
+#[test]
+fn revocations_appear_in_signed_crls_and_persist() {
+    let (dir, ca) = new_ca();
+    let (number, serials, this_update, next_update) = parse_crl(&ca.crl().unwrap());
+    assert_eq!(number, 1);
+    assert!(serials.is_empty());
+    assert_eq!(next_update - this_update, 86400);
+
+    let (_, csr) = csr();
+    let issued = ca
+        .issue(&csr, &identity(PeerRole::Agent, "a1"), None, &[])
+        .unwrap();
+    ca.revoke(&issued.serial, RevocationReason::KeyCompromise)
+        .unwrap();
+    ca.revoke(&issued.serial, RevocationReason::Superseded)
+        .unwrap();
+    let (number, serials, _, _) = parse_crl(&ca.crl().unwrap());
+    assert_eq!(number, 2);
+    assert_eq!(serials, vec![issued.serial.clone()]);
+
+    let reopened = CertificateAuthority::open_or_create(
+        &dir.path().join("ca"),
+        CaOptions {
+            crl_validity: Duration::from_secs(3600),
+            ..CaOptions::default()
+        },
+    )
+    .unwrap();
+    let (number, serials, this_update, next_update) = parse_crl(&reopened.crl().unwrap());
+    assert_eq!(number, 3);
+    assert_eq!(serials.len(), 1);
+    assert_eq!(next_update - this_update, 3600);
+}
+
 #[test]
 fn serial_hex_round_trips() {
     let serial: Serial = "00ab0c".parse().unwrap();
@@ -318,7 +370,7 @@ async fn handshake(server: Arc<ServerConfig>, client: Arc<ClientConfig>) -> Resu
 }
 
 #[tokio::test]
-async fn issued_certificates_complete_a_handshake() {
+async fn revoked_agent_is_rejected_at_the_next_handshake() {
     let (dir, ca) = new_ca();
     let (server_key, server_csr) = csr();
     let server_cert = ca
@@ -343,6 +395,13 @@ async fn issued_certificates_complete_a_handshake() {
         .client_config()
         .unwrap();
 
-    let config = server.server_config(Vec::new()).unwrap();
-    handshake(config, agent).await.unwrap();
+    // Passes only if webpki accepts the CRL and its signature.
+    let config = server.server_config(vec![ca.crl().unwrap()]).unwrap();
+    handshake(config, agent.clone()).await.unwrap();
+
+    ca.revoke(&agent_cert.serial, RevocationReason::KeyCompromise)
+        .unwrap();
+    let config = server.server_config(vec![ca.crl().unwrap()]).unwrap();
+    let err = handshake(config, agent).await.unwrap_err();
+    assert!(err.contains("Revoked"), "{err}");
 }
