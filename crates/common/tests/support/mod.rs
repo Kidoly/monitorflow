@@ -99,10 +99,16 @@ impl Ca {
 
     /// CRL revoking the given serial numbers.
     pub fn crl(&self, serials: &[u64]) -> CertificateRevocationListDer<'static> {
-        let now = rcgen::date_time_ymd(2026, 1, 1);
+        self.crl_until(serials, 2100)
+    }
+
+    /// CRL revoking the given serial numbers, with `next_update` on January
+    /// 1st of `year`.
+    pub fn crl_until(&self, serials: &[u64], year: i32) -> CertificateRevocationListDer<'static> {
+        let now = rcgen::date_time_ymd(2020, 1, 1);
         let params = CertificateRevocationListParams {
             this_update: now,
-            next_update: rcgen::date_time_ymd(2100, 1, 1),
+            next_update: rcgen::date_time_ymd(year, 1, 1),
             crl_number: SerialNumber::from(1),
             issuing_distribution_point: None,
             revoked_certs: serials

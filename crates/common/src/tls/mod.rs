@@ -210,8 +210,10 @@ impl Identity {
     ///
     /// `crls` are DER revocation lists from that CA. When the list is not
     /// empty, the client's end-entity certificate must be covered by one of
-    /// them: a certificate from an issuer without a CRL is rejected. Build a
-    /// new config and send it to [`incoming`] when the CRL changes.
+    /// them: a certificate from an issuer without a CRL is rejected, and so
+    /// is any client once the CRL is past its `next_update`. Build a new
+    /// config and send it to [`incoming`] when the CRL changes, and before
+    /// it expires.
     pub fn server_config(
         &self,
         crls: Vec<CertificateRevocationListDer<'static>>,
@@ -221,6 +223,7 @@ impl Identity {
             WebPkiClientVerifier::builder_with_provider(self.roots.clone(), provider.clone())
                 .with_crls(crls)
                 .only_check_end_entity_revocation()
+                .enforce_revocation_expiration()
                 .build()
                 .map_err(|e| TlsError::Config(e.to_string()))?;
         let mut config = ServerConfig::builder_with_provider(provider)
