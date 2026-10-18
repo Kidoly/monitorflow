@@ -10,10 +10,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::cpu::CpuSensor;
+use crate::memory::MemorySensor;
 use crate::Sensor;
 
 /// Every kind [`build`] knows, in a stable order.
-pub const KINDS: &[&str] = &["cpu"];
+pub const KINDS: &[&str] = &["cpu", "memory"];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BuildError {
@@ -34,6 +35,7 @@ pub fn build(kind: &str, params: &BTreeMap<String, String>) -> Result<Arc<dyn Se
     let mut params = Params::new(kind, params)?;
     let sensor: Arc<dyn Sensor> = match params.kind {
         "cpu" => Arc::new(CpuSensor::new(params.bool("per_core", true)?)),
+        "memory" => Arc::new(MemorySensor),
         _ => unreachable!("Params::new only accepts KINDS"),
     };
     params.finish()?;
@@ -117,7 +119,7 @@ mod tests {
     fn unknown_kinds_and_params_are_refused() {
         let error = build("gpu", &BTreeMap::new()).err().unwrap();
         assert_eq!(error, BuildError::UnknownKind("gpu".into()));
-        assert!(error.to_string().contains("expected one of: cpu"));
+        assert!(error.to_string().contains("expected one of: cpu, memory"));
         assert_eq!(
             build("cpu", &params(&[("per_cores", "true")])).err(),
             Some(BuildError::UnknownParam {
