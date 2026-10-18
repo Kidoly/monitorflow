@@ -35,6 +35,7 @@ rcgen = "0.13"
 ring = "0.17"
 time = { version = "0.3", features = ["std"] }
 pem = "3"
+base64 = "0.22"
 tempfile = "3"
 axum = "0.8"
 argon2 = { version = "0.5", features = ["std"] }

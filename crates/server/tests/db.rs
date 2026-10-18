@@ -87,8 +87,8 @@ async fn insert_token(
     created_by: Uuid,
 ) -> Result<Uuid, sqlx::Error> {
     sqlx::query_scalar(
-        "INSERT INTO enrollment_tokens (token_hash, role, site_id, created_by, expires_at)
-         VALUES ($1, 'agent', $2, $3, now() + interval '1 hour') RETURNING id",
+        "INSERT INTO enrollment_tokens (token_hash, role, peer_id, site_id, created_by, expires_at)
+         VALUES ($1, 'agent', 'agent-1', $2, $3, now() + interval '1 hour') RETURNING id",
     )
     .bind(hash)
     .bind(site_id)
@@ -208,8 +208,10 @@ db_tests! {
                 .bind(peer)
                 .execute(&pool)
         };
-        assert_eq!(consume("agent-1").await.unwrap().rows_affected(), 1);
+        // The peer that uses a token is the one it names.
         assert_eq!(sqlstate(consume("agent-2").await), CHECK_VIOLATION);
+        assert_eq!(consume("agent-1").await.unwrap().rows_affected(), 1);
+        assert_eq!(sqlstate(consume("agent-1").await), CHECK_VIOLATION);
         // Clearing used_at to reuse the token is rejected too.
         assert_eq!(
             sqlstate(sqlx::query("UPDATE enrollment_tokens SET used_at = NULL, used_by_peer_id = NULL WHERE id = $1").bind(token).execute(&pool).await),

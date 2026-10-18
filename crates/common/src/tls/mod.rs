@@ -8,6 +8,7 @@
 //! is calling.
 
 mod peer;
+mod token;
 mod transport;
 
 #[cfg(test)]
@@ -32,6 +33,9 @@ use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use crate::config::TlsPaths;
 
 pub use peer::{peer_identity, validate_id, PeerIdentity, PeerRole, URI_SCHEME};
+pub use token::{
+    fingerprint, fingerprint_hex, EnrollmentToken, Fingerprint, SECRET_LEN, TOKEN_PREFIX,
+};
 pub use transport::{connect, connector, endpoint, incoming, AcceptOptions, DEFAULT_TIMEOUT};
 
 /// ALPN protocol of gRPC.
@@ -74,6 +78,8 @@ pub enum TlsError {
     },
     #[error("cannot identify peer: {0}")]
     PeerIdentity(String),
+    #[error("malformed enrollment token: {0}")]
+    InvalidToken(&'static str),
 }
 
 /// `error: cause: root cause`, since tonic's own message is just

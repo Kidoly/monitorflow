@@ -1216,11 +1216,13 @@ dependencies = [
 name = "monitorflow-common"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "hyper-util",
  "pem",
  "prost",
  "prost-types",
  "rcgen",
+ "ring",
  "rustls",
  "rustls-pemfile",
  "serde",
