@@ -34,6 +34,9 @@ ring.workspace = true
 pem.workspace = true
 time.workspace = true
 x509-parser.workspace = true
+prost.workspace = true
+reqwest.workspace = true
+snap.workspace = true
 
 [dev-dependencies]
 tower.workspace = true

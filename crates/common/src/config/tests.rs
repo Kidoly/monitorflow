@@ -312,3 +312,49 @@ fn parse_errors_do_not_echo_secret_lines() {
     assert!(!msg.contains("s3cret-token"), "{msg}");
     assert!(msg.contains("line 1"), "{msg}");
 }
+
+#[test]
+fn ingest_defaults_overrides_and_bounds() {
+    let server: ServerConfig = parse(SERVER_MIN).unwrap();
+    assert_eq!(server.ingest, IngestConfig::default());
+    assert_eq!(server.ingest.batch_size, 5_000);
+    assert_eq!(server.ingest.flush_interval_ms, 1_000);
+    assert_eq!(server.ingest.queue_capacity, 100_000);
+
+    let text = format!("{SERVER_MIN}\n[ingest]\nbatch_size = 100\nqueue_capacity = 1000");
+    let vars = env(&[("MONITORFLOW_INGEST_FLUSH_INTERVAL_MS", "250")]);
+    let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
+    assert_eq!(server.ingest.batch_size, 100);
+    assert_eq!(server.ingest.queue_capacity, 1000);
+    assert_eq!(server.ingest.flush_interval_ms, 250);
+
+    for (var, value, key) in [
+        ("MONITORFLOW_INGEST_BATCH_SIZE", "0", "ingest.batch_size"),
+        (
+            "MONITORFLOW_INGEST_BATCH_SIZE",
+            "100001",
+            "ingest.batch_size",
+        ),
+        (
+            "MONITORFLOW_INGEST_FLUSH_INTERVAL_MS",
+            "0",
+            "ingest.flush_interval_ms",
+        ),
+        (
+            "MONITORFLOW_INGEST_QUEUE_CAPACITY",
+            "10",
+            "ingest.queue_capacity",
+        ),
+        (
+            "MONITORFLOW_INGEST_SHUTDOWN_TIMEOUT",
+            "0",
+            "ingest.shutdown_timeout",
+        ),
+    ] {
+        let msg = err::<ServerConfig>(SERVER_MIN, &[(var, value)]);
+        assert!(
+            msg.contains(&format!("key `{key}`")),
+            "{var}={value}: {msg}"
+        );
+    }
+}

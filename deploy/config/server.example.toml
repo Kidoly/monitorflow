@@ -42,6 +42,19 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # server certificate it issues to itself on first start.
 # server_names = ["localhost", "127.0.0.1"]
 
+# Batching of writes to VictoriaMetrics and VictoriaLogs (ADR-0013). Each
+# writer has its own queue; while a queue is full, new items are dropped and
+# counted, so a slow backend never stalls agent streams.
+[ingest]
+# Most samples or log lines per HTTP request.
+# batch_size = 5000
+# Milliseconds between flushes of a partial batch.
+# flush_interval_ms = 1000
+# Items held in memory per writer, at least batch_size.
+# queue_capacity = 100000
+# Seconds allowed at shutdown to flush the queues.
+# shutdown_timeout = 10
+
 # Created by the server from its built-in CA when missing, renewed at start
 # when close to expiry. A certificate from another CA is refused.
 [tls]
