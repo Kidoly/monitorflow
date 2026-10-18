@@ -76,7 +76,8 @@ impl Harness {
         Self::start(settings(), Arc::new(DenyRelayedAgents)).await
     }
 
-    async fn open(&self, leaf: &Leaf, first: Option<Envelope>) -> Result<Peer, Status> {
+    // `Status` is boxed to keep the `Err` variant small (clippy::result_large_err).
+    async fn open(&self, leaf: &Leaf, first: Option<Envelope>) -> Result<Peer, Box<Status>> {
         let config = identity(&self.ca, leaf).client_config().unwrap();
         let channel = tls::connect(&self.url, config, TIMEOUT).await.unwrap();
         let (tx, rx) = mpsc::channel(8);
@@ -87,7 +88,8 @@ impl Harness {
         let call = client.stream(ReceiverStream::new(rx));
         let rx = tokio::time::timeout(TIMEOUT, call)
             .await
-            .unwrap()?
+            .unwrap()
+            .map_err(Box::new)?
             .into_inner();
         Ok(Peer { tx, rx })
     }
@@ -116,10 +118,11 @@ impl Peer {
     }
 
     /// Next message from the server, or the status that ended the stream.
-    async fn next(&mut self) -> Result<Option<Envelope>, Status> {
+    async fn next(&mut self) -> Result<Option<Envelope>, Box<Status>> {
         tokio::time::timeout(TIMEOUT, self.rx.message())
             .await
             .unwrap()
+            .map_err(Box::new)
     }
 }
 
@@ -143,7 +146,7 @@ fn heartbeat() -> Payload {
     Payload::Heartbeat(Heartbeat { sent_at_unix_ms: 0 })
 }
 
-fn refused(result: Result<Peer, Status>) -> Status {
+fn refused(result: Result<Peer, Box<Status>>) -> Box<Status> {
     match result {
         Ok(_) => panic!("stream unexpectedly accepted"),
         Err(status) => status,
