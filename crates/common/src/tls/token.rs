@@ -1,4 +1,4 @@
-//! Enrollment token string, `mfe1.<secret>.<ca>` (ADR-0006).
+//! Enrollment token string, `mfe1.<secret>.<ca>` (ADR-0007).
 //!
 //! `<secret>` is 32 random bytes and `<ca>` the SHA-256 of the DER CA
 //! certificate, both in unpadded base64url. The server stores only a hash of

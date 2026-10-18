@@ -438,10 +438,18 @@ pub struct ServerConfig {
     /// gRPC listener for agents and relays.
     pub grpc_listen_addr: SocketAddr,
     /// Enrollment listener: TLS without client certificates, serving only
-    /// `EnrollService` (ADR-0006).
+    /// `EnrollService` (ADR-0007).
     pub enroll_listen_addr: SocketAddr,
-    /// HTTPS listener for the REST API and web interface.
+    /// Plain HTTP listener for the REST API, meant to sit behind a TLS
+    /// reverse proxy on the same host (ADR-0006). Defaults to loopback.
     pub api_listen_addr: SocketAddr,
+    /// Mark the session cookie `Secure`. Only turn off for local development
+    /// over plain HTTP without a proxy.
+    pub api_cookie_secure: bool,
+    /// Seconds a session lasts after login, whatever its activity.
+    pub api_session_lifetime: u64,
+    /// Seconds without a request after which a session expires.
+    pub api_session_idle_timeout: u64,
     pub database_url: DatabaseUrl,
     pub victoriametrics_url: String,
     pub victorialogs_url: String,
@@ -449,7 +457,7 @@ pub struct ServerConfig {
     /// Seconds without any message after which a peer's stream is closed.
     pub heartbeat_timeout: u64,
     /// DNS names and IP addresses peers use to reach this server, written
-    /// in the certificate the built-in CA issues it (ADR-0006). The
+    /// in the certificate the built-in CA issues it (ADR-0007). The
     /// environment override is a comma-separated list.
     pub server_names: Vec<String>,
     pub tls: TlsPaths,
@@ -461,7 +469,10 @@ impl Default for ServerConfig {
         Self {
             grpc_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7443)),
             enroll_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7445)),
-            api_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7444)),
+            api_listen_addr: SocketAddr::from(([127, 0, 0, 1], 7444)),
+            api_cookie_secure: true,
+            api_session_lifetime: 12 * 60 * 60,
+            api_session_idle_timeout: 30 * 60,
             database_url: DatabaseUrl::default(),
             victoriametrics_url: "http://localhost:8428".into(),
             victorialogs_url: "http://localhost:9428".into(),
@@ -480,6 +491,12 @@ impl LoadConfig for ServerConfig {
         env.set("grpc_listen_addr", &mut self.grpc_listen_addr)?;
         env.set("enroll_listen_addr", &mut self.enroll_listen_addr)?;
         env.set("api_listen_addr", &mut self.api_listen_addr)?;
+        env.set("api_cookie_secure", &mut self.api_cookie_secure)?;
+        env.set("api_session_lifetime", &mut self.api_session_lifetime)?;
+        env.set(
+            "api_session_idle_timeout",
+            &mut self.api_session_idle_timeout,
+        )?;
         env.set("database_url", &mut self.database_url)?;
         env.set("victoriametrics_url", &mut self.victoriametrics_url)?;
         env.set("victorialogs_url", &mut self.victorialogs_url)?;
@@ -500,6 +517,8 @@ impl LoadConfig for ServerConfig {
                 "must list at least one DNS name or IP address, none empty",
             ));
         }
+        check.positive("api_session_lifetime", self.api_session_lifetime)?;
+        check.positive("api_session_idle_timeout", self.api_session_idle_timeout)?;
         let db = self.database_url.expose();
         check.required("database_url", db)?;
         // The value is never echoed: it may hold a password.

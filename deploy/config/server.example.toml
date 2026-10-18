@@ -7,12 +7,21 @@
 # gRPC listener for agents and relays (mTLS).
 # grpc_listen_addr = "0.0.0.0:7443"
 
-# Enrollment listener (TLS without client certificates, ADR-0006). New agents
+# Enrollment listener (TLS without client certificates, ADR-0007). New agents
 # and relays exchange their one-time token for a certificate here.
 # enroll_listen_addr = "0.0.0.0:7445"
 
-# HTTPS listener for the REST API and the web interface.
-# api_listen_addr = "0.0.0.0:7444"
+# REST API listener. Plain HTTP: put a TLS reverse proxy on the same host in
+# front of it and keep it on loopback (ADR-0006).
+# api_listen_addr = "127.0.0.1:7444"
+
+# Send the session cookie with the Secure attribute. Only disable for local
+# development over plain HTTP.
+# api_cookie_secure = true
+
+# Session lifetime and idle timeout, in seconds (12 hours, 30 minutes).
+# api_session_lifetime = 43200
+# api_session_idle_timeout = 1800
 
 # PostgreSQL connection. Required. The password is redacted in logs; prefer
 # MONITORFLOW_DATABASE_URL so it does not stay on disk.

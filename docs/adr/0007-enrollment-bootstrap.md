@@ -1,4 +1,4 @@
-# ADR-0006: Enrollment bootstrap
+# ADR-0007: Enrollment bootstrap
 
 Date: 2026-10-18
 Status: accepted

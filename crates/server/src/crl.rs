@@ -1,4 +1,4 @@
-//! Keeps the CRL of the mTLS listener fresh (ADR-0006).
+//! Keeps the CRL of the mTLS listener fresh (ADR-0007).
 //!
 //! The listener enforces CRL expiry, so a CRL past its `next_update` locks
 //! every client out. [`CrlPublisher`] builds a new CRL and `ServerConfig`

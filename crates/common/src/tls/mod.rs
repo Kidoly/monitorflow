@@ -247,7 +247,7 @@ impl Identity {
     }
 
     /// Server configuration that asks for no client certificate, for the
-    /// enrollment listener (ADR-0006). The chain sent to clients ends with
+    /// enrollment listener (ADR-0007). The chain sent to clients ends with
     /// the CA certificates, so that a client holding only the CA fingerprint
     /// ([`pinned_client_config`]) can verify it.
     pub fn server_config_without_client_auth(&self) -> Result<Arc<ServerConfig>, TlsError> {

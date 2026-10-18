@@ -1,4 +1,4 @@
-//! Enrollment of new agents and relays (ADR-0006): an administrator creates
+//! Enrollment of new agents and relays (ADR-0007): an administrator creates
 //! a one-time token, the peer exchanges it with a CSR for a certificate.
 
 pub mod limiter;

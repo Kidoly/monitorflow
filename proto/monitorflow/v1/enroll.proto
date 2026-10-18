@@ -1,4 +1,4 @@
-// MonitorFlow enrollment protocol, version 1. See ADR-0006.
+// MonitorFlow enrollment protocol, version 1. See ADR-0007.
 //
 // Rules: changes are additive only. Never renumber or reuse a field number.
 

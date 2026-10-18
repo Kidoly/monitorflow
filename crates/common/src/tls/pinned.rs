@@ -1,6 +1,6 @@
 //! Client side of enrollment: authenticate the server with only the CA
 //! fingerprint from the token, before any client certificate exists
-//! (ADR-0006).
+//! (ADR-0007).
 
 use std::sync::Arc;
 

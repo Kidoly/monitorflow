@@ -1,4 +1,4 @@
-//! `EnrollService::Enroll` and its listener (ADR-0006).
+//! `EnrollService::Enroll` and its listener (ADR-0007).
 
 use std::future::Future;
 use std::net::IpAddr;

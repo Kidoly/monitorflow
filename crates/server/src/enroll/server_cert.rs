@@ -1,6 +1,6 @@
 //! The server's own TLS certificate, issued by the built-in CA so that
 //! enrolling peers can verify it against the CA pinned in their token
-//! (ADR-0006). Blocking file I/O: call from `spawn_blocking`.
+//! (ADR-0007). Blocking file I/O: call from `spawn_blocking`.
 
 use std::fs;
 use std::io;

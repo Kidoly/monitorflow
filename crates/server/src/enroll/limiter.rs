@@ -1,4 +1,4 @@
-//! Bounds failed enrollment attempts per source address (ADR-0006).
+//! Bounds failed enrollment attempts per source address (ADR-0007).
 //!
 //! Tokens have 256 bits of entropy, so this is not what stops guessing: it
 //! keeps a misbehaving client from loading the database. State is in memory

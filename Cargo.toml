@@ -38,6 +38,8 @@ pem = "3"
 base64 = "0.22"
 tempfile = "3"
 axum = "0.8"
+argon2 = { version = "0.5", features = ["std"] }
+rpassword = "7"
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "migrate", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
