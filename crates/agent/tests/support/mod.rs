@@ -126,14 +126,31 @@ impl Pki {
     }
 
     async fn serve(&self, settings: grpc::StreamSettings, renewer: Option<Renewer>) -> Upstream {
+        let make =
+            |registry| AgentStreamService::new(registry, Arc::new(DenyRelayedAgents), settings);
+        self.serve_with(make, renewer).await
+    }
+
+    /// Serves the service `make` builds around a new registry.
+    pub async fn serve_service(
+        &self,
+        make: impl FnOnce(Registry) -> AgentStreamService,
+    ) -> Upstream {
+        self.serve_with(make, None).await
+    }
+
+    async fn serve_with(
+        &self,
+        make: impl FnOnce(Registry) -> AgentStreamService,
+        renewer: Option<Renewer>,
+    ) -> Upstream {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = url(&listener);
         let (crl, rx) = CrlPublisher::start(self.ca.clone(), self.server.clone())
             .await
             .unwrap();
         let registry = Registry::default();
-        let service =
-            AgentStreamService::new(registry.clone(), Arc::new(DenyRelayedAgents), settings);
+        let service = make(registry.clone());
         tokio::spawn(grpc::serve_with_renewer(
             listener,
             rx,

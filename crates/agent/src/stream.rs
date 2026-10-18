@@ -15,7 +15,9 @@
 //! reconnects with it at once.
 //!
 //! Sensor configurations from the upstream go to the sensors task, and its
-//! acknowledgements go up on the current stream (ADR-0016).
+//! acknowledgements go up on the current stream (ADR-0016). Samples go up
+//! in `SampleBatch` envelopes taken from the [`Uplink`] when a batch is
+//! full or at each flush interval; while disconnected they stay there.
 //!
 //! Envelope payloads are never logged, and commands are never executed:
 //! signed command execution is Phase 3.
@@ -27,7 +29,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use monitorflow_common::config::AgentConfig;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Envelope, Heartbeat, Hello, SensorConfigAck};
+use monitorflow_common::proto::v1::{Envelope, Heartbeat, Hello, SampleBatch, SensorConfigAck};
 use monitorflow_common::tls::{self, error_chain, TlsError};
 use monitorflow_common::PROTOCOL_VERSION;
 use rustls::AlertDescription;
@@ -42,6 +44,7 @@ use crate::identity::AgentIdentity;
 use crate::os::HostInfo;
 use crate::sensor_config::StreamEnd;
 use crate::shutdown::Shutdown;
+use crate::upload::Uplink;
 
 /// Envelopes queued towards the upstream. Heartbeats are skipped, not
 /// queued, when it is full.
@@ -172,6 +175,7 @@ pub struct Agent {
     updates: Option<watch::Receiver<AgentIdentity>>,
     host: HostInfo,
     sensors: Option<StreamEnd>,
+    uplink: Option<Uplink>,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
     // monotonic across restarts; the server only needs them per stream.
     sequence: u64,
@@ -185,8 +189,15 @@ impl Agent {
             updates: None,
             host,
             sensors: None,
+            uplink: None,
             sequence: 0,
         }
+    }
+
+    /// Sends the samples queued in `uplink` upstream.
+    pub fn with_upload(mut self, uplink: Uplink) -> Self {
+        self.uplink = Some(uplink);
+        self
     }
 
     /// Passes sensor configurations to the sensors task and sends its
@@ -287,19 +298,23 @@ impl Agent {
         let every = self.settings.heartbeat_interval;
         let mut heartbeat = interval_at(Instant::now() + every, every);
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let flush_every = self
+            .uplink
+            .as_ref()
+            .map_or(every, |u| u.settings().flush_interval);
+        let mut flush = interval_at(Instant::now() + flush_every, flush_every);
+        flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        // Set by a flush tick while samples wait; cleared once all went.
+        let mut flush_due = false;
         loop {
-            tokio::select! {
-                () = shutdown.wait() => {
-                    drop(tx);
-                    let _ = timeout(CLOSE_GRACE, drain(&mut inbound)).await;
-                    tracing::info!("stream closed");
-                    return Ok(());
-                }
-                () = changed(&mut self.updates) => {
-                    drop(tx);
-                    let _ = timeout(CLOSE_GRACE, drain(&mut inbound)).await;
-                    return Err(Failure::Renewed);
-                }
+            let ready = self
+                .uplink
+                .as_ref()
+                .is_some_and(|u| u.is_full_batch() || (flush_due && !u.is_empty()));
+            // Set when this connection must close.
+            let close = tokio::select! {
+                () = shutdown.wait() => Some(Ok(())),
+                () = changed(&mut self.updates) => Some(Err(Failure::Renewed)),
                 _ = heartbeat.tick() => {
                     let envelope = self.envelope(Payload::Heartbeat(Heartbeat {
                         sent_at_unix_ms: unix_ms(),
@@ -307,18 +322,45 @@ impl Agent {
                     if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(envelope) {
                         tracing::debug!("upstream is not reading; heartbeat skipped");
                     }
+                    None
+                }
+                _ = flush.tick(), if self.uplink.is_some() => {
+                    flush_due = self.uplink.as_ref().is_some_and(|u| !u.is_empty());
+                    None
+                }
+                () = filled(&self.uplink), if !ready => None,
+                permit = tx.reserve(), if ready => {
+                    if let (Ok(permit), Some(uplink)) = (permit, &self.uplink) {
+                        let samples = uplink.take();
+                        flush_due &= !uplink.is_empty();
+                        tracing::trace!(samples = samples.len(), "sample batch");
+                        permit.send(self.envelope(Payload::Samples(SampleBatch { samples })));
+                    }
+                    None
                 }
                 Some(ack) = next_ack(&mut self.sensors) => {
                     let envelope = self.envelope(Payload::SensorConfigAck(ack));
                     if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(envelope) {
                         tracing::debug!("upstream is not reading; sensor configuration ack skipped");
                     }
+                    None
                 }
                 message = inbound.message() => match message {
-                    Ok(Some(envelope)) => self.receive(envelope),
+                    Ok(Some(envelope)) => {
+                        self.receive(envelope);
+                        None
+                    }
                     Ok(None) => return Err(Failure::Transient("the upstream closed the stream".into())),
                     Err(status) => return Err(classify_status(&status)),
                 },
+            };
+            if let Some(result) = close {
+                drop(tx);
+                let _ = timeout(CLOSE_GRACE, drain(&mut inbound)).await;
+                if result.is_ok() {
+                    tracing::info!("stream closed");
+                }
+                return result;
             }
         }
     }
@@ -402,6 +444,14 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::SensorConfigAck(_) => "sensor_config_ack",
         Payload::Command(_) => "command",
         Payload::CommandResult(_) => "command_result",
+    }
+}
+
+/// Resolves once a full batch waits; never without an uplink.
+async fn filled(uplink: &Option<Uplink>) {
+    match uplink {
+        Some(uplink) => uplink.filled().await,
+        None => std::future::pending().await,
     }
 }
 

@@ -8,23 +8,24 @@
 //! the running one only updates the revision: the sensors keep their
 //! schedule.
 //!
-//! Samples are only logged at debug level by [`log_samples`] for now; the
-//! upload task replaces it with batches on the stream.
+//! Samples of every scheduler go to the same [`Uplink`], which the stream
+//! empties in batches.
 
 use std::sync::Arc;
 
 use monitorflow_common::proto::v1::{SensorConfig, SensorConfigAck, SensorSpecError};
-use monitorflow_sensors::{Sample, SchedulerHandle, SchedulerOptions};
-use tokio::sync::mpsc;
+use monitorflow_sensors::{SchedulerHandle, SchedulerOptions};
 use tokio::task::JoinHandle;
 
 use crate::sensor_config::{self, ConfigFile, SensorFactory, SensorsEnd};
 use crate::shutdown::Shutdown;
+use crate::upload::{self, Uplink};
 
 /// The sensors task.
 pub struct Sensors {
     factory: Arc<dyn SensorFactory>,
     file: ConfigFile,
+    uplink: Uplink,
     options: SchedulerOptions,
 }
 
@@ -48,10 +49,11 @@ impl Running {
 }
 
 impl Sensors {
-    pub fn new(factory: Arc<dyn SensorFactory>, file: ConfigFile) -> Self {
+    pub fn new(factory: Arc<dyn SensorFactory>, file: ConfigFile, uplink: Uplink) -> Self {
         Self {
             factory,
             file,
+            uplink,
             options: SchedulerOptions::default(),
         }
     }
@@ -144,27 +146,9 @@ impl Sensors {
             config,
             errors,
             handle,
-            consumer: tokio::spawn(log_samples(samples)),
+            consumer: tokio::spawn(upload::collect(samples, self.uplink.clone())),
         }
     }
-}
-
-/// Placeholder consumer: logs every sample at debug level until the
-/// channel closes, and returns how many it saw.
-pub async fn log_samples(mut samples: mpsc::Receiver<Sample>) -> u64 {
-    let mut count = 0;
-    while let Some(sample) = samples.recv().await {
-        count += 1;
-        tracing::debug!(
-            sensor = %sample.sensor,
-            instance = %sample.instance,
-            value = sample.value,
-            timestamp_unix_ms = sample.timestamp_unix_ms,
-            labels = ?sample.labels,
-            "sample"
-        );
-    }
-    count
 }
 
 #[cfg(test)]
@@ -180,6 +164,7 @@ mod tests {
     use super::*;
     use crate::sensor_config::{link, FactoryError, StreamEnd};
     use crate::shutdown::{self, Trigger};
+    use crate::upload::UploadSettings;
 
     /// Builds `fake` sensors and keeps them, to count their calls.
     #[derive(Default)]
@@ -229,6 +214,7 @@ mod tests {
 
     struct Harness {
         fakes: Arc<Fakes>,
+        uplink: Uplink,
         stream: StreamEnd,
         trigger: Trigger,
         task: JoinHandle<()>,
@@ -236,8 +222,9 @@ mod tests {
 
     fn start(dir: &std::path::Path) -> Harness {
         let fakes = Arc::new(Fakes::default());
-        let sensors =
-            Sensors::new(fakes.clone(), ConfigFile::in_dir(dir)).with_options(SchedulerOptions {
+        let uplink = Uplink::new(UploadSettings::default());
+        let sensors = Sensors::new(fakes.clone(), ConfigFile::in_dir(dir), uplink.clone())
+            .with_options(SchedulerOptions {
                 jitter: false,
                 ..SchedulerOptions::default()
             });
@@ -246,6 +233,7 @@ mod tests {
         let task = tokio::spawn(sensors.run(end, stop));
         Harness {
             fakes,
+            uplink,
             stream,
             trigger,
             task,
@@ -274,6 +262,9 @@ mod tests {
         assert_eq!(ack.errors[0].name, "cpu");
         tokio::time::sleep(Duration::from_secs(25)).await;
         assert_eq!(h.fakes.calls("one"), 3);
+        let batch = h.uplink.take();
+        assert_eq!(batch.len(), 3);
+        assert!(batch.iter().all(|s| s.sensor == "one"));
 
         // Same specs, new revision: acknowledged, saved, not rebuilt.
         let ack = h.push(config(2, &[("fake", "one"), ("cpu", "cpu")])).await;

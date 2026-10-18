@@ -13,9 +13,10 @@ pub const MAX_NAME_LEN: usize = 64;
 pub const MAX_VALUE_LEN: usize = 256;
 /// Most labels on one sample.
 pub const MAX_LABELS: usize = 16;
-/// Label names the server sets itself. Names starting with `__` (reserved
-/// by Prometheus) or `mf_` (reserved for the server) are refused too.
-pub const RESERVED_LABELS: [&str; 2] = ["sensor", "instance"];
+/// Label names the server sets itself or keeps for later (ADR-0013); it
+/// drops samples that use them. Names starting with `__` (reserved by
+/// Prometheus) or `mf_` (reserved for the server) are refused too.
+pub const RESERVED_LABELS: [&str; 5] = ["sensor", "instance", "peer", "site", "job"];
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ValidationError {
@@ -136,7 +137,8 @@ mod tests {
             assert_eq!(label_name(ok), Ok(()), "{ok}");
         }
         for bad in [
-            "", "2x", "a-b", "a b", "__name__", "__x", "mf_peer", "sensor", "instance", "é",
+            "", "2x", "a-b", "a b", "__name__", "__x", "mf_peer", "sensor", "instance", "peer",
+            "site", "job", "é",
         ] {
             assert!(label_name(bad).is_err(), "{bad}");
         }
