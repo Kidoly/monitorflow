@@ -142,6 +142,7 @@ db_tests! {
                 "enrollment_tokens",
                 "relays",
                 "servers",
+                "sessions",
                 "sites",
                 "user_roles",
                 "users"

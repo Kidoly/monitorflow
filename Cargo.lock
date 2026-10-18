@@ -1265,6 +1265,7 @@ dependencies = [
  "tokio-stream",
  "toml",
  "tonic",
+ "tower",
  "tracing",
  "uuid",
  "x509-parser 0.18.1",
