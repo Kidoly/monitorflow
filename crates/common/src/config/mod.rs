@@ -335,6 +335,68 @@ impl FromStr for LogFormat {
     }
 }
 
+/// Batching of the server's writes to VictoriaMetrics and VictoriaLogs
+/// (ADR-0013). Each writer has its own queue with these settings.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct IngestConfig {
+    /// Most items (samples or log lines) sent in one HTTP request.
+    pub batch_size: usize,
+    /// Milliseconds between flushes of a batch that is not full.
+    pub flush_interval_ms: u64,
+    /// Items queued in memory; new items are dropped while it is full.
+    pub queue_capacity: usize,
+    /// Seconds allowed at shutdown to flush what is queued.
+    pub shutdown_timeout: u64,
+}
+
+impl Default for IngestConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 5_000,
+            flush_interval_ms: 1_000,
+            queue_capacity: 100_000,
+            shutdown_timeout: 10,
+        }
+    }
+}
+
+/// Upper bounds that keep one request and the queue's memory reasonable.
+const MAX_INGEST_BATCH: usize = 100_000;
+const MAX_INGEST_QUEUE: usize = 10_000_000;
+const MAX_FLUSH_INTERVAL_MS: u64 = 60_000;
+
+impl IngestConfig {
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set("ingest.batch_size", &mut self.batch_size)?;
+        env.set("ingest.flush_interval_ms", &mut self.flush_interval_ms)?;
+        env.set("ingest.queue_capacity", &mut self.queue_capacity)?;
+        env.set("ingest.shutdown_timeout", &mut self.shutdown_timeout)
+    }
+
+    fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
+        if !(1..=MAX_INGEST_BATCH).contains(&self.batch_size) {
+            return Err(check.fail(
+                "ingest.batch_size",
+                format!("must be 1 to {MAX_INGEST_BATCH}"),
+            ));
+        }
+        if !(1..=MAX_FLUSH_INTERVAL_MS).contains(&self.flush_interval_ms) {
+            return Err(check.fail(
+                "ingest.flush_interval_ms",
+                format!("must be 1 to {MAX_FLUSH_INTERVAL_MS}"),
+            ));
+        }
+        if !(self.batch_size..=MAX_INGEST_QUEUE).contains(&self.queue_capacity) {
+            return Err(check.fail(
+                "ingest.queue_capacity",
+                format!("must be at least ingest.batch_size and at most {MAX_INGEST_QUEUE}"),
+            ));
+        }
+        check.positive("ingest.shutdown_timeout", self.shutdown_timeout)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LogConfig {
@@ -520,6 +582,7 @@ pub struct ServerConfig {
     /// in the certificate the built-in CA issues it (ADR-0007). The
     /// environment override is a comma-separated list.
     pub server_names: Vec<String>,
+    pub ingest: IngestConfig,
     pub tls: TlsPaths,
     pub log: LogConfig,
 }
@@ -540,6 +603,7 @@ impl Default for ServerConfig {
             // Three missed heartbeats at the agent's default interval.
             heartbeat_timeout: 3 * DEFAULT_HEARTBEAT_INTERVAL,
             server_names: vec!["localhost".into(), "127.0.0.1".into()],
+            ingest: IngestConfig::default(),
             tls: TlsPaths::default(),
             log: LogConfig::default(),
         }
@@ -565,6 +629,7 @@ impl LoadConfig for ServerConfig {
         if let Some((_, names)) = env.get("server_names") {
             self.server_names = names.split(',').map(|n| n.trim().to_owned()).collect();
         }
+        self.ingest.apply_env(env)?;
         self.tls.apply_env(env)?;
         self.log.apply_env(env)
     }
@@ -586,6 +651,7 @@ impl LoadConfig for ServerConfig {
             return Err(check.fail("database_url", "must start with postgres://"));
         }
         check.http_url("victoriametrics_url", &self.victoriametrics_url)?;
-        check.http_url("victorialogs_url", &self.victorialogs_url)
+        check.http_url("victorialogs_url", &self.victorialogs_url)?;
+        self.ingest.validate(check)
     }
 }
