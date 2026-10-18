@@ -31,6 +31,8 @@ x509-parser.workspace = true
 monitorflow-sensors.workspace = true
 
 [dev-dependencies]
+monitorflow-sensors = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }
 monitorflow-server = { path = "../server" }
 tempfile.workspace = true
 sqlx.workspace = true

@@ -6,7 +6,7 @@ use monitorflow_agent::backoff::Backoff;
 use monitorflow_agent::enroll::{self, EnrollError};
 use monitorflow_agent::renew::{Renewal, RenewalSettings};
 use monitorflow_agent::stream::{Agent, StreamSettings};
-use monitorflow_agent::{os, shutdown};
+use monitorflow_agent::{os, sensors, shutdown};
 use monitorflow_common::config::{self, AgentConfig};
 use monitorflow_common::logging;
 
@@ -51,9 +51,15 @@ async fn main() -> anyhow::Result<()> {
         identity.clone(),
     );
     tokio::spawn(renewal.run(stop.clone()));
-    Agent::new(StreamSettings::from_config(&config), identity, host)
+    let sensors = tokio::spawn(sensors::run(sensors::scheduler(), stop.clone()));
+    // The stream only returns on shutdown or a local error.
+    let result = Agent::new(StreamSettings::from_config(&config), identity, host)
         .follow(updates)
         .run(stop)
         .await
-        .context("cannot connect upstream")
+        .context("cannot connect upstream");
+    if result.is_ok() {
+        let _ = sensors.await;
+    }
+    result
 }
