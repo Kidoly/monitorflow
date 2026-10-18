@@ -8,11 +8,11 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] `proto/monitorflow/v1/agent.proto`: Hello, Heartbeat, SampleBatch, Command, CommandResult envelope; build with `tonic-build` in `crates/common`.
 - [x] `common::config`: TOML configuration loading for the three binaries, with env overrides and validation.
 - [x] `common::tls`: rustls client and server configs from PEM files; mTLS with client cert verification.
-- [ ] `server::ca`: certificate authority (root key at rest, issue short-lived client certs, revocation list) using `rcgen` and `x509-parser`.
+- [x] `server::ca`: certificate authority (root key at rest, issue short-lived client certs, revocation list) using `rcgen` and `x509-parser`.
 - [ ] `server::enroll`: one-time enrollment tokens stored in PostgreSQL; gRPC `Enroll` RPC that exchanges a token for a certificate.
-- [ ] `server::grpc`: `AgentService::Stream` bidirectional stream; registry of connected agents; heartbeat timeout.
+- [x] `server::grpc`: `AgentService::Stream` bidirectional stream; registry of connected agents; heartbeat timeout.
 - [ ] `agent`: connect, enroll on first run, keep the stream open with reconnect and backoff, send heartbeats.
-- [ ] PostgreSQL migrations: servers, enrollment_tokens, certificates, users, roles.
+- [x] PostgreSQL migrations: servers, enrollment_tokens, certificates, users, roles.
 - [ ] `server::api`: axum skeleton, health endpoint, session auth, `GET /api/servers`.
 - [ ] Certificate renewal before expiry, driven by the agent.
 - [ ] End-to-end test: start server, enroll agent, see it listed via the API.
