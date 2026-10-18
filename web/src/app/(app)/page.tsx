@@ -1,3 +1,9 @@
+import type { Metadata } from "next";
+
+import { FleetOverview } from "@/components/FleetOverview";
+
+export const metadata: Metadata = { title: "Fleet · MonitorFlow" };
+
 export default function FleetPage() {
-  return <h1>Fleet</h1>;
+  return <FleetOverview />;
 }

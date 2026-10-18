@@ -1,0 +1,48 @@
+# Example reverse proxy for the MonitorFlow web interface and REST API
+# (ADR-0006, ADR-0014). Caddy terminates TLS, serves the static export and
+# forwards /api to the server's plain-HTTP API listener on loopback.
+#
+# Set MONITORFLOW_DOMAIN to the public name; Caddy gets a certificate for it
+# with ACME. With the default, localhost, Caddy issues one from its own local
+# CA instead (run `caddy trust` once to make browsers accept it).
+#
+# Copy the build output (`npm run build` in web/) to the root below.
+#
+# Run: MONITORFLOW_DOMAIN=monitor.example.com caddy run --config deploy/caddy/Caddyfile
+
+{$MONITORFLOW_DOMAIN:localhost} {
+	encode zstd gzip
+
+	# The API sets its own cookies and errors; pass requests through as is.
+	# Keep the server's api_cookie_secure = true: the browser link is HTTPS.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:7444
+	}
+
+	handle {
+		root * /srv/monitorflow/web
+		# Next exports each route as <route>/index.html (trailingSlash).
+		try_files {path} {path}/
+		file_server
+	}
+
+	handle_errors 404 {
+		root * /srv/monitorflow/web
+		rewrite * /404.html
+		file_server
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		# Next's static export uses inline scripts, hence 'unsafe-inline'
+		# (ADR-0014). Everything else is same-origin only.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		-Server
+	}
+
+	# Hashed build assets never change; HTML must always be revalidated.
+	@assets path /_next/static/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+}
