@@ -198,9 +198,14 @@ async fn samples_are_named_defaulted_and_validated() {
         Sample::now(f64::NAN),
         Sample::now(3.0).with_label("__name__", "evil"),
     ];
-    let mut lying = samples[0].clone();
-    lying.sensor = "not_me".into();
-    let sensor = Arc::new(FakeSensor::new().always(Step::Samples([samples, vec![lying]].concat())));
+    // A sensor's own name only ever extends the configured one.
+    let mut metric = samples[0].clone();
+    metric.sensor = "open".into();
+    let mut bad_metric = samples[0].clone();
+    bad_metric.sensor = "Open-Now".into();
+    let sensor = Arc::new(
+        FakeSensor::new().always(Step::Samples([samples, vec![metric, bad_metric]].concat())),
+    );
     let mut port = config("port", 10);
     port.instance = "22".into();
     let (handle, mut rx) = start(16, vec![(port, sensor)]);
@@ -215,10 +220,10 @@ async fn samples_are_named_defaulted_and_validated() {
         [
             ("port", "22", 1.0),
             ("port", "/var", 2.0),
-            ("port", "22", 1.0)
+            ("port_open", "22", 1.0)
         ]
     );
-    assert_eq!(handle.stats().invalid, 2);
+    assert_eq!(handle.stats().invalid, 3);
     handle.shutdown().await;
 }
 

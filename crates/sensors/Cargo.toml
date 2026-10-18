@@ -11,6 +11,7 @@ testing = []
 
 [dependencies]
 async-trait.workspace = true
+rustix.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

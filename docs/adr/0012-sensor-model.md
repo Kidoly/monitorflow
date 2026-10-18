@@ -1,7 +1,7 @@
 # ADR-0012: Sensor model and scheduling
 
 Date: 2026-10-19
-Status: accepted
+Status: accepted, naming of samples amended by ADR-0015
 
 ## Context
 

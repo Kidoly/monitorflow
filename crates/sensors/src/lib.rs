@@ -5,23 +5,36 @@
 //! sensor on its own interval and puts the samples on a bounded channel.
 //! Names and labels are checked by [`validate`] because they become
 //! VictoriaMetrics label names and values on the server. See ADR-0012.
+//!
+//! The built-in sensors ([`cpu`], [`memory`], [`disk`]) are built by kind with [`registry::build`].
+//! One sensor emits several metrics by setting [`Sample::sensor`] to a
+//! metric suffix, which the scheduler prefixes with the configured name
+//! ([`metric_name`]). See ADR-0015.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+pub mod cpu;
+pub mod disk;
+pub mod memory;
+mod procfs;
+pub mod registry;
 pub mod scheduler;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod validate;
 
+pub use registry::BuildError;
 pub use scheduler::{Scheduler, SchedulerHandle, SchedulerOptions, Stats};
 pub use validate::ValidationError;
 
 /// One reading produced by a sensor. Mirrors `monitorflow.v1.Sample`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sample {
-    /// Name of the configured sensor. The scheduler sets it from
-    /// [`SensorConfig::name`]; what the sensor puts here is overwritten.
+    /// Full sensor name, like `cpu_usage_ratio`. A sensor leaves it empty
+    /// or sets a metric suffix (`usage_ratio`); the scheduler then sets it
+    /// to [`metric_name`] of [`SensorConfig::name`] and that suffix.
     pub sensor: String,
     /// What the value is about: a mount point, a unit, a core index. Empty
     /// values are replaced by [`SensorConfig::instance`].
@@ -43,6 +56,14 @@ impl Sample {
         }
     }
 
+    /// A sample of the metric `metric` taken now, see [`Sample::sensor`].
+    pub fn metric(metric: impl Into<String>, value: f64) -> Self {
+        Self {
+            sensor: metric.into(),
+            ..Self::now(value)
+        }
+    }
+
     pub fn with_instance(mut self, instance: impl Into<String>) -> Self {
         self.instance = instance.into();
         self
@@ -51,6 +72,36 @@ impl Sample {
     pub fn with_label(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.labels.insert(name.into(), value.into());
         self
+    }
+}
+
+/// Prometheus text format without the timestamp, for CLI output:
+/// `cpu_usage_ratio{instance="total"} 0.25`.
+impl fmt::Display for Sample {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.sensor)?;
+        let instance = (!self.instance.is_empty()).then_some(("instance", &self.instance));
+        let labels = instance
+            .into_iter()
+            .chain(self.labels.iter().map(|(k, v)| (k.as_str(), v)));
+        for (i, (name, value)) in labels.enumerate() {
+            let sep = if i == 0 { "{" } else { "," };
+            write!(f, "{sep}{name}=\"{}\"", value.escape_default())?;
+        }
+        if !self.instance.is_empty() || !self.labels.is_empty() {
+            f.write_str("}")?;
+        }
+        write!(f, " {}", self.value)
+    }
+}
+
+/// The full name of a metric: the configured sensor name, then `_` and
+/// the suffix the sensor set, if any. `("cpu", "load1")` gives `cpu_load1`.
+pub fn metric_name(sensor: &str, metric: &str) -> String {
+    if metric.is_empty() {
+        sensor.to_owned()
+    } else {
+        format!("{sensor}_{metric}")
     }
 }
 
@@ -154,6 +205,24 @@ mod tests {
         assert_eq!(sample.instance, "/");
         assert_eq!(sample.labels["fs"], "ext4");
         assert!(sample.timestamp_unix_ms > 1_700_000_000_000);
+    }
+
+    #[test]
+    fn metric_names_and_display() {
+        assert_eq!(metric_name("cpu", ""), "cpu");
+        assert_eq!(metric_name("cpu", "load1"), "cpu_load1");
+        let mut sample = Sample::metric("usage_ratio", 0.25);
+        assert_eq!(sample.sensor, "usage_ratio");
+        assert_eq!(sample.to_string(), "usage_ratio 0.25");
+        sample = sample.with_instance("/a\"b").with_label("fs", "ext4");
+        assert_eq!(
+            sample.to_string(),
+            r#"usage_ratio{instance="/a\"b",fs="ext4"} 0.25"#
+        );
+        assert_eq!(
+            Sample::now(1.0).with_label("a", "b").to_string(),
+            r#"{a="b"} 1"#
+        );
     }
 
     #[test]
