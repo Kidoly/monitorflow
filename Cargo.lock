@@ -1251,6 +1251,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "monitorflow-e2e"
+version = "0.1.0"
+dependencies = [
+ "monitorflow-agent",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "monitorflow-relay"
 version = "0.1.0"
 dependencies = [
