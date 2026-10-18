@@ -12,6 +12,7 @@ use monitorflow_agent::renew::{Renewal, RenewalSettings};
 use monitorflow_agent::sensor_config::{self, ConfigFile, NoSensors};
 use monitorflow_agent::sensors::Sensors;
 use monitorflow_agent::stream::{Agent, StreamSettings};
+use monitorflow_agent::upload::{Uplink, UploadSettings};
 use monitorflow_agent::{os, shutdown};
 use monitorflow_common::config::{self, AgentConfig};
 use monitorflow_common::logging;
@@ -84,12 +85,18 @@ async fn main() -> anyhow::Result<()> {
     // cpu, memory and disk sensors land; until then every kind is reported
     // as unknown to the server.
     let (stream_end, sensors_end) = sensor_config::link();
-    let sensors = Sensors::new(Arc::new(NoSensors), ConfigFile::in_dir(&config.data_dir));
+    let uplink = Uplink::new(UploadSettings::default());
+    let sensors = Sensors::new(
+        Arc::new(NoSensors),
+        ConfigFile::in_dir(&config.data_dir),
+        uplink.clone(),
+    );
     let sensors = tokio::spawn(sensors.run(sensors_end, stop.clone()));
     // The stream only returns on shutdown or a local error.
     let result = Agent::new(StreamSettings::from_config(&config), identity, host)
         .follow(updates)
         .with_sensors(stream_end)
+        .with_upload(uplink)
         .run(stop)
         .await
         .context("cannot connect upstream");

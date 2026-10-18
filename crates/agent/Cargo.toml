@@ -37,3 +37,5 @@ tokio = { workspace = true, features = ["test-util"] }
 monitorflow-server = { path = "../server" }
 tempfile.workspace = true
 sqlx.workspace = true
+# For the fake VictoriaMetrics shared with the server's tests.
+axum.workspace = true

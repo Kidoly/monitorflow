@@ -15,3 +15,4 @@ pub mod sensor_config;
 pub mod sensors;
 pub mod shutdown;
 pub mod stream;
+pub mod upload;
