@@ -7,6 +7,10 @@
 # gRPC listener for agents and relays (mTLS).
 # grpc_listen_addr = "0.0.0.0:7443"
 
+# Enrollment listener (TLS without client certificates, ADR-0007). New agents
+# and relays exchange their one-time token for a certificate here.
+# enroll_listen_addr = "0.0.0.0:7445"
+
 # REST API listener. Plain HTTP: put a TLS reverse proxy on the same host in
 # front of it and keep it on loopback (ADR-0006).
 # api_listen_addr = "127.0.0.1:7444"
@@ -34,6 +38,12 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # closed. Keep it a few times the agents' heartbeat_interval (default 30).
 # heartbeat_timeout = 90
 
+# Names peers use to reach this server. The built-in CA writes them in the
+# server certificate it issues to itself on first start.
+# server_names = ["localhost", "127.0.0.1"]
+
+# Created by the server from its built-in CA when missing, renewed at start
+# when close to expiry. A certificate from another CA is refused.
 [tls]
 # ca_cert = "/etc/monitorflow/tls/ca.pem"
 # cert = "/etc/monitorflow/tls/cert.pem"

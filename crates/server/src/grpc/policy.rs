@@ -1,18 +1,44 @@
 //! Which agents a relay may speak for (ADR-0004).
 
+use sqlx::PgPool;
 use tonic::async_trait;
 
+use crate::db;
+
 /// Decides whether a relay may forward envelopes on behalf of an agent.
-///
-/// The real check, "the agent is assigned to the relay's site", needs the
-/// database and comes with it; until then the server runs [`DenyRelayedAgents`].
+/// The server runs [`DbRelayPolicy`].
 #[async_trait]
 pub trait RelayPolicy: Send + Sync + 'static {
     async fn may_speak_for(&self, relay_id: &str, agent_id: &str) -> bool;
 }
 
-/// Lets relays speak only for themselves. The production default until the
-/// site assignment exists in the database.
+/// The production policy: the agent is assigned to the relay's site and
+/// neither is revoked ([`db::relay_may_speak_for`]). A database error
+/// denies.
+#[derive(Debug, Clone)]
+pub struct DbRelayPolicy {
+    pool: PgPool,
+}
+
+impl DbRelayPolicy {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl RelayPolicy for DbRelayPolicy {
+    async fn may_speak_for(&self, relay_id: &str, agent_id: &str) -> bool {
+        db::relay_may_speak_for(&self.pool, relay_id, agent_id)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(relay_id, agent_id, %error, "relay policy lookup failed; denying");
+                false
+            })
+    }
+}
+
+/// Lets relays speak only for themselves.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DenyRelayedAgents;
 

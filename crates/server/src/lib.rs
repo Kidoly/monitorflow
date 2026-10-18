@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod ca;
+pub mod crl;
 pub mod db;
 pub mod enroll;
 pub mod grpc;

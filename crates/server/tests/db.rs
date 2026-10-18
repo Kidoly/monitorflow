@@ -3,6 +3,7 @@
 //! reported as ignored (see `build.rs`).
 
 use monitorflow_server::db;
+use monitorflow_server::grpc::{DbRelayPolicy, RelayPolicy};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -244,12 +245,23 @@ db_tests! {
         // An agent is not a relay.
         assert!(!db::relay_may_speak_for(&pool, "agent-paris", "agent-paris").await.unwrap());
 
+        let policy = DbRelayPolicy::new(pool.clone());
+        assert!(policy.may_speak_for("relay-paris", "agent-paris").await);
+        assert!(!policy.may_speak_for("relay-paris", "agent-lyon").await);
+
         sqlx::query("UPDATE servers SET revoked_at = now() WHERE peer_id = 'agent-paris'")
             .execute(&pool).await.unwrap();
         assert!(!db::relay_may_speak_for(&pool, "relay-paris", "agent-paris").await.unwrap());
         sqlx::query("UPDATE relays SET revoked_at = now() WHERE peer_id = 'relay-paris'")
             .execute(&pool).await.unwrap();
         assert!(!db::relay_may_speak_for(&pool, "relay-paris", "agent-paris-direct").await.unwrap());
+    }
+
+    #[sqlx::test]
+    async fn relay_policy_denies_when_the_database_fails(pool: PgPool) {
+        let policy = DbRelayPolicy::new(pool.clone());
+        pool.close().await;
+        assert!(!policy.may_speak_for("relay-paris", "agent-paris").await);
     }
 
     #[sqlx::test]

@@ -8,6 +8,7 @@
 //! is calling.
 
 mod peer;
+mod pinned;
 mod token;
 mod transport;
 
@@ -33,6 +34,7 @@ use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use crate::config::TlsPaths;
 
 pub use peer::{peer_identity, validate_id, PeerIdentity, PeerRole, URI_SCHEME};
+pub use pinned::pinned_client_config;
 pub use token::{
     fingerprint, fingerprint_hex, EnrollmentToken, Fingerprint, SECRET_LEN, TOKEN_PREFIX,
 };
@@ -156,6 +158,7 @@ pub fn load_key(path: &Path) -> Result<PrivateKeyDer<'static>, TlsError> {
 #[derive(Clone)]
 pub struct Identity {
     roots: Arc<RootCertStore>,
+    ca_certs: Arc<Vec<CertificateDer<'static>>>,
     key: Arc<CertifiedKey>,
 }
 
@@ -173,7 +176,8 @@ impl Identity {
     /// key belongs to the first certificate of the chain.
     pub fn load(paths: &TlsPaths) -> Result<Self, TlsError> {
         let mut roots = RootCertStore::empty();
-        for cert in load_certs(&paths.ca_cert)? {
+        let ca_certs = load_certs(&paths.ca_cert)?;
+        for cert in ca_certs.iter().cloned() {
             roots.add(cert).map_err(|error| TlsError::InvalidCert {
                 path: paths.ca_cert.clone(),
                 error,
@@ -207,6 +211,7 @@ impl Identity {
         }
         Ok(Self {
             roots: Arc::new(roots),
+            ca_certs: Arc::new(ca_certs),
             key: Arc::new(key),
         })
     }
@@ -237,6 +242,27 @@ impl Identity {
             .map_err(|e| TlsError::Config(e.to_string()))?
             .with_client_cert_verifier(verifier)
             .with_cert_resolver(Arc::new(SingleCertAndKey::from(self.key.clone())));
+        config.alpn_protocols = vec![ALPN_H2.to_vec()];
+        Ok(Arc::new(config))
+    }
+
+    /// Server configuration that asks for no client certificate, for the
+    /// enrollment listener (ADR-0007). The chain sent to clients ends with
+    /// the CA certificates, so that a client holding only the CA fingerprint
+    /// ([`pinned_client_config`]) can verify it.
+    pub fn server_config_without_client_auth(&self) -> Result<Arc<ServerConfig>, TlsError> {
+        let mut chain = self.key.cert.clone();
+        for ca in self.ca_certs.iter() {
+            if !chain.contains(ca) {
+                chain.push(ca.clone());
+            }
+        }
+        let key = CertifiedKey::new(chain, self.key.key.clone());
+        let mut config = ServerConfig::builder_with_provider(provider())
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .map_err(|e| TlsError::Config(e.to_string()))?
+            .with_no_client_auth()
+            .with_cert_resolver(Arc::new(SingleCertAndKey::from(Arc::new(key))));
         config.alpn_protocols = vec![ALPN_H2.to_vec()];
         Ok(Arc::new(config))
     }

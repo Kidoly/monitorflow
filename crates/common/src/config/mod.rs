@@ -437,6 +437,9 @@ impl LoadConfig for RelayConfig {
 pub struct ServerConfig {
     /// gRPC listener for agents and relays.
     pub grpc_listen_addr: SocketAddr,
+    /// Enrollment listener: TLS without client certificates, serving only
+    /// `EnrollService` (ADR-0007).
+    pub enroll_listen_addr: SocketAddr,
     /// Plain HTTP listener for the REST API, meant to sit behind a TLS
     /// reverse proxy on the same host (ADR-0006). Defaults to loopback.
     pub api_listen_addr: SocketAddr,
@@ -453,6 +456,10 @@ pub struct ServerConfig {
     pub data_dir: PathBuf,
     /// Seconds without any message after which a peer's stream is closed.
     pub heartbeat_timeout: u64,
+    /// DNS names and IP addresses peers use to reach this server, written
+    /// in the certificate the built-in CA issues it (ADR-0007). The
+    /// environment override is a comma-separated list.
+    pub server_names: Vec<String>,
     pub tls: TlsPaths,
     pub log: LogConfig,
 }
@@ -461,6 +468,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             grpc_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7443)),
+            enroll_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7445)),
             api_listen_addr: SocketAddr::from(([127, 0, 0, 1], 7444)),
             api_cookie_secure: true,
             api_session_lifetime: 12 * 60 * 60,
@@ -471,6 +479,7 @@ impl Default for ServerConfig {
             data_dir: "/var/lib/monitorflow/server".into(),
             // Three missed heartbeats at the agent's default interval.
             heartbeat_timeout: 3 * DEFAULT_HEARTBEAT_INTERVAL,
+            server_names: vec!["localhost".into(), "127.0.0.1".into()],
             tls: TlsPaths::default(),
             log: LogConfig::default(),
         }
@@ -480,6 +489,7 @@ impl Default for ServerConfig {
 impl LoadConfig for ServerConfig {
     fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
         env.set("grpc_listen_addr", &mut self.grpc_listen_addr)?;
+        env.set("enroll_listen_addr", &mut self.enroll_listen_addr)?;
         env.set("api_listen_addr", &mut self.api_listen_addr)?;
         env.set("api_cookie_secure", &mut self.api_cookie_secure)?;
         env.set("api_session_lifetime", &mut self.api_session_lifetime)?;
@@ -492,12 +502,21 @@ impl LoadConfig for ServerConfig {
         env.set("victorialogs_url", &mut self.victorialogs_url)?;
         env.set("data_dir", &mut self.data_dir)?;
         env.set("heartbeat_timeout", &mut self.heartbeat_timeout)?;
+        if let Some((_, names)) = env.get("server_names") {
+            self.server_names = names.split(',').map(|n| n.trim().to_owned()).collect();
+        }
         self.tls.apply_env(env)?;
         self.log.apply_env(env)
     }
 
     fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
         check.positive("heartbeat_timeout", self.heartbeat_timeout)?;
+        if self.server_names.is_empty() || self.server_names.iter().any(String::is_empty) {
+            return Err(check.fail(
+                "server_names",
+                "must list at least one DNS name or IP address, none empty",
+            ));
+        }
         check.positive("api_session_lifetime", self.api_session_lifetime)?;
         check.positive("api_session_idle_timeout", self.api_session_idle_timeout)?;
         let db = self.database_url.expose();

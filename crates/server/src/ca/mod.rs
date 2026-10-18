@@ -12,7 +12,7 @@
 //! blocking file I/O; call them from `spawn_blocking` in async code.
 
 mod revocation;
-mod store;
+pub(crate) mod store;
 
 #[cfg(test)]
 mod tests;
