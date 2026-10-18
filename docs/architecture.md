@@ -58,13 +58,15 @@ gRPC over HTTP/2 with mutual TLS on every link: agent ↔ relay, relay ↔ relay
 ### Protocol principles
 
 - One service, `AgentService`, with a bidirectional `Stream` RPC. Messages are a `oneof` envelope so new message types are additive.
-- Every message carries the sender's identity (certificate subject) and a monotonic sequence number for ordering and deduplication after reconnects.
-- Relays are transparent for message semantics: they forward envelopes, they do not interpret them, except to buffer and to serve mirrors.
+- Every message carries a monotonic sequence number for ordering and deduplication after reconnects. Who sent it is known from the connection's certificate and the stream's `Hello` (see §4, peer identity).
+- Relays are transparent for message semantics: they forward envelopes, they do not interpret them, except to buffer and to serve mirrors. The upstream checks which agents a relay may speak for, as described in §4.
 - Protocol versions are negotiated in the first `Hello` message. A server must accept agents one minor version behind.
 
 ## 4. Security model
 
-- **mTLS everywhere.** No plaintext link, ever, including in development.
+- **mTLS everywhere.** No plaintext link, ever, including in development. TLS 1.3 only, ALPN `h2`; peers trust only the MonitorFlow CA, never system roots. Helpers live in `common::tls`; `scripts/dev-certs.sh` creates a throwaway dev CA for local runs.
+- **Peer identity and roles.** Every certificate carries exactly one URI SAN `monitorflow://<role>/<id>`, with role `agent`, `relay` or `server` and an ID of 1 to 64 characters from `[A-Za-z0-9._-]`. The CN is informational and never used to decide identity. Handlers read the verified identity with `common::tls::peer_identity`. See ADR-0004.
+- **Who may speak for an agent.** A peer whose certificate role is `agent` may only send a `Hello.agent_id` equal to its own certificate ID. A peer whose role is `relay` forwards for other agents: the central server accepts an `agent_id` from a relay only if that agent is assigned to the relay's site in the database. Consequence: a compromised relay can forge upstream data (metrics, logs, command results) only for agents of its own site. It still cannot inject commands downstream, because every command is signed by the central server (below).
 - **Built-in certificate authority** on the central server. Enrollment: an administrator creates a one-time token; a new agent or relay presents it and receives a short-lived client certificate; renewal is automatic before expiry.
 - **Revocation.** An agent or relay can be revoked from the web interface; its certificate is rejected at the next connection (the server keeps a revocation list checked on handshake).
 - **Signed commands.** Every command sent to an agent is signed by the central server's command key. The agent verifies the signature before execution, so a compromised relay cannot inject commands.
@@ -215,3 +217,4 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Notifications | Not in the first version |
 | Threshold evaluation | Server side |
 | Time series | VictoriaMetrics, not a custom store |
+| Peer identity | Role and ID in a `monitorflow://<role>/<id>` URI SAN; relays speak only for agents of their site |
