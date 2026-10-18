@@ -1,0 +1,6 @@
+# Pin the toolchain so local runs, Claude threads and CI use the same
+# rustc, clippy and rustfmt. Bump deliberately in its own commit.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
