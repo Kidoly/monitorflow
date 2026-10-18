@@ -10,3 +10,4 @@ pub mod grpc;
 pub mod ingest;
 pub mod renew;
 pub mod sensor_config;
+pub mod vm_query;

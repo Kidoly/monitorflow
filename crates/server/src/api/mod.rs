@@ -27,6 +27,9 @@
 //! | POST | `/api/sites/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
 //! | PUT | `/api/sensor_configs/{id}` | modify | body [`sensors::EntryRequest`], replaces the row; 200 [`sensors::Entry`] |
 //! | DELETE | `/api/sensor_configs/{id}` | modify | 204 |
+//! | GET | `/api/servers/{id}/metrics` | read | [`metrics::MetricList`]: metric names and instances of the last day |
+//! | GET | `/api/metrics/query` | read | [`metrics::QueryResult`], see below |
+//! | GET | `/api/metrics/query_range` | read | [`metrics::QueryResult`], see below |
 //!
 //! # Authentication
 //!
@@ -63,6 +66,25 @@
 //! parameter names only) and bumps the revision, so agents get it at the
 //! next poll.
 //!
+//! # Metric queries
+//!
+//! The query endpoints take `server_id`, `metric` (`monitorflow_` and a
+//! sensor metric name), optional `instance` and `agg` (`avg`, `min`,
+//! `max`, `sum`, `count`), then `time` for an instant query or `start`,
+//! `end` (RFC 3339, default the last hour) and `step` (seconds) for a
+//! range. The API builds the PromQL itself, scoped to that server's `peer`
+//! and `site` (ADR-0018); arbitrary PromQL is not accepted. Ranges are at
+//! most 31 days and 11,000 points per series, answers at most 500 series;
+//! beyond that, 400. A server outside the user's sites is 404. Backend
+//! failures are 502 `metrics backend unavailable`, timeouts 504, queries
+//! the backend refuses 400.
+//!
+//! ```json
+//! {"query": "monitorflow_cpu_usage_ratio{peer=\"agent-1\",site=\"paris\"}",
+//!  "series": [{"labels": {"__name__": "...", "instance": "total"},
+//!              "points": [[1760000000, 0.25]]}]}
+//! ```
+//!
 //! # `GET /api/servers`
 //!
 //! ```json
@@ -86,6 +108,7 @@ pub(crate) mod audit;
 pub mod auth;
 mod error;
 mod health;
+pub mod metrics;
 pub mod password;
 pub mod roles;
 pub mod sensors;
@@ -106,6 +129,7 @@ use sqlx::PgPool;
 use tokio::net::TcpListener;
 
 use crate::grpc::Registry;
+use crate::vm_query::VmQuery;
 
 pub use auth::{CurrentUser, Me};
 pub use error::ApiError;
@@ -146,6 +170,8 @@ pub struct ApiState {
     /// Live view of connected agents, shared with the gRPC service.
     pub registry: Registry,
     pub settings: Arc<ApiSettings>,
+    /// Read client for the metric query proxy; `None` answers 502.
+    pub metrics: Option<VmQuery>,
 }
 
 impl ApiState {
@@ -154,7 +180,14 @@ impl ApiState {
             pool,
             registry,
             settings: Arc::new(settings),
+            metrics: None,
         }
+    }
+
+    /// Serves metric queries from `metrics`.
+    pub fn with_metrics(mut self, metrics: VmQuery) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 }
 
@@ -168,6 +201,9 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/me", get(auth::me))
         .route("/api/servers", get(servers::list))
         .route("/api/servers/{id}/sensors", get(sensors::effective))
+        .route("/api/servers/{id}/metrics", get(metrics::discover))
+        .route("/api/metrics/query", get(metrics::query))
+        .route("/api/metrics/query_range", get(metrics::query_range))
         .route(
             "/api/servers/{id}/sensor_configs",
             get(sensors::list_server).post(sensors::create_server),
