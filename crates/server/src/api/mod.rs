@@ -16,8 +16,24 @@
 //! | --- | --- | --- | --- |
 //! | GET | `/api/health` | none | `{"status": "ok"}`: the process is up |
 //! | GET | `/api/health/ready` | none | `{"status": "ready"}`, or 503 `{"status": "unavailable"}` when PostgreSQL is unreachable |
+//! | POST | `/api/auth/login` | none | body `{"username", "password"}`; 200 [`Me`] and the session cookie, or 401 |
+//! | POST | `/api/auth/logout` | session | 204, clears the cookie |
+//! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "site_id"}]}` |
+//!
+//! # Authentication
+//!
+//! Login sets a session cookie (`__Host-mf_session`, or `mf_session` when
+//! `api_cookie_secure` is off) that is `HttpOnly` and `SameSite=Strict`.
+//! Sessions live server-side (see [`session`]) and end on logout, after
+//! `api_session_lifetime`, or after `api_session_idle_timeout` without a
+//! request. A missing or dead session gives 401 `authentication required`.
+//!
+//! Every request other than GET, HEAD, OPTIONS and TRACE, login included,
+//! must carry the header `X-MonitorFlow-CSRF: 1` and must not be marked
+//! cross-site by `Sec-Fetch-Site`; otherwise 403.
 
 mod audit;
+pub mod auth;
 mod error;
 mod health;
 pub mod password;
@@ -29,7 +45,9 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::routing::get;
+use axum::extract::DefaultBodyLimit;
+use axum::middleware;
+use axum::routing::{get, post};
 use axum::Router;
 use monitorflow_common::config::ServerConfig;
 use sqlx::PgPool;
@@ -37,8 +55,12 @@ use tokio::net::TcpListener;
 
 use crate::grpc::Registry;
 
+pub use auth::{CurrentUser, Me};
 pub use error::ApiError;
 pub use roles::{Role, RoleGrant};
+
+/// Largest accepted request body.
+const BODY_LIMIT: usize = 64 * 1024;
 
 /// Session and cookie settings, from [`ServerConfig`].
 #[derive(Debug, Clone)]
@@ -88,7 +110,12 @@ pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/api/health", get(health::live))
         .route("/api/health/ready", get(health::ready))
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/logout", post(auth::logout))
+        .route("/api/auth/me", get(auth::me))
         .fallback(not_found)
+        .layer(middleware::from_fn(auth::csrf_guard))
+        .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(state)
 }
 

@@ -6,6 +6,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use monitorflow_common::redact::Secret;
+use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::session;
 use monitorflow_server::api::users::{self, CreateUserError};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
@@ -39,8 +40,21 @@ fn app(pool: PgPool) -> Router {
 }
 
 async fn call(app: Router, request: Request<Body>) -> (StatusCode, serde_json::Value) {
+    let (status, _, body) = call_with_cookie(app, request).await;
+    (status, body)
+}
+
+/// Like [`call`], also returning the `Set-Cookie` header.
+async fn call_with_cookie(
+    app: Router,
+    request: Request<Body>,
+) -> (StatusCode, Option<String>, serde_json::Value) {
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
+    let cookie = response
+        .headers()
+        .get("set-cookie")
+        .map(|v| v.to_str().unwrap().to_owned());
     let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
         .await
         .unwrap();
@@ -49,12 +63,39 @@ async fn call(app: Router, request: Request<Body>) -> (StatusCode, serde_json::V
     } else {
         serde_json::from_slice(&bytes).unwrap()
     };
-    (status, body)
+    (status, cookie, body)
 }
 
 async fn add_user(pool: &PgPool, username: &str, role: Role) -> Uuid {
     users::create_user(pool, username, &Secret::new(PASSWORD), role, "test")
         .await
+        .unwrap()
+}
+
+fn login_request(username: &str, password: &str) -> Request<Body> {
+    let body = json!({ "username": username, "password": password }).to_string();
+    Request::post("/api/auth/login")
+        .header("content-type", "application/json")
+        .header(CSRF_HEADER, "1")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// Logs in and returns the `name=value` part of the session cookie.
+async fn login(pool: &PgPool, username: &str) -> String {
+    let (status, cookie, _) =
+        call_with_cookie(app(pool.clone()), login_request(username, PASSWORD)).await;
+    assert_eq!(status, StatusCode::OK);
+    cookie.unwrap().split(';').next().unwrap().to_owned()
+}
+
+fn with_cookie(method: &str, uri: &str, cookie: &str) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("cookie", cookie)
+        .header(CSRF_HEADER, "1")
+        .body(Body::empty())
         .unwrap()
 }
 
@@ -72,6 +113,155 @@ db_tests! {
         let (status, body) = call(app(pool), request).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, serde_json::json!({ "status": "ready" }));
+    }
+
+    #[sqlx::test]
+    async fn login_sets_a_session_cookie_and_me_returns_roles(pool: PgPool) {
+        let id = add_user(&pool, "Admin", Role::Administrator).await;
+        // Usernames match regardless of case.
+        let (status, cookie, body) =
+            call_with_cookie(app(pool.clone()), login_request("admin", PASSWORD)).await;
+        assert_eq!(status, StatusCode::OK);
+        let expected = json!({
+            "id": id,
+            "username": "Admin",
+            "roles": [{ "role": "administrator", "site_id": null }],
+        });
+        assert_eq!(body, expected);
+        let cookie = cookie.unwrap();
+        for attr in ["__Host-mf_session=", "HttpOnly", "SameSite=Strict", "Secure", "Path=/"] {
+            assert!(cookie.contains(attr), "{cookie}");
+        }
+
+        // Only the hash of the token is stored.
+        let token = cookie.split(';').next().unwrap().split_once('=').unwrap().1;
+        let stored: Vec<u8> = sqlx::query_scalar("SELECT token_hash FROM sessions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stored.len(), 32);
+        assert_ne!(stored, token.as_bytes());
+
+        let session = cookie.split(';').next().unwrap();
+        let (status, body) = call(app(pool.clone()), with_cookie("GET", "/api/auth/me", session)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, expected);
+
+        let audit = audit_actions(&pool).await;
+        assert_eq!(audit.last().unwrap().0, "auth.login");
+        assert_eq!(audit.last().unwrap().1, id.to_string());
+    }
+
+    #[sqlx::test]
+    async fn failed_logins_are_generic_and_audited(pool: PgPool) {
+        let id = add_user(&pool, "alice", Role::Viewer).await;
+        let disabled = add_user(&pool, "bob", Role::Viewer).await;
+        sqlx::query("UPDATE users SET disabled_at = now() WHERE id = $1")
+            .bind(disabled)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        for (username, password) in [("alice", "wrong password"), ("nobody", PASSWORD), ("bob", PASSWORD)] {
+            let (status, cookie, body) =
+                call_with_cookie(app(pool.clone()), login_request(username, password)).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{username}");
+            assert_eq!(cookie, None);
+            assert_eq!(body, json!({ "error": "invalid credentials" }));
+        }
+
+        let failures: Vec<_> = audit_actions(&pool)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "auth.login_failed")
+            .map(|(_, actor, details)| (actor, details["reason"].as_str().unwrap().to_owned()))
+            .collect();
+        assert_eq!(
+            failures,
+            [
+                (id.to_string(), "bad_password".to_owned()),
+                ("unknown".to_owned(), "unknown_user".to_owned()),
+                (disabled.to_string(), "disabled".to_owned()),
+            ]
+        );
+        // Neither the password nor the submitted username is recorded.
+        let all: String = sqlx::query_scalar("SELECT string_agg(details::text, ' ') FROM audit_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(!all.contains("wrong password") && !all.contains("nobody"), "{all}");
+    }
+
+    #[sqlx::test]
+    async fn sessions_expire_after_idle_timeout_or_lifetime(pool: PgPool) {
+        add_user(&pool, "alice", Role::Viewer).await;
+        let me = |cookie: String| {
+            let pool = pool.clone();
+            async move { call(app(pool), with_cookie("GET", "/api/auth/me", &cookie)).await.0 }
+        };
+
+        let idle = login(&pool, "alice").await;
+        assert_eq!(me(idle.clone()).await, StatusCode::OK);
+        sqlx::query("UPDATE sessions SET last_seen_at = now() - interval '31 minutes'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(me(idle).await, StatusCode::UNAUTHORIZED);
+
+        let old = login(&pool, "alice").await;
+        sqlx::query(
+            "UPDATE sessions SET created_at = now() - interval '13 hours',
+                                 expires_at = now() - interval '1 hour'
+             WHERE last_seen_at > now() - interval '1 minute'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(me(old).await, StatusCode::UNAUTHORIZED);
+
+        // The next login prunes both dead sessions.
+        login(&pool, "alice").await;
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM sessions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[sqlx::test]
+    async fn logout_invalidates_the_session(pool: PgPool) {
+        let id = add_user(&pool, "alice", Role::Viewer).await;
+        let session = login(&pool, "alice").await;
+        let other = login(&pool, "alice").await;
+
+        let (status, cookie, _) =
+            call_with_cookie(app(pool.clone()), with_cookie("POST", "/api/auth/logout", &session)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(cookie.unwrap().contains("Max-Age=0"));
+
+        let (status, _) = call(app(pool.clone()), with_cookie("GET", "/api/auth/me", &session)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, _) = call(app(pool.clone()), with_cookie("POST", "/api/auth/logout", &session)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        // Other sessions of the same user are untouched.
+        let (status, _) = call(app(pool.clone()), with_cookie("GET", "/api/auth/me", &other)).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let last = audit_actions(&pool).await.pop().unwrap();
+        assert_eq!((last.0.as_str(), last.1), ("auth.logout", id.to_string()));
+    }
+
+    #[sqlx::test]
+    async fn disabling_a_user_ends_their_sessions(pool: PgPool) {
+        let id = add_user(&pool, "alice", Role::Viewer).await;
+        let session = login(&pool, "alice").await;
+        sqlx::query("UPDATE users SET disabled_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, _) = call(app(pool.clone()), with_cookie("GET", "/api/auth/me", &session)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     #[sqlx::test]
