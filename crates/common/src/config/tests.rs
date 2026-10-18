@@ -61,6 +61,7 @@ fn defaults_apply() {
     assert_eq!(server.api_listen_addr.port(), 7444);
     assert_eq!(server.victoriametrics_url, "http://localhost:8428");
     assert_eq!(server.data_dir, Path::new("/var/lib/monitorflow/server"));
+    assert_eq!(server.heartbeat_timeout, 3 * agent.heartbeat_interval);
 }
 
 #[test]
@@ -168,6 +169,21 @@ fn intervals_and_sizes_must_be_positive() {
         msg.contains("key `buffer_max_bytes`: must be greater than zero"),
         "{msg}"
     );
+    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_HEARTBEAT_TIMEOUT", "0")]);
+    assert!(
+        msg.contains("key `heartbeat_timeout`: must be greater than zero"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn heartbeat_timeout_can_be_overridden() {
+    let text = format!("{SERVER_MIN}\nheartbeat_timeout = 60");
+    let server: ServerConfig = parse(&text).unwrap();
+    assert_eq!(server.heartbeat_timeout, 60);
+    let vars = env(&[("MONITORFLOW_HEARTBEAT_TIMEOUT", "45")]);
+    let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
+    assert_eq!(server.heartbeat_timeout, 45);
 }
 
 #[test]

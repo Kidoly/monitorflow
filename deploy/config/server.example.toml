@@ -21,6 +21,10 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # Certificate authority, command signing key, mirrors.
 # data_dir = "/var/lib/monitorflow/server"
 
+# Seconds without any message from an agent or relay before its stream is
+# closed. Keep it a few times the agents' heartbeat_interval (default 30).
+# heartbeat_timeout = 90
+
 [tls]
 # ca_cert = "/etc/monitorflow/tls/ca.pem"
 # cert = "/etc/monitorflow/tls/cert.pem"
