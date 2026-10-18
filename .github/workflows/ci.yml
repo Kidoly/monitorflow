@@ -6,15 +6,33 @@ on:
 jobs:
   rust:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: monitorflow
+          POSTGRES_PASSWORD: monitorflow
+          POSTGRES_DB: monitorflow
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U monitorflow -d monitorflow"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
     env:
       SQLX_OFFLINE: "true"
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Version comes from rust-toolchain.toml; keep the two in sync.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.99.0"
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # DATABASE_URL enables the PostgreSQL tests (crates/server/build.rs).
       - run: cargo test --workspace
+        env:
+          DATABASE_URL: postgres://monitorflow:monitorflow@localhost:5432/monitorflow
