@@ -1,0 +1,56 @@
+/* Colours meet WCAG AA contrast (4.5:1) against their backgrounds. */
+:root {
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #1b1f24;
+  --muted: #4b5563;
+  --border: #d0d5dd;
+  --accent: #1d4ed8;
+  --accent-text: #ffffff;
+  --online: #116329;
+  --online-bg: #dcfce7;
+  --offline: #9a1c1c;
+  --offline-bg: #fee2e2;
+  --error: #9a1c1c;
+  --error-bg: #fef2f2;
+  --focus: #1d4ed8;
+  --radius: 6px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+a {
+  color: var(--accent);
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.visually-hidden:not(:focus):not(:active) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
