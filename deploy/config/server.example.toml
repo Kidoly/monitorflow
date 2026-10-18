@@ -7,6 +7,10 @@
 # gRPC listener for agents and relays (mTLS).
 # grpc_listen_addr = "0.0.0.0:7443"
 
+# Enrollment listener (TLS without client certificates, ADR-0006). New agents
+# and relays exchange their one-time token for a certificate here.
+# enroll_listen_addr = "0.0.0.0:7445"
+
 # HTTPS listener for the REST API and the web interface.
 # api_listen_addr = "0.0.0.0:7444"
 

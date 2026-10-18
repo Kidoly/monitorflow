@@ -1,0 +1,32 @@
+// MonitorFlow enrollment protocol, version 1. See ADR-0006.
+//
+// Rules: changes are additive only. Never renumber or reuse a field number.
+
+syntax = "proto3";
+
+package monitorflow.v1;
+
+// Exchanges a one-time token for a client certificate. Served on its own
+// listener with server-only TLS, since callers have no certificate yet.
+service EnrollService {
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+}
+
+message EnrollRequest {
+  // One-time token `mfe1.<secret>.<ca>` created by an administrator.
+  string token = 1;
+  // PKCS#10 certificate signing request in PEM. Only its public key is
+  // used: the identity comes from the token.
+  string csr_pem = 2;
+}
+
+message EnrollResponse {
+  // Client certificate in PEM.
+  string cert_pem = 1;
+  // CA certificate in PEM. Its SHA-256 must equal the token's CA pin.
+  string ca_cert_pem = 2;
+  // Identity written in the certificate, `monitorflow://<role>/<id>`.
+  string peer_uri = 3;
+  // End of the certificate's validity, Unix seconds.
+  int64 not_after_unix = 4;
+}

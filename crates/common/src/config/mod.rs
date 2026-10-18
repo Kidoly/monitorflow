@@ -437,6 +437,9 @@ impl LoadConfig for RelayConfig {
 pub struct ServerConfig {
     /// gRPC listener for agents and relays.
     pub grpc_listen_addr: SocketAddr,
+    /// Enrollment listener: TLS without client certificates, serving only
+    /// `EnrollService` (ADR-0006).
+    pub enroll_listen_addr: SocketAddr,
     /// HTTPS listener for the REST API and web interface.
     pub api_listen_addr: SocketAddr,
     pub database_url: DatabaseUrl,
@@ -453,6 +456,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             grpc_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7443)),
+            enroll_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7445)),
             api_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7444)),
             database_url: DatabaseUrl::default(),
             victoriametrics_url: "http://localhost:8428".into(),
@@ -469,6 +473,7 @@ impl Default for ServerConfig {
 impl LoadConfig for ServerConfig {
     fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
         env.set("grpc_listen_addr", &mut self.grpc_listen_addr)?;
+        env.set("enroll_listen_addr", &mut self.enroll_listen_addr)?;
         env.set("api_listen_addr", &mut self.api_listen_addr)?;
         env.set("database_url", &mut self.database_url)?;
         env.set("victoriametrics_url", &mut self.victoriametrics_url)?;

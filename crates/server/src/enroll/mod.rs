@@ -1,7 +1,12 @@
 //! Enrollment of new agents and relays (ADR-0006): an administrator creates
 //! a one-time token, the peer exchanges it with a CSR for a certificate.
 
+pub mod limiter;
+mod service;
 pub mod token;
+
+pub use limiter::FailureLimiter;
+pub use service::{serve, EnrollError, Enrolled, Enroller};
 
 use monitorflow_common::tls::{fingerprint, Fingerprint};
 use rustls::pki_types::CertificateDer;

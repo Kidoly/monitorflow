@@ -269,3 +269,81 @@ async fn connect_gives_up_on_a_silent_server() {
     assert!(started.elapsed() < Duration::from_secs(3), "{err}");
     assert!(is_timeout(&err), "{err}");
 }
+
+/// Accepts one connection with `server`'s config without client auth and
+/// returns whether a client pinned to `pin` completes the handshake.
+async fn pinned_handshake(server: &Identity, pin: tls::Fingerprint) -> Result<(), String> {
+    let acceptor =
+        tokio_rustls::TlsAcceptor::from(server.server_config_without_client_auth().unwrap());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let _ = acceptor.accept(tcp).await;
+    });
+    let connector = tokio_rustls::TlsConnector::from(tls::pinned_client_config(pin).unwrap());
+    let name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    let tls = tokio::time::timeout(TIMEOUT, connector.connect(name, tcp))
+        .await
+        .unwrap()
+        .map_err(|e| e.to_string())?;
+    assert_eq!(tls.get_ref().1.alpn_protocol(), Some(&b"h2"[..]));
+    Ok(())
+}
+
+fn pin(ca: &Ca) -> tls::Fingerprint {
+    tls::fingerprint(ca.cert.der())
+}
+
+#[tokio::test]
+async fn pinned_client_accepts_the_pinned_ca_only() {
+    let pki = Pki::new();
+    pinned_handshake(&pki.server, pin(&pki.ca)).await.unwrap();
+
+    let other = Ca::new("other CA");
+    let err = pinned_handshake(&pki.server, pin(&other))
+        .await
+        .unwrap_err();
+    assert!(err.contains("pinned CA"), "{err}");
+}
+
+#[tokio::test]
+async fn pinned_client_rejects_a_server_cert_from_another_ca() {
+    // An impostor can send the real CA certificate, which is public, but
+    // cannot get its own certificate signed by it.
+    let real = Ca::new("monitorflow test CA");
+    let impostor_ca = Ca::new("impostor CA");
+    let dir = TempDir::new().unwrap();
+    let (_, cert, key) = support::write(dir.path(), "server", &impostor_ca, &impostor_ca.server());
+    let ca_cert = dir.path().join("real-ca.pem");
+    std::fs::write(&ca_cert, real.cert.pem()).unwrap();
+    let impostor = Identity::load(&TlsPaths { ca_cert, cert, key }).unwrap();
+    let err = pinned_handshake(&impostor, pin(&real)).await.unwrap_err();
+    assert!(
+        err.contains("UnknownIssuer") || err.contains("BadSignature"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn enroll_listener_asks_for_no_client_certificate() {
+    // The mTLS client still connects: a certificate is not required, and
+    // the server ignores one it did not ask for.
+    let pki = Pki::new();
+    let leaf = pki.ca.client("agent-1", 10);
+    let acceptor =
+        tokio_rustls::TlsAcceptor::from(pki.server.server_config_without_client_auth().unwrap());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let tls = acceptor.accept(tcp).await.unwrap();
+        tls.get_ref().1.peer_certificates().map(<[_]>::len)
+    });
+    let connector = tokio_rustls::TlsConnector::from(pki.client(&leaf));
+    let name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    connector.connect(name, tcp).await.unwrap();
+    assert_eq!(server.await.unwrap(), None);
+}

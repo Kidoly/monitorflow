@@ -59,9 +59,17 @@ fn defaults_apply() {
     let server: ServerConfig = parse(SERVER_MIN).unwrap();
     assert_eq!(server.grpc_listen_addr.port(), 7443);
     assert_eq!(server.api_listen_addr.port(), 7444);
+    assert_eq!(server.enroll_listen_addr, "0.0.0.0:7445".parse().unwrap());
     assert_eq!(server.victoriametrics_url, "http://localhost:8428");
     assert_eq!(server.data_dir, Path::new("/var/lib/monitorflow/server"));
     assert_eq!(server.heartbeat_timeout, 3 * agent.heartbeat_interval);
+}
+
+#[test]
+fn enroll_listen_addr_has_an_env_override() {
+    let vars = env(&[("MONITORFLOW_ENROLL_LISTEN_ADDR", "127.0.0.1:9445")]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert_eq!(server.enroll_listen_addr, "127.0.0.1:9445".parse().unwrap());
 }
 
 #[test]
