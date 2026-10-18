@@ -9,11 +9,10 @@ use monitorflow_common::config::{self, ServerConfig};
 use monitorflow_common::logging;
 use monitorflow_common::tls::{Identity, PeerRole};
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
+use monitorflow_server::crl::{self, CrlPublisher};
 use monitorflow_server::db;
-use monitorflow_server::enroll::{self, token};
-use monitorflow_server::grpc::{
-    self, AgentStreamService, DenyRelayedAgents, Registry, StreamSettings,
-};
+use monitorflow_server::enroll::{self, server_cert, token, Enroller, FailureLimiter};
+use monitorflow_server::grpc::{self, AgentStreamService, DbRelayPolicy, Registry, StreamSettings};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch;
@@ -81,22 +80,63 @@ async fn main() -> anyhow::Result<()> {
     // Secrets are redacted by their Debug impls.
     tracing::info!(effective = ?config, "configuration loaded");
 
+    let ca = Arc::new(open_ca(&config).await?);
+    let names = server_cert::parse_names(&config.server_names);
+    let (issuer, paths) = (ca.clone(), config.tls.clone());
+    tokio::task::spawn_blocking(move || server_cert::ensure(&issuer, &paths, &names))
+        .await?
+        .context("preparing the server certificate")?;
     let identity = Identity::load(&config.tls).context("loading the TLS identity")?;
-    // No CRL yet. The CA will send configs with fresh CRLs through this
-    // channel; each new connection uses the latest one.
-    let (_tls_updates, tls_config) = watch::channel(identity.server_config(Vec::new())?);
+    let pool = db::connect(&config.database_url).await?;
+    db::migrate(&pool).await?;
 
+    // Every new mTLS connection uses the latest config from the publisher,
+    // which carries a fresh CRL.
+    let (crl, tls_config) = CrlPublisher::start(ca.clone(), identity.clone()).await?;
     let listener = TcpListener::bind(config.grpc_listen_addr)
         .await
         .with_context(|| format!("binding gRPC listener on {}", config.grpc_listen_addr))?;
-    // Relays may only speak for themselves until site assignments exist.
+    let enroll_listener = TcpListener::bind(config.enroll_listen_addr)
+        .await
+        .with_context(|| format!("binding enroll listener on {}", config.enroll_listen_addr))?;
     let service = AgentStreamService::new(
         Registry::default(),
-        Arc::new(DenyRelayedAgents),
+        Arc::new(DbRelayPolicy::new(pool.clone())),
         StreamSettings::from_config(&config),
     );
-    tracing::info!(addr = %config.grpc_listen_addr, "gRPC listening");
-    grpc::serve(listener, tls_config, service, shutdown_signal()?).await?;
+    let enroller = Enroller::new(pool, ca, FailureLimiter::default());
+
+    // One signal stops both listeners and the CRL timer.
+    let (stop, stopped) = watch::channel(false);
+    let signal = shutdown_signal()?;
+    tokio::spawn(async move {
+        signal.await;
+        stop.send_replace(true);
+    });
+    let until_stopped = || {
+        let mut stopped = stopped.clone();
+        async move {
+            let _ = stopped.wait_for(|&stop| stop).await;
+        }
+    };
+    tracing::info!(grpc = %config.grpc_listen_addr, enroll = %config.enroll_listen_addr, "listening");
+    tokio::try_join!(
+        grpc::serve(listener, tls_config, service, until_stopped()),
+        enroll::serve(
+            enroll_listener,
+            identity.server_config_without_client_auth()?,
+            enroller,
+            until_stopped()
+        ),
+        async {
+            crl.run(
+                crl::refresh_interval(&CaOptions::default()),
+                until_stopped(),
+            )
+            .await;
+            Ok(())
+        },
+    )?;
     tracing::info!("server stopped");
     Ok(())
 }

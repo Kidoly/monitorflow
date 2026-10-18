@@ -448,6 +448,10 @@ pub struct ServerConfig {
     pub data_dir: PathBuf,
     /// Seconds without any message after which a peer's stream is closed.
     pub heartbeat_timeout: u64,
+    /// DNS names and IP addresses peers use to reach this server, written
+    /// in the certificate the built-in CA issues it (ADR-0006). The
+    /// environment override is a comma-separated list.
+    pub server_names: Vec<String>,
     pub tls: TlsPaths,
     pub log: LogConfig,
 }
@@ -464,6 +468,7 @@ impl Default for ServerConfig {
             data_dir: "/var/lib/monitorflow/server".into(),
             // Three missed heartbeats at the agent's default interval.
             heartbeat_timeout: 3 * DEFAULT_HEARTBEAT_INTERVAL,
+            server_names: vec!["localhost".into(), "127.0.0.1".into()],
             tls: TlsPaths::default(),
             log: LogConfig::default(),
         }
@@ -480,12 +485,21 @@ impl LoadConfig for ServerConfig {
         env.set("victorialogs_url", &mut self.victorialogs_url)?;
         env.set("data_dir", &mut self.data_dir)?;
         env.set("heartbeat_timeout", &mut self.heartbeat_timeout)?;
+        if let Some((_, names)) = env.get("server_names") {
+            self.server_names = names.split(',').map(|n| n.trim().to_owned()).collect();
+        }
         self.tls.apply_env(env)?;
         self.log.apply_env(env)
     }
 
     fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
         check.positive("heartbeat_timeout", self.heartbeat_timeout)?;
+        if self.server_names.is_empty() || self.server_names.iter().any(String::is_empty) {
+            return Err(check.fail(
+                "server_names",
+                "must list at least one DNS name or IP address, none empty",
+            ));
+        }
         let db = self.database_url.expose();
         check.required("database_url", db)?;
         // The value is never echoed: it may hold a password.

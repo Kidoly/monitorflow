@@ -31,8 +31,8 @@ rcgen = { workspace = true, features = ["x509-parser"] }
 ring.workspace = true
 pem.workspace = true
 time.workspace = true
+x509-parser.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
 tokio-rustls.workspace = true
-x509-parser.workspace = true

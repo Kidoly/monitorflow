@@ -2,6 +2,7 @@
 //! a one-time token, the peer exchanges it with a CSR for a certificate.
 
 pub mod limiter;
+pub mod server_cert;
 mod service;
 pub mod token;
 

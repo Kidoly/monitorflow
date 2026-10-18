@@ -17,7 +17,7 @@ use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tonic::transport::Server;
 
-pub use policy::{AllowAllRelayedAgents, DenyRelayedAgents, RelayPolicy};
+pub use policy::{AllowAllRelayedAgents, DbRelayPolicy, DenyRelayedAgents, RelayPolicy};
 pub use registry::{CloseReason, Counters, PeerInfo, Registration, Registry, RegistryError};
 pub use service::{AgentStreamService, HandshakeError, Outbound};
 
