@@ -14,8 +14,8 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] `agent`: connect, enroll on first run, keep the stream open with reconnect and backoff, send heartbeats.
 - [x] PostgreSQL migrations: servers, enrollment_tokens, certificates, users, roles.
 - [x] `server::api`: axum skeleton, health endpoint, session auth, `GET /api/servers`.
-- [ ] Certificate renewal before expiry, driven by the agent.
-- [ ] End-to-end test: start server, enroll agent, see it listed via the API.
+- [x] Certificate renewal before expiry, driven by the agent.
+- [x] End-to-end test: start server, enroll agent, see it listed via the API.
 
 ## Phase 2 — Monitoring
 
