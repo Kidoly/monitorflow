@@ -32,6 +32,8 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 tower = { version = "0.5", features = ["util"] }
 x509-parser = "0.18"
 rcgen = "0.13"
+ring = "0.17"
+time = { version = "0.3", features = ["std"] }
 pem = "3"
 tempfile = "3"
 axum = "0.8"

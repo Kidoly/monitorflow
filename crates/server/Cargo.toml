@@ -23,3 +23,15 @@ sqlx.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
+# CSR parsing and signature verification need rcgen's x509-parser feature.
+rcgen = { workspace = true, features = ["x509-parser"] }
+ring.workspace = true
+rustls.workspace = true
+pem.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio-rustls.workspace = true
+x509-parser.workspace = true
