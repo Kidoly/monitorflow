@@ -5,8 +5,15 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# Exposes `testing::FakeSensor` to other crates' tests.
+testing = []
+
 [dependencies]
 async-trait.workspace = true
-serde.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
