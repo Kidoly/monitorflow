@@ -19,14 +19,14 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 
 ## Phase 2 — Monitoring
 
-- [ ] `sensors`: Sensor trait, Sample type, scheduler.
+- [x] `sensors`: Sensor trait, Sample type, scheduler.
 - [ ] Sensors: cpu, memory, disk (one task each).
 - [ ] Sensors: systemd service, port, log pattern, custom script (one task each).
 - [ ] Agent: sensor configuration pushed from the server, sample batching and upload.
-- [ ] Server: write samples to VictoriaMetrics (remote write) and logs to VictoriaLogs.
+- [x] Server: write samples to VictoriaMetrics (remote write) and logs to VictoriaLogs.
 - [ ] Server: threshold engine with warning/critical and duration; incidents table.
 - [ ] API: sensors, thresholds, incidents, metric query proxy.
-- [ ] Web: Next.js project, auth, fleet overview.
+- [x] Web: Next.js project, auth, fleet overview.
 - [ ] Web: server page with graphs and threshold lines.
 - [ ] Web: incidents list and timeline.
 
