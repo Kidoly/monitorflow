@@ -1,6 +1,10 @@
 //! Code shared by the agent, relay and server: generated gRPC types,
 //! TLS helpers, configuration loading and common error types.
 
+pub mod config;
+pub mod logging;
+pub mod redact;
+
 /// Generated Protobuf and gRPC code for the `monitorflow.v1` package.
 pub mod proto {
     // Generated code; tonic's client returns `tonic::Status` in a large `Err`.
