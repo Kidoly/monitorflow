@@ -23,6 +23,8 @@ scripts/check.sh                        # fmt + clippy + test, what CI runs
 docker compose -f deploy/docker-compose.dev.yml up -d   # postgres, victoriametrics, victorialogs
 ```
 
+Web (`web/`, Node 22 from `.nvmrc`): `npm ci`, then `npm run dev`, `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`. CI runs all of them in the `web` job.
+
 sqlx checks queries at compile time against `DATABASE_URL` (see `.env.example`). Run `cargo sqlx prepare --workspace` after changing queries so the build works offline and in CI.
 
 ## Conventions
