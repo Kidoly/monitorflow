@@ -1,11 +1,13 @@
 //! The agent stream over real mTLS on 127.0.0.1.
 
+mod fake_http;
 #[path = "../../common/tests/support/mod.rs"]
 mod support;
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use fake_http::FakeHttp;
 use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
@@ -13,8 +15,13 @@ use monitorflow_common::proto::v1::{Command, Envelope, Heartbeat, Hello, Sample,
 use monitorflow_common::tls::{self, Identity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
 use monitorflow_server::grpc::{
-    self, AgentStreamService, AllowAllRelayedAgents, DbInventory, DbRelayPolicy, DenyRelayedAgents,
-    Inventory, NoInventory, Registry, RelayPolicy, StreamSettings,
+    self, AcceptedHello, AgentStreamService, AllowAllRelayedAgents, DbInventory, DbRelayPolicy,
+    DenyRelayedAgents, Inventory, InventoryError, NoInventory, Registry, RelayPolicy,
+    StreamSettings,
+};
+use monitorflow_server::ingest::metrics::decode;
+use monitorflow_server::ingest::{
+    Ingest, JsonLines, LogRecord, RemoteWrite, Series, Writer, WriterSettings,
 };
 use sqlx::PgPool;
 use support::{uri_san, Ca, Leaf};
@@ -60,6 +67,15 @@ impl Harness {
         policy: Arc<dyn RelayPolicy>,
         inventory: Arc<dyn Inventory>,
     ) -> Self {
+        Self::start_with_ingest(settings, policy, inventory, Ingest::default()).await
+    }
+
+    async fn start_with_ingest(
+        settings: StreamSettings,
+        policy: Arc<dyn RelayPolicy>,
+        inventory: Arc<dyn Inventory>,
+        ingest: Ingest,
+    ) -> Self {
         let ca = Ca::new("monitorflow test CA");
         let server = identity(&ca, &ca.server());
         let (_tx, tls_config) = watch::channel(server.server_config(Vec::new()).unwrap());
@@ -69,8 +85,9 @@ impl Harness {
             listener.local_addr().unwrap().port()
         );
         let registry = Registry::default();
-        let service =
-            AgentStreamService::new(registry.clone(), policy, settings).with_inventory(inventory);
+        let service = AgentStreamService::new(registry.clone(), policy, settings)
+            .with_inventory(inventory)
+            .with_ingest(ingest);
         let (shutdown, stop) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(grpc::serve(listener, tls_config, service, async {
             let _ = stop.await;
@@ -401,6 +418,207 @@ async fn agent_hello_without_a_valid_os_family_is_rejected() {
     assert!(h.registry.get("agent-1").is_none());
 }
 
+/// Puts every peer in one site, without a database.
+struct OneSite(&'static str);
+
+#[tonic::async_trait]
+impl Inventory for OneSite {
+    async fn hello(&self, _hello: AcceptedHello<'_>) -> Result<String, InventoryError> {
+        Ok(self.0.to_owned())
+    }
+
+    async fn seen(&self, _role: PeerRole, _id: &str) -> Result<(), InventoryError> {
+        Ok(())
+    }
+}
+
+/// Writers to a fake VictoriaMetrics and VictoriaLogs.
+struct Storage {
+    fake: FakeHttp,
+    metrics: Writer<Series>,
+    events: Writer<LogRecord>,
+}
+
+impl Storage {
+    async fn start() -> Self {
+        let fake = FakeHttp::start().await;
+        let settings = WriterSettings {
+            flush_interval: Duration::from_millis(20),
+            ..WriterSettings::default()
+        };
+        let metrics = Writer::spawn(RemoteWrite::new(&fake.url).unwrap(), settings.clone());
+        let events = Writer::spawn(JsonLines::new(&fake.url).unwrap(), settings);
+        Self {
+            fake,
+            metrics,
+            events,
+        }
+    }
+
+    fn ingest(&self) -> Ingest {
+        Ingest {
+            metrics: Some(self.metrics.queue()),
+            events: Some(self.events.queue()),
+        }
+    }
+
+    /// Label sets of every series written so far.
+    fn series(&self) -> Vec<Vec<(String, String)>> {
+        let mut series = Vec::new();
+        for request in self.fake.received() {
+            if request.path_and_query == "/api/v1/write" {
+                for ts in decode(&request.body).unwrap().timeseries {
+                    series.push(ts.labels.into_iter().map(|l| (l.name, l.value)).collect());
+                }
+            }
+        }
+        series
+    }
+
+    async fn wait_for_series(&self, n: usize) -> Vec<Vec<(String, String)>> {
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        loop {
+            let series = self.series();
+            if series.len() >= n {
+                return series;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "{n} series never arrived"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// The JSON log lines written so far.
+    fn events(&self) -> Vec<serde_json::Value> {
+        self.fake
+            .received()
+            .iter()
+            .filter(|r| r.path_and_query.starts_with("/insert/jsonline"))
+            .flat_map(|r| {
+                std::str::from_utf8(&r.body)
+                    .unwrap()
+                    .lines()
+                    .map(|l| serde_json::from_str(l).unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    async fn wait_for_events(&self, n: usize) -> Vec<serde_json::Value> {
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        loop {
+            let events = self.events();
+            if events.len() >= n {
+                return events;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "{n} events never arrived"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+}
+
+fn samples(entries: &[(&str, &[(&str, &str)])]) -> Payload {
+    let now = chrono::Utc::now().timestamp_millis();
+    Payload::Samples(SampleBatch {
+        samples: entries
+            .iter()
+            .map(|(sensor, labels)| Sample {
+                sensor: sensor.to_string(),
+                instance: "/".into(),
+                timestamp_unix_ms: now,
+                value: 1.0,
+                labels: labels
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            })
+            .collect(),
+    })
+}
+
+fn owned(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+#[tokio::test]
+async fn samples_are_written_with_the_identity_of_the_stream() {
+    let storage = Storage::start().await;
+    let h = Harness::start_with_ingest(
+        settings(),
+        Arc::new(AllowAllRelayedAgents),
+        Arc::new(OneSite("paris")),
+        storage.ingest(),
+    )
+    .await;
+    let agent = h
+        .open(&h.ca.client("agent-1", 10), hello("agent-1"))
+        .await
+        .unwrap();
+    agent
+        .send(
+            2,
+            samples(&[
+                ("disk_free_bytes", &[("device", "sda")]),
+                // Forged identity labels drop the sample.
+                ("disk_free_bytes", &[("peer", "agent-9")]),
+                ("disk_free_bytes", &[("site", "lyon")]),
+                ("Not-A-Sensor", &[]),
+            ]),
+        )
+        .await;
+    let series = storage.wait_for_series(1).await;
+    assert_eq!(
+        series,
+        [owned(&[
+            ("__name__", "monitorflow_disk_free_bytes"),
+            ("device", "sda"),
+            ("instance", "/"),
+            ("peer", "agent-1"),
+            ("site", "paris"),
+        ])]
+    );
+    h.wait_until("invalid samples counted", |r| {
+        r.get("agent-1").unwrap().counters.invalid_samples == 3
+    })
+    .await;
+    let counters = h.registry.get("agent-1").unwrap().counters;
+    assert_eq!((counters.samples, counters.dropped_samples), (4, 0));
+
+    // Behind a relay, the series belong to the agent the relay speaks for.
+    let relayed = h
+        .open(&h.ca.relay("relay-1", 11), hello("agent-2"))
+        .await
+        .unwrap();
+    relayed.send(2, samples(&[("cpu", &[])])).await;
+    let series = storage.wait_for_series(2).await;
+    assert!(
+        series[1].contains(&("peer".to_string(), "agent-2".to_string())),
+        "{series:?}"
+    );
+
+    drop(agent);
+    let events = storage.wait_for_events(3).await;
+    assert_eq!(events[0]["event"], "peer.connect");
+    assert_eq!(events[0]["peer"], "agent-1");
+    assert_eq!(events[0]["site"], "paris");
+    assert_eq!(events[0]["role"], "agent");
+    assert_eq!(events[1]["relay"], "relay-1");
+    assert_eq!(events[2]["event"], "peer.disconnect");
+    assert_eq!(events[2]["peer"], "agent-1");
+    assert_eq!(events[2]["reason"], "closed");
+
+    let stats = storage.metrics.shutdown(TIMEOUT).await;
+    assert_eq!((stats.written, stats.rejected), (2, 3));
+}
+
 /// Marks every test in the block as ignored when `DATABASE_URL` is unset.
 macro_rules! db_tests {
     ($($item:item)*) => {
@@ -599,6 +817,28 @@ db_tests! {
         while server_row(&pool, "agent-2").await.unwrap().last_seen_at == Some(old.into()) {
             assert!(tokio::time::Instant::now() < deadline, "last_seen_at never updated");
             tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[sqlx::test]
+    async fn series_get_the_site_of_the_inventory_row(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        enrolled(&pool, "agent-1", paris).await;
+        let storage = Storage::start().await;
+        let h = Harness::start_with_ingest(
+            settings(),
+            Arc::new(DbRelayPolicy::new(pool.clone())),
+            Arc::new(DbInventory::new(pool.clone())),
+            storage.ingest(),
+        )
+        .await;
+        // First Hello creates the row, the second reads it back.
+        for sequence in [10, 20] {
+            let peer = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
+            peer.send(sequence, samples(&[("cpu", &[])])).await;
+            let series = storage.wait_for_series(sequence as usize / 10).await;
+            let last = series.last().unwrap();
+            assert!(last.contains(&("site".to_string(), "paris".to_string())), "{last:?}");
         }
     }
 

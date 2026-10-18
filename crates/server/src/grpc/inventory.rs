@@ -45,21 +45,22 @@ impl AcceptedHello<'_> {
 /// Records connected peers. The server runs [`DbInventory`].
 #[async_trait]
 pub trait Inventory: Send + Sync + 'static {
-    /// Records a Hello; an error refuses the stream.
-    async fn hello(&self, hello: AcceptedHello<'_>) -> Result<(), InventoryError>;
+    /// Records a Hello and returns the name of the peer's site, the `site`
+    /// label of its series (ADR-0013). An error refuses the stream.
+    async fn hello(&self, hello: AcceptedHello<'_>) -> Result<String, InventoryError>;
     /// Records that the peer `id` with `role` is still connected.
     async fn seen(&self, role: PeerRole, id: &str) -> Result<(), InventoryError>;
 }
 
-/// Records nothing and accepts every peer. **Tests only**: in production
-/// it would ignore revocations.
+/// Records nothing, accepts every peer and reports no site. **Tests only**:
+/// in production it would ignore revocations.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoInventory;
 
 #[async_trait]
 impl Inventory for NoInventory {
-    async fn hello(&self, _hello: AcceptedHello<'_>) -> Result<(), InventoryError> {
-        Ok(())
+    async fn hello(&self, _hello: AcceptedHello<'_>) -> Result<String, InventoryError> {
+        Ok(String::new())
     }
 
     async fn seen(&self, _role: PeerRole, _id: &str) -> Result<(), InventoryError> {
@@ -81,14 +82,14 @@ impl DbInventory {
 
 #[async_trait]
 impl Inventory for DbInventory {
-    async fn hello(&self, hello: AcceptedHello<'_>) -> Result<(), InventoryError> {
+    async fn hello(&self, hello: AcceptedHello<'_>) -> Result<String, InventoryError> {
         let mut tx = self.pool.begin().await?;
-        match hello.role() {
+        let site = match hello.role() {
             PeerRole::Relay => relay_hello(&mut tx, hello.peer.id()).await?,
             _ => agent_hello(&mut tx, hello).await?,
-        }
+        };
         tx.commit().await?;
-        Ok(())
+        Ok(site)
     }
 
     async fn seen(&self, role: PeerRole, id: &str) -> Result<(), InventoryError> {
@@ -105,20 +106,34 @@ impl Inventory for DbInventory {
     }
 }
 
+/// Name of the site `site_id`.
+async fn site_name(
+    tx: &mut Transaction<'_, Postgres>,
+    site_id: Uuid,
+) -> Result<String, InventoryError> {
+    Ok(sqlx::query_scalar("SELECT name FROM sites WHERE id = $1")
+        .bind(site_id)
+        .fetch_one(&mut **tx)
+        .await?)
+}
+
 /// A relay's own Hello: its row was created at enrollment.
-async fn relay_hello(tx: &mut Transaction<'_, Postgres>, id: &str) -> Result<(), InventoryError> {
-    let revoked: Option<bool> = sqlx::query_scalar(
+async fn relay_hello(
+    tx: &mut Transaction<'_, Postgres>,
+    id: &str,
+) -> Result<String, InventoryError> {
+    let row: Option<(bool, Uuid)> = sqlx::query_as(
         "UPDATE relays SET last_seen_at = CASE WHEN revoked_at IS NULL THEN now() ELSE last_seen_at END
          WHERE peer_id = $1
-         RETURNING revoked_at IS NOT NULL",
+         RETURNING revoked_at IS NOT NULL, site_id",
     )
     .bind(id)
     .fetch_optional(&mut **tx)
     .await?;
     let (role, id) = (PeerRole::Relay, id.to_owned());
-    match revoked {
-        Some(false) => Ok(()),
-        Some(true) => Err(InventoryError::Revoked { role, id }),
+    match row {
+        Some((false, site_id)) => site_name(tx, site_id).await,
+        Some((true, _)) => Err(InventoryError::Revoked { role, id }),
         None => Err(InventoryError::NotEnrolled { role, id }),
     }
 }
@@ -128,11 +143,11 @@ async fn relay_hello(tx: &mut Transaction<'_, Postgres>, id: &str) -> Result<(),
 async fn agent_hello(
     tx: &mut Transaction<'_, Postgres>,
     accepted: AcceptedHello<'_>,
-) -> Result<(), InventoryError> {
+) -> Result<String, InventoryError> {
     let hello = accepted.hello;
     let id = hello.agent_id.as_str();
-    let existing: Option<(Uuid, bool)> = sqlx::query_as(
-        "SELECT id, revoked_at IS NOT NULL FROM servers WHERE peer_id = $1 FOR UPDATE",
+    let existing: Option<(Uuid, bool, Uuid)> = sqlx::query_as(
+        "SELECT id, revoked_at IS NOT NULL, site_id FROM servers WHERE peer_id = $1 FOR UPDATE",
     )
     .bind(id)
     .fetch_optional(&mut **tx)
@@ -156,11 +171,11 @@ async fn agent_hello(
     );
 
     match existing {
-        Some((_, true)) => Err(InventoryError::Revoked {
+        Some((_, true, _)) => Err(InventoryError::Revoked {
             role: PeerRole::Agent,
             id: id.to_owned(),
         }),
-        Some((server_id, false)) => {
+        Some((server_id, false, site_id)) => {
             // relay_id follows the path of the latest connection; the
             // composite foreign key keeps it in the server's site.
             sqlx::query(
@@ -176,7 +191,7 @@ async fn agent_hello(
             .bind(relay_id)
             .execute(&mut **tx)
             .await?;
-            Ok(())
+            site_name(tx, site_id).await
         }
         None => {
             let site_id: Uuid = sqlx::query_scalar(crate::db::ENROLLED_AGENT_SITE)
@@ -221,7 +236,7 @@ async fn agent_hello(
             )
             .await?;
             tracing::info!(agent_id = id, %site_id, %server_id, "created a server row");
-            Ok(())
+            site_name(tx, site_id).await
         }
     }
 }
@@ -254,7 +269,7 @@ mod tests {
             hello: &hello,
             via_relay: None,
         };
-        assert!(NoInventory.hello(accepted).await.is_ok());
+        assert_eq!(NoInventory.hello(accepted).await.unwrap(), "");
         assert!(NoInventory.seen(PeerRole::Agent, "web-01").await.is_ok());
     }
 }
