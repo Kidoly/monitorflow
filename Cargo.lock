@@ -1366,6 +1366,7 @@ dependencies = [
  "chrono",
  "clap",
  "monitorflow-common",
+ "monitorflow-sensors",
  "pem",
  "prost",
  "rcgen",

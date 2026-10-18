@@ -63,6 +63,19 @@ impl CurrentUser {
         sites.dedup();
         SiteScope::Sites(sites)
     }
+
+    /// Whether any role covers `site`.
+    pub fn can_read_site(&self, site: Uuid) -> bool {
+        self.roles.iter().any(|g| g.covers(site))
+    }
+
+    /// Whether a role that may change configuration (operator or above)
+    /// covers `site`.
+    pub fn can_modify_site(&self, site: Uuid) -> bool {
+        self.roles
+            .iter()
+            .any(|g| g.role.can_modify() && g.covers(site))
+    }
 }
 
 impl FromRequestParts<ApiState> for CurrentUser {
@@ -299,5 +312,19 @@ mod tests {
             .readable_sites(),
             SiteScope::Sites(vec![a, b])
         );
+    }
+
+    #[test]
+    fn site_checks_follow_role_grants() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let viewer = user(&[(Role::Viewer, Some(a))]);
+        assert!(viewer.can_read_site(a) && !viewer.can_read_site(b));
+        assert!(!viewer.can_modify_site(a));
+        let operator = user(&[(Role::Viewer, None), (Role::Operator, Some(b))]);
+        assert!(operator.can_read_site(a) && !operator.can_modify_site(a));
+        assert!(operator.can_modify_site(b));
+        let admin = user(&[(Role::Administrator, None)]);
+        assert!(admin.can_modify_site(a) && admin.can_modify_site(b));
+        assert!(!user(&[]).can_read_site(a));
     }
 }

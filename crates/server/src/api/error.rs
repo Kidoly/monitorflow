@@ -14,6 +14,13 @@ pub enum ApiError {
     /// The body is not the expected JSON.
     #[error("invalid request body")]
     BadRequest,
+    /// The request is well-formed but its content is invalid; the message
+    /// says why and is safe to show.
+    #[error("{0}")]
+    Invalid(String),
+    /// The request conflicts with existing data; the message says how.
+    #[error("{0}")]
+    Conflict(String),
     /// No valid session.
     #[error("authentication required")]
     Unauthorized,
@@ -38,7 +45,8 @@ impl ApiError {
     pub fn status(&self) -> StatusCode {
         match self {
             Self::NotFound => StatusCode::NOT_FOUND,
-            Self::BadRequest => StatusCode::BAD_REQUEST,
+            Self::BadRequest | Self::Invalid(_) => StatusCode::BAD_REQUEST,
+            Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Unauthorized | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::Forbidden | Self::CrossSite => StatusCode::FORBIDDEN,
             Self::Database(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
