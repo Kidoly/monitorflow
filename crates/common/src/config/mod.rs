@@ -15,6 +15,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use tonic::codegen::http::Uri;
 
+use crate::grpc_url::GrpcUrl;
 use crate::redact::{redact_url_password, Secret};
 
 #[cfg(test)]
@@ -194,13 +195,13 @@ impl Check<'_> {
         Ok(())
     }
 
-    /// gRPC links are always mTLS, so upstream URLs must use `https`.
+    /// gRPC upstreams, see [`GrpcUrl::parse`].
     pub fn grpc_url(&self, key: &str, value: &str) -> Result<(), ConfigError> {
         self.required(key, value)?;
-        self.url(key, value, &["https"]).map_err(|_| {
+        GrpcUrl::parse(value).map(drop).map_err(|reason| {
             self.fail(
                 key,
-                format!("must be an https URL (gRPC is always mTLS), got `{value}`"),
+                format!("must be an https URL like https://host:7443 ({reason}), got `{value}`"),
             )
         })
     }
