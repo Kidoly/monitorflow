@@ -436,6 +436,7 @@ db_tests! {
             protocol_version: PROTOCOL_VERSION.into(),
             agent_version: "0.1.0".into(),
             hostname: "web-01.example".into(),
+            ..Default::default()
         };
         tx.send(Envelope { sequence: 1, payload: Some(Payload::Hello(hello)) }).await.unwrap();
         let _stream = tokio::time::timeout(TIMEOUT, AgentServiceClient::new(channel).stream(ReceiverStream::new(rx)))

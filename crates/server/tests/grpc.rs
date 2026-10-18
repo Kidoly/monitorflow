@@ -134,6 +134,7 @@ fn hello_v(agent_id: &str, version: &str) -> Envelope {
             protocol_version: version.into(),
             agent_version: "0.1.0".into(),
             hostname: format!("{agent_id}.example"),
+            ..Default::default()
         })),
     }
 }

@@ -32,6 +32,10 @@ message Hello {
   string protocol_version = 2;
   string agent_version = 3;
   string hostname = 4;
+  // "debian" or "rhel": the package family, which decides the mirror type.
+  string os_family = 5;
+  // Distribution and version, from /etc/os-release, like "debian 12".
+  string os_version = 6;
 }
 
 message Heartbeat {
