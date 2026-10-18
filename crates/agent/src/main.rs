@@ -1,11 +1,10 @@
 //! MonitorFlow agent entry point.
 
-use std::time::SystemTime;
-
 use anyhow::Context;
 use clap::Parser;
 use monitorflow_agent::backoff::Backoff;
 use monitorflow_agent::enroll::{self, EnrollError};
+use monitorflow_agent::renew::{Renewal, RenewalSettings};
 use monitorflow_agent::stream::{Agent, StreamSettings};
 use monitorflow_agent::{os, shutdown};
 use monitorflow_common::config::{self, AgentConfig};
@@ -43,14 +42,17 @@ async fn main() -> anyhow::Result<()> {
         Err(EnrollError::Shutdown) => return Ok(()),
         Err(error) => return Err(error).context("no usable agent identity"),
     };
-    let now = SystemTime::now();
-    if identity.is_expired(now) {
-        tracing::error!(peer = %identity.id, "certificate has expired; remove the identity files and enroll again");
-    } else if identity.renewal_due(now) {
-        tracing::warn!(peer = %identity.id, "certificate is close to expiry and renewal is not implemented yet");
-    }
-    tracing::info!(peer = %identity.id, "identity loaded");
+    tracing::info!(peer = %identity.id, not_after = ?identity.not_after, "identity loaded");
+    // The renewal task logs an expired certificate with the steps to enroll
+    // again; the stream keeps retrying in case the operator does.
+    let (renewal, updates) = Renewal::new(
+        RenewalSettings::from_config(&config),
+        config.tls_paths(),
+        identity.clone(),
+    );
+    tokio::spawn(renewal.run(stop.clone()));
     Agent::new(StreamSettings::from_config(&config), identity, host)
+        .follow(updates)
         .run(stop)
         .await
         .context("cannot connect upstream")

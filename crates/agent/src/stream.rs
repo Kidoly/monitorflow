@@ -11,6 +11,9 @@
 //!   CRL;
 //! - revoked: only a new enrollment helps; retry very slowly.
 //!
+//! When the renewal task publishes a new identity, the stream closes and
+//! reconnects with it at once.
+//!
 //! Envelope payloads are never logged, and commands are never executed:
 //! signed command execution is Phase 3.
 
@@ -25,7 +28,7 @@ use monitorflow_common::proto::v1::{Envelope, Heartbeat, Hello};
 use monitorflow_common::tls::{self, error_chain, TlsError};
 use monitorflow_common::PROTOCOL_VERSION;
 use rustls::AlertDescription;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{interval_at, timeout, Instant, MissedTickBehavior};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Channel;
@@ -87,6 +90,9 @@ pub enum Failure {
     Rejected(String),
     #[error("the upstream says this agent's certificate is revoked")]
     Revoked,
+    /// Not a failure: the certificate was renewed, reconnect with it.
+    #[error("the certificate was renewed")]
+    Renewed,
 }
 
 /// Maps a status from the upstream, looking through transport errors for
@@ -159,6 +165,7 @@ fn find_alert(error: &(dyn StdError + 'static)) -> Option<AlertDescription> {
 pub struct Agent {
     settings: StreamSettings,
     identity: AgentIdentity,
+    updates: Option<watch::Receiver<AgentIdentity>>,
     host: HostInfo,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
     // monotonic across restarts; the server only needs them per stream.
@@ -170,9 +177,17 @@ impl Agent {
         Self {
             settings,
             identity,
+            updates: None,
             host,
             sequence: 0,
         }
+    }
+
+    /// Uses each identity published on `updates`, from the renewal task,
+    /// reconnecting when it changes.
+    pub fn follow(mut self, updates: watch::Receiver<AgentIdentity>) -> Self {
+        self.updates = Some(updates);
+        self
     }
 
     /// Keeps a stream open until `shutdown`. Only fails when the TLS client
@@ -189,6 +204,10 @@ impl Agent {
                 backoff.reset();
             }
             let delay = match &failure {
+                Failure::Renewed => {
+                    tracing::info!("reconnecting with the renewed certificate");
+                    continue;
+                }
                 Failure::Transient(_) => {
                     let delay = backoff.next_delay();
                     tracing::warn!(error = %failure, retry_in = ?delay, "upstream connection lost");
@@ -228,6 +247,9 @@ impl Agent {
         shutdown: &mut Shutdown,
         opened: &mut Option<Instant>,
     ) -> Result<(), Failure> {
+        if let Some(updates) = &mut self.updates {
+            self.identity = updates.borrow_and_update().clone();
+        }
         let channel = tokio::select! {
             channel = self.connect() => channel?,
             () = shutdown.wait() => return Ok(()),
@@ -259,6 +281,11 @@ impl Agent {
                     let _ = timeout(CLOSE_GRACE, drain(&mut inbound)).await;
                     tracing::info!("stream closed");
                     return Ok(());
+                }
+                () = changed(&mut self.updates) => {
+                    drop(tx);
+                    let _ = timeout(CLOSE_GRACE, drain(&mut inbound)).await;
+                    return Err(Failure::Renewed);
                 }
                 _ = heartbeat.tick() => {
                     let envelope = self.envelope(Payload::Heartbeat(Heartbeat {
@@ -343,6 +370,16 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::Samples(_) => "samples",
         Payload::Command(_) => "command",
         Payload::CommandResult(_) => "command_result",
+    }
+}
+
+/// Resolves when a new identity is published; never without a publisher.
+async fn changed(updates: &mut Option<watch::Receiver<AgentIdentity>>) {
+    let Some(updates) = updates else {
+        return std::future::pending().await;
+    };
+    if updates.changed().await.is_err() {
+        std::future::pending::<()>().await;
     }
 }
 
