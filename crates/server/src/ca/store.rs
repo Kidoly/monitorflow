@@ -10,7 +10,7 @@ use super::CaError;
 /// Writes `contents` to a temporary file next to `path` with `mode`, syncs
 /// it, renames it over `path` and syncs the directory, so a crash leaves
 /// either the old file or the new one.
-pub(super) fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<(), CaError> {
+pub(crate) fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<(), CaError> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let tmp = dir.join(format!(".{name}.tmp"));

@@ -2,6 +2,7 @@
 //! modules together; keeping them in a library makes them testable.
 
 pub mod ca;
+pub mod crl;
 pub mod db;
 pub mod enroll;
 pub mod grpc;

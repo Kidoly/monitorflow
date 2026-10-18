@@ -66,6 +66,18 @@ fn defaults_apply() {
 }
 
 #[test]
+fn server_names_default_and_override() {
+    let server: ServerConfig = parse(SERVER_MIN).unwrap();
+    assert_eq!(server.server_names, ["localhost", "127.0.0.1"]);
+    let vars = env(&[("MONITORFLOW_SERVER_NAMES", "mf.example.com, 10.0.0.5")]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert_eq!(server.server_names, ["mf.example.com", "10.0.0.5"]);
+    let text = format!("server_names = []\n{SERVER_MIN}");
+    let err = parse::<ServerConfig>(&text).unwrap_err().to_string();
+    assert!(err.contains("server_names"), "{err}");
+}
+
+#[test]
 fn enroll_listen_addr_has_an_env_override() {
     let vars = env(&[("MONITORFLOW_ENROLL_LISTEN_ADDR", "127.0.0.1:9445")]);
     let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
