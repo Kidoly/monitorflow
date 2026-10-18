@@ -1,5 +1,6 @@
 //! `AgentService::Stream`: identity checks, `Hello`, then the per-connection
-//! loop that tracks liveness and sequence numbers.
+//! loop that tracks liveness and sequence numbers and hands samples to
+//! ingest (ADR-0013).
 //!
 //! Envelope payloads are never logged: command payloads and results will
 //! carry sensitive data.
@@ -13,7 +14,7 @@ use std::time::Duration;
 use chrono::Utc;
 use monitorflow_common::proto::v1::agent_service_server::AgentService;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Envelope, Hello};
+use monitorflow_common::proto::v1::{Envelope, Hello, SampleBatch};
 use monitorflow_common::tls::{self, PeerIdentity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
 use tokio::sync::{mpsc, oneshot};
@@ -25,7 +26,11 @@ use super::inventory::{AcceptedHello, Inventory, InventoryError, NoInventory};
 use super::policy::RelayPolicy;
 use super::registry::{CloseReason, Counters, PeerInfo, Registry};
 use super::StreamSettings;
+use crate::ingest::{self, Identity, Ingest, LogRecord};
 use crate::renew::PresentedCert;
+
+/// Least time between two warnings about invalid samples on one stream.
+const INVALID_SAMPLE_LOG_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Why a stream was refused before registration.
 #[derive(Debug, thiserror::Error)]
@@ -134,6 +139,7 @@ pub struct AgentStreamService {
     registry: Registry,
     policy: Arc<dyn RelayPolicy>,
     inventory: Arc<dyn Inventory>,
+    ingest: Ingest,
     settings: StreamSettings,
 }
 
@@ -145,8 +151,16 @@ impl AgentStreamService {
             registry,
             policy,
             inventory: Arc::new(NoInventory),
+            ingest: Ingest::default(),
             settings,
         }
+    }
+
+    /// Sends samples and stream events to these queues; without it they
+    /// are counted and discarded.
+    pub fn with_ingest(mut self, ingest: Ingest) -> Self {
+        self.ingest = ingest;
+        self
     }
 
     pub fn with_inventory(mut self, inventory: Arc<dyn Inventory>) -> Self {
@@ -159,13 +173,12 @@ impl AgentStreamService {
     }
 
     /// Waits for `Hello`, checks it against the peer's certificate and
-    /// records it in the inventory. Returns its sequence, the Hello, and the
-    /// relay speaking for the agent.
+    /// records it in the inventory.
     async fn handshake(
         &self,
         peer: &PeerIdentity,
         inbound: &mut Streaming<Envelope>,
-    ) -> Result<(u64, Hello, Option<String>), HandshakeError> {
+    ) -> Result<Accepted, HandshakeError> {
         if peer.role() == PeerRole::Server {
             return Err(HandshakeError::ServerRole);
         }
@@ -204,9 +217,24 @@ impl AgentStreamService {
         if accepted.role() == PeerRole::Agent {
             check_agent_hello(&hello)?;
         }
-        self.inventory.hello(accepted).await?;
-        Ok((first.sequence, hello, via_relay))
+        let site = self.inventory.hello(accepted).await?;
+        Ok(Accepted {
+            sequence: first.sequence,
+            hello,
+            via_relay,
+            site,
+        })
     }
+}
+
+/// What the handshake established.
+struct Accepted {
+    sequence: u64,
+    hello: Hello,
+    /// The relay speaking for the agent, if any.
+    via_relay: Option<String>,
+    /// The peer's site, from the inventory.
+    site: String,
 }
 
 #[tonic::async_trait]
@@ -220,7 +248,7 @@ impl AgentService for AgentStreamService {
         let peer = tls::peer_identity(&request)?;
         let cert_serial = PresentedCert::from_request(&request).ok().map(|c| c.serial);
         let mut inbound = request.into_inner();
-        let (sequence, hello, via_relay) = match self.handshake(&peer, &mut inbound).await {
+        let accepted = match self.handshake(&peer, &mut inbound).await {
             Ok(accepted) => accepted,
             Err(error) => {
                 match &error {
@@ -243,6 +271,12 @@ impl AgentService for AgentStreamService {
             }
         };
 
+        let Accepted {
+            sequence,
+            hello,
+            via_relay,
+            site,
+        } = accepted;
         let now = Utc::now();
         let role = if via_relay.is_some() {
             PeerRole::Agent
@@ -252,7 +286,7 @@ impl AgentService for AgentStreamService {
         let info = PeerInfo {
             id: hello.agent_id,
             role,
-            via_relay,
+            via_relay: via_relay.clone(),
             connection: 0,
             cert_serial,
             agent_version: hello.agent_version,
@@ -269,8 +303,20 @@ impl AgentService for AgentStreamService {
             .register(info, outbound_tx)
             .map_err(|e| Status::unavailable(e.to_string()))?;
         tracing::info!(%peer, agent_id = %id, connection = registration.connection, "stream opened");
+        let event = StreamEvent {
+            peer: id.clone(),
+            site: site.clone(),
+            role,
+            via_relay: via_relay.unwrap_or_default(),
+            connection: registration.connection,
+        };
+        self.ingest.event(event.record("stream opened", None));
 
         let (end_tx, end_rx) = oneshot::channel();
+        let identity = Identity {
+            peer: id.clone(),
+            site,
+        };
         let connection = Connection {
             registry: self.registry.clone(),
             id,
@@ -282,6 +328,10 @@ impl AgentService for AgentStreamService {
             // The Hello just wrote last_seen_at.
             last_recorded: Instant::now(),
             last_seen_interval: self.settings.last_seen_interval,
+            identity,
+            ingest: self.ingest.clone(),
+            event,
+            invalid_logged: None,
         };
         tokio::spawn(connection.run(
             inbound,
@@ -329,6 +379,41 @@ struct Connection {
     inventory: Arc<dyn Inventory>,
     last_recorded: Instant,
     last_seen_interval: Duration,
+    /// The `peer` and `site` labels of this stream's series.
+    identity: Identity,
+    ingest: Ingest,
+    event: StreamEvent,
+    /// When invalid samples were last logged.
+    invalid_logged: Option<Instant>,
+}
+
+/// Fields of the stream events recorded in VictoriaLogs. Identifiers only.
+struct StreamEvent {
+    peer: String,
+    site: String,
+    role: PeerRole,
+    via_relay: String,
+    connection: u64,
+}
+
+impl StreamEvent {
+    fn record(&self, msg: &str, reason: Option<&str>) -> LogRecord {
+        LogRecord::new(msg)
+            .field(
+                "event",
+                if reason.is_some() {
+                    "peer.disconnect"
+                } else {
+                    "peer.connect"
+                },
+            )
+            .field("peer", &self.peer)
+            .field("site", &self.site)
+            .field("role", self.role.to_string())
+            .field("relay", &self.via_relay)
+            .field("connection", self.connection.to_string())
+            .field("reason", reason.unwrap_or_default())
+    }
 }
 
 impl Connection {
@@ -341,6 +426,7 @@ impl Connection {
     ) {
         let idle = sleep(heartbeat_timeout);
         tokio::pin!(idle);
+        let mut reason = "closed";
         let status = loop {
             tokio::select! {
                 message = inbound.message() => match message {
@@ -351,17 +437,23 @@ impl Connection {
                     Ok(None) => break None,
                     Err(status) => {
                         tracing::debug!(agent_id = %self.id, %status, "stream failed");
+                        reason = "error";
                         break None;
                     }
                 },
-                reason = &mut close => break Some(match reason {
+                close_reason = &mut close => break Some(match close_reason {
                     Ok(CloseReason::Replaced) => {
+                        reason = "replaced";
                         Status::aborted("replaced by a newer connection with the same ID")
                     }
-                    Ok(CloseReason::Shutdown) | Err(_) => Status::unavailable("server shutting down"),
+                    Ok(CloseReason::Shutdown) | Err(_) => {
+                        reason = "shutdown";
+                        Status::unavailable("server shutting down")
+                    }
                 }),
                 () = &mut idle => {
                     tracing::info!(agent_id = %self.id, timeout = ?heartbeat_timeout, "heartbeat timeout");
+                    reason = "heartbeat_timeout";
                     break Some(Status::deadline_exceeded(format!(
                         "no message for {heartbeat_timeout:?}"
                     )));
@@ -370,6 +462,8 @@ impl Connection {
         };
         // Remove first, so a peer that sees the stream end is already gone.
         self.registry.remove(&self.id, self.number);
+        self.ingest
+            .event(self.event.record("stream closed", Some(reason)));
         if let Some(status) = status {
             let _ = end.send(status);
         }
@@ -417,15 +511,40 @@ impl Connection {
         });
     }
 
+    /// Validates a batch and queues it for VictoriaMetrics. Invalid
+    /// samples are dropped and counted; the stream stays open (ADR-0013).
+    fn samples(&mut self, batch: SampleBatch) {
+        self.counters.sample_batches += 1;
+        self.counters.samples += batch.samples.len() as u64;
+        let checked = ingest::check_batch(&self.identity, batch, Utc::now().timestamp_millis());
+        let (invalid, first_error) = (checked.invalid, checked.first_error);
+        self.counters.invalid_samples += invalid;
+        self.counters.dropped_samples += self.ingest.samples(checked);
+        let Some(error) = first_error else { return };
+        let now = Instant::now();
+        if self
+            .invalid_logged
+            .is_some_and(|at| now.duration_since(at) < INVALID_SAMPLE_LOG_INTERVAL)
+        {
+            return;
+        }
+        self.invalid_logged = Some(now);
+        tracing::warn!(
+            agent_id = %self.id,
+            invalid,
+            total_invalid = self.counters.invalid_samples,
+            %error,
+            "dropped invalid samples"
+        );
+    }
+
     fn handle(&mut self, sequence: u64, payload: Option<Payload>) {
         let id = &self.id;
         match payload {
             Some(Payload::Heartbeat(_)) => tracing::trace!(agent_id = %id, sequence, "heartbeat"),
-            // TODO(phase2-ingest): store samples in VictoriaMetrics.
             Some(Payload::Samples(batch)) => {
-                self.counters.sample_batches += 1;
-                self.counters.samples += batch.samples.len() as u64;
                 tracing::debug!(agent_id = %id, sequence, samples = batch.samples.len(), "sample batch");
+                self.samples(batch);
             }
             // TODO(phase2-ingest): record command results and audit them.
             Some(Payload::CommandResult(result)) => {

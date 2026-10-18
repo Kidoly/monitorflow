@@ -17,6 +17,7 @@ use monitorflow_server::enroll::{self, server_cert, token, Enroller, FailureLimi
 use monitorflow_server::grpc::{
     self, AgentStreamService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
 };
+use monitorflow_server::ingest::{Ingest, JsonLines, RemoteWrite, Writer, WriterSettings};
 use monitorflow_server::renew::Renewer;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
@@ -140,13 +141,27 @@ async fn main() -> anyhow::Result<()> {
     let api_listener = TcpListener::bind(config.api_listen_addr)
         .await
         .with_context(|| format!("binding API listener on {}", config.api_listen_addr))?;
+    // Storage writers (ADR-0013). Streams only push to their queues.
+    let writer_settings = WriterSettings::from_config(&config.ingest);
+    let metrics = Writer::spawn(
+        RemoteWrite::new(&config.victoriametrics_url).context("VictoriaMetrics client")?,
+        writer_settings.clone(),
+    );
+    let events = Writer::spawn(
+        JsonLines::new(&config.victorialogs_url).context("VictoriaLogs client")?,
+        writer_settings,
+    );
     let registry = Registry::default();
     let service = AgentStreamService::new(
         registry.clone(),
         Arc::new(DbRelayPolicy::new(pool.clone())),
         StreamSettings::from_config(&config),
     )
-    .with_inventory(Arc::new(DbInventory::new(pool.clone())));
+    .with_inventory(Arc::new(DbInventory::new(pool.clone())))
+    .with_ingest(Ingest {
+        metrics: Some(metrics.queue()),
+        events: Some(events.queue()),
+    });
     let api_state = ApiState::new(pool.clone(), registry, ApiSettings::from_config(&config));
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
@@ -170,7 +185,7 @@ async fn main() -> anyhow::Result<()> {
         api = %config.api_listen_addr,
         "listening"
     );
-    tokio::try_join!(
+    let served = tokio::try_join!(
         async {
             grpc::serve_with_renewer(
                 listener,
@@ -205,7 +220,11 @@ async fn main() -> anyhow::Result<()> {
             .await;
             Ok(())
         },
-    )?;
+    );
+    // Streams are closed by now; flush what they queued, even after an error.
+    let deadline = Duration::from_secs(config.ingest.shutdown_timeout);
+    tokio::join!(metrics.shutdown(deadline), events.shutdown(deadline));
+    served?;
     tracing::info!("server stopped");
     Ok(())
 }

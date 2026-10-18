@@ -41,6 +41,10 @@ pub struct Counters {
     pub stale_sequences: u64,
     pub sample_batches: u64,
     pub samples: u64,
+    /// Samples dropped by validation (ADR-0013).
+    pub invalid_samples: u64,
+    /// Valid samples dropped because the metrics queue was full.
+    pub dropped_samples: u64,
     pub command_results: u64,
 }
 
