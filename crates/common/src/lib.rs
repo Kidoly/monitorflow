@@ -3,6 +3,8 @@
 
 /// Generated Protobuf and gRPC code for the `monitorflow.v1` package.
 pub mod proto {
+    // Generated code; tonic's client returns `tonic::Status` in a large `Err`.
+    #[allow(clippy::result_large_err)]
     pub mod v1 {
         tonic::include_proto!("monitorflow.v1");
     }
