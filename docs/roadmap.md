@@ -11,7 +11,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] `server::ca`: certificate authority (root key at rest, issue short-lived client certs, revocation list) using `rcgen` and `x509-parser`.
 - [x] `server::enroll`: one-time enrollment tokens stored in PostgreSQL; gRPC `Enroll` RPC that exchanges a token for a certificate.
 - [x] `server::grpc`: `AgentService::Stream` bidirectional stream; registry of connected agents; heartbeat timeout.
-- [ ] `agent`: connect, enroll on first run, keep the stream open with reconnect and backoff, send heartbeats.
+- [x] `agent`: connect, enroll on first run, keep the stream open with reconnect and backoff, send heartbeats.
 - [x] PostgreSQL migrations: servers, enrollment_tokens, certificates, users, roles.
 - [x] `server::api`: axum skeleton, health endpoint, session auth, `GET /api/servers`.
 - [ ] Certificate renewal before expiry, driven by the agent.
