@@ -21,6 +21,8 @@ message Envelope {
     Hello hello = 10;
     Heartbeat heartbeat = 11;
     SampleBatch samples = 12;
+    SensorConfig sensor_config = 13;
+    SensorConfigAck sensor_config_ack = 14;
     Command command = 20;
     CommandResult command_result = 21;
   }
@@ -53,6 +55,42 @@ message Sample {
 
 message SampleBatch {
   repeated Sample samples = 1;
+}
+
+// Sensors an agent must run, sent by the server after a valid Hello and
+// again whenever the configuration changes (ADR-0016). Replaces the whole
+// previous configuration.
+message SensorConfig {
+  // Grows with every change of the server's configuration in the database.
+  uint64 revision = 1;
+  repeated SensorSpec sensors = 2;
+}
+
+// One configured sensor; (name, instance) is unique within a SensorConfig.
+message SensorSpec {
+  // Implementation to run, like "cpu" or "port".
+  string kind = 1;
+  // Sensor name: the metric name on the server (ADR-0013).
+  string name = 2;
+  string instance = 3;
+  uint64 interval_ms = 4;
+  // 0 means the agent's default timeout, capped by the interval.
+  uint64 timeout_ms = 5;
+  // Kind-specific parameters.
+  map<string, string> params = 6;
+}
+
+// Sent by an agent once it applied a SensorConfig, valid or not.
+message SensorConfigAck {
+  uint64 revision = 1;
+  // Specs the agent refused; the others run.
+  repeated SensorSpecError errors = 2;
+}
+
+message SensorSpecError {
+  string name = 1;
+  string instance = 2;
+  string message = 3;
 }
 
 // A command from the central server. Always signed; agents verify before running.

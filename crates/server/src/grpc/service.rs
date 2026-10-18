@@ -1,6 +1,7 @@
 //! `AgentService::Stream`: identity checks, `Hello`, then the per-connection
 //! loop that tracks liveness and sequence numbers and hands samples to
-//! ingest (ADR-0013).
+//! ingest (ADR-0013). Agents get their sensor configuration right after
+//! `Hello` (ADR-0016).
 //!
 //! Envelope payloads are never logged: command payloads and results will
 //! carry sensitive data.
@@ -14,7 +15,7 @@ use std::time::Duration;
 use chrono::Utc;
 use monitorflow_common::proto::v1::agent_service_server::AgentService;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Envelope, Hello, SampleBatch};
+use monitorflow_common::proto::v1::{Envelope, Hello, SampleBatch, SensorConfigAck};
 use monitorflow_common::tls::{self, PeerIdentity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
 use tokio::sync::{mpsc, oneshot};
@@ -28,9 +29,12 @@ use super::registry::{CloseReason, Counters, PeerInfo, Registry};
 use super::StreamSettings;
 use crate::ingest::{self, Identity, Ingest, LogRecord};
 use crate::renew::PresentedCert;
+use crate::sensor_config::{Resolved, SensorConfigs};
 
 /// Least time between two warnings about invalid samples on one stream.
 const INVALID_SAMPLE_LOG_INTERVAL: Duration = Duration::from_secs(60);
+/// Longest error text from an agent written to the log.
+const MAX_LOGGED_ERROR: usize = 256;
 
 /// Why a stream was refused before registration.
 #[derive(Debug, thiserror::Error)]
@@ -60,6 +64,8 @@ pub enum HandshakeError {
     BadHello(String),
     #[error(transparent)]
     Inventory(#[from] InventoryError),
+    #[error("sensor configuration database error: {0}")]
+    SensorConfig(#[source] sqlx::Error),
 }
 
 impl From<HandshakeError> for Status {
@@ -79,6 +85,9 @@ impl From<HandshakeError> for Status {
             | HandshakeError::BadHello(_) => Status::invalid_argument(message),
             HandshakeError::Inventory(InventoryError::Db(_)) => {
                 Status::unavailable("inventory unavailable; retry later")
+            }
+            HandshakeError::SensorConfig(_) => {
+                Status::unavailable("sensor configuration unavailable; retry later")
             }
             HandshakeError::Inventory(_) => Status::permission_denied(message),
         }
@@ -140,6 +149,7 @@ pub struct AgentStreamService {
     policy: Arc<dyn RelayPolicy>,
     inventory: Arc<dyn Inventory>,
     ingest: Ingest,
+    sensor_configs: Option<SensorConfigs>,
     settings: StreamSettings,
 }
 
@@ -152,8 +162,16 @@ impl AgentStreamService {
             policy,
             inventory: Arc::new(NoInventory),
             ingest: Ingest::default(),
+            sensor_configs: None,
             settings,
         }
+    }
+
+    /// Sends agents their sensor configuration after Hello and records
+    /// their acknowledgements; without it agents get none.
+    pub fn with_sensor_configs(mut self, sensor_configs: SensorConfigs) -> Self {
+        self.sensor_configs = Some(sensor_configs);
+        self
     }
 
     /// Sends samples and stream events to these queues; without it they
@@ -218,11 +236,19 @@ impl AgentStreamService {
             check_agent_hello(&hello)?;
         }
         let site = self.inventory.hello(accepted).await?;
+        let sensor_config = match (&self.sensor_configs, accepted.role()) {
+            (Some(configs), PeerRole::Agent) => configs
+                .load(&hello.agent_id)
+                .await
+                .map_err(HandshakeError::SensorConfig)?,
+            _ => None,
+        };
         Ok(Accepted {
             sequence: first.sequence,
             hello,
             via_relay,
             site,
+            sensor_config,
         })
     }
 }
@@ -235,6 +261,8 @@ struct Accepted {
     via_relay: Option<String>,
     /// The peer's site, from the inventory.
     site: String,
+    /// What to send right after registration.
+    sensor_config: Option<Resolved>,
 }
 
 #[tonic::async_trait]
@@ -262,7 +290,8 @@ impl AgentService for AgentStreamService {
                     | HandshakeError::Inventory(
                         InventoryError::Revoked { .. } | InventoryError::NotEnrolled { .. },
                     ) => tracing::warn!(%peer, %error, "stream refused"),
-                    HandshakeError::Inventory(InventoryError::Db(_)) => {
+                    HandshakeError::Inventory(InventoryError::Db(_))
+                    | HandshakeError::SensorConfig(_) => {
                         tracing::error!(%peer, %error, "stream refused")
                     }
                     _ => tracing::info!(%peer, %error, "stream refused"),
@@ -276,6 +305,7 @@ impl AgentService for AgentStreamService {
             hello,
             via_relay,
             site,
+            sensor_config,
         } = accepted;
         let now = Utc::now();
         let role = if via_relay.is_some() {
@@ -295,13 +325,23 @@ impl AgentService for AgentStreamService {
             last_seen: now,
             last_sequence: sequence,
             counters: Counters::default(),
+            sensor_revision_sent: sensor_config.as_ref().map(|c| c.revision),
+            sensor_revision_applied: None,
         };
         let (outbound_tx, outbound_rx) = mpsc::channel(self.settings.outbound_capacity);
         let id = info.id.clone();
         let registration = self
             .registry
-            .register(info, outbound_tx)
+            .register(info, outbound_tx.clone())
             .map_err(|e| Status::unavailable(e.to_string()))?;
+        if let Some(config) = sensor_config {
+            let envelope = self
+                .registry
+                .envelope(Payload::SensorConfig(config.to_proto()));
+            // The queue is new and empty.
+            let _ = outbound_tx.try_send(envelope);
+        }
+        drop(outbound_tx);
         tracing::info!(%peer, agent_id = %id, connection = registration.connection, "stream opened");
         let event = StreamEvent {
             peer: id.clone(),
@@ -330,6 +370,7 @@ impl AgentService for AgentStreamService {
             last_seen_interval: self.settings.last_seen_interval,
             identity,
             ingest: self.ingest.clone(),
+            sensor_configs: self.sensor_configs.clone(),
             event,
             invalid_logged: None,
         };
@@ -382,6 +423,7 @@ struct Connection {
     /// The `peer` and `site` labels of this stream's series.
     identity: Identity,
     ingest: Ingest,
+    sensor_configs: Option<SensorConfigs>,
     event: StreamEvent,
     /// When invalid samples were last logged.
     invalid_logged: Option<Instant>,
@@ -538,6 +580,41 @@ impl Connection {
         );
     }
 
+    /// Records the revision an agent applied. Refused specs are logged:
+    /// the operator fixes them in the configuration.
+    fn sensor_config_ack(&mut self, sequence: u64, ack: SensorConfigAck) {
+        let id = &self.id;
+        if self.role != PeerRole::Agent {
+            tracing::debug!(agent_id = %id, sequence, "ignoring sensor configuration ack from a relay");
+            return;
+        }
+        if let Some(first) = ack.errors.first() {
+            let message: String = first
+                .message
+                .escape_debug()
+                .take(MAX_LOGGED_ERROR)
+                .collect();
+            tracing::warn!(
+                agent_id = %id,
+                revision = ack.revision,
+                refused = ack.errors.len(),
+                sensor = %first.name.escape_debug(),
+                instance = %first.instance.escape_debug(),
+                error = %message,
+                "agent refused sensors of its configuration"
+            );
+        } else {
+            tracing::debug!(agent_id = %id, revision = ack.revision, "sensor configuration applied");
+        }
+        let revision = ack.revision;
+        self.registry.update(id, self.number, |info| {
+            info.sensor_revision_applied = Some(revision);
+        });
+        if let Some(configs) = &self.sensor_configs {
+            configs.applied(id, revision);
+        }
+    }
+
     fn handle(&mut self, sequence: u64, payload: Option<Payload>) {
         let id = &self.id;
         match payload {
@@ -545,6 +622,10 @@ impl Connection {
             Some(Payload::Samples(batch)) => {
                 tracing::debug!(agent_id = %id, sequence, samples = batch.samples.len(), "sample batch");
                 self.samples(batch);
+            }
+            Some(Payload::SensorConfigAck(ack)) => self.sensor_config_ack(sequence, ack),
+            Some(Payload::SensorConfig(_)) => {
+                tracing::warn!(agent_id = %id, sequence, "ignoring SensorConfig sent upstream")
             }
             // TODO(phase2-ingest): record command results and audit them.
             Some(Payload::CommandResult(result)) => {
@@ -610,6 +691,9 @@ mod tests {
         let status = Status::from(HandshakeError::from(InventoryError::Db(
             sqlx::Error::PoolClosed,
         )));
+        assert_eq!(status.code(), Code::Unavailable);
+        assert!(!status.message().contains("pool"), "{status}");
+        let status = Status::from(HandshakeError::SensorConfig(sqlx::Error::PoolClosed));
         assert_eq!(status.code(), Code::Unavailable);
         assert!(!status.message().contains("pool"), "{status}");
     }

@@ -142,6 +142,7 @@ db_tests! {
                 "certificates",
                 "enrollment_tokens",
                 "relays",
+                "sensor_configs",
                 "servers",
                 "sessions",
                 "sites",

@@ -9,3 +9,4 @@ pub mod enroll;
 pub mod grpc;
 pub mod ingest;
 pub mod renew;
+pub mod sensor_config;
