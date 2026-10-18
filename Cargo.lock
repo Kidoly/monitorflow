@@ -1205,11 +1205,15 @@ dependencies = [
  "clap",
  "monitorflow-common",
  "monitorflow-sensors",
+ "rcgen",
  "serde",
+ "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "toml",
  "tonic",
  "tracing",
+ "x509-parser 0.18.1",
 ]
 
 [[package]]

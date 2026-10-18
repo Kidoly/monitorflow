@@ -27,6 +27,9 @@ pub const ENV_PREFIX: &str = "MONITORFLOW_";
 /// Seconds between agent heartbeats unless configured otherwise.
 pub const DEFAULT_HEARTBEAT_INTERVAL: u64 = 30;
 
+/// Port of the server's enrollment listener unless configured otherwise.
+pub const DEFAULT_ENROLL_PORT: u16 = 7445;
+
 /// Environment variables as a map, so tests can pass their own.
 pub type Env = HashMap<String, String>;
 
@@ -346,17 +349,40 @@ impl LogConfig {
     }
 }
 
+/// Agent identity files. Unset paths default to files under
+/// `<data_dir>/tls/`, where enrollment writes them; see
+/// [`AgentConfig::tls_paths`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentTlsPaths {
+    pub ca_cert: Option<PathBuf>,
+    pub cert: Option<PathBuf>,
+    pub key: Option<PathBuf>,
+}
+
+impl AgentTlsPaths {
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set_opt("tls.ca_cert", &mut self.ca_cert)?;
+        env.set_opt("tls.cert", &mut self.cert)?;
+        env.set_opt("tls.key", &mut self.key)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AgentConfig {
     /// gRPC endpoint of a relay or the server, `https://host:port`.
     pub upstream_url: String,
+    /// Enrollment endpoint of the server (ADR-0007). Defaults to the host of
+    /// `upstream_url` on port [`DEFAULT_ENROLL_PORT`]; see
+    /// [`Self::enroll_url`].
+    pub enroll_url: Option<String>,
     pub data_dir: PathBuf,
     /// One-time token, only needed for the first run.
     pub enrollment_token: Option<Secret>,
     /// Seconds between heartbeats.
     pub heartbeat_interval: u64,
-    pub tls: TlsPaths,
+    pub tls: AgentTlsPaths,
     pub log: LogConfig,
 }
 
@@ -364,11 +390,41 @@ impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             upstream_url: String::new(),
+            enroll_url: None,
             data_dir: "/var/lib/monitorflow/agent".into(),
             enrollment_token: None,
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
-            tls: TlsPaths::default(),
+            tls: AgentTlsPaths::default(),
             log: LogConfig::default(),
+        }
+    }
+}
+
+impl AgentConfig {
+    /// The configured `enroll_url`, or `https://<upstream host>:7445`.
+    /// Call on a validated config.
+    pub fn enroll_url(&self) -> String {
+        if let Some(url) = &self.enroll_url {
+            return url.clone();
+        }
+        match GrpcUrl::parse(&self.upstream_url) {
+            Ok(mut url) => {
+                url.port = DEFAULT_ENROLL_PORT;
+                url.to_string()
+            }
+            Err(_) => String::new(),
+        }
+    }
+
+    /// Identity file paths, with defaults under `<data_dir>/tls/`.
+    pub fn tls_paths(&self) -> TlsPaths {
+        let dir = self.data_dir.join("tls");
+        let or =
+            |path: &Option<PathBuf>, name: &str| path.clone().unwrap_or_else(|| dir.join(name));
+        TlsPaths {
+            ca_cert: or(&self.tls.ca_cert, "ca.pem"),
+            cert: or(&self.tls.cert, "cert.pem"),
+            key: or(&self.tls.key, "key.pem"),
         }
     }
 }
@@ -376,6 +432,7 @@ impl Default for AgentConfig {
 impl LoadConfig for AgentConfig {
     fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
         env.set("upstream_url", &mut self.upstream_url)?;
+        env.set_opt("enroll_url", &mut self.enroll_url)?;
         env.set("data_dir", &mut self.data_dir)?;
         env.set_opt("enrollment_token", &mut self.enrollment_token)?;
         env.set("heartbeat_interval", &mut self.heartbeat_interval)?;
@@ -385,6 +442,9 @@ impl LoadConfig for AgentConfig {
 
     fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
         check.grpc_url("upstream_url", &self.upstream_url)?;
+        if let Some(url) = &self.enroll_url {
+            check.grpc_url("enroll_url", url)?;
+        }
         check.positive("heartbeat_interval", self.heartbeat_interval)
     }
 }
@@ -468,7 +528,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             grpc_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7443)),
-            enroll_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7445)),
+            enroll_listen_addr: SocketAddr::from(([0, 0, 0, 0], DEFAULT_ENROLL_PORT)),
             api_listen_addr: SocketAddr::from(([127, 0, 0, 1], 7444)),
             api_cookie_secure: true,
             api_session_lifetime: 12 * 60 * 60,
