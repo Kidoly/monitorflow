@@ -34,10 +34,34 @@ pub struct CurrentUser {
     session: SessionToken,
 }
 
+/// Sites whose data a user may read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SiteScope {
+    /// No role at all.
+    None,
+    /// At least one global role.
+    All,
+    /// Only site-scoped roles, on these sites.
+    Sites(Vec<Uuid>),
+}
+
 impl CurrentUser {
     /// Every role includes read access to the sites it covers.
     pub fn can_read(&self) -> bool {
         !self.roles.is_empty()
+    }
+
+    pub fn readable_sites(&self) -> SiteScope {
+        if self.roles.is_empty() {
+            return SiteScope::None;
+        }
+        if self.roles.iter().any(|grant| grant.site_id.is_none()) {
+            return SiteScope::All;
+        }
+        let mut sites: Vec<Uuid> = self.roles.iter().filter_map(|g| g.site_id).collect();
+        sites.sort();
+        sites.dedup();
+        SiteScope::Sites(sites)
     }
 }
 
@@ -238,4 +262,42 @@ pub async fn logout(
 /// `GET /api/auth/me`.
 pub async fn me(user: CurrentUser) -> Json<Me> {
     Json(Me::from(&user))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::Role;
+
+    fn user(roles: &[(Role, Option<Uuid>)]) -> CurrentUser {
+        CurrentUser {
+            id: Uuid::nil(),
+            username: "u".into(),
+            roles: roles
+                .iter()
+                .map(|&(role, site_id)| RoleGrant { role, site_id })
+                .collect(),
+            session: SessionToken::for_tests(),
+        }
+    }
+
+    #[test]
+    fn readable_sites_follow_role_grants() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        assert_eq!(user(&[]).readable_sites(), SiteScope::None);
+        assert!(!user(&[]).can_read());
+        assert_eq!(
+            user(&[(Role::Viewer, Some(b)), (Role::Operator, None)]).readable_sites(),
+            SiteScope::All
+        );
+        assert_eq!(
+            user(&[
+                (Role::Operator, Some(b)),
+                (Role::Viewer, Some(a)),
+                (Role::Viewer, Some(b))
+            ])
+            .readable_sites(),
+            SiteScope::Sites(vec![a, b])
+        );
+    }
 }

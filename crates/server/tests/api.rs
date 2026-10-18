@@ -5,12 +5,14 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
+use chrono::{TimeZone, Utc};
 use monitorflow_common::redact::Secret;
+use monitorflow_common::tls::PeerRole;
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::session;
 use monitorflow_server::api::users::{self, CreateUserError};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
-use monitorflow_server::grpc::Registry;
+use monitorflow_server::grpc::{Counters, PeerInfo, Registry};
 use serde_json::json;
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -32,11 +34,11 @@ macro_rules! db_tests {
 }
 
 fn app(pool: PgPool) -> Router {
-    api::router(ApiState::new(
-        pool,
-        Registry::default(),
-        ApiSettings::default(),
-    ))
+    app_with(pool, Registry::default())
+}
+
+fn app_with(pool: PgPool, registry: Registry) -> Router {
+    api::router(ApiState::new(pool, registry, ApiSettings::default()))
 }
 
 async fn call(app: Router, request: Request<Body>) -> (StatusCode, serde_json::Value) {
@@ -314,5 +316,132 @@ db_tests! {
         assert_eq!(audit.len(), 1);
         assert_eq!(audit[0].0, "user.create");
         assert_eq!(audit[0].2, json!({ "username": "Alice", "role": "administrator" }));
+    }
+
+    #[sqlx::test]
+    async fn servers_require_a_session_and_a_role(pool: PgPool) {
+        let (status, _) = call(app(pool.clone()), with_cookie("GET", "/api/servers", "x=y")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let id = add_user(&pool, "norole", Role::Viewer).await;
+        sqlx::query("DELETE FROM user_roles WHERE user_id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let session = login(&pool, "norole").await;
+        let (status, body) = call(app(pool.clone()), with_cookie("GET", "/api/servers", &session)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body, json!({ "error": "forbidden" }));
+    }
+
+    #[sqlx::test]
+    async fn servers_join_live_registry_status(pool: PgPool) {
+        let paris: Uuid = sqlx::query_scalar("INSERT INTO sites (name) VALUES ('paris') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let seen = Utc.with_ymd_and_hms(2026, 10, 1, 8, 0, 0).unwrap();
+        for (peer, host) in [("agent-b", "web-2"), ("agent-a", "web-1")] {
+            sqlx::query(
+                "INSERT INTO servers (peer_id, site_id, hostname, os_family, agent_version, last_seen_at)
+                 VALUES ($1, $2, $3, 'debian', '0.0.9', $4)",
+            )
+            .bind(peer)
+            .bind(paris)
+            .bind(host)
+            .bind(seen)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let registry = Registry::default();
+        let connected = Utc.with_ymd_and_hms(2026, 10, 18, 12, 0, 0).unwrap();
+        let heartbeat = Utc.with_ymd_and_hms(2026, 10, 18, 12, 5, 0).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let _registration = registry
+            .register(
+                PeerInfo {
+                    id: "agent-a".into(),
+                    role: PeerRole::Agent,
+                    via_relay: Some("relay-1".into()),
+                    connection: 0,
+                    agent_version: "0.1.0".into(),
+                    hostname: "web-1".into(),
+                    connected_at: connected,
+                    last_seen: heartbeat,
+                    last_sequence: 1,
+                    counters: Counters::default(),
+                },
+                tx,
+            )
+            .unwrap();
+
+        add_user(&pool, "alice", Role::Viewer).await;
+        let session = login(&pool, "alice").await;
+        let (status, body) =
+            call(app_with(pool.clone(), registry), with_cookie("GET", "/api/servers", &session)).await;
+        assert_eq!(status, StatusCode::OK);
+        let servers = body["servers"].as_array().unwrap();
+        assert_eq!(servers.len(), 2);
+
+        let online = &servers[0];
+        assert_eq!(online["peer_id"], "agent-a");
+        assert_eq!(online["hostname"], "web-1");
+        assert_eq!(online["site_name"], "paris");
+        assert_eq!(online["site_id"], json!(paris));
+        assert_eq!(online["status"], "online");
+        assert_eq!(online["connected_at"], "2026-10-18T12:00:00Z");
+        assert_eq!(online["last_heartbeat"], "2026-10-18T12:05:00Z");
+        assert_eq!(online["via_relay"], "relay-1");
+        assert_eq!(online["agent_version"], "0.1.0");
+
+        let offline = &servers[1];
+        assert_eq!(offline["peer_id"], "agent-b");
+        assert_eq!(offline["status"], "offline");
+        assert_eq!(offline["connected_at"], serde_json::Value::Null);
+        assert_eq!(offline["last_heartbeat"], "2026-10-01T08:00:00Z");
+        assert_eq!(offline["agent_version"], "0.0.9");
+        assert_eq!(offline["os_family"], "debian");
+        assert_eq!(offline["revoked_at"], serde_json::Value::Null);
+    }
+
+    #[sqlx::test]
+    async fn site_scoped_roles_see_only_their_sites(pool: PgPool) {
+        let mut sites = Vec::new();
+        for name in ["paris", "lyon"] {
+            let site: Uuid = sqlx::query_scalar("INSERT INTO sites (name) VALUES ($1) RETURNING id")
+                .bind(name)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO servers (peer_id, site_id, hostname, os_family) VALUES ($1, $2, $1, 'rhel')",
+            )
+            .bind(format!("agent-{name}"))
+            .bind(site)
+            .execute(&pool)
+            .await
+            .unwrap();
+            sites.push(site);
+        }
+        let id = add_user(&pool, "paris-viewer", Role::Viewer).await;
+        sqlx::query("UPDATE user_roles SET site_id = $2 WHERE user_id = $1")
+            .bind(id)
+            .bind(sites[0])
+            .execute(&pool)
+            .await
+            .unwrap();
+        let session = login(&pool, "paris-viewer").await;
+        let (status, body) = call(app(pool.clone()), with_cookie("GET", "/api/servers", &session)).await;
+        assert_eq!(status, StatusCode::OK);
+        let peers: Vec<_> = body["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["peer_id"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(peers, ["agent-paris"]);
     }
 }
