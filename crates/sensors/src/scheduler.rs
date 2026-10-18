@@ -13,7 +13,8 @@
 //! - errors, timeouts and panics are counted and logged at most once per
 //!   [`LOG_EVERY`] per sensor and kind, then the sensor waits for its next
 //!   tick; a [`SensorError::Permanent`] stops that sensor only;
-//! - samples get the configured sensor name and default instance, are
+//! - samples get their full name ([`crate::metric_name`] of the configured
+//!   name and the suffix the sensor set) and the default instance, are
 //!   validated (invalid ones are dropped and counted) and sent with
 //!   `try_send`: when the channel is full the new sample is dropped and
 //!   counted, sensors are never slowed down by a slow consumer.
@@ -288,11 +289,13 @@ impl SensorTask {
                 failures = Limiter::default();
             }
             for mut sample in samples {
-                sample.sensor.clone_from(&self.config.name);
+                sample.sensor = crate::metric_name(&self.config.name, &sample.sensor);
                 if sample.instance.is_empty() {
                     sample.instance.clone_from(&self.config.instance);
                 }
-                if let Err(error) = validate::sample(&sample) {
+                let valid =
+                    validate::sensor_name(&sample.sensor).and_then(|()| validate::sample(&sample));
+                if let Err(error) = valid {
                     Counters::bump(&self.counters.invalid);
                     if let Some(suppressed) = invalid.allow() {
                         tracing::warn!(sensor = %self.config.name, instance = %self.config.instance, %error, suppressed, "dropping invalid sample");
