@@ -6,12 +6,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use monitorflow_agent::identity::{self, AgentIdentity, Enrolled};
 use monitorflow_common::config::{AgentConfig, TlsPaths};
 use monitorflow_common::redact::Secret;
-use monitorflow_common::tls::{Identity, PeerRole};
-use monitorflow_server::ca::{CaOptions, CertificateAuthority};
+use monitorflow_common::tls::{Identity, PeerIdentity, PeerRole};
+use monitorflow_server::ca::{CaOptions, CertificateAuthority, Serial};
+use monitorflow_server::crl::CrlPublisher;
 use monitorflow_server::enroll::token::{self, Creator, TokenRequest};
 use monitorflow_server::enroll::{self, server_cert, Enroller, FailureLimiter};
+use monitorflow_server::grpc::{self, AgentStreamService, DenyRelayedAgents, Registry};
 use sqlx::PgPool;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
@@ -94,6 +97,50 @@ impl Pki {
             std::future::pending(),
         ));
         url
+    }
+}
+
+/// The gRPC listener, with its registry and CRL publisher.
+pub struct Upstream {
+    pub url: String,
+    pub registry: Registry,
+    pub crl: CrlPublisher,
+}
+
+impl Pki {
+    /// Serves `AgentService` over mTLS with a CRL from the CA.
+    pub async fn serve_grpc(&self, settings: grpc::StreamSettings) -> Upstream {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = url(&listener);
+        let (crl, rx) = CrlPublisher::start(self.ca.clone(), self.server.clone())
+            .await
+            .unwrap();
+        let registry = Registry::default();
+        let service =
+            AgentStreamService::new(registry.clone(), Arc::new(DenyRelayedAgents), settings);
+        tokio::spawn(grpc::serve(listener, rx, service, std::future::pending()));
+        Upstream { url, registry, crl }
+    }
+
+    /// Issues an agent certificate without a token, as enrollment would,
+    /// and stores it where `config` looks for it.
+    pub fn agent_identity(&self, config: &AgentConfig, id: &str) -> (AgentIdentity, Serial) {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let csr = rcgen::CertificateParams::default()
+            .serialize_request(&key)
+            .unwrap()
+            .pem()
+            .unwrap();
+        let peer = PeerIdentity::new(PeerRole::Agent, id).unwrap();
+        let issued = self.ca.issue(&csr, &peer, None, &[]).unwrap();
+        let enrolled = Enrolled {
+            key_pem: Secret::new(key.serialize_pem()),
+            cert_pem: issued.cert_pem,
+            ca_cert_pem: self.ca.ca_cert_pem().to_owned(),
+        };
+        let paths = config.tls_paths();
+        identity::store(&paths, &enrolled).unwrap();
+        (identity::load(&paths).unwrap().unwrap(), issued.serial)
     }
 }
 

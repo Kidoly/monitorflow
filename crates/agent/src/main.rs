@@ -6,6 +6,7 @@ use anyhow::Context;
 use clap::Parser;
 use monitorflow_agent::backoff::Backoff;
 use monitorflow_agent::enroll::{self, EnrollError};
+use monitorflow_agent::stream::{Agent, StreamSettings};
 use monitorflow_agent::{os, shutdown};
 use monitorflow_common::config::{self, AgentConfig};
 use monitorflow_common::logging;
@@ -37,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
 
     let (trigger, stop) = shutdown::channel();
     shutdown::on_signals(trigger).context("cannot install signal handlers")?;
-    let identity = match enroll::ensure_identity(&config, Backoff::default(), stop).await {
+    let identity = match enroll::ensure_identity(&config, Backoff::default(), stop.clone()).await {
         Ok(identity) => identity,
         Err(EnrollError::Shutdown) => return Ok(()),
         Err(error) => return Err(error).context("no usable agent identity"),
@@ -49,6 +50,8 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!(peer = %identity.id, "certificate is close to expiry and renewal is not implemented yet");
     }
     tracing::info!(peer = %identity.id, "identity loaded");
-    // The upstream stream is added by the next roadmap step.
-    Ok(())
+    Agent::new(StreamSettings::from_config(&config), identity, host)
+        .run(stop)
+        .await
+        .context("cannot connect upstream")
 }

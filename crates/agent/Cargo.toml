@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 monitorflow-common.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
 tonic.workspace = true
 anyhow.workspace = true
 clap.workspace = true
