@@ -3,7 +3,12 @@
 //! [`Identity::load`] reads the PEM files named by [`TlsPaths`];
 //! [`Identity::server_config`] and [`Identity::client_config`] turn them into
 //! rustls configurations (TLS 1.3 only, ALPN `h2`, ring provider, trust in
-//! the configured CA only).
+//! the configured CA only). [`incoming`] and [`connect`] plug those into
+//! tonic, and [`peer_identity`] tells a handler which agent, relay or server
+//! is calling.
+
+mod peer;
+mod transport;
 
 #[cfg(test)]
 mod tests;
@@ -25,6 +30,9 @@ use rustls::sign::{CertifiedKey, SingleCertAndKey};
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
 
 use crate::config::TlsPaths;
+
+pub use peer::{peer_identity, validate_id, PeerIdentity, PeerRole, URI_SCHEME};
+pub use transport::{connect, connector, endpoint, incoming, AcceptOptions, DEFAULT_TIMEOUT};
 
 /// ALPN protocol of gRPC.
 const ALPN_H2: &[u8] = b"h2";
@@ -57,6 +65,31 @@ pub enum TlsError {
     KeyMismatch { cert: PathBuf, key: PathBuf },
     #[error("cannot build TLS configuration: {0}")]
     Config(String),
+    #[error("invalid gRPC URL `{url}`: {reason}")]
+    Url { url: String, reason: String },
+    #[error("cannot connect to {url}: {}", error_chain(error))]
+    Connect {
+        url: String,
+        error: tonic::transport::Error,
+    },
+    #[error("cannot identify peer: {0}")]
+    PeerIdentity(String),
+}
+
+/// `error: cause: root cause`, since tonic's own message is just
+/// "transport error".
+pub fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        // io::Error repeats its inner error as its source.
+        let cause_text = cause.to_string();
+        if !message.ends_with(&cause_text) {
+            message = format!("{message}: {cause_text}");
+        }
+        source = cause.source();
+    }
+    message
 }
 
 /// The ring provider, passed explicitly so nothing depends on a process-wide
