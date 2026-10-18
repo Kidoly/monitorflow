@@ -58,7 +58,10 @@ fn defaults_apply() {
 
     let server: ServerConfig = parse(SERVER_MIN).unwrap();
     assert_eq!(server.grpc_listen_addr.port(), 7443);
-    assert_eq!(server.api_listen_addr.port(), 7444);
+    assert_eq!(server.api_listen_addr, "127.0.0.1:7444".parse().unwrap());
+    assert!(server.api_cookie_secure);
+    assert_eq!(server.api_session_lifetime, 12 * 60 * 60);
+    assert_eq!(server.api_session_idle_timeout, 30 * 60);
     assert_eq!(server.victoriametrics_url, "http://localhost:8428");
     assert_eq!(server.data_dir, Path::new("/var/lib/monitorflow/server"));
     assert_eq!(server.heartbeat_timeout, 3 * agent.heartbeat_interval);
@@ -184,6 +187,22 @@ fn heartbeat_timeout_can_be_overridden() {
     let vars = env(&[("MONITORFLOW_HEARTBEAT_TIMEOUT", "45")]);
     let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
     assert_eq!(server.heartbeat_timeout, 45);
+}
+
+#[test]
+fn api_settings_can_be_overridden_and_must_be_positive() {
+    let text = format!("{SERVER_MIN}\napi_cookie_secure = false\napi_session_lifetime = 3600");
+    let server: ServerConfig = parse(&text).unwrap();
+    assert!(!server.api_cookie_secure);
+    assert_eq!(server.api_session_lifetime, 3600);
+    let vars = env(&[("MONITORFLOW_API_COOKIE_SECURE", "true")]);
+    let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
+    assert!(server.api_cookie_secure);
+
+    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_API_SESSION_IDLE_TIMEOUT", "0")]);
+    assert!(msg.contains("api_session_idle_timeout"), "{msg}");
+    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_API_COOKIE_SECURE", "yes")]);
+    assert!(msg.contains("MONITORFLOW_API_COOKIE_SECURE"), "{msg}");
 }
 
 #[test]
