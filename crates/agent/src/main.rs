@@ -4,7 +4,9 @@ use std::time::SystemTime;
 
 use anyhow::Context;
 use clap::Parser;
-use monitorflow_agent::{identity, os};
+use monitorflow_agent::backoff::Backoff;
+use monitorflow_agent::enroll::{self, EnrollError};
+use monitorflow_agent::{os, shutdown};
 use monitorflow_common::config::{self, AgentConfig};
 use monitorflow_common::logging;
 
@@ -33,13 +35,12 @@ async fn main() -> anyhow::Result<()> {
     let host = os::detect().context("cannot start on this host")?;
     tracing::info!(hostname = %host.hostname, os_family = %host.os_family, os_version = %host.os_version, "host detected");
 
-    let paths = config.tls_paths();
-    let identity = tokio::task::spawn_blocking(move || identity::load(&paths))
-        .await?
-        .context("no usable agent identity")?;
-    let Some(identity) = identity else {
-        // Enrollment is added by the next roadmap step.
-        anyhow::bail!("not enrolled yet");
+    let (trigger, stop) = shutdown::channel();
+    shutdown::on_signals(trigger).context("cannot install signal handlers")?;
+    let identity = match enroll::ensure_identity(&config, Backoff::default(), stop).await {
+        Ok(identity) => identity,
+        Err(EnrollError::Shutdown) => return Ok(()),
+        Err(error) => return Err(error).context("no usable agent identity"),
     };
     let now = SystemTime::now();
     if identity.is_expired(now) {
