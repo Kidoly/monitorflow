@@ -50,7 +50,17 @@ fn defaults_apply() {
     assert_eq!(agent.log, LogConfig::default());
     assert_eq!(agent.log.level, LogLevel::Info);
     assert_eq!(agent.log.format, LogFormat::Text);
-    assert_eq!(agent.tls.ca_cert, Path::new("/etc/monitorflow/tls/ca.pem"));
+    let tls = agent.tls_paths();
+    assert_eq!(
+        tls.ca_cert,
+        Path::new("/var/lib/monitorflow/agent/tls/ca.pem")
+    );
+    assert_eq!(
+        tls.cert,
+        Path::new("/var/lib/monitorflow/agent/tls/cert.pem")
+    );
+    assert_eq!(tls.key, Path::new("/var/lib/monitorflow/agent/tls/key.pem"));
+    assert_eq!(agent.enroll_url(), "https://relay:7445");
 
     let relay: RelayConfig = parse(AGENT_MIN).unwrap();
     assert_eq!(relay.listen_addr, "0.0.0.0:7443".parse().unwrap());
@@ -100,7 +110,33 @@ fn env_beats_file() {
     assert_eq!(agent.heartbeat_interval, 5);
     assert_eq!(agent.log.level, LogLevel::Debug);
     assert_eq!(agent.enrollment_token, Some(Secret::new("tok")));
-    assert_eq!(agent.tls.cert, Path::new("/tmp/cert.pem"));
+    assert_eq!(agent.tls_paths().cert, Path::new("/tmp/cert.pem"));
+    assert_eq!(
+        agent.tls_paths().key,
+        Path::new("/var/lib/monitorflow/agent/tls/key.pem")
+    );
+}
+
+#[test]
+fn agent_enroll_url_is_derived_or_validated() {
+    let agent: AgentConfig = parse(r#"upstream_url = "https://[::1]:9000/""#).unwrap();
+    assert_eq!(agent.enroll_url(), "https://[::1]:7445");
+    let text = format!("{AGENT_MIN}\nenroll_url = \"https://central:8445\"");
+    let agent: AgentConfig = parse(&text).unwrap();
+    assert_eq!(agent.enroll_url(), "https://central:8445");
+    let msg = err::<AgentConfig>(AGENT_MIN, &[("MONITORFLOW_ENROLL_URL", "http://central")]);
+    assert!(
+        msg.contains("key `enroll_url`") && msg.contains("https"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn agent_tls_paths_follow_data_dir() {
+    let text = format!("{AGENT_MIN}\ndata_dir = \"/srv/mf\"\n[tls]\nca_cert = \"/etc/ca.pem\"");
+    let tls = parse::<AgentConfig>(&text).unwrap().tls_paths();
+    assert_eq!(tls.ca_cert, Path::new("/etc/ca.pem"));
+    assert_eq!(tls.cert, Path::new("/srv/mf/tls/cert.pem"));
 }
 
 #[test]

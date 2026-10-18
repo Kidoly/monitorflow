@@ -8,21 +8,28 @@
 # every link is mTLS.
 upstream_url = "https://relay.example.com:7443"
 
+# Enrollment endpoint of the central server, used on the first run only.
+# Defaults to the host of upstream_url on port 7445. Set it when the upstream
+# is a relay.
+# enroll_url = "https://monitorflow.example.com:7445"
+
 # Local state: identity, sequence numbers, pending samples.
 # data_dir = "/var/lib/monitorflow/agent"
 
 # One-time enrollment token from the web interface. Only needed on the first
-# run; prefer MONITORFLOW_ENROLLMENT_TOKEN so it does not stay on disk.
+# run; prefer MONITORFLOW_ENROLLMENT_TOKEN so it does not stay on disk, and
+# remove it once the agent is enrolled.
 # enrollment_token = ""
 
 # Seconds between heartbeats. Must be greater than zero.
 # heartbeat_interval = 30
 
 [tls]
-# PEM files of the mTLS identity, written by enrollment.
-# ca_cert = "/etc/monitorflow/tls/ca.pem"
-# cert = "/etc/monitorflow/tls/cert.pem"
-# key = "/etc/monitorflow/tls/key.pem"
+# PEM files of the mTLS identity, written by enrollment. Default to files in
+# <data_dir>/tls/.
+# ca_cert = "/var/lib/monitorflow/agent/tls/ca.pem"
+# cert = "/var/lib/monitorflow/agent/tls/cert.pem"
+# key = "/var/lib/monitorflow/agent/tls/key.pem"
 
 [log]
 # trace, debug, info, warn or error.
