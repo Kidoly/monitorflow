@@ -1,0 +1,33 @@
+# MonitorFlow central server configuration.
+# Default path: /etc/monitorflow/server.toml (override with --config or MONITORFLOW_CONFIG).
+# Every key can be overridden by an environment variable: MONITORFLOW_ plus the
+# key in upper case, nested keys joined by "_" (log.level -> MONITORFLOW_LOG_LEVEL).
+# Commented-out keys show their default.
+
+# gRPC listener for agents and relays (mTLS).
+# grpc_listen_addr = "0.0.0.0:7443"
+
+# HTTPS listener for the REST API and the web interface.
+# api_listen_addr = "0.0.0.0:7444"
+
+# PostgreSQL connection. Required. The password is redacted in logs; prefer
+# MONITORFLOW_DATABASE_URL so it does not stay on disk.
+database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
+
+# Time series and log storage. http is accepted for development.
+# victoriametrics_url = "http://localhost:8428"
+# victorialogs_url = "http://localhost:9428"
+
+# Certificate authority, command signing key, mirrors.
+# data_dir = "/var/lib/monitorflow/server"
+
+[tls]
+# ca_cert = "/etc/monitorflow/tls/ca.pem"
+# cert = "/etc/monitorflow/tls/cert.pem"
+# key = "/etc/monitorflow/tls/key.pem"
+
+[log]
+# trace, debug, info, warn or error.
+# level = "info"
+# text or json; use json in production.
+# format = "text"

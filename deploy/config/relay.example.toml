@@ -1,0 +1,28 @@
+# MonitorFlow relay configuration.
+# Default path: /etc/monitorflow/relay.toml (override with --config or MONITORFLOW_CONFIG).
+# Every key can be overridden by an environment variable: MONITORFLOW_ plus the
+# key in upper case, nested keys joined by "_" (log.level -> MONITORFLOW_LOG_LEVEL).
+# Commented-out keys show their default.
+
+# gRPC listener for agents and downstream relays (mTLS).
+# listen_addr = "0.0.0.0:7443"
+
+# gRPC endpoint of the next relay or the central server. Required. Must be https.
+upstream_url = "https://monitorflow.example.com:7443"
+
+# Store-and-forward buffer and mirror cache.
+# data_dir = "/var/lib/monitorflow/relay"
+
+# Maximum size of the on-disk buffer when the uplink is down (1 GiB).
+# buffer_max_bytes = 1073741824
+
+[tls]
+# ca_cert = "/etc/monitorflow/tls/ca.pem"
+# cert = "/etc/monitorflow/tls/cert.pem"
+# key = "/etc/monitorflow/tls/key.pem"
+
+[log]
+# trace, debug, info, warn or error.
+# level = "info"
+# text or json.
+# format = "text"

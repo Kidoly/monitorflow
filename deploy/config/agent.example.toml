@@ -1,0 +1,31 @@
+# MonitorFlow agent configuration.
+# Default path: /etc/monitorflow/agent.toml (override with --config or MONITORFLOW_CONFIG).
+# Every key can be overridden by an environment variable: MONITORFLOW_ plus the
+# key in upper case, nested keys joined by "_" (log.level -> MONITORFLOW_LOG_LEVEL).
+# Commented-out keys show their default.
+
+# gRPC endpoint of a relay or the central server. Required. Must be https:
+# every link is mTLS.
+upstream_url = "https://relay.example.com:7443"
+
+# Local state: identity, sequence numbers, pending samples.
+# data_dir = "/var/lib/monitorflow/agent"
+
+# One-time enrollment token from the web interface. Only needed on the first
+# run; prefer MONITORFLOW_ENROLLMENT_TOKEN so it does not stay on disk.
+# enrollment_token = ""
+
+# Seconds between heartbeats. Must be greater than zero.
+# heartbeat_interval = 30
+
+[tls]
+# PEM files of the mTLS identity, written by enrollment.
+# ca_cert = "/etc/monitorflow/tls/ca.pem"
+# cert = "/etc/monitorflow/tls/cert.pem"
+# key = "/etc/monitorflow/tls/key.pem"
+
+[log]
+# trace, debug, info, warn or error.
+# level = "info"
+# text or json.
+# format = "text"

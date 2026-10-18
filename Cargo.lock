@@ -1076,7 +1076,6 @@ dependencies = [
  "toml",
  "tonic",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1087,9 +1086,11 @@ dependencies = [
  "prost-types",
  "serde",
  "thiserror",
+ "toml",
  "tonic",
  "tonic-build",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1104,7 +1105,6 @@ dependencies = [
  "toml",
  "tonic",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1133,7 +1133,6 @@ dependencies = [
  "toml",
  "tonic",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 
