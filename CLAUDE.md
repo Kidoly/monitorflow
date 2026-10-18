@@ -27,7 +27,7 @@ sqlx checks queries at compile time against `DATABASE_URL` (see `.env.example`).
 
 ## Conventions
 
-- Rust 2021, stable toolchain, no `unsafe` without a comment explaining why.
+- Rust 2021 on the toolchain pinned in `rust-toolchain.toml` (ADR-0005). Never bump it inside a feature PR. No `unsafe` without a comment explaining why.
 - Errors: `thiserror` in libraries, `anyhow` only in binaries' `main`.
 - Logging with `tracing`; never `println!` outside tests and CLI output.
 - Async with `tokio`; no blocking calls on the runtime, use `spawn_blocking`.

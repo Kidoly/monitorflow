@@ -175,7 +175,7 @@ Access is role-based: viewer, operator, approver, administrator. In MSP mode eac
 
 | Layer | Choice |
 | --- | --- |
-| Language | Rust 2021, stable toolchain, for agent, relay and server |
+| Language | Rust 2021 for agent, relay and server; toolchain pinned in `rust-toolchain.toml` (ADR-0005) |
 | Async runtime | `tokio` |
 | RPC | `tonic` + `prost` |
 | TLS | `rustls` |

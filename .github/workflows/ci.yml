@@ -23,11 +23,10 @@ jobs:
       SQLX_OFFLINE: "true"
     steps:
       - uses: actions/checkout@v4
-      # Version comes from rust-toolchain.toml; keep the two in sync.
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.99.0"
-          components: rustfmt, clippy
+      # Installs the toolchain and components named in rust-toolchain.toml,
+      # the single source of truth for the Rust version.
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: cargo fmt --all -- --check

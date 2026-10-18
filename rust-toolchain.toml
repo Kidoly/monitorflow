@@ -1,6 +1,7 @@
-# Pin the toolchain so local runs, Claude threads and CI use the same
-# rustc, clippy and rustfmt. Bump deliberately in its own commit.
+# Single source of truth for the Rust version used locally, by Claude threads
+# and in CI. Bump it deliberately in its own commit; see ADR-0005.
+# Keep `rust-version` in Cargo.toml equal to this channel.
 [toolchain]
 channel = "1.99.0"
-components = ["rustfmt", "clippy"]
+components = ["rustfmt", "clippy", "rust-src", "rust-analyzer"]
 profile = "minimal"

@@ -13,7 +13,7 @@ cargo build --workspace
 scripts/check.sh
 ```
 
-Requires a stable Rust toolchain, `protoc`, and Docker.
+Requires `rustup`, `protoc`, and Docker. The Rust version is pinned in `rust-toolchain.toml`; rustup installs it on first use.
 
 ## Licence
 
