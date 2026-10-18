@@ -8,7 +8,7 @@ rust-version.workspace = true
 publish = false
 
 [dev-dependencies]
-# Only for `os::detect`, to skip on hosts the agent refuses.
+# Only for `os::hostname` and the os-release override variable.
 monitorflow-agent = { path = "../agent" }
 serde_json.workspace = true
 sqlx.workspace = true

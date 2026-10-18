@@ -13,9 +13,9 @@
 //! under `cargo test --workspace`, which has already built both binaries.
 //!
 //! Needs `DATABASE_URL` at build time (see `build.rs`); the test creates its
-//! own database on that server and drops it at the end. On a host whose
-//! distribution the agent refuses, the test prints why and passes without
-//! running: the agent has no os-release override.
+//! own database on that server and drops it at the end. The agent reads a
+//! fake debian os-release through `MONITORFLOW_OS_RELEASE_PATH`, so the
+//! test runs on any Linux host, whatever its distribution.
 
 mod support;
 
@@ -23,6 +23,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use monitorflow_agent::os;
 use serde_json::Value;
 use support::{build_binaries, free_addr, http, unique, wait_for, Database, Logs, Process};
 
@@ -70,13 +71,6 @@ fn wait_for_agent(
     ignore = "DATABASE_URL is not set; run `docker compose -f deploy/docker-compose.dev.yml up -d postgres` and export DATABASE_URL from .env.example"
 )]
 fn enroll_agent_and_list_it() {
-    let host = match monitorflow_agent::os::detect() {
-        Ok(host) => host,
-        Err(error) => {
-            eprintln!("SKIPPED: the agent refuses this host ({error}); run on a debian or rhel family distribution");
-            return;
-        }
-    };
     let binaries = build_binaries();
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL at run time");
 
@@ -165,6 +159,15 @@ key = "{data}/tls/key.pem"
         "odd token"
     );
 
+    // Whatever the host runs, the agent sees a supported distribution.
+    let os_release = dir.path().join("os-release");
+    std::fs::write(&os_release, "ID=debian\nVERSION_ID=\"12\"\n").unwrap();
+    let agent_command = |config: &Path| {
+        let mut command = command(&binaries.agent, config);
+        command.env(os::OS_RELEASE_PATH_ENV, &os_release);
+        command
+    };
+
     let agent_dir = dir.path().join("agent");
     let agent_config = dir.path().join("agent.toml");
     // The heartbeat interval is not in the brief's minimal config, but the
@@ -182,7 +185,7 @@ key = "{data}/tls/key.pem"
     std::fs::write(&agent_config, agent_toml(Some(&token))).unwrap();
     let mut agent = Process::spawn(
         "agent",
-        command(&binaries.agent, &agent_config),
+        agent_command(&agent_config),
         &dir.path().join("agent-1.log"),
         &logs,
     );
@@ -208,8 +211,9 @@ key = "{data}/tls/key.pem"
         s["status"] == "online"
     });
     agent.assert_running();
-    assert_eq!(online["hostname"], host.hostname.as_str());
-    assert_eq!(online["os_family"], host.os_family.as_str());
+    assert_eq!(online["hostname"], os::hostname().as_str());
+    assert_eq!(online["os_family"], "debian");
+    assert_eq!(online["os_version"], "debian 12");
     assert_eq!(online["site_name"], SITE);
     assert!(
         agent_dir.join("tls/cert.pem").is_file(),
@@ -227,7 +231,7 @@ key = "{data}/tls/key.pem"
     std::fs::write(&agent_config, agent_toml(None)).unwrap();
     let mut agent = Process::spawn(
         "agent (restart)",
-        command(&binaries.agent, &agent_config),
+        agent_command(&agent_config),
         &dir.path().join("agent-2.log"),
         &logs,
     );
