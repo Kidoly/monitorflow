@@ -5,16 +5,18 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use monitorflow_agent::identity::{self, AgentIdentity, Enrolled};
 use monitorflow_common::config::{AgentConfig, TlsPaths};
 use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::{Identity, PeerIdentity, PeerRole};
-use monitorflow_server::ca::{CaOptions, CertificateAuthority, Serial};
+use monitorflow_server::ca::{CaOptions, CertificateAuthority, IssuedCert, Serial};
 use monitorflow_server::crl::CrlPublisher;
 use monitorflow_server::enroll::token::{self, Creator, TokenRequest};
 use monitorflow_server::enroll::{self, server_cert, Enroller, FailureLimiter};
 use monitorflow_server::grpc::{self, AgentStreamService, DenyRelayedAgents, Registry};
+use monitorflow_server::renew::{PresentedCert, Renewer};
 use sqlx::PgPool;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
@@ -110,6 +112,20 @@ pub struct Upstream {
 impl Pki {
     /// Serves `AgentService` over mTLS with a CRL from the CA.
     pub async fn serve_grpc(&self, settings: grpc::StreamSettings) -> Upstream {
+        self.serve(settings, None).await
+    }
+
+    /// [`Self::serve_grpc`] plus `CertificateService`, without rate limit.
+    pub async fn serve_grpc_with_renewer(
+        &self,
+        settings: grpc::StreamSettings,
+        pool: &PgPool,
+    ) -> Upstream {
+        let renewer = Renewer::new(pool.clone(), self.ca.clone()).with_min_interval(Duration::ZERO);
+        self.serve(settings, Some(renewer)).await
+    }
+
+    async fn serve(&self, settings: grpc::StreamSettings, renewer: Option<Renewer>) -> Upstream {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = url(&listener);
         let (crl, rx) = CrlPublisher::start(self.ca.clone(), self.server.clone())
@@ -118,13 +134,32 @@ impl Pki {
         let registry = Registry::default();
         let service =
             AgentStreamService::new(registry.clone(), Arc::new(DenyRelayedAgents), settings);
-        tokio::spawn(grpc::serve(listener, rx, service, std::future::pending()));
+        tokio::spawn(grpc::serve_with_renewer(
+            listener,
+            rx,
+            service,
+            renewer,
+            std::future::pending(),
+        ));
         Upstream { url, registry, crl }
     }
 
     /// Issues an agent certificate without a token, as enrollment would,
     /// and stores it where `config` looks for it.
     pub fn agent_identity(&self, config: &AgentConfig, id: &str) -> (AgentIdentity, Serial) {
+        let (identity, issued) = self.agent_identity_valid_for(config, id, None);
+        (identity, issued.serial)
+    }
+
+    /// [`Self::agent_identity`] valid for `validity` instead of the CA's
+    /// default. `not_before` is backdated by the CA's clock skew, so
+    /// anything under 2.5 minutes is due for renewal at once.
+    pub fn agent_identity_valid_for(
+        &self,
+        config: &AgentConfig,
+        id: &str,
+        validity: Option<Duration>,
+    ) -> (AgentIdentity, IssuedCert) {
         let key = rcgen::KeyPair::generate().unwrap();
         let csr = rcgen::CertificateParams::default()
             .serialize_request(&key)
@@ -132,16 +167,43 @@ impl Pki {
             .pem()
             .unwrap();
         let peer = PeerIdentity::new(PeerRole::Agent, id).unwrap();
-        let issued = self.ca.issue(&csr, &peer, None, &[]).unwrap();
+        let issued = self.ca.issue(&csr, &peer, validity, &[]).unwrap();
         let enrolled = Enrolled {
             key_pem: Secret::new(key.serialize_pem()),
-            cert_pem: issued.cert_pem,
+            cert_pem: issued.cert_pem.clone(),
             ca_cert_pem: self.ca.ca_cert_pem().to_owned(),
         };
         let paths = config.tls_paths();
         identity::store(&paths, &enrolled).unwrap();
-        (identity::load(&paths).unwrap().unwrap(), issued.serial)
+        (identity::load(&paths).unwrap().unwrap(), issued)
     }
+}
+
+/// Records `issued` for agent `id` in `certificates`, as enrollment does.
+pub async fn record(pool: &PgPool, id: &str, issued: &IssuedCert) {
+    sqlx::query(
+        "INSERT INTO certificates (serial, peer_role, peer_id, not_before, not_after)
+         VALUES ($1, 'agent', $2, to_timestamp($3), to_timestamp($4))",
+    )
+    .bind(issued.serial.as_bytes())
+    .bind(id)
+    .bind(unix(issued.not_before))
+    .bind(unix(issued.not_after))
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+fn unix(t: std::time::SystemTime) -> f64 {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
+/// Serial of the certificate stored where `config` looks for it.
+pub fn stored_serial(config: &AgentConfig) -> Serial {
+    let cert = monitorflow_common::tls::load_certs(&config.tls_paths().cert).unwrap();
+    PresentedCert::from_der(&cert[0]).unwrap().serial
 }
 
 pub fn url(listener: &TcpListener) -> String {

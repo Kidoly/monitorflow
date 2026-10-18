@@ -61,7 +61,7 @@ impl Backoff {
 }
 
 /// A random value for jitter, nothing secret depends on it.
-fn random_u64() -> u64 {
+pub(crate) fn random_u64() -> u64 {
     let mut bytes = [0u8; 8];
     // SystemRandom only fails if the OS has no entropy source at all;
     // a fixed value then just means no jitter.

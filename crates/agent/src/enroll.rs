@@ -130,7 +130,8 @@ async fn blocking<T: Send + 'static>(
 pub async fn request(url: &str, token: &EnrollmentToken) -> Result<Enrolled, EnrollError> {
     let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
         .map_err(|e| EnrollError::Transient(format!("cannot generate a key: {e}")))?;
-    let csr = csr(&key)?;
+    let csr =
+        csr(&key).map_err(|e| EnrollError::Transient(format!("cannot build the CSR: {e}")))?;
     let pin = *token.ca_fingerprint();
     let config =
         tls::pinned_client_config(pin).map_err(|e| EnrollError::Transient(e.to_string()))?;
@@ -156,7 +157,7 @@ pub async fn request(url: &str, token: &EnrollmentToken) -> Result<Enrolled, Enr
     })
 }
 
-fn csr(key: &KeyPair) -> Result<String, EnrollError> {
+pub(crate) fn csr(key: &KeyPair) -> Result<String, rcgen::Error> {
     // The server ignores everything but the key; the CN only helps humans
     // reading the request.
     let mut params = CertificateParams::default();
@@ -164,10 +165,7 @@ fn csr(key: &KeyPair) -> Result<String, EnrollError> {
     params
         .distinguished_name
         .push(DnType::CommonName, "monitorflow-agent");
-    params
-        .serialize_request(key)
-        .and_then(|csr| csr.pem())
-        .map_err(|e| EnrollError::Transient(format!("cannot build the CSR: {e}")))
+    params.serialize_request(key).and_then(|csr| csr.pem())
 }
 
 fn classify(status: &tonic::Status) -> EnrollError {
@@ -199,15 +197,29 @@ pub fn verify(
     pin: &Fingerprint,
     key: &KeyPair,
 ) -> Result<(), EnrollError> {
-    let bad = |why: String| EnrollError::BadResponse(why);
-    let ca = pem_certs(&response.ca_cert_pem, "ca_cert_pem")?;
-    if ca.len() != 1 || tls::fingerprint(&ca[0]) != *pin {
-        return Err(bad(format!(
+    if !is_ca(&response.ca_cert_pem, pin)? {
+        return Err(EnrollError::BadResponse(format!(
             "ca_cert_pem is not the CA pinned by the token (expected SHA-256 {})",
             tls::fingerprint_hex(pin)
         )));
     }
-    let chain = pem_certs(&response.cert_pem, "cert_pem")?;
+    verify_cert(&response.cert_pem, &response.peer_uri, key)
+}
+
+/// True if `ca_cert_pem` holds exactly one certificate, with SHA-256 `pin`.
+pub(crate) fn is_ca(ca_cert_pem: &str, pin: &Fingerprint) -> Result<bool, EnrollError> {
+    let ca = pem_certs(ca_cert_pem, "ca_cert_pem")?;
+    Ok(ca.len() == 1 && tls::fingerprint(&ca[0]) == *pin)
+}
+
+/// The certificate must hold our key, name an agent, and match `peer_uri`.
+pub(crate) fn verify_cert(
+    cert_pem: &str,
+    peer_uri: &str,
+    key: &KeyPair,
+) -> Result<(), EnrollError> {
+    let bad = |why: String| EnrollError::BadResponse(why);
+    let chain = pem_certs(cert_pem, "cert_pem")?;
     let signer = rustls::crypto::ring::default_provider()
         .key_provider
         .load_private_key(PrivatePkcs8KeyDer::from(key.serialize_der()).into())
@@ -222,10 +234,9 @@ pub fn verify(
             id.role()
         )));
     }
-    if id.uri() != response.peer_uri {
+    if id.uri() != peer_uri {
         return Err(bad(format!(
-            "peer_uri `{}` does not match the certificate's `{}`",
-            response.peer_uri,
+            "peer_uri `{peer_uri}` does not match the certificate's `{}`",
             id.uri()
         )));
     }
