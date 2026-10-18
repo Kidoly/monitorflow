@@ -19,6 +19,7 @@ use monitorflow_server::grpc::{
 };
 use monitorflow_server::ingest::{Ingest, JsonLines, RemoteWrite, Writer, WriterSettings};
 use monitorflow_server::renew::Renewer;
+use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch;
@@ -152,12 +153,18 @@ async fn main() -> anyhow::Result<()> {
         writer_settings,
     );
     let registry = Registry::default();
+    let sensor_configs = SensorConfigs::spawn(
+        SensorConfigStore::new(pool.clone()),
+        registry.clone(),
+        WatcherSettings::default(),
+    );
     let service = AgentStreamService::new(
         registry.clone(),
         Arc::new(DbRelayPolicy::new(pool.clone())),
         StreamSettings::from_config(&config),
     )
     .with_inventory(Arc::new(DbInventory::new(pool.clone())))
+    .with_sensor_configs(sensor_configs)
     .with_ingest(Ingest {
         metrics: Some(metrics.queue()),
         events: Some(events.queue()),

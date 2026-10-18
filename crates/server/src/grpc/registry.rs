@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use chrono::{DateTime, Utc};
+use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::Envelope;
 use monitorflow_common::tls::PeerRole;
 use tokio::sync::{mpsc, oneshot};
@@ -67,6 +68,11 @@ pub struct PeerInfo {
     pub last_seen: DateTime<Utc>,
     pub last_sequence: u64,
     pub counters: Counters,
+    /// Revision of the last sensor configuration sent on this connection;
+    /// `None` when none is sent, as to relays (ADR-0016).
+    pub sensor_revision_sent: Option<u64>,
+    /// Revision the agent last acknowledged on this connection.
+    pub sensor_revision_applied: Option<u64>,
 }
 
 struct Entry {
@@ -86,6 +92,8 @@ impl Entry {
 struct Inner {
     peers: HashMap<String, Entry>,
     next_connection: u64,
+    /// Sequence of the last envelope the server sent.
+    last_sequence: u64,
     shutting_down: bool,
 }
 
@@ -182,6 +190,17 @@ impl Registry {
         self.lock().peers.get(id).map(|e| e.info.clone())
     }
 
+    /// Wraps `payload` with the server's next sequence number, monotonic
+    /// over every stream of this process.
+    pub fn envelope(&self, payload: Payload) -> Envelope {
+        let mut inner = self.lock();
+        inner.last_sequence += 1;
+        Envelope {
+            sequence: inner.last_sequence,
+            payload: Some(payload),
+        }
+    }
+
     /// Queues `envelope` on the stream of `id`. Waits while that stream's
     /// outbound queue is full.
     pub async fn send(&self, id: &str, envelope: Envelope) -> Result<(), RegistryError> {
@@ -228,7 +247,19 @@ mod tests {
             last_seen: now,
             last_sequence: 1,
             counters: Counters::default(),
+            sensor_revision_sent: None,
+            sensor_revision_applied: None,
         }
+    }
+
+    #[test]
+    fn envelopes_get_increasing_sequences() {
+        let registry = Registry::default();
+        let first = registry.envelope(Payload::Heartbeat(Default::default()));
+        let second = registry
+            .clone()
+            .envelope(Payload::Heartbeat(Default::default()));
+        assert_eq!((first.sequence, second.sequence), (1, 2));
     }
 
     fn register(registry: &Registry, id: &str) -> (Registration, mpsc::Receiver<Envelope>) {

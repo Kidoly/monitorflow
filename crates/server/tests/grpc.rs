@@ -11,7 +11,9 @@ use fake_http::FakeHttp;
 use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Command, Envelope, Heartbeat, Hello, Sample, SampleBatch};
+use monitorflow_common::proto::v1::{
+    Command, Envelope, Heartbeat, Hello, Sample, SampleBatch, SensorConfigAck,
+};
 use monitorflow_common::tls::{self, Identity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
 use monitorflow_server::grpc::{
@@ -23,6 +25,7 @@ use monitorflow_server::ingest::metrics::decode;
 use monitorflow_server::ingest::{
     Ingest, JsonLines, LogRecord, RemoteWrite, Series, Writer, WriterSettings,
 };
+use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
 use sqlx::PgPool;
 use support::{uri_san, Ca, Leaf};
 use tempfile::TempDir;
@@ -76,6 +79,16 @@ impl Harness {
         inventory: Arc<dyn Inventory>,
         ingest: Ingest,
     ) -> Self {
+        Self::start_service(|registry| {
+            AgentStreamService::new(registry, policy, settings)
+                .with_inventory(inventory)
+                .with_ingest(ingest)
+        })
+        .await
+    }
+
+    /// Serves the service `make` builds around the harness's registry.
+    async fn start_service(make: impl FnOnce(Registry) -> AgentStreamService) -> Self {
         let ca = Ca::new("monitorflow test CA");
         let server = identity(&ca, &ca.server());
         let (_tx, tls_config) = watch::channel(server.server_config(Vec::new()).unwrap());
@@ -85,9 +98,7 @@ impl Harness {
             listener.local_addr().unwrap().port()
         );
         let registry = Registry::default();
-        let service = AgentStreamService::new(registry.clone(), policy, settings)
-            .with_inventory(inventory)
-            .with_ingest(ingest);
+        let service = make(registry.clone());
         let (shutdown, stop) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(grpc::serve(listener, tls_config, service, async {
             let _ = stop.await;
@@ -871,5 +882,94 @@ db_tests! {
         // Connecting directly clears the relay.
         let _direct = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
         assert_eq!(server_row(&pool, "agent-1").await.unwrap().relay_id, None);
+    }
+
+    #[sqlx::test]
+    async fn sensor_config_is_sent_after_hello_and_again_on_change(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        enrolled(&pool, "agent-1", paris).await;
+        let watcher = WatcherSettings { poll_interval: Duration::from_millis(50), ..WatcherSettings::default() };
+        let h = Harness::start_service(|registry| {
+            let configs = SensorConfigs::spawn(SensorConfigStore::new(pool.clone()), registry.clone(), watcher);
+            AgentStreamService::new(registry, Arc::new(DbRelayPolicy::new(pool.clone())), settings())
+                .with_inventory(Arc::new(DbInventory::new(pool.clone())))
+                .with_sensor_configs(configs)
+        })
+        .await;
+        let config = |envelope: Option<Envelope>| match envelope.and_then(|e| e.payload) {
+            Some(Payload::SensorConfig(config)) => config,
+            other => panic!("expected a SensorConfig, got {other:?}"),
+        };
+
+        // The first message after Hello: the built-in defaults.
+        let mut peer = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
+        let first = config(peer.next().await.unwrap());
+        let kinds: Vec<_> = first.sensors.iter().map(|s| s.kind.as_str()).collect();
+        assert_eq!(kinds, ["cpu", "disk", "memory"]);
+        assert_eq!(first.revision, 0);
+        assert_eq!(h.registry.get("agent-1").unwrap().sensor_revision_sent, Some(0));
+
+        // A change in the database reaches the stream without a reconnect.
+        sqlx::query(
+            "INSERT INTO sensor_configs (site_id, kind, name, instance, interval_ms, params)
+             VALUES ($1, 'port', 'port', '22', 10000, '{\"port\": 22}')",
+        )
+        .bind(paris)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let second = config(peer.next().await.unwrap());
+        assert!(second.revision > first.revision);
+        let port = second.sensors.iter().find(|s| s.kind == "port").unwrap();
+        assert_eq!((port.instance.as_str(), port.interval_ms), ("22", 10_000));
+        assert_eq!(port.params["port"], "22");
+
+        // The acknowledgement is recorded on the row and in the registry.
+        let ack = SensorConfigAck { revision: second.revision, errors: Vec::new() };
+        peer.send(2, Payload::SensorConfigAck(ack)).await;
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        loop {
+            let applied: Option<i64> =
+                sqlx::query_scalar("SELECT sensor_revision_applied FROM servers WHERE peer_id = 'agent-1'")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            if applied == Some(second.revision as i64) {
+                break;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "ack never recorded");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let info = h.registry.get("agent-1").unwrap();
+        assert_eq!(info.sensor_revision_applied, Some(second.revision));
+        assert_eq!(info.sensor_revision_sent, Some(second.revision));
+
+        // Nothing more while the revision stays the same.
+        assert!(tokio::time::timeout(Duration::from_millis(300), peer.rx.message()).await.is_err());
+
+        // A reconnect gets the current configuration again.
+        drop(peer);
+        let mut again = h.open(&h.ca.client("agent-1", 11), hello("agent-1")).await.unwrap();
+        assert_eq!(config(again.next().await.unwrap()), second);
+    }
+
+    #[sqlx::test]
+    async fn relays_get_no_sensor_config(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        sqlx::query("INSERT INTO relays (peer_id, site_id, name) VALUES ('relay-1', $1, 'relay-1')")
+            .bind(paris)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let h = Harness::start_service(|registry| {
+            let configs = SensorConfigs::spawn(SensorConfigStore::new(pool.clone()), registry.clone(), WatcherSettings::default());
+            AgentStreamService::new(registry, Arc::new(DbRelayPolicy::new(pool.clone())), settings())
+                .with_inventory(Arc::new(DbInventory::new(pool.clone())))
+                .with_sensor_configs(configs)
+        })
+        .await;
+        let mut relay = h.open(&h.ca.relay("relay-1", 10), hello("relay-1")).await.unwrap();
+        assert!(tokio::time::timeout(Duration::from_millis(200), relay.rx.message()).await.is_err());
+        assert_eq!(h.registry.get("relay-1").unwrap().sensor_revision_sent, None);
     }
 }

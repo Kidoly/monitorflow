@@ -368,6 +368,8 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::Hello(_) => "hello",
         Payload::Heartbeat(_) => "heartbeat",
         Payload::Samples(_) => "samples",
+        Payload::SensorConfig(_) => "sensor_config",
+        Payload::SensorConfigAck(_) => "sensor_config_ack",
         Payload::Command(_) => "command",
         Payload::CommandResult(_) => "command_result",
     }

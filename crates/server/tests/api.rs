@@ -374,6 +374,8 @@ db_tests! {
                     last_seen: heartbeat,
                     last_sequence: 1,
                     counters: Counters::default(),
+                    sensor_revision_sent: None,
+                    sensor_revision_applied: None,
                 },
                 tx,
             )
