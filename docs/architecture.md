@@ -221,3 +221,4 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Time series | VictoriaMetrics, not a custom store |
 | Peer identity | Role and ID in a `monitorflow://<role>/<id>` URI SAN; relays speak only for agents of their site |
 | Web API transport | Plain HTTP on loopback behind a TLS reverse proxy; server-side sessions (ADR-0006) |
+| Sensor scheduling | One task per sensor, jittered first tick, timeout within the interval, missed ticks skipped, full channel drops new samples (ADR-0012) |
