@@ -138,14 +138,18 @@ db_tests! {
         assert_eq!(
             tables,
             [
+                "alert_states",
                 "audit_log",
                 "certificates",
                 "enrollment_tokens",
+                "incident_events",
+                "incidents",
                 "relays",
                 "sensor_configs",
                 "servers",
                 "sessions",
                 "sites",
+                "thresholds",
                 "user_roles",
                 "users"
             ]
