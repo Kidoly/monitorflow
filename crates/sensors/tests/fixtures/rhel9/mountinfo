@@ -1,0 +1,11 @@
+22 98 0:21 / /proc rw,nosuid,nodev,noexec,relatime shared:22 - proc proc rw
+23 98 0:22 / /sys rw,nosuid,nodev,noexec,relatime shared:2 - sysfs sysfs rw,seclabel
+24 98 0:5 / /dev rw,nosuid shared:18 - devtmpfs devtmpfs rw,seclabel,size=4096k,nr_inodes=2008764,mode=755,inode64
+27 98 0:25 / /run rw,nosuid,nodev shared:21 - tmpfs tmpfs rw,seclabel,size=3218576k,nr_inodes=819200,mode=755,inode64
+28 23 0:26 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime shared:4 - cgroup2 cgroup2 rw,seclabel,nsdelegate,memory_recursiveprot
+40 23 0:20 / /sys/fs/selinux rw,nosuid,noexec,relatime shared:3 - selinuxfs selinuxfs rw
+98 1 253:0 / / rw,relatime shared:1 - xfs /dev/mapper/rhel-root rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+45 98 0:39 / /tmp rw,nosuid,nodev shared:23 - tmpfs tmpfs rw,seclabel,nr_inodes=1048576,inode64
+101 98 252:1 / /boot rw,relatime shared:60 - xfs /dev/vda1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+104 98 253:2 / /home rw,relatime shared:62 - xfs /dev/mapper/rhel-home rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+610 98 7:0 / /var/lib/snapd/snap/core22/1380 ro,nodev,relatime shared:331 - squashfs /dev/loop0 ro,seclabel,errors=continue,threads=single
