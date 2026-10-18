@@ -14,6 +14,9 @@
 //! When the renewal task publishes a new identity, the stream closes and
 //! reconnects with it at once.
 //!
+//! Sensor configurations from the upstream go to the sensors task, and its
+//! acknowledgements go up on the current stream (ADR-0016).
+//!
 //! Envelope payloads are never logged, and commands are never executed:
 //! signed command execution is Phase 3.
 
@@ -24,7 +27,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use monitorflow_common::config::AgentConfig;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Envelope, Heartbeat, Hello};
+use monitorflow_common::proto::v1::{Envelope, Heartbeat, Hello, SensorConfigAck};
 use monitorflow_common::tls::{self, error_chain, TlsError};
 use monitorflow_common::PROTOCOL_VERSION;
 use rustls::AlertDescription;
@@ -37,6 +40,7 @@ use tonic::{Code, Status, Streaming};
 use crate::backoff::Backoff;
 use crate::identity::AgentIdentity;
 use crate::os::HostInfo;
+use crate::sensor_config::StreamEnd;
 use crate::shutdown::Shutdown;
 
 /// Envelopes queued towards the upstream. Heartbeats are skipped, not
@@ -167,6 +171,7 @@ pub struct Agent {
     identity: AgentIdentity,
     updates: Option<watch::Receiver<AgentIdentity>>,
     host: HostInfo,
+    sensors: Option<StreamEnd>,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
     // monotonic across restarts; the server only needs them per stream.
     sequence: u64,
@@ -179,8 +184,16 @@ impl Agent {
             identity,
             updates: None,
             host,
+            sensors: None,
             sequence: 0,
         }
+    }
+
+    /// Passes sensor configurations to the sensors task and sends its
+    /// acknowledgements upstream; without it they are ignored.
+    pub fn with_sensors(mut self, sensors: StreamEnd) -> Self {
+        self.sensors = Some(sensors);
+        self
     }
 
     /// Uses each identity published on `updates`, from the renewal task,
@@ -295,8 +308,14 @@ impl Agent {
                         tracing::debug!("upstream is not reading; heartbeat skipped");
                     }
                 }
+                Some(ack) = next_ack(&mut self.sensors) => {
+                    let envelope = self.envelope(Payload::SensorConfigAck(ack));
+                    if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(envelope) {
+                        tracing::debug!("upstream is not reading; sensor configuration ack skipped");
+                    }
+                }
                 message = inbound.message() => match message {
-                    Ok(Some(envelope)) => receive(envelope),
+                    Ok(Some(envelope)) => self.receive(envelope),
                     Ok(None) => return Err(Failure::Transient("the upstream closed the stream".into())),
                     Err(status) => return Err(classify_status(&status)),
                 },
@@ -338,28 +357,39 @@ impl Agent {
         }
     }
 
+    /// Logs what came down, never the payload itself.
+    fn receive(&self, envelope: Envelope) {
+        let sequence = envelope.sequence;
+        match envelope.payload {
+            Some(Payload::SensorConfig(config)) => match &self.sensors {
+                Some(sensors) => {
+                    tracing::debug!(
+                        sequence,
+                        revision = config.revision,
+                        "sensor configuration received"
+                    );
+                    sensors.configs.send_replace(Some(config));
+                }
+                None => tracing::debug!(sequence, "ignoring sensor configuration"),
+            },
+            // TODO(phase3-commands): verify the signature, classify, execute.
+            Some(Payload::Command(command)) => tracing::warn!(
+                sequence,
+                command_id = %command.command_id,
+                kind = %command.kind,
+                "ignoring command: command execution is not supported by this agent yet"
+            ),
+            Some(other) => tracing::debug!(sequence, kind = kind(&other), "ignoring envelope"),
+            None => tracing::debug!(sequence, "ignoring envelope without payload"),
+        }
+    }
+
     fn envelope(&mut self, payload: Payload) -> Envelope {
         self.sequence += 1;
         Envelope {
             sequence: self.sequence,
             payload: Some(payload),
         }
-    }
-}
-
-/// Logs what came down, never the payload itself.
-fn receive(envelope: Envelope) {
-    let sequence = envelope.sequence;
-    match envelope.payload {
-        // TODO(phase3-commands): verify the signature, classify, execute.
-        Some(Payload::Command(command)) => tracing::warn!(
-            sequence,
-            command_id = %command.command_id,
-            kind = %command.kind,
-            "ignoring command: command execution is not supported by this agent yet"
-        ),
-        Some(other) => tracing::debug!(sequence, kind = kind(&other), "ignoring envelope"),
-        None => tracing::debug!(sequence, "ignoring envelope without payload"),
     }
 }
 
@@ -372,6 +402,14 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::SensorConfigAck(_) => "sensor_config_ack",
         Payload::Command(_) => "command",
         Payload::CommandResult(_) => "command_result",
+    }
+}
+
+/// The next acknowledgement of the sensors task; never without one.
+async fn next_ack(sensors: &mut Option<StreamEnd>) -> Option<SensorConfigAck> {
+    match sensors {
+        Some(sensors) => sensors.acks.recv().await,
+        None => std::future::pending().await,
     }
 }
 

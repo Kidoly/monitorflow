@@ -29,6 +29,7 @@ rustls.workspace = true
 rustls-pemfile.workspace = true
 x509-parser.workspace = true
 monitorflow-sensors.workspace = true
+prost.workspace = true
 
 [dev-dependencies]
 monitorflow-sensors = { workspace = true, features = ["testing"] }
