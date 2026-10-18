@@ -1,0 +1,57 @@
+.page {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 1rem;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 22rem;
+  padding: 2rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.title {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+}
+
+.label {
+  font-weight: 600;
+}
+
+.input {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: var(--radius);
+}
+
+.error {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem;
+  color: var(--error);
+  background: var(--error-bg);
+  border-radius: var(--radius);
+}
+
+.submit {
+  padding: 0.6rem;
+  color: var(--accent-text);
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius);
+  font-weight: 600;
+}
+
+.submit:disabled {
+  cursor: progress;
+  opacity: 0.8;
+}
