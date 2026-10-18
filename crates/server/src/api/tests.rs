@@ -69,3 +69,58 @@ fn settings_follow_config() {
     assert_eq!(settings.session_lifetime, Duration::from_secs(12 * 60 * 60));
     assert_eq!(settings.session_idle_timeout, Duration::from_secs(30 * 60));
 }
+
+fn post(uri: &str) -> axum::http::request::Builder {
+    Request::post(uri).header("content-type", "application/json")
+}
+
+const LOGIN: &str = r#"{"username":"admin","password":"correct horse battery"}"#;
+
+#[tokio::test]
+async fn me_without_session_is_unauthorized() {
+    let (status, body) = call(router_without_db(), get("/api/auth/me")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        body,
+        serde_json::json!({ "error": "authentication required" })
+    );
+
+    // A malformed cookie is rejected before any database lookup.
+    let request = Request::get("/api/auth/me")
+        .header("cookie", "__Host-mf_session=not-a-token")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = call(router_without_db(), request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn state_changing_requests_need_the_csrf_header() {
+    for uri in ["/api/auth/login", "/api/auth/logout"] {
+        let request = post(uri).body(Body::from(LOGIN)).unwrap();
+        let (status, body) = call(router_without_db(), request).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
+        assert_eq!(
+            body,
+            serde_json::json!({ "error": "cross-site request rejected" })
+        );
+    }
+    let request = post("/api/auth/login")
+        .header(auth::CSRF_HEADER, "1")
+        .header("sec-fetch-site", "cross-site")
+        .body(Body::from(LOGIN))
+        .unwrap();
+    let (status, _) = call(router_without_db(), request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn login_rejects_malformed_bodies() {
+    let request = post("/api/auth/login")
+        .header(auth::CSRF_HEADER, "1")
+        .body(Body::from(r#"{"username":"admin"}"#))
+        .unwrap();
+    let (status, body) = call(router_without_db(), request).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, serde_json::json!({ "error": "invalid request body" }));
+}

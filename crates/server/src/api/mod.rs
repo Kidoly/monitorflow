@@ -16,15 +16,65 @@
 //! | --- | --- | --- | --- |
 //! | GET | `/api/health` | none | `{"status": "ok"}`: the process is up |
 //! | GET | `/api/health/ready` | none | `{"status": "ready"}`, or 503 `{"status": "unavailable"}` when PostgreSQL is unreachable |
+//! | POST | `/api/auth/login` | none | body `{"username", "password"}`; 200 [`Me`] and the session cookie, or 401 |
+//! | POST | `/api/auth/logout` | session | 204, clears the cookie |
+//! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "site_id"}]}` |
+//! | GET | `/api/servers` | any role | [`ServerList`], see below |
+//!
+//! # Authentication
+//!
+//! Login sets a session cookie (`__Host-mf_session`, or `mf_session` when
+//! `api_cookie_secure` is off) that is `HttpOnly` and `SameSite=Strict`.
+//! Sessions live server-side (see [`session`]) and end on logout, after
+//! `api_session_lifetime`, or after `api_session_idle_timeout` without a
+//! request. A missing or dead session gives 401 `authentication required`.
+//!
+//! Every request other than GET, HEAD, OPTIONS and TRACE, login included,
+//! must carry the header `X-MonitorFlow-CSRF: 1` and must not be marked
+//! cross-site by `Sec-Fetch-Site`; otherwise 403.
+//!
+//! # Authorization
+//!
+//! Every role (viewer, operator, approver, administrator) can read the sites
+//! it is granted on; a grant with a null `site_id` covers every site. A user
+//! without any role gets 403 on data routes.
+//!
+//! # `GET /api/servers`
+//!
+//! ```json
+//! {"servers": [{
+//!   "id": "uuid", "peer_id": "agent-1", "hostname": "web-1",
+//!   "site_id": "uuid", "site_name": "paris", "relay_id": null,
+//!   "os_family": "debian", "os_version": "12", "agent_version": "0.1.0",
+//!   "created_at": "2026-10-18T12:00:00Z", "revoked_at": null,
+//!   "status": "online",
+//!   "connected_at": "2026-10-18T12:00:00Z",
+//!   "last_heartbeat": "2026-10-18T12:05:00Z",
+//!   "via_relay": null
+//! }]}
+//! ```
+//!
+//! `status` is `online` while the agent has an open stream, else `offline`.
+//! Servers come from the database only; a connected agent without a row is
+//! not listed. See [`ServerView`] for each field.
 
+mod audit;
+pub mod auth;
 mod error;
 mod health;
+pub mod password;
+pub mod roles;
+pub mod servers;
+pub mod session;
+pub mod users;
 
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::routing::get;
+use axum::extract::DefaultBodyLimit;
+use axum::middleware;
+use axum::routing::{get, post};
 use axum::Router;
 use monitorflow_common::config::ServerConfig;
 use sqlx::PgPool;
@@ -32,7 +82,13 @@ use tokio::net::TcpListener;
 
 use crate::grpc::Registry;
 
+pub use auth::{CurrentUser, Me};
 pub use error::ApiError;
+pub use roles::{Role, RoleGrant};
+pub use servers::{ServerList, ServerView};
+
+/// Largest accepted request body.
+const BODY_LIMIT: usize = 64 * 1024;
 
 /// Session and cookie settings, from [`ServerConfig`].
 #[derive(Debug, Clone)]
@@ -82,7 +138,13 @@ pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/api/health", get(health::live))
         .route("/api/health/ready", get(health::ready))
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/logout", post(auth::logout))
+        .route("/api/auth/me", get(auth::me))
+        .route("/api/servers", get(servers::list))
         .fallback(not_found)
+        .layer(middleware::from_fn(auth::csrf_guard))
+        .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(state)
 }
 
