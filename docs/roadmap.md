@@ -6,7 +6,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 
 - [x] Repository skeleton: workspace, crates, CI, docs, dev compose.
 - [ ] `proto/monitorflow/v1/agent.proto`: Hello, Heartbeat, SampleBatch, Command, CommandResult envelope; build with `tonic-build` in `crates/common`.
-- [ ] `common::config`: TOML configuration loading for the three binaries, with env overrides and validation.
+- [x] `common::config`: TOML configuration loading for the three binaries, with env overrides and validation.
 - [ ] `common::tls`: rustls client and server configs from PEM files; mTLS with client cert verification.
 - [ ] `server::ca`: certificate authority (root key at rest, issue short-lived client certs, revocation list) using `rcgen` and `x509-parser`.
 - [ ] `server::enroll`: one-time enrollment tokens stored in PostgreSQL; gRPC `Enroll` RPC that exchanges a token for a certificate.
