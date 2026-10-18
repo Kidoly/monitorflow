@@ -11,7 +11,7 @@ for the run (and dropped afterwards, failure included):
 2. `user add` an administrator (password on stdin), `token create` for agent `e2e-01`;
 3. write a minimal agent config with the token, start the agent;
 4. log in through the API and poll `GET /api/servers` until `e2e-01` is online
-   with the host's hostname and OS family;
+   with the host's hostname and the fake os-release's family and version;
 5. SIGTERM the agent and see it go offline; restart it without a token and see
    it come back with its stored identity;
 6. SIGTERM the server and the agent and check both exit with status 0, and that
@@ -40,13 +40,7 @@ docker compose -f deploy/docker-compose.dev.yml up -d postgres
 DATABASE_URL=postgres://monitorflow:monitorflow@localhost:5432/monitorflow cargo test -p monitorflow-e2e
 ```
 
-The agent only starts on debian and rhel family distributions and has no
-os-release override. On another host the test prints `SKIPPED: ...` (visible
-with `--nocapture`) and passes without running. On such a host you can still
-run it in a mount namespace with a fake os-release, for example:
-
-```
-printf 'ID=debian\nVERSION_ID="12"\n' > /tmp/os-release
-bwrap --dev-bind / / --ro-bind /tmp/os-release "$(readlink -f /etc/os-release)" \
-  cargo test -p monitorflow-e2e
-```
+The agent only starts on debian and rhel family distributions. The test
+writes a fake debian os-release in its temp dir and points the agent at it
+with `MONITORFLOW_OS_RELEASE_PATH` (a variable meant for tests only), so it
+runs on any Linux host.

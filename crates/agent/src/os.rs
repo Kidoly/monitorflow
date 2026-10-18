@@ -1,5 +1,10 @@
 //! Host facts sent in `Hello`: package family and version from
 //! `/etc/os-release`, and the host name.
+//!
+//! For tests only, [`OS_RELEASE_PATH_ENV`] points the agent at another
+//! os-release file, so the end-to-end test can pose as a supported
+//! distribution on any Linux host. The family is still checked: a file
+//! naming an unsupported distribution is refused like the real one.
 
 use std::fmt;
 use std::io;
@@ -7,6 +12,10 @@ use std::path::{Path, PathBuf};
 
 /// `os-release` locations, in the order systemd documents them.
 const OS_RELEASE: [&str; 2] = ["/etc/os-release", "/usr/lib/os-release"];
+
+/// Environment variable naming an os-release file to read instead of the
+/// system ones. For testing; a real install never sets it.
+pub const OS_RELEASE_PATH_ENV: &str = "MONITORFLOW_OS_RELEASE_PATH";
 
 /// Package family, which decides the mirror type (architecture §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,8 +74,28 @@ pub enum OsError {
 }
 
 /// Reads the host name and `os-release`, failing on an unsupported family.
+/// Honours [`OS_RELEASE_PATH_ENV`] when it is set and not empty.
 pub fn detect() -> Result<HostInfo, OsError> {
-    let (os_family, os_version) = parse_os_release(&read_os_release()?)?;
+    let path = std::env::var_os(OS_RELEASE_PATH_ENV)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    if let Some(path) = &path {
+        tracing::warn!(path = %path.display(), "using an os-release override ({OS_RELEASE_PATH_ENV}); this is meant for tests");
+    }
+    detect_from(path.as_deref())
+}
+
+/// Same as [`detect`], reading `os_release` if given, otherwise the system
+/// files.
+pub fn detect_from(os_release: Option<&Path>) -> Result<HostInfo, OsError> {
+    let text = match os_release {
+        Some(path) => read(path)?.ok_or_else(|| OsError::Read {
+            path: path.to_owned(),
+            error: io::ErrorKind::NotFound.into(),
+        })?,
+        None => read_os_release()?,
+    };
+    let (os_family, os_version) = parse_os_release(&text)?;
     Ok(HostInfo {
         hostname: hostname(),
         os_family,
@@ -74,17 +103,22 @@ pub fn detect() -> Result<HostInfo, OsError> {
     })
 }
 
+/// The file's text, or `None` if it does not exist.
+fn read(path: &Path) -> Result<Option<String>, OsError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(OsError::Read {
+            path: path.to_owned(),
+            error,
+        }),
+    }
+}
+
 fn read_os_release() -> Result<String, OsError> {
     for path in OS_RELEASE.map(Path::new) {
-        match std::fs::read_to_string(path) {
-            Ok(text) => return Ok(text),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(OsError::Read {
-                    path: path.to_owned(),
-                    error,
-                })
-            }
+        if let Some(text) = read(path)? {
+            return Ok(text);
         }
     }
     Err(OsError::Missing)
@@ -202,6 +236,27 @@ mod tests {
         assert_eq!(unquote(r#""a \"b\" \\ c""#), r#"a "b" \ c"#);
         assert_eq!(unquote("bare"), "bare");
         assert_eq!(unquote("'it''"), "it'");
+    }
+
+    #[test]
+    fn override_file_is_read_and_still_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("os-release");
+        std::fs::write(&path, "ID=debian\nVERSION_ID=\"12\"\n").unwrap();
+        let host = detect_from(Some(&path)).unwrap();
+        assert_eq!(host.os_family, OsFamily::Debian);
+        assert_eq!(host.os_version, "debian 12");
+
+        std::fs::write(&path, "ID=arch\n").unwrap();
+        let err = detect_from(Some(&path)).unwrap_err().to_string();
+        assert!(err.contains("unsupported distribution `arch`"), "{err}");
+
+        let missing = dir.path().join("missing");
+        let err = detect_from(Some(&missing)).unwrap_err().to_string();
+        assert!(
+            err.starts_with("cannot read") && err.contains("missing"),
+            "{err}"
+        );
     }
 
     #[test]
