@@ -6,7 +6,7 @@
 //! Names and labels are checked by [`validate`] because they become
 //! VictoriaMetrics label names and values on the server. See ADR-0012.
 //!
-//! The built-in sensors ([`cpu`], [`memory`]) are built by kind with [`registry::build`].
+//! The built-in sensors ([`cpu`], [`memory`], [`disk`]) are built by kind with [`registry::build`].
 //! One sensor emits several metrics by setting [`Sample::sensor`] to a
 //! metric suffix, which the scheduler prefixes with the configured name
 //! ([`metric_name`]). See ADR-0015.
@@ -16,6 +16,7 @@ use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub mod cpu;
+pub mod disk;
 pub mod memory;
 mod procfs;
 pub mod registry;

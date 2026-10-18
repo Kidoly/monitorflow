@@ -10,11 +10,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::cpu::CpuSensor;
+use crate::disk::DiskSensor;
 use crate::memory::MemorySensor;
 use crate::Sensor;
 
 /// Every kind [`build`] knows, in a stable order.
-pub const KINDS: &[&str] = &["cpu", "memory"];
+pub const KINDS: &[&str] = &["cpu", "disk", "memory"];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BuildError {
@@ -35,6 +36,7 @@ pub fn build(kind: &str, params: &BTreeMap<String, String>) -> Result<Arc<dyn Se
     let mut params = Params::new(kind, params)?;
     let sensor: Arc<dyn Sensor> = match params.kind {
         "cpu" => Arc::new(CpuSensor::new(params.bool("per_core", true)?)),
+        "disk" => Arc::new(DiskSensor::from_params(&mut params)?),
         "memory" => Arc::new(MemorySensor),
         _ => unreachable!("Params::new only accepts KINDS"),
     };
@@ -68,7 +70,7 @@ impl<'a> Params<'a> {
         self.map.get(name).map(|v| v.trim())
     }
 
-    fn bad(&self, name: &'static str, reason: impl Into<String>) -> BuildError {
+    pub(crate) fn bad(&self, name: &'static str, reason: impl Into<String>) -> BuildError {
         BuildError::BadParam {
             kind: self.kind,
             name,
@@ -84,6 +86,18 @@ impl<'a> Params<'a> {
             Some("false") => Ok(false),
             Some(_) => Err(self.bad(name, "must be `true` or `false`")),
         }
+    }
+
+    /// A comma-separated list without empty items; `None` when absent.
+    pub(crate) fn list(&mut self, name: &'static str) -> Result<Option<Vec<String>>, BuildError> {
+        let Some(value) = self.get(name) else {
+            return Ok(None);
+        };
+        let items: Vec<String> = value.split(',').map(|s| s.trim().to_owned()).collect();
+        if items.iter().any(String::is_empty) {
+            return Err(self.bad(name, "must be a comma-separated list without empty items"));
+        }
+        Ok(Some(items))
     }
 
     fn finish(self) -> Result<(), BuildError> {
@@ -119,7 +133,9 @@ mod tests {
     fn unknown_kinds_and_params_are_refused() {
         let error = build("gpu", &BTreeMap::new()).err().unwrap();
         assert_eq!(error, BuildError::UnknownKind("gpu".into()));
-        assert!(error.to_string().contains("expected one of: cpu, memory"));
+        assert!(error
+            .to_string()
+            .contains("expected one of: cpu, disk, memory"));
         assert_eq!(
             build("cpu", &params(&[("per_cores", "true")])).err(),
             Some(BuildError::UnknownParam {
@@ -131,7 +147,7 @@ mod tests {
 
     #[test]
     fn typed_params() {
-        let map = params(&[("a", " true "), ("b", "yes")]);
+        let map = params(&[("a", " true "), ("b", "yes"), ("l", "x, y"), ("e", "x,,y")]);
         let mut p = Params::new("cpu", &map).unwrap();
         assert_eq!(p.bool("a", false), Ok(true));
         assert_eq!(p.bool("missing", true), Ok(true));
@@ -139,6 +155,9 @@ mod tests {
             p.bool("b", true),
             Err(BuildError::BadParam { name: "b", .. })
         ));
+        assert_eq!(p.list("l"), Ok(Some(vec!["x".into(), "y".into()])));
+        assert_eq!(p.list("none"), Ok(None));
+        assert!(p.list("e").is_err());
         assert!(p.finish().is_ok());
     }
 }
