@@ -1,0 +1,71 @@
+// MonitorFlow agent protocol, version 1.
+//
+// Rules: changes are additive only. Never renumber or reuse a field number.
+// Add new message kinds as new `oneof` variants of Envelope.
+
+syntax = "proto3";
+
+package monitorflow.v1;
+
+// Long-lived bidirectional stream between an agent (or relay) and its upstream.
+service AgentService {
+  rpc Stream(stream Envelope) returns (stream Envelope);
+}
+
+// Every message on the stream is wrapped in an Envelope.
+message Envelope {
+  // Monotonic per sender, used for ordering and deduplication after reconnects.
+  uint64 sequence = 1;
+
+  oneof payload {
+    Hello hello = 10;
+    Heartbeat heartbeat = 11;
+    SampleBatch samples = 12;
+    Command command = 20;
+    CommandResult command_result = 21;
+  }
+}
+
+// First message sent by an agent on a new stream.
+message Hello {
+  string agent_id = 1;
+  string protocol_version = 2;
+  string agent_version = 3;
+  string hostname = 4;
+}
+
+message Heartbeat {
+  int64 sent_at_unix_ms = 1;
+}
+
+// A single sensor reading.
+message Sample {
+  string sensor = 1;
+  string instance = 2;        // e.g. mount point, unit name, core index
+  int64 timestamp_unix_ms = 3;
+  double value = 4;
+  map<string, string> labels = 5;
+}
+
+message SampleBatch {
+  repeated Sample samples = 1;
+}
+
+// A command from the central server. Always signed; agents verify before running.
+message Command {
+  string command_id = 1;
+  string kind = 2;            // "shell", "apply_updates", "configure_sources", ...
+  bytes payload = 3;          // kind-specific, serialized
+  bytes signature = 4;        // signature over command_id + kind + payload
+  int64 issued_at_unix_ms = 5;
+  int64 expires_at_unix_ms = 6;
+}
+
+message CommandResult {
+  string command_id = 1;
+  int32 exit_code = 2;
+  bytes stdout = 3;
+  bytes stderr = 4;
+  int64 started_at_unix_ms = 5;
+  int64 finished_at_unix_ms = 6;
+}

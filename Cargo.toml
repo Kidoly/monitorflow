@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/common",
+    "crates/sensors",
+    "crates/agent",
+    "crates/relay",
+    "crates/server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/kidoly/monitorflow"
+rust-version = "1.85"
+
+[workspace.dependencies]
+monitorflow-common = { path = "crates/common" }
+monitorflow-sensors = { path = "crates/sensors" }
+
+tokio = { version = "1", features = ["full"] }
+tonic = { version = "0.13", features = ["tls-ring"] }
+prost = "0.13"
+prost-types = "0.13"
+tonic-build = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2"
+axum = "0.8"
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "migrate"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+clap = { version = "4", features = ["derive", "env"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

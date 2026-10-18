@@ -1,0 +1,8 @@
+/target
+/web/node_modules
+/web/.next
+/web/out
+.env
+*.pem
+*.key
+/deploy/data

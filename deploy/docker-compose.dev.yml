@@ -1,0 +1,27 @@
+# Development dependencies only. Not for production.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: monitorflow
+      POSTGRES_PASSWORD: monitorflow
+      POSTGRES_DB: monitorflow
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:latest
+    command: ["-storageDataPath=/storage", "-retentionPeriod=30d"]
+    ports: ["8428:8428"]
+    volumes: ["vmdata:/storage"]
+
+  victorialogs:
+    image: victoriametrics/victoria-logs:latest
+    command: ["-storageDataPath=/storage", "-retentionPeriod=30d"]
+    ports: ["9428:9428"]
+    volumes: ["vldata:/storage"]
+
+volumes:
+  pgdata:
+  vmdata:
+  vldata:
