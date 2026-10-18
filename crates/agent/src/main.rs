@@ -1,5 +1,6 @@
 //! MonitorFlow agent entry point.
 
+use std::sync::Arc;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -8,8 +9,10 @@ use clap::{Parser, Subcommand};
 use monitorflow_agent::backoff::Backoff;
 use monitorflow_agent::enroll::{self, EnrollError};
 use monitorflow_agent::renew::{Renewal, RenewalSettings};
+use monitorflow_agent::sensor_config::{self, ConfigFile, NoSensors};
+use monitorflow_agent::sensors::Sensors;
 use monitorflow_agent::stream::{Agent, StreamSettings};
-use monitorflow_agent::{os, sensors, shutdown};
+use monitorflow_agent::{os, shutdown};
 use monitorflow_common::config::{self, AgentConfig};
 use monitorflow_common::logging;
 use monitorflow_sensors::{metric_name, registry, Sample};
@@ -77,10 +80,16 @@ async fn main() -> anyhow::Result<()> {
         identity.clone(),
     );
     tokio::spawn(renewal.run(stop.clone()));
-    let sensors = tokio::spawn(sensors::run(sensors::scheduler(), stop.clone()));
+    // TODO(phase2-sensors): use the factory of `crates/sensors` once the
+    // cpu, memory and disk sensors land; until then every kind is reported
+    // as unknown to the server.
+    let (stream_end, sensors_end) = sensor_config::link();
+    let sensors = Sensors::new(Arc::new(NoSensors), ConfigFile::in_dir(&config.data_dir));
+    let sensors = tokio::spawn(sensors.run(sensors_end, stop.clone()));
     // The stream only returns on shutdown or a local error.
     let result = Agent::new(StreamSettings::from_config(&config), identity, host)
         .follow(updates)
+        .with_sensors(stream_end)
         .run(stop)
         .await
         .context("cannot connect upstream");
