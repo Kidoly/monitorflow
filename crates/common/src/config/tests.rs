@@ -114,7 +114,13 @@ fn upstream_must_be_present_and_https() {
     assert!(msg.contains("key `upstream_url`: is required"), "{msg}");
     assert!(msg.contains("MONITORFLOW_UPSTREAM_URL"), "{msg}");
 
-    for url in ["http://relay:7443", "relay:7443", "https://", "not a url"] {
+    for url in [
+        "http://relay:7443",
+        "relay:7443",
+        "https://",
+        "not a url",
+        "https://relay:7443/prefix",
+    ] {
         let msg = err::<RelayConfig>(&format!("upstream_url = \"{url}\""), &[]);
         assert!(
             msg.contains("key `upstream_url`: must be an https URL"),

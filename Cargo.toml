@@ -26,6 +26,9 @@ prost-types = "0.13"
 tonic-build = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pemfile = "2"
+rcgen = "0.13"
+pem = "3"
+tempfile = "3"
 axum = "0.8"
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "migrate"] }
 serde = { version = "1", features = ["derive"] }

@@ -2,8 +2,10 @@
 //! TLS helpers, configuration loading and common error types.
 
 pub mod config;
+pub mod grpc_url;
 pub mod logging;
 pub mod redact;
+pub mod tls;
 
 /// Generated Protobuf and gRPC code for the `monitorflow.v1` package.
 pub mod proto {
