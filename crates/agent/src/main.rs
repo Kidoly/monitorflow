@@ -1,7 +1,7 @@
 //! MonitorFlow agent entry point.
 
-use std::sync::Arc;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use monitorflow_agent::backoff::Backoff;
 use monitorflow_agent::enroll::{self, EnrollError};
 use monitorflow_agent::renew::{Renewal, RenewalSettings};
-use monitorflow_agent::sensor_config::{self, ConfigFile, NoSensors};
+use monitorflow_agent::sensor_config::{self, Builtin, ConfigFile};
 use monitorflow_agent::sensors::Sensors;
 use monitorflow_agent::stream::{Agent, StreamSettings};
 use monitorflow_agent::upload::{Uplink, UploadSettings};
@@ -81,13 +81,10 @@ async fn main() -> anyhow::Result<()> {
         identity.clone(),
     );
     tokio::spawn(renewal.run(stop.clone()));
-    // TODO(phase2-sensors): use the factory of `crates/sensors` once the
-    // cpu, memory and disk sensors land; until then every kind is reported
-    // as unknown to the server.
     let (stream_end, sensors_end) = sensor_config::link();
     let uplink = Uplink::new(UploadSettings::default());
     let sensors = Sensors::new(
-        Arc::new(NoSensors),
+        Arc::new(Builtin),
         ConfigFile::in_dir(&config.data_dir),
         uplink.clone(),
     );

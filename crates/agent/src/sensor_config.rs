@@ -32,9 +32,8 @@ pub enum FactoryError {
     Invalid(String),
 }
 
-/// Builds sensor implementations by kind.
-// TODO(phase2-sensors): implement with the registry of `crates/sensors`
-// once its cpu, memory and disk sensors land.
+/// Builds sensor implementations by kind. The agent uses [`Builtin`];
+/// tests plug in fakes.
 pub trait SensorFactory: Send + Sync + 'static {
     fn build(
         &self,
@@ -43,17 +42,20 @@ pub trait SensorFactory: Send + Sync + 'static {
     ) -> Result<Arc<dyn Sensor>, FactoryError>;
 }
 
-/// Knows no kind: every spec is reported as unknown.
+/// The built-in sensors of [`sensors::registry`] (ADR-0015).
 #[derive(Debug, Clone, Copy, Default)]
-pub struct NoSensors;
+pub struct Builtin;
 
-impl SensorFactory for NoSensors {
+impl SensorFactory for Builtin {
     fn build(
         &self,
         kind: &str,
-        _config: &sensors::SensorConfig,
+        config: &sensors::SensorConfig,
     ) -> Result<Arc<dyn Sensor>, FactoryError> {
-        Err(FactoryError::UnknownKind(kind.to_owned()))
+        sensors::registry::build(kind, &config.params).map_err(|error| match error {
+            sensors::BuildError::UnknownKind(kind) => FactoryError::UnknownKind(kind),
+            other => FactoryError::Invalid(other.to_string()),
+        })
     }
 }
 
@@ -255,11 +257,20 @@ mod tests {
     }
 
     #[test]
-    fn no_sensors_knows_no_kind() {
-        let config = sensors::SensorConfig::new("cpu", Duration::from_secs(60));
+    fn builtin_builds_the_registry_kinds() {
+        let mut config = sensors::SensorConfig::new("cpu", Duration::from_secs(60));
+        for kind in sensors::registry::KINDS {
+            assert!(Builtin.build(kind, &config).is_ok(), "{kind}");
+        }
         assert_eq!(
-            NoSensors.build("cpu", &config).err(),
-            Some(FactoryError::UnknownKind("cpu".into()))
+            Builtin.build("gpu", &config).err(),
+            Some(FactoryError::UnknownKind("gpu".into()))
+        );
+        config.params.insert("per_cores".into(), "true".into());
+        let error = Builtin.build("cpu", &config).err().unwrap();
+        assert!(
+            matches!(&error, FactoryError::Invalid(m) if m.contains("per_cores")),
+            "{error}"
         );
     }
 
