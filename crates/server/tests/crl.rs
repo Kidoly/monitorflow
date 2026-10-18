@@ -97,6 +97,8 @@ impl Setup {
         let hello = Hello {
             agent_id: id.into(),
             protocol_version: PROTOCOL_VERSION.into(),
+            hostname: format!("{id}.example"),
+            os_family: "debian".into(),
             ..Default::default()
         };
         tx.send(Envelope {

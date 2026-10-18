@@ -14,7 +14,9 @@ use monitorflow_server::ca::{CaOptions, CertificateAuthority};
 use monitorflow_server::crl::{self, CrlPublisher};
 use monitorflow_server::db;
 use monitorflow_server::enroll::{self, server_cert, token, Enroller, FailureLimiter};
-use monitorflow_server::grpc::{self, AgentStreamService, DbRelayPolicy, Registry, StreamSettings};
+use monitorflow_server::grpc::{
+    self, AgentStreamService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
+};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch;
@@ -142,7 +144,8 @@ async fn main() -> anyhow::Result<()> {
         registry.clone(),
         Arc::new(DbRelayPolicy::new(pool.clone())),
         StreamSettings::from_config(&config),
-    );
+    )
+    .with_inventory(Arc::new(DbInventory::new(pool.clone())));
     let api_state = ApiState::new(pool.clone(), registry, ApiSettings::from_config(&config));
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 

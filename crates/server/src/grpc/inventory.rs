@@ -1,0 +1,260 @@
+//! Inventory rows of connected peers (ADR-0008): an agent's `Hello` creates
+//! or refreshes its `servers` row, relays must have their `relays` row, and
+//! a revoked row refuses the stream even with a valid certificate.
+
+use monitorflow_common::proto::v1::Hello;
+use monitorflow_common::tls::{PeerIdentity, PeerRole};
+use sqlx::{PgPool, Postgres, Transaction};
+use tonic::async_trait;
+use uuid::Uuid;
+
+use crate::api::audit::{self, Event};
+
+#[derive(Debug, thiserror::Error)]
+pub enum InventoryError {
+    #[error("{role} {id} is revoked")]
+    Revoked { role: PeerRole, id: String },
+    #[error("{role} {id} is not enrolled")]
+    NotEnrolled { role: PeerRole, id: String },
+    #[error("inventory database error: {0}")]
+    Db(#[from] sqlx::Error),
+}
+
+/// An accepted `Hello`, after the identity checks of the stream.
+#[derive(Debug, Clone, Copy)]
+pub struct AcceptedHello<'a> {
+    /// The certificate identity of the connection.
+    pub peer: &'a PeerIdentity,
+    pub hello: &'a Hello,
+    /// Peer ID of the relay speaking for the agent, if any.
+    pub via_relay: Option<&'a str>,
+}
+
+impl AcceptedHello<'_> {
+    /// Role of the peer the Hello is about: a relay speaking for itself, or
+    /// an agent, directly or through a relay.
+    pub fn role(&self) -> PeerRole {
+        if self.peer.role() == PeerRole::Relay && self.via_relay.is_none() {
+            PeerRole::Relay
+        } else {
+            PeerRole::Agent
+        }
+    }
+}
+
+/// Records connected peers. The server runs [`DbInventory`].
+#[async_trait]
+pub trait Inventory: Send + Sync + 'static {
+    /// Records a Hello; an error refuses the stream.
+    async fn hello(&self, hello: AcceptedHello<'_>) -> Result<(), InventoryError>;
+    /// Records that the peer `id` with `role` is still connected.
+    async fn seen(&self, role: PeerRole, id: &str) -> Result<(), InventoryError>;
+}
+
+/// Records nothing and accepts every peer. **Tests only**: in production
+/// it would ignore revocations.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoInventory;
+
+#[async_trait]
+impl Inventory for NoInventory {
+    async fn hello(&self, _hello: AcceptedHello<'_>) -> Result<(), InventoryError> {
+        Ok(())
+    }
+
+    async fn seen(&self, _role: PeerRole, _id: &str) -> Result<(), InventoryError> {
+        Ok(())
+    }
+}
+
+/// The production inventory, in the `servers` and `relays` tables.
+#[derive(Debug, Clone)]
+pub struct DbInventory {
+    pool: PgPool,
+}
+
+impl DbInventory {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl Inventory for DbInventory {
+    async fn hello(&self, hello: AcceptedHello<'_>) -> Result<(), InventoryError> {
+        let mut tx = self.pool.begin().await?;
+        match hello.role() {
+            PeerRole::Relay => relay_hello(&mut tx, hello.peer.id()).await?,
+            _ => agent_hello(&mut tx, hello).await?,
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn seen(&self, role: PeerRole, id: &str) -> Result<(), InventoryError> {
+        let sql = match role {
+            PeerRole::Relay => {
+                "UPDATE relays SET last_seen_at = now() WHERE peer_id = $1 AND revoked_at IS NULL"
+            }
+            _ => {
+                "UPDATE servers SET last_seen_at = now() WHERE peer_id = $1 AND revoked_at IS NULL"
+            }
+        };
+        sqlx::query(sql).bind(id).execute(&self.pool).await?;
+        Ok(())
+    }
+}
+
+/// A relay's own Hello: its row was created at enrollment.
+async fn relay_hello(tx: &mut Transaction<'_, Postgres>, id: &str) -> Result<(), InventoryError> {
+    let revoked: Option<bool> = sqlx::query_scalar(
+        "UPDATE relays SET last_seen_at = CASE WHEN revoked_at IS NULL THEN now() ELSE last_seen_at END
+         WHERE peer_id = $1
+         RETURNING revoked_at IS NOT NULL",
+    )
+    .bind(id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let (role, id) = (PeerRole::Relay, id.to_owned());
+    match revoked {
+        Some(false) => Ok(()),
+        Some(true) => Err(InventoryError::Revoked { role, id }),
+        None => Err(InventoryError::NotEnrolled { role, id }),
+    }
+}
+
+/// An agent's Hello: updates its `servers` row, or creates it in the site
+/// of its enrollment token. The site of an existing row never changes.
+async fn agent_hello(
+    tx: &mut Transaction<'_, Postgres>,
+    accepted: AcceptedHello<'_>,
+) -> Result<(), InventoryError> {
+    let hello = accepted.hello;
+    let id = hello.agent_id.as_str();
+    let existing: Option<(Uuid, bool)> = sqlx::query_as(
+        "SELECT id, revoked_at IS NOT NULL FROM servers WHERE peer_id = $1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let relay_id: Option<Uuid> = match accepted.via_relay {
+        Some(relay) => sqlx::query_scalar("SELECT id FROM relays WHERE peer_id = $1")
+            .bind(relay)
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or_else(|| InventoryError::NotEnrolled {
+                role: PeerRole::Relay,
+                id: relay.to_owned(),
+            })
+            .map(Some)?,
+        None => None,
+    };
+    let non_empty = |s: &str| Some(s.to_owned()).filter(|s| !s.is_empty());
+    let (os_version, agent_version) = (
+        non_empty(&hello.os_version),
+        non_empty(&hello.agent_version),
+    );
+
+    match existing {
+        Some((_, true)) => Err(InventoryError::Revoked {
+            role: PeerRole::Agent,
+            id: id.to_owned(),
+        }),
+        Some((server_id, false)) => {
+            // relay_id follows the path of the latest connection; the
+            // composite foreign key keeps it in the server's site.
+            sqlx::query(
+                "UPDATE servers SET hostname = $2, os_family = $3, os_version = $4,
+                        agent_version = $5, relay_id = $6, last_seen_at = now()
+                 WHERE id = $1",
+            )
+            .bind(server_id)
+            .bind(&hello.hostname)
+            .bind(&hello.os_family)
+            .bind(&os_version)
+            .bind(&agent_version)
+            .bind(relay_id)
+            .execute(&mut **tx)
+            .await?;
+            Ok(())
+        }
+        None => {
+            let site_id: Uuid = sqlx::query_scalar(crate::db::ENROLLED_AGENT_SITE)
+                .bind(id)
+                .fetch_optional(&mut **tx)
+                .await?
+                .ok_or_else(|| InventoryError::NotEnrolled {
+                    role: PeerRole::Agent,
+                    id: id.to_owned(),
+                })?;
+            let server_id: Uuid = sqlx::query_scalar(
+                "INSERT INTO servers (peer_id, site_id, relay_id, hostname, os_family,
+                                      os_version, agent_version, last_seen_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+                 RETURNING id",
+            )
+            .bind(id)
+            .bind(site_id)
+            .bind(relay_id)
+            .bind(&hello.hostname)
+            .bind(&hello.os_family)
+            .bind(&os_version)
+            .bind(&agent_version)
+            .fetch_one(&mut **tx)
+            .await?;
+            let actor = accepted.peer.uri();
+            audit::record(
+                &mut **tx,
+                Event {
+                    actor_kind: "peer",
+                    actor_id: &actor,
+                    action: "server.create",
+                    target: Some(("agent", id)),
+                    details: serde_json::json!({
+                        "server_id": server_id,
+                        "site_id": site_id,
+                        "hostname": hello.hostname,
+                        "os_family": hello.os_family,
+                        "via_relay": accepted.via_relay,
+                    }),
+                },
+            )
+            .await?;
+            tracing::info!(agent_id = id, %site_id, %server_id, "created a server row");
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hello_role_is_the_subject_of_the_hello() {
+        let hello = Hello::default();
+        let relay = PeerIdentity::new(PeerRole::Relay, "relay-1").unwrap();
+        let agent = PeerIdentity::new(PeerRole::Agent, "web-01").unwrap();
+        let accepted = |peer, via_relay| AcceptedHello {
+            peer,
+            hello: &hello,
+            via_relay,
+        };
+        assert_eq!(accepted(&relay, None).role(), PeerRole::Relay);
+        assert_eq!(accepted(&relay, Some("relay-1")).role(), PeerRole::Agent);
+        assert_eq!(accepted(&agent, None).role(), PeerRole::Agent);
+    }
+
+    #[tokio::test]
+    async fn no_inventory_accepts_everything() {
+        let hello = Hello::default();
+        let peer = PeerIdentity::new(PeerRole::Agent, "web-01").unwrap();
+        let accepted = AcceptedHello {
+            peer: &peer,
+            hello: &hello,
+            via_relay: None,
+        };
+        assert!(NoInventory.hello(accepted).await.is_ok());
+        assert!(NoInventory.seen(PeerRole::Agent, "web-01").await.is_ok());
+    }
+}

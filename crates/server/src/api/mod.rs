@@ -58,7 +58,7 @@
 //! Servers come from the database only; a connected agent without a row is
 //! not listed. See [`ServerView`] for each field.
 
-mod audit;
+pub(crate) mod audit;
 pub mod auth;
 mod error;
 mod health;

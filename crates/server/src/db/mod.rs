@@ -57,9 +57,17 @@ pub async fn migrate(pool: &PgPool) -> Result<(), DbError> {
     Ok(())
 }
 
+/// Site of the latest enrollment token consumed by the agent `$1`: where
+/// its `servers` row is created at its first Hello (ADR-0008).
+pub const ENROLLED_AGENT_SITE: &str = "SELECT site_id FROM enrollment_tokens
+     WHERE peer_id = $1 AND role = 'agent' AND used_at IS NOT NULL
+     ORDER BY used_at DESC LIMIT 1";
+
 /// Whether the relay with certificate ID `relay_peer_id` may speak for the
-/// agent `agent_peer_id` (ADR-0004): both exist, neither is revoked, and they
-/// belong to the same site. Both lookups use the unique `peer_id` indexes.
+/// agent `agent_peer_id` (ADR-0004): the relay exists and is not revoked,
+/// the agent's row is not revoked, and the agent belongs to the relay's
+/// site. An agent without a row yet belongs to the site of its enrollment
+/// token, so its first Hello can come through a relay (ADR-0008).
 pub async fn relay_may_speak_for(
     pool: &PgPool,
     relay_peer_id: &str,
@@ -69,9 +77,14 @@ pub async fn relay_may_speak_for(
         "SELECT EXISTS (
              SELECT 1
              FROM relays r
-             JOIN servers s ON s.site_id = r.site_id
              WHERE r.peer_id = $1 AND r.revoked_at IS NULL
-               AND s.peer_id = $2 AND s.revoked_at IS NULL
+               AND r.site_id = COALESCE(
+                   (SELECT s.site_id FROM servers s WHERE s.peer_id = $2),
+                   (SELECT t.site_id FROM enrollment_tokens t
+                    WHERE t.peer_id = $2 AND t.role = 'agent' AND t.used_at IS NOT NULL
+                    ORDER BY t.used_at DESC LIMIT 1))
+               AND NOT EXISTS (
+                   SELECT 1 FROM servers s WHERE s.peer_id = $2 AND s.revoked_at IS NOT NULL)
          )",
     )
     .bind(relay_peer_id)

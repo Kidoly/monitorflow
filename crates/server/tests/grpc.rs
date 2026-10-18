@@ -13,15 +13,17 @@ use monitorflow_common::proto::v1::{Command, Envelope, Heartbeat, Hello, Sample,
 use monitorflow_common::tls::{self, Identity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
 use monitorflow_server::grpc::{
-    self, AgentStreamService, AllowAllRelayedAgents, DenyRelayedAgents, Registry, RelayPolicy,
-    StreamSettings,
+    self, AgentStreamService, AllowAllRelayedAgents, DbInventory, DbRelayPolicy, DenyRelayedAgents,
+    Inventory, NoInventory, Registry, RelayPolicy, StreamSettings,
 };
+use sqlx::PgPool;
 use support::{uri_san, Ca, Leaf};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Code, Status, Streaming};
+use uuid::Uuid;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -44,11 +46,20 @@ fn settings() -> StreamSettings {
         hello_timeout: Duration::from_millis(200),
         heartbeat_timeout: TIMEOUT,
         outbound_capacity: 8,
+        last_seen_interval: Duration::from_secs(3600),
     }
 }
 
 impl Harness {
     async fn start(settings: StreamSettings, policy: Arc<dyn RelayPolicy>) -> Self {
+        Self::start_with(settings, policy, Arc::new(NoInventory)).await
+    }
+
+    async fn start_with(
+        settings: StreamSettings,
+        policy: Arc<dyn RelayPolicy>,
+        inventory: Arc<dyn Inventory>,
+    ) -> Self {
         let ca = Ca::new("monitorflow test CA");
         let server = identity(&ca, &ca.server());
         let (_tx, tls_config) = watch::channel(server.server_config(Vec::new()).unwrap());
@@ -58,7 +69,8 @@ impl Harness {
             listener.local_addr().unwrap().port()
         );
         let registry = Registry::default();
-        let service = AgentStreamService::new(registry.clone(), policy, settings);
+        let service =
+            AgentStreamService::new(registry.clone(), policy, settings).with_inventory(inventory);
         let (shutdown, stop) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(grpc::serve(listener, tls_config, service, async {
             let _ = stop.await;
@@ -134,7 +146,8 @@ fn hello_v(agent_id: &str, version: &str) -> Envelope {
             protocol_version: version.into(),
             agent_version: "0.1.0".into(),
             hostname: format!("{agent_id}.example"),
-            ..Default::default()
+            os_family: "debian".into(),
+            os_version: "debian 12".into(),
         })),
     }
 }
@@ -356,4 +369,267 @@ async fn shutdown_closes_streams_and_stops_serving() {
     let _keep = peer;
     let served = tokio::time::timeout(TIMEOUT, h.server).await.unwrap();
     served.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn agent_hello_without_a_valid_os_family_is_rejected() {
+    let h = Harness::start(settings(), Arc::new(AllowAllRelayedAgents)).await;
+    for os_family in ["", "windows"] {
+        let mut envelope = hello_v("agent-1", PROTOCOL_VERSION);
+        if let Some(Payload::Hello(hello)) = envelope.payload.as_mut() {
+            hello.os_family = os_family.into();
+        }
+        let status = refused(
+            h.open(&h.ca.client("agent-1", 10), Some(envelope.clone()))
+                .await,
+        );
+        assert_eq!(status.code(), Code::InvalidArgument);
+        assert!(status.message().contains("os_family"), "{status}");
+        // Also when a relay forwards it...
+        if let Some(Payload::Hello(hello)) = envelope.payload.as_mut() {
+            hello.agent_id = "agent-9".into();
+        }
+        let status = refused(h.open(&h.ca.relay("relay-1", 10), Some(envelope)).await);
+        assert_eq!(status.code(), Code::InvalidArgument);
+    }
+    // ...but a relay's own Hello has no OS to report.
+    let mut own = hello_v("relay-1", PROTOCOL_VERSION);
+    if let Some(Payload::Hello(hello)) = own.payload.as_mut() {
+        hello.os_family.clear();
+    }
+    h.open(&h.ca.relay("relay-1", 11), Some(own)).await.unwrap();
+    assert!(h.registry.get("agent-1").is_none());
+}
+
+/// Marks every test in the block as ignored when `DATABASE_URL` is unset.
+macro_rules! db_tests {
+    ($($item:item)*) => {
+        $(
+            #[cfg_attr(
+                not(db_tests),
+                ignore = "DATABASE_URL is not set; run `docker compose -f deploy/docker-compose.dev.yml up -d postgres` and export DATABASE_URL from .env.example"
+            )]
+            $item
+        )*
+    };
+}
+
+async fn site(pool: &PgPool, name: &str) -> Uuid {
+    sqlx::query_scalar("INSERT INTO sites (name) VALUES ($1) RETURNING id")
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A consumed agent enrollment token, as `Enroller::enroll` leaves it.
+async fn enrolled(pool: &PgPool, peer_id: &str, site_id: Uuid) {
+    sqlx::query(
+        "INSERT INTO enrollment_tokens
+             (token_hash, role, peer_id, site_id, expires_at, used_at, used_by_peer_id)
+         VALUES (sha256(gen_random_uuid()::text::bytea), 'agent', $1, $2,
+                 now() + interval '1 hour', clock_timestamp(), $1)",
+    )
+    .bind(peer_id)
+    .bind(site_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ServerRow {
+    id: Uuid,
+    site_id: Uuid,
+    relay_id: Option<Uuid>,
+    hostname: String,
+    os_family: String,
+    os_version: Option<String>,
+    agent_version: Option<String>,
+    last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+async fn server_row(pool: &PgPool, peer_id: &str) -> Option<ServerRow> {
+    sqlx::query_as(
+        "SELECT id, site_id, relay_id, hostname, os_family, os_version, agent_version, last_seen_at
+         FROM servers WHERE peer_id = $1",
+    )
+    .bind(peer_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+async fn audit_count(pool: &PgPool, action: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = $1")
+        .bind(action)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn db_harness(pool: &PgPool, settings: StreamSettings) -> Harness {
+    Harness::start_with(
+        settings,
+        Arc::new(DbRelayPolicy::new(pool.clone())),
+        Arc::new(DbInventory::new(pool.clone())),
+    )
+    .await
+}
+
+fn with_hello(agent_id: &str, edit: impl FnOnce(&mut Hello)) -> Option<Envelope> {
+    let mut envelope = hello_v(agent_id, PROTOCOL_VERSION);
+    if let Some(Payload::Hello(hello)) = envelope.payload.as_mut() {
+        edit(hello);
+    }
+    Some(envelope)
+}
+
+db_tests! {
+    #[sqlx::test]
+    async fn hello_creates_then_updates_the_server_row_in_its_site(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        let lyon = site(&pool, "lyon").await;
+        enrolled(&pool, "agent-1", paris).await;
+        let h = db_harness(&pool, settings()).await;
+
+        let peer = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
+        let row = server_row(&pool, "agent-1").await.unwrap();
+        assert_eq!(row.site_id, paris);
+        assert_eq!(row.relay_id, None);
+        assert_eq!(row.hostname, "agent-1.example");
+        assert_eq!(row.os_family, "debian");
+        assert_eq!(row.os_version.as_deref(), Some("debian 12"));
+        assert_eq!(row.agent_version.as_deref(), Some("0.1.0"));
+        assert!(row.last_seen_at.is_some());
+        assert_eq!(audit_count(&pool, "server.create").await, 1);
+        drop(peer);
+
+        // A later token for another site does not move an existing row.
+        enrolled(&pool, "agent-1", lyon).await;
+        let second = with_hello("agent-1", |hello| {
+            hello.hostname = "web-1".into();
+            hello.os_family = "rhel".into();
+            hello.os_version = String::new();
+            hello.agent_version = "0.2.0".into();
+        });
+        let _peer = h.open(&h.ca.client("agent-1", 11), second).await.unwrap();
+        let updated = server_row(&pool, "agent-1").await.unwrap();
+        assert_eq!(updated.id, row.id);
+        assert_eq!(updated.site_id, paris);
+        assert_eq!(updated.hostname, "web-1");
+        assert_eq!(updated.os_family, "rhel");
+        assert_eq!(updated.os_version, None);
+        assert_eq!(updated.agent_version.as_deref(), Some("0.2.0"));
+        assert!(updated.last_seen_at >= row.last_seen_at);
+        assert_eq!(audit_count(&pool, "server.create").await, 1);
+    }
+
+    #[sqlx::test]
+    async fn unenrolled_or_invalid_agents_get_no_row(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        let h = db_harness(&pool, settings()).await;
+        let status = refused(h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await);
+        assert_eq!(status.code(), Code::PermissionDenied);
+        assert!(status.message().contains("not enrolled"), "{status}");
+
+        enrolled(&pool, "agent-1", paris).await;
+        let bad = with_hello("agent-1", |hello| hello.os_family = "arch".into());
+        let status = refused(h.open(&h.ca.client("agent-1", 10), bad).await);
+        assert_eq!(status.code(), Code::InvalidArgument);
+        assert!(server_row(&pool, "agent-1").await.is_none());
+        assert!(h.registry.connected().is_empty());
+    }
+
+    #[sqlx::test]
+    async fn revoked_rows_refuse_valid_certificates(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        enrolled(&pool, "agent-1", paris).await;
+        sqlx::query("INSERT INTO relays (peer_id, site_id, name) VALUES ('relay-1', $1, 'relay-1')")
+            .bind(paris)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let h = db_harness(&pool, settings()).await;
+        drop(h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap());
+        drop(h.open(&h.ca.relay("relay-1", 10), hello("relay-1")).await.unwrap());
+
+        sqlx::query("UPDATE servers SET revoked_at = now()").execute(&pool).await.unwrap();
+        sqlx::query("UPDATE relays SET revoked_at = now()").execute(&pool).await.unwrap();
+        for (leaf, id) in [(h.ca.client("agent-1", 11), "agent-1"), (h.ca.relay("relay-1", 11), "relay-1")] {
+            let status = refused(h.open(&leaf, hello(id)).await);
+            assert_eq!(status.code(), Code::PermissionDenied);
+            assert!(status.message().contains("revoked"), "{status}");
+        }
+        // A relay with no row at all is not enrolled.
+        let status = refused(h.open(&h.ca.relay("relay-2", 10), hello("relay-2")).await);
+        assert!(status.message().contains("not enrolled"), "{status}");
+    }
+
+    #[sqlx::test]
+    async fn last_seen_at_is_written_at_most_once_per_interval(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        enrolled(&pool, "agent-1", paris).await;
+        enrolled(&pool, "agent-2", paris).await;
+        let set_old = || async {
+            sqlx::query("UPDATE servers SET last_seen_at = '2020-01-01T00:00:00Z'")
+                .execute(&pool)
+                .await
+                .unwrap();
+        };
+        let old = chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap();
+
+        // An hour between writes: heartbeats do not touch the row.
+        let h = db_harness(&pool, settings()).await;
+        let peer = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
+        set_old().await;
+        for sequence in 2..12 {
+            peer.send(sequence, heartbeat()).await;
+        }
+        h.wait_until("heartbeats", |r| r.get("agent-1").unwrap().last_sequence == 11).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(server_row(&pool, "agent-1").await.unwrap().last_seen_at, Some(old.into()));
+
+        // No minimum interval: the next heartbeat writes it.
+        let h = db_harness(&pool, StreamSettings { last_seen_interval: Duration::ZERO, ..settings() }).await;
+        let peer = h.open(&h.ca.client("agent-2", 10), hello("agent-2")).await.unwrap();
+        set_old().await;
+        peer.send(2, heartbeat()).await;
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        while server_row(&pool, "agent-2").await.unwrap().last_seen_at == Some(old.into()) {
+            assert!(tokio::time::Instant::now() < deadline, "last_seen_at never updated");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[sqlx::test]
+    async fn relayed_agent_gets_its_row_with_the_relay(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        let lyon = site(&pool, "lyon").await;
+        let relay_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO relays (peer_id, site_id, name) VALUES ('relay-1', $1, 'relay-1') RETURNING id",
+        )
+        .bind(paris)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        enrolled(&pool, "agent-1", paris).await;
+        enrolled(&pool, "agent-2", lyon).await;
+        let h = db_harness(&pool, settings()).await;
+
+        // First Hello through the relay: the agent has no row yet.
+        let _peer = h.open(&h.ca.relay("relay-1", 10), hello("agent-1")).await.unwrap();
+        let row = server_row(&pool, "agent-1").await.unwrap();
+        assert_eq!((row.site_id, row.relay_id), (paris, Some(relay_id)));
+        assert_eq!(h.registry.get("agent-1").unwrap().via_relay.as_deref(), Some("relay-1"));
+
+        // An agent of another site is refused and gets no row.
+        let status = refused(h.open(&h.ca.relay("relay-1", 11), hello("agent-2")).await);
+        assert_eq!(status.code(), Code::PermissionDenied);
+        assert!(server_row(&pool, "agent-2").await.is_none());
+
+        // Connecting directly clears the relay.
+        let _direct = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
+        assert_eq!(server_row(&pool, "agent-1").await.unwrap().relay_id, None);
+    }
 }
