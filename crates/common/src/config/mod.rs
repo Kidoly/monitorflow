@@ -24,6 +24,9 @@ mod tests;
 /// Prefix of every environment override.
 pub const ENV_PREFIX: &str = "MONITORFLOW_";
 
+/// Seconds between agent heartbeats unless configured otherwise.
+pub const DEFAULT_HEARTBEAT_INTERVAL: u64 = 30;
+
 /// Environment variables as a map, so tests can pass their own.
 pub type Env = HashMap<String, String>;
 
@@ -363,7 +366,7 @@ impl Default for AgentConfig {
             upstream_url: String::new(),
             data_dir: "/var/lib/monitorflow/agent".into(),
             enrollment_token: None,
-            heartbeat_interval: 30,
+            heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             tls: TlsPaths::default(),
             log: LogConfig::default(),
         }
@@ -440,6 +443,8 @@ pub struct ServerConfig {
     pub victoriametrics_url: String,
     pub victorialogs_url: String,
     pub data_dir: PathBuf,
+    /// Seconds without any message after which a peer's stream is closed.
+    pub heartbeat_timeout: u64,
     pub tls: TlsPaths,
     pub log: LogConfig,
 }
@@ -453,6 +458,8 @@ impl Default for ServerConfig {
             victoriametrics_url: "http://localhost:8428".into(),
             victorialogs_url: "http://localhost:9428".into(),
             data_dir: "/var/lib/monitorflow/server".into(),
+            // Three missed heartbeats at the agent's default interval.
+            heartbeat_timeout: 3 * DEFAULT_HEARTBEAT_INTERVAL,
             tls: TlsPaths::default(),
             log: LogConfig::default(),
         }
@@ -467,11 +474,13 @@ impl LoadConfig for ServerConfig {
         env.set("victoriametrics_url", &mut self.victoriametrics_url)?;
         env.set("victorialogs_url", &mut self.victorialogs_url)?;
         env.set("data_dir", &mut self.data_dir)?;
+        env.set("heartbeat_timeout", &mut self.heartbeat_timeout)?;
         self.tls.apply_env(env)?;
         self.log.apply_env(env)
     }
 
     fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
+        check.positive("heartbeat_timeout", self.heartbeat_timeout)?;
         let db = self.database_url.expose();
         check.required("database_url", db)?;
         // The value is never echoed: it may hold a password.
