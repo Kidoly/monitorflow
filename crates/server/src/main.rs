@@ -3,11 +3,12 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use monitorflow_common::config::{self, ServerConfig};
 use monitorflow_common::logging;
+use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::Identity;
-use monitorflow_server::api::{self, ApiSettings, ApiState};
+use monitorflow_server::api::{self, users, ApiSettings, ApiState, Role};
 use monitorflow_server::db;
 use monitorflow_server::grpc::{
     self, AgentStreamService, DenyRelayedAgents, Registry, StreamSettings,
@@ -26,6 +27,37 @@ struct Cli {
         default_value = "/etc/monitorflow/server.toml"
     )]
     config: std::path::PathBuf,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Manage web interface users.
+    User {
+        #[command(subcommand)]
+        command: UserCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum UserCommand {
+    /// Create a user with a global role. The password is read from the
+    /// terminal, or from the first line of stdin when it is not a terminal.
+    Add {
+        #[arg(long)]
+        username: String,
+        /// viewer, operator, approver or administrator (alias: admin).
+        #[arg(long, value_parser = parse_role)]
+        role: Role,
+    },
+}
+
+fn parse_role(s: &str) -> Result<Role, String> {
+    match s {
+        "admin" => Ok(Role::Administrator),
+        other => other.parse(),
+    }
 }
 
 #[tokio::main]
@@ -39,6 +71,13 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = db::connect(&config.database_url).await?;
     db::migrate(&pool).await?;
+
+    if let Some(Command::User {
+        command: UserCommand::Add { username, role },
+    }) = cli.command
+    {
+        return add_user(&pool, &username, role).await;
+    }
 
     let identity = Identity::load(&config.tls).context("loading the TLS identity")?;
     // No CRL yet. The CA will send configs with fresh CRLs through this
@@ -87,6 +126,29 @@ async fn main() -> anyhow::Result<()> {
     )?;
     tracing::info!("server stopped");
     Ok(())
+}
+
+async fn add_user(pool: &sqlx::PgPool, username: &str, role: Role) -> anyhow::Result<()> {
+    users::validate_username(username)?;
+    let password = tokio::task::spawn_blocking(read_password).await??;
+    let id = users::create_user(pool, username, &password, role, "cli").await?;
+    println!("created user {username} ({id}) with role {role}");
+    Ok(())
+}
+
+/// Prompts twice without echo on a terminal; reads one line otherwise.
+fn read_password() -> anyhow::Result<Secret> {
+    use std::io::{BufRead, IsTerminal};
+    if std::io::stdin().is_terminal() {
+        let first = rpassword::prompt_password("Password: ")?;
+        let second = rpassword::prompt_password("Repeat password: ")?;
+        anyhow::ensure!(first == second, "passwords do not match");
+        Ok(Secret::new(first))
+    } else {
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line)?;
+        Ok(Secret::new(line.trim_end_matches(['\r', '\n'])))
+    }
 }
 
 /// Resolves on the first SIGINT or SIGTERM.

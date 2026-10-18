@@ -17,8 +17,13 @@
 //! | GET | `/api/health` | none | `{"status": "ok"}`: the process is up |
 //! | GET | `/api/health/ready` | none | `{"status": "ready"}`, or 503 `{"status": "unavailable"}` when PostgreSQL is unreachable |
 
+mod audit;
 mod error;
 mod health;
+pub mod password;
+pub mod roles;
+pub mod session;
+pub mod users;
 
 use std::future::Future;
 use std::sync::Arc;
@@ -33,6 +38,7 @@ use tokio::net::TcpListener;
 use crate::grpc::Registry;
 
 pub use error::ApiError;
+pub use roles::{Role, RoleGrant};
 
 /// Session and cookie settings, from [`ServerConfig`].
 #[derive(Debug, Clone)]
