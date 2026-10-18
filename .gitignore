@@ -6,3 +6,4 @@
 *.pem
 *.key
 /deploy/data
+/deploy/dev-certs
