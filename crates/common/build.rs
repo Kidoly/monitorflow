@@ -7,6 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[
                 format!("{proto_root}/monitorflow/v1/agent.proto"),
                 format!("{proto_root}/monitorflow/v1/enroll.proto"),
+                format!("{proto_root}/monitorflow/v1/certificate.proto"),
             ],
             &[proto_root],
         )?;

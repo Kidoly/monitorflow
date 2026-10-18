@@ -1,0 +1,33 @@
+// MonitorFlow certificate protocol, version 1. See ADR-0010.
+//
+// Rules: changes are additive only. Never renumber or reuse a field number.
+
+syntax = "proto3";
+
+package monitorflow.v1;
+
+// Certificate lifecycle for enrolled peers. Served on the mTLS gRPC
+// listener: the client certificate of the connection authenticates every
+// call.
+service CertificateService {
+  // Issues a new certificate for the identity of the presenting
+  // certificate, before it expires.
+  rpc Renew(RenewRequest) returns (RenewResponse);
+}
+
+message RenewRequest {
+  // PKCS#10 certificate signing request in PEM, for a fresh key. Only its
+  // public key is used: the identity comes from the presenting certificate.
+  string csr_pem = 1;
+}
+
+message RenewResponse {
+  // Client certificate in PEM.
+  string cert_pem = 1;
+  // CA certificate in PEM. Peers check it is the CA they already trust.
+  string ca_cert_pem = 2;
+  // Identity written in the certificate, `monitorflow://<role>/<id>`.
+  string peer_uri = 3;
+  // End of the certificate's validity, Unix seconds.
+  int64 not_after_unix = 4;
+}

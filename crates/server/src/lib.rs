@@ -7,3 +7,4 @@ pub mod crl;
 pub mod db;
 pub mod enroll;
 pub mod grpc;
+pub mod renew;

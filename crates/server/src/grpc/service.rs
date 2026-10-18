@@ -25,6 +25,7 @@ use super::inventory::{AcceptedHello, Inventory, InventoryError, NoInventory};
 use super::policy::RelayPolicy;
 use super::registry::{CloseReason, Counters, PeerInfo, Registry};
 use super::StreamSettings;
+use crate::renew::PresentedCert;
 
 /// Why a stream was refused before registration.
 #[derive(Debug, thiserror::Error)]
@@ -217,6 +218,7 @@ impl AgentService for AgentStreamService {
         request: Request<Streaming<Envelope>>,
     ) -> Result<Response<Self::StreamStream>, Status> {
         let peer = tls::peer_identity(&request)?;
+        let cert_serial = PresentedCert::from_request(&request).ok().map(|c| c.serial);
         let mut inbound = request.into_inner();
         let (sequence, hello, via_relay) = match self.handshake(&peer, &mut inbound).await {
             Ok(accepted) => accepted,
@@ -252,6 +254,7 @@ impl AgentService for AgentStreamService {
             role,
             via_relay,
             connection: 0,
+            cert_serial,
             agent_version: hello.agent_version,
             hostname: hello.hostname,
             connected_at: now,
