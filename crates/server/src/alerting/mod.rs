@@ -1,6 +1,8 @@
 //! The threshold engine (ADR-0017): thresholds per site and server, the
-//! state machine of each series, and incidents in PostgreSQL.
+//! state machine of each series, and incidents in PostgreSQL. Streams
+//! hand their validated series to [`Alerts::submit`].
 
+pub mod engine;
 pub mod rules;
 pub mod state;
 pub mod store;
@@ -8,6 +10,7 @@ pub mod store;
 use std::fmt;
 use std::str::FromStr;
 
+pub use engine::{Alerts, EngineSettings, LogNotifier, Notification, Notifier, Stats};
 pub use rules::{builtin_defaults, resolve, Comparison, Row, Rule, Rules};
 pub use state::{Evaluation, SeriesState, Transition};
 pub use store::{AlertStore, SeriesKey};

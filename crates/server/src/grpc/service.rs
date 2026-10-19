@@ -1,6 +1,6 @@
 //! `AgentService::Stream`: identity checks, `Hello`, then the per-connection
 //! loop that tracks liveness and sequence numbers and hands samples to
-//! ingest (ADR-0013). Agents get their sensor configuration right after
+//! ingest (ADR-0013) and to the threshold engine (ADR-0017). Agents get their sensor configuration right after
 //! `Hello` (ADR-0016).
 //!
 //! Envelope payloads are never logged: command payloads and results will
@@ -27,6 +27,7 @@ use super::inventory::{AcceptedHello, Inventory, InventoryError, NoInventory};
 use super::policy::RelayPolicy;
 use super::registry::{CloseReason, Counters, PeerInfo, Registry};
 use super::StreamSettings;
+use crate::alerting::Alerts;
 use crate::ingest::{self, Identity, Ingest, LogRecord};
 use crate::renew::PresentedCert;
 use crate::sensor_config::{Resolved, SensorConfigs};
@@ -150,6 +151,7 @@ pub struct AgentStreamService {
     inventory: Arc<dyn Inventory>,
     ingest: Ingest,
     sensor_configs: Option<SensorConfigs>,
+    alerts: Option<Alerts>,
     settings: StreamSettings,
 }
 
@@ -163,6 +165,7 @@ impl AgentStreamService {
             inventory: Arc::new(NoInventory),
             ingest: Ingest::default(),
             sensor_configs: None,
+            alerts: None,
             settings,
         }
     }
@@ -178,6 +181,13 @@ impl AgentStreamService {
     /// are counted and discarded.
     pub fn with_ingest(mut self, ingest: Ingest) -> Self {
         self.ingest = ingest;
+        self
+    }
+
+    /// Evaluates valid samples against thresholds (ADR-0017); without it
+    /// no incident opens.
+    pub fn with_alerts(mut self, alerts: Alerts) -> Self {
+        self.alerts = Some(alerts);
         self
     }
 
@@ -371,6 +381,7 @@ impl AgentService for AgentStreamService {
             identity,
             ingest: self.ingest.clone(),
             sensor_configs: self.sensor_configs.clone(),
+            alerts: self.alerts.clone(),
             event,
             invalid_logged: None,
         };
@@ -424,6 +435,7 @@ struct Connection {
     identity: Identity,
     ingest: Ingest,
     sensor_configs: Option<SensorConfigs>,
+    alerts: Option<Alerts>,
     event: StreamEvent,
     /// When invalid samples were last logged.
     invalid_logged: Option<Instant>,
@@ -561,6 +573,10 @@ impl Connection {
         let checked = ingest::check_batch(&self.identity, batch, Utc::now().timestamp_millis());
         let (invalid, first_error) = (checked.invalid, checked.first_error);
         self.counters.invalid_samples += invalid;
+        // Never waits: a full engine queue drops the batch and counts it.
+        if let Some(alerts) = &self.alerts {
+            alerts.submit(&checked.series);
+        }
         self.counters.dropped_samples += self.ingest.samples(checked);
         let Some(error) = first_error else { return };
         let now = Instant::now();

@@ -16,6 +16,7 @@ use monitorflow_common::proto::v1::{
 };
 use monitorflow_common::tls::{self, Identity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
+use monitorflow_server::alerting::{AlertStore, Alerts, EngineSettings, LogNotifier};
 use monitorflow_server::grpc::{
     self, AcceptedHello, AgentStreamService, AllowAllRelayedAgents, DbInventory, DbRelayPolicy,
     DenyRelayedAgents, Inventory, InventoryError, NoInventory, Registry, RelayPolicy,
@@ -971,5 +972,66 @@ db_tests! {
         let mut relay = h.open(&h.ca.relay("relay-1", 10), hello("relay-1")).await.unwrap();
         assert!(tokio::time::timeout(Duration::from_millis(200), relay.rx.message()).await.is_err());
         assert_eq!(h.registry.get("relay-1").unwrap().sensor_revision_sent, None);
+    }
+
+    #[sqlx::test]
+    async fn samples_on_the_stream_open_then_resolve_an_incident(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        enrolled(&pool, "agent-1", paris).await;
+        sqlx::query(
+            "INSERT INTO thresholds (site_id, metric, instance, comparison, warning, duration_s)
+             VALUES ($1, 'monitorflow_disk_used_ratio', '/', '>', 0.8, 1)",
+        )
+        .bind(paris)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let alerts = Alerts::start(AlertStore::new(pool.clone()), EngineSettings::default(), Arc::new(LogNotifier))
+            .await
+            .unwrap();
+        let engine = alerts.clone();
+        let h = Harness::start_service(|registry| {
+            AgentStreamService::new(registry, Arc::new(DbRelayPolicy::new(pool.clone())), settings())
+                .with_inventory(Arc::new(DbInventory::new(pool.clone())))
+                .with_alerts(engine)
+        })
+        .await;
+        let agent = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        let disk = |ts: i64, value: f64| {
+            Payload::Samples(SampleBatch {
+                samples: vec![Sample {
+                    sensor: "disk_used_ratio".into(),
+                    instance: "/".into(),
+                    timestamp_unix_ms: ts,
+                    value,
+                    labels: Default::default(),
+                }],
+            })
+        };
+        let incident = || async {
+            sqlx::query_as::<_, (String, String, f64)>("SELECT state, severity, last_value FROM incidents")
+                .fetch_optional(&pool)
+                .await
+                .unwrap()
+        };
+        let wait_for = |state: &'static str| async move {
+            let deadline = tokio::time::Instant::now() + TIMEOUT;
+            loop {
+                if let Some(found) = incident().await.filter(|i| i.0 == state) {
+                    return found;
+                }
+                assert!(tokio::time::Instant::now() < deadline, "no {state} incident");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+
+        // The condition holds 1.5 s of sample time: past the 1 s duration.
+        agent.send(2, disk(now - 3_000, 0.9)).await;
+        agent.send(3, disk(now - 1_500, 0.92)).await;
+        assert_eq!(wait_for("open").await, ("open".into(), "warning".into(), 0.92));
+        agent.send(4, disk(now, 0.5)).await;
+        assert_eq!(wait_for("resolved").await, ("resolved".into(), "warning".into(), 0.5));
+        assert_eq!(alerts.stats().transitions, 2);
     }
 }
