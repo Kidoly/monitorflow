@@ -7,21 +7,14 @@ mod support;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use monitorflow_common::client::backoff::Backoff;
-use monitorflow_common::client::enroll::{ensure_identity, EnrollSettings};
-use monitorflow_common::client::identity::StoredIdentity;
-use monitorflow_common::client::shutdown;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{Sample, SampleBatch};
 use monitorflow_common::tls::PeerRole;
-use monitorflow_server::enroll::token::{self, Creator, TokenRequest};
-use monitorflow_server::enroll::{self, Enroller, FailureLimiter};
 use monitorflow_server::grpc::{AgentStreamService, DbInventory, DbRelayPolicy};
 use monitorflow_server::ingest::{Ingest, Series, Sink, WriteError, Writer, WriterSettings};
 use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
 use sqlx::PgPool;
-use support::{hello, open, server_settings, Pki, Relay};
-use tokio::net::TcpListener;
+use support::{enroll_as, hello, open, serve_enroll, server_settings, Pki, Relay};
 use tonic::Code;
 
 /// Keeps every series written, in memory.
@@ -49,53 +42,6 @@ impl Captured {
                 .all(|(k, v)| series.labels.iter().any(|(a, b)| a == k && b == v))
         })
     }
-}
-
-/// Enrolls `id` with a token for `site`, through the enrollment listener.
-async fn enroll_as(
-    pki: &Pki,
-    pool: &PgPool,
-    enroll_url: &str,
-    role: PeerRole,
-    id: &str,
-    site: &str,
-    server_names: Vec<String>,
-) -> StoredIdentity {
-    let site_id = token::site_id(pool, site, true).await.unwrap().unwrap();
-    let request = TokenRequest {
-        role,
-        peer_id: id.into(),
-        site_id,
-        ttl: token::DEFAULT_TTL,
-        creator: Creator::Cli,
-        server_names,
-    };
-    let created = token::create(pool, enroll::ca_fingerprint(&pki.ca), &request)
-        .await
-        .unwrap();
-    let settings = EnrollSettings {
-        role,
-        paths: support::paths(pki.dir.path(), id),
-        token: Some(created.token.to_secret_string()),
-        enroll_url: enroll_url.into(),
-    };
-    let (_trigger, stop) = shutdown::channel();
-    let fast = Backoff::new(Duration::from_millis(50), Duration::from_millis(200));
-    ensure_identity(&settings, fast, stop).await.unwrap()
-}
-
-async fn serve_enroll(pki: &Pki, pool: &PgPool) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = support::url(&listener);
-    let enroller = Enroller::new(pool.clone(), pki.ca.clone(), FailureLimiter::default());
-    let tls = pki.server.server_config_without_client_auth().unwrap();
-    tokio::spawn(enroll::serve(
-        listener,
-        tls,
-        enroller,
-        std::future::pending(),
-    ));
-    url
 }
 
 fn now_ms() -> i64 {

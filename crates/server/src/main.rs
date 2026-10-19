@@ -114,6 +114,10 @@ struct CreateToken {
     /// for several; they go in the relay's certificate (ADR-0025).
     #[arg(long = "server-name", value_name = "NAME")]
     server_names: Vec<String>,
+    /// For a relay that connects through another relay: the peer ID of
+    /// that relay, its parent (ADR-0028).
+    #[arg(long, value_name = "RELAY_ID")]
+    parent_relay: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -413,6 +417,7 @@ async fn create_token(config: &ServerConfig, args: CreateToken) -> anyhow::Resul
         ttl: args.ttl,
         creator: token::Creator::Cli,
         server_names: args.server_names,
+        parent_relay: args.parent_relay,
     };
     let created = token::create(&pool, enroll::ca_fingerprint(&ca), &request).await?;
     println!("{}", created.token.to_secret_string().expose());

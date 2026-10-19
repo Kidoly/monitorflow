@@ -83,6 +83,7 @@ impl Pki {
             ttl: token::DEFAULT_TTL,
             creator: Creator::Cli,
             server_names,
+            parent_relay: None,
         };
         let created = token::create(pool, enroll::ca_fingerprint(&self.ca), &request)
             .await

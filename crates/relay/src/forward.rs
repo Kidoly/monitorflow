@@ -23,6 +23,7 @@ use monitorflow_common::proto::v1::agent_service_server::AgentService;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::Envelope;
 use monitorflow_common::tls::{self, error_chain, PeerIdentity, PeerRole};
+use monitorflow_common::via::Via;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::timeout;
 use tokio_stream::wrappers::ReceiverStream;
@@ -33,7 +34,7 @@ use tonic::{Code, Request, Response, Status, Streaming};
 /// What agents get when the relay cannot reach its upstream. Details stay
 /// in the relay's log: they may name TLS alerts about the relay's own
 /// certificate, which an agent would read as being about its own.
-const UPSTREAM_UNAVAILABLE: &str = "upstream unavailable; retry later";
+pub const UPSTREAM_UNAVAILABLE: &str = "upstream unavailable; retry later";
 /// HTTP/2 pings on upstream connections detect a dead server.
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -109,24 +110,28 @@ impl Forwarder {
     }
 }
 
-/// Only agents may open a stream through the relay, as themselves.
+/// Agents open streams through the relay, and so do downstream relays,
+/// for themselves or for what is below them (ADR-0028).
 pub fn check_peer(peer: &PeerIdentity) -> Result<(), Status> {
     match peer.role() {
-        PeerRole::Agent => Ok(()),
-        PeerRole::Relay => Err(Status::permission_denied(
-            "relay chaining is not supported yet",
-        )),
+        PeerRole::Agent | PeerRole::Relay => Ok(()),
         PeerRole::Server => Err(Status::permission_denied(
             "role server may not open an agent stream",
         )),
     }
 }
 
-/// The `Hello` must name the certificate's agent; nothing else in it is
-/// the relay's business.
-pub fn check_hello(peer: &PeerIdentity, first: &Envelope) -> Result<(), Status> {
+/// The `Hello` must name the origin of the stream: the certificate's peer,
+/// or the origin of a downstream relay's path, which the upstream checks
+/// against its relays' parents. Nothing else in it is the relay's
+/// business.
+pub fn check_hello(peer: &PeerIdentity, via: &Via, first: &Envelope) -> Result<(), Status> {
+    let origin = match peer.role() {
+        PeerRole::Relay => via.origin_peer(),
+        _ => peer,
+    };
     match &first.payload {
-        Some(Payload::Hello(hello)) if hello.agent_id == peer.id() => Ok(()),
+        Some(Payload::Hello(hello)) if hello.agent_id == origin.id() => Ok(()),
         Some(Payload::Hello(hello)) => Err(Status::permission_denied(format!(
             "{peer} may not speak for agent {}",
             hello.agent_id.escape_debug()
@@ -209,12 +214,17 @@ impl AgentService for Forwarder {
         check_peer(&peer).inspect_err(|status| {
             tracing::warn!(%peer, %status, "stream refused");
         })?;
+        let received = match peer.role() {
+            PeerRole::Relay => Via::from_metadata(request.metadata())?,
+            _ => None,
+        };
+        let via = Via::extend(received, &peer)?;
         let mut inbound = request.into_inner();
         let hello = first_envelope(&mut inbound, self.settings.hello_timeout).await?;
-        check_hello(&peer, &hello).inspect_err(|status| {
+        check_hello(&peer, &via, &hello).inspect_err(|status| {
             tracing::warn!(%peer, %status, "stream refused");
         })?;
-        let agent_id = peer.id().to_owned();
+        let agent_id = via.origin_peer().id().to_owned();
         if !*self.upstream_up.borrow() {
             tracing::info!(%agent_id, "stream refused: the upstream is not connected");
             return Err(Status::unavailable(UPSTREAM_UNAVAILABLE));
@@ -229,10 +239,9 @@ impl AgentService for Forwarder {
             .try_send(hello)
             .expect("a new channel has room for Hello");
         let mut client = AgentServiceClient::new(channel);
-        let open = timeout(
-            self.settings.open_timeout,
-            client.stream(ReceiverStream::new(up_rx)),
-        );
+        let mut up_request = Request::new(ReceiverStream::new(up_rx));
+        via.insert_into(up_request.metadata_mut());
+        let open = timeout(self.settings.open_timeout, client.stream(up_request));
         let upstream = match open.await {
             Err(_) => {
                 tracing::warn!(%agent_id, "the upstream did not answer Hello in time");
@@ -280,25 +289,39 @@ mod tests {
     }
 
     #[test]
-    fn only_agents_speaking_for_themselves_pass() {
+    fn hellos_must_name_the_origin() {
         assert!(check_peer(&agent("web-01")).is_ok());
-        for role in [PeerRole::Relay, PeerRole::Server] {
-            let peer = PeerIdentity::new(role, "x").unwrap();
-            assert_eq!(
-                check_peer(&peer).unwrap_err().code(),
-                Code::PermissionDenied
-            );
-        }
-        assert!(check_hello(&agent("web-01"), &hello("web-01")).is_ok());
-        let other = check_hello(&agent("web-01"), &hello("web-02")).unwrap_err();
+        let relay = PeerIdentity::new(PeerRole::Relay, "b").unwrap();
+        assert!(check_peer(&relay).is_ok());
+        let server = PeerIdentity::new(PeerRole::Server, "x").unwrap();
+        assert_eq!(
+            check_peer(&server).unwrap_err().code(),
+            Code::PermissionDenied
+        );
+
+        let web01 = agent("web-01");
+        // Whatever path an agent sends is replaced by itself.
+        let forged = Some(Via::origin(agent("web-02")));
+        let via = Via::extend(forged, &web01).unwrap();
+        assert!(check_hello(&web01, &via, &hello("web-01")).is_ok());
+        let other = check_hello(&web01, &via, &hello("web-02")).unwrap_err();
         assert_eq!(other.code(), Code::PermissionDenied);
         assert!(other.message().contains("web-02"), "{other}");
         let heartbeat = Envelope {
             sequence: 1,
             payload: Some(Payload::Heartbeat(Heartbeat::default())),
         };
-        let status = check_hello(&agent("web-01"), &heartbeat).unwrap_err();
+        let status = check_hello(&web01, &via, &heartbeat).unwrap_err();
         assert_eq!(status.code(), Code::InvalidArgument);
+
+        // A downstream relay speaks for itself without a path, or for the
+        // origin of its path.
+        let own = Via::extend(None, &relay).unwrap();
+        assert!(check_hello(&relay, &own, &hello("b")).is_ok());
+        assert!(check_hello(&relay, &own, &hello("web-01")).is_err());
+        let below = Via::extend(Some(via), &relay).unwrap();
+        assert!(check_hello(&relay, &below, &hello("web-01")).is_ok());
+        assert!(check_hello(&relay, &below, &hello("b")).is_err());
     }
 
     #[test]

@@ -17,6 +17,7 @@ use monitorflow_common::proto::v1::agent_service_server::AgentService;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{Envelope, Hello, SampleBatch, SensorConfigAck};
 use monitorflow_common::tls::{self, PeerIdentity, PeerRole};
+use monitorflow_common::via::Via;
 use monitorflow_common::PROTOCOL_VERSION;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{sleep, timeout, Instant};
@@ -202,9 +203,13 @@ impl AgentStreamService {
 
     /// Waits for `Hello`, checks it against the peer's certificate and
     /// records it in the inventory.
+    ///
+    /// `via` is the path a relay sent (ADR-0028): the Hello is then about
+    /// its origin, attached to the last relay of the path.
     async fn handshake(
         &self,
         peer: &PeerIdentity,
+        via: Option<Via>,
         inbound: &mut Streaming<Envelope>,
     ) -> Result<Accepted, HandshakeError> {
         if peer.role() == PeerRole::Server {
@@ -225,22 +230,39 @@ impl AgentStreamService {
             peer: peer.clone(),
             agent_id: hello.agent_id.clone(),
         };
-        let via_relay = match peer.role() {
-            PeerRole::Agent if hello.agent_id != peer.id() => return Err(not_allowed()),
+        let (role, via_relay) = match (peer.role(), via) {
+            // Forwarded by relays: the server checks the whole path.
+            (PeerRole::Relay, Some(via)) => {
+                let origin = via.origin_peer();
+                if origin.id() != hello.agent_id {
+                    return Err(not_allowed());
+                }
+                let relays: Vec<&str> = std::iter::once(peer.id())
+                    .chain(via.relays().rev().map(PeerIdentity::id))
+                    .collect();
+                if !self.policy.may_route(&relays, origin).await {
+                    return Err(not_allowed());
+                }
+                let attached = relays.last().map(|id| (*id).to_owned());
+                (origin.role(), attached)
+            }
+            (PeerRole::Agent, _) if hello.agent_id != peer.id() => return Err(not_allowed()),
             // A relay's own Hello, or an agent's own direct connection.
-            _ if hello.agent_id == peer.id() => None,
-            PeerRole::Relay => {
+            (role, _) if hello.agent_id == peer.id() => (role, None),
+            // A relay that sends no path speaks for an agent attached to it.
+            (PeerRole::Relay, None) => {
                 if !self.policy.may_speak_for(peer.id(), &hello.agent_id).await {
                     return Err(not_allowed());
                 }
-                Some(peer.id().to_owned())
+                (PeerRole::Agent, Some(peer.id().to_owned()))
             }
-            PeerRole::Agent | PeerRole::Server => unreachable!("handled above"),
+            (PeerRole::Agent | PeerRole::Server, _) => unreachable!("handled above"),
         };
         let accepted = AcceptedHello {
             peer,
             hello: &hello,
             via_relay: via_relay.as_deref(),
+            role,
         };
         if accepted.role() == PeerRole::Agent {
             check_agent_hello(&hello)?;
@@ -256,6 +278,7 @@ impl AgentStreamService {
         Ok(Accepted {
             sequence: first.sequence,
             hello,
+            role,
             via_relay,
             site,
             sensor_config,
@@ -267,7 +290,9 @@ impl AgentStreamService {
 struct Accepted {
     sequence: u64,
     hello: Hello,
-    /// The relay speaking for the agent, if any.
+    /// Role of the peer the Hello is about.
+    role: PeerRole,
+    /// The relay the peer is attached to, if any.
     via_relay: Option<String>,
     /// The peer's site, from the inventory.
     site: String,
@@ -285,8 +310,13 @@ impl AgentService for AgentStreamService {
     ) -> Result<Response<Self::StreamStream>, Status> {
         let peer = tls::peer_identity(&request)?;
         let cert_serial = PresentedCert::from_request(&request).ok().map(|c| c.serial);
+        // Only relays forward; an agent speaks for itself whatever it sends.
+        let via = match peer.role() {
+            PeerRole::Relay => Via::from_metadata(request.metadata())?,
+            _ => None,
+        };
         let mut inbound = request.into_inner();
-        let accepted = match self.handshake(&peer, &mut inbound).await {
+        let accepted = match self.handshake(&peer, via, &mut inbound).await {
             Ok(accepted) => accepted,
             Err(error) => {
                 match &error {
@@ -313,16 +343,12 @@ impl AgentService for AgentStreamService {
         let Accepted {
             sequence,
             hello,
+            role,
             via_relay,
             site,
             sensor_config,
         } = accepted;
         let now = Utc::now();
-        let role = if via_relay.is_some() {
-            PeerRole::Agent
-        } else {
-            peer.role()
-        };
         let info = PeerInfo {
             id: hello.agent_id,
             role,

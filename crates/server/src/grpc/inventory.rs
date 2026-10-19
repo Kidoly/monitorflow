@@ -26,19 +26,17 @@ pub struct AcceptedHello<'a> {
     /// The certificate identity of the connection.
     pub peer: &'a PeerIdentity,
     pub hello: &'a Hello,
-    /// Peer ID of the relay speaking for the agent, if any.
+    /// Peer ID of the relay the peer is attached to, if any: the relay
+    /// speaking for an agent, or the parent of a chained relay (ADR-0028).
     pub via_relay: Option<&'a str>,
+    /// Role of the peer the Hello is about, whose ID is `hello.agent_id`:
+    /// a relay speaking for itself, or an agent.
+    pub role: PeerRole,
 }
 
 impl AcceptedHello<'_> {
-    /// Role of the peer the Hello is about: a relay speaking for itself, or
-    /// an agent, directly or through a relay.
     pub fn role(&self) -> PeerRole {
-        if self.peer.role() == PeerRole::Relay && self.via_relay.is_none() {
-            PeerRole::Relay
-        } else {
-            PeerRole::Agent
-        }
+        self.role
     }
 }
 
@@ -85,7 +83,7 @@ impl Inventory for DbInventory {
     async fn hello(&self, hello: AcceptedHello<'_>) -> Result<String, InventoryError> {
         let mut tx = self.pool.begin().await?;
         let site = match hello.role() {
-            PeerRole::Relay => relay_hello(&mut tx, hello.peer.id()).await?,
+            PeerRole::Relay => relay_hello(&mut tx, &hello.hello.agent_id).await?,
             _ => agent_hello(&mut tx, hello).await?,
         };
         tx.commit().await?;
@@ -245,21 +243,6 @@ async fn agent_hello(
 mod tests {
     use super::*;
 
-    #[test]
-    fn hello_role_is_the_subject_of_the_hello() {
-        let hello = Hello::default();
-        let relay = PeerIdentity::new(PeerRole::Relay, "relay-1").unwrap();
-        let agent = PeerIdentity::new(PeerRole::Agent, "web-01").unwrap();
-        let accepted = |peer, via_relay| AcceptedHello {
-            peer,
-            hello: &hello,
-            via_relay,
-        };
-        assert_eq!(accepted(&relay, None).role(), PeerRole::Relay);
-        assert_eq!(accepted(&relay, Some("relay-1")).role(), PeerRole::Agent);
-        assert_eq!(accepted(&agent, None).role(), PeerRole::Agent);
-    }
-
     #[tokio::test]
     async fn no_inventory_accepts_everything() {
         let hello = Hello::default();
@@ -268,6 +251,7 @@ mod tests {
             peer: &peer,
             hello: &hello,
             via_relay: None,
+            role: PeerRole::Agent,
         };
         assert_eq!(NoInventory.hello(accepted).await.unwrap(), "");
         assert!(NoInventory.seen(PeerRole::Agent, "web-01").await.is_ok());

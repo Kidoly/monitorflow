@@ -62,6 +62,9 @@ pub struct TokenRequest {
     /// DNS names and IP addresses agents use to reach a relay, written in
     /// its certificate (ADR-0025). Empty for agents.
     pub server_names: Vec<String>,
+    /// Peer ID of the relay a relay connects through, for relay chaining
+    /// (ADR-0028). `None` for agents and for relays of the server.
+    pub parent_relay: Option<String>,
 }
 
 /// Most names a relay token may carry.
@@ -76,6 +79,12 @@ impl TokenRequest {
         validate_id(&self.peer_id).or_else(|e| invalid(format!("invalid peer ID: {e}")))?;
         if self.role != PeerRole::Relay && !self.server_names.is_empty() {
             return invalid("server names are for relay tokens only".into());
+        }
+        if self.role != PeerRole::Relay && self.parent_relay.is_some() {
+            return invalid("a parent relay is for relay tokens only".into());
+        }
+        if self.parent_relay.as_deref() == Some(self.peer_id.as_str()) {
+            return invalid("a relay cannot be its own parent".into());
         }
         if self.server_names.len() > MAX_SERVER_NAMES {
             return invalid(format!("at most {MAX_SERVER_NAMES} server names"));
@@ -155,9 +164,25 @@ pub async fn create(
     request.validate()?;
     let token = generate(ca_fingerprint)?;
     let mut tx = pool.begin().await?;
+    let parent_relay_id: Option<Uuid> = match &request.parent_relay {
+        Some(parent) => Some(
+            sqlx::query_scalar("SELECT id FROM relays WHERE peer_id = $1 AND revoked_at IS NULL")
+                .bind(parent)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(|| {
+                    TokenError::Invalid(format!(
+                        "parent relay `{}` is not enrolled or is revoked",
+                        parent.escape_debug()
+                    ))
+                })?,
+        ),
+        None => None,
+    };
     let (id, expires_at): (Uuid, DateTime<Utc>) = sqlx::query_as(
-        "INSERT INTO enrollment_tokens (token_hash, role, peer_id, site_id, created_by, expires_at, server_names)
-         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6), $7)
+        "INSERT INTO enrollment_tokens (token_hash, role, peer_id, site_id, created_by, expires_at,
+                                        server_names, parent_relay_id)
+         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6), $7, $8)
          RETURNING id, expires_at",
     )
     .bind(hash(&token).as_slice())
@@ -167,6 +192,7 @@ pub async fn create(
     .bind(request.creator.user_id())
     .bind(request.ttl.as_secs_f64())
     .bind(&request.server_names)
+    .bind(parent_relay_id)
     .fetch_one(&mut *tx)
     .await?;
     let (actor_kind, actor_id) = request.creator.actor();
@@ -175,6 +201,7 @@ pub async fn create(
         "site_id": request.site_id,
         "expires_at": expires_at,
         "server_names": request.server_names,
+        "parent_relay": request.parent_relay,
     });
     sqlx::query(
         "INSERT INTO audit_log (actor_kind, actor_id, action, target_kind, target_id, details)
@@ -267,7 +294,19 @@ mod tests {
             ttl,
             creator: Creator::Cli,
             server_names: Vec::new(),
+            parent_relay: None,
         }
+    }
+
+    #[test]
+    fn only_relays_get_a_parent_and_not_themselves() {
+        let with = |role, id: &str, parent: &str| TokenRequest {
+            parent_relay: Some(parent.into()),
+            ..request(role, id, DEFAULT_TTL)
+        };
+        assert!(with(PeerRole::Relay, "b", "a").validate().is_ok());
+        assert!(with(PeerRole::Agent, "web-01", "a").validate().is_err());
+        assert!(with(PeerRole::Relay, "a", "a").validate().is_err());
     }
 
     #[test]
