@@ -34,9 +34,9 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 
 - [x] Relay binary: accept agent connections, forward to upstream.
 - [ ] Store-and-forward buffer on disk with ordering and bounded size.
-- [ ] Relay chaining and relay enrollment.
+- [x] Relay chaining and relay enrollment.
 - [x] Multi-tenancy: customers, sites, tenancy enforcement in the API.
-- [ ] Web: administration of relays and sites.
+- [x] Web: administration of relays and sites.
 
 ## Phase 4 — Packages and updates
 
