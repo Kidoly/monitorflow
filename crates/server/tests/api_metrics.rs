@@ -383,78 +383,89 @@ db_tests! {
         let end: i64 = sent.param("end")[0].parse().unwrap();
         assert_eq!(end - start, 86_400);
     }
+}
 
-    /// Writes a series of two servers to the VictoriaMetrics at
-    /// `VICTORIAMETRICS_URL` and reads one back through the API.
-    #[sqlx::test]
-    #[cfg_attr(
-        not(vm_tests),
-        ignore = "VICTORIAMETRICS_URL is not set; run `docker compose -f deploy/docker-compose.dev.yml up -d victoriametrics` and export it from .env.example"
-    )]
-    async fn real_victoriametrics_answers_scoped_queries(pool: PgPool) {
-        use monitorflow_server::ingest::{RemoteWrite, Series, Sink};
+/// Writes a series of two servers to the VictoriaMetrics at
+/// `VICTORIAMETRICS_URL` and reads one back through the API.
+#[sqlx::test]
+#[cfg_attr(
+    not(all(db_tests, vm_tests)),
+    ignore = "DATABASE_URL or VICTORIAMETRICS_URL is not set; run `docker compose -f deploy/docker-compose.dev.yml up -d` and export both from .env.example"
+)]
+async fn real_victoriametrics_answers_scoped_queries(pool: PgPool) {
+    use monitorflow_server::ingest::{RemoteWrite, Series, Sink};
 
-        let base = std::env::var("VICTORIAMETRICS_URL").unwrap();
-        let site_name = format!("api-test-{}", Uuid::new_v4().simple());
-        let site: Uuid = sqlx::query_scalar("INSERT INTO sites (name) VALUES ($1) RETURNING id")
-            .bind(&site_name)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        let server: Uuid = sqlx::query_scalar(
-            "INSERT INTO servers (peer_id, site_id, hostname, os_family)
-             VALUES ('agent-real', $1, 'h', 'debian') RETURNING id",
-        )
-        .bind(site)
+    let base = std::env::var("VICTORIAMETRICS_URL").unwrap();
+    let site_name = format!("api-test-{}", Uuid::new_v4().simple());
+    let site: Uuid = sqlx::query_scalar("INSERT INTO sites (name) VALUES ($1) RETURNING id")
+        .bind(&site_name)
         .fetch_one(&pool)
         .await
         .unwrap();
-        // Older than VictoriaMetrics' latency offset (30 s), which hides
-        // newer points from instant queries.
-        let now = chrono::Utc::now().timestamp_millis() - 60_000;
-        let batch: Vec<Series> = ["agent-real", "agent-other"]
-            .iter()
-            .map(|peer| Series {
-                labels: [
-                    ("__name__", "monitorflow_api_test_ratio"),
-                    ("instance", "x"),
-                    ("peer", peer),
-                    ("site", site_name.as_str()),
-                ]
-                .into_iter()
-                .map(|(k, v)| (k.to_owned(), v.to_owned()))
-                .collect(),
-                value: 0.5,
-                timestamp_ms: now,
-            })
-            .collect();
-        RemoteWrite::new(&base).unwrap().write(&batch).await.unwrap();
+    let server: Uuid = sqlx::query_scalar(
+        "INSERT INTO servers (peer_id, site_id, hostname, os_family)
+             VALUES ('agent-real', $1, 'h', 'debian') RETURNING id",
+    )
+    .bind(site)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // Older than VictoriaMetrics' latency offset (30 s), which hides
+    // newer points from instant queries.
+    let now = chrono::Utc::now().timestamp_millis() - 60_000;
+    let batch: Vec<Series> = ["agent-real", "agent-other"]
+        .iter()
+        .map(|peer| Series {
+            labels: [
+                ("__name__", "monitorflow_api_test_ratio"),
+                ("instance", "x"),
+                ("peer", peer),
+                ("site", site_name.as_str()),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect(),
+            value: 0.5,
+            timestamp_ms: now,
+        })
+        .collect();
+    RemoteWrite::new(&base)
+        .unwrap()
+        .write(&batch)
+        .await
+        .unwrap();
 
-        let client = reqwest::Client::new();
-        let router = || {
-            api::router(
-                ApiState::new(pool.clone(), Registry::default(), ApiSettings::default())
-                    .with_metrics(VmQuery::new(&base).unwrap()),
-            )
-        };
-        let vm = FakeVm::start().await;
-        let viewer = session(&pool, &vm, "viewer", Some(site)).await;
-        let uri = format!("/api/metrics/query?server_id={server}&metric=monitorflow_api_test_ratio");
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            client.get(format!("{base}/internal/force_flush")).send().await.unwrap();
-            let request = Request::get(&uri).header("cookie", &viewer).body(Body::empty()).unwrap();
-            let (status, body, _) = send(router(), request).await;
-            assert_eq!(status, StatusCode::OK, "{body}");
-            let series = body["series"].as_array().unwrap();
-            if !series.is_empty() {
-                assert_eq!(series.len(), 1, "{body}");
-                assert_eq!(series[0]["labels"]["peer"], "agent-real");
-                assert_eq!(series[0]["points"][0][1], 0.5);
-                return;
-            }
-            assert!(tokio::time::Instant::now() < deadline, "series not found");
-            tokio::time::sleep(Duration::from_millis(200)).await;
+    let client = reqwest::Client::new();
+    let router = || {
+        api::router(
+            ApiState::new(pool.clone(), Registry::default(), ApiSettings::default())
+                .with_metrics(VmQuery::new(&base).unwrap()),
+        )
+    };
+    let vm = FakeVm::start().await;
+    let viewer = session(&pool, &vm, "viewer", Some(site)).await;
+    let uri = format!("/api/metrics/query?server_id={server}&metric=monitorflow_api_test_ratio");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        client
+            .get(format!("{base}/internal/force_flush"))
+            .send()
+            .await
+            .unwrap();
+        let request = Request::get(&uri)
+            .header("cookie", &viewer)
+            .body(Body::empty())
+            .unwrap();
+        let (status, body, _) = send(router(), request).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let series = body["series"].as_array().unwrap();
+        if !series.is_empty() {
+            assert_eq!(series.len(), 1, "{body}");
+            assert_eq!(series[0]["labels"]["peer"], "agent-real");
+            assert_eq!(series[0]["points"][0][1], 0.5);
+            return;
         }
+        assert!(tokio::time::Instant::now() < deadline, "series not found");
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }
