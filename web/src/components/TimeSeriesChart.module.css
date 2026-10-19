@@ -1,0 +1,105 @@
+.figure {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.title {
+  font-weight: 600;
+}
+
+.empty {
+  display: grid;
+  place-items: center;
+  min-height: 8rem;
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: pan-y;
+}
+
+.grid {
+  stroke: var(--grid);
+  stroke-width: 1;
+}
+
+.axis {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.tick {
+  fill: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.series path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.series circle {
+  fill: currentColor;
+}
+
+.warning line,
+.critical line {
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+}
+
+.warning line {
+  stroke: var(--warning-line);
+}
+
+.critical line {
+  stroke: var(--critical-line);
+}
+
+.warning text,
+.critical text {
+  fill: var(--text);
+  font-size: 11px;
+}
+
+.crosshair {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.when {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  font-size: 0.875rem;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.key {
+  display: inline-block;
+  width: 0.9rem;
+  height: 2px;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}

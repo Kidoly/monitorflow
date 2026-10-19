@@ -16,6 +16,19 @@
   --error-bg: #fef2f2;
   --focus: #1d4ed8;
   --radius: 6px;
+  /* Chart series in this fixed order (colour-blind checked as adjacent pairs). */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
+  /* Threshold lines; always drawn with a text label, never colour alone. */
+  --warning-line: #b77f00;
+  --critical-line: #d03b3b;
+  --grid: #e1e0d9;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   line-height: 1.5;
 }
