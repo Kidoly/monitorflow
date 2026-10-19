@@ -3,12 +3,14 @@
 
 pub mod rules;
 pub mod state;
+pub mod store;
 
 use std::fmt;
 use std::str::FromStr;
 
 pub use rules::{builtin_defaults, resolve, Comparison, Row, Rule, Rules};
 pub use state::{Evaluation, SeriesState, Transition};
+pub use store::{AlertStore, SeriesKey};
 
 /// Severity of an incident; critical is the higher one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
