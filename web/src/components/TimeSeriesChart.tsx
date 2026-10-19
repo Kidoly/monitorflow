@@ -3,6 +3,7 @@
 import { type PointerEvent, useId, useState } from "react";
 
 import { type Unit, binaryExponent, formatBytes, formatValue } from "@/lib/format";
+import type { Severity } from "@/lib/thresholds";
 
 import styles from "./TimeSeriesChart.module.css";
 
@@ -19,7 +20,13 @@ export interface ChartSeries {
 export interface ReferenceLine {
   value: number;
   label: string;
-  severity: "warning" | "critical";
+  severity: Severity;
+}
+
+/** A vertical line at time `t` (unix seconds), such as when an incident opened. */
+export interface TimeMarker {
+  t: number;
+  label: string;
 }
 
 /** Series colours in a fixed order (validated light palette); never cycled. */
@@ -41,6 +48,7 @@ interface Props {
   /** Expected seconds between points; a longer gap breaks the line. */
   step?: number;
   referenceLines?: ReferenceLine[];
+  markers?: TimeMarker[];
   /** Shown instead of the plot when no series has a value. */
   emptyText?: string;
 }
@@ -54,6 +62,7 @@ export function TimeSeriesChart({
   series: allSeries,
   step,
   referenceLines = [],
+  markers = [],
   emptyText = "No data in this range.",
 }: Props) {
   const titleId = useId();
@@ -120,6 +129,16 @@ export function TimeSeriesChart({
                 </text>
               </g>
             ))}
+            {markers
+              .filter((m) => m.t >= start && m.t <= end)
+              .map((m) => (
+                <g key={m.label} className={styles.marker} data-testid="time-marker">
+                  <line x1={x(m.t)} x2={x(m.t)} y1={MARGIN.top} y2={MARGIN.top + PLOT_H} />
+                  <text x={x(m.t) + 4} y={MARGIN.top + 10}>
+                    {m.label}
+                  </text>
+                </g>
+              ))}
             {series.map((s, i) => (
               <g key={s.label} className={styles.series} style={{ color: `var(--series-${i + 1})` }}>
                 {segments(s.points, step).map((segment) =>

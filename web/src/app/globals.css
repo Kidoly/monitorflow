@@ -12,6 +12,10 @@
   --online-bg: #dcfce7;
   --offline: #9a1c1c;
   --offline-bg: #fee2e2;
+  --warning: #7a4a00;
+  --warning-bg: #fef3c7;
+  --critical: #9a1c1c;
+  --critical-bg: #fee2e2;
   --error: #9a1c1c;
   --error-bg: #fef2f2;
   --focus: #1d4ed8;

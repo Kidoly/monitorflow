@@ -20,6 +20,7 @@
 //! | POST | `/api/auth/logout` | session | 204, clears the cookie |
 //! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "site_id"}]}` |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
+//! | GET | `/api/servers/{id}` | read | [`ServerDetail`]: one listing row plus `certificate`, see below |
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
 //! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
@@ -107,8 +108,12 @@
 //! The query endpoints take `server_id`, `metric` (`monitorflow_` and a
 //! sensor metric name), optional `instance` and `agg` (`avg`, `min`,
 //! `max`, `sum`, `count`), then `time` for an instant query or `start`,
-//! `end` (RFC 3339, default the last hour) and `step` (seconds) for a
-//! range. The API builds the PromQL itself, scoped to that server's `peer`
+//! `end` (RFC 3339, default the last hour), `step` (seconds) and optional
+//! `rollup` (`avg`, `max`, `min`, `last`) for a range. With `rollup`, each
+//! point summarizes the samples of its series over the step before it
+//! (`max_over_time(…[<step>s])`), before `agg`, so long ranges keep
+//! spikes; without it, a point is the last sample before it. The API
+//! builds the PromQL itself, scoped to that server's `peer`
 //! and `site` (ADR-0018); arbitrary PromQL is not accepted. Ranges are at
 //! most 31 days and 11,000 points per series, answers at most 500 series;
 //! beyond that, 400. A server outside the user's sites is 404. Backend
@@ -133,7 +138,8 @@
 //!   "connected_at": "2026-10-18T12:00:00Z",
 //!   "last_heartbeat": "2026-10-18T12:05:00Z",
 //!   "via_relay": null,
-//!   "open_incidents": 0
+//!   "open_incidents": 0,
+//!   "cert_not_after": "2027-01-16T12:00:00Z"
 //! }], "next_cursor": null}
 //! ```
 //!
@@ -143,7 +149,23 @@
 //!
 //! `status` is `online` while the agent has an open stream, else `offline`.
 //! Servers come from the database only; a connected agent without a row is
-//! not listed. See [`ServerView`] for each field.
+//! not listed. See [`ServerView`] for each field. `cert_not_after` is the
+//! latest expiry among the agent's unrevoked certificates, `null` if none.
+//!
+//! # `GET /api/servers/{id}`
+//!
+//! The same fields as a listing row, plus the certificate the CA issued
+//! last to the agent (revoked or not), or `null` if it never issued one:
+//!
+//! ```json
+//! {"id": "uuid", "peer_id": "agent-1", "...": "as in the listing",
+//!  "certificate": {"serial": "3f2a…", "not_before": "2026-10-18T12:00:00Z",
+//!                  "not_after": "2027-01-16T12:00:00Z",
+//!                  "issued_at": "2026-10-18T12:00:00Z", "revoked": false,
+//!                  "revoked_at": null, "revocation_reason": null}}
+//! ```
+//!
+//! A server outside the user's sites, or an ID that is not a UUID, is 404.
 
 pub(crate) mod audit;
 pub mod auth;
@@ -178,7 +200,7 @@ use crate::vm_query::VmQuery;
 pub use auth::{CurrentUser, Me};
 pub use error::ApiError;
 pub use roles::{Role, RoleGrant};
-pub use servers::{ServerList, ServerView};
+pub use servers::{CertificateView, ServerDetail, ServerList, ServerView};
 
 /// Largest accepted request body.
 const BODY_LIMIT: usize = 64 * 1024;
@@ -244,6 +266,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
         .route("/api/servers", get(servers::list))
+        .route("/api/servers/{id}", get(servers::detail))
         .route("/api/sites", get(sites::list))
         .route("/api/incidents", get(incidents::list))
         .route("/api/incidents/{id}", get(incidents::detail))

@@ -599,6 +599,25 @@ impl LoadConfig for RelayConfig {
     }
 }
 
+/// Server identity files. Unset paths default to files under
+/// `<data_dir>/tls/`, where the server writes the certificate its built-in
+/// CA issues it (ADR-0007); see [`ServerConfig::tls_paths`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ServerTlsPaths {
+    pub ca_cert: Option<PathBuf>,
+    pub cert: Option<PathBuf>,
+    pub key: Option<PathBuf>,
+}
+
+impl ServerTlsPaths {
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set_opt("tls.ca_cert", &mut self.ca_cert)?;
+        env.set_opt("tls.cert", &mut self.cert)?;
+        env.set_opt("tls.key", &mut self.key)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ServerConfig {
@@ -628,7 +647,7 @@ pub struct ServerConfig {
     /// environment override is a comma-separated list.
     pub server_names: Vec<String>,
     pub ingest: IngestConfig,
-    pub tls: TlsPaths,
+    pub tls: ServerTlsPaths,
     pub log: LogConfig,
 }
 
@@ -649,8 +668,22 @@ impl Default for ServerConfig {
             heartbeat_timeout: 3 * DEFAULT_HEARTBEAT_INTERVAL,
             server_names: vec!["localhost".into(), "127.0.0.1".into()],
             ingest: IngestConfig::default(),
-            tls: TlsPaths::default(),
+            tls: ServerTlsPaths::default(),
             log: LogConfig::default(),
+        }
+    }
+}
+
+impl ServerConfig {
+    /// Identity file paths, with defaults under `<data_dir>/tls/`.
+    pub fn tls_paths(&self) -> TlsPaths {
+        let dir = self.data_dir.join("tls");
+        let or =
+            |path: &Option<PathBuf>, name: &str| path.clone().unwrap_or_else(|| dir.join(name));
+        TlsPaths {
+            ca_cert: or(&self.tls.ca_cert, "ca.pem"),
+            cert: or(&self.tls.cert, "cert.pem"),
+            key: or(&self.tls.key, "key.pem"),
         }
     }
 }

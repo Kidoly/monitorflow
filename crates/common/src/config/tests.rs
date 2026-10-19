@@ -178,6 +178,41 @@ fn agent_sensor_limits_default_and_validate() {
 }
 
 #[test]
+fn server_tls_paths_follow_data_dir() {
+    let tls = parse::<ServerConfig>(SERVER_MIN).unwrap().tls_paths();
+    assert_eq!(
+        tls.ca_cert,
+        Path::new("/var/lib/monitorflow/server/tls/ca.pem")
+    );
+    assert_eq!(
+        tls.cert,
+        Path::new("/var/lib/monitorflow/server/tls/cert.pem")
+    );
+    assert_eq!(
+        tls.key,
+        Path::new("/var/lib/monitorflow/server/tls/key.pem")
+    );
+
+    let text = format!("{SERVER_MIN}\ndata_dir = \"/tmp/x\"");
+    let tls = parse::<ServerConfig>(&text).unwrap().tls_paths();
+    assert_eq!(tls.ca_cert, Path::new("/tmp/x/tls/ca.pem"));
+    assert_eq!(tls.cert, Path::new("/tmp/x/tls/cert.pem"));
+    assert_eq!(tls.key, Path::new("/tmp/x/tls/key.pem"));
+
+    // Explicit paths win one by one; the others still follow data_dir.
+    let text = format!("{SERVER_MIN}\ndata_dir = \"/srv/mf\"\n[tls]\ncert = \"/etc/mf/cert.pem\"");
+    let vars = env(&[("MONITORFLOW_TLS_KEY", "/etc/mf/key.pem")]);
+    let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
+    let tls = server.tls_paths();
+    assert_eq!(tls.cert, Path::new("/etc/mf/cert.pem"));
+    assert_eq!(tls.key, Path::new("/etc/mf/key.pem"));
+    assert_eq!(tls.ca_cert, Path::new("/srv/mf/tls/ca.pem"));
+
+    let msg = err::<ServerConfig>(&format!("{SERVER_MIN}\n[tls]\nkey_file = \"/k\""), &[]);
+    assert!(msg.contains("key `tls.key_file`"), "{msg}");
+}
+
+#[test]
 fn env_fills_required_key_and_empty_env_is_ignored() {
     let vars = env(&[
         ("MONITORFLOW_DATABASE_URL", "postgres://db/mf"),

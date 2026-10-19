@@ -65,6 +65,29 @@ impl Aggregation {
     }
 }
 
+/// How each point of a range summarizes the samples since the previous
+/// point. Without it, a point is the last sample before it, so a spike
+/// between two points of a long range is not drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Rollup {
+    Avg,
+    Max,
+    Min,
+    Last,
+}
+
+impl Rollup {
+    fn function(self) -> &'static str {
+        match self {
+            Self::Avg => "avg_over_time",
+            Self::Max => "max_over_time",
+            Self::Min => "min_over_time",
+            Self::Last => "last_over_time",
+        }
+    }
+}
+
 /// Query string of `GET /api/metrics/query`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -92,6 +115,8 @@ pub struct RangeParams {
     /// Seconds; defaults to the range over 720, at least one second.
     pub step: Option<i64>,
     pub agg: Option<Aggregation>,
+    /// Applied per series over a window of one step, before `agg`.
+    pub rollup: Option<Rollup>,
 }
 
 /// One series: its labels and its `[unix seconds, value]` points. A value
@@ -174,12 +199,14 @@ pub fn check_metric(metric: &str) -> Result<(), ApiError> {
     })
 }
 
-/// The PromQL for `metric` of `target`, with an optional instance and
-/// aggregation. `metric` and `instance` must be checked first.
+/// The PromQL for `metric` of `target`, with an optional instance, rollup
+/// over a window in seconds, and aggregation. `metric` and `instance`
+/// must be checked first.
 pub fn build_query(
     metric: &str,
     target: &Target,
     instance: Option<&str>,
+    rollup: Option<(Rollup, i64)>,
     agg: Option<Aggregation>,
 ) -> String {
     let mut selector = format!(
@@ -191,6 +218,9 @@ pub fn build_query(
         selector.push_str(&format!(",instance={}", quote(instance)));
     }
     selector.push('}');
+    if let Some((rollup, window)) = rollup {
+        selector = format!("{}({selector}[{window}s])", rollup.function());
+    }
     match agg {
         Some(agg) => format!("{}({selector})", agg.as_str()),
         None => selector,
@@ -328,6 +358,7 @@ pub async fn query(
         &params.metric,
         &target,
         params.instance.as_deref(),
+        None,
         params.agg,
     );
     let time = params.time.unwrap_or_else(Utc::now).timestamp();
@@ -354,10 +385,12 @@ pub async fn query_range(
     check_instance(params.instance.as_deref())?;
     let (start, end, step) = range(&params, Utc::now())?;
     let (vm, target) = target(&state, &user, params.server_id).await?;
+    // A window of one step: consecutive points cover the range exactly.
     let promql = build_query(
         &params.metric,
         &target,
         params.instance.as_deref(),
+        params.rollup.map(|rollup| (rollup, step)),
         params.agg,
     );
     let mut query = vec![
@@ -452,7 +485,7 @@ mod tests {
     fn queries_carry_escaped_peer_and_site_matchers() {
         assert_eq!(quote("a\"b\\c\nd\u{1}"), r#""a\"b\\c\nd\u0001""#);
         assert_eq!(
-            build_query("monitorflow_cpu_usage_ratio", &target(), None, None),
+            build_query("monitorflow_cpu_usage_ratio", &target(), None, None, None),
             r#"monitorflow_cpu_usage_ratio{peer="agent-1",site="o\"brien\\paris"}"#
         );
         assert_eq!(
@@ -460,9 +493,43 @@ mod tests {
                 "monitorflow_disk_used_ratio",
                 &target(),
                 Some("/\"}or{"),
+                None,
                 Some(Aggregation::Max)
             ),
             r#"max(monitorflow_disk_used_ratio{peer="agent-1",site="o\"brien\\paris",instance="/\"}or{"})"#
+        );
+    }
+
+    #[test]
+    fn rollups_wrap_the_selector_with_a_window_of_one_step() {
+        let selector = r#"monitorflow_cpu_usage_ratio{peer="agent-1",site="o\"brien\\paris"}"#;
+        for (rollup, function) in [
+            (Rollup::Avg, "avg_over_time"),
+            (Rollup::Max, "max_over_time"),
+            (Rollup::Min, "min_over_time"),
+            (Rollup::Last, "last_over_time"),
+        ] {
+            assert_eq!(
+                build_query(
+                    "monitorflow_cpu_usage_ratio",
+                    &target(),
+                    None,
+                    Some((rollup, 300)),
+                    None
+                ),
+                format!("{function}({selector}[300s])")
+            );
+        }
+        // The aggregation across series comes after the rollup in time.
+        assert_eq!(
+            build_query(
+                "monitorflow_cpu_usage_ratio",
+                &target(),
+                Some("total"),
+                Some((Rollup::Max, 60)),
+                Some(Aggregation::Avg)
+            ),
+            r#"avg(max_over_time(monitorflow_cpu_usage_ratio{peer="agent-1",site="o\"brien\\paris",instance="total"}[60s]))"#
         );
     }
 
@@ -493,6 +560,7 @@ mod tests {
             end: end.map(at),
             step,
             agg: None,
+            rollup: None,
         }
     }
 

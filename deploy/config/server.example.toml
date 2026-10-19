@@ -31,7 +31,8 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # victoriametrics_url = "http://localhost:8428"
 # victorialogs_url = "http://localhost:9428"
 
-# Certificate authority, command signing key, mirrors.
+# Certificate authority (<data_dir>/ca/), the server's own certificate
+# (<data_dir>/tls/ unless [tls] says otherwise), command signing key, mirrors.
 # data_dir = "/var/lib/monitorflow/server"
 
 # Seconds without any message from an agent or relay before its stream is
@@ -56,11 +57,12 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # shutdown_timeout = 10
 
 # Created by the server from its built-in CA when missing, renewed at start
-# when close to expiry. A certificate from another CA is refused.
+# when close to expiry. A certificate from another CA is refused. Each unset
+# path defaults to a file under <data_dir>/tls/, so it follows data_dir.
 [tls]
-# ca_cert = "/etc/monitorflow/tls/ca.pem"
-# cert = "/etc/monitorflow/tls/cert.pem"
-# key = "/etc/monitorflow/tls/key.pem"
+# ca_cert = "/var/lib/monitorflow/server/tls/ca.pem"
+# cert = "/var/lib/monitorflow/server/tls/cert.pem"
+# key = "/var/lib/monitorflow/server/tls/key.pem"
 
 [log]
 # trace, debug, info, warn or error.

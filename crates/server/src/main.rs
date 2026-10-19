@@ -126,11 +126,12 @@ async fn main() -> anyhow::Result<()> {
 
     let ca = Arc::new(open_ca(&config).await?);
     let names = server_cert::parse_names(&config.server_names);
-    let (issuer, paths) = (ca.clone(), config.tls.clone());
+    let tls_paths = config.tls_paths();
+    let (issuer, paths) = (ca.clone(), tls_paths.clone());
     tokio::task::spawn_blocking(move || server_cert::ensure(&issuer, &paths, &names))
         .await?
         .context("preparing the server certificate")?;
-    let identity = Identity::load(&config.tls).context("loading the TLS identity")?;
+    let identity = Identity::load(&tls_paths).context("loading the TLS identity")?;
 
     // Every new mTLS connection uses the latest config from the publisher,
     // which carries a fresh CRL.

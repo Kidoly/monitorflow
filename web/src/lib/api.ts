@@ -49,6 +49,8 @@ export interface Server {
   last_heartbeat: string | null;
   /** Peer ID of the relay carrying the live stream, if any. */
   via_relay: string | null;
+  /** Open incidents of the server (ADR-0019). */
+  open_incidents: number;
 }
 
 /** One page of `GET /api/servers`, sorted by site name, hostname and peer ID. */
@@ -125,6 +127,122 @@ export interface EffectiveSensors {
   applied_at: string | null;
   in_sync: boolean;
   sensors: EffectiveSensor[];
+}
+
+/** How a value is compared with a threshold: the alarm is `value <comparison> threshold`. */
+export type Comparison = ">" | ">=" | "<" | "<=";
+
+/** Which layer an effective threshold comes from (ADR-0017). */
+export type ThresholdOrigin = "default" | "site" | "server";
+
+/** One threshold as the engine applies it, or a muted one (ADR-0019). */
+export interface EffectiveThreshold {
+  origin: ThresholdOrigin;
+  /** The `thresholds` row; null for a built-in default. */
+  threshold_id: string | null;
+  metric: string;
+  /** Null covers every instance; `""` is the series without one. */
+  instance: string | null;
+  /** False: muted by a disabled row, which the engine skips. */
+  enabled: boolean;
+  comparison: Comparison;
+  warning: number | null;
+  critical: number | null;
+  duration_s: number;
+  hysteresis: number;
+}
+
+/** `GET /api/servers/{id}/thresholds/effective`. */
+export interface EffectiveThresholds {
+  server_id: string;
+  site_id: string;
+  revision: number;
+  thresholds: EffectiveThreshold[];
+}
+
+/** One entry of `GET /api/sites`. */
+export interface Site {
+  id: string;
+  name: string;
+  server_count: number;
+}
+
+export interface SiteList {
+  sites: Site[];
+}
+
+export type IncidentSeverity = "warning" | "critical";
+export type IncidentState = "open" | "resolved";
+
+/** The threshold an incident opened under, as it was then (ADR-0017). */
+export interface ThresholdSnapshot {
+  metric: string;
+  instance: string | null;
+  comparison: Comparison;
+  warning: number | null;
+  critical: number | null;
+  duration_s: number;
+  hysteresis: number;
+}
+
+/** One incident of `GET /api/incidents`. Times are sample times. */
+export interface Incident {
+  id: string;
+  server_id: string;
+  hostname: string;
+  site_id: string;
+  site_name: string;
+  metric: string;
+  /** `""` for a series without an instance. */
+  instance: string;
+  /** The current one, or the last one once resolved. */
+  severity: IncidentSeverity;
+  state: IncidentState;
+  opened_at: string;
+  resolved_at: string | null;
+  last_value: number;
+  last_value_at: string;
+  /** The worst value seen while open. */
+  peak_value: number;
+  threshold: ThresholdSnapshot;
+}
+
+/** One page of incidents: open ones first, then newest first. */
+export interface IncidentList {
+  incidents: Incident[];
+  next_cursor: string | null;
+}
+
+export type IncidentEventKind = "opened" | "escalated" | "deescalated" | "resolved";
+
+/** One change of an incident, as the engine made it. */
+export interface IncidentEvent {
+  id: number;
+  kind: IncidentEventKind;
+  /** Severity after the change; null once resolved. */
+  severity: IncidentSeverity | null;
+  value: number | null;
+  /** Sample time, or the server clock without a sample. */
+  occurred_at: string;
+  recorded_at: string;
+  /** For instance `{"reason": "threshold_removed"}`. */
+  details: Record<string, unknown>;
+}
+
+/** `GET /api/incidents/{id}`: the incident and its events in the order they happened. */
+export interface IncidentDetail extends Incident {
+  events: IncidentEvent[];
+}
+
+/** Filters of `GET /api/incidents`; all optional. */
+export interface IncidentQuery {
+  state?: IncidentState;
+  severity?: IncidentSeverity;
+  server_id?: string;
+  site_id?: string;
+  /** 1 to 500; the API's default is 100. */
+  limit?: number;
+  cursor?: string;
 }
 
 export interface Health {
@@ -282,6 +400,25 @@ export const api = {
 
   serverSensors: (serverId: string, signal?: AbortSignal) =>
     request<EffectiveSensors>(`/api/servers/${encodeURIComponent(serverId)}/sensors`, { signal }),
+
+  sites: (signal?: AbortSignal) => request<SiteList>("/api/sites", { signal }),
+
+  incidents: (query: IncidentQuery, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined) params.set(key, String(value));
+    }
+    const search = params.toString();
+    return request<IncidentList>(search ? `/api/incidents?${search}` : "/api/incidents", { signal });
+  },
+
+  incident: (id: string, signal?: AbortSignal) =>
+    request<IncidentDetail>(`/api/incidents/${encodeURIComponent(id)}`, { signal }),
+
+  serverThresholds: (serverId: string, signal?: AbortSignal) =>
+    request<EffectiveThresholds>(`/api/servers/${encodeURIComponent(serverId)}/thresholds/effective`, {
+      signal,
+    }),
 
   serverMetrics: (serverId: string, signal?: AbortSignal) =>
     request<MetricList>(`/api/servers/${encodeURIComponent(serverId)}/metrics`, { signal }),

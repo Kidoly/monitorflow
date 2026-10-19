@@ -39,3 +39,9 @@ where `<secret>` is 32 random bytes from `ring::rand::SystemRandom` and `<ca>` i
 - A token is bound to one peer ID. Enrolling the same ID again needs a new token; revoking the old certificate is a separate action.
 - The server's own certificate is renewed at start only. Renewal while running and agent-driven renewal are follow-up tasks.
 - Rate limiting is in memory and per process; it resets on restart and is not shared between servers.
+
+## Amendment 2026-10-19: server certificate paths follow `data_dir`
+
+The server's `tls.ca_cert`, `tls.cert` and `tls.key` used to default to `/etc/monitorflow/tls/`, whatever `data_dir` said, so a server run with `data_dir = "/tmp/x"` and no `[tls]` section failed at start trying to create `/etc/monitorflow/tls`. Each unset path now defaults to `<data_dir>/tls/{ca.pem,cert.pem,key.pem}`, the same rule as the agent. The server writes these files itself from the built-in CA, which already lives under `<data_dir>/ca/`, so its state is in one directory owned by the service user, and `/etc` can stay read-only for it.
+
+Explicit `[tls]` paths and `MONITORFLOW_TLS_*` variables keep working, path by path. No release shipped with the old default and there is no package yet; packaging that wants the files under `/etc` sets the paths explicitly. An install that relied on the old default and moves to this version gets a new server certificate under `data_dir` on first start, issued by the same CA, so enrolled peers keep trusting it.

@@ -41,6 +41,10 @@
   border-radius: var(--radius);
 }
 
+.note {
+  color: var(--muted);
+}
+
 .notFound {
   padding: 2rem;
   text-align: center;

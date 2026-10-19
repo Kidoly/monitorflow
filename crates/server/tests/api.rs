@@ -511,4 +511,157 @@ db_tests! {
             assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
         }
     }
+
+    #[sqlx::test]
+    async fn server_detail_has_status_and_certificate_within_scope(pool: PgPool) {
+        let mut servers = Vec::new();
+        for name in ["paris", "lyon"] {
+            let site: Uuid = sqlx::query_scalar("INSERT INTO sites (name) VALUES ($1) RETURNING id")
+                .bind(name)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            let server: Uuid = sqlx::query_scalar(
+                "INSERT INTO servers (peer_id, site_id, hostname, os_family)
+                 VALUES ($1, $2, $1, 'debian') RETURNING id",
+            )
+            .bind(format!("agent-{name}"))
+            .bind(site)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            servers.push((site, server));
+        }
+        let (paris_site, paris) = servers[0];
+        let (_, lyon) = servers[1];
+        sqlx::query(
+            "INSERT INTO incidents (server_id, metric, instance, severity, opened_at, last_value,
+                                    last_value_at, peak_value, threshold)
+             VALUES ($1, 'monitorflow_cpu_usage_ratio', 'total', 'warning', now(), 0.9, now(), 0.9, '{}')",
+        )
+        .bind(paris)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // An older active certificate, then a newer one that was revoked:
+        // the detail shows the newest, the expiry the latest unrevoked one.
+        let at = |month, day| Utc.with_ymd_and_hms(2026, month, day, 12, 0, 0).unwrap();
+        for (serial, issued, not_after, revoked) in [
+            (vec![0x0a_u8, 0x01], at(9, 1), at(11, 30), None),
+            (vec![0x0b, 0x02], at(10, 1), at(12, 30), Some(at(10, 2))),
+        ] {
+            sqlx::query(
+                "INSERT INTO certificates
+                    (serial, peer_role, peer_id, not_before, not_after, issued_at, revoked_at)
+                 VALUES ($1, 'agent', 'agent-paris', $2, $3, $2, $4)",
+            )
+            .bind(serial)
+            .bind(issued)
+            .bind(not_after)
+            .bind(revoked)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let registry = Registry::default();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let _registration = registry
+            .register(
+                PeerInfo {
+                    id: "agent-paris".into(),
+                    role: PeerRole::Agent,
+                    via_relay: None,
+                    connection: 0,
+                    cert_serial: None,
+                    agent_version: "0.2.0".into(),
+                    hostname: "agent-paris".into(),
+                    connected_at: at(10, 18),
+                    last_seen: at(10, 19),
+                    last_sequence: 1,
+                    counters: Counters::default(),
+                    sensor_revision_sent: None,
+                    sensor_revision_applied: None,
+                },
+                tx,
+            )
+            .unwrap();
+
+        let id = add_user(&pool, "paris-viewer", Role::Viewer).await;
+        sqlx::query("UPDATE user_roles SET site_id = $2 WHERE user_id = $1")
+            .bind(id)
+            .bind(paris_site)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let session = login(&pool, "paris-viewer").await;
+        let get = |uri: String| {
+            let (app, session) = (app_with(pool.clone(), registry.clone()), session.clone());
+            async move { call(app, with_cookie("GET", &uri, &session)).await }
+        };
+
+        let (status, body) = get(format!("/api/servers/{paris}")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["id"], json!(paris));
+        assert_eq!(body["peer_id"], "agent-paris");
+        assert_eq!(body["site_name"], "paris");
+        assert_eq!(body["status"], "online");
+        assert_eq!(body["connected_at"], "2026-10-18T12:00:00Z");
+        assert_eq!(body["agent_version"], "0.2.0");
+        assert_eq!(body["open_incidents"], 1);
+        assert_eq!(body["cert_not_after"], "2026-11-30T12:00:00Z");
+        assert_eq!(
+            body["certificate"],
+            json!({
+                "serial": "0b02",
+                "not_before": "2026-10-01T12:00:00Z",
+                "not_after": "2026-12-30T12:00:00Z",
+                "issued_at": "2026-10-01T12:00:00Z",
+                "revoked": true,
+                "revoked_at": "2026-10-02T12:00:00Z",
+                "revocation_reason": null,
+            })
+        );
+
+        // The listing row carries the same expiry.
+        let (_, list) = get("/api/servers".into()).await;
+        assert_eq!(list["servers"][0]["cert_not_after"], "2026-11-30T12:00:00Z");
+
+        // Another site, an unknown ID and a non-UUID all look missing.
+        for uri in [
+            format!("/api/servers/{lyon}"),
+            format!("/api/servers/{}", Uuid::new_v4()),
+            "/api/servers/not-a-uuid".into(),
+        ] {
+            let (status, body) = get(uri.clone()).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}: {body}");
+        }
+
+        // A global role reads the other site; no certificate gives null.
+        add_user(&pool, "admin", Role::Administrator).await;
+        let admin = login(&pool, "admin").await;
+        let (status, body) =
+            call(app(pool.clone()), with_cookie("GET", &format!("/api/servers/{lyon}"), &admin)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "offline");
+        assert_eq!(body["certificate"], serde_json::Value::Null);
+        assert_eq!(body["cert_not_after"], serde_json::Value::Null);
+        assert_eq!(body["open_incidents"], 0);
+    }
+
+    #[sqlx::test]
+    async fn server_detail_requires_a_session_and_a_role(pool: PgPool) {
+        let uri = format!("/api/servers/{}", Uuid::new_v4());
+        let (status, _) = call(app(pool.clone()), with_cookie("GET", &uri, "x=y")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let id = add_user(&pool, "norole", Role::Viewer).await;
+        sqlx::query("DELETE FROM user_roles WHERE user_id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let session = login(&pool, "norole").await;
+        let (status, _) = call(app(pool.clone()), with_cookie("GET", &uri, &session)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
 }

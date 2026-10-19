@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { type Server, setUnauthorizedHandler } from "@/lib/api";
 import { stubFetch } from "@/test/fetch";
+import { incident } from "@/test/incidents";
 
 import { ServerPage } from "./ServerPage";
 
@@ -24,7 +25,12 @@ const web1: Server = {
   connected_at: new Date().toISOString(),
   last_heartbeat: new Date().toISOString(),
   via_relay: null,
+  open_incidents: 0,
 };
+
+const openIncidents = `GET /api/incidents?state=open&server_id=${ID}&limit=10`;
+const noIncidents = { status: 200, body: { incidents: [], next_cursor: null } };
+const noThresholds = { status: 200, body: { server_id: ID, site_id: "site-1", revision: 1, thresholds: [] } };
 
 describe("ServerPage", () => {
   it("shows the server header and its graphs", async () => {
@@ -34,6 +40,11 @@ describe("ServerPage", () => {
       [`GET /api/servers/${ID}/sensors`]: {
         status: 200,
         body: { revision: 1, applied_revision: 1, applied_at: null, in_sync: true, sensors: [] },
+      },
+      [`GET /api/servers/${ID}/thresholds/effective`]: noThresholds,
+      [openIncidents]: {
+        status: 200,
+        body: { incidents: [incident({ server_id: ID })], next_cursor: null },
       },
     });
     render(<ServerPage id={ID} />);
@@ -50,10 +61,71 @@ describe("ServerPage", () => {
     expect(await screen.findByRole("heading", { level: 2, name: "Metrics" })).toBeInTheDocument();
     expect(await screen.findByText(/No metrics yet/)).toBeInTheDocument();
     expect(await screen.findByText(/In sync/)).toBeInTheDocument();
+    const incidents = screen.getByRole("region", { name: "Open incidents" });
+    const link = await within(incidents).findByRole("link", { name: "Disk used /var" });
+    expect(link).toHaveAttribute("href", expect.stringMatching(/^\/incidents\/view\/?\?id=1d6a9a3e-/));
+    expect(within(incidents).getByRole("listitem")).toHaveTextContent(/◆ Critical\s*Disk used \/var\s*96\.2%/);
+    expect(within(incidents).getByRole("link", { name: "Incident history" })).toHaveAttribute(
+      "href",
+      expect.stringMatching(new RegExp(`^/incidents/?\\?server=${ID}$`)),
+    );
+  });
+
+  it("draws the effective thresholds on the graphs", async () => {
+    const disk = "monitorflow_disk_used_ratio";
+    const end = Math.floor(Date.now() / 30_000) * 30;
+    stubFetch({
+      "GET /api/servers": { status: 200, body: { servers: [web1], next_cursor: null } },
+      [`GET /api/servers/${ID}/metrics`]: {
+        status: 200,
+        body: { metrics: [{ name: disk, instances: ["/", "/boot"] }], truncated: false },
+      },
+      [`GET /api/servers/${ID}/sensors`]: { status: 500, body: { error: "internal error" } },
+      [openIncidents]: noIncidents,
+      [`GET /api/servers/${ID}/thresholds/effective`]: {
+        status: 200,
+        body: {
+          ...noThresholds.body,
+          thresholds: [
+            { origin: "default", threshold_id: null, metric: disk, instance: null, enabled: true, comparison: ">", warning: 0.85, critical: 0.95, duration_s: 300, hysteresis: 0.02 },
+            { origin: "server", threshold_id: "t1", metric: disk, instance: "/boot", enabled: false, comparison: ">", warning: 0.5, critical: null, duration_s: 0, hysteresis: 0 },
+          ],
+        },
+      },
+    });
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(
+      ((original) => async (input, init) => {
+        if (String(input).startsWith("/api/metrics/query_range")) {
+          const series = ["/", "/boot"].map((instance) => ({ labels: { instance }, points: [[end, 0.4]] }));
+          return new Response(JSON.stringify({ query: "…", series }), { status: 200 });
+        }
+        return original(input, init);
+      })(fetchMock.getMockImplementation()!),
+    );
+    render(<ServerPage id={ID} />);
+    const lines = await screen.findAllByTestId("reference-line");
+    expect(lines.map((l) => l.textContent)).toEqual(["Warning (/) 85%", "Critical (/) 95%"]);
+  });
+
+  it("shows the graphs without lines when thresholds fail", async () => {
+    stubFetch({
+      "GET /api/servers": { status: 200, body: { servers: [web1], next_cursor: null } },
+      [`GET /api/servers/${ID}/metrics`]: { status: 200, body: { metrics: [], truncated: false } },
+      [`GET /api/servers/${ID}/sensors`]: { status: 500, body: { error: "internal error" } },
+      [openIncidents]: noIncidents,
+      [`GET /api/servers/${ID}/thresholds/effective`]: { status: 500, body: { error: "internal error" } },
+    });
+    render(<ServerPage id={ID} />);
+    expect(await screen.findByText(/Threshold lines are not shown/)).toHaveTextContent("could not handle");
+    expect(await screen.findByText(/No metrics yet/)).toBeInTheDocument();
   });
 
   it("says when the server does not exist or is out of scope", async () => {
-    stubFetch({ "GET /api/servers": { status: 200, body: { servers: [], next_cursor: null } } });
+    stubFetch({
+      "GET /api/servers": { status: 200, body: { servers: [], next_cursor: null } },
+      [`GET /api/servers/${ID}/thresholds/effective`]: { status: 404, body: { error: "not found" } },
+    });
     render(<ServerPage id={ID} />);
     expect(await screen.findByRole("heading", { name: "Server not found" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to the fleet" })).toHaveAttribute("href", "/");
@@ -67,18 +139,25 @@ describe("ServerPage", () => {
   });
 
   it("shows backend errors", async () => {
-    stubFetch({ "GET /api/servers": { status: 500, body: { error: "internal error" } } });
+    stubFetch({
+      "GET /api/servers": { status: 500, body: { error: "internal error" } },
+      [`GET /api/servers/${ID}/thresholds/effective`]: noThresholds,
+    });
     render(<ServerPage id={ID} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("could not handle the request");
   });
 
   it("leaves a 401 to the login redirect", async () => {
-    const fetchMock = stubFetch({ "GET /api/servers": { status: 401, body: { error: "authentication required" } } });
+    const unauthorized = { status: 401, body: { error: "authentication required" } };
+    const fetchMock = stubFetch({
+      "GET /api/servers": unauthorized,
+      [`GET /api/servers/${ID}/thresholds/effective`]: unauthorized,
+    });
     const toLogin = vi.fn();
     const restore = setUnauthorizedHandler(toLogin);
     render(<ServerPage id={ID} />);
-    await vi.waitFor(() => expect(toLogin).toHaveBeenCalledOnce());
-    expect(fetchMock).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(toLogin).toHaveBeenCalled());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     restore();
   });

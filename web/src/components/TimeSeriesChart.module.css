@@ -74,6 +74,17 @@
   font-size: 11px;
 }
 
+.marker line {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.marker text {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
 .crosshair {
   stroke: var(--muted);
   stroke-width: 1;
