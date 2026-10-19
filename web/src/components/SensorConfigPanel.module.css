@@ -1,0 +1,66 @@
+.section {
+  margin-top: 2rem;
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.table th,
+.table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+.table tbody th {
+  font-weight: 600;
+}
+
+.param {
+  display: block;
+  white-space: nowrap;
+}
+
+.inSync,
+.pending {
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius);
+}
+
+.inSync {
+  color: var(--online);
+  background: var(--online-bg);
+}
+
+.pending {
+  color: var(--offline);
+  background: var(--offline-bg);
+}
+
+.error {
+  padding: 0.5rem 0.75rem;
+  color: var(--error);
+  background: var(--error-bg);
+  border-radius: var(--radius);
+}
+
+.empty {
+  padding: 2rem;
+  text-align: center;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.note {
+  color: var(--muted);
+}

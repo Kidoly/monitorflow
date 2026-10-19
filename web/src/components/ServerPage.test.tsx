@@ -31,6 +31,10 @@ describe("ServerPage", () => {
     stubFetch({
       "GET /api/servers": { status: 200, body: { servers: [web1], next_cursor: null } },
       [`GET /api/servers/${ID}/metrics`]: { status: 200, body: { metrics: [], truncated: false } },
+      [`GET /api/servers/${ID}/sensors`]: {
+        status: 200,
+        body: { revision: 1, applied_revision: 1, applied_at: null, in_sync: true, sensors: [] },
+      },
     });
     render(<ServerPage id={ID} />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading server…");
@@ -45,6 +49,7 @@ describe("ServerPage", () => {
     expect(document.title).toBe("web-1 · MonitorFlow");
     expect(await screen.findByRole("heading", { level: 2, name: "Metrics" })).toBeInTheDocument();
     expect(await screen.findByText(/No metrics yet/)).toBeInTheDocument();
+    expect(await screen.findByText(/In sync/)).toBeInTheDocument();
   });
 
   it("says when the server does not exist or is out of scope", async () => {

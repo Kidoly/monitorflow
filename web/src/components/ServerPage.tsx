@@ -9,6 +9,7 @@ import { formatDateTime, formatOs, formatRelative } from "@/lib/format";
 import { usePolling } from "@/lib/usePolling";
 
 import { REFRESH_MS, StatusBadge } from "./FleetOverview";
+import { SensorConfigPanel } from "./SensorConfigPanel";
 import { ServerGraphs } from "./ServerGraphs";
 import styles from "./ServerPage.module.css";
 
@@ -84,6 +85,7 @@ export function ServerPage({ id }: { id: string | null }) {
         </p>
       )}
       <ServerGraphs serverId={server.id} />
+      <SensorConfigPanel serverId={server.id} />
     </article>
   );
 }
