@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useCallback, useState } from "react";
 
 import { type Server, api, describeError, isAbortError } from "@/lib/api";
 import { formatDateTime, formatOs, formatRelative } from "@/lib/format";
+import { serverHref } from "@/lib/routes";
+import { usePolling } from "@/lib/usePolling";
 
 import styles from "./FleetOverview.module.css";
 
@@ -16,31 +19,21 @@ interface State {
   error: string | null;
 }
 
-/** The fleet table, refreshed every {@link REFRESH_MS}. */
+/** The fleet table, refreshed every {@link REFRESH_MS} while the tab is visible. */
 export function FleetOverview() {
   const [state, setState] = useState<State>({ servers: null, updatedAt: null, error: null });
 
-  useEffect(() => {
-    let controller: AbortController | undefined;
-    async function load() {
-      controller?.abort();
-      controller = new AbortController();
-      try {
-        const { servers } = await api.servers(controller.signal);
-        setState({ servers, updatedAt: new Date(), error: null });
-      } catch (e) {
-        if (!isAbortError(e)) {
-          setState((s) => ({ ...s, error: describeError(e) }));
-        }
+  const load = useCallback(async (signal: AbortSignal) => {
+    try {
+      const { servers } = await api.servers(signal);
+      setState({ servers, updatedAt: new Date(), error: null });
+    } catch (e) {
+      if (!isAbortError(e)) {
+        setState((s) => ({ ...s, error: describeError(e) }));
       }
     }
-    void load();
-    const timer = setInterval(load, REFRESH_MS);
-    return () => {
-      clearInterval(timer);
-      controller?.abort();
-    };
   }, []);
+  usePolling(load, REFRESH_MS);
 
   const { servers, updatedAt, error } = state;
   const online = servers?.filter((s) => s.status === "online").length ?? 0;
@@ -93,7 +86,9 @@ function ServerTable({ servers, now }: { servers: Server[]; now: Date }) {
           {servers.map((server) => (
             <tr key={server.id}>
               <td>{server.site_name}</td>
-              <th scope="row">{server.hostname}</th>
+              <th scope="row">
+                <Link href={serverHref(server.id)}>{server.hostname}</Link>
+              </th>
               <td>{formatOs(server.os_family, server.os_version)}</td>
               <td>{server.agent_version ?? "unknown"}</td>
               <td>
@@ -116,7 +111,7 @@ function ServerTable({ servers, now }: { servers: Server[]; now: Date }) {
   );
 }
 
-function StatusBadge({ server }: { server: Server }) {
+export function StatusBadge({ server }: { server: Server }) {
   const online = server.status === "online";
   return (
     <span className={online ? styles.online : styles.offline}>

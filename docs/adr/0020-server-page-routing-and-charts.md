@@ -1,0 +1,35 @@
+# ADR-0020: Server page routing and hand-rolled SVG charts
+
+Date: 2026-10-19
+Status: accepted
+
+## Context
+
+The web interface needs a page per server with its details, graphs of its metrics (ADR-0018) and its sensor configuration (ADR-0016). It is a static export with no Node runtime (ADR-0014), so a route like `/servers/[id]` only exists for IDs known at build time, and servers are created at run time. The graphs need a charting approach, kept small for a short dependency list, and must later show threshold lines (ADR-0017) whose API is not there yet.
+
+## Decision
+
+**Routing.** The server page is one static route, `/servers/view/`, and the server ID is a query parameter: `/servers/view/?id=<uuid>`. The page reads it on the client with `useSearchParams` under a `Suspense` boundary, as Next requires for a prerendered page. Any static file server serves it, the Caddy example included (`try_files {path}/` ignores the query string), so the reverse proxy needs no rewrite rule. A malformed ID shows "not found" without calling the API. Alternatives set aside: a catch-all rewrite in the proxy to one `index.html` (every deployment would need the rule, and `next dev` would differ from production), and a hash route (`/servers/#id`), which hides the ID from the server logs but breaks the usual link semantics for no gain here.
+
+**Charts.** A hand-rolled SVG line chart, `TimeSeriesChart`, of about 250 lines, instead of a library:
+
+- The need is narrow: lines over time, one unit per chart (ADR-0015 puts the unit in the metric name), a crosshair readout and horizontal reference lines. That is a few scale functions and `<path>` elements.
+- uPlot, the smallest serious candidate (about 50 kB minified), draws on a canvas. jsdom has no canvas, so its output could not be tested with Testing Library; SVG is plain DOM, so tests check lines, labels and accessible names directly.
+- An SVG inside React needs no imperative lifecycle, resize observer or teardown, and follows CSS variables and CSS Modules like the rest of the interface.
+- Recharts or ECharts weigh hundreds of kilobytes and bring transitive dependencies to keep up to date.
+
+The cost is that we maintain axis ticks, gaps and hover ourselves; a chart with zoom, thousands of series or stacked areas would justify revisiting this. Series colours come from a fixed eight-colour order checked for colour-blind separation; a chart shows at most eight series and says how many it left out.
+
+**Threshold lines.** The chart takes `referenceLines: { value, label, severity }[]` and draws each as a dashed horizontal line with a text label, included in the y scale. The page does not fill it yet; once the thresholds API exists, the graph section passes the effective warning and critical values of each metric and instance.
+
+**Ranges and steps.** The graphs offer 1 h, 6 h, 24 h and 7 d. Each has a fixed step that keeps a series to a few hundred points, far below the API's 11,000 (ADR-0018), and never below the default 60 s collection interval for long ranges: 1 h at 30 s (120 points), 6 h at 2 min (180), 24 h at 5 min (288), 7 d at 30 min (336). The end of the range is aligned to the step, so successive refreshes return the same timestamps. The step samples the series (a value per step), it does not average it, so short spikes can be missed on long ranges.
+
+**Refresh.** Like the fleet overview, the page reloads every 15 s, and a shared `usePolling` hook stops while the tab is hidden and reloads when it is shown again.
+
+## Consequences
+
+- Links to a server are `/servers/view/?id=…`; `serverHref` builds them.
+- There is no `GET /api/servers/{id}`, so the page header reads the server list and picks the server out. One endpoint for a single server would make the page cheaper on large fleets.
+- Long ranges need a server-side rollup (`max_over_time`, `avg_over_time`) in the query proxy to show spikes; until then the 7 d view is sampled.
+- The newest point lags by about 30 s (VictoriaMetrics' latency offset, ADR-0018) plus the collection interval; empty graphs say so.
+- Charts have no table view or keyboard readout yet; the legend gives the latest values in text.
