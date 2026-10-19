@@ -408,3 +408,17 @@ async fn revoked_agent_is_rejected_at_the_next_handshake() {
     let err = handshake(config, agent).await.unwrap_err();
     assert!(err.contains("Revoked"), "{err}");
 }
+
+#[test]
+fn verify_issued_accepts_only_this_cas_certificates() {
+    let (_dir, ca) = new_ca();
+    let (_other_dir, other) = new_ca();
+    let id = PeerIdentity::new(PeerRole::Agent, "web-01").unwrap();
+    let ours = ca.issue(&csr().1, &id, None, &[]).unwrap();
+    let theirs = other.issue(&csr().1, &id, None, &[]).unwrap();
+    assert!(ca.verify_issued(&der(&ours.cert_pem)).is_ok());
+    assert!(ca.verify_issued(&der(&theirs.cert_pem)).is_err());
+    assert!(ca
+        .verify_issued(&CertificateDer::from(vec![1, 2, 3]))
+        .is_err());
+}

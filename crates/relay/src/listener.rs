@@ -1,6 +1,7 @@
 //! The relay's mTLS listener for agents (ADR-0025): the relay's own
 //! certificate, agents' certificates checked against the CA and the CRL
-//! fetched from the upstream with `RevocationService.GetCrl`.
+//! fetched from the upstream with `RevocationService.GetCrl`. It serves
+//! `AgentService` and `CertificateService` (ADR-0028).
 //!
 //! [`TlsPublisher`] refetches the CRL every hour, retrying every minute
 //! after a failure, and rebuilds the configuration when the relay's
@@ -28,6 +29,7 @@ use x509_parser::extensions::GeneralName;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::forward::Forwarder;
+use crate::renew::RenewProxy;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// HTTP/2 pings towards agents: a silent agent's stream ends, and so does
@@ -219,11 +221,13 @@ impl TlsPublisher {
     }
 }
 
-/// Serves `forwarder` to agents over mTLS until `shutdown` resolves.
+/// Serves `forwarder` and `renew` to agents over mTLS until `shutdown`
+/// resolves.
 pub async fn serve(
     listener: TcpListener,
     tls: watch::Receiver<Arc<ServerConfig>>,
     forwarder: Forwarder,
+    renew: RenewProxy,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), tonic::transport::Error> {
     let incoming = tls::incoming(listener, tls, AcceptOptions::default());
@@ -231,6 +235,7 @@ pub async fn serve(
         .http2_keepalive_interval(Some(KEEPALIVE_INTERVAL))
         .http2_keepalive_timeout(Some(KEEPALIVE_TIMEOUT))
         .add_service(AgentServiceServer::new(forwarder))
+        .add_service(renew.into_service())
         .serve_with_incoming_shutdown(incoming, shutdown)
         .await
 }

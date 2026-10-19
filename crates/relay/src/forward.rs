@@ -33,7 +33,7 @@ use tonic::{Code, Request, Response, Status, Streaming};
 /// What agents get when the relay cannot reach its upstream. Details stay
 /// in the relay's log: they may name TLS alerts about the relay's own
 /// certificate, which an agent would read as being about its own.
-const UPSTREAM_UNAVAILABLE: &str = "upstream unavailable; retry later";
+pub const UPSTREAM_UNAVAILABLE: &str = "upstream unavailable; retry later";
 /// HTTP/2 pings on upstream connections detect a dead server.
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(20);

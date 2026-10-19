@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use monitorflow_common::client::backoff::Backoff;
+use monitorflow_common::client::enroll::{ensure_identity, EnrollSettings};
 use monitorflow_common::client::identity::{self, Enrolled, StoredIdentity};
 use monitorflow_common::client::shutdown::{self, Trigger};
 use monitorflow_common::config::{RelayConfig, TlsPaths};
@@ -19,10 +20,14 @@ use monitorflow_common::PROTOCOL_VERSION;
 use monitorflow_relay::control::{Control, ControlSettings};
 use monitorflow_relay::forward::{ForwardSettings, Forwarder};
 use monitorflow_relay::listener::{self, CrlSettings, TlsPublisher};
+use monitorflow_relay::renew::{RenewProxy, RenewSettings};
 use monitorflow_server::ca::{CaOptions, CertificateAuthority, Serial, ServerName};
 use monitorflow_server::crl::CrlPublisher;
-use monitorflow_server::enroll::server_cert;
+use monitorflow_server::enroll::token::{self, Creator, TokenRequest};
+use monitorflow_server::enroll::{self, server_cert, Enroller, FailureLimiter};
 use monitorflow_server::grpc::{self, AgentStreamService, CrlService, Registry};
+use monitorflow_server::renew::Renewer;
+use sqlx::PgPool;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
@@ -107,6 +112,15 @@ impl Pki {
 
     /// Serves the service `make` builds, with `RevocationService`.
     pub async fn serve(&self, make: impl FnOnce(Registry) -> AgentStreamService) -> Upstream {
+        self.serve_with_renewer(make, None).await
+    }
+
+    /// [`Self::serve`], plus `CertificateService` when `renewer` is set.
+    pub async fn serve_with_renewer(
+        &self,
+        make: impl FnOnce(Registry) -> AgentStreamService,
+        renewer: Option<Renewer>,
+    ) -> Upstream {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = url(&listener);
         let (crl, rx) = CrlPublisher::start(self.ca.clone(), self.server.clone())
@@ -118,7 +132,7 @@ impl Pki {
             listener,
             rx,
             make(registry.clone()),
-            None,
+            renewer,
             Some(CrlService::new(crl.subscribe())),
             async move {
                 let _ = stopped.await;
@@ -131,6 +145,53 @@ impl Pki {
             stop: Some(stop),
         }
     }
+}
+
+/// Enrolls `id` with a token for `site`, through the enrollment listener.
+pub async fn enroll_as(
+    pki: &Pki,
+    pool: &PgPool,
+    enroll_url: &str,
+    role: PeerRole,
+    id: &str,
+    site: &str,
+    server_names: Vec<String>,
+) -> StoredIdentity {
+    let site_id = token::site_id(pool, site, true).await.unwrap().unwrap();
+    let request = TokenRequest {
+        role,
+        peer_id: id.into(),
+        site_id,
+        ttl: token::DEFAULT_TTL,
+        creator: Creator::Cli,
+        server_names,
+    };
+    let created = token::create(pool, enroll::ca_fingerprint(&pki.ca), &request)
+        .await
+        .unwrap();
+    let settings = EnrollSettings {
+        role,
+        paths: paths(pki.dir.path(), id),
+        token: Some(created.token.to_secret_string()),
+        enroll_url: enroll_url.into(),
+    };
+    let (_trigger, stop) = shutdown::channel();
+    let fast = Backoff::new(Duration::from_millis(50), Duration::from_millis(200));
+    ensure_identity(&settings, fast, stop).await.unwrap()
+}
+
+pub async fn serve_enroll(pki: &Pki, pool: &PgPool) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = url(&listener);
+    let enroller = Enroller::new(pool.clone(), pki.ca.clone(), FailureLimiter::default());
+    let tls = pki.server.server_config_without_client_auth().unwrap();
+    tokio::spawn(enroll::serve(
+        listener,
+        tls,
+        enroller,
+        std::future::pending(),
+    ));
+    url
 }
 
 pub fn paths(dir: &Path, name: &str) -> TlsPaths {
@@ -231,15 +292,23 @@ impl Relay {
         tokio::spawn(publisher.run(stop.clone()));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = url(&listener);
+        let renew = RenewProxy::new(
+            RenewSettings::for_upstream(upstream_url),
+            identities.clone(),
+        );
         let forwarder = Forwarder::new(
             ForwardSettings::from_config(&config),
             identities,
             up.clone(),
         );
         let mut stopped = stop;
-        tokio::spawn(listener::serve(listener, tls, forwarder, async move {
-            stopped.wait().await
-        }));
+        tokio::spawn(listener::serve(
+            listener,
+            tls,
+            forwarder,
+            renew,
+            async move { stopped.wait().await },
+        ));
         Self {
             url,
             up,

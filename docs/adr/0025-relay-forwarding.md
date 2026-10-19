@@ -44,6 +44,6 @@ A relay sits on an isolated site and forwards its agents' streams to the central
 
 - Operators create relay tokens with `--server-name` for every name agents use. A relay enrolled without names cannot accept agents and says so at start. Tokens created through the REST API get no names until the relay administration task adds them.
 - Agents need no change: they point `upstream_url` at the relay, and `enroll_url` still at the server's enrollment listener.
-- An agent behind a relay cannot renew its certificate yet: the relay does not serve `CertificateService`, so the agent gets `UNIMPLEMENTED` and retries with backoff. Forwarding `Renew` under the relay policy is a follow-up (ADR-0010).
+- An agent behind a relay cannot renew its certificate yet: the relay does not serve `CertificateService`, so the agent gets `UNIMPLEMENTED` and retries with backoff. Forwarding `Renew` under the relay policy is a follow-up (ADR-0010). Done in ADR-0028.
 - The server handles one connection per relayed agent, as for direct agents.
 - A relay cut off for about a day, or unable to fetch the CRL, refuses its agents until it fetches a fresh one.

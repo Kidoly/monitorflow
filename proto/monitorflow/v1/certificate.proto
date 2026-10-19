@@ -13,12 +13,25 @@ service CertificateService {
   // Issues a new certificate for the identity of the presenting
   // certificate, before it expires.
   rpc Renew(RenewRequest) returns (RenewResponse);
+  // A relay forwards the `Renew` of a peer it terminated the mTLS of, with
+  // that peer's certificate. Only relay certificates may call it; the
+  // upstream checks the relay may speak for the peer (ADR-0028).
+  rpc RenewForwarded(ForwardedRenewRequest) returns (RenewResponse);
 }
 
 message RenewRequest {
   // PKCS#10 certificate signing request in PEM, for a fresh key. Only its
   // public key is used: the identity comes from the presenting certificate.
   string csr_pem = 1;
+}
+
+message ForwardedRenewRequest {
+  // The peer's CSR, unchanged.
+  string csr_pem = 1;
+  // DER leaf certificate the peer presented to the relay, which verified
+  // it against the CA and the CRL. The identity of the new certificate is
+  // the one of this certificate.
+  bytes peer_cert_der = 2;
 }
 
 message RenewResponse {
