@@ -1337,6 +1337,7 @@ dependencies = [
  "crc",
  "monitorflow-common",
  "monitorflow-server",
+ "prost",
  "rcgen",
  "rustls",
  "sqlx",
