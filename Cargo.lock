@@ -1276,8 +1276,10 @@ dependencies = [
  "monitorflow-common",
  "monitorflow-sensors",
  "monitorflow-server",
+ "pem",
  "prost",
  "rcgen",
+ "rustls",
  "serde",
  "sqlx",
  "tempfile",
@@ -1287,6 +1289,7 @@ dependencies = [
  "toml",
  "tonic",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1337,6 +1340,7 @@ dependencies = [
  "crc",
  "monitorflow-common",
  "monitorflow-server",
+ "pem",
  "prost",
  "rcgen",
  "rustls",
@@ -1347,6 +1351,7 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tracing",
+ "uuid",
  "x509-parser 0.18.1",
 ]
 
