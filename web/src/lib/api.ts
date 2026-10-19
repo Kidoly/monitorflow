@@ -355,6 +355,51 @@ export interface IncidentQuery {
   cursor?: string;
 }
 
+export type TokenRole = "agent" | "relay";
+export type TokenState = "pending" | "used" | "expired";
+
+/** One enrollment token of `GET /api/tokens`, never with its secret. */
+export interface EnrollmentToken {
+  id: string;
+  role: TokenRole;
+  peer_id: string;
+  site_id: string;
+  site_name: string;
+  customer_id: string;
+  customer_name: string;
+  server_names: string[];
+  /** Null for tokens made with the server CLI. */
+  created_by: string | null;
+  created_by_username: string | null;
+  created_at: string;
+  expires_at: string;
+  used_at: string | null;
+  state: TokenState;
+}
+
+export interface TokenList {
+  tokens: EnrollmentToken[];
+  next_cursor: string | null;
+}
+
+/** Body of `POST /api/tokens`. */
+export interface TokenRequest {
+  role: TokenRole;
+  peer_id: string;
+  site_id: string;
+  /** 60 to 604800 seconds. */
+  ttl_s: number;
+  /** Relays only: names agents connect to. */
+  server_names: string[];
+}
+
+/** `POST /api/tokens`: the only answer that carries the token itself. */
+export interface CreatedToken extends EnrollmentToken {
+  token: string;
+  upstream_url: string;
+  enroll_url: string;
+}
+
 export interface Health {
   status: "ok";
 }
@@ -541,6 +586,14 @@ export const api = {
 
   relay: (id: string, signal?: AbortSignal) =>
     request<RelayDetail>(`/api/relays/${encodeURIComponent(id)}`, { signal }),
+
+  /** The newest enrollment tokens of the customers the user administers. */
+  tokens: (signal?: AbortSignal) => request<TokenList>("/api/tokens", { signal }),
+
+  createToken: (body: TokenRequest) => request<CreatedToken>("/api/tokens", { method: "POST", body }),
+
+  /** Revokes an unused token; 409 once used. */
+  revokeToken: (id: string) => request<void>(`/api/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** Revokes a server or relay and its certificates; cannot be undone. */
   revoke: (kind: "servers" | "relays", id: string, reason: RevocationReason) =>
