@@ -31,9 +31,9 @@ pub const MAX_PARAM_NAME_LEN: usize = 64;
 /// Longest parameter value once turned into the agent's string, in bytes.
 pub const MAX_PARAM_VALUE_LEN: usize = 1024;
 
-const UNIQUE_VIOLATION: &str = "23505";
-const FOREIGN_KEY_VIOLATION: &str = "23503";
-const CHECK_VIOLATION: &str = "23514";
+pub(super) const UNIQUE_VIOLATION: &str = "23505";
+pub(super) const FOREIGN_KEY_VIOLATION: &str = "23503";
+pub(super) const CHECK_VIOLATION: &str = "23514";
 
 /// Body of a create or an update. An update replaces every field.
 #[derive(Debug, Clone, Deserialize)]
@@ -195,11 +195,11 @@ const ENTRY_COLUMNS: &str = "id, site_id, server_id, kind, name, instance, inter
                              timeout_ms, params, enabled, created_at, updated_at";
 
 /// A path ID that is not a UUID names nothing.
-fn parse_id(id: &str) -> Result<Uuid, ApiError> {
+pub(super) fn parse_id(id: &str) -> Result<Uuid, ApiError> {
     id.parse().map_err(|_| ApiError::NotFound)
 }
 
-fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
+pub(super) fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
     body.map(|Json(b)| b)
         .map_err(|rejection| ApiError::Invalid(rejection.body_text()))
 }
@@ -207,7 +207,11 @@ fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
 /// The site `site` if the user may read it (and change it, with
 /// `modify`). Unreadable or missing gives 404, readable but not
 /// changeable 403.
-fn authorize(user: &CurrentUser, site: Option<Uuid>, modify: bool) -> Result<Uuid, ApiError> {
+pub(super) fn authorize(
+    user: &CurrentUser,
+    site: Option<Uuid>,
+    modify: bool,
+) -> Result<Uuid, ApiError> {
     if !user.can_read() {
         return Err(ApiError::Forbidden);
     }
@@ -227,7 +231,10 @@ async fn site_exists(pool: &PgPool, site: Uuid) -> Result<Option<Uuid>, sqlx::Er
         .await
 }
 
-async fn site_of_server(pool: &PgPool, server: Uuid) -> Result<Option<Uuid>, sqlx::Error> {
+pub(super) async fn site_of_server(
+    pool: &PgPool,
+    server: Uuid,
+) -> Result<Option<Uuid>, sqlx::Error> {
     sqlx::query_scalar("SELECT site_id FROM servers WHERE id = $1")
         .bind(server)
         .fetch_optional(pool)
@@ -236,13 +243,13 @@ async fn site_of_server(pool: &PgPool, server: Uuid) -> Result<Option<Uuid>, sql
 
 /// Who owns a row: the site it applies to, or one server of a site.
 #[derive(Debug, Clone, Copy)]
-enum Owner {
+pub(super) enum Owner {
     Site(Uuid),
     Server(Uuid),
 }
 
 impl Owner {
-    fn columns(self) -> (Option<Uuid>, Option<Uuid>) {
+    pub(super) fn columns(self) -> (Option<Uuid>, Option<Uuid>) {
         match self {
             Self::Site(id) => (Some(id), None),
             Self::Server(id) => (None, Some(id)),
@@ -250,7 +257,7 @@ impl Owner {
     }
 
     /// The site whose roles decide access, if the owner exists.
-    async fn site(self, pool: &PgPool) -> Result<Option<Uuid>, sqlx::Error> {
+    pub(super) async fn site(self, pool: &PgPool) -> Result<Option<Uuid>, sqlx::Error> {
         match self {
             Self::Site(id) => site_exists(pool, id).await,
             Self::Server(id) => site_of_server(pool, id).await,
