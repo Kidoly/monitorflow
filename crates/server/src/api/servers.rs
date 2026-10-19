@@ -12,6 +12,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use monitorflow_common::tls::PeerRole;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -43,18 +44,29 @@ pub struct ServerList {
     pub next_cursor: Option<String>,
 }
 
-/// The sort key `(site name, hostname, peer ID)` of a page's last server,
-/// as opaque text.
-fn encode_cursor(key: (&str, &str, &str)) -> String {
-    URL_SAFE_NO_PAD.encode(serde_json::to_vec(&key).unwrap_or_default())
+/// The sort key of a page's last row, such as `(site name, hostname, peer
+/// ID)` for servers, as opaque text.
+pub(super) fn encode_cursor(key: &impl Serialize) -> String {
+    URL_SAFE_NO_PAD.encode(serde_json::to_vec(key).unwrap_or_default())
 }
 
-fn decode_cursor(cursor: &str) -> Result<(String, String, String), ApiError> {
+pub(super) fn decode_cursor<T: DeserializeOwned>(cursor: &str) -> Result<T, ApiError> {
     URL_SAFE_NO_PAD
         .decode(cursor)
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .ok_or_else(|| ApiError::Invalid("invalid cursor".into()))
+}
+
+/// `limit` checked against 1 to `max`, or `default`.
+pub(super) fn page_limit(limit: Option<u32>, default: u32, max: u32) -> Result<u32, ApiError> {
+    let limit = limit.unwrap_or(default);
+    if !(1..=max).contains(&limit) {
+        return Err(ApiError::Invalid(format!(
+            "limit must be between 1 and {max}"
+        )));
+    }
+    Ok(limit)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -198,15 +210,10 @@ pub async fn list(
         return Err(ApiError::Forbidden);
     }
     let (all_sites, sites) = user.readable_sites().bind();
-    let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
-    if !(1..=MAX_LIMIT).contains(&limit) {
-        return Err(ApiError::Invalid(format!(
-            "limit must be between 1 and {MAX_LIMIT}"
-        )));
-    }
+    let limit = page_limit(params.limit, DEFAULT_LIMIT, MAX_LIMIT)?;
     let (after_site, after_host, after_peer) = match params.cursor.as_deref() {
         Some(cursor) => {
-            let (site, host, peer) = decode_cursor(cursor)?;
+            let (site, host, peer): (String, String, String) = decode_cursor(cursor)?;
             (Some(site), Some(host), Some(peer))
         }
         None => (None, None, None),
@@ -229,7 +236,7 @@ pub async fn list(
     let next_cursor = if rows.len() > limit as usize {
         rows.truncate(limit as usize);
         rows.last()
-            .map(|r| encode_cursor((&r.site_name, &r.hostname, &r.peer_id)))
+            .map(|r| encode_cursor(&(&r.site_name, &r.hostname, &r.peer_id)))
     } else {
         None
     };
@@ -258,21 +265,32 @@ pub async fn detail(
         .await?;
     authorize(&user, row.as_ref().map(|r| r.site_id), false)?;
     let row = row.ok_or(ApiError::NotFound)?;
+    let certificate = latest_certificate(&state.pool, PeerRole::Agent, &row.peer_id).await?;
+    Ok(Json(ServerDetail {
+        server: ServerView::new(&state, row),
+        certificate,
+    }))
+}
+
+/// The certificate the CA issued last to `role`/`peer_id`, revoked or not.
+pub(super) async fn latest_certificate(
+    pool: &sqlx::PgPool,
+    role: PeerRole,
+    peer_id: &str,
+) -> Result<Option<CertificateView>, sqlx::Error> {
     // Newest first on the per-peer issued_at index.
     let certificate: Option<CertificateRow> = sqlx::query_as(
         "SELECT serial, not_before, not_after, issued_at, revoked_at, revocation_reason
          FROM certificates
-         WHERE peer_role = 'agent' AND peer_id = $1
+         WHERE peer_role = $1 AND peer_id = $2
          ORDER BY issued_at DESC, serial DESC
          LIMIT 1",
     )
-    .bind(&row.peer_id)
-    .fetch_optional(&state.pool)
+    .bind(role.as_str())
+    .bind(peer_id)
+    .fetch_optional(pool)
     .await?;
-    Ok(Json(ServerDetail {
-        server: ServerView::new(&state, row),
-        certificate: certificate.map(CertificateView::from),
-    }))
+    Ok(certificate.map(CertificateView::from))
 }
 
 impl ServerView {
@@ -326,17 +344,20 @@ mod tests {
 
     #[test]
     fn cursors_round_trip_and_refuse_garbage() {
-        let cursor = encode_cursor(("paris", "web-1", "agent-1"));
+        let cursor = encode_cursor(&("paris", "web-1", "agent-1"));
         assert!(cursor
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
         assert_eq!(
-            decode_cursor(&cursor).unwrap(),
+            decode_cursor::<(String, String, String)>(&cursor).unwrap(),
             ("paris".into(), "web-1".into(), "agent-1".into())
         );
         for bad in ["", "!!", &URL_SAFE_NO_PAD.encode(b"[1,2]")] {
             assert!(
-                matches!(decode_cursor(bad), Err(ApiError::Invalid(_))),
+                matches!(
+                    decode_cursor::<(String, String, String)>(bad),
+                    Err(ApiError::Invalid(_))
+                ),
                 "{bad}"
             );
         }

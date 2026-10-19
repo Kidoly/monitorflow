@@ -28,7 +28,12 @@
 //! | POST | `/api/sites/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
 //! | PUT | `/api/sensor_configs/{id}` | modify | body [`sensors::EntryRequest`], replaces the row; 200 [`sensors::Entry`] |
 //! | DELETE | `/api/sensor_configs/{id}` | modify | 204 |
-//! | GET | `/api/sites` | any role | [`sites::SiteList`]: `{"sites": [{"id", "name", "server_count", "customer_id", "customer_name"}]}`, readable sites by name |
+//! | GET | `/api/sites` | any role | [`sites::SiteList`]: `{"sites": [{"id", "name", "server_count", "relay_count", "customer_id", "customer_name"}]}`, readable sites by name |
+//! | GET | `/api/relays` | any role | [`relays::RelayList`], paginated like servers, see below |
+//! | GET | `/api/relays/{id}` | read | [`relays::RelayDetail`]: a listing row plus `certificate` and attached `servers` |
+//! | GET | `/api/tokens` | customer administrator | [`tokens::TokenList`]: enrollment tokens without secrets, see below |
+//! | POST | `/api/tokens` | customer administrator | body [`tokens::CreateRequest`]; 201 [`tokens::CreatedToken`], the only time the token is returned |
+//! | DELETE | `/api/tokens/{id}` | customer administrator | 204; 409 once used |
 //! | GET | `/api/customers` | any role | [`customers::CustomerList`]: `{"customers": [{"id", "name", "site_count"}]}`, see below |
 //! | POST | `/api/customers` | global administrator | body `{"name"}`; 201 [`customers::CustomerView`] |
 //! | POST | `/api/customers/{id}/sites` | customer administrator | body `{"name"}`; 201 [`sites::SiteView`] |
@@ -83,6 +88,33 @@
 //! across customers. Duplicates are 409. Both are audited
 //! (`customer.create`, `site.create`). Sites never move between customers
 //! through the API.
+//!
+//! # Relays and enrollment tokens
+//!
+//! `GET /api/relays` lists the relays of readable sites by site name and
+//! peer ID, with `limit` and `cursor` as for servers. Each item has `id`,
+//! `peer_id`, `name`, site and customer, `created_at`, `revoked_at`, the
+//! live `status`, `connected_at` and `last_heartbeat` of the relay's own
+//! stream, `cert_not_after`, the `server_names` of its certificate,
+//! `server_count` (servers whose latest connection came through it) and
+//! `connected_agents` (streams it forwards now). The detail adds
+//! `certificate` as for servers and `servers`: `[{"id", "peer_id",
+//! "hostname", "status"}]`.
+//!
+//! Enrollment tokens (ADR-0007) need an administrator role on the site's
+//! customer, global or by customer grant; a site grant is not enough
+//! (ADR-0029). `POST /api/tokens` takes `{"role": "agent" | "relay",
+//! "peer_id", "site_id", "ttl_s"?, "server_names"?}` (TTL 60 s to 7 days,
+//! default one hour; names for relays only) and answers the stored token
+//! plus `token`, `upstream_url` and `enroll_url`. The token string is never
+//! returned again. `GET /api/tokens` takes optional `state` (`pending`,
+//! `used`, `expired`), `limit` (1 to 500, default 100) and `cursor`, and
+//! lists newest first with `{"id", "role", "peer_id", "site_id",
+//! "site_name", "customer_id", "customer_name", "server_names",
+//! "created_by", "created_by_username", "created_at", "expires_at",
+//! "used_at", "state"}`. `DELETE` removes an unused token, so enrollment
+//! refuses it; the audit log keeps `enrollment_token.create` and
+//! `enrollment_token.revoke`.
 //!
 //! # Sensor configuration
 //!
@@ -196,12 +228,14 @@ mod health;
 pub mod incidents;
 pub mod metrics;
 pub mod password;
+pub mod relays;
 pub mod roles;
 pub mod sensors;
 pub mod servers;
 pub mod session;
 pub mod sites;
 pub mod thresholds;
+pub mod tokens;
 pub mod users;
 
 use std::future::Future;
@@ -210,7 +244,7 @@ use std::time::Duration;
 
 use axum::extract::DefaultBodyLimit;
 use axum::middleware;
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::Router;
 use monitorflow_common::config::ServerConfig;
 use sqlx::PgPool;
@@ -223,6 +257,7 @@ pub use auth::{CurrentUser, Me};
 pub use error::ApiError;
 pub use roles::{Role, RoleGrant};
 pub use servers::{CertificateView, ServerDetail, ServerList, ServerView};
+pub use tokens::EnrollmentSettings;
 
 /// Largest accepted request body.
 const BODY_LIMIT: usize = 64 * 1024;
@@ -260,6 +295,8 @@ pub struct ApiState {
     pub settings: Arc<ApiSettings>,
     /// Read client for the metric query proxy; `None` answers 502.
     pub metrics: Option<VmQuery>,
+    /// CA pin and URLs for enrollment tokens; `None` refuses to create them.
+    pub enrollment: Option<Arc<EnrollmentSettings>>,
 }
 
 impl ApiState {
@@ -269,7 +306,14 @@ impl ApiState {
             registry,
             settings: Arc::new(settings),
             metrics: None,
+            enrollment: None,
         }
+    }
+
+    /// Creates enrollment tokens pinned to `settings.ca_fingerprint`.
+    pub fn with_enrollment(mut self, settings: EnrollmentSettings) -> Self {
+        self.enrollment = Some(Arc::new(settings));
+        self
     }
 
     /// Serves metric queries from `metrics`.
@@ -290,6 +334,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/servers", get(servers::list))
         .route("/api/servers/{id}", get(servers::detail))
         .route("/api/sites", get(sites::list))
+        .route("/api/relays", get(relays::list))
+        .route("/api/relays/{id}", get(relays::detail))
+        .route("/api/tokens", get(tokens::list).post(tokens::create))
+        .route("/api/tokens/{id}", delete(tokens::delete))
         .route(
             "/api/customers",
             get(customers::list).post(customers::create),

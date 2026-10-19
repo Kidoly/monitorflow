@@ -15,12 +15,16 @@ pub struct SiteView {
     pub id: Uuid,
     pub name: String,
     pub server_count: i64,
+    /// Enrolled relays of the site, revoked ones included (ADR-0029).
+    pub relay_count: i64,
     pub customer_id: Uuid,
     pub customer_name: String,
 }
 
 /// Columns of [`SiteView`]; callers add `WHERE` before the grouping.
 const SELECT_SITES: &str = "SELECT si.id, si.name, count(s.id) AS server_count,
+                                   (SELECT count(*) FROM relays r WHERE r.site_id = si.id)
+                                       AS relay_count,
                                    si.customer_id, c.name AS customer_name
                             FROM sites si
                             JOIN customers c ON c.id = si.customer_id
