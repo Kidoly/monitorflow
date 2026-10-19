@@ -4,6 +4,7 @@
 pub mod alerting;
 pub mod api;
 pub mod ca;
+pub mod commands;
 pub mod crl;
 pub mod db;
 pub mod enroll;
