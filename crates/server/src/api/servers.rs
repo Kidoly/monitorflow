@@ -87,6 +87,8 @@ pub struct ServerView {
     pub last_heartbeat: Option<DateTime<Utc>>,
     /// Peer ID of the relay carrying the live stream, if any.
     pub via_relay: Option<String>,
+    /// Threshold incidents currently open on this server.
+    pub open_incidents: i64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -103,6 +105,7 @@ struct Row {
     created_at: DateTime<Utc>,
     last_seen_at: Option<DateTime<Utc>>,
     revoked_at: Option<DateTime<Utc>>,
+    open_incidents: i64,
 }
 
 /// `GET /api/servers`: one page of the servers of the sites the user may
@@ -134,7 +137,10 @@ pub async fn list(
     let mut rows: Vec<Row> = sqlx::query_as(
         "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name, s.relay_id,
                 s.os_family, s.os_version, s.agent_version, s.created_at, s.last_seen_at,
-                s.revoked_at
+                s.revoked_at,
+                -- One probe of the partial unique index on open incidents.
+                (SELECT count(*) FROM incidents i
+                 WHERE i.server_id = s.id AND i.state = 'open') AS open_incidents
          FROM servers s
          JOIN sites si ON si.id = s.site_id
          WHERE ($1 OR s.site_id = ANY($2))
@@ -202,6 +208,7 @@ impl ServerView {
             connected_at: None,
             last_heartbeat: row.last_seen_at,
             via_relay: None,
+            open_incidents: row.open_incidents,
         }
     }
 }
