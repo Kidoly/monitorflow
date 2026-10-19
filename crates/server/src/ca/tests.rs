@@ -162,6 +162,7 @@ fn issues_for_each_role() {
     for (role, id, names) in [
         (PeerRole::Agent, "agent-1", vec![]),
         (PeerRole::Relay, "site-a.relay", vec![]),
+        (PeerRole::Relay, "site-b.relay", localhost()),
         (PeerRole::Server, "central", localhost()),
     ] {
         let (_, csr) = csr();
@@ -189,7 +190,7 @@ fn issues_for_each_role() {
 
         let eku = cert.extended_key_usage().unwrap().unwrap().value;
         assert!(eku.client_auth);
-        assert_eq!(eku.server_auth, role == PeerRole::Server, "{role}");
+        assert_eq!(eku.server_auth, !names.is_empty(), "{role}");
         assert!(!cert.basic_constraints().unwrap().unwrap().value.ca);
         let sans = &cert.subject_alternative_name().unwrap().unwrap().value;
         assert_eq!(sans.general_names.len(), 1 + names.len());
@@ -213,7 +214,7 @@ fn validity_can_be_overridden_within_the_ca_lifetime() {
 }
 
 #[test]
-fn server_names_only_for_servers() {
+fn server_names_only_for_servers_and_relays() {
     let (_dir, ca) = new_ca();
     let (_, csr) = csr();
     let err = ca

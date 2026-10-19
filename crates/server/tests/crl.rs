@@ -1,5 +1,6 @@
 //! The mTLS listener's CRL is refreshed after a revocation and before it
-//! expires, over real connections on 127.0.0.1.
+//! expires, and relays fetch the same CRL, over real connections on
+//! 127.0.0.1.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,14 +8,15 @@ use std::time::Duration;
 use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Envelope, Hello};
+use monitorflow_common::proto::v1::revocation_service_client::RevocationServiceClient;
+use monitorflow_common::proto::v1::{Envelope, GetCrlRequest, Hello};
 use monitorflow_common::tls::{self, Identity, PeerIdentity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
 use monitorflow_server::ca::{CaOptions, CertificateAuthority, RevocationReason, Serial};
 use monitorflow_server::crl::CrlPublisher;
 use monitorflow_server::enroll::server_cert;
 use monitorflow_server::grpc::{
-    self, AgentStreamService, DenyRelayedAgents, Registry, StreamSettings,
+    self, AgentStreamService, CrlService, DenyRelayedAgents, Registry, StreamSettings,
 };
 use rcgen::{CertificateParams, KeyPair};
 use tempfile::TempDir;
@@ -51,7 +53,15 @@ async fn setup(options: CaOptions) -> Setup {
         Arc::new(DenyRelayedAgents),
         StreamSettings::default(),
     );
-    tokio::spawn(grpc::serve(listener, rx, service, std::future::pending()));
+    let crl = CrlService::new(publisher.subscribe());
+    tokio::spawn(grpc::serve_all(
+        listener,
+        rx,
+        service,
+        None,
+        Some(crl),
+        std::future::pending(),
+    ));
     Setup {
         dir,
         ca,
@@ -71,13 +81,18 @@ fn tls_paths(dir: &TempDir, name: &str) -> TlsPaths {
 impl Setup {
     /// An agent certificate from the CA, written next to the server's.
     fn agent(&self, id: &str) -> (Identity, Serial) {
+        self.peer(PeerRole::Agent, id)
+    }
+
+    /// A certificate for `role`/`id` from the CA.
+    fn peer(&self, role: PeerRole, id: &str) -> (Identity, Serial) {
         let key = KeyPair::generate().unwrap();
         let csr = CertificateParams::default()
             .serialize_request(&key)
             .unwrap()
             .pem()
             .unwrap();
-        let identity = PeerIdentity::new(PeerRole::Agent, id).unwrap();
+        let identity = PeerIdentity::new(role, id).unwrap();
         let issued = self.ca.issue(&csr, &identity, None, &[]).unwrap();
         let paths = tls_paths(&self.dir, id);
         std::fs::write(&paths.ca_cert, self.ca.ca_cert_pem()).unwrap();
@@ -88,6 +103,20 @@ impl Setup {
 
     /// Opens a stream; with TLS 1.3 a rejected client certificate shows up
     /// on the first call rather than on connect.
+    /// Calls `GetCrl` as `peer`.
+    async fn get_crl(&self, peer: &Identity) -> Result<Vec<u8>, Box<tonic::Status>> {
+        let channel = tls::connect(&self.url, peer.client_config().unwrap(), TIMEOUT)
+            .await
+            .unwrap();
+        let mut client = RevocationServiceClient::new(channel);
+        let call = client.get_crl(GetCrlRequest {});
+        let response = tokio::time::timeout(TIMEOUT, call)
+            .await
+            .unwrap()
+            .map_err(Box::new)?;
+        Ok(response.into_inner().crl_der)
+    }
+
     async fn connects(&self, agent: &Identity, id: &str) -> bool {
         let Ok(channel) = tls::connect(&self.url, agent.client_config().unwrap(), TIMEOUT).await
         else {
@@ -154,4 +183,39 @@ async fn timer_refreshes_the_crl_before_it_expires() {
     timer.await.unwrap();
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert!(!s.connects(&agent, "agent-1").await);
+}
+
+/// Serials listed in a DER CRL, without the sign byte of the DER integer.
+fn revoked_serials(der: &[u8]) -> Vec<Vec<u8>> {
+    use x509_parser::prelude::{CertificateRevocationList, FromDer};
+    let (_, crl) = CertificateRevocationList::from_der(der).unwrap();
+    crl.iter_revoked_certificates()
+        .map(|r| unsigned(r.raw_serial()))
+        .collect()
+}
+
+#[tokio::test]
+async fn relays_fetch_the_crl_the_listener_enforces() {
+    let s = setup(CaOptions::default()).await;
+    let (relay, _) = s.peer(PeerRole::Relay, "relay-1");
+    let (_, serial) = s.agent("agent-1");
+    let before = s.get_crl(&relay).await.unwrap();
+    assert!(revoked_serials(&before).is_empty());
+
+    s.publisher
+        .revoke(serial.clone(), RevocationReason::KeyCompromise)
+        .await
+        .unwrap();
+    let after = s.get_crl(&relay).await.unwrap();
+    assert_eq!(revoked_serials(&after), vec![unsigned(serial.as_bytes())]);
+
+    // Agents get nothing: only relays verify other peers' certificates.
+    let (other, _) = s.agent("agent-2");
+    let status = s.get_crl(&other).await.unwrap_err();
+    assert_eq!(status.code(), tonic::Code::PermissionDenied, "{status}");
+}
+
+fn unsigned(serial: &[u8]) -> Vec<u8> {
+    let start = serial.iter().position(|&b| b != 0).unwrap_or(serial.len());
+    serial[start..].to_vec()
 }

@@ -59,7 +59,13 @@ pub struct TokenRequest {
     pub site_id: Uuid,
     pub ttl: Duration,
     pub creator: Creator,
+    /// DNS names and IP addresses agents use to reach a relay, written in
+    /// its certificate (ADR-0025). Empty for agents.
+    pub server_names: Vec<String>,
 }
+
+/// Most names a relay token may carry.
+pub const MAX_SERVER_NAMES: usize = 16;
 
 impl TokenRequest {
     fn validate(&self) -> Result<(), TokenError> {
@@ -68,6 +74,23 @@ impl TokenRequest {
             return invalid("tokens enroll agents and relays, not servers".into());
         }
         validate_id(&self.peer_id).or_else(|e| invalid(format!("invalid peer ID: {e}")))?;
+        if self.role != PeerRole::Relay && !self.server_names.is_empty() {
+            return invalid("server names are for relay tokens only".into());
+        }
+        if self.server_names.len() > MAX_SERVER_NAMES {
+            return invalid(format!("at most {MAX_SERVER_NAMES} server names"));
+        }
+        for name in &self.server_names {
+            let valid = name.parse::<std::net::IpAddr>().is_ok()
+                || (!name.is_empty()
+                    && rustls::pki_types::DnsName::try_from(name.as_str()).is_ok());
+            if !valid {
+                return invalid(format!(
+                    "`{}` is not a DNS name or an IP address",
+                    name.escape_debug()
+                ));
+            }
+        }
         if !(MIN_TTL..=MAX_TTL).contains(&self.ttl) {
             return invalid(format!(
                 "TTL must be between {} and {} seconds",
@@ -133,8 +156,8 @@ pub async fn create(
     let token = generate(ca_fingerprint)?;
     let mut tx = pool.begin().await?;
     let (id, expires_at): (Uuid, DateTime<Utc>) = sqlx::query_as(
-        "INSERT INTO enrollment_tokens (token_hash, role, peer_id, site_id, created_by, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))
+        "INSERT INTO enrollment_tokens (token_hash, role, peer_id, site_id, created_by, expires_at, server_names)
+         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6), $7)
          RETURNING id, expires_at",
     )
     .bind(hash(&token).as_slice())
@@ -143,6 +166,7 @@ pub async fn create(
     .bind(request.site_id)
     .bind(request.creator.user_id())
     .bind(request.ttl.as_secs_f64())
+    .bind(&request.server_names)
     .fetch_one(&mut *tx)
     .await?;
     let (actor_kind, actor_id) = request.creator.actor();
@@ -150,6 +174,7 @@ pub async fn create(
         "token_id": id,
         "site_id": request.site_id,
         "expires_at": expires_at,
+        "server_names": request.server_names,
     });
     sqlx::query(
         "INSERT INTO audit_log (actor_kind, actor_id, action, target_kind, target_id, details)
@@ -241,6 +266,7 @@ mod tests {
             site_id: Uuid::nil(),
             ttl,
             creator: Creator::Cli,
+            server_names: Vec::new(),
         }
     }
 
@@ -258,6 +284,34 @@ mod tests {
             request(PeerRole::Agent, "", DEFAULT_TTL),
             request(PeerRole::Agent, "web-01", Duration::from_secs(59)),
             request(PeerRole::Agent, "web-01", MAX_TTL + Duration::from_secs(1)),
+        ] {
+            assert!(
+                matches!(bad.validate(), Err(TokenError::Invalid(_))),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_relays_get_valid_server_names() {
+        let with = |role, names: &[&str]| TokenRequest {
+            server_names: names.iter().map(|n| n.to_string()).collect(),
+            ..request(role, "r1", DEFAULT_TTL)
+        };
+        assert!(
+            with(PeerRole::Relay, &["relay.example.com", "10.0.0.1", "::1"])
+                .validate()
+                .is_ok()
+        );
+        let many: Vec<String> = (0..=MAX_SERVER_NAMES)
+            .map(|i| format!("r{i}.example"))
+            .collect();
+        let many: Vec<&str> = many.iter().map(String::as_str).collect();
+        for bad in [
+            with(PeerRole::Agent, &["web.example.com"]),
+            with(PeerRole::Relay, &[""]),
+            with(PeerRole::Relay, &["not a name"]),
+            with(PeerRole::Relay, &many),
         ] {
             assert!(
                 matches!(bad.validate(), Err(TokenError::Invalid(_))),

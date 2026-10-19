@@ -45,3 +45,7 @@ where `<secret>` is 32 random bytes from `ring::rand::SystemRandom` and `<ca>` i
 The server's `tls.ca_cert`, `tls.cert` and `tls.key` used to default to `/etc/monitorflow/tls/`, whatever `data_dir` said, so a server run with `data_dir = "/tmp/x"` and no `[tls]` section failed at start trying to create `/etc/monitorflow/tls`. Each unset path now defaults to `<data_dir>/tls/{ca.pem,cert.pem,key.pem}`, the same rule as the agent. The server writes these files itself from the built-in CA, which already lives under `<data_dir>/ca/`, so its state is in one directory owned by the service user, and `/etc` can stay read-only for it.
 
 Explicit `[tls]` paths and `MONITORFLOW_TLS_*` variables keep working, path by path. No release shipped with the old default and there is no package yet; packaging that wants the files under `/etc` sets the paths explicitly. An install that relied on the old default and moves to this version gets a new server certificate under `data_dir` on first start, issued by the same CA, so enrolled peers keep trusting it.
+
+## Amendment 2026-10-19: relay tokens carry server names
+
+A relay accepts its agents over mTLS, so its certificate needs the DNS names or IP addresses agents connect to and `serverAuth`. A relay token now carries those names (`token create --role relay --server-name …`, `enrollment_tokens.server_names`), and the CA writes them with `serverAuth`. As with the identity, the CSR's names are still ignored. Agent tokens carry none. See ADR-0025.

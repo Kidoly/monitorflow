@@ -21,7 +21,7 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use super::limiter::{FailureLimiter, UNKNOWN_SOURCE};
-use super::{ca_fingerprint, token};
+use super::{ca_fingerprint, server_cert, token};
 use crate::api::audit::{self, Event};
 use crate::ca::{CertificateAuthority, IssuedCert};
 
@@ -109,15 +109,15 @@ impl Enroller {
 
         let mut tx = self.pool.begin().await?;
         // Concurrent uses wait on the row lock, then see used_at set.
-        let row: Option<(Uuid, String, String, Uuid)> = sqlx::query_as(
+        let row: Option<(Uuid, String, String, Uuid, Vec<String>)> = sqlx::query_as(
             "UPDATE enrollment_tokens SET used_at = now(), used_by_peer_id = peer_id
              WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
-             RETURNING id, role, peer_id, site_id",
+             RETURNING id, role, peer_id, site_id, server_names",
         )
         .bind(token::hash(&token).as_slice())
         .fetch_optional(&mut *tx)
         .await?;
-        let Some((token_id, role, peer_id, site_id)) = row else {
+        let Some((token_id, role, peer_id, site_id, server_names)) = row else {
             return Err(EnrollError::Refused);
         };
         let role = match role.as_str() {
@@ -129,8 +129,10 @@ impl Enroller {
             PeerIdentity::new(role, &peer_id).map_err(|e| EnrollError::Internal(e.to_string()))?;
         let new_relay = prepare_inventory(&mut tx, role, &peer_id, site_id).await?;
 
+        // Names come from the token, like the identity (ADR-0025).
+        let names = server_cert::parse_names(&server_names);
         let (ca, csr, id) = (self.ca.clone(), csr_pem.to_owned(), identity.clone());
-        let cert = tokio::task::spawn_blocking(move || ca.issue(&csr, &id, None, &[]))
+        let cert = tokio::task::spawn_blocking(move || ca.issue(&csr, &id, None, &names))
             .await
             .map_err(|e| EnrollError::Internal(e.to_string()))?
             .map_err(|e| EnrollError::Internal(e.to_string()))?;

@@ -3,13 +3,15 @@
 //! The listener enforces CRL expiry, so a CRL past its `next_update` locks
 //! every client out. [`CrlPublisher`] builds a new CRL and `ServerConfig`
 //! after each revocation and on a timer, and sends it through the watch
-//! channel read by `tls::incoming`.
+//! channel read by `tls::incoming`. The same CRL is published for
+//! `RevocationService`, so relays enforce what the listener enforces.
 
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
 use monitorflow_common::tls::{Identity, TlsError};
+use rustls::pki_types::CertificateRevocationListDer;
 use rustls::ServerConfig;
 use tokio::sync::watch;
 
@@ -38,7 +40,11 @@ pub struct CrlPublisher {
     ca: Arc<CertificateAuthority>,
     identity: Identity,
     tx: watch::Sender<Arc<ServerConfig>>,
+    crl: watch::Sender<Crl>,
 }
+
+/// The CRL in DER, as last published.
+pub type Crl = Arc<CertificateRevocationListDer<'static>>;
 
 impl CrlPublisher {
     /// Builds the first config with a fresh CRL. Pass the receiver to the
@@ -47,15 +53,30 @@ impl CrlPublisher {
         ca: Arc<CertificateAuthority>,
         identity: Identity,
     ) -> Result<(Self, watch::Receiver<Arc<ServerConfig>>), CrlError> {
-        let config = build(ca.clone(), identity.clone()).await?;
+        let (config, crl) = build(ca.clone(), identity.clone()).await?;
         let (tx, rx) = watch::channel(config);
-        Ok((Self { ca, identity, tx }, rx))
+        let (crl, _) = watch::channel(crl);
+        Ok((
+            Self {
+                ca,
+                identity,
+                tx,
+                crl,
+            },
+            rx,
+        ))
+    }
+
+    /// Follows the published CRL, for `RevocationService`.
+    pub fn subscribe(&self) -> watch::Receiver<Crl> {
+        self.crl.subscribe()
     }
 
     /// Publishes a new CRL now.
     pub async fn refresh(&self) -> Result<(), CrlError> {
-        let config = build(self.ca.clone(), self.identity.clone()).await?;
+        let (config, crl) = build(self.ca.clone(), self.identity.clone()).await?;
         self.tx.send_replace(config);
+        self.crl.send_replace(crl);
         Ok(())
     }
 
@@ -95,8 +116,13 @@ impl CrlPublisher {
 async fn build(
     ca: Arc<CertificateAuthority>,
     identity: Identity,
-) -> Result<Arc<ServerConfig>, CrlError> {
-    tokio::task::spawn_blocking(move || Ok(identity.server_config(vec![ca.crl()?])?)).await?
+) -> Result<(Arc<ServerConfig>, Crl), CrlError> {
+    tokio::task::spawn_blocking(move || {
+        let crl = ca.crl()?;
+        let config = identity.server_config(vec![crl.clone()])?;
+        Ok((config, Arc::new(crl)))
+    })
+    .await?
 }
 
 #[cfg(test)]

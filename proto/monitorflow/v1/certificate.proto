@@ -31,3 +31,18 @@ message RenewResponse {
   // End of the certificate's validity, Unix seconds.
   int64 not_after_unix = 4;
 }
+
+// The CA's certificate revocation list, for relays: a relay terminates the
+// mTLS of its agents and must refuse revoked certificates like the server
+// does (ADR-0025). Served on the mTLS gRPC listener to relays only.
+service RevocationService {
+  rpc GetCrl(GetCrlRequest) returns (GetCrlResponse);
+}
+
+message GetCrlRequest {}
+
+message GetCrlResponse {
+  // The current CRL in DER, signed by the CA. The same list the server's
+  // listener enforces, including its next_update.
+  bytes crl_der = 1;
+}

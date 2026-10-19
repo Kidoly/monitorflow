@@ -3,7 +3,8 @@
 //!
 //! Served on the mTLS gRPC listener, so the client certificate of the
 //! connection authenticates the call. The identity written in the new
-//! certificate is the one of that certificate, never anything from the CSR.
+//! certificate is the one of that certificate, never anything from the CSR,
+//! and so are a relay's DNS names and IP addresses (ADR-0025).
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -18,10 +19,11 @@ use rcgen::CertificateSigningRequestParams;
 use rustls::pki_types::CertificateDer;
 use sqlx::{PgPool, Postgres, Transaction};
 use tonic::{Request, Response, Status};
+use x509_parser::extensions::GeneralName;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::api::audit::{self, Event};
-use crate::ca::{CertificateAuthority, IssuedCert, Serial};
+use crate::ca::{CertificateAuthority, IssuedCert, Serial, ServerName};
 
 /// Largest request accepted: a CSR fits in a few KiB.
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
@@ -67,6 +69,9 @@ pub struct PresentedCert {
     pub identity: PeerIdentity,
     pub serial: Serial,
     pub not_after: SystemTime,
+    /// DNS names and IP addresses of a relay, copied into its next
+    /// certificate. The CA wrote them from its enrollment token.
+    pub server_names: Vec<ServerName>,
 }
 
 impl PresentedCert {
@@ -75,10 +80,23 @@ impl PresentedCert {
         let (_, cert) =
             X509Certificate::from_der(der).map_err(|e| format!("cannot parse certificate: {e}"))?;
         let not_after = cert.validity().not_after.timestamp().max(0) as u64;
+        let sans = cert
+            .subject_alternative_name()
+            .map_err(|e| format!("cannot parse the subject alternative names: {e}"))?;
+        let server_names = sans
+            .into_iter()
+            .flat_map(|ext| ext.value.general_names.iter())
+            .filter_map(|name| match name {
+                GeneralName::DNSName(dns) => Some(ServerName::Dns((*dns).to_owned())),
+                GeneralName::IPAddress(ip) => ip_addr(ip).map(ServerName::Ip),
+                _ => None,
+            })
+            .collect();
         Ok(Self {
             identity,
             serial: Serial::from_bytes(cert.raw_serial()),
             not_after: UNIX_EPOCH + Duration::from_secs(not_after),
+            server_names,
         })
     }
 
@@ -91,6 +109,15 @@ impl PresentedCert {
             .and_then(|certs| certs.first().cloned())
             .ok_or_else(|| Status::unauthenticated("no client certificate"))?;
         Self::from_der(&leaf).map_err(Status::unauthenticated)
+    }
+}
+
+/// An IPv4 or IPv6 address in SAN encoding.
+fn ip_addr(bytes: &[u8]) -> Option<std::net::IpAddr> {
+    match bytes.len() {
+        4 => <[u8; 4]>::try_from(bytes).ok().map(Into::into),
+        16 => <[u8; 16]>::try_from(bytes).ok().map(Into::into),
+        _ => None,
     }
 }
 
@@ -192,7 +219,8 @@ impl Renewer {
         }
 
         let (ca, csr, identity) = (self.ca.clone(), csr_pem.to_owned(), peer.clone());
-        let cert = tokio::task::spawn_blocking(move || ca.issue(&csr, &identity, None, &[]))
+        let names = presented.server_names.clone();
+        let cert = tokio::task::spawn_blocking(move || ca.issue(&csr, &identity, None, &names))
             .await
             .map_err(|e| RenewError::Internal(e.to_string()))?
             .map_err(|e| RenewError::Internal(e.to_string()))?;

@@ -224,3 +224,4 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Sensor scheduling | One task per sensor, jittered first tick, timeout within the interval, missed ticks skipped, full channel drops new samples (ADR-0012) |
 | Sensor configuration | Built-in defaults, then site rows, then server rows in PostgreSQL; pushed after Hello and on revision change, polled every 10 s; agents acknowledge and persist it (ADR-0016) |
 | Threshold engine | Thresholds per metric with site and server layers over built-in defaults; per-severity timers on sample time with hysteresis; one open incident per series by partial unique index; state in `alert_states` reloaded at start (ADR-0017) |
+| Relay forwarding | The relay terminates agent mTLS (CA, CRL fetched from upstream, Hello ID = certificate ID) and opens one upstream stream per agent stream with its own certificate, forwarding envelopes unchanged; relay certificates carry admin-chosen server names (ADR-0025) |
