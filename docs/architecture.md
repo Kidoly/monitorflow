@@ -129,6 +129,8 @@ Mirroring reuses proven tools, orchestrated from Rust, rather than reimplementin
 3. Agents apply updates and report installed packages and whether a reboot is required.
 4. Results appear per server in the web interface and in the audit log.
 
+Updates travel as `apply_updates` commands on the agent's stream, signed with the CA key, one in flight per server; the agent keeps a journal so a command redelivered after a reconnect never runs twice, runs apt or dnf through fixed `sudo -n` command lines, and sends a `PackageReport` after each update and every 6 hours (ADR-0031).
+
 ## 8. AI-driven remediation
 
 When a threshold is crossed, the central server can ask an external AI API to diagnose and propose shell commands. The AI layer is provider-agnostic: one trait, one adapter per provider. The Claude API is the first adapter.
@@ -229,3 +231,4 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Relay chaining | Each relay has an admin-chosen parent; every hop adds the peer it verified to a `monitorflow-via` path, and the server accepts only paths along parent links down from the connecting relay; relays serve the CRL downstream (ADR-0028) |
 | Peer administration | Enrollment tokens and revocation of agents and relays from the API by customer administrators; tokens returned once; revocation updates rows, certificates and the CRL and closes live streams (ADR-0029) |
 | Relay store-and-forward | `SampleBatch` envelopes buffered on disk per origin (CRC-checked segments, size and age caps, oldest dropped first) while the upstream is down, replayed oldest first before live data with the stored Hello and `monitorflow-via` path; at-least-once for buffered data until server acks exist (ADR-0027) |
+| Commands and updates | Commands signed with the CA key over the agent ID, kind, payload and expiry; one in flight per server, resent on reconnect, results matched to the sending agent; agents journal command IDs on disk; `apply_updates` and `PackageReport` typed in `packages.proto` (ADR-0031) |

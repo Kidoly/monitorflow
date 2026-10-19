@@ -34,6 +34,7 @@ use rcgen::{
     SerialNumber, PKCS_ECDSA_P256_SHA256,
 };
 use ring::rand::{SecureRandom, SystemRandom};
+use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_ASN1_SIGNING};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, UnixTime};
 use rustls::server::WebPkiClientVerifier;
 use rustls::sign::CertifiedKey;
@@ -228,6 +229,8 @@ pub struct CertificateAuthority {
     /// rcgen needs it to sign. Its own signature is never published.
     issuer: Certificate,
     key: KeyPair,
+    /// The same key for ring, which signs commands (ADR-0031).
+    command_key: EcdsaKeyPair,
     revocations: Mutex<Revocations>,
 }
 
@@ -283,6 +286,12 @@ impl CertificateAuthority {
         check_key_matches(cert_der.contents(), &key)
             .map_err(|why| CaError::corrupt(&key_path, why))?;
         let issuer = params.self_signed(&key).map_err(CaError::signing)?;
+        let command_key = EcdsaKeyPair::from_pkcs8(
+            &ECDSA_P256_SHA256_ASN1_SIGNING,
+            &key.serialize_der(),
+            &SystemRandom::new(),
+        )
+        .map_err(|_| CaError::corrupt(&key_path, "cannot load the key for signing"))?;
 
         let revocations = revocation::load(&dir.join(REVOCATIONS_FILE))?;
         Ok(Self {
@@ -291,8 +300,18 @@ impl CertificateAuthority {
             cert_pem,
             issuer,
             key,
+            command_key,
             revocations: Mutex::new(revocations),
         })
+    }
+
+    /// Signs `message`, the bytes of `common::command::signed_bytes`, for
+    /// agents to verify with the CA certificate (ADR-0031).
+    pub fn sign_command(&self, message: &[u8]) -> Result<Vec<u8>, CaError> {
+        self.command_key
+            .sign(&SystemRandom::new(), message)
+            .map(|signature| signature.as_ref().to_vec())
+            .map_err(|_| CaError::Signing("cannot sign the command".into()))
     }
 
     /// The root certificate, for peers' trust stores.

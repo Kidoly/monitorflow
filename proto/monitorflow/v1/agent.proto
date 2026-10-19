@@ -7,6 +7,8 @@ syntax = "proto3";
 
 package monitorflow.v1;
 
+import "monitorflow/v1/packages.proto";
+
 // Long-lived bidirectional stream between an agent (or relay) and its upstream.
 service AgentService {
   rpc Stream(stream Envelope) returns (stream Envelope);
@@ -23,6 +25,8 @@ message Envelope {
     SampleBatch samples = 12;
     SensorConfig sensor_config = 13;
     SensorConfigAck sensor_config_ack = 14;
+    // Agent to server: installed packages and reboot state (ADR-0031).
+    PackageReport package_report = 15;
     Command command = 20;
     CommandResult command_result = 21;
   }
@@ -93,14 +97,35 @@ message SensorSpecError {
   string message = 3;
 }
 
-// A command from the central server. Always signed; agents verify before running.
+// A command from the central server. Always signed; agents verify before
+// running (ADR-0031).
 message Command {
   string command_id = 1;
   string kind = 2;            // "shell", "apply_updates", "configure_sources", ...
-  bytes payload = 3;          // kind-specific, serialized
-  bytes signature = 4;        // signature over command_id + kind + payload
+  bytes payload = 3;          // the serialized message of `kind`, like ApplyUpdates
+  // ECDSA P-256 signature by the CA key over agent_id, command_id, kind,
+  // payload, issued_at and expires_at, encoded as ADR-0031 says.
+  bytes signature = 4;
   int64 issued_at_unix_ms = 5;
+  // Agents refuse to start a command after this time.
   int64 expires_at_unix_ms = 6;
+  // The agent the command is for; agents refuse another agent's command.
+  string agent_id = 7;
+}
+
+enum CommandStatus {
+  // Older agents: final, succeeded when exit_code is 0.
+  COMMAND_STATUS_UNSPECIFIED = 0;
+  // Interim: the agent started the command. A final status follows.
+  COMMAND_STATUS_RUNNING = 1;
+  COMMAND_STATUS_SUCCEEDED = 2;
+  // The command ran and failed.
+  COMMAND_STATUS_FAILED = 3;
+  // Not run: it arrived after expires_at.
+  COMMAND_STATUS_EXPIRED = 4;
+  // Not run: bad signature, another agent's command, unknown kind or
+  // invalid payload.
+  COMMAND_STATUS_REJECTED = 5;
 }
 
 message CommandResult {
@@ -110,4 +135,7 @@ message CommandResult {
   bytes stderr = 4;
   int64 started_at_unix_ms = 5;
   int64 finished_at_unix_ms = 6;
+  CommandStatus status = 7;
+  // Why the command failed or was not run, in one line; empty on success.
+  string error = 8;
 }

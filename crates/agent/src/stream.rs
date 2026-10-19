@@ -360,6 +360,7 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::SensorConfigAck(_) => "sensor_config_ack",
         Payload::Command(_) => "command",
         Payload::CommandResult(_) => "command_result",
+        Payload::PackageReport(_) => "package_report",
     }
 }
 
