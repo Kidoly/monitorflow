@@ -374,6 +374,15 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let uri = format!("/api/relays/{}", b.relay);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
         }
+        ("POST", "/api/servers/{id}/revoke") | ("POST", "/api/relays/{id}/revoke") => {
+            let id = if path.starts_with("/api/servers") {
+                b.server
+            } else {
+                b.relay
+            };
+            let uri = path.replace("{id}", &id.to_string());
+            assert_eq!(ctx.status(method, &uri, Some(json!({}))).await, not_found);
+        }
         ("POST", "/api/tokens") => {
             let body = json!({ "role": "agent", "peer_id": "intruder", "site_id": b.site });
             assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
@@ -584,14 +593,14 @@ db_tests! {
                 .unwrap()
             }
         };
-        let rows = (before("sensor_configs").await, before("thresholds").await, before("sites").await, before("enrollment_tokens").await);
+        let rows = (before("sensor_configs").await, before("thresholds").await, before("sites").await, before("enrollment_tokens").await, before("relays").await, before("servers").await);
 
         for (method, path) in &routes {
             check(&ctx, method, path).await;
         }
 
         // Writes against B changed nothing (A's rows were not touched either).
-        assert_eq!(rows, (before("sensor_configs").await, before("thresholds").await, before("sites").await, before("enrollment_tokens").await));
+        assert_eq!(rows, (before("sensor_configs").await, before("thresholds").await, before("sites").await, before("enrollment_tokens").await, before("relays").await, before("servers").await));
         // Nothing about B ever reached VictoriaMetrics, while A's queries did.
         let seen = vm.seen();
         assert!(!seen.is_empty());

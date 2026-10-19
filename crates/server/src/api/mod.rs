@@ -31,6 +31,7 @@
 //! | GET | `/api/sites` | any role | [`sites::SiteList`]: `{"sites": [{"id", "name", "server_count", "relay_count", "customer_id", "customer_name"}]}`, readable sites by name |
 //! | GET | `/api/relays` | any role | [`relays::RelayList`], paginated like servers, see below |
 //! | GET | `/api/relays/{id}` | read | [`relays::RelayDetail`]: a listing row plus `certificate` and attached `servers` |
+//! | POST | `/api/servers/{id}/revoke`, `/api/relays/{id}/revoke` | customer administrator | body `{"reason"?}`; 200 [`revoke::Revoked`], 409 if already revoked |
 //! | GET | `/api/tokens` | customer administrator | [`tokens::TokenList`]: enrollment tokens without secrets, see below |
 //! | POST | `/api/tokens` | customer administrator | body [`tokens::CreateRequest`]; 201 [`tokens::CreatedToken`], the only time the token is returned |
 //! | DELETE | `/api/tokens/{id}` | customer administrator | 204; 409 once used |
@@ -115,6 +116,15 @@
 //! "used_at", "state"}`. `DELETE` removes an unused token, so enrollment
 //! refuses it; the audit log keeps `enrollment_token.create` and
 //! `enrollment_token.revoke`.
+//!
+//! Revoking a server or relay (ADR-0029) sets its `revoked_at`, revokes
+//! every unexpired certificate of the peer with `reason` (`unspecified`,
+//! `key_compromise`, `affiliation_changed`, `superseded` or
+//! `cessation_of_operation`; default `unspecified`), publishes a new CRL
+//! and closes its live streams, and a relay's forwarded ones, with
+//! `PERMISSION_DENIED`. The answer is `{"revoked_at", "reason", "serials",
+//! "closed_streams"}`. It is audited as `server.revoke` or `relay.revoke`
+//! and cannot be undone.
 //!
 //! # Sensor configuration
 //!
@@ -229,6 +239,7 @@ pub mod incidents;
 pub mod metrics;
 pub mod password;
 pub mod relays;
+pub mod revoke;
 pub mod roles;
 pub mod sensors;
 pub mod servers;
@@ -250,6 +261,7 @@ use monitorflow_common::config::ServerConfig;
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 
+use crate::crl::CrlPublisher;
 use crate::grpc::Registry;
 use crate::vm_query::VmQuery;
 
@@ -297,6 +309,9 @@ pub struct ApiState {
     pub metrics: Option<VmQuery>,
     /// CA pin and URLs for enrollment tokens; `None` refuses to create them.
     pub enrollment: Option<Arc<EnrollmentSettings>>,
+    /// Revokes certificates and republishes the CRL; `None` refuses
+    /// revocations.
+    pub crl: Option<Arc<CrlPublisher>>,
 }
 
 impl ApiState {
@@ -307,7 +322,14 @@ impl ApiState {
             settings: Arc::new(settings),
             metrics: None,
             enrollment: None,
+            crl: None,
         }
+    }
+
+    /// Revokes peers' certificates through `crl`.
+    pub fn with_crl(mut self, crl: Arc<CrlPublisher>) -> Self {
+        self.crl = Some(crl);
+        self
     }
 
     /// Creates enrollment tokens pinned to `settings.ca_fingerprint`.
@@ -336,6 +358,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/sites", get(sites::list))
         .route("/api/relays", get(relays::list))
         .route("/api/relays/{id}", get(relays::detail))
+        .route("/api/relays/{id}/revoke", post(revoke::relay))
+        .route("/api/servers/{id}/revoke", post(revoke::server))
         .route("/api/tokens", get(tokens::list).post(tokens::create))
         .route("/api/tokens/{id}", delete(tokens::delete))
         .route(
