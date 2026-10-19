@@ -21,7 +21,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 
 - [x] `sensors`: Sensor trait, Sample type, scheduler.
 - [x] Sensors: cpu, memory, disk (one task each).
-- [ ] Sensors: systemd service, port, log pattern, custom script (one task each).
+- [x] Sensors: systemd service, port, log pattern, custom script (one task each).
 - [x] Agent: sensor configuration pushed from the server, sample batching and upload.
 - [x] Server: write samples to VictoriaMetrics (remote write) and logs to VictoriaLogs.
 - [x] Server: threshold engine with warning/critical and duration; incidents table.
