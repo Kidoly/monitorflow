@@ -302,11 +302,6 @@ fn intervals_and_sizes_must_be_positive() {
         msg.contains("key `heartbeat_interval`: must be greater than zero"),
         "{msg}"
     );
-    let msg = err::<RelayConfig>(&format!("{AGENT_MIN}\nbuffer_max_bytes = 0"), &[]);
-    assert!(
-        msg.contains("key `buffer_max_bytes`: must be greater than zero"),
-        "{msg}"
-    );
     let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_HEARTBEAT_TIMEOUT", "0")]);
     assert!(
         msg.contains("key `heartbeat_timeout`: must be greater than zero"),
@@ -436,4 +431,57 @@ fn ingest_defaults_overrides_and_bounds() {
             "{var}={value}: {msg}"
         );
     }
+}
+
+#[test]
+fn relay_buffer_defaults_and_overrides() {
+    let relay: RelayConfig = parse(AGENT_MIN).unwrap();
+    assert_eq!(relay.buffer, BufferConfig::default());
+    assert_eq!(relay.buffer.max_bytes, 1024 * 1024 * 1024);
+    assert_eq!(relay.buffer.max_age, 7 * 24 * 60 * 60);
+    assert_eq!(relay.buffer.fsync_interval_ms, 1_000);
+    assert_eq!(
+        relay.buffer_dir(),
+        Path::new("/var/lib/monitorflow/relay/buffer")
+    );
+
+    let text = format!(
+        "{AGENT_MIN}\n[buffer]\nmax_bytes = 2097152\nmax_age = 3600\nfsync_interval_ms = 0"
+    );
+    let env = env(&[("MONITORFLOW_BUFFER_MAX_AGE", "60")]);
+    let relay: RelayConfig = parse_with_env(&text, Path::new("relay.toml"), &env).unwrap();
+    assert_eq!(
+        relay.buffer,
+        BufferConfig {
+            max_bytes: 2 * 1024 * 1024,
+            max_age: 60,
+            fsync_interval_ms: 0,
+        }
+    );
+}
+
+#[test]
+fn relay_buffer_limits_are_checked() {
+    for (line, message) in [
+        (
+            "max_bytes = 1000",
+            "key `buffer.max_bytes`: must be at least",
+        ),
+        ("max_age = 0", "key `buffer.max_age`: must be 1 to 604800"),
+        (
+            "max_age = 604801",
+            "key `buffer.max_age`: must be 1 to 604800",
+        ),
+        (
+            "fsync_interval_ms = 60001",
+            "key `buffer.fsync_interval_ms`: must be at most",
+        ),
+        ("max_size = 1", "unknown field `max_size`"),
+    ] {
+        let msg = err::<RelayConfig>(&format!("{AGENT_MIN}\n[buffer]\n{line}"), &[]);
+        assert!(msg.contains(message), "{line}: {msg}");
+    }
+    // The old top-level key is gone.
+    let msg = err::<RelayConfig>(&format!("{AGENT_MIN}\nbuffer_max_bytes = 1"), &[]);
+    assert!(msg.contains("unknown field `buffer_max_bytes`"), "{msg}");
 }

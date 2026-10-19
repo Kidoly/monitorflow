@@ -577,8 +577,7 @@ pub struct RelayConfig {
     pub enrollment_token: Option<Secret>,
     /// Seconds between heartbeats on the relay's own stream.
     pub heartbeat_interval: u64,
-    /// Maximum size of the store-and-forward buffer on disk.
-    pub buffer_max_bytes: u64,
+    pub buffer: BufferConfig,
     pub tls: RelayTlsPaths,
     pub log: LogConfig,
 }
@@ -592,7 +591,7 @@ impl Default for RelayConfig {
             data_dir: "/var/lib/monitorflow/relay".into(),
             enrollment_token: None,
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
-            buffer_max_bytes: 1024 * 1024 * 1024,
+            buffer: BufferConfig::default(),
             tls: RelayTlsPaths::default(),
             log: LogConfig::default(),
         }
@@ -611,6 +610,72 @@ impl RelayConfig {
     pub fn tls_paths(&self) -> TlsPaths {
         self.tls.resolve(&self.data_dir)
     }
+
+    /// Directory of the store-and-forward buffer.
+    pub fn buffer_dir(&self) -> PathBuf {
+        self.data_dir.join("buffer")
+    }
+}
+
+/// The relay's store-and-forward buffer on disk (ADR-0027).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BufferConfig {
+    /// Total size of the buffer; the oldest records go first when full.
+    pub max_bytes: u64,
+    /// Seconds a record is kept; at most the server's 7-day sample age
+    /// limit (ADR-0013).
+    pub max_age: u64,
+    /// Milliseconds between syncs of new records to disk; 0 syncs after
+    /// every record.
+    pub fsync_interval_ms: u64,
+}
+
+/// The server drops samples older than this (ADR-0013).
+pub const MAX_BUFFER_AGE: u64 = 7 * 24 * 60 * 60;
+const MIN_BUFFER_BYTES: u64 = 1024 * 1024;
+const MAX_FSYNC_INTERVAL_MS: u64 = 60_000;
+
+impl Default for BufferConfig {
+    fn default() -> Self {
+        Self {
+            max_bytes: 1024 * 1024 * 1024,
+            max_age: MAX_BUFFER_AGE,
+            fsync_interval_ms: 1_000,
+        }
+    }
+}
+
+impl BufferConfig {
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set("buffer.max_bytes", &mut self.max_bytes)?;
+        env.set("buffer.max_age", &mut self.max_age)?;
+        env.set("buffer.fsync_interval_ms", &mut self.fsync_interval_ms)
+    }
+
+    fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
+        if self.max_bytes < MIN_BUFFER_BYTES {
+            return Err(check.fail(
+                "buffer.max_bytes",
+                format!("must be at least {MIN_BUFFER_BYTES} (1 MiB)"),
+            ));
+        }
+        if !(1..=MAX_BUFFER_AGE).contains(&self.max_age) {
+            return Err(check.fail(
+                "buffer.max_age",
+                format!(
+                    "must be 1 to {MAX_BUFFER_AGE} seconds (7 days, the server's sample age limit)"
+                ),
+            ));
+        }
+        if self.fsync_interval_ms > MAX_FSYNC_INTERVAL_MS {
+            return Err(check.fail(
+                "buffer.fsync_interval_ms",
+                format!("must be at most {MAX_FSYNC_INTERVAL_MS}"),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl LoadConfig for RelayConfig {
@@ -621,7 +686,7 @@ impl LoadConfig for RelayConfig {
         env.set("data_dir", &mut self.data_dir)?;
         env.set_opt("enrollment_token", &mut self.enrollment_token)?;
         env.set("heartbeat_interval", &mut self.heartbeat_interval)?;
-        env.set("buffer_max_bytes", &mut self.buffer_max_bytes)?;
+        self.buffer.apply_env(env)?;
         self.tls.apply_env(env)?;
         self.log.apply_env(env)
     }
@@ -632,7 +697,7 @@ impl LoadConfig for RelayConfig {
             check.grpc_url("enroll_url", url)?;
         }
         check.positive("heartbeat_interval", self.heartbeat_interval)?;
-        check.positive("buffer_max_bytes", self.buffer_max_bytes)
+        self.buffer.validate(check)
     }
 }
 

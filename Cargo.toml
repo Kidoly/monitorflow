@@ -56,6 +56,8 @@ async-trait = "0.1"
 # rustls on ring, like the rest of the workspace; no OpenSSL.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 snap = "1"
+# CRC-32C of the relay buffer's records; already used by sqlx.
+crc = "3"
 # Linear-time matching for the log sensor's patterns, set by the server.
 regex = "1"
 # Safe syscall wrappers (statvfs, clock_gettime) for the sensors, instead

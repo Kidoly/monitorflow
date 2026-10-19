@@ -1334,8 +1334,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "crc",
  "monitorflow-common",
  "monitorflow-server",
+ "prost",
  "rcgen",
  "rustls",
  "sqlx",

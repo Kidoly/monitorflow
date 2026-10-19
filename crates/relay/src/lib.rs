@@ -7,6 +7,7 @@
 //! SIGINT or SIGTERM, renewing the certificate before it expires. Agents
 //! renew their certificates through the relay (ADR-0028).
 
+pub mod buffer;
 pub mod control;
 pub mod forward;
 pub mod listener;
