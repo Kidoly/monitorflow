@@ -157,6 +157,22 @@ fn agent_sensor_limits_default_and_validate() {
         msg.contains("sensors.script_dir") && msg.contains("absolute"),
         "{msg}"
     );
+    assert_eq!(agent.sensors.log_dirs, [Path::new("/var/log")]);
+    let text = format!("{AGENT_MIN}\n[sensors]\nlog_dirs = [\"/var/log/app\", \"/srv/logs\"]\n");
+    let agent: AgentConfig = parse(&text).unwrap();
+    assert_eq!(
+        agent.sensors.log_dirs,
+        [Path::new("/var/log/app"), Path::new("/srv/logs")]
+    );
+    let agent: AgentConfig = parse(&format!("{AGENT_MIN}\n[sensors]\nlog_dirs = []\n")).unwrap();
+    assert!(agent.sensors.log_dirs.is_empty());
+    let vars = [("MONITORFLOW_SENSORS_LOG_DIRS", "/a, /b")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert_eq!(agent.sensors.log_dirs, [Path::new("/a"), Path::new("/b")]);
+    for bad in ["logs", "/var/log/../../etc"] {
+        let msg = err::<AgentConfig>(AGENT_MIN, &[("MONITORFLOW_SENSORS_LOG_DIRS", bad)]);
+        assert!(msg.contains("sensors.log_dirs"), "{msg}");
+    }
     let msg = err::<AgentConfig>(&format!("{AGENT_MIN}\n[sensors]\nscripts = \"/x\""), &[]);
     assert!(msg.contains("scripts"), "{msg}");
 }

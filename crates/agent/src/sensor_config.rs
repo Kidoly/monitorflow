@@ -66,6 +66,7 @@ impl Builtin {
 pub fn local(config: &AgentSensorsConfig) -> Local {
     Local {
         script_dir: config.script_dir.clone(),
+        log_dirs: config.log_dirs.clone(),
     }
 }
 
@@ -285,11 +286,6 @@ mod tests {
     fn builtin_builds_the_registry_kinds() {
         let mut config = sensors::SensorConfig::new("cpu", Duration::from_secs(60));
         // Every parameter a kind requires; the others ignore none of them.
-        let required = [
-            ("port", "port", "22"),
-            ("script", "script", "check"),
-            ("systemd", "units", "ssh"),
-        ];
         let scripts = tempfile::tempdir().unwrap();
         std::fs::write(scripts.path().join("check"), "#!/bin/sh\n").unwrap();
         std::fs::set_permissions(
@@ -299,10 +295,19 @@ mod tests {
         .unwrap();
         let builtin = Builtin::from_config(&AgentSensorsConfig {
             script_dir: scripts.path().into(),
+            log_dirs: vec![scripts.path().into()],
         });
+        let log = format!("{}/app.log", scripts.path().display());
+        let required: [(&str, &[(&str, &str)]); 4] = [
+            ("log", &[("path", &log), ("pattern", "error")]),
+            ("port", &[("port", "22")]),
+            ("script", &[("script", "check")]),
+            ("systemd", &[("units", "ssh")]),
+        ];
         for kind in sensors::registry::KINDS {
             let mut config = config.clone();
-            if let Some((_, name, value)) = required.iter().find(|(k, _, _)| k == kind) {
+            let pairs = required.iter().find(|(k, _)| k == kind);
+            for (name, value) in pairs.map_or(&[][..], |(_, p)| p) {
                 config.params.insert(name.to_string(), value.to_string());
             }
             assert!(builtin.build(kind, &config).is_ok(), "{kind}");

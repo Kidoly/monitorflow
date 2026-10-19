@@ -43,10 +43,12 @@ enum Command {
 enum SensorsCommand {
     /// Collect each sensor twice, one second apart, and print the second
     /// round. Needs no configuration; when the agent's configuration file
-    /// exists, its `[sensors]` limits apply (script directory).
+    /// exists, its `[sensors]` limits apply (script and log directories).
     ///
     /// Examples: `sensors probe systemd --param units=ssh,cron`,
-    /// `sensors probe script --param script=check_backup --param args=-w,2`.
+    /// `sensors probe script --param script=check_backup --param args=-w,2`,
+    /// `sensors probe log --param path=/var/log/syslog --param pattern=error`
+    /// (counts the lines written during the second between the rounds).
     Probe {
         /// Sensor kinds to run; when empty, every kind that needs no
         /// parameters.

@@ -8,7 +8,7 @@
 //! VictoriaMetrics label names and values on the server. See ADR-0012.
 //!
 //! The built-in sensors ([`cpu`], [`memory`], [`disk`], [`systemd`],
-//! [`port`], [`script`]) are built by kind with [`registry::build`].
+//! [`port`], [`script`], [`log`]) are built by kind with [`registry::build`].
 //! One sensor emits several metrics by setting [`Sample::sensor`] to a
 //! metric suffix, which the scheduler prefixes with the configured name
 //! ([`metric_name`]). See ADR-0015.
@@ -19,6 +19,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub mod cpu;
 pub mod disk;
+pub mod log;
 pub mod memory;
 pub mod port;
 mod procfs;
