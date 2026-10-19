@@ -96,6 +96,37 @@ export interface QueryResult {
   series: MetricSeries[];
 }
 
+/** Which layer an effective sensor comes from (ADR-0016). */
+export type SensorOrigin = "default" | "site" | "server";
+
+/** One sensor as the agent receives it. */
+export interface EffectiveSensor {
+  origin: SensorOrigin;
+  /** The `sensor_configs` row; null for a built-in default. */
+  entry_id: string | null;
+  kind: string;
+  /** Metric name prefix, like `disk_data`. */
+  name: string;
+  instance: string;
+  interval_ms: number;
+  /** Null: the agent's default. */
+  timeout_ms: number | null;
+  params: Record<string, string>;
+}
+
+/** `GET /api/servers/{id}/sensors`: the effective configuration and its drift. */
+export interface EffectiveSensors {
+  server_id: string;
+  site_id: string;
+  /** Revision of the current configuration. */
+  revision: number;
+  /** Revision the agent last acknowledged; null if it never did. */
+  applied_revision: number | null;
+  applied_at: string | null;
+  in_sync: boolean;
+  sensors: EffectiveSensor[];
+}
+
 export interface Health {
   status: "ok";
 }
@@ -248,6 +279,9 @@ export const api = {
     } while (cursor !== undefined);
     return { servers, next_cursor: null };
   },
+
+  serverSensors: (serverId: string, signal?: AbortSignal) =>
+    request<EffectiveSensors>(`/api/servers/${encodeURIComponent(serverId)}/sensors`, { signal }),
 
   serverMetrics: (serverId: string, signal?: AbortSignal) =>
     request<MetricList>(`/api/servers/${encodeURIComponent(serverId)}/metrics`, { signal }),
