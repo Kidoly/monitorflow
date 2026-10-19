@@ -9,6 +9,7 @@ import { formatDateTime, formatOs, formatRelative } from "@/lib/format";
 import { usePolling } from "@/lib/usePolling";
 
 import { REFRESH_MS, StatusBadge } from "./FleetOverview";
+import { ServerGraphs } from "./ServerGraphs";
 import styles from "./ServerPage.module.css";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -82,6 +83,7 @@ export function ServerPage({ id }: { id: string | null }) {
           Refresh failed: {error} Showing the last data received.
         </p>
       )}
+      <ServerGraphs serverId={server.id} />
     </article>
   );
 }

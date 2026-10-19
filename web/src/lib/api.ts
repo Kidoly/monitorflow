@@ -58,6 +58,44 @@ export interface ServerList {
   next_cursor: string | null;
 }
 
+/** One metric of `GET /api/servers/{id}/metrics`, with the instances seen. */
+export interface MetricInfo {
+  /** Full name, like `monitorflow_cpu_usage_ratio`. */
+  name: string;
+  instances: string[];
+}
+
+/** Metrics a server wrote in the last day (ADR-0018). */
+export interface MetricList {
+  metrics: MetricInfo[];
+  /** The backend's series limit was hit; some metrics may be missing. */
+  truncated: boolean;
+}
+
+/** Parameters of `GET /api/metrics/query_range`. */
+export interface RangeQuery {
+  serverId: string;
+  metric: string;
+  instance?: string;
+  start: Date;
+  end: Date;
+  /** Seconds between points. */
+  step: number;
+  agg?: "avg" | "min" | "max" | "sum" | "count";
+}
+
+/** One series: its labels and `[unix seconds, value]` points; null is not a number. */
+export interface MetricSeries {
+  labels: Record<string, string>;
+  points: [number, number | null][];
+}
+
+export interface QueryResult {
+  /** The PromQL the server built, for display. */
+  query: string;
+  series: MetricSeries[];
+}
+
 export interface Health {
   status: "ok";
 }
@@ -209,5 +247,18 @@ export const api = {
       cursor = page.next_cursor ?? undefined;
     } while (cursor !== undefined);
     return { servers, next_cursor: null };
+  },
+
+  serverMetrics: (serverId: string, signal?: AbortSignal) =>
+    request<MetricList>(`/api/servers/${encodeURIComponent(serverId)}/metrics`, { signal }),
+
+  queryRange: (query: RangeQuery, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ server_id: query.serverId, metric: query.metric });
+    if (query.instance !== undefined) params.set("instance", query.instance);
+    params.set("start", query.start.toISOString());
+    params.set("end", query.end.toISOString());
+    params.set("step", String(query.step));
+    if (query.agg) params.set("agg", query.agg);
+    return request<QueryResult>(`/api/metrics/query_range?${params}`, { signal });
   },
 };
