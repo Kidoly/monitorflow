@@ -121,6 +121,9 @@ Mirroring reuses proven tools, orchestrated from Rust, rather than reimplementin
 - The agent rewrites `/etc/apt/sources.list.d/` or `/etc/yum.repos.d/` to point at its assigned mirror.
 - Original files are backed up before any change, so a server can be reverted.
 - Repository signing keys are distributed by the central server.
+- The spec (`ConfigureSources`) carries the mirror URL, repositories and armored keys; the agent checks every key's fingerprint before installing it. `replace` mode sets the other sources aside (apt) or disables them (dnf); `add` keeps them.
+- The manifest of the backup (path, mode, owner, SHA-256) and the copies are on disk before the first change; a failure midway or of the post-check (`apt-get update`, `dnf makecache`) reverts to the originals.
+- The agent writes through a root helper, `sudo -n monitorflow-agent sources apply|revert`, allowed by exact sudoers rules (ADR-0032).
 
 ### Update campaigns
 
@@ -229,3 +232,4 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Relay chaining | Each relay has an admin-chosen parent; every hop adds the peer it verified to a `monitorflow-via` path, and the server accepts only paths along parent links down from the connecting relay; relays serve the CRL downstream (ADR-0028) |
 | Peer administration | Enrollment tokens and revocation of agents and relays from the API by customer administrators; tokens returned once; revocation updates rows, certificates and the CRL and closes live streams (ADR-0029) |
 | Relay store-and-forward | `SampleBatch` envelopes buffered on disk per origin (CRC-checked segments, size and age caps, oldest dropped first) while the upstream is down, replayed oldest first before live data with the stored Hello and `monitorflow-via` path; at-least-once for buffered data until server acks exist (ADR-0027) |
+| Package source configuration | Signed spec with inline keys checked by fingerprint; deb822 or `.repo` files under `/etc`; one active backup with a manifest synced before any change, revert byte for byte, automatic revert on a failed post-check; root helper via exact sudoers rules (ADR-0032) |

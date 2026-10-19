@@ -1,0 +1,73 @@
+// MonitorFlow package source configuration, version 1. See ADR-0032.
+//
+// Rules: changes are additive only. Never renumber or reuse a field number.
+
+syntax = "proto3";
+
+package monitorflow.v1;
+
+// Points the host's package manager at its MonitorFlow mirror. The agent
+// backs up every file it changes first, so `RevertSources` restores them.
+// URLs follow the layout the server publishes (ADR-0030):
+// `<base>/apt/<mirror>/<snapshot>/` and `<base>/dnf/<mirror>/<snapshot>/`.
+message ConfigureSources {
+  enum Family {
+    FAMILY_UNSPECIFIED = 0;
+    FAMILY_APT = 1;
+    FAMILY_DNF = 2;
+  }
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    // The MonitorFlow sources become the only ones: the others are set
+    // aside (apt) or disabled (dnf).
+    MODE_REPLACE = 1;
+    // The MonitorFlow sources are added next to the existing ones.
+    MODE_ADD = 2;
+  }
+  message AptRepository {
+    // Mirror name on the server, like `debian-bookworm`.
+    string mirror = 1;
+    // Snapshot name, or `current` for the latest one.
+    string snapshot = 2;
+    // Like `bookworm`.
+    string suite = 3;
+    // Like `main`, `contrib`. At least one.
+    repeated string components = 4;
+    // Like `amd64`. Empty means apt's default.
+    repeated string architectures = 5;
+  }
+  message DnfRepository {
+    string mirror = 1;
+    string snapshot = 2;
+    // Unique, like `baseos`; the section is `monitorflow-<repo_id>`.
+    string repo_id = 3;
+    // Human-readable name; the repo ID when empty.
+    string name = 4;
+    // Package signature checks; absent means true.
+    optional bool gpgcheck = 5;
+  }
+  message SigningKey {
+    // File name part: `archive` becomes `monitorflow-archive.asc`.
+    string name = 1;
+    // ASCII-armored OpenPGP public key, one primary key.
+    string armored = 2;
+    // Expected fingerprint of the primary key, hex; spaces are ignored.
+    // A key with another fingerprint is refused.
+    string fingerprint = 3;
+  }
+
+  // Like `https://mirror.example.net`, without the trailing path.
+  string mirror_base_url = 1;
+  Family family = 2;
+  Mode mode = 3;
+  // Repositories of `family`; the other list must be empty.
+  repeated AptRepository apt = 4;
+  repeated DnfRepository dnf = 5;
+  // Keys repositories are signed with: all of them are trusted for every
+  // repository of this message.
+  repeated SigningKey keys = 6;
+}
+
+// Restores the files `ConfigureSources` changed and removes MonitorFlow's
+// own. A host with nothing to revert succeeds.
+message RevertSources {}

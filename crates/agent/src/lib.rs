@@ -9,6 +9,7 @@
 pub mod enroll;
 pub mod identity;
 pub mod os;
+pub mod packages;
 pub mod renew;
 pub mod sensor_config;
 pub mod sensors;
