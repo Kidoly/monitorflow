@@ -9,6 +9,7 @@ use monitorflow_common::config::{self, ServerConfig};
 use monitorflow_common::logging;
 use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::{Identity, PeerRole};
+use monitorflow_server::alerting::{AlertStore, Alerts, EngineSettings, LogNotifier};
 use monitorflow_server::api::{self, users, ApiSettings, ApiState, Role};
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
 use monitorflow_server::crl::{self, CrlPublisher};
@@ -153,6 +154,15 @@ async fn main() -> anyhow::Result<()> {
         JsonLines::new(&config.victorialogs_url).context("VictoriaLogs client")?,
         writer_settings,
     );
+    // Threshold engine (ADR-0017): open incidents and pending timers are
+    // reloaded before any stream can deliver samples.
+    let alerts = Alerts::start(
+        AlertStore::new(pool.clone()),
+        EngineSettings::default(),
+        Arc::new(LogNotifier),
+    )
+    .await
+    .context("loading the threshold engine state")?;
     let registry = Registry::default();
     let sensor_configs = SensorConfigs::spawn(
         SensorConfigStore::new(pool.clone()),
@@ -166,6 +176,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_inventory(Arc::new(DbInventory::new(pool.clone())))
     .with_sensor_configs(sensor_configs)
+    .with_alerts(alerts)
     .with_ingest(Ingest {
         metrics: Some(metrics.queue()),
         events: Some(events.queue()),
