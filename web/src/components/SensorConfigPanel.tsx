@@ -29,7 +29,14 @@ interface State {
 }
 
 /** The sensors the agent should run, where each comes from, and whether it has them. Read-only. */
-export function SensorConfigPanel({ serverId }: { serverId: string }) {
+export function SensorConfigPanel({
+  serverId,
+  onLoad,
+}: {
+  serverId: string;
+  /** Called with each configuration received, so the page can share it. */
+  onLoad?: (config: EffectiveSensors) => void;
+}) {
   const [state, setState] = useState<State>({ config: null, updatedAt: null, error: null });
 
   const load = useCallback(
@@ -37,6 +44,7 @@ export function SensorConfigPanel({ serverId }: { serverId: string }) {
       try {
         const config = await api.serverSensors(serverId, signal);
         setState({ config, updatedAt: new Date(), error: null });
+        onLoad?.(config);
       } catch (e) {
         // A 401 has already been routed to the login page.
         if (!isAbortError(e) && !(e instanceof ApiError && e.status === 401)) {
@@ -44,7 +52,7 @@ export function SensorConfigPanel({ serverId }: { serverId: string }) {
         }
       }
     },
-    [serverId],
+    [serverId, onLoad],
   );
   usePolling(load, REFRESH_MS);
 

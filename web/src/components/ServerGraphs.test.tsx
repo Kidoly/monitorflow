@@ -2,10 +2,10 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { MetricList, QueryResult } from "@/lib/api";
+import type { EffectiveSensor, MetricList, QueryResult } from "@/lib/api";
 
 import { REFRESH_MS } from "./FleetOverview";
-import { RANGES, ServerGraphs, planCharts } from "./ServerGraphs";
+import { RANGES, ServerGraphs, chartWindow, planCharts } from "./ServerGraphs";
 
 const ID = "6f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a01";
 // 12:00:10 UTC: 1 h ranges end at 12:00:00, the last 30 s step.
@@ -111,12 +111,53 @@ describe("ServerGraphs", () => {
     const weekEnd = Math.floor(NOW.getTime() / 1000 / 1800) * 1800;
     expect(week).toMatchObject({
       step: "1800",
+      rollup: "max",
       start: new Date((weekEnd - 604_800) * 1000).toISOString(),
       end: new Date(weekEnd * 1000).toISOString(),
     });
 
     await act(() => vi.advanceTimersByTimeAsync(REFRESH_MS));
     expect(rangeParams(fetchMock)).toHaveLength(3);
+  });
+
+  it("rolls up long ranges per metric, with steps of at least the sensor's interval", async () => {
+    const metrics = ["cpu_usage_ratio", "memory_available_ratio", "disk_total_bytes", "backup_status"];
+    const fetchMock = stubMetrics(
+      ok({ truncated: false, metrics: metrics.map((m) => ({ name: `monitorflow_${m}`, instances: [] })) }),
+      Object.fromEntries(metrics.map((m) => [`monitorflow_${m}`, ok(result({ "": 1 }))])),
+    );
+    const sensor = (name: string, interval_ms: number): EffectiveSensor => ({
+      origin: "server",
+      entry_id: null,
+      kind: name,
+      name,
+      instance: "",
+      interval_ms,
+      timeout_ms: null,
+      params: {},
+    });
+    render(<ServerGraphs serverId={ID} sensors={[sensor("cpu", 60_000), sensor("backup", 3_600_000)]} />);
+    await screen.findAllByRole("figure");
+    // Short ranges stay raw.
+    expect(rangeParams(fetchMock).every((p) => !("rollup" in p))).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: "6 h" }));
+    await vi.waitFor(() => expect(rangeParams(fetchMock)).toHaveLength(8));
+    expect(rangeParams(fetchMock).every((p) => !("rollup" in p))).toBe(true);
+
+    await userEvent.click(screen.getByRole("button", { name: "24 h" }));
+    await vi.waitFor(() => expect(rangeParams(fetchMock)).toHaveLength(12));
+    const day = Object.fromEntries(rangeParams(fetchMock).slice(8).map((p) => [p.metric, p]));
+    expect(day["monitorflow_cpu_usage_ratio"]).toMatchObject({ rollup: "max", step: "300" });
+    expect(day["monitorflow_memory_available_ratio"]).toMatchObject({ rollup: "min", step: "300" });
+    expect(day["monitorflow_disk_total_bytes"]).toMatchObject({ rollup: "avg", step: "300" });
+    // An hourly script: one point per hour, ending on the hour.
+    const hourEnd = Math.floor(NOW.getTime() / 1000 / 3600) * 3600;
+    expect(day["monitorflow_backup_status"]).toMatchObject({
+      rollup: "max",
+      step: "3600",
+      end: new Date(hourEnd * 1000).toISOString(),
+      start: new Date((hourEnd - 86_400) * 1000).toISOString(),
+    });
   });
 
   it("keeps every range within the proxy's point limit", () => {
@@ -168,6 +209,24 @@ describe("ServerGraphs", () => {
     expect(await screen.findByTestId("reference-line")).toHaveTextContent(
       "Warning monitorflow_disk_used_ratio 85%",
     );
+  });
+});
+
+describe("chartWindow", () => {
+  const [hour, , day, week] = RANGES;
+  const now = END + 10;
+
+  it("keeps short ranges raw and long ones rolled up", () => {
+    expect(chartWindow(hour, "monitorflow_cpu_usage_ratio", 600, now)).toEqual({ start: END - 3600, end: END, step: 30 });
+    expect(chartWindow(day, "monitorflow_cpu_usage_ratio", 60, now)).toMatchObject({ step: 300, rollup: "max" });
+    expect(chartWindow(week, "monitorflow_port_up", 60, now)).toMatchObject({ step: 1800, rollup: "min" });
+  });
+
+  it("rounds a long interval up to a multiple of the range's step", () => {
+    const window = chartWindow(day, "monitorflow_cpu_usage_ratio", 420, now);
+    expect(window.step).toBe(600);
+    expect(window.end % 600).toBe(0);
+    expect(window.end - window.start).toBe(86_400);
   });
 });
 

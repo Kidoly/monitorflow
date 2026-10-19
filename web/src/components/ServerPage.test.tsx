@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { type Server, setUnauthorizedHandler } from "@/lib/api";
+import { type ServerDetail, setUnauthorizedHandler } from "@/lib/api";
 import { stubFetch } from "@/test/fetch";
 import { incident } from "@/test/incidents";
 
@@ -9,7 +9,9 @@ import { ServerPage } from "./ServerPage";
 
 const ID = "6f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a01";
 
-const web1: Server = {
+const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
+
+const web1: ServerDetail = {
   id: ID,
   peer_id: "agent-1",
   hostname: "web-1",
@@ -26,7 +28,19 @@ const web1: Server = {
   last_heartbeat: new Date().toISOString(),
   via_relay: null,
   open_incidents: 0,
+  cert_not_after: inDays(60.5),
+  certificate: {
+    serial: "3f2a",
+    not_before: "2026-10-18T10:00:00Z",
+    not_after: inDays(60.5),
+    issued_at: "2026-10-18T10:00:00Z",
+    revoked: false,
+    revoked_at: null,
+    revocation_reason: null,
+  },
 };
+
+const detail = (body: ServerDetail = web1) => ({ [`GET /api/servers/${ID}`]: { status: 200, body } });
 
 const openIncidents = `GET /api/incidents?state=open&server_id=${ID}&limit=10`;
 const noIncidents = { status: 200, body: { incidents: [], next_cursor: null } };
@@ -35,7 +49,7 @@ const noThresholds = { status: 200, body: { server_id: ID, site_id: "site-1", re
 describe("ServerPage", () => {
   it("shows the server header and its graphs", async () => {
     stubFetch({
-      "GET /api/servers": { status: 200, body: { servers: [web1], next_cursor: null } },
+      ...detail(),
       [`GET /api/servers/${ID}/metrics`]: { status: 200, body: { metrics: [], truncated: false } },
       [`GET /api/servers/${ID}/sensors`]: {
         status: 200,
@@ -57,6 +71,8 @@ describe("ServerPage", () => {
     expect(header).toHaveTextContent(/Agent\s*0\.2\.0/);
     expect(header).toHaveTextContent(/Last seen\s*just now/);
     expect(header).toHaveTextContent(/Certificate ID\s*agent-1/);
+    expect(header).toHaveTextContent(/Certificate expires\s*in 60 days/);
+    expect(header).not.toHaveTextContent(/⚠|Certificate revoked/);
     expect(document.title).toBe("web-1 · MonitorFlow");
     expect(await screen.findByRole("heading", { level: 2, name: "Metrics" })).toBeInTheDocument();
     expect(await screen.findByText(/No metrics yet/)).toBeInTheDocument();
@@ -75,7 +91,7 @@ describe("ServerPage", () => {
     const disk = "monitorflow_disk_used_ratio";
     const end = Math.floor(Date.now() / 30_000) * 30;
     stubFetch({
-      "GET /api/servers": { status: 200, body: { servers: [web1], next_cursor: null } },
+      ...detail(),
       [`GET /api/servers/${ID}/metrics`]: {
         status: 200,
         body: { metrics: [{ name: disk, instances: ["/", "/boot"] }], truncated: false },
@@ -110,7 +126,7 @@ describe("ServerPage", () => {
 
   it("shows the graphs without lines when thresholds fail", async () => {
     stubFetch({
-      "GET /api/servers": { status: 200, body: { servers: [web1], next_cursor: null } },
+      ...detail(),
       [`GET /api/servers/${ID}/metrics`]: { status: 200, body: { metrics: [], truncated: false } },
       [`GET /api/servers/${ID}/sensors`]: { status: 500, body: { error: "internal error" } },
       [openIncidents]: noIncidents,
@@ -123,7 +139,7 @@ describe("ServerPage", () => {
 
   it("says when the server does not exist or is out of scope", async () => {
     stubFetch({
-      "GET /api/servers": { status: 200, body: { servers: [], next_cursor: null } },
+      [`GET /api/servers/${ID}`]: { status: 404, body: { error: "not found" } },
       [`GET /api/servers/${ID}/thresholds/effective`]: { status: 404, body: { error: "not found" } },
     });
     render(<ServerPage id={ID} />);
@@ -140,7 +156,7 @@ describe("ServerPage", () => {
 
   it("shows backend errors", async () => {
     stubFetch({
-      "GET /api/servers": { status: 500, body: { error: "internal error" } },
+      [`GET /api/servers/${ID}`]: { status: 500, body: { error: "internal error" } },
       [`GET /api/servers/${ID}/thresholds/effective`]: noThresholds,
     });
     render(<ServerPage id={ID} />);
@@ -150,7 +166,7 @@ describe("ServerPage", () => {
   it("leaves a 401 to the login redirect", async () => {
     const unauthorized = { status: 401, body: { error: "authentication required" } };
     const fetchMock = stubFetch({
-      "GET /api/servers": unauthorized,
+      [`GET /api/servers/${ID}`]: unauthorized,
       [`GET /api/servers/${ID}/thresholds/effective`]: unauthorized,
     });
     const toLogin = vi.fn();
@@ -160,5 +176,54 @@ describe("ServerPage", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     restore();
+  });
+
+  it("warns about an expiring or revoked certificate", async () => {
+    const certificate = { ...web1.certificate!, not_after: inDays(3.5) };
+    stubFetch({
+      ...detail({ ...web1, certificate }),
+      [`GET /api/servers/${ID}/metrics`]: { status: 200, body: { metrics: [], truncated: false } },
+      [`GET /api/servers/${ID}/sensors`]: { status: 500, body: { error: "internal error" } },
+      [`GET /api/servers/${ID}/thresholds/effective`]: noThresholds,
+      [openIncidents]: noIncidents,
+    });
+    const { unmount } = render(<ServerPage id={ID} />);
+    const header = await screen.findByRole("banner");
+    expect(header).toHaveTextContent(/Certificate expires\s*⚠ Expires in 3 days/);
+    unmount();
+
+    const revoked = {
+      ...certificate,
+      not_after: inDays(-2.5),
+      revoked: true,
+      revoked_at: "2026-10-19T08:00:00Z",
+      revocation_reason: "key compromise",
+    };
+    stubFetch({
+      ...detail({ ...web1, certificate: revoked }),
+      [`GET /api/servers/${ID}/metrics`]: { status: 200, body: { metrics: [], truncated: false } },
+      [`GET /api/servers/${ID}/sensors`]: { status: 500, body: { error: "internal error" } },
+      [`GET /api/servers/${ID}/thresholds/effective`]: noThresholds,
+      [openIncidents]: noIncidents,
+    });
+    render(<ServerPage id={ID} />);
+    const again = await screen.findByRole("banner");
+    expect(again).toHaveTextContent(/⚠ Expired 2 days ago/);
+    expect(again).toHaveTextContent(/Certificate revoked\s*.*2026.*\(key compromise\)/);
+  });
+
+  it("reads the server from its own endpoint, not the list", async () => {
+    const fetchMock = stubFetch({
+      ...detail(),
+      [`GET /api/servers/${ID}/metrics`]: { status: 200, body: { metrics: [], truncated: false } },
+      [`GET /api/servers/${ID}/sensors`]: { status: 500, body: { error: "internal error" } },
+      [`GET /api/servers/${ID}/thresholds/effective`]: noThresholds,
+      [openIncidents]: noIncidents,
+    });
+    render(<ServerPage id={ID} />);
+    await screen.findByRole("heading", { level: 1, name: "web-1" });
+    const paths = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(paths).toContain(`/api/servers/${ID}`);
+    expect(paths).not.toContain("/api/servers");
   });
 });

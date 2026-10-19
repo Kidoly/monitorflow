@@ -51,6 +51,27 @@ export interface Server {
   via_relay: string | null;
   /** Open incidents of the server (ADR-0019). */
   open_incidents: number;
+  /** Latest expiry among the agent's unrevoked certificates; null when it has none. */
+  cert_not_after: string | null;
+}
+
+/** The certificate the CA issued last to an agent, revoked or not. */
+export interface Certificate {
+  /** Lowercase hexadecimal. */
+  serial: string;
+  not_before: string;
+  /** Expiry. */
+  not_after: string;
+  issued_at: string;
+  revoked: boolean;
+  revoked_at: string | null;
+  revocation_reason: string | null;
+}
+
+/** `GET /api/servers/{id}`: the listing row plus the agent's current certificate. */
+export interface ServerDetail extends Server {
+  /** Null when the CA never issued one, like a server row created by hand. */
+  certificate: Certificate | null;
 }
 
 /** One page of `GET /api/servers`, sorted by site name, hostname and peer ID. */
@@ -84,7 +105,12 @@ export interface RangeQuery {
   /** Seconds between points. */
   step: number;
   agg?: "avg" | "min" | "max" | "sum" | "count";
+  /** Summarizes each series over a window of one step before `agg` (ADR-0018). */
+  rollup?: Rollup;
 }
+
+/** How each point of a range summarizes the samples of its step. */
+export type Rollup = "avg" | "max" | "min" | "last";
 
 /** One series: its labels and `[unix seconds, value]` points; null is not a number. */
 export interface MetricSeries {
@@ -398,6 +424,10 @@ export const api = {
     return { servers, next_cursor: null };
   },
 
+  /** One server with its certificate; 404 when missing or outside the user's sites. */
+  server: (id: string, signal?: AbortSignal) =>
+    request<ServerDetail>(`/api/servers/${encodeURIComponent(id)}`, { signal }),
+
   serverSensors: (serverId: string, signal?: AbortSignal) =>
     request<EffectiveSensors>(`/api/servers/${encodeURIComponent(serverId)}/sensors`, { signal }),
 
@@ -430,6 +460,7 @@ export const api = {
     params.set("end", query.end.toISOString());
     params.set("step", String(query.step));
     if (query.agg) params.set("agg", query.agg);
+    if (query.rollup) params.set("rollup", query.rollup);
     return request<QueryResult>(`/api/metrics/query_range?${params}`, { signal });
   },
 };
