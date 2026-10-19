@@ -148,6 +148,7 @@ db_tests! {
                 "incidents",
                 "relays",
                 "sensor_configs",
+                "server_packages",
                 "servers",
                 "sessions",
                 "sites",

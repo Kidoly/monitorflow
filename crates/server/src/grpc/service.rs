@@ -698,9 +698,12 @@ impl Connection {
                     tokio::spawn(async move { commands.record(&id, result).await });
                 }
             }
-            // TODO(phase4-packages): store the report (ADR-0031).
             Some(Payload::PackageReport(report)) => {
                 tracing::debug!(agent_id = %id, sequence, packages = report.packages.len(), "package report");
+                if let (Some(commands), PeerRole::Agent) = (&self.commands, self.role) {
+                    let (commands, id) = (commands.clone(), id.clone());
+                    tokio::spawn(async move { commands.report(&id, report).await });
+                }
             }
             // TODO(relay-mux): on a relay connection, a later Hello opens a
             // sub-session for another agent behind the relay. It must pass

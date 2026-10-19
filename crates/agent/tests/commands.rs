@@ -14,6 +14,7 @@ use monitorflow_agent::commands::{
 use monitorflow_agent::os::{HostInfo, OsFamily};
 use monitorflow_agent::shutdown::{self, Trigger};
 use monitorflow_agent::stream::{Agent, StreamSettings};
+use monitorflow_common::proto::v1::{Package, PackageReport};
 use monitorflow_common::tls;
 use monitorflow_server::commands::{
     CommandStore, Commands, DispatcherSettings as ServerDispatch, NewCommand, State,
@@ -24,6 +25,7 @@ use monitorflow_server::grpc::{
 use sqlx::PgPool;
 use support::{agent_config, Pki};
 use tempfile::TempDir;
+use tokio::sync::watch;
 use uuid::Uuid;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -53,6 +55,7 @@ struct Setup {
     server_id: Uuid,
     echo: Arc<Echo>,
     trigger: Trigger,
+    reports: watch::Sender<Option<PackageReport>>,
 }
 
 impl Setup {
@@ -121,7 +124,10 @@ impl Setup {
             os_family: OsFamily::Debian,
             os_version: "debian 12".into(),
         };
-        let agent = Agent::new(settings, identity, host).with_commands(stream_end);
+        let (reports, latest) = watch::channel(None);
+        let agent = Agent::new(settings, identity, host)
+            .with_commands(stream_end)
+            .with_reports(latest);
         tokio::spawn(async move { agent.run(stop).await.unwrap() });
         Self {
             _pki: pki,
@@ -131,6 +137,7 @@ impl Setup {
             server_id,
             echo,
             trigger,
+            reports,
         }
     }
 
@@ -226,5 +233,37 @@ db_tests! {
         s.wait_for(id, State::Expired).await;
         assert_eq!(s.store.get(id).await.unwrap().unwrap().sent_at, None);
         assert_eq!(s.runs(), 0);
+    }
+
+    #[sqlx::test(migrations = "../server/migrations")]
+    async fn package_reports_reach_the_server(pool: PgPool) {
+        let s = Setup::start(&pool).await;
+        let package = Package {
+            name: "libc6".into(),
+            version: "2.36-9".into(),
+            arch: "amd64".into(),
+            upgradable_version: "2.36-9+deb12u4".into(),
+        };
+        s.reports.send_replace(Some(PackageReport {
+            packages: vec![package],
+            reboot_required: true,
+            collected_at_unix_ms: 1_800_000_000_000,
+        }));
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        loop {
+            let stored: Option<(String, Option<String>, Option<bool>)> = sqlx::query_as(
+                "SELECT p.name, p.upgradable_version, s.reboot_required
+                 FROM server_packages p JOIN servers s ON s.id = p.server_id",
+            )
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+            if let Some(stored) = stored {
+                assert_eq!(stored, ("libc6".into(), Some("2.36-9+deb12u4".into()), Some(true)));
+                break;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "report never stored");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 }

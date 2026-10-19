@@ -13,13 +13,13 @@ use std::time::Duration;
 
 use monitorflow_common::command;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Command, CommandResult};
+use monitorflow_common::proto::v1::{Command, CommandResult, PackageReport};
 use monitorflow_common::tls::PeerRole;
 use tokio::sync::mpsc;
 use tokio::time::{interval, timeout, MissedTickBehavior};
 use uuid::Uuid;
 
-use super::{CommandRow, CommandStore, State};
+use super::{CommandRow, CommandStore, PackageStore, State};
 use crate::ca::CertificateAuthority;
 use crate::grpc::Registry;
 
@@ -55,6 +55,7 @@ impl Default for DispatcherSettings {
 #[derive(Debug, Clone)]
 pub struct Commands {
     store: CommandStore,
+    packages: PackageStore,
     wake: mpsc::Sender<String>,
 }
 
@@ -75,8 +76,13 @@ impl Commands {
             wake: rx,
             delivered: HashMap::new(),
         };
+        let packages = PackageStore::new(store.pool().clone());
         tokio::spawn(dispatcher.run());
-        Self { store, wake }
+        Self {
+            store,
+            packages,
+            wake,
+        }
     }
 
     pub fn store(&self) -> &CommandStore {
@@ -91,6 +97,27 @@ impl Commands {
                 agent_id = peer_id,
                 "dispatch queue full; the next poll sends it"
             );
+        }
+    }
+
+    /// Stores the package report of the agent `peer_id`. Failures are
+    /// logged; the agent reports again within its interval.
+    pub async fn report(&self, peer_id: &str, report: PackageReport) {
+        let count = report.packages.len();
+        match self.packages.replace(peer_id, &report).await {
+            Ok(true) => tracing::info!(
+                agent_id = peer_id,
+                packages = count,
+                reboot_required = report.reboot_required,
+                "package report stored"
+            ),
+            Ok(false) => tracing::debug!(
+                agent_id = peer_id,
+                "ignoring a package report older than the stored one"
+            ),
+            Err(error) => {
+                tracing::warn!(agent_id = peer_id, %error, "could not store a package report")
+            }
         }
     }
 
