@@ -26,9 +26,11 @@ The cost is that we maintain axis ticks, gaps and hover ourselves; a chart with 
 
 **Refresh.** Like the fleet overview, the page reloads every 15 s, and a shared `usePolling` hook stops while the tab is hidden and reloads when it is shown again.
 
+**Incident pages.** Incidents (ADR-0019) follow the same routing. The list is `/incidents/`, and its filters live in the query string (`state`, `severity`, `site`, `server`), so a filtered view can be shared and reloaded. Values the page does not recognise are dropped rather than sent to the API, which would answer 400. "Load more" follows `next_cursor`. A refresh asks for as many rows as are shown (up to the API's 500) in one request, so the list keeps its length every 15 s. An incident's page is `/incidents/view/?id=<uuid>`. It shows the threshold snapshot taken at opening, the events in API order (insertion order, not `occurred_at`, which can go backwards), and a chart of the series from a margin before it opened (a quarter of its duration, at least 15 minutes) to as long after it resolved, or to now. The chart's step comes from the graphs' steps, keeping it under 360 points. Its reference lines are the snapshot's values, not today's thresholds, and dashed vertical markers show the open and resolve times. A resolved incident's page stops refreshing.
+
 ## Consequences
 
-- Links to a server are `/servers/view/?id=…`; `serverHref` builds them.
+- Links to a server are `/servers/view/?id=…`; `serverHref` builds them. `incidentHref` and `incidentsHref(filters)` do the same for incidents.
 - There is no `GET /api/servers/{id}`, so the page header reads the server list and picks the server out. One endpoint for a single server would make the page cheaper on large fleets.
 - Long ranges need a server-side rollup (`max_over_time`, `avg_over_time`) in the query proxy to show spikes; until then the 7 d view is sampled.
 - The newest point lags by about 30 s (VictoriaMetrics' latency offset, ADR-0018) plus the collection interval; empty graphs say so.

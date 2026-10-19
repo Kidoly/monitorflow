@@ -11,6 +11,7 @@ import { usePolling } from "@/lib/usePolling";
 import { UUID } from "@/lib/uuid";
 
 import { REFRESH_MS, StatusBadge } from "./FleetOverview";
+import { OpenIncidents } from "./OpenIncidents";
 import { SensorConfigPanel } from "./SensorConfigPanel";
 import { type ChartPlan, ServerGraphs } from "./ServerGraphs";
 import styles from "./ServerPage.module.css";
@@ -105,6 +106,7 @@ export function ServerPage({ id }: { id: string | null }) {
           Refresh failed: {error} Showing the last data received.
         </p>
       )}
+      <OpenIncidents serverId={server.id} />
       {thresholdsError && (
         <p className={styles.note}>Threshold lines are not shown: {thresholdsError}</p>
       )}
