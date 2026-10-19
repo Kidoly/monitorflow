@@ -2,7 +2,8 @@
 //! 127.0.0.1 over mTLS from one CA.
 #![allow(dead_code)]
 
-use std::path::Path;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,11 +14,12 @@ use monitorflow_common::client::shutdown::{self, Trigger};
 use monitorflow_common::config::{RelayConfig, TlsPaths};
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Envelope, Hello};
+use monitorflow_common::proto::v1::{Envelope, Hello, Sample, SampleBatch};
 use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::{self, Identity, PeerIdentity, PeerRole};
 use monitorflow_common::via::Via;
 use monitorflow_common::PROTOCOL_VERSION;
+use monitorflow_relay::buffer::{Buffer, BufferSettings, Limits};
 use monitorflow_relay::control::{Control, ControlSettings};
 use monitorflow_relay::forward::{ForwardSettings, Forwarder};
 use monitorflow_relay::listener::{self, CrlCache, CrlSettings, Services, TlsPublisher};
@@ -27,6 +29,7 @@ use monitorflow_server::crl::CrlPublisher;
 use monitorflow_server::enroll::token::{self, Creator, TokenRequest};
 use monitorflow_server::enroll::{self, server_cert, Enroller, FailureLimiter};
 use monitorflow_server::grpc::{self, AgentStreamService, CrlService, Registry};
+use monitorflow_server::ingest::{Ingest, Series, Sink, WriteError, Writer, WriterSettings};
 use monitorflow_server::renew::Renewer;
 use sqlx::PgPool;
 use tempfile::TempDir;
@@ -122,8 +125,21 @@ impl Pki {
         make: impl FnOnce(Registry) -> AgentStreamService,
         renewer: Option<Renewer>,
     ) -> Upstream {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        self.serve_at("127.0.0.1:0".parse().unwrap(), make, renewer)
+            .await
+    }
+
+    /// [`Self::serve_with_renewer`] on `addr`, to bring a stopped upstream
+    /// back at the same URL.
+    pub async fn serve_at(
+        &self,
+        addr: SocketAddr,
+        make: impl FnOnce(Registry) -> AgentStreamService,
+        renewer: Option<Renewer>,
+    ) -> Upstream {
+        let listener = TcpListener::bind(addr).await.unwrap();
         let url = url(&listener);
+        let addr = listener.local_addr().unwrap();
         let (crl, rx) = CrlPublisher::start(self.ca.clone(), self.server.clone())
             .await
             .unwrap();
@@ -141,6 +157,7 @@ impl Pki {
         ));
         Upstream {
             url,
+            addr,
             registry,
             crl,
             stop: Some(stop),
@@ -275,6 +292,7 @@ pub fn server_settings() -> grpc::StreamSettings {
 
 pub struct Upstream {
     pub url: String,
+    pub addr: SocketAddr,
     pub registry: Registry,
     pub crl: CrlPublisher,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
@@ -301,12 +319,43 @@ pub async fn wait_until(what: &str, f: impl Fn() -> bool) {
     }
 }
 
-/// A relay with its own stream, CRL and listener.
+/// Where a relay keeps its buffer and how large it may grow.
+pub struct BufferOptions {
+    pub dir: PathBuf,
+    pub max_bytes: u64,
+    _temp: Option<TempDir>,
+}
+
+impl BufferOptions {
+    /// A fresh directory, deleted with the options.
+    pub fn temp() -> Self {
+        let temp = TempDir::new().unwrap();
+        Self {
+            dir: temp.path().join("buffer"),
+            max_bytes: 1 << 30,
+            _temp: Some(temp),
+        }
+    }
+
+    /// `dir`, which outlives the relay, for restarts.
+    pub fn at(dir: &Path, max_bytes: u64) -> Self {
+        Self {
+            dir: dir.to_owned(),
+            max_bytes,
+            _temp: None,
+        }
+    }
+}
+
+/// A relay with its own stream, CRL, listener and buffer.
 pub struct Relay {
     pub url: String,
     pub up: watch::Receiver<bool>,
+    pub buffer: Buffer,
     _identity: watch::Sender<StoredIdentity>,
-    _stop: Trigger,
+    _options: BufferOptions,
+    served: tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
+    stop: Trigger,
 }
 
 impl Relay {
@@ -319,6 +368,25 @@ impl Relay {
     }
 
     pub async fn start_unchecked(identity: StoredIdentity, upstream_url: &str) -> Self {
+        Self::start_with(identity, upstream_url, BufferOptions::temp()).await
+    }
+
+    /// Stops the relay once its agents have gone.
+    pub async fn stop(self) {
+        drop(self.stop);
+        tokio::time::timeout(TIMEOUT, self.served)
+            .await
+            .expect("relay stopped in time")
+            .unwrap()
+            .unwrap();
+    }
+
+    /// Starts a relay without waiting for its own stream.
+    pub async fn start_with(
+        identity: StoredIdentity,
+        upstream_url: &str,
+        options: BufferOptions,
+    ) -> Self {
         let config = RelayConfig {
             upstream_url: upstream_url.into(),
             heartbeat_interval: 1,
@@ -346,29 +414,42 @@ impl Relay {
         tokio::spawn(publisher.run(stop.clone()));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = url(&listener);
+        let buffer = Buffer::open(&BufferSettings {
+            dir: options.dir.clone(),
+            limits: Limits::new(options.max_bytes, Duration::from_secs(3600)),
+            fsync_interval: Duration::from_millis(50),
+        })
+        .await
+        .unwrap();
+        tokio::spawn(buffer.clone().run(stop.clone()));
+        let forward = ForwardSettings {
+            backoff: fast(),
+            replay_scan: Duration::from_millis(200),
+            ..ForwardSettings::from_config(&config)
+        };
         let renew = RenewProxy::new(
             RenewSettings::for_upstream(upstream_url),
             identities.clone(),
         );
-        let forwarder = Forwarder::new(
-            ForwardSettings::from_config(&config),
-            identities,
-            up.clone(),
-        );
+        let forwarder = Forwarder::new(forward, identities, up.clone(), buffer.clone());
+        tokio::spawn(forwarder.clone().run_replays(stop.clone()));
         let mut stopped = stop;
         let services = Services {
             forwarder,
             renew,
             crl,
         };
-        tokio::spawn(listener::serve(listener, tls, services, async move {
+        let served = tokio::spawn(listener::serve(listener, tls, services, async move {
             stopped.wait().await
         }));
         Self {
             url,
             up,
+            buffer,
             _identity: identity_tx,
-            _stop: trigger,
+            _options: options,
+            served,
+            stop: trigger,
         }
     }
 }
@@ -448,4 +529,94 @@ pub async fn open_via(
         tx,
         inbound: response.into_inner(),
     })
+}
+
+/// Keeps every series written, in memory, in the order written.
+#[derive(Clone, Default)]
+pub struct Captured {
+    series: Arc<std::sync::Mutex<Vec<Series>>>,
+    /// A writer stops when dropped.
+    writers: Arc<std::sync::Mutex<Vec<Writer<Series>>>>,
+}
+
+#[derive(Clone)]
+struct CapturedSink(Arc<std::sync::Mutex<Vec<Series>>>);
+
+impl Sink for CapturedSink {
+    type Item = Series;
+
+    fn name(&self) -> &'static str {
+        "captured"
+    }
+
+    async fn write(&self, batch: &[Series]) -> Result<(), WriteError> {
+        self.0.lock().unwrap().extend_from_slice(batch);
+        Ok(())
+    }
+}
+
+impl Captured {
+    pub fn has(&self, labels: &[(&str, &str)]) -> bool {
+        self.series.lock().unwrap().iter().any(|series| {
+            labels
+                .iter()
+                .all(|(k, v)| series.labels.iter().any(|(a, b)| a == k && b == v))
+        })
+    }
+
+    /// Values written for `peer`, in order.
+    pub fn values(&self, peer: &str) -> Vec<f64> {
+        self.series
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| s.labels.iter().any(|(k, v)| k == "peer" && v == peer))
+            .map(|s| s.value)
+            .collect()
+    }
+
+    /// An ingest that writes here, flushing quickly.
+    pub fn ingest(&self) -> Ingest {
+        let writer = Writer::spawn(
+            CapturedSink(self.series.clone()),
+            WriterSettings {
+                flush_interval: Duration::from_millis(20),
+                ..WriterSettings::default()
+            },
+        );
+        let queue = writer.queue();
+        self.writers.lock().unwrap().push(writer);
+        Ingest {
+            metrics: Some(queue),
+            events: None,
+        }
+    }
+}
+
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+/// One `load1` sample of `value`, timestamped now.
+pub fn samples(value: f64) -> Payload {
+    Payload::Samples(SampleBatch {
+        samples: vec![Sample {
+            sensor: "load1".into(),
+            timestamp_unix_ms: now_ms(),
+            value,
+            ..Sample::default()
+        }],
+    })
+}
+
+/// Polls an async condition until it holds.
+pub async fn wait_for<F: std::future::Future<Output = bool>>(what: &str, f: impl Fn() -> F) {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    while !f().await {
+        assert!(tokio::time::Instant::now() < deadline, "timed out: {what}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }

@@ -10,6 +10,7 @@ use monitorflow_common::client::renew::{Renewal, RenewalSettings};
 use monitorflow_common::client::shutdown;
 use monitorflow_common::config::{self, RelayConfig};
 use monitorflow_common::logging;
+use monitorflow_relay::buffer::{Buffer, BufferSettings};
 use monitorflow_relay::control::{Control, ControlSettings};
 use monitorflow_relay::forward::{ForwardSettings, Forwarder};
 use monitorflow_relay::listener::{self, CrlCache, CrlSettings, Services, TlsPublisher};
@@ -75,6 +76,15 @@ async fn main() -> anyhow::Result<()> {
     let crl = CrlCache::new(publisher.crl());
     tokio::spawn(publisher.run(stop.clone()));
 
+    let buffer_settings = BufferSettings::from_config(&config);
+    let buffer = Buffer::open(&buffer_settings).await.with_context(|| {
+        format!(
+            "cannot open the buffer in {}",
+            buffer_settings.dir.display()
+        )
+    })?;
+    tokio::spawn(buffer.clone().run(stop.clone()));
+
     let listener = TcpListener::bind(config.listen_addr)
         .await
         .with_context(|| format!("binding the agent listener on {}", config.listen_addr))?;
@@ -87,7 +97,9 @@ async fn main() -> anyhow::Result<()> {
         ForwardSettings::from_config(&config),
         identities,
         upstream_up,
+        buffer,
     );
+    tokio::spawn(forwarder.clone().run_replays(stop.clone()));
     let mut until_stopped = stop.clone();
     let services = Services {
         forwarder,

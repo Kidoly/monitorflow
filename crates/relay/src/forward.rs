@@ -1,11 +1,15 @@
 //! The relay's `AgentService`: checks an agent's certificate and `Hello`,
-//! then pipes its stream to a stream of its own on the upstream, envelopes
-//! unchanged both ways (ADR-0025).
+//! then hands its stream to a [`Session`] that forwards it to a stream of
+//! its own on the upstream, payloads unchanged both ways (ADR-0025), or
+//! buffers its batches on disk while there is none (ADR-0027).
 //!
 //! The TLS listener already checked the certificate against the CA and the
 //! CRL. Each agent stream gets its own upstream connection, authenticated
-//! with the relay's certificate, so the server applies its relay policy and
-//! its per-agent stream logic as for any relayed agent.
+//! with the relay's certificate and carrying the stream's `monitorflow-via`
+//! path (ADR-0028), so the server applies its relay policy and its
+//! per-agent stream logic as for any relayed agent. The relay numbers the
+//! envelopes of the upstream streams it opens, so buffered batches fit
+//! between the `Hello` and live data.
 //!
 //! Envelope payloads are never logged.
 
@@ -16,7 +20,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use monitorflow_common::client::backoff::Backoff;
 use monitorflow_common::client::identity::StoredIdentity;
+use monitorflow_common::client::shutdown::Shutdown;
 use monitorflow_common::config::RelayConfig;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::agent_service_server::AgentService;
@@ -24,12 +30,15 @@ use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::Envelope;
 use monitorflow_common::tls::{self, error_chain, PeerIdentity, PeerRole};
 use monitorflow_common::via::Via;
-use tokio::sync::{mpsc, oneshot, watch};
-use tokio::time::timeout;
+use tokio::sync::{mpsc, watch};
+use tokio::time::{interval, timeout, Instant, MissedTickBehavior};
 use tokio_stream::wrappers::ReceiverStream;
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::Stream;
 use tonic::transport::Channel;
 use tonic::{Code, Request, Response, Status, Streaming};
+
+use crate::buffer::Buffer;
+use crate::session::{self, AgentSide, Down, Ended, Lanes, Session, Upstream};
 
 /// What agents get when the relay cannot reach its upstream. Details stay
 /// in the relay's log: they may name TLS alerts about the relay's own
@@ -51,6 +60,12 @@ pub struct ForwardSettings {
     /// Envelopes queued towards the upstream per stream; a full queue stops
     /// reading from the agent.
     pub queue: usize,
+    /// Retries of an agent's upstream stream after its link failed.
+    pub backoff: Backoff,
+    /// Buffered envelopes read from disk at a time during a replay.
+    pub replay_batch: usize,
+    /// How often agents with buffered records and no session are replayed.
+    pub replay_scan: Duration,
 }
 
 impl ForwardSettings {
@@ -61,6 +76,9 @@ impl ForwardSettings {
             connect_timeout: tls::DEFAULT_TIMEOUT,
             open_timeout: Duration::from_secs(15),
             queue: 16,
+            backoff: Backoff::default(),
+            replay_batch: 64,
+            replay_scan: Duration::from_secs(10),
         }
     }
 }
@@ -71,21 +89,137 @@ pub struct Forwarder {
     settings: Arc<ForwardSettings>,
     identity: watch::Receiver<StoredIdentity>,
     upstream_up: watch::Receiver<bool>,
+    buffer: Buffer,
+    lanes: Arc<Lanes>,
 }
 
 impl Forwarder {
-    /// `identity` is the relay's own, followed through renewals; agent
-    /// streams are refused without dialing while `upstream_up` is false,
-    /// which [`crate::control`] sets while the relay's own stream is down.
+    /// `identity` is the relay's own, followed through renewals. While
+    /// `upstream_up` is false, which [`crate::control`] sets while the
+    /// relay's own stream is down, agents are accepted without dialing and
+    /// their batches go to `buffer`.
     pub fn new(
         settings: ForwardSettings,
         identity: watch::Receiver<StoredIdentity>,
         upstream_up: watch::Receiver<bool>,
+        buffer: Buffer,
     ) -> Self {
         Self {
             settings: Arc::new(settings),
             identity,
             upstream_up,
+            buffer,
+            lanes: Arc::default(),
+        }
+    }
+
+    pub(crate) fn settings(&self) -> &Arc<ForwardSettings> {
+        &self.settings
+    }
+
+    pub(crate) fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
+    pub(crate) fn upstream_up(&self) -> watch::Receiver<bool> {
+        self.upstream_up.clone()
+    }
+
+    /// Dials the upstream and opens a stream with `hello`, numbered 1, and
+    /// the stream's path. What comes down goes to `down`.
+    pub(crate) async fn open(
+        &self,
+        hello: &Envelope,
+        via: &Via,
+        down: Option<Down>,
+    ) -> Result<Upstream, Ended> {
+        let agent_id = via.origin_peer().id().to_owned();
+        let channel = self.connect().await.map_err(|error| {
+            tracing::warn!(%agent_id, %error, "cannot reach the upstream");
+            Ended::Link
+        })?;
+        let (up_tx, up_rx) = mpsc::channel(self.settings.queue.max(1));
+        up_tx
+            .try_send(Envelope {
+                sequence: 1,
+                ..hello.clone()
+            })
+            .expect("a new channel has room for Hello");
+        let mut client = AgentServiceClient::new(channel);
+        let mut up_request = Request::new(ReceiverStream::new(up_rx));
+        via.insert_into(up_request.metadata_mut());
+        let open = timeout(self.settings.open_timeout, client.stream(up_request));
+        match open.await {
+            Err(_) => {
+                tracing::warn!(%agent_id, "the upstream did not answer Hello in time");
+                Err(Ended::Link)
+            }
+            Ok(Err(status)) => {
+                let ended = session::classify(&agent_id, status);
+                if let Ended::Status(status) = &ended {
+                    tracing::info!(%agent_id, %status, "the upstream refused the agent");
+                }
+                Err(ended)
+            }
+            Ok(Ok(response)) => Ok(Upstream::start(
+                agent_id,
+                up_tx,
+                response.into_inner(),
+                down,
+            )),
+        }
+    }
+
+    /// Replays the records of agents without a session, every
+    /// `replay_scan` and when the relay's own stream opens, until
+    /// `shutdown`.
+    pub async fn run_replays(self, mut shutdown: Shutdown) {
+        let mut up = self.upstream_up.clone();
+        let mut tick = interval(self.settings.replay_scan);
+        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                () = shutdown.wait() => return,
+                _ = tick.tick() => {}
+                changed = up.changed() => if changed.is_err() { return },
+            }
+            if !*up.borrow_and_update() {
+                continue;
+            }
+            let pending = match self.buffer.pending().await {
+                Ok(pending) => pending,
+                Err(error) => {
+                    tracing::error!(%error, "cannot list buffered agents");
+                    continue;
+                }
+            };
+            for agent_id in pending {
+                let Some(held) = self.lanes.try_take(&agent_id) else {
+                    continue;
+                };
+                let (hello, via) = match self.buffer.hello(&agent_id).await {
+                    Ok(Some((hello, via))) if names_origin(&hello, &via, &agent_id) => (hello, via),
+                    Ok(_) => {
+                        tracing::warn!(%agent_id, "buffered batches without a valid Hello and path; dropping them");
+                        let _ = self.buffer.discard(&agent_id).await;
+                        continue;
+                    }
+                    Err(error) => {
+                        tracing::error!(%agent_id, %error, "cannot read the stored Hello");
+                        continue;
+                    }
+                };
+                tracing::info!(%agent_id, %via, "replaying buffered batches");
+                let replay = Session {
+                    forwarder: self.clone(),
+                    agent_id,
+                    hello,
+                    via,
+                    held,
+                    sequence: 1,
+                };
+                tokio::spawn(replay.run(None, None, Instant::now()));
+            }
         }
     }
 
@@ -152,6 +286,12 @@ pub fn downstream_status(agent_id: &str, status: Status) -> Status {
     Status::new(status.code(), status.message())
 }
 
+/// A stored `Hello` and path are the agent's they are filed under.
+fn names_origin(envelope: &Envelope, via: &Via, agent_id: &str) -> bool {
+    via.origin_peer().id() == agent_id
+        && matches!(&envelope.payload, Some(Payload::Hello(hello)) if hello.agent_id == agent_id)
+}
+
 async fn first_envelope(
     inbound: &mut Streaming<Envelope>,
     hello_timeout: Duration,
@@ -164,40 +304,6 @@ async fn first_envelope(
         Ok(Ok(None)) => Err(Status::invalid_argument("stream closed before Hello")),
         Ok(Ok(Some(first))) => Ok(first),
     }
-}
-
-/// Envelopes from the agent to the upstream, until either side ends.
-/// Dropping `upstream` ends the upstream stream, so the server sees the
-/// agent leave.
-async fn pump_up(
-    agent_id: String,
-    mut inbound: Streaming<Envelope>,
-    upstream: mpsc::Sender<Envelope>,
-    mut done: oneshot::Receiver<()>,
-) {
-    let mut forwarded = 0u64;
-    let reason = loop {
-        tokio::select! {
-            message = inbound.message() => match message {
-                Ok(Some(envelope)) => {
-                    tokio::select! {
-                        sent = upstream.send(envelope) => if sent.is_err() {
-                            break "upstream closed";
-                        },
-                        _ = &mut done => break "downstream closed",
-                    }
-                    forwarded += 1;
-                }
-                Ok(None) => break "agent closed",
-                Err(status) => {
-                    tracing::debug!(%agent_id, %status, "agent stream failed");
-                    break "agent stream failed";
-                }
-            },
-            _ = &mut done => break "downstream closed",
-        }
-    };
-    tracing::info!(%agent_id, forwarded, reason, "stream closed");
 }
 
 type Downstream = Pin<Box<dyn Stream<Item = Result<Envelope, Status>> + Send>>;
@@ -225,46 +331,52 @@ impl AgentService for Forwarder {
             tracing::warn!(%peer, %status, "stream refused");
         })?;
         let agent_id = via.origin_peer().id().to_owned();
-        if !*self.upstream_up.borrow() {
-            tracing::info!(%agent_id, "stream refused: the upstream is not connected");
-            return Err(Status::unavailable(UPSTREAM_UNAVAILABLE));
+        // Waits for an older session of this agent to stop, so its records
+        // stay in order.
+        let held = self.lanes.take(&agent_id).await;
+        if let Err(error) = self.buffer.set_hello(&agent_id, &hello, &via).await {
+            tracing::error!(%agent_id, %error, "cannot store the Hello; buffered batches cannot be replayed without the agent");
         }
-        let channel = self.connect().await.map_err(|error| {
-            tracing::warn!(%agent_id, %error, "cannot reach the upstream");
-            Status::unavailable(UPSTREAM_UNAVAILABLE)
-        })?;
-
-        let (up_tx, up_rx) = mpsc::channel(self.settings.queue.max(1));
-        up_tx
-            .try_send(hello)
-            .expect("a new channel has room for Hello");
-        let mut client = AgentServiceClient::new(channel);
-        let mut up_request = Request::new(ReceiverStream::new(up_rx));
-        via.insert_into(up_request.metadata_mut());
-        let open = timeout(self.settings.open_timeout, client.stream(up_request));
-        let upstream = match open.await {
-            Err(_) => {
-                tracing::warn!(%agent_id, "the upstream did not answer Hello in time");
-                return Err(Status::unavailable(UPSTREAM_UNAVAILABLE));
+        let (down_tx, down_rx) = mpsc::channel(self.settings.queue.max(1));
+        let mut retry_at = Instant::now();
+        let upstream = if *self.upstream_up.borrow() {
+            match self.open(&hello, &via, Some(down_tx.clone())).await {
+                Ok(upstream) => Some(upstream),
+                Err(Ended::Status(status)) => {
+                    if session::is_permanent(&status) {
+                        let _ = self.buffer.discard(&agent_id).await;
+                    }
+                    return Err(status);
+                }
+                Err(Ended::Link) => {
+                    retry_at += self.settings.backoff.clone().next_delay();
+                    None
+                }
             }
-            Ok(Err(status)) => {
-                let status = downstream_status(&agent_id, status);
-                tracing::info!(%agent_id, %status, "the upstream refused the agent");
-                return Err(status);
-            }
-            Ok(Ok(response)) => response.into_inner(),
+        } else {
+            None
         };
-        tracing::info!(%agent_id, "stream opened");
-
-        // Dropped with the response stream, which tonic drops when the
-        // agent goes away: that stops the upward pump.
-        let (done_tx, done_rx) = oneshot::channel();
-        tokio::spawn(pump_up(agent_id.clone(), inbound, up_tx, done_rx));
-        let down = upstream.map(move |item| {
-            let _alive = &done_tx;
-            item.map_err(|status| downstream_status(&agent_id, status))
-        });
-        Ok(Response::new(Box::pin(down)))
+        match upstream {
+            Some(_) => tracing::info!(%agent_id, %via, "stream opened"),
+            None => {
+                tracing::info!(%agent_id, %via, "stream opened; buffering until the upstream is back")
+            }
+        }
+        let side = AgentSide {
+            inbound,
+            down: down_tx,
+            last_sequence: hello.sequence,
+        };
+        let session = Session {
+            forwarder: self.clone(),
+            agent_id,
+            hello,
+            via,
+            held,
+            sequence: 1,
+        };
+        tokio::spawn(session.run(Some(side), upstream, retry_at));
+        Ok(Response::new(Box::pin(ReceiverStream::new(down_rx))))
     }
 }
 

@@ -14,8 +14,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use monitorflow_common::client::shutdown::Shutdown;
 use monitorflow_common::config::RelayConfig;
 use monitorflow_common::proto::v1::Envelope;
+use monitorflow_common::via::{self, Via};
 use prost::Message;
 use tokio::time::{interval, MissedTickBehavior};
+use tonic::metadata::{MetadataMap, MetadataValue};
 
 pub mod store;
 
@@ -78,18 +80,20 @@ impl Buffer {
         .map_err(io::Error::other)?
     }
 
-    pub async fn set_hello(&self, agent: &str, hello: &Envelope) -> io::Result<()> {
-        let (agent, bytes) = (agent.to_owned(), hello.encode_to_vec());
+    /// Stores the agent's latest `Hello` with the path its stream came
+    /// by (ADR-0028), both sent again when its records are replayed.
+    pub async fn set_hello(&self, agent: &str, hello: &Envelope, via: &Via) -> io::Result<()> {
+        let (agent, bytes) = (agent.to_owned(), encode_hello(hello, via));
         self.blocking(move |s| s.set_hello(&agent, &bytes)).await
     }
 
-    /// The agent's stored `Hello`, unless missing or unreadable.
-    pub async fn hello(&self, agent: &str) -> io::Result<Option<Envelope>> {
+    /// The agent's stored `Hello` and path, unless missing or unreadable.
+    pub async fn hello(&self, agent: &str) -> io::Result<Option<(Envelope, Via)>> {
         let agent = agent.to_owned();
         let bytes = self
             .blocking(move |s| Ok(s.hello(&agent).map(<[u8]>::to_vec)))
             .await?;
-        Ok(bytes.and_then(|b| Envelope::decode(b.as_slice()).ok()))
+        Ok(bytes.as_deref().and_then(decode_hello))
     }
 
     /// Appends `envelope`; false if it was too large to keep.
@@ -215,6 +219,28 @@ fn log_stats(stats: &Stats, last: &Stats) {
     }
 }
 
+/// `hello.pb`: the path's length (u16 LE), the path as in its metadata
+/// entry, then the `Hello` envelope.
+fn encode_hello(hello: &Envelope, via: &Via) -> Vec<u8> {
+    let path = via.to_string();
+    let mut bytes = Vec::with_capacity(2 + path.len() + hello.encoded_len());
+    bytes.extend_from_slice(&(path.len() as u16).to_le_bytes());
+    bytes.extend_from_slice(path.as_bytes());
+    hello.encode(&mut bytes).expect("a Vec grows");
+    bytes
+}
+
+fn decode_hello(bytes: &[u8]) -> Option<(Envelope, Via)> {
+    let len = usize::from(u16::from_le_bytes(bytes.get(..2)?.try_into().ok()?));
+    let path = std::str::from_utf8(bytes.get(2..2 + len)?).ok()?;
+    // Parsed as the upstream would, with the same checks.
+    let mut metadata = MetadataMap::new();
+    metadata.insert(via::HEADER, MetadataValue::try_from(path).ok()?);
+    let via = Via::from_metadata(&metadata).ok()??;
+    let hello = Envelope::decode(&bytes[2 + len..]).ok()?;
+    Some((hello, via))
+}
+
 fn unix_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -228,6 +254,7 @@ mod tests {
     use monitorflow_common::client::shutdown;
     use monitorflow_common::proto::v1::envelope::Payload;
     use monitorflow_common::proto::v1::{Hello, Sample, SampleBatch};
+    use monitorflow_common::tls::{PeerIdentity, PeerRole};
 
     use super::*;
 
@@ -256,6 +283,33 @@ mod tests {
         assert_eq!(settings.fsync_interval, Duration::from_secs(1));
     }
 
+    #[test]
+    fn a_stored_hello_keeps_its_path() {
+        let hello = Envelope {
+            sequence: 7,
+            payload: Some(Payload::Hello(Hello {
+                agent_id: "web-01".into(),
+                ..Hello::default()
+            })),
+        };
+        let via = chained_via();
+        let bytes = encode_hello(&hello, &via);
+        assert_eq!(decode_hello(&bytes), Some((hello, via)));
+        // Truncated or garbled files are unreadable, not wrong.
+        assert_eq!(decode_hello(&bytes[..5]), None);
+        assert_eq!(decode_hello(&[0xff, 0xff, b'x']), None);
+        let mut bad = bytes.clone();
+        bad[2] = b'!';
+        assert_eq!(decode_hello(&bad), None);
+    }
+
+    /// web-01 behind relay paris-2.
+    fn chained_via() -> Via {
+        let agent = PeerIdentity::new(PeerRole::Agent, "web-01").unwrap();
+        let relay = PeerIdentity::new(PeerRole::Relay, "paris-2").unwrap();
+        Via::extend(Some(Via::origin(agent)), &relay).unwrap()
+    }
+
     #[tokio::test]
     async fn envelopes_round_trip_through_the_disk() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -271,9 +325,10 @@ mod tests {
                 ..Hello::default()
             })),
         };
+        let via = chained_via();
         {
             let buffer = Buffer::open(&settings).await.unwrap();
-            buffer.set_hello("web-01", &hello).await.unwrap();
+            buffer.set_hello("web-01", &hello, &via).await.unwrap();
             for sequence in 2..5 {
                 assert!(buffer.append("web-01", &batch(sequence)).await.unwrap());
             }
@@ -284,7 +339,7 @@ mod tests {
         }
         let buffer = Buffer::open(&settings).await.unwrap();
         assert_eq!(buffer.pending().await.unwrap(), ["web-01"]);
-        assert_eq!(buffer.hello("web-01").await.unwrap(), Some(hello));
+        assert_eq!(buffer.hello("web-01").await.unwrap(), Some((hello, via)));
         let read = buffer.read("web-01", 10).await.unwrap();
         assert_eq!(read, (2..5).map(batch).collect::<Vec<_>>());
         buffer.commit("web-01").await.unwrap();
