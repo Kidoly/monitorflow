@@ -127,6 +127,37 @@ export interface EffectiveSensors {
   sensors: EffectiveSensor[];
 }
 
+/** How a value is compared with a threshold: the alarm is `value <comparison> threshold`. */
+export type Comparison = ">" | ">=" | "<" | "<=";
+
+/** Which layer an effective threshold comes from (ADR-0017). */
+export type ThresholdOrigin = "default" | "site" | "server";
+
+/** One threshold as the engine applies it, or a muted one (ADR-0019). */
+export interface EffectiveThreshold {
+  origin: ThresholdOrigin;
+  /** The `thresholds` row; null for a built-in default. */
+  threshold_id: string | null;
+  metric: string;
+  /** Null covers every instance; `""` is the series without one. */
+  instance: string | null;
+  /** False: muted by a disabled row, which the engine skips. */
+  enabled: boolean;
+  comparison: Comparison;
+  warning: number | null;
+  critical: number | null;
+  duration_s: number;
+  hysteresis: number;
+}
+
+/** `GET /api/servers/{id}/thresholds/effective`. */
+export interface EffectiveThresholds {
+  server_id: string;
+  site_id: string;
+  revision: number;
+  thresholds: EffectiveThreshold[];
+}
+
 export interface Health {
   status: "ok";
 }
@@ -282,6 +313,11 @@ export const api = {
 
   serverSensors: (serverId: string, signal?: AbortSignal) =>
     request<EffectiveSensors>(`/api/servers/${encodeURIComponent(serverId)}/sensors`, { signal }),
+
+  serverThresholds: (serverId: string, signal?: AbortSignal) =>
+    request<EffectiveThresholds>(`/api/servers/${encodeURIComponent(serverId)}/thresholds/effective`, {
+      signal,
+    }),
 
   serverMetrics: (serverId: string, signal?: AbortSignal) =>
     request<MetricList>(`/api/servers/${encodeURIComponent(serverId)}/metrics`, { signal }),
