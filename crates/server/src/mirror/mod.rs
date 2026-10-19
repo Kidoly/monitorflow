@@ -4,10 +4,13 @@
 //! campaigns point at.
 //!
 //! Mirrors are global, not per customer. [`model`] holds their rows and
-//! naming rules.
+//! naming rules, [`store`] keeps them in PostgreSQL with their snapshots
+//! and runs.
 
 pub mod model;
+pub mod store;
 
 pub use model::{
     Family, Mirror, MirrorSpec, Run, RunKind, RunState, Snapshot, SnapshotState, Trigger,
 };
+pub use store::{MirrorLock, StoreError};
