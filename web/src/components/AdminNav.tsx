@@ -3,12 +3,13 @@ import type { ReactNode } from "react";
 
 import { type Me } from "@/lib/api";
 import { isAdministrator, useMe } from "@/lib/me";
-import { RELAYS_PATH } from "@/lib/routes";
+import { RELAYS_PATH, SITES_PATH } from "@/lib/routes";
 
 import styles from "./Admin.module.css";
 
 const SECTIONS = [
   { href: RELAYS_PATH, label: "Relays" },
+  { href: SITES_PATH, label: "Sites" },
 ] as const;
 
 export type AdminSection = (typeof SECTIONS)[number]["label"];
