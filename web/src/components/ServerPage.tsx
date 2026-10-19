@@ -4,13 +4,14 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
-import { ApiError, type Server, api, describeError, isAbortError } from "@/lib/api";
+import { ApiError, type EffectiveThreshold, type Server, api, describeError, isAbortError } from "@/lib/api";
 import { formatDateTime, formatOs, formatRelative } from "@/lib/format";
+import { thresholdLines } from "@/lib/thresholds";
 import { usePolling } from "@/lib/usePolling";
 
 import { REFRESH_MS, StatusBadge } from "./FleetOverview";
 import { SensorConfigPanel } from "./SensorConfigPanel";
-import { ServerGraphs } from "./ServerGraphs";
+import { type ChartPlan, ServerGraphs } from "./ServerGraphs";
 import styles from "./ServerPage.module.css";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -27,19 +28,36 @@ interface State {
   server: Server | null | undefined;
   updatedAt: Date | null;
   error: string | null;
+  /** Effective thresholds, for the graphs' reference lines; the last ones received. */
+  thresholds: EffectiveThreshold[];
+  thresholdsError: string | null;
 }
 
 export function ServerPage({ id }: { id: string | null }) {
   const valid = id !== null && UUID.test(id);
-  const [state, setState] = useState<State>({ server: undefined, updatedAt: null, error: null });
+  const [state, setState] = useState<State>({
+    server: undefined,
+    updatedAt: null,
+    error: null,
+    thresholds: [],
+    thresholdsError: null,
+  });
 
   // There is no single-server endpoint yet, so the header comes from the list.
+  // Thresholds load in the same cycle; without them the graphs still show.
   const load = useCallback(
     async (signal: AbortSignal) => {
+      const thresholds = api.serverThresholds(id ?? "", signal).then(
+        (t) => ({ thresholds: t.thresholds, thresholdsError: null }),
+        (e: unknown) => {
+          if (isAbortError(e)) throw e;
+          return { thresholdsError: describeError(e) };
+        },
+      );
       try {
-        const { servers } = await api.servers(signal);
+        const [{ servers }, lines] = await Promise.all([api.servers(signal), thresholds]);
         const server = servers.find((s) => s.id === id?.toLowerCase()) ?? null;
-        setState({ server, updatedAt: new Date(), error: null });
+        setState((s) => ({ ...s, ...lines, server, updatedAt: new Date(), error: null }));
       } catch (e) {
         // A 401 has already been routed to the login page.
         if (!isAbortError(e) && !(e instanceof ApiError && e.status === 401)) {
@@ -51,7 +69,11 @@ export function ServerPage({ id }: { id: string | null }) {
   );
   usePolling(load, REFRESH_MS, valid);
 
-  const { server, updatedAt, error } = state;
+  const { server, updatedAt, error, thresholds, thresholdsError } = state;
+  const referenceLines = useCallback(
+    (plan: ChartPlan, instances: string[]) => thresholdLines(thresholds, plan.metric, instances),
+    [thresholds],
+  );
   useEffect(() => {
     if (server) document.title = `${server.hostname} · MonitorFlow`;
   }, [server]);
@@ -84,7 +106,10 @@ export function ServerPage({ id }: { id: string | null }) {
           Refresh failed: {error} Showing the last data received.
         </p>
       )}
-      <ServerGraphs serverId={server.id} />
+      {thresholdsError && (
+        <p className={styles.note}>Threshold lines are not shown: {thresholdsError}</p>
+      )}
+      <ServerGraphs serverId={server.id} referenceLines={referenceLines} />
       <SensorConfigPanel serverId={server.id} />
     </article>
   );

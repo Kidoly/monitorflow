@@ -8,7 +8,7 @@ import { usePolling } from "@/lib/usePolling";
 
 import { REFRESH_MS } from "./FleetOverview";
 import styles from "./ServerGraphs.module.css";
-import { type ReferenceLine, TimeSeriesChart } from "./TimeSeriesChart";
+import { MAX_SERIES, type ReferenceLine, TimeSeriesChart } from "./TimeSeriesChart";
 
 /** Ranges and their steps, a few hundred points each (ADR-0020). */
 export const RANGES = [
@@ -90,8 +90,8 @@ interface Loaded {
 
 interface Props {
   serverId: string;
-  /** Threshold lines for a chart; none until the thresholds API is wired (ADR-0020). */
-  referenceLines?: (plan: ChartPlan) => ReferenceLine[];
+  /** Threshold lines for a chart, given the instances its series show. */
+  referenceLines?: (plan: ChartPlan, instances: string[]) => ReferenceLine[];
 }
 
 /** Graphs of every metric the server wrote in the last day, with a range picker. */
@@ -192,7 +192,10 @@ export function ServerGraphs({ serverId, referenceLines }: Props) {
                 end={data.end}
                 step={data.range.step}
                 series={result.series.map((s) => ({ label: s.labels.instance || plan.title, points: s.points }))}
-                referenceLines={referenceLines?.(plan)}
+                referenceLines={referenceLines?.(
+                  plan,
+                  result.series.slice(0, MAX_SERIES).map((s) => s.labels.instance ?? ""),
+                )}
                 emptyText="No data in this range yet. New points take about 30 seconds to appear."
               />
             ),

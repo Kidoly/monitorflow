@@ -3,6 +3,7 @@
 import { type PointerEvent, useId, useState } from "react";
 
 import { type Unit, binaryExponent, formatBytes, formatValue } from "@/lib/format";
+import type { Severity } from "@/lib/thresholds";
 
 import styles from "./TimeSeriesChart.module.css";
 
@@ -19,7 +20,7 @@ export interface ChartSeries {
 export interface ReferenceLine {
   value: number;
   label: string;
-  severity: "warning" | "critical";
+  severity: Severity;
 }
 
 /** Series colours in a fixed order (validated light palette); never cycled. */
