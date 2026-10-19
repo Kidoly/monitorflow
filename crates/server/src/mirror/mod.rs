@@ -5,12 +5,14 @@
 //!
 //! Mirrors are global, not per customer. [`model`] holds their rows and
 //! naming rules, [`store`] keeps them in PostgreSQL with their snapshots
-//! and runs.
+//! and runs, [`runner`] runs the tools.
 
 pub mod model;
+pub mod runner;
 pub mod store;
 
 pub use model::{
     Family, Mirror, MirrorSpec, Run, RunKind, RunState, Snapshot, SnapshotState, Trigger,
 };
+pub use runner::{CommandRunner, Invocation, Output, RunError, Runner, Tool};
 pub use store::{MirrorLock, StoreError};

@@ -39,8 +39,12 @@ x509-parser.workspace = true
 prost.workspace = true
 reqwest.workspace = true
 snap.workspace = true
+async-trait.workspace = true
+# Kills a timed-out mirror tool with the programs it started.
+rustix = { workspace = true, features = ["process"] }
 
 [dev-dependencies]
 tower.workspace = true
 tempfile.workspace = true
 tokio-rustls.workspace = true
+monitorflow-sensors = { workspace = true, features = ["testing"] }
