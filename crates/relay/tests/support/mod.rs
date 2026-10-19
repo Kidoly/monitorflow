@@ -16,6 +16,7 @@ use monitorflow_common::proto::v1::{Envelope, Hello};
 use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::{self, Identity, PeerIdentity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
+use monitorflow_relay::control::{Control, ControlSettings};
 use monitorflow_relay::forward::{ForwardSettings, Forwarder};
 use monitorflow_relay::listener::{self, CrlSettings, TlsPublisher};
 use monitorflow_server::ca::{CaOptions, CertificateAuthority, Serial, ServerName};
@@ -186,17 +187,24 @@ pub async fn wait_until(what: &str, f: impl Fn() -> bool) {
     }
 }
 
-/// A relay's CRL and listener. Whether the upstream counts as connected is
-/// up to the test.
+/// A relay with its own stream, CRL and listener.
 pub struct Relay {
     pub url: String,
-    pub up: watch::Sender<bool>,
+    pub up: watch::Receiver<bool>,
     _identity: watch::Sender<StoredIdentity>,
     _stop: Trigger,
 }
 
 impl Relay {
+    /// Starts a relay and waits for its own stream to open.
     pub async fn start(identity: StoredIdentity, upstream_url: &str) -> Self {
+        let relay = Self::start_unchecked(identity, upstream_url).await;
+        let up = relay.up.clone();
+        wait_until("relay stream open", || *up.borrow()).await;
+        relay
+    }
+
+    pub async fn start_unchecked(identity: StoredIdentity, upstream_url: &str) -> Self {
         let config = RelayConfig {
             upstream_url: upstream_url.into(),
             heartbeat_interval: 1,
@@ -205,7 +213,12 @@ impl Relay {
         let (trigger, stop) = shutdown::channel();
         let (identity_tx, identities) = watch::channel(identity);
         let fast = || Backoff::new(Duration::from_millis(50), Duration::from_millis(200));
-        let (up, upstream_up) = watch::channel(true);
+        let control = ControlSettings {
+            backoff: fast(),
+            ..ControlSettings::from_config(&config)
+        };
+        let (control, up) = Control::new(control, identities.clone());
+        tokio::spawn(control.run(stop.clone()));
         let (publisher, tls) = TlsPublisher::start(
             CrlSettings::for_upstream(upstream_url),
             identities.clone(),
@@ -221,7 +234,7 @@ impl Relay {
         let forwarder = Forwarder::new(
             ForwardSettings::from_config(&config),
             identities,
-            upstream_up,
+            up.clone(),
         );
         let mut stopped = stop;
         tokio::spawn(listener::serve(listener, tls, forwarder, async move {

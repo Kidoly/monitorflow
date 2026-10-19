@@ -22,6 +22,8 @@ async fn envelopes_go_both_ways_unchanged() {
     let pki = Pki::new();
     let upstream = pki.serve(allow_all).await;
     let relay = Relay::start(pki.relay("paris-1"), &upstream.url).await;
+    let own = upstream.registry.get("paris-1").unwrap();
+    assert_eq!((own.role, own.via_relay), (PeerRole::Relay, None));
 
     let mut agent = open(&relay.url, &pki.agent("web-01"), hello("web-01"))
         .await
@@ -61,6 +63,7 @@ async fn envelopes_go_both_ways_unchanged() {
     upstream
         .wait_until("agent removed", |r| r.get("web-01").is_none())
         .await;
+    assert!(upstream.registry.get("paris-1").is_some());
 }
 
 #[tokio::test]
@@ -151,9 +154,9 @@ async fn agents_are_refused_while_the_upstream_is_down() {
     assert_eq!(status.code(), Code::Unavailable, "{status}");
     assert_eq!(status.message(), "server shutting down");
 
-    // While the upstream counts as down, new agents are refused without
-    // dialing.
-    relay.up.send_replace(false);
+    // Then the relay refuses new agents without dialing.
+    let up = relay.up.clone();
+    support::wait_until("relay stream closed", || !*up.borrow()).await;
     let status = open(&relay.url, &pki.agent("web-02"), hello("web-02"))
         .await
         .err()
