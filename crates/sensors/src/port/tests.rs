@@ -176,7 +176,9 @@ async fn a_hanging_connect_is_down_before_the_deadline() {
 
 #[tokio::test]
 async fn a_spent_deadline_still_answers() {
-    let samples = local(closed_port().await)
+    // TEST-NET-1 never answers. A closed local port could be taken by a
+    // listener of a test running in parallel and connect at once.
+    let samples = PortSensor::new(Host::Ip(IpAddr::from([192, 0, 2, 1])), 9)
         .collect(Instant::now())
         .await
         .unwrap();
