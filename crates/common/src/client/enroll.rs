@@ -6,19 +6,19 @@
 
 use std::time::Duration;
 
-use monitorflow_common::config::AgentConfig;
-use monitorflow_common::proto::v1::enroll_service_client::EnrollServiceClient;
-use monitorflow_common::proto::v1::{EnrollRequest, EnrollResponse};
-use monitorflow_common::redact::Secret;
-use monitorflow_common::tls::{self, EnrollmentToken, Fingerprint, PeerIdentity, PeerRole};
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ECDSA_P256_SHA256};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use rustls::sign::CertifiedKey;
 use tonic::Code;
 
-use crate::backoff::Backoff;
-use crate::identity::{self, AgentIdentity, Enrolled, IdentityError};
-use crate::shutdown::Shutdown;
+use super::backoff::Backoff;
+use super::identity::{self, article, Enrolled, IdentityError, StoredIdentity};
+use super::shutdown::Shutdown;
+use crate::config::{AgentConfig, TlsPaths};
+use crate::proto::v1::enroll_service_client::EnrollServiceClient;
+use crate::proto::v1::{EnrollRequest, EnrollResponse};
+use crate::redact::Secret;
+use crate::tls::{self, EnrollmentToken, Fingerprint, PeerIdentity, PeerRole};
 
 /// Time allowed for the whole `Enroll` call once connected.
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -51,17 +51,38 @@ impl EnrollError {
     }
 }
 
+/// What a peer needs to load its identity or enroll.
+#[derive(Debug, Clone)]
+pub struct EnrollSettings {
+    /// The role the certificate must name.
+    pub role: PeerRole,
+    pub paths: TlsPaths,
+    pub token: Option<Secret>,
+    pub enroll_url: String,
+}
+
+impl EnrollSettings {
+    pub fn agent(config: &AgentConfig) -> Self {
+        Self {
+            role: PeerRole::Agent,
+            paths: config.tls_paths(),
+            token: config.enrollment_token.clone(),
+            enroll_url: config.enroll_url(),
+        }
+    }
+}
+
 /// Loads the identity, enrolling first when there is none. Transient
 /// enrollment failures are retried with backoff until `shutdown`.
 pub async fn ensure_identity(
-    config: &AgentConfig,
+    settings: &EnrollSettings,
     mut backoff: Backoff,
     mut shutdown: Shutdown,
-) -> Result<AgentIdentity, EnrollError> {
-    let paths = config.tls_paths();
+) -> Result<StoredIdentity, EnrollError> {
+    let (paths, role) = (settings.paths.clone(), settings.role);
     let load_paths = paths.clone();
-    if let Some(identity) = blocking(move || identity::load(&load_paths)).await? {
-        if config.enrollment_token.is_some() {
+    if let Some(identity) = blocking(move || identity::load(&load_paths, role)).await? {
+        if settings.token.is_some() {
             tracing::info!(
                 "already enrolled; the enrollment_token is ignored, remove it from the configuration"
             );
@@ -74,13 +95,13 @@ pub async fn ensure_identity(
         .unwrap_or(&paths.cert)
         .display()
         .to_string();
-    let token = config
-        .enrollment_token
+    let token = settings
+        .token
         .as_ref()
         .ok_or(EnrollError::NoToken { dir })?;
     let token =
         EnrollmentToken::parse(token.expose()).map_err(|e| EnrollError::BadToken(e.to_string()))?;
-    let url = config.enroll_url();
+    let url = &settings.enroll_url;
     tracing::info!(
         enroll_url = %url,
         ca_fingerprint = %tls::fingerprint_hex(token.ca_fingerprint()),
@@ -88,7 +109,7 @@ pub async fn ensure_identity(
     );
     let enrolled = loop {
         let attempt = tokio::select! {
-            result = request(&url, &token) => result,
+            result = request(url, &token, role) => result,
             () = shutdown.wait() => return Err(EnrollError::Shutdown),
         };
         match attempt {
@@ -106,7 +127,7 @@ pub async fn ensure_identity(
     };
     let identity = blocking(move || {
         identity::store(&paths, &enrolled)?;
-        identity::load(&paths)?.ok_or_else(|| {
+        identity::load(&paths, role)?.ok_or_else(|| {
             IdentityError::Invalid("the certificate vanished right after it was written".into())
         })
     })
@@ -127,11 +148,15 @@ async fn blocking<T: Send + 'static>(
 /// One enrollment attempt: new key, CSR, `Enroll`, checks. A fresh key per
 /// attempt costs nothing and never reuses a key that may have left a CSR on
 /// a failed connection.
-pub async fn request(url: &str, token: &EnrollmentToken) -> Result<Enrolled, EnrollError> {
+pub async fn request(
+    url: &str,
+    token: &EnrollmentToken,
+    role: PeerRole,
+) -> Result<Enrolled, EnrollError> {
     let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
         .map_err(|e| EnrollError::Transient(format!("cannot generate a key: {e}")))?;
-    let csr =
-        csr(&key).map_err(|e| EnrollError::Transient(format!("cannot build the CSR: {e}")))?;
+    let csr = csr(&key, role)
+        .map_err(|e| EnrollError::Transient(format!("cannot build the CSR: {e}")))?;
     let pin = *token.ca_fingerprint();
     let config =
         tls::pinned_client_config(pin).map_err(|e| EnrollError::Transient(e.to_string()))?;
@@ -149,7 +174,7 @@ pub async fn request(url: &str, token: &EnrollmentToken) -> Result<Enrolled, Enr
         Ok(Err(status)) => return Err(classify(&status)),
         Ok(Ok(response)) => response.into_inner(),
     };
-    verify(&response, &pin, &key)?;
+    verify(&response, &pin, &key, role)?;
     Ok(Enrolled {
         key_pem: Secret::new(key.serialize_pem()),
         cert_pem: response.cert_pem,
@@ -157,14 +182,14 @@ pub async fn request(url: &str, token: &EnrollmentToken) -> Result<Enrolled, Enr
     })
 }
 
-pub(crate) fn csr(key: &KeyPair) -> Result<String, rcgen::Error> {
+pub(crate) fn csr(key: &KeyPair, role: PeerRole) -> Result<String, rcgen::Error> {
     // The server ignores everything but the key; the CN only helps humans
     // reading the request.
     let mut params = CertificateParams::default();
     params.distinguished_name = DistinguishedName::new();
     params
         .distinguished_name
-        .push(DnType::CommonName, "monitorflow-agent");
+        .push(DnType::CommonName, format!("monitorflow-{role}"));
     params.serialize_request(key).and_then(|csr| csr.pem())
 }
 
@@ -191,11 +216,12 @@ fn pem_certs(pem: &str, what: &str) -> Result<Vec<CertificateDer<'static>>, Enro
 }
 
 /// The CA must be the pinned one and the certificate must hold our key and
-/// name an agent. Run before anything is written.
+/// name `role`. Run before anything is written.
 pub fn verify(
     response: &EnrollResponse,
     pin: &Fingerprint,
     key: &KeyPair,
+    role: PeerRole,
 ) -> Result<(), EnrollError> {
     if !is_ca(&response.ca_cert_pem, pin)? {
         return Err(EnrollError::BadResponse(format!(
@@ -203,7 +229,7 @@ pub fn verify(
             tls::fingerprint_hex(pin)
         )));
     }
-    verify_cert(&response.cert_pem, &response.peer_uri, key)
+    verify_cert(&response.cert_pem, &response.peer_uri, key, role)
 }
 
 /// True if `ca_cert_pem` holds exactly one certificate, with SHA-256 `pin`.
@@ -212,11 +238,12 @@ pub(crate) fn is_ca(ca_cert_pem: &str, pin: &Fingerprint) -> Result<bool, Enroll
     Ok(ca.len() == 1 && tls::fingerprint(&ca[0]) == *pin)
 }
 
-/// The certificate must hold our key, name an agent, and match `peer_uri`.
+/// The certificate must hold our key, name `role`, and match `peer_uri`.
 pub(crate) fn verify_cert(
     cert_pem: &str,
     peer_uri: &str,
     key: &KeyPair,
+    role: PeerRole,
 ) -> Result<(), EnrollError> {
     let bad = |why: String| EnrollError::BadResponse(why);
     let chain = pem_certs(cert_pem, "cert_pem")?;
@@ -228,10 +255,11 @@ pub(crate) fn verify_cert(
         .keys_match()
         .map_err(|_| bad("the certificate does not hold the key we sent".into()))?;
     let id = PeerIdentity::from_cert(&chain[0]).map_err(|e| bad(e.to_string()))?;
-    if id.role() != PeerRole::Agent {
+    if id.role() != role {
         return Err(bad(format!(
-            "the certificate is for a {}, not an agent",
-            id.role()
+            "the certificate is for {}, not {}",
+            article(id.role()),
+            article(role)
         )));
     }
     if id.uri() != peer_uri {
@@ -281,7 +309,7 @@ mod tests {
     }
 
     fn check(response: &EnrollResponse, pin: &Fingerprint, key: &KeyPair) -> Result<(), String> {
-        verify(response, pin, key).map_err(|e| e.to_string())
+        verify(response, pin, key, PeerRole::Agent).map_err(|e| e.to_string())
     }
 
     #[test]
@@ -349,7 +377,7 @@ mod tests {
 
     #[test]
     fn csr_is_valid_pem() {
-        let csr = csr(&KeyPair::generate().unwrap()).unwrap();
+        let csr = csr(&KeyPair::generate().unwrap(), PeerRole::Relay).unwrap();
         assert!(
             csr.starts_with("-----BEGIN CERTIFICATE REQUEST-----"),
             "{csr}"

@@ -1,25 +1,25 @@
 //! Certificate renewal before expiry (ADR-0010): once two thirds of the
 //! validity have passed, trade a CSR for a fresh key against a new
 //! certificate with `CertificateService::Renew` over mTLS, store it, and
-//! publish the new identity so the stream reconnects with it.
+//! publish the new identity so the peer's connections use it.
 //!
 //! The private key is never logged; its PEM lives in a [`Secret`].
 
 use std::time::{Duration, SystemTime};
 
-use monitorflow_common::config::{AgentConfig, TlsPaths};
-use monitorflow_common::proto::v1::certificate_service_client::CertificateServiceClient;
-use monitorflow_common::proto::v1::RenewRequest;
-use monitorflow_common::redact::Secret;
-use monitorflow_common::tls;
 use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
 use tokio::sync::watch;
 use tonic::Code;
 
-use crate::backoff::{random_u64, Backoff};
-use crate::enroll::{self, EnrollError};
-use crate::identity::{self, AgentIdentity, IdentityError, Renewed};
-use crate::shutdown::Shutdown;
+use super::backoff::{random_u64, Backoff};
+use super::enroll::{self, EnrollError};
+use super::identity::{self, IdentityError, Renewed, StoredIdentity};
+use super::shutdown::Shutdown;
+use crate::config::{AgentConfig, TlsPaths};
+use crate::proto::v1::certificate_service_client::CertificateServiceClient;
+use crate::proto::v1::RenewRequest;
+use crate::redact::Secret;
+use crate::tls;
 
 /// Time allowed for the whole `Renew` call once connected.
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -40,8 +40,13 @@ pub struct RenewalSettings {
 
 impl RenewalSettings {
     pub fn from_config(config: &AgentConfig) -> Self {
+        Self::for_upstream(&config.upstream_url)
+    }
+
+    /// Hourly checks against `upstream_url`, the default for every peer.
+    pub fn for_upstream(upstream_url: &str) -> Self {
         Self {
-            upstream_url: config.upstream_url.clone(),
+            upstream_url: upstream_url.to_owned(),
             check_every: Duration::from_secs(60 * 60),
             jitter: Duration::from_secs(5 * 60),
             connect_timeout: tls::DEFAULT_TIMEOUT,
@@ -73,19 +78,19 @@ fn classify(status: &tonic::Status) -> RenewError {
 }
 
 /// The renewal task. Holds the current identity, which [`Self::new`] also
-/// returns as a receiver for [`crate::stream::Agent::follow`].
+/// returns as a receiver, so the peer's connections can follow it.
 pub struct Renewal {
     settings: RenewalSettings,
     paths: TlsPaths,
-    identity: watch::Sender<AgentIdentity>,
+    identity: watch::Sender<StoredIdentity>,
 }
 
 impl Renewal {
     pub fn new(
         settings: RenewalSettings,
         paths: TlsPaths,
-        identity: AgentIdentity,
-    ) -> (Self, watch::Receiver<AgentIdentity>) {
+        identity: StoredIdentity,
+    ) -> (Self, watch::Receiver<StoredIdentity>) {
         let (tx, rx) = watch::channel(identity);
         let renewal = Self {
             settings,
@@ -118,7 +123,7 @@ impl Renewal {
             tracing::error!(
                 peer = %current.id,
                 identity_dir = %parent(&self.paths.cert),
-                "fatal: the certificate has expired and can no longer be renewed; stop the agent, remove the files in the identity directory, set enrollment_token to a new token created on the server, and start it again"
+                "fatal: the certificate has expired and can no longer be renewed; stop the service, remove the files in the identity directory, set enrollment_token to a new token created on the server, and start it again"
             );
             return self.settings.check_every;
         }
@@ -149,11 +154,12 @@ impl Renewal {
 
     /// One attempt: new key, CSR, `Renew`, checks, then the files. Nothing
     /// is written unless the response matches our CA, key and identity.
-    pub async fn renew(&self, current: &AgentIdentity) -> Result<AgentIdentity, RenewError> {
+    pub async fn renew(&self, current: &StoredIdentity) -> Result<StoredIdentity, RenewError> {
         let failed = |e: &dyn std::fmt::Display| RenewError::Failed(e.to_string());
         let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
             .map_err(|e| RenewError::Failed(format!("cannot generate a key: {e}")))?;
-        let csr_pem = enroll::csr(&key)
+        let role = current.id.role();
+        let csr_pem = enroll::csr(&key, role)
             .map_err(|e| RenewError::Failed(format!("cannot build the CSR: {e}")))?;
         let config = current.tls.client_config().map_err(|e| failed(&e))?;
         let url = &self.settings.upstream_url;
@@ -178,7 +184,7 @@ impl Renewal {
                 tls::fingerprint_hex(&current.ca_fingerprint)
             )));
         }
-        enroll::verify_cert(&response.cert_pem, &response.peer_uri, &key).map_err(bad)?;
+        enroll::verify_cert(&response.cert_pem, &response.peer_uri, &key, role).map_err(bad)?;
         if response.peer_uri != current.id.uri() {
             return Err(RenewError::BadResponse(format!(
                 "the certificate is for `{}`, not `{}`",
@@ -194,7 +200,7 @@ impl Renewal {
         let paths = self.paths.clone();
         tokio::task::spawn_blocking(move || {
             identity::store_renewed(&paths, &renewed)?;
-            identity::load(&paths)?.ok_or_else(|| {
+            identity::load(&paths, role)?.ok_or_else(|| {
                 IdentityError::Invalid("the certificate vanished right after it was written".into())
             })
         })

@@ -1,9 +1,9 @@
-//! The agent's mTLS identity on disk: load it, or store the one enrollment
-//! returned.
+//! The mTLS identity of an agent or relay on disk: load it, or store the
+//! one enrollment returned.
 //!
 //! Each file is written atomically (temporary file, fsync, rename, fsync of
 //! the directory), key and CA first and the certificate last. The
-//! certificate is the commit marker: without it the agent counts as not
+//! certificate is the commit marker: without it the peer counts as not
 //! enrolled, so a crash in the middle never leaves a mismatched set that
 //! looks valid.
 //!
@@ -18,9 +18,9 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use monitorflow_common::config::TlsPaths;
-use monitorflow_common::redact::Secret;
-use monitorflow_common::tls::{self, Fingerprint, Identity, PeerIdentity, PeerRole, TlsError};
+use crate::config::TlsPaths;
+use crate::redact::Secret;
+use crate::tls::{self, Fingerprint, Identity, PeerIdentity, PeerRole, TlsError};
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 const KEY_MODE: u32 = 0o600;
@@ -30,13 +30,13 @@ const DIR_MODE: u32 = 0o700;
 #[derive(Debug, thiserror::Error)]
 pub enum IdentityError {
     #[error(
-        "{}: permission denied; run the agent as the user that owns its data directory",
+        "{}: permission denied; run the service as the user that owns its data directory",
         path.display()
     )]
     PermissionDenied { path: PathBuf },
     #[error("{}: {error}", path.display())]
     Io { path: PathBuf, error: io::Error },
-    #[error("invalid agent identity: {0}; remove the files in the identity directory and enroll again with a new token")]
+    #[error("invalid identity: {0}; remove the files in the identity directory and enroll again with a new token")]
     Invalid(String),
 }
 
@@ -63,11 +63,12 @@ impl From<TlsError> for IdentityError {
     }
 }
 
-/// A loaded identity whose certificate names an agent.
+/// A loaded identity whose certificate names the expected role.
 #[derive(Debug, Clone)]
-pub struct AgentIdentity {
+pub struct StoredIdentity {
     pub tls: Identity,
-    /// From the certificate's URI SAN; what `Hello.agent_id` must say.
+    /// From the certificate's URI SAN; what an agent's `Hello.agent_id`
+    /// must say.
     pub id: PeerIdentity,
     /// SHA-256 of the stored CA certificate; a renewal must return it.
     pub ca_fingerprint: Fingerprint,
@@ -75,8 +76,8 @@ pub struct AgentIdentity {
     pub not_after: SystemTime,
 }
 
-impl AgentIdentity {
-    pub fn agent_id(&self) -> &str {
+impl StoredIdentity {
+    pub fn peer_id(&self) -> &str {
         self.id.id()
     }
 
@@ -100,8 +101,9 @@ impl AgentIdentity {
 
 /// Loads the identity, or `None` when the certificate file does not exist
 /// yet (never enrolled, or enrollment interrupted before it finished).
-/// Finishes or discards an interrupted renewal first.
-pub fn load(paths: &TlsPaths) -> Result<Option<AgentIdentity>, IdentityError> {
+/// Finishes or discards an interrupted renewal first. A certificate for
+/// another role than `role` is refused.
+pub fn load(paths: &TlsPaths, role: PeerRole) -> Result<Option<StoredIdentity>, IdentityError> {
     recover_renewal(paths)?;
     match paths.cert.try_exists() {
         Ok(true) => {}
@@ -111,23 +113,32 @@ pub fn load(paths: &TlsPaths) -> Result<Option<AgentIdentity>, IdentityError> {
     let tls = Identity::load(paths)?;
     let leaf = tls::load_certs(&paths.cert)?.swap_remove(0);
     let id = PeerIdentity::from_cert(&leaf)?;
-    if id.role() != PeerRole::Agent {
+    if id.role() != role {
         return Err(IdentityError::Invalid(format!(
-            "{} is a {} certificate, not an agent one",
+            "{} is a {} certificate, not {} one",
             paths.cert.display(),
-            id.role()
+            id.role(),
+            article(role)
         )));
     }
     let (not_before, not_after) = validity(leaf.as_ref())?;
     let ca_fingerprint = tls::fingerprint(&tls::load_certs(&paths.ca_cert)?[0]);
     warn_if_key_is_readable(&paths.key);
-    Ok(Some(AgentIdentity {
+    Ok(Some(StoredIdentity {
         tls,
         id,
         ca_fingerprint,
         not_before,
         not_after,
     }))
+}
+
+/// "an agent", "a relay", "a server".
+pub(crate) fn article(role: PeerRole) -> String {
+    match role {
+        PeerRole::Agent => format!("an {role}"),
+        _ => format!("a {role}"),
+    }
 }
 
 fn validity(der: &[u8]) -> Result<(SystemTime, SystemTime), IdentityError> {
@@ -321,10 +332,10 @@ mod tests {
     fn missing_certificate_means_not_enrolled() {
         let dir = TempDir::new().unwrap();
         let paths = paths(dir.path());
-        assert!(load(&paths).unwrap().is_none());
+        assert!(load(&paths, PeerRole::Agent).unwrap().is_none());
         // A key alone (interrupted enrollment) still counts as not enrolled.
         write_atomic(&paths.key, b"key", KEY_MODE).unwrap();
-        assert!(load(&paths).unwrap().is_none());
+        assert!(load(&paths, PeerRole::Agent).unwrap().is_none());
     }
 
     #[test]
@@ -335,8 +346,8 @@ mod tests {
         store(&paths, &enrolled).unwrap();
         assert_eq!(mode(&paths.key), 0o600);
         assert_eq!(mode(&paths.cert), 0o644);
-        let identity = load(&paths).unwrap().unwrap();
-        assert_eq!(identity.agent_id(), "web-01");
+        let identity = load(&paths, PeerRole::Agent).unwrap().unwrap();
+        assert_eq!(identity.peer_id(), "web-01");
         let now = SystemTime::now();
         assert!(!identity.is_expired(now) && !identity.renewal_due(now));
         assert!(identity.renewal_due(identity.not_after - Duration::from_secs(60)));
@@ -349,7 +360,7 @@ mod tests {
         let paths = paths(dir.path());
         let (old, ca) = enrolled("web-01", PeerRole::Agent);
         store(&paths, &old).unwrap();
-        let before = load(&paths).unwrap().unwrap();
+        let before = load(&paths, PeerRole::Agent).unwrap().unwrap();
         let new = renewed_by(&ca, "web-01");
         store_renewed(&paths, &new).unwrap();
         assert_eq!(fs::read_to_string(&paths.cert).unwrap(), new.cert_pem);
@@ -358,7 +369,7 @@ mod tests {
             new.key_pem.expose()
         );
         assert_eq!(mode(&paths.key), 0o600);
-        let after = load(&paths).unwrap().unwrap();
+        let after = load(&paths, PeerRole::Agent).unwrap().unwrap();
         assert_eq!(after.id, before.id);
         assert_eq!(after.ca_fingerprint, before.ca_fingerprint);
         assert!(!next(&paths.key).exists() && !next(&paths.cert).exists());
@@ -382,13 +393,13 @@ mod tests {
 
         // Crash before the marker: the old pair stays.
         write_next(true, false);
-        load(&paths).unwrap().unwrap();
+        load(&paths, PeerRole::Agent).unwrap().unwrap();
         assert_eq!(fs::read_to_string(&paths.cert).unwrap(), old.cert_pem);
         assert!(!next(&paths.key).exists());
 
         // Crash after the marker, before any rename: the new pair wins.
         write_next(true, true);
-        load(&paths).unwrap().unwrap();
+        load(&paths, PeerRole::Agent).unwrap().unwrap();
         assert_eq!(fs::read_to_string(&paths.cert).unwrap(), new.cert_pem);
         assert_eq!(
             fs::read_to_string(&paths.key).unwrap(),
@@ -398,7 +409,7 @@ mod tests {
         // Crash between the two renames: the key is new, the cert follows.
         write_next(true, true);
         fs::rename(next(&paths.key), &paths.key).unwrap();
-        load(&paths).unwrap().unwrap();
+        load(&paths, PeerRole::Agent).unwrap().unwrap();
         assert_eq!(fs::read_to_string(&paths.cert).unwrap(), new.cert_pem);
         assert!(!next(&paths.cert).exists());
     }
@@ -409,7 +420,7 @@ mod tests {
         let paths = paths(dir.path());
         let (relay, _) = enrolled("r1", PeerRole::Relay);
         store(&paths, &relay).unwrap();
-        let err = load(&paths).unwrap_err().to_string();
+        let err = load(&paths, PeerRole::Agent).unwrap_err().to_string();
         assert!(err.contains("relay certificate, not an agent one"), "{err}");
 
         // Key from another enrollment.
@@ -417,11 +428,14 @@ mod tests {
         let (agent, _) = enrolled("web-01", PeerRole::Agent);
         store(&paths, &agent).unwrap();
         write_atomic(&paths.key, other.key_pem.expose().as_bytes(), KEY_MODE).unwrap();
-        let err = load(&paths).unwrap_err().to_string();
+        let err = load(&paths, PeerRole::Agent).unwrap_err().to_string();
         assert!(err.contains("does not match"), "{err}");
 
         fs::write(&paths.cert, "garbage").unwrap();
-        assert!(matches!(load(&paths), Err(IdentityError::Invalid(_))));
+        assert!(matches!(
+            load(&paths, PeerRole::Agent),
+            Err(IdentityError::Invalid(_))
+        ));
     }
 
     #[test]
@@ -432,7 +446,7 @@ mod tests {
         fs::set_permissions(&paths.key, Permissions::from_mode(0o000)).unwrap();
         // Root reads anything; the check only makes sense for other users.
         if fs::read(&paths.key).is_err() {
-            let err = load(&paths).unwrap_err();
+            let err = load(&paths, PeerRole::Agent).unwrap_err();
             assert!(
                 matches!(err, IdentityError::PermissionDenied { .. }),
                 "{err}"

@@ -23,15 +23,11 @@ tracing.workspace = true
 serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true
-rcgen.workspace = true
-ring.workspace = true
-rustls.workspace = true
-rustls-pemfile.workspace = true
-x509-parser.workspace = true
 monitorflow-sensors.workspace = true
 prost.workspace = true
 
 [dev-dependencies]
+rcgen.workspace = true
 monitorflow-sensors = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["test-util"] }
 monitorflow-server = { path = "../server" }
