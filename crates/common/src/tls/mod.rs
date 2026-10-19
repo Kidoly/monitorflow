@@ -216,6 +216,11 @@ impl Identity {
         })
     }
 
+    /// Our own certificate, the first of the chain.
+    pub fn leaf(&self) -> &CertificateDer<'static> {
+        &self.key.cert[0]
+    }
+
     /// Server configuration that requires a client certificate issued by
     /// the configured CA.
     ///
