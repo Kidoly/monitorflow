@@ -6,6 +6,7 @@
 //! then accept agents and forward each of their streams upstream until
 //! SIGINT or SIGTERM, renewing the certificate before it expires.
 
+pub mod buffer;
 pub mod control;
 pub mod forward;
 pub mod listener;

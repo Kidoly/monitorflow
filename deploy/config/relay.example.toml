@@ -22,15 +22,23 @@ upstream_url = "https://monitorflow.example.com:7443"
 # Prefer MONITORFLOW_ENROLLMENT_TOKEN, and remove it once enrolled.
 # enrollment_token = "mfe1...."
 
-# Identity files and, later, the store-and-forward buffer and mirror cache.
+# Identity files, the store-and-forward buffer (<data_dir>/buffer) and,
+# later, the mirror cache.
 # data_dir = "/var/lib/monitorflow/relay"
 
 # Seconds between heartbeats on the relay's own stream to the server.
 # heartbeat_interval = 30
 
-# Maximum size of the on-disk buffer when the uplink is down (1 GiB). Not
-# used yet: store-and-forward is a later task.
-# buffer_max_bytes = 1073741824
+[buffer]
+# Store-and-forward (ADR-0027): agents' sample batches are kept on disk while
+# the upstream is unreachable, and sent in order once it is back.
+# Total size on disk; when full, the oldest records are dropped (1 GiB).
+# max_bytes = 1073741824
+# Seconds a record is kept, at most 7 days: the server drops older samples.
+# max_age = 604800
+# Milliseconds between syncs to disk; a crash loses at most this much of the
+# buffer. 0 syncs after every record.
+# fsync_interval_ms = 1000
 
 [tls]
 # Written by enrollment; each unset path defaults under data_dir.
