@@ -38,6 +38,10 @@
 //! | GET | `/api/customers` | any role | [`customers::CustomerList`]: `{"customers": [{"id", "name", "site_count"}]}`, see below |
 //! | POST | `/api/customers` | global administrator | body `{"name"}`; 201 [`customers::CustomerView`] |
 //! | POST | `/api/customers/{id}/sites` | customer administrator | body `{"name"}`; 201 [`sites::SiteView`] |
+//! | GET | `/api/mirrors` | global administrator | [`mirrors::MirrorList`], see below |
+//! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots` and the last `runs` |
+//! | POST | `/api/mirrors/{id}/sync` | global administrator | 202 [`mirrors::RunSummary`] of the started sync; 409 while busy |
+//! | POST | `/api/mirrors/{id}/snapshots` | global administrator | body `{"name"?}`; 202 [`mirrors::RunSummary`]; 409 while busy or never synced |
 //! | GET | `/api/incidents` | any role | [`incidents::IncidentList`], see below |
 //! | GET | `/api/incidents/{id}` | read | [`incidents::IncidentDetail`]: the incident and its `events` |
 //! | GET | `/api/servers/{id}/thresholds/effective` | read | [`thresholds::Effective`]: thresholds in force, muted ones and origins |
@@ -125,6 +129,24 @@
 //! `PERMISSION_DENIED`. The answer is `{"revoked_at", "reason", "serials",
 //! "closed_streams"}`. It is audited as `server.revoke` or `relay.revoke`
 //! and cannot be undone.
+//!
+//! # Mirrors
+//!
+//! Package mirrors are global (ADR-0030), so every mirror route needs a
+//! global administrator role; anyone else gets 403. A listing item is the
+//! mirror (`id`, `name`, `family`, `upstream_url`, `distribution`,
+//! `components`, `architectures`, `sync_interval_s`, `auto_snapshot`,
+//! `created_at`) plus `current_snapshot` (the newest published one's name,
+//! served at `/<family>/<name>/current/` on the mirror listener) and
+//! `last_run`. Snapshots have `id`, `name`, `state` (`creating`,
+//! `published`, `failed`), `size_bytes`, `error`, `created_at` and
+//! `published_at`; runs `id`, `kind` (`sync`, `snapshot`), `trigger`
+//! (`schedule`, `manual`), `requested_by`, `state` (`running`,
+//! `succeeded`, `failed`), `snapshot_id`, `error`, `started_at`,
+//! `finished_at`, and in the detail `output`, the last 64 KiB of the
+//! commands and what they printed. Starting a job answers at once with
+//! the running run; poll the detail for its end. Requests are audited
+//! (`mirror.sync`, `mirror.snapshot`). Mirrors are created with the CLI.
 //!
 //! # Sensor configuration
 //!
@@ -237,6 +259,7 @@ mod error;
 mod health;
 pub mod incidents;
 pub mod metrics;
+pub mod mirrors;
 pub mod password;
 pub mod relays;
 pub mod revoke;
@@ -263,6 +286,7 @@ use tokio::net::TcpListener;
 
 use crate::crl::CrlPublisher;
 use crate::grpc::Registry;
+use crate::mirror::Mirrors;
 use crate::vm_query::VmQuery;
 
 pub use auth::{CurrentUser, Me};
@@ -312,6 +336,8 @@ pub struct ApiState {
     /// Revokes certificates and republishes the CRL; `None` refuses
     /// revocations.
     pub crl: Option<Arc<CrlPublisher>>,
+    /// Runs mirror jobs; `None` refuses to start them.
+    pub mirrors: Option<Mirrors>,
 }
 
 impl ApiState {
@@ -323,7 +349,14 @@ impl ApiState {
             metrics: None,
             enrollment: None,
             crl: None,
+            mirrors: None,
         }
+    }
+
+    /// Starts mirror syncs and snapshots with `mirrors`.
+    pub fn with_mirrors(mut self, mirrors: Mirrors) -> Self {
+        self.mirrors = Some(mirrors);
+        self
     }
 
     /// Revokes peers' certificates through `crl`.
@@ -370,6 +403,10 @@ pub fn router(state: ApiState) -> Router {
             "/api/customers/{id}/sites",
             post(customers::create_customer_site),
         )
+        .route("/api/mirrors", get(mirrors::list))
+        .route("/api/mirrors/{id}", get(mirrors::detail))
+        .route("/api/mirrors/{id}/sync", post(mirrors::sync))
+        .route("/api/mirrors/{id}/snapshots", post(mirrors::snapshot))
         .route("/api/incidents", get(incidents::list))
         .route("/api/incidents/{id}", get(incidents::detail))
         .route("/api/servers/{id}/sensors", get(sensors::effective))
