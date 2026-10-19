@@ -260,7 +260,7 @@ mod tests {
     fn builtin_builds_the_registry_kinds() {
         let mut config = sensors::SensorConfig::new("cpu", Duration::from_secs(60));
         // Every parameter a kind requires; the others ignore none of them.
-        let required = [("systemd", "units", "ssh")];
+        let required = [("port", "port", "22"), ("systemd", "units", "ssh")];
         for kind in sensors::registry::KINDS {
             let mut config = config.clone();
             if let Some((_, name, value)) = required.iter().find(|(k, _, _)| k == kind) {

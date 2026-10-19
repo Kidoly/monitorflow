@@ -12,11 +12,12 @@ use std::sync::Arc;
 use crate::cpu::CpuSensor;
 use crate::disk::DiskSensor;
 use crate::memory::MemorySensor;
+use crate::port::PortSensor;
 use crate::systemd::SystemdSensor;
 use crate::Sensor;
 
 /// Every kind [`build`] knows, in a stable order.
-pub const KINDS: &[&str] = &["cpu", "disk", "memory", "systemd"];
+pub const KINDS: &[&str] = &["cpu", "disk", "memory", "port", "systemd"];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BuildError {
@@ -39,6 +40,7 @@ pub fn build(kind: &str, params: &BTreeMap<String, String>) -> Result<Arc<dyn Se
         "cpu" => Arc::new(CpuSensor::new(params.bool("per_core", true)?)),
         "disk" => Arc::new(DiskSensor::from_params(&mut params)?),
         "memory" => Arc::new(MemorySensor),
+        "port" => Arc::new(PortSensor::from_params(&mut params)?),
         "systemd" => Arc::new(SystemdSensor::from_params(&mut params)?),
         _ => unreachable!("Params::new only accepts KINDS"),
     };
@@ -67,7 +69,7 @@ impl<'a> Params<'a> {
         })
     }
 
-    fn get(&mut self, name: &'static str) -> Option<&'a str> {
+    pub(crate) fn get(&mut self, name: &'static str) -> Option<&'a str> {
         self.used.insert(name);
         self.map.get(name).map(|v| v.trim())
     }
@@ -126,7 +128,7 @@ mod tests {
 
     #[test]
     fn every_kind_builds_with_defaults_or_asks_for_params() {
-        let required = [("systemd", "units", "ssh")];
+        let required = [("port", "port", "22"), ("systemd", "units", "ssh")];
         for kind in KINDS {
             match required.iter().find(|(k, _, _)| k == kind) {
                 None => assert!(build(kind, &BTreeMap::new()).is_ok(), "{kind}"),
@@ -145,7 +147,7 @@ mod tests {
         assert_eq!(error, BuildError::UnknownKind("gpu".into()));
         assert!(error
             .to_string()
-            .contains("expected one of: cpu, disk, memory, systemd"));
+            .contains("expected one of: cpu, disk, memory, port, systemd"));
         assert_eq!(
             build("cpu", &params(&[("per_cores", "true")])).err(),
             Some(BuildError::UnknownParam {

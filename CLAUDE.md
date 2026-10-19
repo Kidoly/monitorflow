@@ -6,7 +6,7 @@ Open source monitoring and fleet management platform in Rust: agents on Linux se
 
 - `proto/` Protobuf contracts. Changes must be additive (new fields, new `oneof` variants). Never renumber.
 - `crates/common` generated gRPC code, TLS, config, shared types
-- `crates/sensors` sensor trait and implementations, no network code
+- `crates/sensors` sensor trait and implementations, no transport code (gRPC, TLS, HTTP); probes like a TCP connect are fine (ADR-0021)
 - `crates/agent`, `crates/relay`, `crates/server` the three binaries
 - `web/` Next.js static export, talks only to the REST API
 - `deploy/` compose files, Dockerfiles, packaging

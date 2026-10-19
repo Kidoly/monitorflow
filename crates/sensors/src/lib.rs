@@ -1,13 +1,14 @@
-//! Sensor trait and implementations. This crate has no network code so it can
-//! be reused by future agents on other platforms.
+//! Sensor trait and implementations. This crate has no transport code (no
+//! gRPC, TLS or HTTP) so it can be reused by future agents on other
+//! platforms; the [`port`] sensor's TCP connect is a measurement (ADR-0021).
 //!
 //! A [`Sensor`] collects [`Sample`]s; a [`Scheduler`] runs each configured
 //! sensor on its own interval and puts the samples on a bounded channel.
 //! Names and labels are checked by [`validate`] because they become
 //! VictoriaMetrics label names and values on the server. See ADR-0012.
 //!
-//! The built-in sensors ([`cpu`], [`memory`], [`disk`], [`systemd`]) are
-//! built by kind with [`registry::build`].
+//! The built-in sensors ([`cpu`], [`memory`], [`disk`], [`systemd`],
+//! [`port`]) are built by kind with [`registry::build`].
 //! One sensor emits several metrics by setting [`Sample::sensor`] to a
 //! metric suffix, which the scheduler prefixes with the configured name
 //! ([`metric_name`]). See ADR-0015.
@@ -19,6 +20,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub mod cpu;
 pub mod disk;
 pub mod memory;
+pub mod port;
 mod procfs;
 pub mod registry;
 pub mod scheduler;
