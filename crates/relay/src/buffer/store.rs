@@ -5,8 +5,8 @@
 //! smallest segment anywhere is the oldest. A record is a 16-byte header
 //! (payload length, CRC-32C of the rest, time written) and the payload.
 //!
-//! This is synchronous file I/O: callers on the runtime run it on the
-//! blocking pool.
+//! This is synchronous file I/O: callers on the runtime go through
+//! [`super::Buffer`], which runs it on the blocking pool.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
