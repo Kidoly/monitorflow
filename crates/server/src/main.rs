@@ -234,7 +234,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_inventory(Arc::new(DbInventory::new(pool.clone())))
     .with_sensor_configs(sensor_configs)
-    .with_commands(commands)
+    .with_commands(commands.clone())
     .with_alerts(alerts)
     .with_ingest(Ingest {
         metrics: Some(metrics.queue()),
@@ -248,7 +248,8 @@ async fn main() -> anyhow::Result<()> {
             &config,
             enroll::ca_fingerprint(&ca),
         ))
-        .with_crl(crl.clone());
+        .with_crl(crl.clone())
+        .with_commands(commands);
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 

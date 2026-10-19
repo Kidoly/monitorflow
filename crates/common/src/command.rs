@@ -9,6 +9,20 @@ use crate::proto::v1::Command;
 /// Kind of [`crate::proto::v1::ApplyUpdates`] commands.
 pub const APPLY_UPDATES: &str = "apply_updates";
 
+/// Package names in an `ApplyUpdates` reach a command line on the agent:
+/// letters, digits and `.+_:-`, at most 128 bytes, not starting with `-` so
+/// none reads as an option. The API refuses others, the agent too.
+pub fn valid_package_name(name: &str) -> bool {
+    name.len() <= 128
+        && name
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._+:-".contains(&b))
+}
+
 /// Starts every signed message. Certificates and CRLs, which the same key
 /// signs, are DER and start with 0x30, so neither can pass for the other.
 const DOMAIN: &[u8] = b"monitorflow-command-v1\0";

@@ -90,7 +90,7 @@ The server keeps the latest report only: `server_packages` is replaced on each r
 
 ### REST API
 
-`POST /api/servers/{id}/commands` (an administrator role covering the site; `apply_updates` only for now; audited `command.create`), `GET /api/servers/{id}/commands`, `GET /api/commands/{id}` and `GET /api/servers/{id}/packages` (paginated, `?upgradable=true`), with the access helpers of ADR-0026.
+`POST /api/servers/{id}/commands` (administrators of the server's customer, as for revocation in ADR-0029; `apply_updates` only for now; audited `command.create`), `GET /api/servers/{id}/commands`, `GET /api/commands/{id}` and `GET /api/servers/{id}/packages` (paginated, `?upgradable=true`), with the access helpers of ADR-0026.
 
 ## Consequences
 

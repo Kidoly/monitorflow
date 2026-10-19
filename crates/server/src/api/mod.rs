@@ -50,6 +50,10 @@
 //! | GET | `/api/servers/{id}/metrics` | read | [`metrics::MetricList`]: metric names and instances of the last day |
 //! | GET | `/api/metrics/query` | read | [`metrics::QueryResult`], see below |
 //! | GET | `/api/metrics/query_range` | read | [`metrics::QueryResult`], see below |
+//! | GET | `/api/servers/{id}/packages` | read | [`packages::PackageList`], see below |
+//! | GET | `/api/servers/{id}/commands` | read | [`commands::CommandList`], newest first, paginated |
+//! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
+//! | GET | `/api/commands/{id}` | read | [`commands::CommandDetail`]: the command and its output |
 //!
 //! # Authentication
 //!
@@ -164,6 +168,31 @@
 //! servers. Unknown parameters and bad values are 400. A server or site
 //! outside the user's scope gives an empty list, an incident outside it 404.
 //!
+//! # Commands and packages
+//!
+//! Commands for agents (ADR-0031). `POST /api/servers/{id}/commands` takes
+//! `{"kind": "apply_updates", "packages"?, "security_only"?,
+//! "allow_reboot"?, "ttl_s"?}`: `packages` empty or absent upgrades
+//! everything, names are letters, digits and `.+_:-` not starting with
+//! `-`; `ttl_s` (60 s to 7 days, default one hour) is how long the agent
+//! may still start it. It needs an administrator role on the server's
+//! customer, as revocation does (ADR-0029); a revoked server is 409. The
+//! command is queued, sent as soon as the agent is connected and has no
+//! other command in flight, and audited as `command.create`. A command is
+//! `{"id", "server_id", "kind", "parameters", "state", "issued_at",
+//! "expires_at", "sent_at", "started_at", "finished_at", "exit_code",
+//! "error", "requested_by", "campaign_id"}`; `state` is `queued`, `sent`,
+//! `running`, `succeeded`, `failed`, `expired` or `cancelled`. The detail
+//! adds `stdout` and `stderr`, the last 64 KiB of each. Listings take
+//! `limit` (1 to 500, default 100) and `cursor`.
+//!
+//! `GET /api/servers/{id}/packages` returns `{"reboot_required",
+//! "reported_at", "packages": [{"name", "arch", "version",
+//! "upgradable_version"}], "next_cursor"}` from the latest report, by name
+//! and architecture; `upgradable=true` keeps packages with an upgrade,
+//! `limit` is 1 to 5000 (default 500). `reboot_required` and
+//! `reported_at` are `null` until the agent reported.
+//!
 //! # Metric queries
 //!
 //! The query endpoints take `server_id`, `metric` (`monitorflow_` and a
@@ -232,11 +261,13 @@
 pub mod access;
 pub(crate) mod audit;
 pub mod auth;
+pub mod commands;
 pub mod customers;
 mod error;
 mod health;
 pub mod incidents;
 pub mod metrics;
+pub mod packages;
 pub mod password;
 pub mod relays;
 pub mod revoke;
@@ -261,6 +292,7 @@ use monitorflow_common::config::ServerConfig;
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 
+use crate::commands::Commands;
 use crate::crl::CrlPublisher;
 use crate::grpc::Registry;
 use crate::vm_query::VmQuery;
@@ -312,6 +344,9 @@ pub struct ApiState {
     /// Revokes certificates and republishes the CRL; `None` refuses
     /// revocations.
     pub crl: Option<Arc<CrlPublisher>>,
+    /// Sends newly queued commands at once; `None` leaves them to the
+    /// dispatcher's next poll.
+    pub commands: Option<Commands>,
 }
 
 impl ApiState {
@@ -323,7 +358,14 @@ impl ApiState {
             metrics: None,
             enrollment: None,
             crl: None,
+            commands: None,
         }
+    }
+
+    /// Wakes `commands` when a command is queued.
+    pub fn with_commands(mut self, commands: Commands) -> Self {
+        self.commands = Some(commands);
+        self
     }
 
     /// Revokes peers' certificates through `crl`.
@@ -404,6 +446,12 @@ pub fn router(state: ApiState) -> Router {
             "/api/thresholds/{id}",
             put(thresholds::update).delete(thresholds::delete),
         )
+        .route("/api/servers/{id}/packages", get(packages::list))
+        .route(
+            "/api/servers/{id}/commands",
+            get(commands::list).post(commands::create),
+        )
+        .route("/api/commands/{id}", get(commands::detail))
         .fallback(not_found)
         .layer(middleware::from_fn(auth::csrf_guard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

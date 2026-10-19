@@ -12,6 +12,7 @@ pub mod exec;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use monitorflow_common::command;
 use monitorflow_common::proto::v1::{ApplyUpdates, Package, PackageReport};
 use tokio::sync::watch;
 
@@ -72,18 +73,9 @@ pub fn for_family(family: OsFamily, tools: Tools) -> Arc<dyn PackageManager> {
     }
 }
 
-/// Package names from the server reach a command line: letters, digits
-/// and `.+_:-`, not starting with `-` so none reads as an option.
-pub fn valid_name(name: &str) -> bool {
-    name.len() <= 128
-        && name
-            .as_bytes()
-            .first()
-            .is_some_and(u8::is_ascii_alphanumeric)
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._+:-".contains(&b))
-}
+/// Package names from the server reach a command line; see
+/// [`command::valid_package_name`].
+pub use command::valid_package_name as valid_name;
 
 /// Collects package reports and publishes the latest one to the stream,
 /// which sends it on the current connection, or on the next one when
