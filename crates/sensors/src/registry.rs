@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use crate::cpu::CpuSensor;
 use crate::disk::DiskSensor;
+use crate::log::{self, LogSensor};
 use crate::memory::MemorySensor;
 use crate::port::PortSensor;
 use crate::script::{self, ScriptSensor};
@@ -24,7 +25,7 @@ use crate::systemd::SystemdSensor;
 use crate::Sensor;
 
 /// Every kind [`build`] knows, in a stable order.
-pub const KINDS: &[&str] = &["cpu", "disk", "memory", "port", "script", "systemd"];
+pub const KINDS: &[&str] = &["cpu", "disk", "log", "memory", "port", "script", "systemd"];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BuildError {
@@ -49,12 +50,15 @@ pub enum BuildError {
 pub struct Local {
     /// Where the `script` sensor finds the scripts it may run.
     pub script_dir: PathBuf,
+    /// Directories the `log` sensor may read files under.
+    pub log_dirs: Vec<PathBuf>,
 }
 
 impl Default for Local {
     fn default() -> Self {
         Self {
             script_dir: script::DEFAULT_DIR.into(),
+            log_dirs: log::DEFAULT_DIRS.iter().map(PathBuf::from).collect(),
         }
     }
 }
@@ -84,6 +88,7 @@ fn build_with(
     let sensor: Arc<dyn Sensor> = match params.kind {
         "cpu" => Arc::new(CpuSensor::new(params.bool("per_core", true)?)),
         "disk" => Arc::new(DiskSensor::from_params(&mut params)?),
+        "log" => Arc::new(LogSensor::from_params(&mut params, local)?),
         "memory" => Arc::new(MemorySensor),
         "port" => Arc::new(PortSensor::from_params(&mut params)?),
         "script" => Arc::new(ScriptSensor::from_params(&mut params, local)?),
@@ -181,18 +186,19 @@ mod tests {
 
     #[test]
     fn every_kind_builds_with_defaults_or_asks_for_params() {
-        let required = [
-            ("port", "port", "22"),
-            ("script", "script", "check"),
-            ("systemd", "units", "ssh"),
+        let required: [(&str, &[(&str, &str)]); 4] = [
+            ("log", &[("path", "/var/log/syslog"), ("pattern", "error")]),
+            ("port", &[("port", "22")]),
+            ("script", &[("script", "check")]),
+            ("systemd", &[("units", "ssh")]),
         ];
         for kind in KINDS {
-            match required.iter().find(|(k, _, _)| k == kind) {
+            match required.iter().find(|(k, _)| k == kind) {
                 None => assert!(build(kind, &BTreeMap::new()).is_ok(), "{kind}"),
-                Some((_, name, value)) => {
+                Some((_, pairs)) => {
                     let error = build(kind, &BTreeMap::new()).err().unwrap();
                     assert!(error.to_string().contains("is required"), "{error}");
-                    assert!(build(kind, &params(&[(name, value)])).is_ok(), "{kind}");
+                    assert!(build(kind, &params(pairs)).is_ok(), "{kind}");
                 }
             }
         }
@@ -204,7 +210,7 @@ mod tests {
         assert_eq!(error, BuildError::UnknownKind("gpu".into()));
         assert!(error
             .to_string()
-            .contains("expected one of: cpu, disk, memory, port, script, systemd"));
+            .contains("expected one of: cpu, disk, log, memory, port, script, systemd"));
         assert_eq!(
             build("cpu", &params(&[("per_cores", "true")])).err(),
             Some(BuildError::UnknownParam {
@@ -219,6 +225,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let local = Local {
             script_dir: dir.path().into(),
+            log_dirs: vec![dir.path().into()],
         };
         let params = params(&[("script", "missing")]);
         assert!(build("script", &params).is_ok());

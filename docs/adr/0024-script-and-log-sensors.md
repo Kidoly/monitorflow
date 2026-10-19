@@ -5,7 +5,7 @@ Status: accepted
 
 ## Context
 
-The last two Phase 2 sensors run a custom check and watch a log file. Sensor configurations are pushed by the server (ADR-0016) and applied by every agent of a site. If the server could name a command, a custom script sensor would be remote code execution as the agent's user on the whole fleet; if it could name any path, a log sensor would read any file the agent can read (keys, `/etc/shadow` when the agent runs as root) and leak it through match counts. A compromised server, a stolen admin account or a bad API row must not be able to do either. The server's API validates rows with the agent's registry (ADR-0015), but it cannot know what each host allows.
+The last two Phase 2 sensors run a custom check and count pattern matches in a log file. Sensor configurations are pushed by the server (ADR-0016) and applied by every agent of a site. If the server could name a command, a custom script sensor would be remote code execution as the agent's user on the whole fleet; if it could name any path, a log sensor would read any file the agent can read (keys, `/etc/shadow` when the agent runs as root) and leak it through match counts. A compromised server, a stolen admin account or a bad API row must not be able to do either. The server's API validates rows with the agent's registry (ADR-0015), but it cannot know what each host allows.
 
 ## Decision
 
@@ -44,10 +44,35 @@ install -o root -g root -m 0755 check_backup /etc/monitorflow/scripts.d/
 
 Then create a sensor with `kind = "script"`, `name = "backup"`, `params = {"script": "check_backup"}` and a threshold on `monitorflow_backup_status`. Test it locally first: `monitorflow-agent sensors probe script --param script=check_backup --param args=-w,2`, which reads `script_dir` from the agent's configuration file when it exists.
 
+### Log
+
+**What the server can name.** Parameter `path`, an absolute path without `.` or `..` segments, at most 256 bytes so it fits a label value. The agent reads it only if it is under one of `sensors.log_dirs` (default `/var/log`; an empty list disables the sensor), lexically when the configuration is applied and, at every collection, once the path and the directories are resolved with `canonicalize`, so a symlink inside `/var/log` pointing to `/etc/shadow` is refused (permanent error). The resolved file is opened with `O_NOFOLLOW` and `O_NONBLOCK` and must be a regular file, so a FIFO swapped in cannot hang a blocking thread. Someone able to swap directories inside an allowed directory between the check and the open could still redirect the read; that takes write access to the log directory, which is root's on `/var/log`. `openat2` with `RESOLVE_BENEATH` would close this but needs Linux 5.6, newer than RHEL 8.
+
+**Patterns.** `pattern` (required) and `exclude` (optional, matching lines are not counted), regular expressions of the `regex` crate on bytes: matching is linear in the line length whatever the pattern, so a hostile pattern cannot stall the agent (no backtracking). Patterns are at most 1024 bytes and compile within 1 MiB, which refuses blow-ups like `(\w{1000}){1000}`. They are checked by `registry::build`, so the API refuses bad ones.
+
+**Reading.** On the blocking pool, bounded by the deadline like the other sensors, with at most one read in flight per sensor. The first collection after the sensor is built starts at the end of the file: history is not counted, which would alert on old lines after every restart. A file that appears later (missing at first) is read from its start. The sensor keeps the file open between collections: when the path names another inode (rotation by rename), it first reads the old file to its end, then switches to the new one from its start; when the file is shorter than the offset (copytruncate), it restarts from 0. At most 1 MiB is read per collection; the rest waits for the next one. Only the first 4096 bytes of a line are matched, the rest is skipped, and a line without its newline yet waits for it.
+
+**Metrics.**
+
+| Metric | Value |
+| --- | --- |
+| `log_matches` | Lines that matched since the previous collection |
+| `log_lag_bytes` | Bytes written to the file and not read yet |
+
+With label `path` and the configured instance. `matches` is a gauge of the last interval rather than a counter, because the threshold engine (ADR-0017) compares raw sample values and has no `rate()`: `monitorflow_log_matches > 0` alerts on any match, and the threshold duration (or a longer interval) gives "N matches in a window". A counter would also restart at every agent restart and configuration change. `lag_bytes` above zero says the file grows faster than 1 MiB per interval.
+
+**Failure semantics.** A missing file is transient (logged by the scheduler, rate-limited) and then read from its start when it appears. A path resolving outside the log directories or to something that is not a regular file is permanent. Other I/O errors are transient.
+
+**Matching lines are not forwarded.** The agent protocol has no log samples (ADR-0013 only writes server events to VictoriaLogs). Forwarding matching lines needs an additive envelope variant, server ingest and redaction rules, and is a follow-up. Even without lines, a pattern reveals whether matching lines exist, one bit per collection; the log directory allowlist is what bounds this, so administrators should keep it to logs the monitoring admins may see.
+
+**Example.** `kind = "log"`, `name = "nginx_errors"`, `params = {"path": "/var/log/nginx/error.log", "pattern": "\\[(crit|alert|emerg)\\]"}`; threshold `monitorflow_nginx_errors_matches > 0`. Locally: `monitorflow-agent sensors probe log --param path=/var/log/syslog --param pattern=error`, which counts the lines written during the second between its two rounds.
+
 ## Consequences
 
 - The server can at worst run, with chosen plain-word arguments, scripts the host's administrator installed. Arguments are the remaining channel, so scripts must treat them as untrusted input.
 - A script installed or fixed after the configuration arrived runs once the configuration is resent or the agent restarts, because refused specs and permanent errors stop the sensor (ADR-0012). Retrying refused specs is a possible follow-up.
 - Scripts run as the agent's user. Dropping privileges per script (a `User=` setting, systemd-run) is a follow-up if agents run as root.
+- Lines written while the agent is stopped, or between the last collection and a configuration change (which rebuilds the sensor), are not counted. Persisting offsets is a possible follow-up.
+- An administrator narrows or empties `sensors.log_dirs` to limit what the server can probe; the default `/var/log` includes `auth.log`, whose match counts the server can see.
 - Stderr is discarded rather than logged, since it can contain anything; forwarding script output to VictoriaLogs needs agent log samples, which the protocol does not have yet.
 - Tests write scripts through a child process: a test forking in parallel would otherwise inherit the write descriptor until its `exec`, and running the file fails with `ETXTBSY`.
