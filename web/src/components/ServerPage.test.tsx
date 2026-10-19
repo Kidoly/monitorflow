@@ -27,8 +27,11 @@ const web1: Server = {
 };
 
 describe("ServerPage", () => {
-  it("shows the server header", async () => {
-    stubFetch({ "GET /api/servers": { status: 200, body: { servers: [web1], next_cursor: null } } });
+  it("shows the server header and its graphs", async () => {
+    stubFetch({
+      "GET /api/servers": { status: 200, body: { servers: [web1], next_cursor: null } },
+      [`GET /api/servers/${ID}/metrics`]: { status: 200, body: { metrics: [], truncated: false } },
+    });
     render(<ServerPage id={ID} />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading server…");
     expect(await screen.findByRole("heading", { level: 1, name: "web-1" })).toBeInTheDocument();
@@ -40,6 +43,8 @@ describe("ServerPage", () => {
     expect(header).toHaveTextContent(/Last seen\s*just now/);
     expect(header).toHaveTextContent(/Certificate ID\s*agent-1/);
     expect(document.title).toBe("web-1 · MonitorFlow");
+    expect(await screen.findByRole("heading", { level: 2, name: "Metrics" })).toBeInTheDocument();
+    expect(await screen.findByText(/No metrics yet/)).toBeInTheDocument();
   });
 
   it("says when the server does not exist or is out of scope", async () => {

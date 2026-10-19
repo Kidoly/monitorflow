@@ -54,6 +54,25 @@ describe("api client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("builds metric query parameters", async () => {
+    const fetchMock = mockFetch(200, { query: "q", series: [] });
+    await api.queryRange({
+      serverId: "s 1",
+      metric: "monitorflow_disk_used_ratio",
+      instance: "/var/lib",
+      start: new Date("2026-10-19T11:00:00Z"),
+      end: new Date("2026-10-19T12:00:00Z"),
+      step: 30,
+      agg: "max",
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "/api/metrics/query_range?server_id=s+1&metric=monitorflow_disk_used_ratio&instance=%2Fvar%2Flib" +
+        "&start=2026-10-19T11%3A00%3A00.000Z&end=2026-10-19T12%3A00%3A00.000Z&step=30&agg=max",
+    );
+    await api.serverMetrics("a/b");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/servers/a%2Fb/metrics");
+  });
+
   it("returns nothing for 204", async () => {
     mockFetch(204);
     await expect(api.logout()).resolves.toBeUndefined();
