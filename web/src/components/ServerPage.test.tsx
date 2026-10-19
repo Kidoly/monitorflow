@@ -77,7 +77,7 @@ describe("ServerPage", () => {
     expect(header).toHaveTextContent(/Certificate ID\s*agent-1/);
     expect(header).toHaveTextContent(/Certificate expires\s*in 60 days/);
     expect(header).not.toHaveTextContent(/⚠|Certificate revoked/);
-    expect(document.title).toBe("web-1 · MonitorFlow");
+    await vi.waitFor(() => expect(document.title).toBe("web-1 · MonitorFlow"));
     expect(await screen.findByRole("heading", { level: 2, name: "Metrics" })).toBeInTheDocument();
     expect(await screen.findByText(/No metrics yet/)).toBeInTheDocument();
     expect(await screen.findByText(/In sync/)).toBeInTheDocument();
