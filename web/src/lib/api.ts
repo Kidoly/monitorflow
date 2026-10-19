@@ -51,8 +51,11 @@ export interface Server {
   via_relay: string | null;
 }
 
+/** One page of `GET /api/servers`, sorted by site name, hostname and peer ID. */
 export interface ServerList {
   servers: Server[];
+  /** Pass as `cursor` for the next page; null on the last one. */
+  next_cursor: string | null;
 }
 
 export interface Health {
@@ -189,5 +192,22 @@ export const api = {
 
   me: (signal?: AbortSignal) => request<Me>("/api/auth/me", { signal }),
 
-  servers: (signal?: AbortSignal) => request<ServerList>("/api/servers", { signal }),
+  /** One page of servers, from `cursor` when given. */
+  serversPage: (cursor?: string, signal?: AbortSignal) =>
+    request<ServerList>(
+      cursor === undefined ? "/api/servers" : `/api/servers?cursor=${encodeURIComponent(cursor)}`,
+      { signal },
+    ),
+
+  /** Every server the user may read, following `next_cursor` across pages. */
+  servers: async (signal?: AbortSignal): Promise<ServerList> => {
+    const servers: Server[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await api.serversPage(cursor, signal);
+      servers.push(...page.servers);
+      cursor = page.next_cursor ?? undefined;
+    } while (cursor !== undefined);
+    return { servers, next_cursor: null };
+  },
 };

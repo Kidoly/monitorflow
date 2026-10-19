@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, CSRF_HEADER, api, describeError, setUnauthorizedHandler } from "./api";
+import { stubFetch } from "../test/fetch";
+import { ApiError, CSRF_HEADER, type Server, api, describeError, setUnauthorizedHandler } from "./api";
 
 function mockFetch(status: number, body?: unknown) {
   const fetchMock = vi.fn<typeof fetch>(
@@ -39,6 +40,18 @@ describe("api client", () => {
     await api.servers();
     expect(fetchMock.mock.calls[0]?.[1]?.credentials).toBe("same-origin");
     expect(headersOf(fetchMock)).not.toHaveProperty(CSRF_HEADER);
+  });
+
+  it("follows next_cursor until the last page of servers", async () => {
+    const server = (peer_id: string) => ({ peer_id }) as Server;
+    const fetchMock = stubFetch({
+      "GET /api/servers": { status: 200, body: { servers: [server("a")], next_cursor: "c/1" } },
+      "GET /api/servers?cursor=c%2F1": { status: 200, body: { servers: [server("b")], next_cursor: null } },
+    });
+    const { servers, next_cursor } = await api.servers();
+    expect(servers.map((s) => s.peer_id)).toEqual(["a", "b"]);
+    expect(next_cursor).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("returns nothing for 204", async () => {

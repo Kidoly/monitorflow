@@ -1,20 +1,56 @@
 //! `GET /api/servers`: managed machines from the database, with their live
 //! connection status from the gRPC [`Registry`](crate::grpc::Registry).
+//!
+//! Pages are keyset-paginated on the sort key, so a server added or
+//! removed between two pages neither repeats nor skips the others.
 
-use axum::extract::State;
+use axum::extract::rejection::QueryRejection;
+use axum::extract::{Query, State};
 use axum::Json;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use monitorflow_common::tls::PeerRole;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::auth::{CurrentUser, SiteScope};
 use super::{ApiError, ApiState};
 
+/// Page size without `limit`.
+pub const DEFAULT_LIMIT: u32 = 500;
+/// Largest accepted `limit`.
+pub const MAX_LIMIT: u32 = 1000;
+
+/// Query string of `GET /api/servers`.
+#[derive(Debug, Default, Deserialize)]
+pub struct ListParams {
+    /// 1 to [`MAX_LIMIT`], default [`DEFAULT_LIMIT`].
+    pub limit: Option<u32>,
+    /// `next_cursor` of the previous page.
+    pub cursor: Option<String>,
+}
+
 /// Body of `GET /api/servers`.
 #[derive(Debug, Serialize)]
 pub struct ServerList {
     pub servers: Vec<ServerView>,
+    /// Pass as `cursor` for the next page; `null` on the last one.
+    pub next_cursor: Option<String>,
+}
+
+/// The sort key `(site name, hostname, peer ID)` of a page's last server,
+/// as opaque text.
+fn encode_cursor(key: (&str, &str, &str)) -> String {
+    URL_SAFE_NO_PAD.encode(serde_json::to_vec(&key).unwrap_or_default())
+}
+
+fn decode_cursor(cursor: &str) -> Result<(String, String, String), ApiError> {
+    URL_SAFE_NO_PAD
+        .decode(cursor)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .ok_or_else(|| ApiError::Invalid("invalid cursor".into()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -69,30 +105,58 @@ struct Row {
     revoked_at: Option<DateTime<Utc>>,
 }
 
-/// `GET /api/servers`: every server of the sites the user may read, sorted
-/// by site name, hostname and peer ID. Needs at least one role.
+/// `GET /api/servers`: one page of the servers of the sites the user may
+/// read, sorted by site name, hostname and peer ID. Needs at least one role.
 pub async fn list(
     State(state): State<ApiState>,
     user: CurrentUser,
+    params: Result<Query<ListParams>, QueryRejection>,
 ) -> Result<Json<ServerList>, ApiError> {
+    let Query(params) = params.map_err(|r| ApiError::Invalid(r.body_text()))?;
     let (all_sites, sites) = match user.readable_sites() {
         SiteScope::None => return Err(ApiError::Forbidden),
         SiteScope::All => (true, Vec::new()),
         SiteScope::Sites(sites) => (false, sites),
     };
-    let rows: Vec<Row> = sqlx::query_as(
+    let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
+    if !(1..=MAX_LIMIT).contains(&limit) {
+        return Err(ApiError::Invalid(format!(
+            "limit must be between 1 and {MAX_LIMIT}"
+        )));
+    }
+    let (after_site, after_host, after_peer) = match params.cursor.as_deref() {
+        Some(cursor) => {
+            let (site, host, peer) = decode_cursor(cursor)?;
+            (Some(site), Some(host), Some(peer))
+        }
+        None => (None, None, None),
+    };
+    let mut rows: Vec<Row> = sqlx::query_as(
         "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name, s.relay_id,
                 s.os_family, s.os_version, s.agent_version, s.created_at, s.last_seen_at,
                 s.revoked_at
          FROM servers s
          JOIN sites si ON si.id = s.site_id
-         WHERE $1 OR s.site_id = ANY($2)
-         ORDER BY si.name, s.hostname, s.peer_id",
+         WHERE ($1 OR s.site_id = ANY($2))
+           AND ($3::text IS NULL OR (si.name, s.hostname, s.peer_id) > ($3, $4, $5))
+         ORDER BY si.name, s.hostname, s.peer_id
+         LIMIT $6",
     )
     .bind(all_sites)
     .bind(&sites)
+    .bind(after_site)
+    .bind(after_host)
+    .bind(after_peer)
+    .bind(i64::from(limit) + 1)
     .fetch_all(&state.pool)
     .await?;
+    let next_cursor = if rows.len() > limit as usize {
+        rows.truncate(limit as usize);
+        rows.last()
+            .map(|r| encode_cursor((&r.site_name, &r.hostname, &r.peer_id)))
+    } else {
+        None
+    };
 
     let servers = rows
         .into_iter()
@@ -114,7 +178,10 @@ pub async fn list(
             }
         })
         .collect();
-    Ok(Json(ServerList { servers }))
+    Ok(Json(ServerList {
+        servers,
+        next_cursor,
+    }))
 }
 
 impl ServerView {
@@ -135,6 +202,29 @@ impl ServerView {
             connected_at: None,
             last_heartbeat: row.last_seen_at,
             via_relay: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cursors_round_trip_and_refuse_garbage() {
+        let cursor = encode_cursor(("paris", "web-1", "agent-1"));
+        assert!(cursor
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert_eq!(
+            decode_cursor(&cursor).unwrap(),
+            ("paris".into(), "web-1".into(), "agent-1".into())
+        );
+        for bad in ["", "!!", &URL_SAFE_NO_PAD.encode(b"[1,2]")] {
+            assert!(
+                matches!(decode_cursor(bad), Err(ApiError::Invalid(_))),
+                "{bad}"
+            );
         }
     }
 }
