@@ -1,6 +1,8 @@
 //! The relay's mTLS listener for agents (ADR-0025): the relay's own
 //! certificate, agents' certificates checked against the CA and the CRL
-//! fetched from the upstream with `RevocationService.GetCrl`.
+//! fetched from the upstream with `RevocationService.GetCrl`. It serves
+//! `AgentService` and `CertificateService`, and `RevocationService` from
+//! that copy to downstream relays (ADR-0028).
 //!
 //! [`TlsPublisher`] refetches the CRL every hour, retrying every minute
 //! after a failure, and rebuilds the configuration when the relay's
@@ -17,8 +19,11 @@ use monitorflow_common::client::identity::StoredIdentity;
 use monitorflow_common::client::shutdown::Shutdown;
 use monitorflow_common::proto::v1::agent_service_server::AgentServiceServer;
 use monitorflow_common::proto::v1::revocation_service_client::RevocationServiceClient;
-use monitorflow_common::proto::v1::GetCrlRequest;
-use monitorflow_common::tls::{self, error_chain, AcceptOptions};
+use monitorflow_common::proto::v1::revocation_service_server::{
+    RevocationService, RevocationServiceServer,
+};
+use monitorflow_common::proto::v1::{GetCrlRequest, GetCrlResponse};
+use monitorflow_common::tls::{self, error_chain, AcceptOptions, PeerRole};
 use rustls::pki_types::CertificateRevocationListDer;
 use rustls::ServerConfig;
 use tokio::net::TcpListener;
@@ -28,6 +33,7 @@ use x509_parser::extensions::GeneralName;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::forward::Forwarder;
+use crate::renew::RenewProxy;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// HTTP/2 pings towards agents: a silent agent's stream ends, and so does
@@ -134,7 +140,7 @@ fn ip_addr(bytes: &[u8]) -> Option<std::net::IpAddr> {
 pub struct TlsPublisher {
     settings: CrlSettings,
     identity: watch::Receiver<StoredIdentity>,
-    crl: CertificateRevocationListDer<'static>,
+    crl: watch::Sender<CertificateRevocationListDer<'static>>,
     tx: watch::Sender<Arc<ServerConfig>>,
 }
 
@@ -159,7 +165,7 @@ impl TlsPublisher {
                     let publisher = Self {
                         settings,
                         identity,
-                        crl,
+                        crl: watch::channel(crl).0,
                         tx,
                     };
                     return Ok(Some((publisher, rx)));
@@ -176,6 +182,11 @@ impl TlsPublisher {
         }
     }
 
+    /// The CRL the listener enforces, for [`CrlCache`].
+    pub fn crl(&self) -> watch::Receiver<CertificateRevocationListDer<'static>> {
+        self.crl.subscribe()
+    }
+
     pub async fn run(mut self, mut shutdown: Shutdown) {
         let mut wait = self.settings.refresh_every;
         // Set when the renewal task is gone.
@@ -187,7 +198,7 @@ impl TlsPublisher {
                     let current = self.identity.borrow().clone();
                     wait = match fetch_crl(&current, &self.settings).await {
                         Ok(crl) => {
-                            self.crl = crl;
+                            self.crl.send_replace(crl);
                             self.publish(&current);
                             self.settings.refresh_every
                         }
@@ -209,7 +220,7 @@ impl TlsPublisher {
     }
 
     fn publish(&self, identity: &StoredIdentity) {
-        match server_config(identity, &self.crl) {
+        match server_config(identity, &self.crl.borrow()) {
             Ok(config) => {
                 self.tx.send_replace(config);
                 tracing::debug!("listener TLS configuration updated");
@@ -219,18 +230,61 @@ impl TlsPublisher {
     }
 }
 
-/// Serves `forwarder` to agents over mTLS until `shutdown` resolves.
+/// `RevocationService` for downstream relays, from the relay's own copy of
+/// the CRL. The CRL is signed by the CA, so a relay can serve an old one
+/// but not a forged one, and its `next_update` still bounds how old.
+#[derive(Clone)]
+pub struct CrlCache {
+    crl: watch::Receiver<CertificateRevocationListDer<'static>>,
+}
+
+impl CrlCache {
+    pub fn new(crl: watch::Receiver<CertificateRevocationListDer<'static>>) -> Self {
+        Self { crl }
+    }
+}
+
+#[tonic::async_trait]
+impl RevocationService for CrlCache {
+    async fn get_crl(
+        &self,
+        request: tonic::Request<GetCrlRequest>,
+    ) -> Result<tonic::Response<GetCrlResponse>, tonic::Status> {
+        let peer = tls::peer_identity(&request)?;
+        if peer.role() != PeerRole::Relay {
+            tracing::info!(%peer, "CRL request refused: not a relay");
+            return Err(tonic::Status::permission_denied(
+                "only relays may fetch the CRL",
+            ));
+        }
+        let crl_der = self.crl.borrow().as_ref().to_vec();
+        tracing::debug!(%peer, bytes = crl_der.len(), "CRL sent");
+        Ok(tonic::Response::new(GetCrlResponse { crl_der }))
+    }
+}
+
+/// What the relay serves on its listener.
+pub struct Services {
+    pub forwarder: Forwarder,
+    pub renew: RenewProxy,
+    pub crl: CrlCache,
+}
+
+/// Serves `services` to agents and downstream relays over mTLS until
+/// `shutdown` resolves.
 pub async fn serve(
     listener: TcpListener,
     tls: watch::Receiver<Arc<ServerConfig>>,
-    forwarder: Forwarder,
+    services: Services,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), tonic::transport::Error> {
     let incoming = tls::incoming(listener, tls, AcceptOptions::default());
     Server::builder()
         .http2_keepalive_interval(Some(KEEPALIVE_INTERVAL))
         .http2_keepalive_timeout(Some(KEEPALIVE_TIMEOUT))
-        .add_service(AgentServiceServer::new(forwarder))
+        .add_service(AgentServiceServer::new(services.forwarder))
+        .add_service(services.renew.into_service())
+        .add_service(RevocationServiceServer::new(services.crl))
         .serve_with_incoming_shutdown(incoming, shutdown)
         .await
 }

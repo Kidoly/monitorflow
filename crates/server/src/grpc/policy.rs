@@ -1,5 +1,7 @@
-//! Which agents a relay may speak for (ADR-0004).
+//! Which agents a relay may speak for (ADR-0004), directly or through
+//! chained relays (ADR-0028).
 
+use monitorflow_common::tls::{PeerIdentity, PeerRole};
 use sqlx::PgPool;
 use tonic::async_trait;
 
@@ -10,6 +12,17 @@ use crate::db;
 #[async_trait]
 pub trait RelayPolicy: Send + Sync + 'static {
     async fn may_speak_for(&self, relay_id: &str, agent_id: &str) -> bool;
+
+    /// Whether a call forwarded along `relays`, from the connecting relay
+    /// down to the one `origin` is attached to, may speak for `origin`, an
+    /// agent or a relay. Without an override only one relay and an agent
+    /// are allowed, by [`Self::may_speak_for`].
+    async fn may_route(&self, relays: &[&str], origin: &PeerIdentity) -> bool {
+        match (relays, origin.role()) {
+            ([relay], PeerRole::Agent) => self.may_speak_for(relay, origin.id()).await,
+            _ => false,
+        }
+    }
 }
 
 /// The production policy: the agent is assigned to the relay's site and
@@ -36,6 +49,15 @@ impl RelayPolicy for DbRelayPolicy {
                 false
             })
     }
+
+    async fn may_route(&self, relays: &[&str], origin: &PeerIdentity) -> bool {
+        db::relay_route_allowed(&self.pool, relays, origin)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(?relays, %origin, %error, "relay policy lookup failed; denying");
+                false
+            })
+    }
 }
 
 /// Lets relays speak only for themselves.
@@ -59,6 +81,10 @@ impl RelayPolicy for AllowAllRelayedAgents {
     async fn may_speak_for(&self, _relay_id: &str, _agent_id: &str) -> bool {
         true
     }
+
+    async fn may_route(&self, _relays: &[&str], _origin: &PeerIdentity) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -73,5 +99,25 @@ mod tests {
                 .may_speak_for("relay-1", "agent-1")
                 .await
         );
+    }
+
+    #[tokio::test]
+    async fn routes_default_to_one_relay_and_an_agent() {
+        struct SameName;
+        #[async_trait]
+        impl RelayPolicy for SameName {
+            async fn may_speak_for(&self, relay_id: &str, agent_id: &str) -> bool {
+                relay_id == agent_id
+            }
+        }
+        let agent = PeerIdentity::new(PeerRole::Agent, "x").unwrap();
+        let relay = PeerIdentity::new(PeerRole::Relay, "x").unwrap();
+        assert!(SameName.may_route(&["x"], &agent).await);
+        assert!(!SameName.may_route(&["y"], &agent).await);
+        assert!(!SameName.may_route(&["x", "x"], &agent).await);
+        assert!(!SameName.may_route(&["x"], &relay).await);
+        assert!(!SameName.may_route(&[], &agent).await);
+        assert!(AllowAllRelayedAgents.may_route(&["a", "b"], &relay).await);
+        assert!(!DenyRelayedAgents.may_route(&["a"], &agent).await);
     }
 }

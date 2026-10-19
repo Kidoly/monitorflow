@@ -237,6 +237,7 @@ pub async fn create(
             ttl,
             creator: Creator::User(user.id),
             server_names: request.server_names,
+            parent_relay: None,
         },
     )
     .await?;

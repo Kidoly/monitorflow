@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use monitorflow_common::config::DatabaseUrl;
+use monitorflow_common::tls::{PeerIdentity, PeerRole};
 use sqlx::migrate::{MigrateError, Migrator};
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 
@@ -92,6 +93,49 @@ pub async fn relay_may_speak_for(
     .fetch_one(pool)
     .await?;
     Ok(allowed)
+}
+
+/// Whether a call forwarded along `relays` may speak for `origin`
+/// (ADR-0028). `relays` starts with the connecting relay and ends with the
+/// one `origin` is attached to; each must be the parent of the next, and
+/// none revoked. An agent must then belong to the site of the relay it is
+/// attached to ([`relay_may_speak_for`]); a relay must be the child of it.
+/// So a relay speaks only for its own subtree.
+pub async fn relay_route_allowed(
+    pool: &PgPool,
+    relays: &[&str],
+    origin: &PeerIdentity,
+) -> Result<bool, DbError> {
+    let Some(attached) = relays.last() else {
+        return Ok(false);
+    };
+    let links_ok: bool = sqlx::query_scalar(
+        "SELECT count(*) = cardinality($1::text[]) - 1
+         FROM unnest($1::text[]) WITH ORDINALITY AS hop (peer_id, n)
+         JOIN relays child ON child.peer_id = hop.peer_id AND child.revoked_at IS NULL
+         JOIN relays parent ON parent.id = child.parent_relay_id AND parent.revoked_at IS NULL
+         WHERE hop.n > 1 AND parent.peer_id = ($1::text[])[hop.n - 1]",
+    )
+    .bind(relays)
+    .fetch_one(pool)
+    .await?;
+    if !links_ok {
+        return Ok(false);
+    }
+    match origin.role() {
+        PeerRole::Agent => relay_may_speak_for(pool, attached, origin.id()).await,
+        PeerRole::Relay => Ok(sqlx::query_scalar(
+            "SELECT EXISTS (
+                 SELECT 1 FROM relays child
+                 JOIN relays parent ON parent.id = child.parent_relay_id
+                 WHERE child.peer_id = $1 AND parent.peer_id = $2 AND parent.revoked_at IS NULL)",
+        )
+        .bind(origin.id())
+        .bind(attached)
+        .fetch_one(pool)
+        .await?),
+        PeerRole::Server => Ok(false),
+    }
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ pub mod grpc_url;
 pub mod logging;
 pub mod redact;
 pub mod tls;
+pub mod via;
 
 /// Generated Protobuf and gRPC code for the `monitorflow.v1` package.
 pub mod proto {

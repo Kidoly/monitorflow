@@ -31,7 +31,7 @@ A relay sits on an isolated site and forwards its agents' streams to the central
 
 **Relay identity.** The relay enrolls with a relay token and stores its files under `<data_dir>/tls/` unless `[tls]` paths are set, like the agent and the server (ADR-0007). It renews its certificate as in ADR-0010, with the client code shared with the agent. A renewed certificate applies to new agent connections, new upstream dials and the relay's own stream, which reconnects at once. Open forwarded streams keep the connection they have; the old certificate stays valid until it expires (ADR-0010).
 
-**Chaining stays possible.** The upstream may be a relay: it would accept a downstream relay's certificate and forward its streams unchanged, and the server's policy would check the last relay's site. That needs a relay-to-relay policy, which is the relay chaining task.
+**Chaining stays possible.** The upstream may be a relay: it would accept a downstream relay's certificate and forward its streams unchanged, and the server's policy would check the last relay's site. That needs a relay-to-relay policy, which is the relay chaining task. Done in ADR-0028.
 
 ## Alternatives rejected
 
@@ -44,6 +44,6 @@ A relay sits on an isolated site and forwards its agents' streams to the central
 
 - Operators create relay tokens with `--server-name` for every name agents use. A relay enrolled without names cannot accept agents and says so at start. Tokens created through the REST API get no names until the relay administration task adds them.
 - Agents need no change: they point `upstream_url` at the relay, and `enroll_url` still at the server's enrollment listener.
-- An agent behind a relay cannot renew its certificate yet: the relay does not serve `CertificateService`, so the agent gets `UNIMPLEMENTED` and retries with backoff. Forwarding `Renew` under the relay policy is a follow-up (ADR-0010).
+- An agent behind a relay cannot renew its certificate yet: the relay does not serve `CertificateService`, so the agent gets `UNIMPLEMENTED` and retries with backoff. Forwarding `Renew` under the relay policy is a follow-up (ADR-0010). Done in ADR-0028.
 - The server handles one connection per relayed agent, as for direct agents.
 - A relay cut off for about a day, or unable to fetch the CRL, refuses its agents until it fetches a fresh one.

@@ -12,7 +12,8 @@ use monitorflow_common::config::{self, RelayConfig};
 use monitorflow_common::logging;
 use monitorflow_relay::control::{Control, ControlSettings};
 use monitorflow_relay::forward::{ForwardSettings, Forwarder};
-use monitorflow_relay::listener::{self, CrlSettings, TlsPublisher};
+use monitorflow_relay::listener::{self, CrlCache, CrlSettings, Services, TlsPublisher};
+use monitorflow_relay::renew::{RenewProxy, RenewSettings};
 use tokio::net::TcpListener;
 
 /// Time given to forwarded streams to end after a shutdown signal.
@@ -71,19 +72,29 @@ async fn main() -> anyhow::Result<()> {
     let Some((publisher, tls)) = started else {
         return Ok(());
     };
+    let crl = CrlCache::new(publisher.crl());
     tokio::spawn(publisher.run(stop.clone()));
 
     let listener = TcpListener::bind(config.listen_addr)
         .await
         .with_context(|| format!("binding the agent listener on {}", config.listen_addr))?;
     tracing::info!(listen = %config.listen_addr, upstream = %config.upstream_url, "accepting agents");
+    let renew = RenewProxy::new(
+        RenewSettings::for_upstream(&config.upstream_url),
+        identities.clone(),
+    );
     let forwarder = Forwarder::new(
         ForwardSettings::from_config(&config),
         identities,
         upstream_up,
     );
     let mut until_stopped = stop.clone();
-    let served = listener::serve(listener, tls, forwarder, async move {
+    let services = Services {
+        forwarder,
+        renew,
+        crl,
+    };
+    let served = listener::serve(listener, tls, services, async move {
         until_stopped.wait().await
     });
     tokio::pin!(served);

@@ -24,7 +24,7 @@ use std::net::IpAddr;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use monitorflow_common::tls::{PeerIdentity, PeerRole};
@@ -34,8 +34,10 @@ use rcgen::{
     SerialNumber, PKCS_ECDSA_P256_SHA256,
 };
 use ring::rand::{SecureRandom, SystemRandom};
-use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, UnixTime};
+use rustls::server::WebPkiClientVerifier;
 use rustls::sign::CertifiedKey;
+use rustls::RootCertStore;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::{debug, info};
@@ -296,6 +298,27 @@ impl CertificateAuthority {
     /// The root certificate, for peers' trust stores.
     pub fn ca_cert_pem(&self) -> &str {
         &self.cert_pem
+    }
+
+    /// Checks that `der` is a client certificate this CA signed and that it
+    /// is valid now, as a TLS listener would. For certificates a relay
+    /// forwards on behalf of a peer it terminated (ADR-0028): the relay
+    /// cannot make one up, only pass on one it was shown. Revocation is the
+    /// caller's check.
+    pub fn verify_issued(&self, der: &CertificateDer<'_>) -> Result<(), String> {
+        let ca_der = pem::parse(&self.cert_pem).map_err(|e| e.to_string())?;
+        let mut roots = RootCertStore::empty();
+        roots
+            .add(CertificateDer::from(ca_der.into_contents()))
+            .map_err(|e| e.to_string())?;
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
+            .build()
+            .map_err(|e| e.to_string())?;
+        verifier
+            .verify_client_cert(&der.clone().into_owned(), &[], UnixTime::now())
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
     /// Signs the public key of `csr_pem` for `identity`.

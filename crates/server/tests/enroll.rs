@@ -57,6 +57,7 @@ fn request(site_id: Uuid, peer_id: &str) -> TokenRequest {
         ttl: token::DEFAULT_TTL,
         creator: Creator::Cli,
         server_names: Vec::new(),
+        parent_relay: None,
     }
 }
 
