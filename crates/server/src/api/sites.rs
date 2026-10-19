@@ -15,6 +15,25 @@ pub struct SiteView {
     pub id: Uuid,
     pub name: String,
     pub server_count: i64,
+    pub customer_id: Uuid,
+    pub customer_name: String,
+}
+
+/// Columns of [`SiteView`]; callers add `WHERE` before the grouping.
+const SELECT_SITES: &str = "SELECT si.id, si.name, count(s.id) AS server_count,
+                                   si.customer_id, c.name AS customer_name
+                            FROM sites si
+                            JOIN customers c ON c.id = si.customer_id
+                            LEFT JOIN servers s ON s.site_id = si.id";
+
+/// The site `id`, without access checks.
+pub(super) async fn fetch(pool: &sqlx::PgPool, id: Uuid) -> Result<Option<SiteView>, sqlx::Error> {
+    sqlx::query_as(&format!(
+        "{SELECT_SITES} WHERE si.id = $1 GROUP BY si.id, c.name"
+    ))
+    .bind(id)
+    .fetch_optional(pool)
+    .await
 }
 
 /// Body of `GET /api/sites`, sorted by name.
@@ -33,13 +52,12 @@ pub async fn list(
         return Err(ApiError::Forbidden);
     }
     let (all_sites, sites) = user.readable_sites().bind();
-    let sites = sqlx::query_as(
-        "SELECT si.id, si.name, count(s.id) AS server_count
-         FROM sites si LEFT JOIN servers s ON s.site_id = si.id
+    let sites = sqlx::query_as(&format!(
+        "{SELECT_SITES}
          WHERE $1 OR si.id = ANY($2)
-         GROUP BY si.id
-         ORDER BY si.name",
-    )
+         GROUP BY si.id, c.name
+         ORDER BY si.name"
+    ))
     .bind(all_sites)
     .bind(&sites)
     .fetch_all(&state.pool)

@@ -75,6 +75,9 @@ pub struct ServerView {
     pub hostname: String,
     pub site_id: Uuid,
     pub site_name: String,
+    /// Customer of the site (ADR-0026).
+    pub customer_id: Uuid,
+    pub customer_name: String,
     pub relay_id: Option<Uuid>,
     /// `debian` or `rhel`.
     pub os_family: String,
@@ -148,8 +151,8 @@ impl From<CertificateRow> for CertificateView {
 }
 
 /// Columns of [`Row`]; callers add the `WHERE` clause.
-const SELECT_SERVERS: &str =
-    "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name, s.relay_id,
+const SELECT_SERVERS: &str = "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name,
+            si.customer_id, c.name AS customer_name, s.relay_id,
             s.os_family, s.os_version, s.agent_version, s.created_at, s.last_seen_at,
             s.revoked_at,
             -- One probe of the partial unique index on open incidents.
@@ -160,7 +163,8 @@ const SELECT_SERVERS: &str =
              WHERE c.peer_role = 'agent' AND c.peer_id = s.peer_id
                AND c.revoked_at IS NULL) AS cert_not_after
      FROM servers s
-     JOIN sites si ON si.id = s.site_id";
+     JOIN sites si ON si.id = s.site_id
+     JOIN customers c ON c.id = si.customer_id";
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -169,6 +173,8 @@ struct Row {
     hostname: String,
     site_id: Uuid,
     site_name: String,
+    customer_id: Uuid,
+    customer_name: String,
     relay_id: Option<Uuid>,
     os_family: String,
     os_version: Option<String>,
@@ -296,6 +302,8 @@ impl ServerView {
             hostname: row.hostname,
             site_id: row.site_id,
             site_name: row.site_name,
+            customer_id: row.customer_id,
+            customer_name: row.customer_name,
             relay_id: row.relay_id,
             os_family: row.os_family,
             os_version: row.os_version,
