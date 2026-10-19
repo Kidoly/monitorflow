@@ -39,7 +39,7 @@ Shared code:
 | Crate | Contents |
 | --- | --- |
 | `crates/common` | Generated Protobuf/gRPC code, TLS and certificate helpers, configuration loading, shared types and error types |
-| `crates/sensors` | Sensor trait and implementations. No network code, so it can be reused by a future Windows agent |
+| `crates/sensors` | Sensor trait and implementations. No transport code (gRPC, TLS, HTTP), so it can be reused by a future Windows agent; probes like a TCP connect are allowed (ADR-0021) |
 
 Relays can be chained. Each relay keeps a store-and-forward buffer on disk: if its uplink drops, data is kept and sent once the link returns, in order.
 
@@ -194,7 +194,7 @@ Access is role-based: viewer, operator, approver, administrator. In MSP mode eac
 ```
 proto/            Protobuf definitions shared by all components
 crates/common     Generated gRPC code, TLS, configuration, shared types
-crates/sensors    Sensor trait and implementations (no network code)
+crates/sensors    Sensor trait and implementations (no transport code)
 crates/agent      Agent binary
 crates/relay      Relay binary
 crates/server     Central server binary (gRPC, REST API, engines, CA)
