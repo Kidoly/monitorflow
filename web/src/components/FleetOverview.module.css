@@ -75,3 +75,8 @@
   border-radius: 999px;
   font-weight: 600;
 }
+
+.cert:not(:empty) {
+  margin-left: 0.5rem;
+  font-size: 0.875rem;
+}

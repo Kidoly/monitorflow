@@ -1,25 +1,58 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError, type MetricInfo, type MetricSeries, api, describeError, isAbortError } from "@/lib/api";
+import {
+  ApiError,
+  type EffectiveSensor,
+  type MetricInfo,
+  type MetricSeries,
+  type Rollup,
+  api,
+  describeError,
+  isAbortError,
+} from "@/lib/api";
 import { unitOf } from "@/lib/format";
-import { METRIC_TITLES, metricTitle, shortMetric } from "@/lib/metrics";
+import { DEFAULT_INTERVAL_S, METRIC_TITLES, metricTitle, rollupFor, sensorInterval, shortMetric } from "@/lib/metrics";
 import { usePolling } from "@/lib/usePolling";
 
 import { REFRESH_MS } from "./FleetOverview";
 import styles from "./ServerGraphs.module.css";
 import { MAX_SERIES, type ReferenceLine, TimeSeriesChart } from "./TimeSeriesChart";
 
-/** Ranges and their steps, a few hundred points each (ADR-0020). */
+/**
+ * Ranges and their steps, a few hundred points each (ADR-0020). Long ranges
+ * summarize each step with a rollup instead of sampling it; short ones
+ * show the samples as they are.
+ */
 export const RANGES = [
-  { label: "1 h", seconds: 3_600, step: 30 },
-  { label: "6 h", seconds: 21_600, step: 120 },
-  { label: "24 h", seconds: 86_400, step: 300 },
-  { label: "7 d", seconds: 604_800, step: 1_800 },
+  { label: "1 h", seconds: 3_600, step: 30, rollup: false },
+  { label: "6 h", seconds: 21_600, step: 120, rollup: false },
+  { label: "24 h", seconds: 86_400, step: 300, rollup: true },
+  { label: "7 d", seconds: 604_800, step: 1_800, rollup: true },
 ] as const;
 
-type Range = (typeof RANGES)[number];
+export type Range = (typeof RANGES)[number];
+
+/** The time span and step of one chart. */
+export interface ChartWindow {
+  start: number;
+  end: number;
+  step: number;
+  rollup?: Rollup;
+}
+
+/**
+ * The window of `metric` over `range` at `now` (unix seconds). With a
+ * rollup, the step is at least the sensor's interval, rounded up to a
+ * multiple of the range's step, so every step holds a sample (ADR-0018).
+ * The end is aligned to the step, so refreshes return the same timestamps.
+ */
+export function chartWindow(range: Range, metric: string, intervalS: number, now: number): ChartWindow {
+  const step = range.rollup ? Math.ceil(Math.max(intervalS, range.step) / range.step) * range.step : range.step;
+  const end = Math.floor(now / step) * step;
+  return { start: end - range.seconds, end, step, ...(range.rollup && { rollup: rollupFor(metric) }) };
+}
 
 /** One chart: a metric, all its instances or only one. */
 export interface ChartPlan {
@@ -60,54 +93,60 @@ type ChartResult = { series: MetricSeries[] } | { error: string };
 
 interface Loaded {
   range: Range;
-  start: number;
-  end: number;
   truncated: boolean;
-  charts: { plan: ChartPlan; result: ChartResult }[];
+  charts: { plan: ChartPlan; window: ChartWindow; result: ChartResult }[];
 }
 
 interface Props {
   serverId: string;
+  /** The effective sensors, for their intervals; the default interval until known. */
+  sensors?: EffectiveSensor[];
   /** Threshold lines for a chart, given the instances its series show. */
   referenceLines?: (plan: ChartPlan, instances: string[]) => ReferenceLine[];
 }
 
 /** Graphs of every metric the server wrote in the last day, with a range picker. */
-export function ServerGraphs({ serverId, referenceLines }: Props) {
+export function ServerGraphs({ serverId, sensors, referenceLines }: Props) {
   const [range, setRange] = useState<Range>(RANGES[0]);
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Read at the next refresh: a new sensor list does not reload the graphs.
+  const sensorsRef = useRef(sensors);
+  useEffect(() => {
+    sensorsRef.current = sensors;
+  }, [sensors]);
 
   const load = useCallback(
     async (signal: AbortSignal) => {
-      // Aligned to the step, so refreshes return the same timestamps.
-      const end = Math.floor(Date.now() / 1000 / range.step) * range.step;
-      const start = end - range.seconds;
+      const now = Date.now() / 1000;
       try {
         const { metrics, truncated } = await api.serverMetrics(serverId, signal);
         const plans = planCharts(metrics);
         const charts = await Promise.all(
           plans.map(async (plan) => {
+            const interval = sensorInterval(sensorsRef.current ?? [], plan.metric) ?? DEFAULT_INTERVAL_S;
+            const window = chartWindow(range, plan.metric, interval, now);
             try {
               const { series } = await api.queryRange(
                 {
                   serverId,
                   metric: plan.metric,
                   instance: plan.instance,
-                  start: new Date(start * 1000),
-                  end: new Date(end * 1000),
-                  step: range.step,
+                  start: new Date(window.start * 1000),
+                  end: new Date(window.end * 1000),
+                  step: window.step,
+                  rollup: window.rollup,
                 },
                 signal,
               );
-              return { plan, result: { series } };
+              return { plan, window, result: { series } };
             } catch (e) {
               if (isAbortError(e)) throw e;
-              return { plan, result: { error: metricsError(e) } };
+              return { plan, window, result: { error: metricsError(e) } };
             }
           }),
         );
-        setData({ range, start, end, truncated, charts });
+        setData({ range, truncated, charts });
         setError(null);
       } catch (e) {
         // A 401 has already been routed to the login page.
@@ -155,7 +194,7 @@ export function ServerGraphs({ serverId, referenceLines }: Props) {
       )}
       {data && data.charts.length > 0 && (
         <div className={styles.grid} aria-busy={data.range !== range}>
-          {data.charts.map(({ plan, result }) =>
+          {data.charts.map(({ plan, window, result }) =>
             "error" in result ? (
               <figure key={plan.metric} className={styles.failed}>
                 <figcaption>{plan.title}</figcaption>
@@ -166,9 +205,9 @@ export function ServerGraphs({ serverId, referenceLines }: Props) {
                 key={plan.metric}
                 title={plan.title}
                 unit={unitOf(plan.metric)}
-                start={data.start}
-                end={data.end}
-                step={data.range.step}
+                start={window.start}
+                end={window.end}
+                step={window.step}
                 series={result.series.map((s) => ({ label: s.labels.instance || plan.title, points: s.points }))}
                 referenceLines={referenceLines?.(
                   plan,

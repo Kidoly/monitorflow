@@ -8,6 +8,7 @@ import { formatDateTime, formatOs, formatRelative } from "@/lib/format";
 import { incidentsHref, serverHref } from "@/lib/routes";
 import { usePolling } from "@/lib/usePolling";
 
+import { CertificateExpiry } from "./CertificateExpiry";
 import styles from "./FleetOverview.module.css";
 
 export const REFRESH_MS = 15_000;
@@ -94,6 +95,11 @@ function ServerTable({ servers, now }: { servers: Server[]; now: Date }) {
               <td>{server.agent_version ?? "unknown"}</td>
               <td>
                 <StatusBadge server={server} />
+                {server.cert_not_after && (
+                  <span className={styles.cert}>
+                    <CertificateExpiry notAfter={server.cert_not_after} now={now} compact />
+                  </span>
+                )}
               </td>
               <td>
                 <OpenIncidentsBadge server={server} />

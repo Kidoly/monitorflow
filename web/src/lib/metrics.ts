@@ -1,3 +1,5 @@
+import type { EffectiveSensor, Rollup } from "./api";
+
 /** Prefix of every metric MonitorFlow stores (ADR-0015). */
 export const METRIC_PREFIX = "monitorflow_";
 
@@ -30,4 +32,38 @@ export function shortMetric(metric: string): string {
 export function metricTitle(metric: string): string {
   const short = shortMetric(metric);
   return METRIC_TITLES[short] ?? short;
+}
+
+/** Collection interval when the sensor's configuration is not known (ADR-0016). */
+export const DEFAULT_INTERVAL_S = 60;
+
+/**
+ * How a long range summarizes `metric` per step (ADR-0020): the worst value
+ * of the step. Headroom and health (`available`, `free`, `_up`, `_active`,
+ * `_loaded`) take the minimum, so a dip or an outage shows; usage and
+ * pressure (ratios, used bytes, load, durations, statuses, failures,
+ * matches, lag, restarts) take the maximum, so a spike shows. Sizes and
+ * custom gauges of unknown meaning take the average.
+ */
+export function rollupFor(metric: string): Rollup {
+  const short = shortMetric(metric);
+  if (/available|free|_(up|active|loaded)$/.test(short)) return "min";
+  if (/(_ratio|_used_bytes|_seconds|_status|_failed|_matches|_lag_bytes|_restarts)$|^cpu_load/.test(short)) {
+    return "max";
+  }
+  return "avg";
+}
+
+/**
+ * The longest collection interval, in seconds, of the sensors that write
+ * `metric`: the ones with the longest name that prefixes it
+ * (`monitorflow_disk_data_used_ratio` comes from `disk_data`, not `disk`).
+ * Undefined when no sensor matches.
+ */
+export function sensorInterval(sensors: EffectiveSensor[], metric: string): number | undefined {
+  const short = shortMetric(metric);
+  const matching = sensors.filter((s) => short.startsWith(`${s.name}_`));
+  const longest = Math.max(...matching.map((s) => s.name.length));
+  const intervals = matching.filter((s) => s.name.length === longest).map((s) => s.interval_ms / 1000);
+  return intervals.length > 0 ? Math.max(...intervals) : undefined;
 }

@@ -1,0 +1,16 @@
+.expiring,
+.expired {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.expiring {
+  color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.expired {
+  color: var(--critical);
+  background: var(--critical-bg);
+}

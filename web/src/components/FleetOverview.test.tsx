@@ -24,6 +24,7 @@ function server(overrides: Partial<Server>): Server {
     last_heartbeat: new Date().toISOString(),
     via_relay: null,
     open_incidents: 0,
+    cert_not_after: new Date(Date.now() + 60 * 86_400_000).toISOString(),
     ...overrides,
   };
 }
@@ -65,6 +66,29 @@ describe("FleetOverview", () => {
       // next/link adds the trailing slash only in a build with `trailingSlash`.
       expect.stringMatching(/^\/servers\/view\/?\?id=s1$/),
     );
+  });
+
+  it("warns about certificates close to expiry", async () => {
+    const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
+    stubFetch({
+      "GET /api/servers": {
+        status: 200,
+        body: {
+          servers: [
+            server({ id: "a", hostname: "a", cert_not_after: inDays(15) }),
+            server({ id: "b", hostname: "b", cert_not_after: inDays(5.5) }),
+            server({ id: "c", hostname: "c", cert_not_after: inDays(-2.5) }),
+            server({ id: "d", hostname: "d", cert_not_after: null }),
+          ],
+        },
+      },
+    });
+    render(<FleetOverview />);
+    const rows = within(await screen.findByRole("table", { name: "Fleet" })).getAllByRole("row").slice(1);
+    expect(rows[0]).not.toHaveTextContent(/Certificate/);
+    expect(rows[1]).toHaveTextContent(/● Online\s*⚠ Certificate expires in 5 days/);
+    expect(rows[2]).toHaveTextContent(/⚠ Certificate expired 2 days ago/);
+    expect(rows[3]).not.toHaveTextContent(/Certificate/);
   });
 
   it("shows an empty state", async () => {

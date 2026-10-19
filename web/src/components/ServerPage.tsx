@@ -4,12 +4,22 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
-import { ApiError, type EffectiveThreshold, type Server, api, describeError, isAbortError } from "@/lib/api";
+import {
+  ApiError,
+  type EffectiveSensor,
+  type EffectiveSensors,
+  type EffectiveThreshold,
+  type ServerDetail,
+  api,
+  describeError,
+  isAbortError,
+} from "@/lib/api";
 import { formatDateTime, formatOs, formatRelative } from "@/lib/format";
 import { thresholdLines } from "@/lib/thresholds";
 import { usePolling } from "@/lib/usePolling";
 import { UUID } from "@/lib/uuid";
 
+import { CertificateExpiry } from "./CertificateExpiry";
 import { REFRESH_MS, StatusBadge } from "./FleetOverview";
 import { OpenIncidents } from "./OpenIncidents";
 import { SensorConfigPanel } from "./SensorConfigPanel";
@@ -24,8 +34,8 @@ export function ServerView() {
 }
 
 interface State {
-  /** Undefined until loaded, null when the server is not in the list. */
-  server: Server | null | undefined;
+  /** Undefined until loaded, null when not found or out of scope. */
+  server: ServerDetail | null | undefined;
   updatedAt: Date | null;
   error: string | null;
   /** Effective thresholds, for the graphs' reference lines; the last ones received. */
@@ -43,8 +53,8 @@ export function ServerPage({ id }: { id: string | null }) {
     thresholdsError: null,
   });
 
-  // There is no single-server endpoint yet, so the header comes from the list.
-  // Thresholds load in the same cycle; without them the graphs still show.
+  // Thresholds load in the same cycle as the header; without them the
+  // graphs still show.
   const load = useCallback(
     async (signal: AbortSignal) => {
       const thresholds = api.serverThresholds(id ?? "", signal).then(
@@ -55,12 +65,14 @@ export function ServerPage({ id }: { id: string | null }) {
         },
       );
       try {
-        const [{ servers }, lines] = await Promise.all([api.servers(signal), thresholds]);
-        const server = servers.find((s) => s.id === id?.toLowerCase()) ?? null;
+        const [server, lines] = await Promise.all([api.server(id ?? "", signal), thresholds]);
         setState((s) => ({ ...s, ...lines, server, updatedAt: new Date(), error: null }));
       } catch (e) {
-        // A 401 has already been routed to the login page.
-        if (!isAbortError(e) && !(e instanceof ApiError && e.status === 401)) {
+        if (isAbortError(e)) return;
+        if (e instanceof ApiError && e.status === 404) {
+          setState((s) => ({ ...s, server: null }));
+        } else if (!(e instanceof ApiError && e.status === 401)) {
+          // A 401 has already been routed to the login page.
           setState((s) => ({ ...s, error: describeError(e) }));
         }
       }
@@ -68,6 +80,9 @@ export function ServerPage({ id }: { id: string | null }) {
     [id],
   );
   usePolling(load, REFRESH_MS, valid);
+  // The sensor panel's configuration, for the graphs' steps.
+  const [sensors, setSensors] = useState<EffectiveSensor[]>();
+  const onSensors = useCallback((config: EffectiveSensors) => setSensors(config.sensors), []);
 
   const { server, updatedAt, error, thresholds, thresholdsError } = state;
   const referenceLines = useCallback(
@@ -110,13 +125,14 @@ export function ServerPage({ id }: { id: string | null }) {
       {thresholdsError && (
         <p className={styles.note}>Threshold lines are not shown: {thresholdsError}</p>
       )}
-      <ServerGraphs serverId={server.id} referenceLines={referenceLines} />
-      <SensorConfigPanel serverId={server.id} />
+      <ServerGraphs serverId={server.id} sensors={sensors} referenceLines={referenceLines} />
+      <SensorConfigPanel serverId={server.id} onLoad={onSensors} />
     </article>
   );
 }
 
-function ServerHeader({ server, now }: { server: Server; now: Date }) {
+function ServerHeader({ server, now }: { server: ServerDetail; now: Date }) {
+  const { certificate } = server;
   return (
     <header className={styles.header}>
       <p className={styles.crumbs}>
@@ -141,6 +157,19 @@ function ServerHeader({ server, now }: { server: Server; now: Date }) {
         <Fact term="Certificate ID">
           <code>{server.peer_id}</code>
         </Fact>
+        {certificate && (
+          <Fact term="Certificate expires">
+            <CertificateExpiry notAfter={certificate.not_after} now={now} />
+          </Fact>
+        )}
+        {certificate?.revoked && (
+          <Fact term="Certificate revoked">
+            <span className={styles.revoked}>
+              {certificate.revoked_at ? formatDateTime(certificate.revoked_at) : "Yes"}
+              {certificate.revocation_reason && ` (${certificate.revocation_reason})`}
+            </span>
+          </Fact>
+        )}
         <Fact term="Enrolled">{formatDateTime(server.created_at)}</Fact>
         {server.revoked_at && <Fact term="Revoked">{formatDateTime(server.revoked_at)}</Fact>}
       </dl>

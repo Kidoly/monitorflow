@@ -52,3 +52,8 @@
   border: 1px dashed var(--border);
   border-radius: var(--radius);
 }
+
+.revoked {
+  color: var(--critical);
+  font-weight: 600;
+}
