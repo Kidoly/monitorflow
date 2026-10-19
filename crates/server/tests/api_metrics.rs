@@ -257,6 +257,73 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn range_rollups_use_a_window_of_one_step_with_the_same_filters(pool: PgPool) {
+        let vm = FakeVm::start().await;
+        let [(paris, paris_server), (_, lyon_server)] = fleet(&pool).await;
+        let viewer = session(&pool, &vm, "viewer", None).await;
+        let range = "start=2026-10-12T00:00:00Z&end=2026-10-19T00:00:00Z&step=900";
+        let cases = [
+            (paris_server, "rollup=max", r#"max_over_time(monitorflow_cpu_usage_ratio{peer="agent-paris",site="paris"}[900s])"#),
+            (paris_server, "rollup=avg&instance=total&agg=max", r#"max(avg_over_time(monitorflow_cpu_usage_ratio{peer="agent-paris",site="paris",instance="total"}[900s]))"#),
+            (lyon_server, "rollup=min", r#"min_over_time(monitorflow_cpu_usage_ratio{peer="agent-lyon",site="o\"lyon"}[900s])"#),
+            (lyon_server, "rollup=last&agg=sum", r#"sum(last_over_time(monitorflow_cpu_usage_ratio{peer="agent-lyon",site="o\"lyon"}[900s]))"#),
+        ];
+        for (server, extra, query) in cases {
+            let uri = format!(
+                "/api/metrics/query_range?server_id={server}&metric=monitorflow_cpu_usage_ratio&{range}&{extra}"
+            );
+            let (status, body) = get(&pool, &vm, &viewer, &uri).await;
+            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+            assert_eq!(body["query"], query);
+        }
+        let seen = vm.seen();
+        assert_eq!(seen.len(), cases.len());
+        for (sent, (server, _, query)) in seen.iter().zip(cases) {
+            let (peer, site) = if server == paris_server {
+                ("peer=agent-paris", "site=paris")
+            } else {
+                ("peer=agent-lyon", "site=o\"lyon")
+            };
+            let mut params = sent.params.clone();
+            params.sort();
+            let expected: Vec<(String, String)> = [
+                ("end", "1792368000"),
+                ("extra_label", peer),
+                ("extra_label", site),
+                ("query", query),
+                ("start", "1791763200"),
+                ("step", "900"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+            assert_eq!(params, expected);
+        }
+
+        // Without a step, the window is the default step.
+        let uri = format!(
+            "/api/metrics/query_range?server_id={paris_server}&metric=monitorflow_cpu_usage_ratio\
+             &start=2026-10-19T00:00:00Z&end=2026-10-19T01:00:00Z&rollup=max"
+        );
+        let (status, body) = get(&pool, &vm, &viewer, &uri).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["query"],
+            r#"max_over_time(monitorflow_cpu_usage_ratio{peer="agent-paris",site="paris"}[5s])"#
+        );
+        assert_eq!(vm.seen().last().unwrap().param("step"), ["5"]);
+
+        // A Paris-only viewer still gets 404 on Lyon's server with a rollup.
+        let paris_viewer = session(&pool, &vm, "paris-only", Some(paris)).await;
+        let uri = format!(
+            "/api/metrics/query_range?server_id={lyon_server}&metric=monitorflow_cpu_usage_ratio&rollup=max"
+        );
+        let (status, _) = get(&pool, &vm, &paris_viewer, &uri).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(vm.seen().len(), cases.len() + 1);
+    }
+
+    #[sqlx::test]
     async fn instant_queries_escape_site_names(pool: PgPool) {
         let vm = FakeVm::start().await;
         let [_, (lyon, lyon_server)] = fleet(&pool).await;
@@ -292,6 +359,8 @@ db_tests! {
             (format!("{base}&metric=monitorflow_cpu%7Bpeer%3D%22x%22%7D"), "metric must be"),
             (format!("{base}&metric=monitorflow_cpu&query=up"), "unknown field `query`"),
             (format!("{base}&metric=monitorflow_cpu&agg=quantile"), "unknown variant"),
+            (format!("{base}&metric=monitorflow_cpu&rollup=sum"), "unknown variant"),
+            (format!("/api/metrics/query?server_id={paris_server}&metric=monitorflow_cpu&rollup=max"), "unknown field `rollup`"),
             (format!("{base}&metric=monitorflow_cpu&instance=a%0Ab"), "instance must be"),
             (format!("{base}&metric=monitorflow_cpu&start=2026-01-01T00:00:00Z&end=2026-03-01T00:00:00Z"), "at most 31 days"),
             (format!("{base}&metric=monitorflow_cpu&start=2026-01-01T00:00:00Z&end=2026-01-02T00:00:00Z&step=1"), "points"),
@@ -463,9 +532,25 @@ async fn real_victoriametrics_answers_scoped_queries(pool: PgPool) {
             assert_eq!(series.len(), 1, "{body}");
             assert_eq!(series[0]["labels"]["peer"], "agent-real");
             assert_eq!(series[0]["points"][0][1], 0.5);
-            return;
+            break;
         }
         assert!(tokio::time::Instant::now() < deadline, "series not found");
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+
+    // VictoriaMetrics accepts the rollup form and keeps the scoping.
+    let uri = format!(
+        "/api/metrics/query_range?server_id={server}&metric=monitorflow_api_test_ratio\
+         &step=60&rollup=max&agg=max"
+    );
+    let request = Request::get(&uri)
+        .header("cookie", &viewer)
+        .body(Body::empty())
+        .unwrap();
+    let (status, body, _) = send(router(), request).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let series = body["series"].as_array().unwrap();
+    assert_eq!(series.len(), 1, "{body}");
+    let points = series[0]["points"].as_array().unwrap();
+    assert!(points.iter().any(|p| p[1] == 0.5), "{body}");
 }

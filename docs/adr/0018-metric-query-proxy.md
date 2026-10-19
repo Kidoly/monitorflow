@@ -35,3 +35,23 @@ The web interface needs graphs, so the REST API must serve metrics from Victoria
 - Each query costs one indexed PostgreSQL lookup for the scope check before VictoriaMetrics is called.
 - Queries over several servers or sites need new structured forms; each must apply the same scope.
 - Instant queries at "now" see points older than VictoriaMetrics' latency offset (30 s by default), so the latest point of a graph can lag by that much.
+
+## Amendment 2026-10-19: rollups on range queries
+
+**Problem.** A range query evaluates the selector at each step, and each point is the last sample before it (within VictoriaMetrics' lookback). Over a week at a 15-minute step, a CPU spike lasting two minutes between two points is never drawn.
+
+**Decision.** `query_range` takes an optional `rollup`: `avg`, `max`, `min` or `last`. With it the builder wraps the selector in the matching `<fn>_over_time` function with a window of exactly one step, before any `agg`:
+
+```
+agg(max_over_time(<metric>{peer="…",site="…",instance="…"}[<step>s]))
+```
+
+- **Window = step.** The point at `t` summarizes the samples in `(t - step, t]`, so consecutive points tile the range: every sample counts in exactly one point, nothing is missed or counted twice. The window is written explicitly in seconds rather than left out (VictoriaMetrics alone accepts `max_over_time(m)` with an implicit window), so the query stays valid PromQL for any Prometheus-compatible store and the `query` field of the answer says exactly what ran.
+- **Rollup before aggregation.** The rollup works per series over time; `agg` then combines series at each point (`avg(max_over_time(…))`: the average across instances of each instance's peak). The reverse order would need a subquery, which the builder deliberately does not produce.
+- **Default unchanged.** Without `rollup` the query is the bare selector, as before. `last` differs from the default only in that a point with no sample in its own step is empty instead of repeating an older one.
+- **Fixed set.** Only these four functions, from a closed enum; nothing of the request reaches the query text except the already validated metric and instance, and the step, a number the handler bounded. Instant queries do not take `rollup` (400, unknown field).
+- **Filters unchanged.** The selector keeps its `peer` and `site` matchers, and `extra_label=peer=…` / `extra_label=site=…` are sent exactly as before; VictoriaMetrics adds them to the selector inside the function too.
+
+**Consequence.** A window shorter than the interval between samples (for instance `step=5` on a metric collected every 30 s) leaves points without a sample empty, which a chart draws as gaps. The web interface should send a rollup with steps at least as long as the collection interval, which is the case where it matters: long ranges.
+
+**Follow-up, not done here.** A batch endpoint returning several metrics of one server in one request (the server page sends about 16 per refresh). Each chart has its own instance, `agg` and `rollup`, and one failing metric should not fail the others, so it needs its own request and error shape rather than a loop over this one.

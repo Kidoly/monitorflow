@@ -107,8 +107,12 @@
 //! The query endpoints take `server_id`, `metric` (`monitorflow_` and a
 //! sensor metric name), optional `instance` and `agg` (`avg`, `min`,
 //! `max`, `sum`, `count`), then `time` for an instant query or `start`,
-//! `end` (RFC 3339, default the last hour) and `step` (seconds) for a
-//! range. The API builds the PromQL itself, scoped to that server's `peer`
+//! `end` (RFC 3339, default the last hour), `step` (seconds) and optional
+//! `rollup` (`avg`, `max`, `min`, `last`) for a range. With `rollup`, each
+//! point summarizes the samples of its series over the step before it
+//! (`max_over_time(…[<step>s])`), before `agg`, so long ranges keep
+//! spikes; without it, a point is the last sample before it. The API
+//! builds the PromQL itself, scoped to that server's `peer`
 //! and `site` (ADR-0018); arbitrary PromQL is not accepted. Ranges are at
 //! most 31 days and 11,000 points per series, answers at most 500 series;
 //! beyond that, 400. A server outside the user's sites is 404. Backend
