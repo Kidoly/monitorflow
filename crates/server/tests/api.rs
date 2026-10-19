@@ -447,4 +447,68 @@ db_tests! {
             .collect();
         assert_eq!(peers, ["agent-paris"]);
     }
+
+    #[sqlx::test]
+    async fn servers_are_paginated_with_cursors(pool: PgPool) {
+        let mut expected = Vec::new();
+        for (site, hosts) in [("lyon", ["db-1", "web-1"]), ("paris", ["app-1", "web-2"])] {
+            let site_id: Uuid = sqlx::query_scalar("INSERT INTO sites (name) VALUES ($1) RETURNING id")
+                .bind(site)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            for host in hosts {
+                let peer = format!("agent-{site}-{host}");
+                sqlx::query(
+                    "INSERT INTO servers (peer_id, site_id, hostname, os_family) VALUES ($1, $2, $3, 'rhel')",
+                )
+                .bind(&peer)
+                .bind(site_id)
+                .bind(host)
+                .execute(&pool)
+                .await
+                .unwrap();
+                expected.push(peer);
+            }
+        }
+        add_user(&pool, "alice", Role::Viewer).await;
+        let session = login(&pool, "alice").await;
+        let page = |uri: String| {
+            let pool = pool.clone();
+            let session = session.clone();
+            async move { call(app(pool), with_cookie("GET", &uri, &session)).await }
+        };
+
+        let (status, body) = page("/api/servers".into()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["servers"].as_array().unwrap().len(), 4);
+        assert_eq!(body["next_cursor"], serde_json::Value::Null);
+
+        let mut seen = Vec::new();
+        let mut uri = "/api/servers?limit=3".to_owned();
+        let mut pages = 0;
+        loop {
+            let (status, body) = page(uri.clone()).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            pages += 1;
+            seen.extend(
+                body["servers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|s| s["peer_id"].as_str().unwrap().to_owned()),
+            );
+            match body["next_cursor"].as_str() {
+                Some(cursor) => uri = format!("/api/servers?limit=3&cursor={cursor}"),
+                None => break,
+            }
+        }
+        assert_eq!(pages, 2);
+        assert_eq!(seen, expected);
+
+        for bad in ["limit=0", "limit=1001", "limit=x", "cursor=not!base64"] {
+            let (status, body) = page(format!("/api/servers?{bad}")).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+        }
+    }
 }

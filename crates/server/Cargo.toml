@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 monitorflow-common.workspace = true
 monitorflow-sensors.workspace = true
+base64.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true

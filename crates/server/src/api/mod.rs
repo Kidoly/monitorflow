@@ -97,8 +97,12 @@
 //!   "connected_at": "2026-10-18T12:00:00Z",
 //!   "last_heartbeat": "2026-10-18T12:05:00Z",
 //!   "via_relay": null
-//! }]}
+//! }], "next_cursor": null}
 //! ```
+//!
+//! Pages hold `limit` servers (1 to 1000, default 500); `next_cursor` is
+//! `null` on the last page, else the `cursor` to pass for the next one. A
+//! bad `limit` or `cursor` is 400.
 //!
 //! `status` is `online` while the agent has an open stream, else `offline`.
 //! Servers come from the database only; a connected agent without a row is
