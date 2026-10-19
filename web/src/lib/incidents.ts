@@ -60,3 +60,28 @@ export function incidentSeconds(openedAt: string, resolvedAt: string | null, now
   const end = resolvedAt ? Date.parse(resolvedAt) : now.getTime();
   return Math.max(0, Math.round((end - Date.parse(openedAt)) / 1000));
 }
+
+/** Steps for an incident's chart, the graphs' ones first (ADR-0020). */
+const CHART_STEPS = [30, 120, 300, 1_800, 3_600, 21_600];
+/** Most points in an incident's chart. */
+const MAX_POINTS = 360;
+
+/**
+ * The time range of an incident's chart, in unix seconds: from a margin
+ * before it opened (a quarter of its duration, at least 15 minutes) to as
+ * long after it resolved, or to now. The step keeps it to a few hundred
+ * points and the ends are aligned to it.
+ */
+export function incidentWindow(
+  openedAt: string,
+  resolvedAt: string | null,
+  now: Date,
+): { start: number; end: number; step: number } {
+  const opened = Date.parse(openedAt) / 1000;
+  const until = Math.max(opened, (resolvedAt ? Date.parse(resolvedAt) : now.getTime()) / 1000);
+  const margin = Math.max(900, (until - opened) / 4);
+  const from = opened - margin;
+  const to = resolvedAt ? Math.min(until + margin, now.getTime() / 1000) : until;
+  const step = CHART_STEPS.find((s) => (to - from) / s <= MAX_POINTS) ?? 86_400;
+  return { start: Math.floor(from / step) * step, end: Math.ceil(to / step) * step, step };
+}

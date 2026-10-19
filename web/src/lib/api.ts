@@ -213,6 +213,27 @@ export interface IncidentList {
   next_cursor: string | null;
 }
 
+export type IncidentEventKind = "opened" | "escalated" | "deescalated" | "resolved";
+
+/** One change of an incident, as the engine made it. */
+export interface IncidentEvent {
+  id: number;
+  kind: IncidentEventKind;
+  /** Severity after the change; null once resolved. */
+  severity: IncidentSeverity | null;
+  value: number | null;
+  /** Sample time, or the server clock without a sample. */
+  occurred_at: string;
+  recorded_at: string;
+  /** For instance `{"reason": "threshold_removed"}`. */
+  details: Record<string, unknown>;
+}
+
+/** `GET /api/incidents/{id}`: the incident and its events in the order they happened. */
+export interface IncidentDetail extends Incident {
+  events: IncidentEvent[];
+}
+
 /** Filters of `GET /api/incidents`; all optional. */
 export interface IncidentQuery {
   state?: IncidentState;
@@ -390,6 +411,9 @@ export const api = {
     const search = params.toString();
     return request<IncidentList>(search ? `/api/incidents?${search}` : "/api/incidents", { signal });
   },
+
+  incident: (id: string, signal?: AbortSignal) =>
+    request<IncidentDetail>(`/api/incidents/${encodeURIComponent(id)}`, { signal }),
 
   serverThresholds: (serverId: string, signal?: AbortSignal) =>
     request<EffectiveThresholds>(`/api/servers/${encodeURIComponent(serverId)}/thresholds/effective`, {

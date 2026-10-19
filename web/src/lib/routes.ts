@@ -10,3 +10,8 @@ export function incidentsHref(filters: Partial<IncidentFilters> = {}): string {
   const query = filtersToQuery({ ...NO_FILTERS, ...filters });
   return query ? `/incidents/?${query}` : "/incidents/";
 }
+
+/** Link to the page of the incident `id` (a query parameter, like servers). */
+export function incidentHref(id: string): string {
+  return `/incidents/view/?id=${encodeURIComponent(id)}`;
+}

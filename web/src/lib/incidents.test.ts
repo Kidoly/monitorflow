@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { NO_FILTERS, apiQuery, filtersFromQuery, filtersToQuery, incidentSeconds } from "./incidents";
+import { NO_FILTERS, apiQuery, filtersFromQuery, filtersToQuery, incidentSeconds, incidentWindow } from "./incidents";
 import { incidentsHref } from "./routes";
 
 const SITE = "0b8d2f6e-1c4a-4f7e-9d2b-3a5c6e7f8a90";
@@ -51,5 +51,33 @@ describe("incidentSeconds", () => {
 
   it("never goes negative when the agent's clock is ahead", () => {
     expect(incidentSeconds("2026-10-19T12:05:00Z", null, now)).toBe(0);
+  });
+});
+
+describe("incidentWindow", () => {
+  const now = new Date("2026-10-19T12:00:00Z");
+  const at = (iso: string) => Date.parse(iso) / 1000;
+
+  it("frames an open incident from a margin before it to now", () => {
+    expect(incidentWindow("2026-10-19T11:50:00Z", null, now)).toEqual({
+      start: at("2026-10-19T11:35:00Z"),
+      end: at("2026-10-19T12:00:00Z"),
+      step: 30,
+    });
+  });
+
+  it("frames a resolved incident with a margin on both sides", () => {
+    // 4 h long: a 1 h margin on each side, 6 h at 2 min steps.
+    expect(incidentWindow("2026-10-18T10:00:00Z", "2026-10-18T14:00:00Z", now)).toEqual({
+      start: at("2026-10-18T09:00:00Z"),
+      end: at("2026-10-18T15:00:00Z"),
+      step: 120,
+    });
+  });
+
+  it("keeps long incidents to a few hundred points", () => {
+    const { start, end, step } = incidentWindow("2026-09-19T12:00:00Z", null, now);
+    expect((end - start) / step).toBeLessThanOrEqual(360);
+    expect(start % step).toBe(0);
   });
 });

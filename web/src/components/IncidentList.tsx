@@ -8,7 +8,7 @@ import { ApiError, type Incident, type Server, type Site, api, describeError, is
 import { formatDateTime, formatRelative, formatSeconds, formatValue, unitOf } from "@/lib/format";
 import { type IncidentFilters, NO_FILTERS, apiQuery, filtersFromQuery, incidentSeconds } from "@/lib/incidents";
 import { metricTitle } from "@/lib/metrics";
-import { incidentsHref, serverHref } from "@/lib/routes";
+import { incidentHref, incidentsHref, serverHref } from "@/lib/routes";
 import { usePolling } from "@/lib/usePolling";
 
 import { REFRESH_MS } from "./FleetOverview";
@@ -236,8 +236,10 @@ function IncidentTable({ incidents, now }: { incidents: Incident[]; now: Date })
                   <span className={styles.muted}>{incident.site_name}</span>
                 </td>
                 <th scope="row">
-                  {metricTitle(incident.metric)}
-                  {incident.instance && <code className={styles.instance}>{incident.instance}</code>}
+                  <Link href={incidentHref(incident.id)}>
+                    {metricTitle(incident.metric)}
+                    {incident.instance && <code className={styles.instance}>{incident.instance}</code>}
+                  </Link>
                 </th>
                 <td>
                   <Time iso={incident.opened_at} now={now} />

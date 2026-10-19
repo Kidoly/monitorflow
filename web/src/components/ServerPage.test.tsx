@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { type Server, setUnauthorizedHandler } from "@/lib/api";
 import { stubFetch } from "@/test/fetch";
+import { incident } from "@/test/incidents";
 
 import { ServerPage } from "./ServerPage";
 
@@ -27,6 +28,8 @@ const web1: Server = {
   open_incidents: 0,
 };
 
+const openIncidents = `GET /api/incidents?state=open&server_id=${ID}&limit=10`;
+const noIncidents = { status: 200, body: { incidents: [], next_cursor: null } };
 const noThresholds = { status: 200, body: { server_id: ID, site_id: "site-1", revision: 1, thresholds: [] } };
 
 describe("ServerPage", () => {
@@ -39,6 +42,10 @@ describe("ServerPage", () => {
         body: { revision: 1, applied_revision: 1, applied_at: null, in_sync: true, sensors: [] },
       },
       [`GET /api/servers/${ID}/thresholds/effective`]: noThresholds,
+      [openIncidents]: {
+        status: 200,
+        body: { incidents: [incident({ server_id: ID })], next_cursor: null },
+      },
     });
     render(<ServerPage id={ID} />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading server…");
@@ -54,6 +61,14 @@ describe("ServerPage", () => {
     expect(await screen.findByRole("heading", { level: 2, name: "Metrics" })).toBeInTheDocument();
     expect(await screen.findByText(/No metrics yet/)).toBeInTheDocument();
     expect(await screen.findByText(/In sync/)).toBeInTheDocument();
+    const incidents = screen.getByRole("region", { name: "Open incidents" });
+    const link = await within(incidents).findByRole("link", { name: "Disk used /var" });
+    expect(link).toHaveAttribute("href", expect.stringMatching(/^\/incidents\/view\/?\?id=1d6a9a3e-/));
+    expect(within(incidents).getByRole("listitem")).toHaveTextContent(/◆ Critical\s*Disk used \/var\s*96\.2%/);
+    expect(within(incidents).getByRole("link", { name: "Incident history" })).toHaveAttribute(
+      "href",
+      expect.stringMatching(new RegExp(`^/incidents/?\\?server=${ID}$`)),
+    );
   });
 
   it("draws the effective thresholds on the graphs", async () => {
@@ -66,6 +81,7 @@ describe("ServerPage", () => {
         body: { metrics: [{ name: disk, instances: ["/", "/boot"] }], truncated: false },
       },
       [`GET /api/servers/${ID}/sensors`]: { status: 500, body: { error: "internal error" } },
+      [openIncidents]: noIncidents,
       [`GET /api/servers/${ID}/thresholds/effective`]: {
         status: 200,
         body: {
@@ -97,6 +113,7 @@ describe("ServerPage", () => {
       "GET /api/servers": { status: 200, body: { servers: [web1], next_cursor: null } },
       [`GET /api/servers/${ID}/metrics`]: { status: 200, body: { metrics: [], truncated: false } },
       [`GET /api/servers/${ID}/sensors`]: { status: 500, body: { error: "internal error" } },
+      [openIncidents]: noIncidents,
       [`GET /api/servers/${ID}/thresholds/effective`]: { status: 500, body: { error: "internal error" } },
     });
     render(<ServerPage id={ID} />);
