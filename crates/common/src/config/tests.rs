@@ -65,6 +65,12 @@ fn defaults_apply() {
     let relay: RelayConfig = parse(AGENT_MIN).unwrap();
     assert_eq!(relay.listen_addr, "0.0.0.0:7443".parse().unwrap());
     assert_eq!(relay.data_dir, Path::new("/var/lib/monitorflow/relay"));
+    assert_eq!(relay.heartbeat_interval, 30);
+    assert_eq!(relay.enroll_url(), "https://relay:7445");
+    assert_eq!(
+        relay.tls_paths().cert,
+        Path::new("/var/lib/monitorflow/relay/tls/cert.pem")
+    );
 
     let server: ServerConfig = parse(SERVER_MIN).unwrap();
     assert_eq!(server.grpc_listen_addr.port(), 7443);

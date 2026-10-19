@@ -16,7 +16,7 @@ use monitorflow_server::crl::{self, CrlPublisher};
 use monitorflow_server::db;
 use monitorflow_server::enroll::{self, server_cert, token, Enroller, FailureLimiter};
 use monitorflow_server::grpc::{
-    self, AgentStreamService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
+    self, AgentStreamService, CrlService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
 };
 use monitorflow_server::ingest::{Ingest, JsonLines, RemoteWrite, Writer, WriterSettings};
 use monitorflow_server::renew::Renewer;
@@ -77,6 +77,10 @@ struct CreateToken {
     /// Validity, like 90s, 15m, 1h or 7d (at most 7d).
     #[arg(long, default_value = "1h", value_parser = token::parse_ttl)]
     ttl: Duration,
+    /// For a relay: a DNS name or IP address its agents connect to. Repeat
+    /// for several; they go in the relay's certificate (ADR-0025).
+    #[arg(long = "server-name", value_name = "NAME")]
+    server_names: Vec<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -210,11 +214,12 @@ async fn main() -> anyhow::Result<()> {
     );
     let served = tokio::try_join!(
         async {
-            grpc::serve_with_renewer(
+            grpc::serve_all(
                 listener,
                 tls_config,
                 service,
                 Some(renewer),
+                Some(CrlService::new(crl.subscribe())),
                 until_stopped(),
             )
             .await
@@ -309,6 +314,7 @@ async fn create_token(config: &ServerConfig, args: CreateToken) -> anyhow::Resul
         site_id,
         ttl: args.ttl,
         creator: token::Creator::Cli,
+        server_names: args.server_names,
     };
     let created = token::create(&pool, enroll::ca_fingerprint(&ca), &request).await?;
     println!("{}", created.token.to_secret_string().expose());
