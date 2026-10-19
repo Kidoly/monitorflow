@@ -149,6 +149,17 @@ impl CurrentUser {
     pub fn modifiable_sites(&self) -> Scope {
         self.access.sites(Role::can_modify)
     }
+
+    /// Customers granted to the user as a whole, by any role. Customers of
+    /// readable sites are visible too; see `customers::list`.
+    pub fn visible_customers(&self) -> Scope {
+        self.access.customers(|_| true)
+    }
+
+    /// Customers the user administers as a whole, where it may add sites.
+    pub fn administered_customers(&self) -> Scope {
+        self.access.customers(|role| role == Role::Administrator)
+    }
 }
 
 /// The site `site` if the user may read it (and change it, with

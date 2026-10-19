@@ -9,7 +9,8 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use monitorflow_common::redact::Secret;
 use monitorflow_server::api::auth::CSRF_HEADER;
-use monitorflow_server::api::users;
+use monitorflow_server::api::customers::{self, TenancyError};
+use monitorflow_server::api::users::{self, GrantScope};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::db;
 use monitorflow_server::grpc::Registry;
@@ -166,9 +167,14 @@ db_tests! {
             .fetch_one(&pool)
             .await
             .unwrap();
-        users::create_user(&pool, "alice", &Secret::new(PASSWORD), Role::Viewer, "test")
-            .await
-            .unwrap();
+        // As the code of that release wrote grants.
+        sqlx::raw_sql(
+            "INSERT INTO users (username, password_hash) VALUES ('alice', '$argon2id$x');
+             INSERT INTO user_roles (user_id, role) SELECT id, 'viewer' FROM users;",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         db::migrate(&pool).await.unwrap();
         let (id, name): (Uuid, String) = sqlx::query_as("SELECT id, name FROM customers")
@@ -260,5 +266,133 @@ db_tests! {
         assert_eq!((status, hostnames(&body).len()), (StatusCode::OK, 0));
         let (status, body) = call(&pool, &empty, "GET", "/api/sites", Value::Null).await;
         assert_eq!((status, body["sites"].as_array().unwrap().len()), (StatusCode::OK, 0));
+    }
+
+    #[sqlx::test]
+    async fn customers_list_what_the_user_reads(pool: PgPool) {
+        let acme = customer(&pool, "acme").await;
+        let globex = customer(&pool, "globex").await;
+        let (paris, _) = site(&pool, acme, "paris").await;
+        site(&pool, acme, "lyon").await;
+        site(&pool, globex, "berlin").await;
+        let names = |body: &Value| -> Vec<(String, i64)> {
+            body["customers"].as_array().unwrap().iter()
+                .map(|c| (c["name"].as_str().unwrap().to_owned(), c["site_count"].as_i64().unwrap()))
+                .collect()
+        };
+
+        let admin = session(&pool, "admin", Role::Administrator, (None, None)).await;
+        let (status, body) = call(&pool, &admin, "GET", "/api/customers", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(names(&body), [("acme".into(), 2), ("default".into(), 0), ("globex".into(), 1)]);
+
+        let by_customer = session(&pool, "c", Role::Viewer, (Some(acme), None)).await;
+        let (_, body) = call(&pool, &by_customer, "GET", "/api/customers", Value::Null).await;
+        assert_eq!(names(&body), [("acme".to_owned(), 2)]);
+        // A site grant shows its customer, counting only that site.
+        let by_site = session(&pool, "s", Role::Viewer, (None, Some(paris))).await;
+        let (_, body) = call(&pool, &by_site, "GET", "/api/customers", Value::Null).await;
+        assert_eq!(names(&body), [("acme".to_owned(), 1)]);
+
+        // Listings carry the customer.
+        let (_, body) = call(&pool, &by_site, "GET", "/api/sites", Value::Null).await;
+        assert_eq!(body["sites"][0]["customer_id"], json!(acme));
+        assert_eq!(body["sites"][0]["customer_name"], "acme");
+        let (_, body) = call(&pool, &by_site, "GET", "/api/servers", Value::Null).await;
+        assert_eq!(body["servers"][0]["customer_name"], "acme");
+        let id = body["servers"][0]["id"].as_str().unwrap().to_owned();
+        let (_, body) = call(&pool, &by_site, "GET", &format!("/api/servers/{id}"), Value::Null).await;
+        assert_eq!(body["customer_id"], json!(acme));
+    }
+
+    #[sqlx::test]
+    async fn administrators_create_customers_and_sites(pool: PgPool) {
+        let acme = customer(&pool, "acme").await;
+        let globex = customer(&pool, "globex").await;
+        let admin = session(&pool, "admin", Role::Administrator, (None, None)).await;
+        let acme_admin = session(&pool, "acme-admin", Role::Administrator, (Some(acme), None)).await;
+        let acme_operator = session(&pool, "acme-op", Role::Operator, (Some(acme), None)).await;
+
+        let (status, body) = call(&pool, &admin, "POST", "/api/customers", json!({ "name": "initech" })).await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!((body["name"].as_str(), body["site_count"].as_i64()), (Some("initech"), Some(0)));
+        let (status, _) = call(&pool, &admin, "POST", "/api/customers", json!({ "name": "initech" })).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, _) = call(&pool, &admin, "POST", "/api/customers", json!({ "name": " x" })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _) = call(&pool, &acme_admin, "POST", "/api/customers", json!({ "name": "y" })).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let sites = |id: Uuid| format!("/api/customers/{id}/sites");
+        let (status, body) = call(&pool, &acme_admin, "POST", &sites(acme), json!({ "name": "paris" })).await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!((body["customer_id"].clone(), body["server_count"].clone()), (json!(acme), json!(0)));
+        // Site names are unique across customers.
+        let (status, _) = call(&pool, &admin, "POST", &sites(globex), json!({ "name": "paris" })).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, _) = call(&pool, &acme_admin, "POST", &sites(globex), json!({ "name": "berlin" })).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = call(&pool, &acme_operator, "POST", &sites(acme), json!({ "name": "lyon" })).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = call(&pool, &admin, "POST", "/api/customers/nope/sites", json!({ "name": "z" })).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let actions: Vec<String> = sqlx::query_scalar(
+            "SELECT action FROM audit_log WHERE action LIKE 'customer.%' OR action LIKE 'site.%' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(actions, ["customer.create", "site.create"]);
+    }
+
+    #[sqlx::test]
+    async fn cli_helpers_scope_grants_and_token_sites(pool: PgPool) {
+        let acme = customers::create_customer(&pool, "acme", ("system", "cli")).await.unwrap();
+        let globex = customers::create_customer(&pool, "globex", ("system", "cli")).await.unwrap();
+        assert!(matches!(
+            customers::create_customer(&pool, "acme", ("system", "cli")).await,
+            Err(TenancyError::AlreadyExists("customer"))
+        ));
+        assert_eq!(customers::customer_id(&pool, "acme").await.unwrap(), Some(acme));
+
+        // `token create --customer acme --site paris [--create-site]`.
+        assert_eq!(customers::site_of_customer(&pool, "paris", acme, false).await.unwrap(), None);
+        let paris = customers::site_of_customer(&pool, "paris", acme, true).await.unwrap().unwrap();
+        assert_eq!(customers::site_of_customer(&pool, "paris", acme, true).await.unwrap(), Some(paris));
+        assert!(matches!(
+            customers::site_of_customer(&pool, "paris", globex, true).await,
+            Err(TenancyError::OtherCustomer(_))
+        ));
+        let listed: Vec<(String, i64)> = customers::list_all(&pool).await.unwrap()
+            .into_iter().map(|c| (c.name, c.site_count)).collect();
+        assert_eq!(listed, [("acme".into(), 1), ("default".into(), 0), ("globex".into(), 0)]);
+
+        let id = users::create_user_with(
+            &pool, "alice", &Secret::new(PASSWORD), Role::Viewer, GrantScope::Customer(acme), "cli",
+        )
+        .await
+        .unwrap();
+        assert_eq!(users::user_id(&pool, "ALICE").await.unwrap(), Some(id));
+        assert!(users::grant(&pool, id, Role::Operator, GrantScope::Site(paris), "cli").await.unwrap());
+        assert!(!users::grant(&pool, id, Role::Operator, GrantScope::Site(paris), "cli").await.unwrap());
+        let grants: Vec<(String, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
+            "SELECT role, customer_id, site_id FROM user_roles WHERE user_id = $1 ORDER BY role",
+        )
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(grants, [("operator".into(), None, Some(paris)), ("viewer".into(), Some(acme), None)]);
+        let details: Vec<Value> = sqlx::query_scalar(
+            "SELECT details FROM audit_log WHERE action IN ('user.create', 'user.grant') ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(details, [
+            json!({ "username": "alice", "role": "viewer", "customer_id": acme }),
+            json!({ "role": "operator", "site_id": paris }),
+        ]);
     }
 }

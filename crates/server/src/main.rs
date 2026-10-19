@@ -10,7 +10,8 @@ use monitorflow_common::logging;
 use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::{Identity, PeerRole};
 use monitorflow_server::alerting::{AlertStore, Alerts, EngineSettings, LogNotifier};
-use monitorflow_server::api::{self, users, ApiSettings, ApiState, Role};
+use monitorflow_server::api::users::GrantScope;
+use monitorflow_server::api::{self, customers, users, ApiSettings, ApiState, Role};
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
 use monitorflow_server::crl::{self, CrlPublisher};
 use monitorflow_server::db;
@@ -52,6 +53,34 @@ enum Command {
     /// Manage enrollment tokens.
     #[command(subcommand)]
     Token(TokenCommand),
+    /// Manage customers (ADR-0026).
+    #[command(subcommand)]
+    Customer(CustomerCommand),
+}
+
+#[derive(Subcommand, Debug)]
+enum CustomerCommand {
+    /// Create a customer.
+    Add {
+        #[arg(long)]
+        name: String,
+    },
+    /// List customers with their number of sites.
+    List,
+}
+
+/// Where a role applies; global without either flag.
+#[derive(Args, Debug)]
+struct GrantArgs {
+    /// viewer, operator, approver or administrator (alias: admin).
+    #[arg(long, value_parser = parse_role)]
+    role: Role,
+    /// Grant on this customer and all its sites.
+    #[arg(long, conflicts_with = "site")]
+    customer: Option<String>,
+    /// Grant on this site only.
+    #[arg(long)]
+    site: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -74,6 +103,10 @@ struct CreateToken {
     /// Create the site if it does not exist.
     #[arg(long)]
     create_site: bool,
+    /// Customer of the site; with --create-site, the customer it is
+    /// created under. Defaults to the site's own customer, or `default`.
+    #[arg(long)]
+    customer: Option<String>,
     /// Validity, like 90s, 15m, 1h or 7d (at most 7d).
     #[arg(long, default_value = "1h", value_parser = token::parse_ttl)]
     ttl: Duration,
@@ -81,14 +114,21 @@ struct CreateToken {
 
 #[derive(Subcommand, Debug)]
 enum UserCommand {
-    /// Create a user with a global role. The password is read from the
-    /// terminal, or from the first line of stdin when it is not a terminal.
+    /// Create a user with one role, global unless --customer or --site.
+    /// The password is read from the terminal, or from the first line of
+    /// stdin when it is not a terminal.
     Add {
         #[arg(long)]
         username: String,
-        /// viewer, operator, approver or administrator (alias: admin).
-        #[arg(long, value_parser = parse_role)]
-        role: Role,
+        #[command(flatten)]
+        grant: GrantArgs,
+    },
+    /// Grant one more role to an existing user.
+    Grant {
+        #[arg(long)]
+        username: String,
+        #[command(flatten)]
+        grant: GrantArgs,
     },
 }
 
@@ -107,7 +147,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Token(TokenCommand::Create(args))) => {
             return create_token(&config, args).await
         }
-        Some(Command::User { .. }) | None => {}
+        Some(Command::User { .. } | Command::Customer(_)) | None => {}
     }
     logging::init(&config.log);
     tracing::info!(config = %cli.config.display(), protocol = monitorflow_common::PROTOCOL_VERSION, "starting server");
@@ -117,11 +157,10 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::connect(&config.database_url).await?;
     db::migrate(&pool).await?;
 
-    if let Some(Command::User {
-        command: UserCommand::Add { username, role },
-    }) = cli.command
-    {
-        return add_user(&pool, &username, role).await;
+    match cli.command {
+        Some(Command::User { command }) => return user_command(&pool, command).await,
+        Some(Command::Customer(command)) => return customer_command(&pool, command).await,
+        Some(Command::Token(_)) | None => {}
     }
 
     let ca = Arc::new(open_ca(&config).await?);
@@ -252,11 +291,65 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn add_user(pool: &sqlx::PgPool, username: &str, role: Role) -> anyhow::Result<()> {
-    users::validate_username(username)?;
-    let password = tokio::task::spawn_blocking(read_password).await??;
-    let id = users::create_user(pool, username, &password, role, "cli").await?;
-    println!("created user {username} ({id}) with role {role}");
+async fn user_command(pool: &sqlx::PgPool, command: UserCommand) -> anyhow::Result<()> {
+    match command {
+        UserCommand::Add { username, grant } => {
+            users::validate_username(&username)?;
+            let scope = grant_scope(pool, &grant).await?;
+            let password = tokio::task::spawn_blocking(read_password).await??;
+            let id = users::create_user_with(pool, &username, &password, grant.role, scope, "cli")
+                .await?;
+            println!("created user {username} ({id}) with role {}", grant.role);
+        }
+        UserCommand::Grant { username, grant } => {
+            let id = users::user_id(pool, &username)
+                .await?
+                .with_context(|| format!("user `{username}` does not exist"))?;
+            let scope = grant_scope(pool, &grant).await?;
+            if users::grant(pool, id, grant.role, scope, "cli").await? {
+                println!("granted {} to {username}", grant.role);
+            } else {
+                println!("{username} already has this grant");
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn grant_scope(pool: &sqlx::PgPool, grant: &GrantArgs) -> anyhow::Result<GrantScope> {
+    if let Some(name) = &grant.customer {
+        return Ok(GrantScope::Customer(customer_id(pool, name).await?));
+    }
+    if let Some(name) = &grant.site {
+        let site = token::site_id(pool, name, false)
+            .await?
+            .with_context(|| format!("site `{name}` does not exist"))?;
+        return Ok(GrantScope::Site(site));
+    }
+    Ok(GrantScope::Global)
+}
+
+async fn customer_id(pool: &sqlx::PgPool, name: &str) -> anyhow::Result<uuid::Uuid> {
+    customers::customer_id(pool, name)
+        .await?
+        .with_context(|| format!("customer `{name}` does not exist; create it with `customer add`"))
+}
+
+async fn customer_command(pool: &sqlx::PgPool, command: CustomerCommand) -> anyhow::Result<()> {
+    match command {
+        CustomerCommand::Add { name } => {
+            let id = customers::create_customer(pool, &name, ("system", "cli")).await?;
+            println!("created customer {name} ({id})");
+        }
+        CustomerCommand::List => {
+            for customer in customers::list_all(pool).await? {
+                println!(
+                    "{}\t{}\t{} sites",
+                    customer.id, customer.name, customer.site_count
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -290,14 +383,19 @@ async fn create_token(config: &ServerConfig, args: CreateToken) -> anyhow::Resul
     let ca = open_ca(config).await?;
     let pool = db::connect(&config.database_url).await?;
     db::migrate(&pool).await?;
-    let site_id = token::site_id(&pool, &args.site, args.create_site)
-        .await?
-        .with_context(|| {
-            format!(
-                "site `{}` does not exist; pass --create-site to create it",
-                args.site
-            )
-        })?;
+    let site_id = match &args.customer {
+        Some(name) => {
+            let customer = customer_id(&pool, name).await?;
+            customers::site_of_customer(&pool, &args.site, customer, args.create_site).await?
+        }
+        None => token::site_id(&pool, &args.site, args.create_site).await?,
+    };
+    let site_id = site_id.with_context(|| {
+        format!(
+            "site `{}` does not exist; pass --create-site to create it",
+            args.site
+        )
+    })?;
     let role = if args.role == "relay" {
         PeerRole::Relay
     } else {
