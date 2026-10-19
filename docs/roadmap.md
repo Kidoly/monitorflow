@@ -24,7 +24,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [ ] Sensors: systemd service, port, log pattern, custom script (one task each).
 - [x] Agent: sensor configuration pushed from the server, sample batching and upload.
 - [x] Server: write samples to VictoriaMetrics (remote write) and logs to VictoriaLogs.
-- [ ] Server: threshold engine with warning/critical and duration; incidents table.
+- [x] Server: threshold engine with warning/critical and duration; incidents table.
 - [ ] API: sensors, thresholds, incidents, metric query proxy.
 - [x] Web: Next.js project, auth, fleet overview.
 - [ ] Web: server page with graphs and threshold lines.
