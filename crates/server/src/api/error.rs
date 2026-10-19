@@ -34,6 +34,12 @@ pub enum ApiError {
     /// A state-changing request without the CSRF header, or cross-site.
     #[error("cross-site request rejected")]
     CrossSite,
+    /// VictoriaMetrics is unreachable, failing or not configured; the
+    /// message is logged, not returned.
+    #[error("metrics backend unavailable")]
+    MetricsUnavailable(String),
+    #[error("metrics backend timed out")]
+    MetricsTimeout,
     #[error("internal error")]
     Database(#[from] sqlx::Error),
     /// Any other server-side failure; the message is logged, not returned.
@@ -49,6 +55,8 @@ impl ApiError {
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Unauthorized | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::Forbidden | Self::CrossSite => StatusCode::FORBIDDEN,
+            Self::MetricsUnavailable(_) => StatusCode::BAD_GATEWAY,
+            Self::MetricsTimeout => StatusCode::GATEWAY_TIMEOUT,
             Self::Database(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -59,6 +67,8 @@ impl IntoResponse for ApiError {
         match &self {
             Self::Database(error) => tracing::error!(%error, "API request failed"),
             Self::Internal(error) => tracing::error!(%error, "API request failed"),
+            Self::MetricsUnavailable(error) => tracing::warn!(%error, "metric query failed"),
+            Self::MetricsTimeout => tracing::warn!("metric query timed out"),
             _ => {}
         }
         (self.status(), Json(json!({ "error": self.to_string() }))).into_response()

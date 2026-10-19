@@ -20,6 +20,7 @@ use monitorflow_server::grpc::{
 use monitorflow_server::ingest::{Ingest, JsonLines, RemoteWrite, Writer, WriterSettings};
 use monitorflow_server::renew::Renewer;
 use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
+use monitorflow_server::vm_query::VmQuery;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch;
@@ -169,7 +170,10 @@ async fn main() -> anyhow::Result<()> {
         metrics: Some(metrics.queue()),
         events: Some(events.queue()),
     });
-    let api_state = ApiState::new(pool.clone(), registry, ApiSettings::from_config(&config));
+    let api_state = ApiState::new(pool.clone(), registry, ApiSettings::from_config(&config))
+        .with_metrics(
+            VmQuery::new(&config.victoriametrics_url).context("VictoriaMetrics query client")?,
+        );
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
