@@ -3,8 +3,10 @@
 //! the stream and the sensors task, and the copy kept in `data_dir`.
 //!
 //! A spec that cannot run (unknown kind, invalid name or interval, bad
-//! parameters, duplicate) is reported in the acknowledgement; the others
-//! run. Nothing here can stop the agent.
+//! parameters, duplicate, refused by this host) is reported in the
+//! acknowledgement; the others run. Sensors are wrapped so that a
+//! permanent error, which stops them (ADR-0012), is reported too. Nothing
+//! here can stop the agent.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,7 +16,9 @@ use std::time::Duration;
 use monitorflow_common::config::AgentSensorsConfig;
 use monitorflow_common::proto::v1::{SensorConfig, SensorConfigAck, SensorSpec, SensorSpecError};
 use monitorflow_sensors::registry::Local;
-use monitorflow_sensors::{self as sensors, Scheduler, SchedulerOptions, Sensor};
+use monitorflow_sensors::{
+    self as sensors, Sample, Scheduler, SchedulerOptions, Sensor, SensorError,
+};
 use prost::Message;
 use tokio::sync::{mpsc, watch};
 
@@ -29,9 +33,22 @@ const ACK_QUEUE: usize = 8;
 pub enum FactoryError {
     #[error("unknown sensor kind `{0}`")]
     UnknownKind(String),
+    /// Valid, but not allowed or not possible on this host, which can
+    /// change: a script installed later (ADR-0024).
+    #[error("{0}")]
+    Refused(String),
     /// The kind exists but refuses this configuration, like a bad param.
     #[error("{0}")]
     Invalid(String),
+}
+
+impl FactoryError {
+    fn down_kind(&self) -> DownKind {
+        match self {
+            Self::Refused(_) => DownKind::Refused,
+            Self::UnknownKind(_) | Self::Invalid(_) => DownKind::Invalid,
+        }
+    }
 }
 
 /// Builds sensor implementations by kind. The agent uses [`Builtin`];
@@ -79,6 +96,9 @@ impl SensorFactory for Builtin {
         sensors::registry::build_local(kind, &config.params, &self.local).map_err(|error| {
             match error {
                 sensors::BuildError::UnknownKind(kind) => FactoryError::UnknownKind(kind),
+                refused @ sensors::BuildError::Refused { .. } => {
+                    FactoryError::Refused(refused.to_string())
+                }
                 other => FactoryError::Invalid(other.to_string()),
             }
         })
@@ -96,39 +116,146 @@ pub fn sensor_config(spec: &SensorSpec) -> sensors::SensorConfig {
     }
 }
 
-/// A scheduler for the specs that can run, and why the others cannot.
+/// Why a spec of the configuration is not running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownKind {
+    /// Invalid on any host (name, interval, kind, parameters, duplicate):
+    /// trying again cannot help.
+    Invalid,
+    /// Refused by this host's limits, which can change.
+    Refused,
+    /// Started, then stopped by a permanent error.
+    Failed,
+}
+
+/// A spec that is not running, and why.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Down {
+    pub spec: SensorSpec,
+    pub kind: DownKind,
+    pub message: String,
+}
+
+impl Down {
+    fn new(spec: &SensorSpec, kind: DownKind, message: String) -> Self {
+        Self {
+            spec: spec.clone(),
+            kind,
+            message,
+        }
+    }
+
+    /// The factory's refusal of `spec`.
+    pub fn refused(spec: &SensorSpec, error: FactoryError) -> Self {
+        Self::new(spec, error.down_kind(), error.to_string())
+    }
+
+    /// `spec` stopped by the permanent error `message`.
+    pub fn failed(spec: &SensorSpec, message: &str) -> Self {
+        Self::new(
+            spec,
+            DownKind::Failed,
+            format!("stopped by a permanent error: {message}"),
+        )
+    }
+
+    /// Whether the host may now accept it.
+    pub fn retryable(&self) -> bool {
+        self.kind != DownKind::Invalid
+    }
+
+    /// As reported in the acknowledgement.
+    pub fn error(&self) -> SensorSpecError {
+        SensorSpecError {
+            name: self.spec.name.clone(),
+            instance: self.spec.instance.clone(),
+            message: self.message.clone(),
+        }
+    }
+}
+
+/// A permanent error of a running sensor, after which the scheduler stops
+/// it: the spec's name and instance, and the error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failure {
+    pub name: String,
+    pub instance: String,
+    pub message: String,
+}
+
+/// Where [`watch`]ed sensors report their [`Failure`]. Unbounded, but each
+/// sensor reports at most once, since it stops right after.
+pub type Failures = mpsc::UnboundedSender<Failure>;
+
+/// `sensor`, reporting its permanent errors to `failures`.
+pub fn watch(
+    sensor: Arc<dyn Sensor>,
+    config: &sensors::SensorConfig,
+    failures: &Failures,
+) -> Arc<dyn Sensor> {
+    Arc::new(Watched {
+        sensor,
+        name: config.name.clone(),
+        instance: config.instance.clone(),
+        failures: failures.clone(),
+    })
+}
+
+struct Watched {
+    sensor: Arc<dyn Sensor>,
+    name: String,
+    instance: String,
+    failures: Failures,
+}
+
+#[async_trait::async_trait]
+impl Sensor for Watched {
+    async fn collect(&self, deadline: tokio::time::Instant) -> Result<Vec<Sample>, SensorError> {
+        let result = self.sensor.collect(deadline).await;
+        if let Err(error @ SensorError::Permanent(_)) = &result {
+            // Closed only once the configuration was replaced.
+            let _ = self.failures.send(Failure {
+                name: self.name.clone(),
+                instance: self.instance.clone(),
+                message: error.to_string(),
+            });
+        }
+        result
+    }
+}
+
+/// A scheduler for the specs that can run, reporting permanent errors to
+/// `failures`, and why the others cannot.
 pub fn build(
     config: &SensorConfig,
     factory: &dyn SensorFactory,
     options: SchedulerOptions,
-) -> (Scheduler, Vec<SensorSpecError>) {
+    failures: &Failures,
+) -> (Scheduler, Vec<Down>) {
     let mut scheduler = Scheduler::new(options);
-    let mut errors = Vec::new();
+    let mut down = Vec::new();
     for spec in &config.sensors {
         let sensor_config = sensor_config(spec);
         // Validate before the factory sees it; `add` checks duplicates.
         let added = sensor_config
             .validate()
-            .map_err(|e| e.to_string())
+            .map_err(|e| (DownKind::Invalid, e.to_string()))
             .and_then(|()| {
                 factory
                     .build(&spec.kind, &sensor_config)
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| (e.down_kind(), e.to_string()))
             })
             .and_then(|sensor| {
+                let sensor = watch(sensor, &sensor_config, failures);
                 scheduler
                     .add(sensor_config, sensor)
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| (DownKind::Invalid, e.to_string()))
             });
-        if let Err(message) = added {
-            errors.push(SensorSpecError {
-                name: spec.name.clone(),
-                instance: spec.instance.clone(),
-                message,
-            });
+        if let Err((kind, message)) = added {
+            down.push(Down::new(spec, kind, message));
         }
     }
-    (scheduler, errors)
+    (scheduler, down)
 }
 
 /// The stream's side: configurations go down, acknowledgements come up.
@@ -267,13 +394,15 @@ mod tests {
                 spec("fake", "good", 20_000),
             ],
         };
-        let (scheduler, errors) = build(&config, &Fakes, SchedulerOptions::default());
+        let (failures, _) = mpsc::unbounded_channel();
+        let (scheduler, errors) = build(&config, &Fakes, SchedulerOptions::default(), &failures);
         assert_eq!(scheduler.len(), 1);
-        let refused: Vec<_> = errors.iter().map(|e| e.name.as_str()).collect();
+        let refused: Vec<_> = errors.iter().map(|e| e.spec.name.as_str()).collect();
         assert_eq!(
             refused,
             ["cpu", "Bad-Name", "too_fast", "bad_param", "good"]
         );
+        assert!(errors.iter().all(|e| e.kind == DownKind::Invalid));
         assert!(
             errors[0].message.contains("unknown sensor kind `cpu`"),
             "{errors:?}"
@@ -317,7 +446,7 @@ mod tests {
         missing.params.insert("script".into(), "missing".into());
         let error = builtin.build("script", &missing).err().unwrap();
         assert!(
-            matches!(&error, FactoryError::Invalid(m) if m.contains("refused by this agent") && m.contains("not installed")),
+            matches!(&error, FactoryError::Refused(m) if m.contains("refused by this agent") && m.contains("not installed")),
             "{error}"
         );
         let builtin = Builtin::default();
@@ -331,6 +460,46 @@ mod tests {
             matches!(&error, FactoryError::Invalid(m) if m.contains("per_cores")),
             "{error}"
         );
+    }
+
+    #[test]
+    fn only_host_refusals_and_failures_are_retried() {
+        let spec = spec("script", "backup", 60_000);
+        let refused = Down::refused(&spec, FactoryError::Refused("not installed".into()));
+        assert_eq!(refused.kind, DownKind::Refused);
+        assert!(refused.retryable());
+        let invalid = Down::refused(&spec, FactoryError::Invalid("bad".into()));
+        assert!(!invalid.retryable());
+        assert!(!Down::refused(&spec, FactoryError::UnknownKind("x".into())).retryable());
+        let failed = Down::failed(&spec, "gone");
+        assert!(failed.retryable());
+        assert_eq!(failed.error().message, "stopped by a permanent error: gone");
+        assert_eq!(failed.error().name, "backup");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn watched_sensors_report_permanent_errors_only() {
+        use monitorflow_sensors::testing::Step;
+        let (failures, mut reported) = mpsc::unbounded_channel();
+        let mut config = sensors::SensorConfig::new("flaky", Duration::from_secs(10));
+        config.instance = "a".into();
+        let fake = FakeSensor::new()
+            .on_call(0, Step::Fail(SensorError::Transient("busy".into())))
+            .on_call(1, Step::Fail(SensorError::Permanent("gone".into())));
+        let sensor = watch(Arc::new(fake), &config, &failures);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        assert!(sensor.collect(deadline).await.is_err());
+        assert!(reported.try_recv().is_err());
+        assert!(sensor.collect(deadline).await.is_err());
+        assert_eq!(
+            reported.try_recv().unwrap(),
+            Failure {
+                name: "flaky".into(),
+                instance: "a".into(),
+                message: "gone".into()
+            }
+        );
+        assert_eq!(sensor.collect(deadline).await.unwrap().len(), 1);
     }
 
     #[tokio::test]
