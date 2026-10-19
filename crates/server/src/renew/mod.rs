@@ -19,6 +19,7 @@ use monitorflow_common::proto::v1::certificate_service_server::{
 };
 use monitorflow_common::proto::v1::{ForwardedRenewRequest, RenewRequest, RenewResponse};
 use monitorflow_common::tls::{PeerIdentity, PeerRole};
+use monitorflow_common::via::Via;
 use rcgen::CertificateSigningRequestParams;
 use rustls::pki_types::CertificateDer;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -173,14 +174,16 @@ impl Renewer {
     }
 
     /// [`Self::renew`] for the peer whose certificate `relay` forwards
-    /// (ADR-0028). The certificate must be one this CA issued, valid now,
-    /// and the relay must be allowed to speak for its peer by the relay
-    /// policy (ADR-0004): only agents of the relay's own site. Everything
-    /// else, rate limit included, applies to the peer as if it had called
-    /// directly.
+    /// (ADR-0028), along `via` when it came through chained relays. The
+    /// certificate must be one this CA issued, valid now, and the origin of
+    /// `via`; the relay policy must allow the path to speak for its peer
+    /// ([`crate::db::relay_route_allowed`]): agents of the attached relay's
+    /// site, or a child relay. Everything else, rate limit included,
+    /// applies to the peer as if it had called directly.
     pub async fn renew_forwarded(
         &self,
         relay: &PeerIdentity,
+        via: Option<&Via>,
         peer_cert: &CertificateDer<'_>,
         csr_pem: &str,
     ) -> Result<Renewed, RenewError> {
@@ -193,17 +196,25 @@ impl Renewer {
         }
         let presented = PresentedCert::from_der(peer_cert).map_err(RenewError::Refused)?;
         let peer = &presented.identity;
-        let allowed = match peer.role() {
-            PeerRole::Agent => crate::db::relay_may_speak_for(&self.pool, relay.id(), peer.id())
-                .await
-                .map_err(|e| RenewError::Internal(e.to_string()))?,
-            PeerRole::Relay | PeerRole::Server => false,
-        };
+        if via.is_some_and(|via| via.origin_peer() != peer) {
+            return refused(format!(
+                "the forwarded certificate is not {peer}'s path origin"
+            ));
+        }
+        let relays: Vec<&str> = std::iter::once(relay.id())
+            .chain(
+                via.into_iter()
+                    .flat_map(|via| via.relays().rev().map(PeerIdentity::id)),
+            )
+            .collect();
+        let allowed = crate::db::relay_route_allowed(&self.pool, &relays, peer)
+            .await
+            .map_err(|e| RenewError::Internal(e.to_string()))?;
         if !allowed {
             return refused(format!("{relay} may not renew for {peer}"));
         }
-        self.issue_renewal(&presented, csr_pem, Some(relay.id()))
-            .await
+        let attached = relays.last().copied();
+        self.issue_renewal(&presented, csr_pem, attached).await
     }
 
     /// The checks of ADR-0010 and the issuance, for `presented` as seen by
@@ -349,9 +360,11 @@ impl CertificateService for Renewer {
         request: Request<ForwardedRenewRequest>,
     ) -> Result<Response<RenewResponse>, Status> {
         let relay = monitorflow_common::tls::peer_identity(&request)?;
+        let via = Via::from_metadata(request.metadata())?;
         let request = request.into_inner();
         let cert = CertificateDer::from(request.peer_cert_der);
-        let result = Renewer::renew_forwarded(self, &relay, &cert, &request.csr_pem).await;
+        let result =
+            Renewer::renew_forwarded(self, &relay, via.as_ref(), &cert, &request.csr_pem).await;
         self.respond(&relay, result)
     }
 }

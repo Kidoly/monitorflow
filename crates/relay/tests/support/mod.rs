@@ -16,10 +16,11 @@ use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{Envelope, Hello};
 use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::{self, Identity, PeerIdentity, PeerRole};
+use monitorflow_common::via::Via;
 use monitorflow_common::PROTOCOL_VERSION;
 use monitorflow_relay::control::{Control, ControlSettings};
 use monitorflow_relay::forward::{ForwardSettings, Forwarder};
-use monitorflow_relay::listener::{self, CrlSettings, TlsPublisher};
+use monitorflow_relay::listener::{self, CrlCache, CrlSettings, Services, TlsPublisher};
 use monitorflow_relay::renew::{RenewProxy, RenewSettings};
 use monitorflow_server::ca::{CaOptions, CertificateAuthority, Serial, ServerName};
 use monitorflow_server::crl::CrlPublisher;
@@ -157,6 +158,57 @@ pub async fn enroll_as(
     site: &str,
     server_names: Vec<String>,
 ) -> StoredIdentity {
+    let token = Token {
+        role,
+        id,
+        site,
+        server_names,
+        parent_relay: None,
+    };
+    enroll_with(pki, pool, enroll_url, token).await
+}
+
+/// What a test token enrolls.
+pub struct Token<'a> {
+    pub role: PeerRole,
+    pub id: &'a str,
+    pub site: &'a str,
+    pub server_names: Vec<String>,
+    pub parent_relay: Option<&'a str>,
+}
+
+/// A relay for `localhost` in `site` whose parent is `parent`.
+pub async fn enroll_relay(
+    pki: &Pki,
+    pool: &PgPool,
+    enroll_url: &str,
+    id: &str,
+    site: &str,
+    parent: Option<&str>,
+) -> StoredIdentity {
+    let token = Token {
+        role: PeerRole::Relay,
+        id,
+        site,
+        server_names: vec!["localhost".into()],
+        parent_relay: parent,
+    };
+    enroll_with(pki, pool, enroll_url, token).await
+}
+
+pub async fn enroll_with(
+    pki: &Pki,
+    pool: &PgPool,
+    enroll_url: &str,
+    token: Token<'_>,
+) -> StoredIdentity {
+    let Token {
+        role,
+        id,
+        site,
+        server_names,
+        parent_relay,
+    } = token;
     let site_id = token::site_id(pool, site, true).await.unwrap().unwrap();
     let request = TokenRequest {
         role,
@@ -165,6 +217,7 @@ pub async fn enroll_as(
         ttl: token::DEFAULT_TTL,
         creator: Creator::Cli,
         server_names,
+        parent_relay: parent_relay.map(Into::into),
     };
     let created = token::create(pool, enroll::ca_fingerprint(&pki.ca), &request)
         .await
@@ -289,6 +342,7 @@ impl Relay {
         .await
         .unwrap()
         .unwrap();
+        let crl = CrlCache::new(publisher.crl());
         tokio::spawn(publisher.run(stop.clone()));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = url(&listener);
@@ -302,13 +356,14 @@ impl Relay {
             up.clone(),
         );
         let mut stopped = stop;
-        tokio::spawn(listener::serve(
-            listener,
-            tls,
+        let services = Services {
             forwarder,
             renew,
-            async move { stopped.wait().await },
-        ));
+            crl,
+        };
+        tokio::spawn(listener::serve(listener, tls, services, async move {
+            stopped.wait().await
+        }));
         Self {
             url,
             up,
@@ -362,6 +417,16 @@ pub async fn open(
     agent: &StoredIdentity,
     first: Envelope,
 ) -> Result<AgentStream, Box<Status>> {
+    open_via(url, agent, first, None).await
+}
+
+/// [`open`], sending `via` as a relay would (ADR-0028).
+pub async fn open_via(
+    url: &str,
+    agent: &StoredIdentity,
+    first: Envelope,
+    via: Option<Via>,
+) -> Result<AgentStream, Box<Status>> {
     let config = agent.tls.client_config().unwrap();
     let channel = match tls::connect(url, config, TIMEOUT).await {
         Ok(channel) => channel,
@@ -370,7 +435,11 @@ pub async fn open(
     let (tx, rx) = mpsc::channel(8);
     tx.send(first).await.unwrap();
     let mut client = AgentServiceClient::new(channel);
-    let call = client.stream(ReceiverStream::new(rx));
+    let mut request = tonic::Request::new(ReceiverStream::new(rx));
+    if let Some(via) = via {
+        via.insert_into(request.metadata_mut());
+    }
+    let call = client.stream(request);
     let response = tokio::time::timeout(TIMEOUT, call)
         .await
         .expect("no answer in time")

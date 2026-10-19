@@ -80,6 +80,7 @@ impl Pki {
             ttl: token::DEFAULT_TTL,
             creator: Creator::Cli,
             server_names: Vec::new(),
+            parent_relay: None,
         };
         let created = token::create(pool, self.fingerprint(), &request)
             .await

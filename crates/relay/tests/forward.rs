@@ -98,12 +98,12 @@ async fn the_relay_checks_roles_and_the_hello() {
         .err()
         .expect("web-01 may not say it is web-02");
     assert_eq!(status.code(), Code::PermissionDenied, "{status}");
-    let status = open(&relay.url, &pki.relay("lyon-1"), hello("lyon-1"))
+    // A downstream relay without a path speaks only for itself.
+    let status = open(&relay.url, &pki.relay("lyon-1"), hello("web-01"))
         .await
         .err()
-        .expect("no relay chaining yet");
+        .expect("lyon-1 may not say it is web-01");
     assert_eq!(status.code(), Code::PermissionDenied, "{status}");
-    assert!(status.message().contains("chaining"), "{status}");
     let status = open(
         &relay.url,
         &pki.agent("web-01"),

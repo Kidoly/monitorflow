@@ -7,6 +7,10 @@
 //! listener verified against the CA and the CRL; nothing in the request
 //! says who the agent is. The upstream applies the relay policy, the rate
 //! limit and every check of ADR-0010 to that agent.
+//!
+//! Downstream relays renew here too, for themselves with `Renew` or for
+//! what is below them with `RenewForwarded`; the relay passes those on
+//! with the path of the call (ADR-0028), like streams.
 
 // Every check here ends as the `Status` tonic returns by value.
 #![allow(clippy::result_large_err)]
@@ -21,6 +25,7 @@ use monitorflow_common::proto::v1::certificate_service_server::{
 };
 use monitorflow_common::proto::v1::{ForwardedRenewRequest, RenewRequest, RenewResponse};
 use monitorflow_common::tls::{self, PeerIdentity, PeerRole};
+use monitorflow_common::via::Via;
 use tokio::sync::watch;
 use tonic::{Request, Response, Status};
 
@@ -72,6 +77,7 @@ impl RenewProxy {
     async fn forward(
         &self,
         peer: &PeerIdentity,
+        via: Via,
         request: ForwardedRenewRequest,
     ) -> Result<RenewResponse, Status> {
         let url = &self.settings.upstream_url;
@@ -89,6 +95,8 @@ impl RenewProxy {
             .await
             .map_err(|e| unavailable(tls::error_chain(&e)))?;
         let mut client = CertificateServiceClient::new(channel);
+        let mut request = Request::new(request);
+        via.insert_into(request.metadata_mut());
         let call = client.renew_forwarded(request);
         match tokio::time::timeout(self.settings.call_timeout, call).await {
             Err(_) => Err(unavailable("no answer in time".into())),
@@ -105,13 +113,11 @@ impl RenewProxy {
     }
 }
 
-/// Only agents renew through the relay; the upstream decides which.
+/// Agents and downstream relays renew through the relay; the upstream
+/// decides which.
 pub fn check_peer(peer: &PeerIdentity) -> Result<(), Status> {
     match peer.role() {
-        PeerRole::Agent => Ok(()),
-        PeerRole::Relay => Err(Status::permission_denied(
-            "relay chaining is not supported yet",
-        )),
+        PeerRole::Agent | PeerRole::Relay => Ok(()),
         PeerRole::Server => Err(Status::permission_denied(
             "role server may not renew through a relay",
         )),
@@ -137,18 +143,28 @@ impl CertificateService for RenewProxy {
             csr_pem: request.into_inner().csr_pem,
             peer_cert_der: leaf.to_vec(),
         };
-        self.forward(&peer, forwarded).await.map(Response::new)
+        let via = Via::origin(peer.clone());
+        self.forward(&peer, via, forwarded).await.map(Response::new)
     }
 
+    /// A downstream relay's forwarded renewal: passed on with the path it
+    /// sent plus that relay. The upstream checks the certificate is the
+    /// path's origin.
     async fn renew_forwarded(
         &self,
         request: Request<ForwardedRenewRequest>,
     ) -> Result<Response<RenewResponse>, Status> {
         let peer = tls::peer_identity(&request)?;
-        tracing::warn!(%peer, "forwarded renewal refused: relay chaining is not supported yet");
-        Err(Status::permission_denied(
-            "relay chaining is not supported yet",
-        ))
+        if peer.role() != PeerRole::Relay {
+            tracing::warn!(%peer, "forwarded renewal refused: not a relay");
+            return Err(Status::permission_denied(format!(
+                "{peer} may not forward renewals"
+            )));
+        }
+        let via = Via::extend(Via::from_metadata(request.metadata())?, &peer)?;
+        self.forward(&peer, via, request.into_inner())
+            .await
+            .map(Response::new)
     }
 }
 
@@ -159,15 +175,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_agents_renew_through_the_relay() {
-        let agent = PeerIdentity::new(PeerRole::Agent, "web-01").unwrap();
-        assert!(check_peer(&agent).is_ok());
-        for role in [PeerRole::Relay, PeerRole::Server] {
-            let peer = PeerIdentity::new(role, "x").unwrap();
-            assert_eq!(
-                check_peer(&peer).unwrap_err().code(),
-                Code::PermissionDenied
-            );
+    fn agents_and_relays_renew_through_the_relay() {
+        for role in [PeerRole::Agent, PeerRole::Relay] {
+            assert!(check_peer(&PeerIdentity::new(role, "x").unwrap()).is_ok());
         }
+        let server = PeerIdentity::new(PeerRole::Server, "x").unwrap();
+        assert_eq!(
+            check_peer(&server).unwrap_err().code(),
+            Code::PermissionDenied
+        );
     }
 }
