@@ -25,6 +25,12 @@ impl Role {
             Self::Administrator => "administrator",
         }
     }
+
+    /// Operators and the roles above them may change configuration; viewers
+    /// only read.
+    pub fn can_modify(self) -> bool {
+        self >= Self::Operator
+    }
 }
 
 impl fmt::Display for Role {
@@ -56,6 +62,13 @@ pub struct RoleGrant {
     pub site_id: Option<Uuid>,
 }
 
+impl RoleGrant {
+    /// Whether the grant applies to `site`: a global grant covers them all.
+    pub fn covers(&self, site: Uuid) -> bool {
+        self.site_id.is_none_or(|id| id == site)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,5 +88,7 @@ mod tests {
             );
         }
         assert!("admin".parse::<Role>().is_err());
+        assert!(!Role::Viewer.can_modify());
+        assert!(Role::Operator.can_modify() && Role::Administrator.can_modify());
     }
 }

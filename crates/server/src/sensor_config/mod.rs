@@ -121,7 +121,7 @@ impl Resolved {
 /// A JSON object of scalars as string parameters: strings as they are,
 /// numbers and booleans in their JSON form. The schema refuses nested
 /// values; any that slip through are passed as JSON text.
-fn params(value: serde_json::Value) -> BTreeMap<String, String> {
+pub(crate) fn params(value: serde_json::Value) -> BTreeMap<String, String> {
     let serde_json::Value::Object(map) = value else {
         return BTreeMap::new();
     };

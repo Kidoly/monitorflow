@@ -27,7 +27,7 @@ Agents run sensors (ADR-0012) but had no way to know which ones. Operators manag
 
 ## Consequences
 
-- Until the sensors API exists, operators edit `sensor_configs` with SQL; the schema rejects invalid rows.
+- Operators edit `sensor_configs` through the REST API, which checks rows with the agent's registry; the schema still rejects invalid rows written with SQL.
 - Every configuration change costs a full resend to the servers concerned; at a few dozen sensors per server this is small.
 - A relay gets no configuration for itself. Agents behind a relay get theirs through it once relays route envelopes per agent.
 - `sensor_configs` rows are deleted with their site or server. Moving a server between sites, when it exists, must bump its revision.

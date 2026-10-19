@@ -20,6 +20,13 @@
 //! | POST | `/api/auth/logout` | session | 204, clears the cookie |
 //! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "site_id"}]}` |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
+//! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
+//! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
+//! | POST | `/api/servers/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
+//! | GET | `/api/sites/{id}/sensor_configs` | read | [`sensors::EntryList`] of the site's rows |
+//! | POST | `/api/sites/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
+//! | PUT | `/api/sensor_configs/{id}` | modify | body [`sensors::EntryRequest`], replaces the row; 200 [`sensors::Entry`] |
+//! | DELETE | `/api/sensor_configs/{id}` | modify | 204 |
 //!
 //! # Authentication
 //!
@@ -38,6 +45,23 @@
 //! Every role (viewer, operator, approver, administrator) can read the sites
 //! it is granted on; a grant with a null `site_id` covers every site. A user
 //! without any role gets 403 on data routes.
+//!
+//! "read" routes need a role covering the site of the resource, "modify"
+//! routes an operator role or above on it. A site or server outside the
+//! user's sites is 404, as if it did not exist; one the user reads but may
+//! not change is 403.
+//!
+//! # Sensor configuration
+//!
+//! Site and server rows of `sensor_configs` (ADR-0016). A body is
+//! `{"kind", "name"?, "instance"?, "interval_ms", "timeout_ms"?, "params"?,
+//! "enabled"?}`: `name` defaults to the kind, `params` is a flat object of
+//! strings, numbers and booleans. Rows are checked with the agent's rules
+//! and sensor registry; an invalid one is 400 with `{"error"}` saying why,
+//! a second row with the same name and instance for one owner 409. Every
+//! change is audited (`sensor_config.create`, `.update`, `.delete`,
+//! parameter names only) and bumps the revision, so agents get it at the
+//! next poll.
 //!
 //! # `GET /api/servers`
 //!
@@ -64,6 +88,7 @@ mod error;
 mod health;
 pub mod password;
 pub mod roles;
+pub mod sensors;
 pub mod servers;
 pub mod session;
 pub mod users;
@@ -74,7 +99,7 @@ use std::time::Duration;
 
 use axum::extract::DefaultBodyLimit;
 use axum::middleware;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::Router;
 use monitorflow_common::config::ServerConfig;
 use sqlx::PgPool;
@@ -142,6 +167,19 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
         .route("/api/servers", get(servers::list))
+        .route("/api/servers/{id}/sensors", get(sensors::effective))
+        .route(
+            "/api/servers/{id}/sensor_configs",
+            get(sensors::list_server).post(sensors::create_server),
+        )
+        .route(
+            "/api/sites/{id}/sensor_configs",
+            get(sensors::list_site).post(sensors::create_site),
+        )
+        .route(
+            "/api/sensor_configs/{id}",
+            put(sensors::update).delete(sensors::delete),
+        )
         .fallback(not_found)
         .layer(middleware::from_fn(auth::csrf_guard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
