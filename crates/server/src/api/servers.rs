@@ -15,7 +15,8 @@ use monitorflow_common::tls::PeerRole;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::auth::{CurrentUser, SiteScope};
+use super::access::authorize;
+use super::auth::CurrentUser;
 use super::sensors::parse_id;
 use super::{ApiError, ApiState};
 use crate::ca::Serial;
@@ -187,11 +188,10 @@ pub async fn list(
     params: Result<Query<ListParams>, QueryRejection>,
 ) -> Result<Json<ServerList>, ApiError> {
     let Query(params) = params.map_err(|r| ApiError::Invalid(r.body_text()))?;
-    let (all_sites, sites) = match user.readable_sites() {
-        SiteScope::None => return Err(ApiError::Forbidden),
-        SiteScope::All => (true, Vec::new()),
-        SiteScope::Sites(sites) => (false, sites),
-    };
+    if !user.can_read() {
+        return Err(ApiError::Forbidden);
+    }
+    let (all_sites, sites) = user.readable_sites().bind();
     let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
     if !(1..=MAX_LIMIT).contains(&limit) {
         return Err(ApiError::Invalid(format!(
@@ -246,16 +246,12 @@ pub async fn detail(
     Path(id): Path<String>,
 ) -> Result<Json<ServerDetail>, ApiError> {
     let id = parse_id(&id)?;
-    if !user.can_read() {
-        return Err(ApiError::Forbidden);
-    }
     let row: Option<Row> = sqlx::query_as(&format!("{SELECT_SERVERS} WHERE s.id = $1"))
         .bind(id)
         .fetch_optional(&state.pool)
         .await?;
-    let row = row
-        .filter(|row| user.can_read_site(row.site_id))
-        .ok_or(ApiError::NotFound)?;
+    authorize(&user, row.as_ref().map(|r| r.site_id), false)?;
+    let row = row.ok_or(ApiError::NotFound)?;
     // Newest first on the per-peer issued_at index.
     let certificate: Option<CertificateRow> = sqlx::query_as(
         "SELECT serial, not_before, not_after, issued_at, revoked_at, revocation_reason

@@ -55,18 +55,14 @@ impl FromStr for Role {
     }
 }
 
-/// A role granted globally (`site_id` null) or on one site.
+/// A role granted globally (both IDs null), on one customer and all its
+/// sites (`customer_id`), or on one site (`site_id`). Which sites that
+/// means is resolved by [`super::access::Access`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RoleGrant {
     pub role: Role,
+    pub customer_id: Option<Uuid>,
     pub site_id: Option<Uuid>,
-}
-
-impl RoleGrant {
-    /// Whether the grant applies to `site`: a global grant covers them all.
-    pub fn covers(&self, site: Uuid) -> bool {
-        self.site_id.is_none_or(|id| id == site)
-    }
 }
 
 #[cfg(test)]

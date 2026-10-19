@@ -6,7 +6,7 @@ use axum::Json;
 use serde::Serialize;
 use uuid::Uuid;
 
-use super::auth::{CurrentUser, SiteScope};
+use super::auth::CurrentUser;
 use super::{ApiError, ApiState};
 
 /// One site.
@@ -29,11 +29,10 @@ pub async fn list(
     State(state): State<ApiState>,
     user: CurrentUser,
 ) -> Result<Json<SiteList>, ApiError> {
-    let (all_sites, sites) = match user.readable_sites() {
-        SiteScope::None => return Err(ApiError::Forbidden),
-        SiteScope::All => (true, Vec::new()),
-        SiteScope::Sites(sites) => (false, sites),
-    };
+    if !user.can_read() {
+        return Err(ApiError::Forbidden);
+    }
+    let (all_sites, sites) = user.readable_sites().bind();
     let sites = sqlx::query_as(
         "SELECT si.id, si.name, count(s.id) AS server_count
          FROM sites si LEFT JOIN servers s ON s.site_id = si.id

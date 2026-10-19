@@ -19,12 +19,12 @@ use serde_json::{json, Value};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
+use super::access::authorize;
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::metrics::check_metric;
 use super::sensors::{
-    authorize, body, parse_id, Origin, Owner, CHECK_VIOLATION, FOREIGN_KEY_VIOLATION,
-    UNIQUE_VIOLATION,
+    body, parse_id, Origin, Owner, CHECK_VIOLATION, FOREIGN_KEY_VIOLATION, UNIQUE_VIOLATION,
 };
 use super::{ApiError, ApiState};
 use crate::alerting::rules::{self, Comparison, Rule};

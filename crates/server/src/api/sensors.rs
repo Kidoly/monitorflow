@@ -19,6 +19,7 @@ use serde_json::{json, Map, Value};
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
+use super::access::authorize;
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::{ApiError, ApiState};
@@ -202,26 +203,6 @@ pub(super) fn parse_id(id: &str) -> Result<Uuid, ApiError> {
 pub(super) fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
     body.map(|Json(b)| b)
         .map_err(|rejection| ApiError::Invalid(rejection.body_text()))
-}
-
-/// The site `site` if the user may read it (and change it, with
-/// `modify`). Unreadable or missing gives 404, readable but not
-/// changeable 403.
-pub(super) fn authorize(
-    user: &CurrentUser,
-    site: Option<Uuid>,
-    modify: bool,
-) -> Result<Uuid, ApiError> {
-    if !user.can_read() {
-        return Err(ApiError::Forbidden);
-    }
-    let site = site
-        .filter(|s| user.can_read_site(*s))
-        .ok_or(ApiError::NotFound)?;
-    if modify && !user.can_modify_site(site) {
-        return Err(ApiError::Forbidden);
-    }
-    Ok(site)
 }
 
 async fn site_exists(pool: &PgPool, site: Uuid) -> Result<Option<Uuid>, sqlx::Error> {

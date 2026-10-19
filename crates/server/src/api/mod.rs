@@ -18,7 +18,7 @@
 //! | GET | `/api/health/ready` | none | `{"status": "ready"}`, or 503 `{"status": "unavailable"}` when PostgreSQL is unreachable |
 //! | POST | `/api/auth/login` | none | body `{"username", "password"}`; 200 [`Me`] and the session cookie, or 401 |
 //! | POST | `/api/auth/logout` | session | 204, clears the cookie |
-//! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "site_id"}]}` |
+//! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}]}` |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
 //! | GET | `/api/servers/{id}` | read | [`ServerDetail`]: one listing row plus `certificate`, see below |
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
@@ -57,8 +57,10 @@
 //! # Authorization
 //!
 //! Every role (viewer, operator, approver, administrator) can read the sites
-//! it is granted on; a grant with a null `site_id` covers every site. A user
-//! without any role gets 403 on data routes.
+//! it is granted on. A grant is global (`customer_id` and `site_id` null),
+//! on one customer and every site it has, or on one site (ADR-0026). A user
+//! without any role gets 403 on data routes. Grants are resolved to sites in
+//! [`access`] only; handlers never inspect them.
 //!
 //! "read" routes need a role covering the site of the resource, "modify"
 //! routes an operator role or above on it. A site or server outside the
@@ -167,6 +169,7 @@
 //!
 //! A server outside the user's sites, or an ID that is not a UUID, is 404.
 
+pub mod access;
 pub(crate) mod audit;
 pub mod auth;
 mod error;

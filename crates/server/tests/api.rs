@@ -127,7 +127,7 @@ db_tests! {
         let expected = json!({
             "id": id,
             "username": "Admin",
-            "roles": [{ "role": "administrator", "site_id": null }],
+            "roles": [{ "role": "administrator", "customer_id": null, "site_id": null }],
         });
         assert_eq!(body, expected);
         let cookie = cookie.unwrap();

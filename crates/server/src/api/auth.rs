@@ -14,6 +14,7 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::access::Access;
 use super::audit::{self, Event};
 use super::roles::RoleGrant;
 use super::session::{self, SessionToken};
@@ -31,50 +32,21 @@ pub struct CurrentUser {
     pub id: Uuid,
     pub username: String,
     pub roles: Vec<RoleGrant>,
+    /// `roles` resolved to sites; see [`super::access`].
+    pub(super) access: Access,
     session: SessionToken,
 }
 
-/// Sites whose data a user may read.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SiteScope {
-    /// No role at all.
-    None,
-    /// At least one global role.
-    All,
-    /// Only site-scoped roles, on these sites.
-    Sites(Vec<Uuid>),
-}
-
 impl CurrentUser {
-    /// Every role includes read access to the sites it covers.
-    pub fn can_read(&self) -> bool {
-        !self.roles.is_empty()
-    }
-
-    pub fn readable_sites(&self) -> SiteScope {
-        if self.roles.is_empty() {
-            return SiteScope::None;
+    #[cfg(test)]
+    pub(super) fn for_tests(access: Access) -> Self {
+        Self {
+            id: Uuid::nil(),
+            username: "u".into(),
+            roles: Vec::new(),
+            access,
+            session: SessionToken::for_tests(),
         }
-        if self.roles.iter().any(|grant| grant.site_id.is_none()) {
-            return SiteScope::All;
-        }
-        let mut sites: Vec<Uuid> = self.roles.iter().filter_map(|g| g.site_id).collect();
-        sites.sort();
-        sites.dedup();
-        SiteScope::Sites(sites)
-    }
-
-    /// Whether any role covers `site`.
-    pub fn can_read_site(&self, site: Uuid) -> bool {
-        self.roles.iter().any(|g| g.covers(site))
-    }
-
-    /// Whether a role that may change configuration (operator or above)
-    /// covers `site`.
-    pub fn can_modify_site(&self, site: Uuid) -> bool {
-        self.roles
-            .iter()
-            .any(|g| g.role.can_modify() && g.covers(site))
     }
 }
 
@@ -101,26 +73,33 @@ async fn load_user(
         .fetch_optional(pool)
         .await?
         .ok_or(ApiError::Unauthorized)?;
-    let rows: Vec<(String, Option<Uuid>)> = sqlx::query_as(
-        "SELECT role, site_id FROM user_roles WHERE user_id = $1 ORDER BY role, site_id",
+    let rows: Vec<(String, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
+        "SELECT role, customer_id, site_id FROM user_roles
+         WHERE user_id = $1 ORDER BY role, customer_id, site_id",
     )
     .bind(id)
     .fetch_all(pool)
     .await?;
-    let roles = rows
+    let roles: Vec<RoleGrant> = rows
         .into_iter()
-        .filter_map(|(role, site_id)| match role.parse() {
-            Ok(role) => Some(RoleGrant { role, site_id }),
+        .filter_map(|(role, customer_id, site_id)| match role.parse() {
+            Ok(role) => Some(RoleGrant {
+                role,
+                customer_id,
+                site_id,
+            }),
             Err(error) => {
                 tracing::warn!(user = %id, %error, "ignoring unknown role");
                 None
             }
         })
         .collect();
+    let access = Access::load(pool, &roles).await?;
     Ok(CurrentUser {
         id,
         username,
         roles,
+        access,
         session,
     })
 }
@@ -275,56 +254,4 @@ pub async fn logout(
 /// `GET /api/auth/me`.
 pub async fn me(user: CurrentUser) -> Json<Me> {
     Json(Me::from(&user))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::api::Role;
-
-    fn user(roles: &[(Role, Option<Uuid>)]) -> CurrentUser {
-        CurrentUser {
-            id: Uuid::nil(),
-            username: "u".into(),
-            roles: roles
-                .iter()
-                .map(|&(role, site_id)| RoleGrant { role, site_id })
-                .collect(),
-            session: SessionToken::for_tests(),
-        }
-    }
-
-    #[test]
-    fn readable_sites_follow_role_grants() {
-        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
-        assert_eq!(user(&[]).readable_sites(), SiteScope::None);
-        assert!(!user(&[]).can_read());
-        assert_eq!(
-            user(&[(Role::Viewer, Some(b)), (Role::Operator, None)]).readable_sites(),
-            SiteScope::All
-        );
-        assert_eq!(
-            user(&[
-                (Role::Operator, Some(b)),
-                (Role::Viewer, Some(a)),
-                (Role::Viewer, Some(b))
-            ])
-            .readable_sites(),
-            SiteScope::Sites(vec![a, b])
-        );
-    }
-
-    #[test]
-    fn site_checks_follow_role_grants() {
-        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
-        let viewer = user(&[(Role::Viewer, Some(a))]);
-        assert!(viewer.can_read_site(a) && !viewer.can_read_site(b));
-        assert!(!viewer.can_modify_site(a));
-        let operator = user(&[(Role::Viewer, None), (Role::Operator, Some(b))]);
-        assert!(operator.can_read_site(a) && !operator.can_modify_site(a));
-        assert!(operator.can_modify_site(b));
-        let admin = user(&[(Role::Administrator, None)]);
-        assert!(admin.can_modify_site(a) && admin.can_modify_site(b));
-        assert!(!user(&[]).can_read_site(a));
-    }
 }

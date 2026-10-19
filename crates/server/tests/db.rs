@@ -141,6 +141,7 @@ db_tests! {
                 "alert_states",
                 "audit_log",
                 "certificates",
+                "customers",
                 "enrollment_tokens",
                 "incident_events",
                 "incidents",
