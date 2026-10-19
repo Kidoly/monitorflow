@@ -279,14 +279,6 @@ impl Default for TlsPaths {
     }
 }
 
-impl TlsPaths {
-    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
-        env.set("tls.ca_cert", &mut self.ca_cert)?;
-        env.set("tls.cert", &mut self.cert)?;
-        env.set("tls.key", &mut self.key)
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
@@ -411,22 +403,49 @@ impl LogConfig {
     }
 }
 
-/// Agent identity files. Unset paths default to files under
-/// `<data_dir>/tls/`, where enrollment writes them; see
-/// [`AgentConfig::tls_paths`].
+/// Identity files of a peer that owns them. Unset paths default to files
+/// under `<data_dir>/tls/`, where enrollment (or the server's built-in CA,
+/// ADR-0007) writes them; see [`Self::resolve`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct AgentTlsPaths {
+pub struct DataDirTlsPaths {
     pub ca_cert: Option<PathBuf>,
     pub cert: Option<PathBuf>,
     pub key: Option<PathBuf>,
 }
 
-impl AgentTlsPaths {
+pub type AgentTlsPaths = DataDirTlsPaths;
+pub type RelayTlsPaths = DataDirTlsPaths;
+pub type ServerTlsPaths = DataDirTlsPaths;
+
+impl DataDirTlsPaths {
     fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
         env.set_opt("tls.ca_cert", &mut self.ca_cert)?;
         env.set_opt("tls.cert", &mut self.cert)?;
         env.set_opt("tls.key", &mut self.key)
+    }
+
+    /// The configured paths, with defaults under `<data_dir>/tls/`.
+    pub fn resolve(&self, data_dir: &Path) -> TlsPaths {
+        let dir = data_dir.join("tls");
+        let or =
+            |path: &Option<PathBuf>, name: &str| path.clone().unwrap_or_else(|| dir.join(name));
+        TlsPaths {
+            ca_cert: or(&self.ca_cert, "ca.pem"),
+            cert: or(&self.cert, "cert.pem"),
+            key: or(&self.key, "key.pem"),
+        }
+    }
+}
+
+/// `https://<host of upstream_url>:7445`, or empty for an invalid URL.
+fn default_enroll_url(upstream_url: &str) -> String {
+    match GrpcUrl::parse(upstream_url) {
+        Ok(mut url) => {
+            url.port = DEFAULT_ENROLL_PORT;
+            url.to_string()
+        }
+        Err(_) => String::new(),
     }
 }
 
@@ -505,28 +524,14 @@ impl AgentConfig {
     /// The configured `enroll_url`, or `https://<upstream host>:7445`.
     /// Call on a validated config.
     pub fn enroll_url(&self) -> String {
-        if let Some(url) = &self.enroll_url {
-            return url.clone();
-        }
-        match GrpcUrl::parse(&self.upstream_url) {
-            Ok(mut url) => {
-                url.port = DEFAULT_ENROLL_PORT;
-                url.to_string()
-            }
-            Err(_) => String::new(),
-        }
+        self.enroll_url
+            .clone()
+            .unwrap_or_else(|| default_enroll_url(&self.upstream_url))
     }
 
     /// Identity file paths, with defaults under `<data_dir>/tls/`.
     pub fn tls_paths(&self) -> TlsPaths {
-        let dir = self.data_dir.join("tls");
-        let or =
-            |path: &Option<PathBuf>, name: &str| path.clone().unwrap_or_else(|| dir.join(name));
-        TlsPaths {
-            ca_cert: or(&self.tls.ca_cert, "ca.pem"),
-            cert: or(&self.tls.cert, "cert.pem"),
-            key: or(&self.tls.key, "key.pem"),
-        }
+        self.tls.resolve(&self.data_dir)
     }
 }
 
@@ -559,14 +564,22 @@ impl LoadConfig for AgentConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RelayConfig {
-    /// gRPC listener for agents and downstream relays.
+    /// gRPC listener for agents (ADR-0025).
     pub listen_addr: SocketAddr,
-    /// gRPC endpoint of the next relay or the server, `https://host:port`.
+    /// gRPC endpoint of the server (or, later, the next relay),
+    /// `https://host:port`.
     pub upstream_url: String,
+    /// Enrollment endpoint of the server (ADR-0007). Defaults to the host of
+    /// `upstream_url` on port [`DEFAULT_ENROLL_PORT`].
+    pub enroll_url: Option<String>,
     pub data_dir: PathBuf,
+    /// One-time relay token, only needed for the first run.
+    pub enrollment_token: Option<Secret>,
+    /// Seconds between heartbeats on the relay's own stream.
+    pub heartbeat_interval: u64,
     /// Maximum size of the store-and-forward buffer on disk.
     pub buffer_max_bytes: u64,
-    pub tls: TlsPaths,
+    pub tls: RelayTlsPaths,
     pub log: LogConfig,
 }
 
@@ -575,11 +588,28 @@ impl Default for RelayConfig {
         Self {
             listen_addr: SocketAddr::from(([0, 0, 0, 0], 7443)),
             upstream_url: String::new(),
+            enroll_url: None,
             data_dir: "/var/lib/monitorflow/relay".into(),
+            enrollment_token: None,
+            heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             buffer_max_bytes: 1024 * 1024 * 1024,
-            tls: TlsPaths::default(),
+            tls: RelayTlsPaths::default(),
             log: LogConfig::default(),
         }
+    }
+}
+
+impl RelayConfig {
+    /// The configured `enroll_url`, or `https://<upstream host>:7445`.
+    pub fn enroll_url(&self) -> String {
+        self.enroll_url
+            .clone()
+            .unwrap_or_else(|| default_enroll_url(&self.upstream_url))
+    }
+
+    /// Identity file paths, with defaults under `<data_dir>/tls/`.
+    pub fn tls_paths(&self) -> TlsPaths {
+        self.tls.resolve(&self.data_dir)
     }
 }
 
@@ -587,7 +617,10 @@ impl LoadConfig for RelayConfig {
     fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
         env.set("listen_addr", &mut self.listen_addr)?;
         env.set("upstream_url", &mut self.upstream_url)?;
+        env.set_opt("enroll_url", &mut self.enroll_url)?;
         env.set("data_dir", &mut self.data_dir)?;
+        env.set_opt("enrollment_token", &mut self.enrollment_token)?;
+        env.set("heartbeat_interval", &mut self.heartbeat_interval)?;
         env.set("buffer_max_bytes", &mut self.buffer_max_bytes)?;
         self.tls.apply_env(env)?;
         self.log.apply_env(env)
@@ -595,26 +628,11 @@ impl LoadConfig for RelayConfig {
 
     fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
         check.grpc_url("upstream_url", &self.upstream_url)?;
+        if let Some(url) = &self.enroll_url {
+            check.grpc_url("enroll_url", url)?;
+        }
+        check.positive("heartbeat_interval", self.heartbeat_interval)?;
         check.positive("buffer_max_bytes", self.buffer_max_bytes)
-    }
-}
-
-/// Server identity files. Unset paths default to files under
-/// `<data_dir>/tls/`, where the server writes the certificate its built-in
-/// CA issues it (ADR-0007); see [`ServerConfig::tls_paths`].
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ServerTlsPaths {
-    pub ca_cert: Option<PathBuf>,
-    pub cert: Option<PathBuf>,
-    pub key: Option<PathBuf>,
-}
-
-impl ServerTlsPaths {
-    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
-        env.set_opt("tls.ca_cert", &mut self.ca_cert)?;
-        env.set_opt("tls.cert", &mut self.cert)?;
-        env.set_opt("tls.key", &mut self.key)
     }
 }
 
@@ -677,14 +695,7 @@ impl Default for ServerConfig {
 impl ServerConfig {
     /// Identity file paths, with defaults under `<data_dir>/tls/`.
     pub fn tls_paths(&self) -> TlsPaths {
-        let dir = self.data_dir.join("tls");
-        let or =
-            |path: &Option<PathBuf>, name: &str| path.clone().unwrap_or_else(|| dir.join(name));
-        TlsPaths {
-            ca_cert: or(&self.tls.ca_cert, "ca.pem"),
-            cert: or(&self.tls.cert, "cert.pem"),
-            key: or(&self.tls.key, "key.pem"),
-        }
+        self.tls.resolve(&self.data_dir)
     }
 }
 

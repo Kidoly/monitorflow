@@ -1,11 +1,11 @@
-//! End-to-end test of the real `monitorflow-server` and `monitorflow-agent`
-//! binaries, driven as an operator would: config files written from
-//! scratch, the server's CLI subcommands, the agent enrolling with a token,
-//! and the REST API. It catches wiring regressions in `main.rs`, config
+//! End-to-end test of the real `monitorflow-server`, `monitorflow-agent`
+//! and `monitorflow-relay` binaries, driven as an operator would: config
+//! files written from scratch, the server's CLI subcommands, the agent and
+//! the relay enrolling with tokens, and the REST API. It catches wiring regressions in `main.rs`, config
 //! loading and defaults that the in-process tests cannot see.
 //!
 //! The binaries are built by `cargo build -p monitorflow-server -p
-//! monitorflow-agent --bins` from the test, with the cargo, target directory
+//! monitorflow-agent -p monitorflow-relay --bins` from the test, with the cargo, target directory
 //! and profile that built the test (see [`support::build_binaries`]). Cargo
 //! only exposes `CARGO_BIN_EXE_*` to tests of the package that owns the
 //! binary, and artifact dependencies are unstable; building from the test
@@ -30,6 +30,8 @@ use support::{build_binaries, free_addr, http, unique, wait_for, Database, Logs,
 /// Short enough to keep the test fast; the agent heartbeats every second.
 const HEARTBEAT_TIMEOUT_SECS: u64 = 3;
 const AGENT_ID: &str = "e2e-01";
+const RELAYED_ID: &str = "e2e-02";
+const RELAY_ID: &str = "e2e-relay";
 const SITE: &str = "e2e";
 const ADMIN: &str = "e2e-admin";
 
@@ -46,10 +48,11 @@ fn command(binary: &Path, config: &Path) -> Command {
     command
 }
 
-/// The server's entry for `AGENT_ID` once `ready` accepts it.
+/// The server's entry for `id` once `ready` accepts it.
 fn wait_for_agent(
     api: std::net::SocketAddr,
     cookie: &str,
+    id: &str,
     what: &str,
     timeout: Duration,
     ready: impl Fn(&Value) -> bool,
@@ -60,7 +63,7 @@ fn wait_for_agent(
         let servers = response.json()["servers"].as_array()?.clone();
         servers
             .into_iter()
-            .find(|s| s["peer_id"] == AGENT_ID)
+            .find(|s| s["peer_id"] == id)
             .filter(&ready)
     })
 }
@@ -136,20 +139,24 @@ key = "{data}/tls/key.pem"
     logs.add("user add", &user_log);
     assert!(added.status.success(), "user add failed: {}", added.status);
 
-    let created = command(&binaries.server, &server_config)
-        .args(["token", "create", "--role", "agent", "--id", AGENT_ID])
-        .args(["--site", SITE, "--create-site"])
-        .output()
-        .expect("running token create");
-    let token_log = dir.path().join("token-create.log");
-    std::fs::write(&token_log, &created.stderr).unwrap();
-    logs.add("token create (stderr)", &token_log);
-    assert!(
-        created.status.success(),
-        "token create failed: {}",
-        created.status
-    );
-    let token = String::from_utf8(created.stdout).unwrap().trim().to_owned();
+    let create_token = |role: &str, id: &str, extra: &[&str]| {
+        let created = command(&binaries.server, &server_config)
+            .args(["token", "create", "--role", role, "--id", id])
+            .args(["--site", SITE, "--create-site"])
+            .args(extra)
+            .output()
+            .expect("running token create");
+        let token_log = dir.path().join(format!("token-create-{id}.log"));
+        std::fs::write(&token_log, &created.stderr).unwrap();
+        logs.add(&format!("token create {id} (stderr)"), &token_log);
+        assert!(
+            created.status.success(),
+            "token create failed: {}",
+            created.status
+        );
+        String::from_utf8(created.stdout).unwrap().trim().to_owned()
+    };
+    let token = create_token("agent", AGENT_ID, &[]);
     let secret = token
         .split('.')
         .nth(1)
@@ -172,16 +179,17 @@ key = "{data}/tls/key.pem"
     let agent_config = dir.path().join("agent.toml");
     // The heartbeat interval is not in the brief's minimal config, but the
     // default 30 s would trip the short server timeout above.
-    let agent_toml = |token: Option<&str>| {
+    let agent_toml_for = |upstream: &str, data_dir: &Path, token: Option<&str>| {
         let mut toml = format!(
-            "upstream_url = \"https://{grpc}\"\nenroll_url = \"https://{enroll}\"\ndata_dir = \"{}\"\nheartbeat_interval = 1\n",
-            agent_dir.display()
+            "upstream_url = \"https://{upstream}\"\nenroll_url = \"https://{enroll}\"\ndata_dir = \"{}\"\nheartbeat_interval = 1\n",
+            data_dir.display()
         );
         if let Some(token) = token {
             toml.push_str(&format!("enrollment_token = \"{token}\"\n"));
         }
         toml
     };
+    let agent_toml = |token: Option<&str>| agent_toml_for(&grpc.to_string(), &agent_dir, token);
     std::fs::write(&agent_config, agent_toml(Some(&token))).unwrap();
     let mut agent = Process::spawn(
         "agent",
@@ -207,7 +215,7 @@ key = "{data}/tls/key.pem"
     let cookie = set_cookie.split(';').next().unwrap().to_owned();
 
     let timeout = Duration::from_secs(20);
-    let online = wait_for_agent(api, &cookie, "agent online", timeout, |s| {
+    let online = wait_for_agent(api, &cookie, AGENT_ID, "agent online", timeout, |s| {
         s["status"] == "online"
     });
     agent.assert_running();
@@ -223,9 +231,14 @@ key = "{data}/tls/key.pem"
     // A clean stop closes the stream; the heartbeat timeout bounds the rest.
     assert!(agent.terminate(Duration::from_secs(10)).success());
     let offline_within = Duration::from_secs(HEARTBEAT_TIMEOUT_SECS + 5);
-    wait_for_agent(api, &cookie, "agent offline", offline_within, |s| {
-        s["status"] == "offline"
-    });
+    wait_for_agent(
+        api,
+        &cookie,
+        AGENT_ID,
+        "agent offline",
+        offline_within,
+        |s| s["status"] == "offline",
+    );
 
     // Without a token the agent can only come back with its stored identity.
     std::fs::write(&agent_config, agent_toml(None)).unwrap();
@@ -235,16 +248,81 @@ key = "{data}/tls/key.pem"
         &dir.path().join("agent-2.log"),
         &logs,
     );
-    let back = wait_for_agent(api, &cookie, "agent back online", timeout, |s| {
+    let back = wait_for_agent(api, &cookie, AGENT_ID, "agent back online", timeout, |s| {
         s["status"] == "online"
     });
     assert_eq!(back["id"], online["id"], "the same server row is reused");
     assert_ne!(back["connected_at"], online["connected_at"]);
 
+    // A relay for the site, then a second agent behind it (ADR-0025).
+    let relay_listen = free_addr();
+    let relay_token = create_token("relay", RELAY_ID, &["--server-name", "127.0.0.1"]);
+    let relay_config = dir.path().join("relay.toml");
+    std::fs::write(
+        &relay_config,
+        format!(
+            "listen_addr = \"{relay_listen}\"\nupstream_url = \"https://{grpc}\"\nenroll_url = \"https://{enroll}\"\ndata_dir = \"{}\"\nheartbeat_interval = 1\nenrollment_token = \"{relay_token}\"\n",
+            dir.path().join("relay").display()
+        ),
+    )
+    .unwrap();
+    let mut relay = Process::spawn(
+        "relay",
+        command(&binaries.relay, &relay_config),
+        &dir.path().join("relay.log"),
+        &logs,
+    );
+    let relayed_token = create_token("agent", RELAYED_ID, &[]);
+    let relayed_config = dir.path().join("agent-relayed.toml");
+    let relayed_dir = dir.path().join("agent-relayed");
+    std::fs::write(
+        &relayed_config,
+        agent_toml_for(
+            &relay_listen.to_string(),
+            &relayed_dir,
+            Some(&relayed_token),
+        ),
+    )
+    .unwrap();
+    let mut relayed = Process::spawn(
+        "agent (relayed)",
+        agent_command(&relayed_config),
+        &dir.path().join("agent-relayed.log"),
+        &logs,
+    );
+    // The agent retries until the relay has its CRL and its own stream.
+    let through = wait_for_agent(
+        api,
+        &cookie,
+        RELAYED_ID,
+        "relayed agent online",
+        timeout,
+        |s| s["status"] == "online",
+    );
+    relay.assert_running();
+    assert_eq!(through["via_relay"], RELAY_ID);
+    assert_eq!(through["site_name"], SITE);
+
+    // Without its relay the agent goes offline.
+    assert!(relay.terminate(Duration::from_secs(10)).success());
+    wait_for_agent(
+        api,
+        &cookie,
+        RELAYED_ID,
+        "relayed agent offline",
+        offline_within,
+        |s| s["status"] == "offline",
+    );
+
     assert!(server.terminate(Duration::from_secs(10)).success());
     assert!(agent.terminate(Duration::from_secs(10)).success());
+    assert!(relayed.terminate(Duration::from_secs(10)).success());
 
     let all = logs.all();
     assert!(!all.contains(secret), "a log contains the token secret");
+    for token in [&relay_token, &relayed_token] {
+        let secret = token.split('.').nth(1).unwrap();
+        assert!(!all.contains(secret), "a log contains a token secret");
+    }
     assert!(!all.contains(&password), "a log contains the password");
 }

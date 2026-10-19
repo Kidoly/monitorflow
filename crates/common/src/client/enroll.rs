@@ -14,7 +14,7 @@ use tonic::Code;
 use super::backoff::Backoff;
 use super::identity::{self, article, Enrolled, IdentityError, StoredIdentity};
 use super::shutdown::Shutdown;
-use crate::config::{AgentConfig, TlsPaths};
+use crate::config::{AgentConfig, RelayConfig, TlsPaths};
 use crate::proto::v1::enroll_service_client::EnrollServiceClient;
 use crate::proto::v1::{EnrollRequest, EnrollResponse};
 use crate::redact::Secret;
@@ -65,6 +65,15 @@ impl EnrollSettings {
     pub fn agent(config: &AgentConfig) -> Self {
         Self {
             role: PeerRole::Agent,
+            paths: config.tls_paths(),
+            token: config.enrollment_token.clone(),
+            enroll_url: config.enroll_url(),
+        }
+    }
+
+    pub fn relay(config: &RelayConfig) -> Self {
+        Self {
+            role: PeerRole::Relay,
             paths: config.tls_paths(),
             token: config.enrollment_token.clone(),
             enroll_url: config.enroll_url(),
