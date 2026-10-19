@@ -27,6 +27,9 @@
 //! | POST | `/api/sites/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
 //! | PUT | `/api/sensor_configs/{id}` | modify | body [`sensors::EntryRequest`], replaces the row; 200 [`sensors::Entry`] |
 //! | DELETE | `/api/sensor_configs/{id}` | modify | 204 |
+//! | GET | `/api/sites` | any role | [`sites::SiteList`]: `{"sites": [{"id", "name", "server_count"}]}`, readable sites by name |
+//! | GET | `/api/incidents` | any role | [`incidents::IncidentList`], see below |
+//! | GET | `/api/incidents/{id}` | read | [`incidents::IncidentDetail`]: the incident and its `events` |
 //! | GET | `/api/servers/{id}/thresholds/effective` | read | [`thresholds::Effective`]: thresholds in force, muted ones and origins |
 //! | GET | `/api/servers/{id}/thresholds` | read | [`thresholds::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
@@ -88,6 +91,17 @@
 //! `.update`, `.delete`) and bump the revision, so the engine reloads them
 //! at its next poll. The API never writes incidents or alert states.
 //!
+//! # Incidents
+//!
+//! Read-only: the threshold engine owns incidents and their events
+//! (ADR-0019). `GET /api/incidents` takes optional `state` (`open`,
+//! `resolved`), `severity` (`warning`, `critical`), `server_id`,
+//! `site_id`, `from` and `to` (RFC 3339; incidents active at some point of
+//! the range), `limit` (1 to 500, default 100) and `cursor`. Open incidents
+//! come first, then newest `opened_at` first; `next_cursor` works as for
+//! servers. Unknown parameters and bad values are 400. A server or site
+//! outside the user's scope gives an empty list, an incident outside it 404.
+//!
 //! # Metric queries
 //!
 //! The query endpoints take `server_id`, `metric` (`monitorflow_` and a
@@ -118,7 +132,8 @@
 //!   "status": "online",
 //!   "connected_at": "2026-10-18T12:00:00Z",
 //!   "last_heartbeat": "2026-10-18T12:05:00Z",
-//!   "via_relay": null
+//!   "via_relay": null,
+//!   "open_incidents": 0
 //! }], "next_cursor": null}
 //! ```
 //!
@@ -134,12 +149,14 @@ pub(crate) mod audit;
 pub mod auth;
 mod error;
 mod health;
+pub mod incidents;
 pub mod metrics;
 pub mod password;
 pub mod roles;
 pub mod sensors;
 pub mod servers;
 pub mod session;
+pub mod sites;
 pub mod thresholds;
 pub mod users;
 
@@ -227,6 +244,9 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
         .route("/api/servers", get(servers::list))
+        .route("/api/sites", get(sites::list))
+        .route("/api/incidents", get(incidents::list))
+        .route("/api/incidents/{id}", get(incidents::detail))
         .route("/api/servers/{id}/sensors", get(sensors::effective))
         .route("/api/servers/{id}/metrics", get(metrics::discover))
         .route("/api/metrics/query", get(metrics::query))
