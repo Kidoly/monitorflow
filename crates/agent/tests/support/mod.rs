@@ -79,6 +79,7 @@ impl Pki {
             site_id,
             ttl: token::DEFAULT_TTL,
             creator: Creator::Cli,
+            server_names: Vec::new(),
         };
         let created = token::create(pool, self.fingerprint(), &request)
             .await

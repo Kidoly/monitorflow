@@ -1,25 +1,42 @@
-# MonitorFlow relay configuration.
+# MonitorFlow relay configuration (ADR-0025).
 # Default path: /etc/monitorflow/relay.toml (override with --config or MONITORFLOW_CONFIG).
 # Every key can be overridden by an environment variable: MONITORFLOW_ plus the
 # key in upper case, nested keys joined by "_" (log.level -> MONITORFLOW_LOG_LEVEL).
 # Commented-out keys show their default.
 
-# gRPC listener for agents and downstream relays (mTLS).
+# gRPC listener for agents (mTLS). Agents set their upstream_url to this
+# address, under one of the names given with --server-name to the relay's
+# enrollment token.
 # listen_addr = "0.0.0.0:7443"
 
-# gRPC endpoint of the next relay or the central server. Required. Must be https.
+# gRPC endpoint of the central server. Required. Must be https.
 upstream_url = "https://monitorflow.example.com:7443"
 
-# Store-and-forward buffer and mirror cache.
+# Enrollment endpoint of the server. Defaults to the host of upstream_url on
+# port 7445.
+# enroll_url = "https://monitorflow.example.com:7445"
+
+# One-time relay token, only for the first run. Create it on the server with
+#   monitorflow-server token create --role relay --id <relay id> --site <site> \
+#     --server-name <name agents use> [--server-name ...]
+# Prefer MONITORFLOW_ENROLLMENT_TOKEN, and remove it once enrolled.
+# enrollment_token = "mfe1...."
+
+# Identity files and, later, the store-and-forward buffer and mirror cache.
 # data_dir = "/var/lib/monitorflow/relay"
 
-# Maximum size of the on-disk buffer when the uplink is down (1 GiB).
+# Seconds between heartbeats on the relay's own stream to the server.
+# heartbeat_interval = 30
+
+# Maximum size of the on-disk buffer when the uplink is down (1 GiB). Not
+# used yet: store-and-forward is a later task.
 # buffer_max_bytes = 1073741824
 
 [tls]
-# ca_cert = "/etc/monitorflow/tls/ca.pem"
-# cert = "/etc/monitorflow/tls/cert.pem"
-# key = "/etc/monitorflow/tls/key.pem"
+# Written by enrollment; each unset path defaults under data_dir.
+# ca_cert = "/var/lib/monitorflow/relay/tls/ca.pem"
+# cert = "/var/lib/monitorflow/relay/tls/cert.pem"
+# key = "/var/lib/monitorflow/relay/tls/key.pem"
 
 [log]
 # trace, debug, info, warn or error.

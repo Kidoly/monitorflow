@@ -201,7 +201,7 @@ impl TryFrom<String> for Serial {
     }
 }
 
-/// Extra name of a `server` certificate.
+/// Extra name of a `server` or `relay` certificate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerName {
     Dns(String),
@@ -302,8 +302,9 @@ impl CertificateAuthority {
     ///
     /// The CSR signature must verify; its subject, SANs and extensions are
     /// ignored. The certificate gets the single URI SAN of `identity`, the
-    /// ID as CN, `clientAuth`, and for role `server` also `serverAuth` and
-    /// `server_names`, which must be empty for other roles. `validity`
+    /// ID as CN, `clientAuth`, and with `server_names` also `serverAuth` and
+    /// those names. A `server` needs names; a `relay` may have them, to
+    /// accept its agents (ADR-0025); an `agent` may not. `validity`
     /// defaults to [`CaOptions::cert_validity`]; `not_before` is backdated
     /// by [`CLOCK_SKEW`].
     pub fn issue(
@@ -325,9 +326,9 @@ impl CertificateAuthority {
                 "a server certificate needs a DNS name or an IP address".into(),
             ));
         }
-        if !is_server && !server_names.is_empty() {
+        if identity.role() == PeerRole::Agent && !server_names.is_empty() {
             return Err(invalid(format!(
-                "DNS names and IP addresses are for server certificates, not {}",
+                "DNS names and IP addresses are for server and relay certificates, not {}",
                 identity.role()
             )));
         }
@@ -370,7 +371,7 @@ impl CertificateAuthority {
         params.is_ca = IsCa::ExplicitNoCa;
         params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
         params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-        if is_server {
+        if !server_names.is_empty() {
             params
                 .extended_key_usages
                 .push(ExtendedKeyUsagePurpose::ServerAuth);

@@ -1,10 +1,11 @@
 //! gRPC ingress: the `AgentService::Stream` endpoint, the registry of
-//! connected agents and relays, and `CertificateService` on the same mTLS
-//! listener.
+//! connected agents and relays, and `CertificateService` and
+//! `RevocationService` on the same mTLS listener.
 
 mod inventory;
 mod policy;
 mod registry;
+mod revocation;
 mod service;
 
 use std::future::Future;
@@ -24,6 +25,7 @@ use crate::renew::Renewer;
 pub use inventory::{AcceptedHello, DbInventory, Inventory, InventoryError, NoInventory};
 pub use policy::{AllowAllRelayedAgents, DbRelayPolicy, DenyRelayedAgents, RelayPolicy};
 pub use registry::{CloseReason, Counters, PeerInfo, Registration, Registry, RegistryError};
+pub use revocation::CrlService;
 pub use service::{AgentStreamService, HandshakeError, Outbound};
 
 /// Timeouts and queue sizes of agent streams.
@@ -81,11 +83,25 @@ pub async fn serve_with_renewer(
     renewer: Option<Renewer>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), tonic::transport::Error> {
+    serve_all(listener, tls, service, renewer, None, shutdown).await
+}
+
+/// [`serve_with_renewer`], plus `RevocationService` when `crl` is set
+/// (ADR-0025).
+pub async fn serve_all(
+    listener: TcpListener,
+    tls: watch::Receiver<Arc<TlsServerConfig>>,
+    service: AgentStreamService,
+    renewer: Option<Renewer>,
+    crl: Option<CrlService>,
+    shutdown: impl Future<Output = ()>,
+) -> Result<(), tonic::transport::Error> {
     let registry = service.registry().clone();
     let incoming = tls::incoming(listener, tls, AcceptOptions::default());
     Server::builder()
         .add_service(AgentServiceServer::new(service))
         .add_optional_service(renewer.map(Renewer::into_service))
+        .add_optional_service(crl.map(CrlService::into_service))
         .serve_with_incoming_shutdown(incoming, async move {
             shutdown.await;
             registry.close_all();

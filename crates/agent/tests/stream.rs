@@ -240,7 +240,7 @@ db_tests! {
 
         let (_trigger, stop) = shutdown::channel();
         let identity = ensure_identity(&config, settings(&config).backoff, stop).await.unwrap();
-        assert_eq!(identity.agent_id(), "web-01");
+        assert_eq!(identity.peer_id(), "web-01");
         let agent = Running::start(settings(&config), identity);
         let registry = &upstream.registry;
         eventually("registration", || registry.get("web-01").is_some()).await;

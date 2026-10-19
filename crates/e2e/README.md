@@ -1,8 +1,8 @@
 # monitorflow-e2e
 
 Test-only crate: one end-to-end test (`tests/e2e.rs`) that runs the real
-`monitorflow-server` and `monitorflow-agent` binaries the way an operator
-would. Nothing here is shipped.
+`monitorflow-server`, `monitorflow-agent` and `monitorflow-relay` binaries the
+way an operator would. Nothing here is shipped.
 
 The scenario, in a temp dir with random loopback ports and a database created
 for the run (and dropped afterwards, failure included):
@@ -14,8 +14,11 @@ for the run (and dropped afterwards, failure included):
    with the host's hostname and the fake os-release's family and version;
 5. SIGTERM the agent and see it go offline; restart it without a token and see
    it come back with its stored identity;
-6. SIGTERM the server and the agent and check both exit with status 0, and that
-   no log contains the token secret or the password.
+6. `token create` a relay with `--server-name 127.0.0.1` and an agent `e2e-02`,
+   start the relay and the agent pointed at it, and see `e2e-02` online with
+   `via_relay` set; SIGTERM the relay and see the agent go offline;
+7. SIGTERM the server and the agents and check they exit with status 0, and
+   that no log contains a token secret or the password.
 
 Child processes are killed if the test fails, and their logs are printed.
 
@@ -23,7 +26,7 @@ Child processes are killed if the test fails, and their logs are printed.
 
 Cargo only exposes `CARGO_BIN_EXE_<name>` to the tests of the package that owns
 the binary, and artifact dependencies are still unstable. The test therefore
-runs `cargo build -p monitorflow-server -p monitorflow-agent --bins
+runs `cargo build -p monitorflow-server -p monitorflow-agent -p monitorflow-relay --bins
 --message-format=json` itself, with the `CARGO` that runs the test, the same
 target directory (derived from `CARGO_TARGET_TMPDIR`) and the same profile, and
 takes the executable paths from cargo's JSON messages. `cargo test -p

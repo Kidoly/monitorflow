@@ -1277,9 +1277,6 @@ dependencies = [
  "monitorflow-server",
  "prost",
  "rcgen",
- "ring",
- "rustls",
- "rustls-pemfile",
  "serde",
  "sqlx",
  "tempfile",
@@ -1289,7 +1286,6 @@ dependencies = [
  "toml",
  "tonic",
  "tracing",
- "x509-parser 0.18.1",
 ]
 
 [[package]]
@@ -1338,11 +1334,17 @@ dependencies = [
  "anyhow",
  "clap",
  "monitorflow-common",
- "serde",
+ "monitorflow-server",
+ "rcgen",
+ "rustls",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.21",
  "tokio",
- "toml",
+ "tokio-stream",
  "tonic",
  "tracing",
+ "x509-parser 0.18.1",
 ]
 
 [[package]]

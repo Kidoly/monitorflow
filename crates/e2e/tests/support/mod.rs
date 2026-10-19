@@ -13,9 +13,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub struct Binaries {
     pub server: PathBuf,
     pub agent: PathBuf,
+    pub relay: PathBuf,
 }
 
-/// Builds `monitorflow-server` and `monitorflow-agent` with the cargo, target
+/// Builds `monitorflow-server`, `monitorflow-agent` and `monitorflow-relay`
+/// with the cargo, target
 /// directory and profile that built this test, and returns the executables
 /// cargo reports. A no-op when `cargo test --workspace` already built them.
 pub fn build_binaries() -> Binaries {
@@ -44,6 +46,7 @@ pub fn build_binaries() -> Binaries {
             "--message-format=json-render-diagnostics",
         ])
         .args(["-p", "monitorflow-server", "-p", "monitorflow-agent"])
+        .args(["-p", "monitorflow-relay"])
         .args(["--profile", &profile])
         .arg("--manifest-path")
         .arg(&manifest)
@@ -56,7 +59,7 @@ pub fn build_binaries() -> Binaries {
         "cargo build failed: {}",
         output.status
     );
-    let (mut server, mut agent) = (None, None);
+    let (mut server, mut agent, mut relay) = (None, None, None);
     for line in output.stdout.split(|&b| b == b'\n') {
         let Ok(message) = serde_json::from_slice::<serde_json::Value>(line) else {
             continue;
@@ -67,12 +70,14 @@ pub fn build_binaries() -> Binaries {
         match message["target"]["name"].as_str() {
             Some("monitorflow-server") => server = Some(PathBuf::from(path)),
             Some("monitorflow-agent") => agent = Some(PathBuf::from(path)),
+            Some("monitorflow-relay") => relay = Some(PathBuf::from(path)),
             _ => {}
         }
     }
     Binaries {
         server: server.expect("cargo reported no monitorflow-server executable"),
         agent: agent.expect("cargo reported no monitorflow-agent executable"),
+        relay: relay.expect("cargo reported no monitorflow-relay executable"),
     }
 }
 

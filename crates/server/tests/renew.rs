@@ -64,6 +64,17 @@ impl Pki {
 
     /// Enrolls `role`/`peer_id` with a token, as an administrator would.
     async fn enroll(&self, pool: &PgPool, role: PeerRole, peer_id: &str) -> Peer {
+        self.enroll_with_names(pool, role, peer_id, Vec::new())
+            .await
+    }
+
+    async fn enroll_with_names(
+        &self,
+        pool: &PgPool,
+        role: PeerRole,
+        peer_id: &str,
+        server_names: Vec<String>,
+    ) -> Peer {
         let site_id = token::site_id(pool, "paris", true).await.unwrap().unwrap();
         let request = TokenRequest {
             role,
@@ -71,6 +82,7 @@ impl Pki {
             site_id,
             ttl: token::DEFAULT_TTL,
             creator: Creator::Cli,
+            server_names,
         };
         let created = token::create(pool, enroll::ca_fingerprint(&self.ca), &request)
             .await
@@ -195,6 +207,21 @@ db_tests! {
         let sans = cert.subject_alternative_name().unwrap().unwrap();
         assert_eq!(sans.value.general_names.len(), 1, "{sans:?}");
         assert_eq!(count(&pool, "SELECT count(*) FROM certificates WHERE peer_id = 'db-99'").await, 0);
+    }
+
+    #[sqlx::test]
+    async fn relays_keep_the_names_of_their_token(pool: PgPool) {
+        use monitorflow_server::ca::ServerName;
+        let pki = Pki::new();
+        let names = vec!["relay-1.paris.example".to_owned(), "10.0.0.7".to_owned()];
+        let relay = pki.enroll_with_names(&pool, PeerRole::Relay, "relay-1", names).await;
+        let expected = vec![
+            ServerName::Dns("relay-1.paris.example".into()),
+            ServerName::Ip("10.0.0.7".parse().unwrap()),
+        ];
+        assert_eq!(relay.presented.server_names, expected);
+        let renewed = pki.renewer(&pool).renew(&relay.presented, &fresh_csr()).await.unwrap();
+        assert_eq!(presented(&renewed.cert.cert_pem).server_names, expected);
     }
 
     #[sqlx::test]
