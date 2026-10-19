@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use super::access::authorize;
 use super::auth::CurrentUser;
 use super::{ApiError, ApiState};
 use crate::vm_query::{QueryError, VmQuery};
@@ -276,9 +277,6 @@ async fn target(
     user: &CurrentUser,
     server: Uuid,
 ) -> Result<(VmQuery, Target), ApiError> {
-    if !user.can_read() {
-        return Err(ApiError::Forbidden);
-    }
     let row: Option<(String, Uuid, String)> = sqlx::query_as(
         "SELECT s.peer_id, s.site_id, si.name FROM servers s
          JOIN sites si ON si.id = s.site_id WHERE s.id = $1",
@@ -286,9 +284,8 @@ async fn target(
     .bind(server)
     .fetch_optional(&state.pool)
     .await?;
-    let (peer, _, site) = row
-        .filter(|(_, site, _)| user.can_read_site(*site))
-        .ok_or(ApiError::NotFound)?;
+    authorize(user, row.as_ref().map(|r| r.1), false)?;
+    let (peer, _, site) = row.ok_or(ApiError::NotFound)?;
     let vm = state
         .metrics
         .clone()

@@ -18,7 +18,7 @@
 //! | GET | `/api/health/ready` | none | `{"status": "ready"}`, or 503 `{"status": "unavailable"}` when PostgreSQL is unreachable |
 //! | POST | `/api/auth/login` | none | body `{"username", "password"}`; 200 [`Me`] and the session cookie, or 401 |
 //! | POST | `/api/auth/logout` | session | 204, clears the cookie |
-//! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "site_id"}]}` |
+//! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}]}` |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
 //! | GET | `/api/servers/{id}` | read | [`ServerDetail`]: one listing row plus `certificate`, see below |
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
@@ -28,7 +28,10 @@
 //! | POST | `/api/sites/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
 //! | PUT | `/api/sensor_configs/{id}` | modify | body [`sensors::EntryRequest`], replaces the row; 200 [`sensors::Entry`] |
 //! | DELETE | `/api/sensor_configs/{id}` | modify | 204 |
-//! | GET | `/api/sites` | any role | [`sites::SiteList`]: `{"sites": [{"id", "name", "server_count"}]}`, readable sites by name |
+//! | GET | `/api/sites` | any role | [`sites::SiteList`]: `{"sites": [{"id", "name", "server_count", "customer_id", "customer_name"}]}`, readable sites by name |
+//! | GET | `/api/customers` | any role | [`customers::CustomerList`]: `{"customers": [{"id", "name", "site_count"}]}`, see below |
+//! | POST | `/api/customers` | global administrator | body `{"name"}`; 201 [`customers::CustomerView`] |
+//! | POST | `/api/customers/{id}/sites` | customer administrator | body `{"name"}`; 201 [`sites::SiteView`] |
 //! | GET | `/api/incidents` | any role | [`incidents::IncidentList`], see below |
 //! | GET | `/api/incidents/{id}` | read | [`incidents::IncidentDetail`]: the incident and its `events` |
 //! | GET | `/api/servers/{id}/thresholds/effective` | read | [`thresholds::Effective`]: thresholds in force, muted ones and origins |
@@ -57,13 +60,29 @@
 //! # Authorization
 //!
 //! Every role (viewer, operator, approver, administrator) can read the sites
-//! it is granted on; a grant with a null `site_id` covers every site. A user
-//! without any role gets 403 on data routes.
+//! it is granted on. A grant is global (`customer_id` and `site_id` null),
+//! on one customer and every site it has, or on one site (ADR-0026). A user
+//! without any role gets 403 on data routes. Grants are resolved to sites in
+//! [`access`] only; handlers never inspect them.
 //!
 //! "read" routes need a role covering the site of the resource, "modify"
 //! routes an operator role or above on it. A site or server outside the
 //! user's sites is 404, as if it did not exist; one the user reads but may
 //! not change is 403.
+//!
+//! # Customers
+//!
+//! Every site belongs to one customer; single-tenant installs only have
+//! `default` (ADR-0026). `GET /api/customers` lists the customers of a
+//! global grant, of customer grants and of readable sites; `site_count`
+//! counts only the sites the user reads. Creating a customer needs a global
+//! administrator role, creating a site under one an administrator role on
+//! it (global or customer grant): a customer the user does not see is 404,
+//! one it sees without that right 403. Names are 1 to 64 characters
+//! without control characters or surrounding spaces; site names are unique
+//! across customers. Duplicates are 409. Both are audited
+//! (`customer.create`, `site.create`). Sites never move between customers
+//! through the API.
 //!
 //! # Sensor configuration
 //!
@@ -131,7 +150,8 @@
 //! ```json
 //! {"servers": [{
 //!   "id": "uuid", "peer_id": "agent-1", "hostname": "web-1",
-//!   "site_id": "uuid", "site_name": "paris", "relay_id": null,
+//!   "site_id": "uuid", "site_name": "paris",
+//!   "customer_id": "uuid", "customer_name": "default", "relay_id": null,
 //!   "os_family": "debian", "os_version": "12", "agent_version": "0.1.0",
 //!   "created_at": "2026-10-18T12:00:00Z", "revoked_at": null,
 //!   "status": "online",
@@ -167,8 +187,10 @@
 //!
 //! A server outside the user's sites, or an ID that is not a UUID, is 404.
 
+pub mod access;
 pub(crate) mod audit;
 pub mod auth;
+pub mod customers;
 mod error;
 mod health;
 pub mod incidents;
@@ -268,6 +290,14 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/servers", get(servers::list))
         .route("/api/servers/{id}", get(servers::detail))
         .route("/api/sites", get(sites::list))
+        .route(
+            "/api/customers",
+            get(customers::list).post(customers::create),
+        )
+        .route(
+            "/api/customers/{id}/sites",
+            post(customers::create_customer_site),
+        )
         .route("/api/incidents", get(incidents::list))
         .route("/api/incidents/{id}", get(incidents::detail))
         .route("/api/servers/{id}/sensors", get(sensors::effective))

@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::auth::{CurrentUser, SiteScope};
-use super::sensors::{authorize, parse_id};
+use super::access::authorize;
+use super::auth::CurrentUser;
+use super::sensors::parse_id;
 use super::{ApiError, ApiState};
 
 /// Page size without `limit`.
@@ -148,11 +149,10 @@ pub async fn list(
     params: Result<Query<ListParams>, QueryRejection>,
 ) -> Result<Json<IncidentList>, ApiError> {
     let Query(params) = params.map_err(|r| ApiError::Invalid(r.body_text()))?;
-    let (all_sites, sites) = match user.readable_sites() {
-        SiteScope::None => return Err(ApiError::Forbidden),
-        SiteScope::All => (true, Vec::new()),
-        SiteScope::Sites(sites) => (false, sites),
-    };
+    if !user.can_read() {
+        return Err(ApiError::Forbidden);
+    }
+    let (all_sites, sites) = user.readable_sites().bind();
     let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
     if !(1..=MAX_LIMIT).contains(&limit) {
         return Err(ApiError::Invalid(format!(

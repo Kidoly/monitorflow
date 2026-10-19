@@ -15,7 +15,8 @@ use monitorflow_common::tls::PeerRole;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::auth::{CurrentUser, SiteScope};
+use super::access::authorize;
+use super::auth::CurrentUser;
 use super::sensors::parse_id;
 use super::{ApiError, ApiState};
 use crate::ca::Serial;
@@ -74,6 +75,9 @@ pub struct ServerView {
     pub hostname: String,
     pub site_id: Uuid,
     pub site_name: String,
+    /// Customer of the site (ADR-0026).
+    pub customer_id: Uuid,
+    pub customer_name: String,
     pub relay_id: Option<Uuid>,
     /// `debian` or `rhel`.
     pub os_family: String,
@@ -147,8 +151,8 @@ impl From<CertificateRow> for CertificateView {
 }
 
 /// Columns of [`Row`]; callers add the `WHERE` clause.
-const SELECT_SERVERS: &str =
-    "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name, s.relay_id,
+const SELECT_SERVERS: &str = "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name,
+            si.customer_id, c.name AS customer_name, s.relay_id,
             s.os_family, s.os_version, s.agent_version, s.created_at, s.last_seen_at,
             s.revoked_at,
             -- One probe of the partial unique index on open incidents.
@@ -159,7 +163,8 @@ const SELECT_SERVERS: &str =
              WHERE c.peer_role = 'agent' AND c.peer_id = s.peer_id
                AND c.revoked_at IS NULL) AS cert_not_after
      FROM servers s
-     JOIN sites si ON si.id = s.site_id";
+     JOIN sites si ON si.id = s.site_id
+     JOIN customers c ON c.id = si.customer_id";
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -168,6 +173,8 @@ struct Row {
     hostname: String,
     site_id: Uuid,
     site_name: String,
+    customer_id: Uuid,
+    customer_name: String,
     relay_id: Option<Uuid>,
     os_family: String,
     os_version: Option<String>,
@@ -187,11 +194,10 @@ pub async fn list(
     params: Result<Query<ListParams>, QueryRejection>,
 ) -> Result<Json<ServerList>, ApiError> {
     let Query(params) = params.map_err(|r| ApiError::Invalid(r.body_text()))?;
-    let (all_sites, sites) = match user.readable_sites() {
-        SiteScope::None => return Err(ApiError::Forbidden),
-        SiteScope::All => (true, Vec::new()),
-        SiteScope::Sites(sites) => (false, sites),
-    };
+    if !user.can_read() {
+        return Err(ApiError::Forbidden);
+    }
+    let (all_sites, sites) = user.readable_sites().bind();
     let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
     if !(1..=MAX_LIMIT).contains(&limit) {
         return Err(ApiError::Invalid(format!(
@@ -246,16 +252,12 @@ pub async fn detail(
     Path(id): Path<String>,
 ) -> Result<Json<ServerDetail>, ApiError> {
     let id = parse_id(&id)?;
-    if !user.can_read() {
-        return Err(ApiError::Forbidden);
-    }
     let row: Option<Row> = sqlx::query_as(&format!("{SELECT_SERVERS} WHERE s.id = $1"))
         .bind(id)
         .fetch_optional(&state.pool)
         .await?;
-    let row = row
-        .filter(|row| user.can_read_site(row.site_id))
-        .ok_or(ApiError::NotFound)?;
+    authorize(&user, row.as_ref().map(|r| r.site_id), false)?;
+    let row = row.ok_or(ApiError::NotFound)?;
     // Newest first on the per-peer issued_at index.
     let certificate: Option<CertificateRow> = sqlx::query_as(
         "SELECT serial, not_before, not_after, issued_at, revoked_at, revocation_reason
@@ -300,6 +302,8 @@ impl ServerView {
             hostname: row.hostname,
             site_id: row.site_id,
             site_name: row.site_name,
+            customer_id: row.customer_id,
+            customer_name: row.customer_name,
             relay_id: row.relay_id,
             os_family: row.os_family,
             os_version: row.os_version,

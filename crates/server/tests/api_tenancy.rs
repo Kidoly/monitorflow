@@ -1,0 +1,558 @@
+//! Exhaustive tenancy test (ADR-0026): every route of the API router has a
+//! case asserting that an administrator of customer A gets 404, 403 or an
+//! empty answer for customer B's resources, and that nothing about B
+//! reaches VictoriaMetrics.
+//!
+//! Routes are read from the `.route(...)` calls of `src/api/mod.rs`, and
+//! the router itself is probed to confirm that list: a route added without
+//! a case here fails [`every_route_keeps_customers_apart`]. Ignored without
+//! `DATABASE_URL`.
+
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use axum::body::Body;
+use axum::extract::{OriginalUri, State};
+use axum::http::{Request, StatusCode};
+use axum::Router;
+use monitorflow_common::redact::Secret;
+use monitorflow_server::api::auth::CSRF_HEADER;
+use monitorflow_server::api::users::{self, GrantScope};
+use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
+use monitorflow_server::grpc::Registry;
+use monitorflow_server::vm_query::VmQuery;
+use serde_json::{json, Value};
+use sqlx::PgPool;
+use tokio::net::TcpListener;
+use tower::ServiceExt;
+use uuid::Uuid;
+
+const PASSWORD: &str = "correct horse battery";
+const ROUTER_SOURCE: &str = include_str!("../src/api/mod.rs");
+const METHODS: [&str; 5] = ["get", "post", "put", "delete", "patch"];
+
+/// Marks every test in the block as ignored when `DATABASE_URL` is unset.
+macro_rules! db_tests {
+    ($($item:item)*) => {
+        $(
+            #[cfg_attr(
+                not(db_tests),
+                ignore = "DATABASE_URL is not set; run `docker compose -f deploy/docker-compose.dev.yml up -d postgres` and export DATABASE_URL from .env.example"
+            )]
+            $item
+        )*
+    };
+}
+
+/// `(METHOD, path)` of every `.route(...)` call in the router source.
+fn source_routes() -> BTreeSet<(String, String)> {
+    for other in [".nest(", ".merge(", ".route_service(", ".nest_service("] {
+        assert!(
+            !ROUTER_SOURCE.contains(other),
+            "the router uses `{other}`; teach source_routes() to read it"
+        );
+    }
+    let mut routes = BTreeSet::new();
+    for (start, _) in ROUTER_SOURCE.match_indices(".route(") {
+        let call = &ROUTER_SOURCE[start + ".route(".len()..];
+        let mut depth = 1;
+        let end = call
+            .char_indices()
+            .find(|&(_, c)| {
+                depth += match c {
+                    '(' => 1,
+                    ')' => -1,
+                    _ => 0,
+                };
+                depth == 0
+            })
+            .unwrap()
+            .0;
+        let call = &call[..end];
+        let path = call.split('"').nth(1).unwrap().to_owned();
+        let mut found = false;
+        for method in METHODS {
+            let token = format!("{method}(");
+            let used = call.match_indices(&token).any(|(i, _)| {
+                !call[..i]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ':')
+            });
+            if used {
+                routes.insert((method.to_uppercase(), path.clone()));
+                found = true;
+            }
+        }
+        assert!(found, "no method found in route {path}");
+    }
+    assert!(routes.len() > 20, "suspiciously few routes: {routes:?}");
+    routes
+}
+
+/// A path template with `{id}` filled in.
+fn concrete(path: &str) -> String {
+    path.replace("{id}", &Uuid::from_u128(42).to_string())
+}
+
+/// Fake VictoriaMetrics: records the query string of every request and
+/// answers an empty success.
+#[derive(Clone, Default)]
+struct FakeVm {
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeVm {
+    async fn start(&self) -> String {
+        async fn answer(State(vm): State<FakeVm>, OriginalUri(uri): OriginalUri) -> String {
+            let decoded = reqwest::Url::parse(&format!("http://fake{uri}"))
+                .unwrap()
+                .query_pairs()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join("&");
+            vm.seen.lock().unwrap().push(decoded);
+            let data = if uri.path().ends_with("/series") {
+                json!([])
+            } else {
+                json!({ "resultType": "matrix", "result": [] })
+            };
+            json!({ "status": "success", "data": data }).to_string()
+        }
+        let app = Router::new().fallback(answer).with_state(self.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    fn seen(&self) -> Vec<String> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+/// One customer's resources.
+#[derive(Debug, Clone, Copy)]
+struct Tenant {
+    customer: Uuid,
+    site: Uuid,
+    server: Uuid,
+    site_sensor: Uuid,
+    server_sensor: Uuid,
+    site_threshold: Uuid,
+    server_threshold: Uuid,
+    incident: Uuid,
+}
+
+async fn tenant(pool: &PgPool, name: &str) -> Tenant {
+    let one = |sql: &'static str| sqlx::query_scalar::<_, Uuid>(sql);
+    let customer = one("INSERT INTO customers (name) VALUES ($1) RETURNING id")
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let site = one("INSERT INTO sites (name, customer_id) VALUES ($1, $2) RETURNING id")
+        .bind(format!("site-{name}"))
+        .bind(customer)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let server = one("INSERT INTO servers (peer_id, site_id, hostname, os_family)
+         VALUES ($1, $2, $1, 'debian') RETURNING id")
+    .bind(format!("agent-{name}"))
+    .bind(site)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let sensor = "INSERT INTO sensor_configs (site_id, server_id, kind, name, interval_ms)
+                  VALUES ($1, $2, 'cpu', 'cpu', 10000) RETURNING id";
+    let threshold = "INSERT INTO thresholds (site_id, server_id, metric, comparison, warning)
+                     VALUES ($1, $2, 'monitorflow_cpu_usage_ratio', '>', 0.9) RETURNING id";
+    let mut ids = Vec::new();
+    for sql in [sensor, threshold] {
+        for (site_id, server_id) in [(Some(site), None), (None, Some(server))] {
+            ids.push(
+                one(sql)
+                    .bind(site_id)
+                    .bind(server_id)
+                    .fetch_one(pool)
+                    .await
+                    .unwrap(),
+            );
+        }
+    }
+    let incident = one(
+        "INSERT INTO incidents (server_id, metric, instance, severity, opened_at, last_value,
+                                last_value_at, peak_value, threshold)
+         VALUES ($1, 'monitorflow_cpu_usage_ratio', 'total', 'warning', now(), 0.95, now(),
+                 0.95, '{}') RETURNING id",
+    )
+    .bind(server)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    Tenant {
+        customer,
+        site,
+        server,
+        site_sensor: ids[0],
+        server_sensor: ids[1],
+        site_threshold: ids[2],
+        server_threshold: ids[3],
+        incident,
+    }
+}
+
+struct Ctx {
+    pool: PgPool,
+    vm: FakeVm,
+    vm_url: String,
+    cookie: String,
+    a: Tenant,
+    b: Tenant,
+}
+
+impl Ctx {
+    fn app(&self) -> Router {
+        let vm = VmQuery::with_timeout(&self.vm_url, Duration::from_millis(500)).unwrap();
+        api::router(
+            ApiState::new(
+                self.pool.clone(),
+                Registry::default(),
+                ApiSettings::default(),
+            )
+            .with_metrics(vm),
+        )
+    }
+
+    async fn send(
+        &self,
+        method: &str,
+        uri: &str,
+        cookie: Option<&str>,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(CSRF_HEADER, "1")
+            .header("content-type", "application/json");
+        if let Some(cookie) = cookie {
+            request = request.header("cookie", cookie);
+        }
+        let request = request
+            .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
+            .unwrap();
+        let response = self.app().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, body)
+    }
+
+    /// A request as the customer A administrator.
+    async fn call(&self, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+        self.send(method, uri, Some(&self.cookie), body).await
+    }
+
+    async fn status(&self, method: &str, uri: &str, body: Option<Value>) -> StatusCode {
+        self.call(method, uri, body).await.0
+    }
+
+    /// The last query string VictoriaMetrics received.
+    fn vm_seen_last(&self) -> String {
+        self.vm.seen().pop().unwrap_or_default()
+    }
+
+    /// Whether `id` appears anywhere in `body`.
+    fn mentions(body: &Value, id: Uuid) -> bool {
+        body.to_string().contains(&id.to_string())
+    }
+}
+
+fn sensor_body() -> Value {
+    json!({ "kind": "cpu", "interval_ms": 10000 })
+}
+
+fn threshold_body() -> Value {
+    json!({ "metric": "monitorflow_cpu_usage_ratio", "comparison": ">", "warning": 0.5 })
+}
+
+/// The tenancy case of one route. A route without one panics.
+async fn check(ctx: &Ctx, method: &str, path: &str) {
+    let (a, b) = (ctx.a, ctx.b);
+    let not_found = StatusCode::NOT_FOUND;
+    let metric = "metric=monitorflow_cpu_usage_ratio";
+    match (method, path) {
+        // Tenant-free: health and session handling.
+        ("GET", "/api/health") | ("GET", "/api/health/ready") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer));
+        }
+        ("POST", "/api/auth/login") => {
+            let body = json!({ "username": "admin-a", "password": PASSWORD });
+            let (status, body) = ctx.send(method, path, None, Some(body)).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
+        }
+        ("POST", "/api/auth/logout") => {
+            // On a throwaway session, so the shared one stays valid.
+            let (_, cookie) = login(&ctx.app(), "admin-a").await;
+            let (status, _) = ctx.send(method, path, Some(&cookie), None).await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+        }
+        ("GET", "/api/auth/me") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(
+                body["roles"],
+                json!([{ "role": "administrator", "customer_id": a.customer, "site_id": null }])
+            );
+        }
+        // Listings: B never shows.
+        ("GET", "/api/servers") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(
+                Ctx::mentions(&body, a.server) && !Ctx::mentions(&body, b.server),
+                "{body}"
+            );
+        }
+        ("GET", "/api/sites") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(
+                Ctx::mentions(&body, a.site) && !Ctx::mentions(&body, b.site),
+                "{body}"
+            );
+        }
+        ("GET", "/api/customers") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(
+                Ctx::mentions(&body, a.customer) && !Ctx::mentions(&body, b.customer),
+                "{body}"
+            );
+        }
+        ("GET", "/api/incidents") => {
+            for query in [
+                String::new(),
+                format!("?server_id={}", b.server),
+                format!("?site_id={}", b.site),
+                format!("?state=open&severity=warning&server_id={}", b.server),
+            ] {
+                let (status, body) = ctx.call(method, &format!("{path}{query}"), None).await;
+                assert_eq!(status, StatusCode::OK, "{query}");
+                assert!(!Ctx::mentions(&body, b.incident), "{query}: {body}");
+            }
+            let (_, body) = ctx.call(method, path, None).await;
+            assert!(Ctx::mentions(&body, a.incident));
+        }
+        // Creation: a customer admin cannot create customers, nor sites of B.
+        ("POST", "/api/customers") => {
+            assert_eq!(
+                ctx.status(method, path, Some(json!({ "name": "new" })))
+                    .await,
+                StatusCode::FORBIDDEN
+            );
+        }
+        ("POST", "/api/customers/{id}/sites") => {
+            let uri = format!("/api/customers/{}/sites", b.customer);
+            assert_eq!(
+                ctx.status(method, &uri, Some(json!({ "name": "intruder" })))
+                    .await,
+                not_found
+            );
+        }
+        // One resource of B: 404, as if it did not exist.
+        ("GET", "/api/servers/{id}") => {
+            assert_eq!(
+                ctx.status(method, &format!("/api/servers/{}", b.server), None)
+                    .await,
+                not_found
+            );
+        }
+        ("GET", "/api/incidents/{id}") => {
+            assert_eq!(
+                ctx.status(method, &format!("/api/incidents/{}", b.incident), None)
+                    .await,
+                not_found
+            );
+        }
+        ("GET", "/api/servers/{id}/sensors")
+        | ("GET", "/api/servers/{id}/thresholds/effective")
+        | ("GET", "/api/servers/{id}/sensor_configs")
+        | ("GET", "/api/servers/{id}/thresholds") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+        }
+        ("GET", "/api/servers/{id}/metrics") => {
+            let uri = format!("/api/servers/{}/metrics", b.server);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            let uri = format!("/api/servers/{}/metrics", a.server);
+            assert_eq!(ctx.status(method, &uri, None).await, StatusCode::OK);
+            let last = ctx.vm_seen_last();
+            assert!(
+                last.contains("site=\"site-a\"") && last.contains("extra_label=site=site-a"),
+                "{last}"
+            );
+        }
+        ("GET", "/api/sites/{id}/sensor_configs") | ("GET", "/api/sites/{id}/thresholds") => {
+            let uri = path.replace("{id}", &b.site.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+        }
+        ("POST", "/api/servers/{id}/sensor_configs")
+        | ("POST", "/api/sites/{id}/sensor_configs") => {
+            for id in [b.server, b.site] {
+                let uri = path.replace("{id}", &id.to_string());
+                assert_eq!(
+                    ctx.status(method, &uri, Some(sensor_body())).await,
+                    not_found,
+                    "{uri}"
+                );
+            }
+        }
+        ("POST", "/api/servers/{id}/thresholds") | ("POST", "/api/sites/{id}/thresholds") => {
+            for id in [b.server, b.site] {
+                let uri = path.replace("{id}", &id.to_string());
+                assert_eq!(
+                    ctx.status(method, &uri, Some(threshold_body())).await,
+                    not_found,
+                    "{uri}"
+                );
+            }
+        }
+        ("PUT", "/api/sensor_configs/{id}") | ("DELETE", "/api/sensor_configs/{id}") => {
+            for id in [b.site_sensor, b.server_sensor] {
+                let uri = format!("/api/sensor_configs/{id}");
+                assert_eq!(
+                    ctx.status(method, &uri, Some(sensor_body())).await,
+                    not_found,
+                    "{uri}"
+                );
+            }
+        }
+        ("PUT", "/api/thresholds/{id}") | ("DELETE", "/api/thresholds/{id}") => {
+            for id in [b.site_threshold, b.server_threshold] {
+                let uri = format!("/api/thresholds/{id}");
+                assert_eq!(
+                    ctx.status(method, &uri, Some(threshold_body())).await,
+                    not_found,
+                    "{uri}"
+                );
+            }
+        }
+        // Metric proxy: B is 404 and never queried; A is queried with A's
+        // site only.
+        ("GET", "/api/metrics/query") | ("GET", "/api/metrics/query_range") => {
+            let uri = format!("{path}?server_id={}&{metric}", b.server);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            let uri = format!("{path}?server_id={}&{metric}&agg=sum", a.server);
+            assert_eq!(ctx.status(method, &uri, None).await, StatusCode::OK);
+            let last = ctx.vm_seen_last();
+            assert!(
+                last.contains("site=\"site-a\"") && last.contains("extra_label=site=site-a"),
+                "{last}"
+            );
+        }
+        _ => panic!(
+            "no tenancy case for {method} {path}; add one to check() in tests/api_tenancy.rs"
+        ),
+    }
+}
+
+/// Logs `username` in; returns the login body and the session cookie.
+async fn login(app: &Router, username: &str) -> (Value, String) {
+    let body = json!({ "username": username, "password": PASSWORD }).to_string();
+    let request = Request::post("/api/auth/login")
+        .header("content-type", "application/json")
+        .header(CSRF_HEADER, "1")
+        .body(Body::from(body))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    (serde_json::from_slice(&bytes).unwrap(), cookie)
+}
+
+#[test]
+fn route_source_parsing_finds_methods() {
+    let routes = source_routes();
+    for expected in [
+        ("GET", "/api/servers"),
+        ("PUT", "/api/sensor_configs/{id}"),
+        ("DELETE", "/api/thresholds/{id}"),
+        ("POST", "/api/customers"),
+    ] {
+        assert!(
+            routes.contains(&(expected.0.into(), expected.1.into())),
+            "{expected:?}"
+        );
+    }
+}
+
+db_tests! {
+    #[sqlx::test]
+    async fn every_route_keeps_customers_apart(pool: PgPool) {
+        let vm = FakeVm::default();
+        let vm_url = vm.start().await;
+        let a = tenant(&pool, "a").await;
+        let b = tenant(&pool, "b").await;
+        users::create_user_with(&pool, "admin-a", &Secret::new(PASSWORD), Role::Administrator, GrantScope::Customer(a.customer), "test")
+            .await
+            .unwrap();
+        let mut ctx = Ctx { pool: pool.clone(), vm: vm.clone(), vm_url, cookie: String::new(), a, b };
+        ctx.cookie = login(&ctx.app(), "admin-a").await.1;
+
+        // The parsed list is the router's: listed methods are routed, the
+        // others on the same paths are 405.
+        let routes = source_routes();
+        let paths: BTreeSet<&String> = routes.iter().map(|(_, p)| p).collect();
+        for path in paths {
+            for method in METHODS.map(str::to_uppercase) {
+                let status = ctx.send(&method, &concrete(path), None, None).await.0;
+                let listed = routes.contains(&(method.clone(), path.clone()));
+                assert_eq!(status == StatusCode::METHOD_NOT_ALLOWED, !listed, "{method} {path}: {status}");
+            }
+        }
+
+        let before = |table: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, String>(&format!(
+                    "SELECT string_agg(t::text, ',' ORDER BY id) FROM {table} t"
+                ))
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let rows = (before("sensor_configs").await, before("thresholds").await, before("sites").await);
+
+        for (method, path) in &routes {
+            check(&ctx, method, path).await;
+        }
+
+        // Writes against B changed nothing (A's rows were not touched either).
+        assert_eq!(rows, (before("sensor_configs").await, before("thresholds").await, before("sites").await));
+        // Nothing about B ever reached VictoriaMetrics, while A's queries did.
+        let seen = vm.seen();
+        assert!(!seen.is_empty());
+        for query in seen {
+            assert!(!query.contains("site-b") && !query.contains("agent-b"), "{query}");
+        }
+    }
+}
