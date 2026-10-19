@@ -63,3 +63,15 @@
   color: var(--offline);
   background: var(--offline-bg);
 }
+
+.none {
+  color: var(--muted);
+}
+
+.incidents {
+  padding: 0.1rem 0.5rem;
+  color: var(--critical);
+  background: var(--critical-bg);
+  border-radius: 999px;
+  font-weight: 600;
+}

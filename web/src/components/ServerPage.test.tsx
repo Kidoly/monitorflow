@@ -24,6 +24,7 @@ const web1: Server = {
   connected_at: new Date().toISOString(),
   last_heartbeat: new Date().toISOString(),
   via_relay: null,
+  open_incidents: 0,
 };
 
 const noThresholds = { status: 200, body: { server_id: ID, site_id: "site-1", revision: 1, thresholds: [] } };

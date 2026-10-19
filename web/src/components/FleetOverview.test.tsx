@@ -23,12 +23,13 @@ function server(overrides: Partial<Server>): Server {
     connected_at: "2026-10-18T11:00:00Z",
     last_heartbeat: new Date().toISOString(),
     via_relay: null,
+    open_incidents: 0,
     ...overrides,
   };
 }
 
 const servers = [
-  server({}),
+  server({ open_incidents: 2 }),
   server({
     id: "s2",
     hostname: "db-1",
@@ -51,8 +52,13 @@ describe("FleetOverview", () => {
 
     const rows = within(await screen.findByRole("table", { name: "Fleet" })).getAllByRole("row");
     expect(rows).toHaveLength(3);
-    expect(rows[1]).toHaveTextContent(/paris\s*web-1\s*Debian 12\s*0\.1\.0\s*● Online\s*just now/);
-    expect(rows[2]).toHaveTextContent(/db-1\s*RHEL 9\s*unknown\s*○ Offline\s*never/);
+    expect(rows[1]).toHaveTextContent(/paris\s*web-1\s*Debian 12\s*0\.1\.0\s*● Online\s*2 open\s*just now/);
+    expect(rows[2]).toHaveTextContent(/db-1\s*RHEL 9\s*unknown\s*○ Offline\s*None\s*never/);
+    expect(within(rows[1]!).getByRole("link", { name: "2 open" })).toHaveAttribute(
+      "href",
+      expect.stringMatching(/^\/incidents\/?\?state=open&server=s1$/),
+    );
+    expect(within(rows[2]!).queryByRole("link", { name: /open/ })).not.toBeInTheDocument();
     expect(screen.getByText(/2 servers, 1 online/)).toBeInTheDocument();
     expect(within(rows[1]!).getByRole("link", { name: "web-1" })).toHaveAttribute(
       "href",

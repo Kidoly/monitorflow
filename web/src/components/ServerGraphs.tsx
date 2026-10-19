@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 
 import { ApiError, type MetricInfo, type MetricSeries, api, describeError, isAbortError } from "@/lib/api";
 import { unitOf } from "@/lib/format";
+import { METRIC_TITLES, metricTitle, shortMetric } from "@/lib/metrics";
 import { usePolling } from "@/lib/usePolling";
 
 import { REFRESH_MS } from "./FleetOverview";
@@ -20,28 +21,6 @@ export const RANGES = [
 
 type Range = (typeof RANGES)[number];
 
-const PREFIX = "monitorflow_";
-
-/** Built-in metrics (ADR-0015) in display order, with their titles. */
-const KNOWN: Record<string, string> = {
-  cpu_usage_ratio: "CPU usage",
-  cpu_load1: "Load average, 1 min",
-  cpu_load5: "Load average, 5 min",
-  cpu_load15: "Load average, 15 min",
-  memory_used_bytes: "Memory used",
-  memory_available_ratio: "Memory available",
-  memory_available_bytes: "Memory available (bytes)",
-  memory_total_bytes: "Memory total",
-  memory_swap_free_bytes: "Swap free",
-  memory_swap_total_bytes: "Swap total",
-  disk_used_ratio: "Disk used",
-  disk_available_bytes: "Disk available",
-  disk_free_bytes: "Disk free",
-  disk_total_bytes: "Disk size",
-  disk_inodes_free: "Free inodes",
-  disk_inodes: "Inodes",
-};
-
 /** One chart: a metric, all its instances or only one. */
 export interface ChartPlan {
   metric: string;
@@ -55,17 +34,16 @@ export interface ChartPlan {
  * line per core is too many for one chart.
  */
 export function planCharts(metrics: MetricInfo[]): ChartPlan[] {
-  const order = Object.keys(KNOWN);
+  const order = Object.keys(METRIC_TITLES);
   const rank = (m: MetricInfo) => {
-    const i = order.indexOf(m.name.slice(PREFIX.length));
+    const i = order.indexOf(shortMetric(m.name));
     return i === -1 ? order.length : i;
   };
   return [...metrics]
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
     .map((m) => {
-      const short = m.name.slice(PREFIX.length);
-      const total = short === "cpu_usage_ratio" && m.instances.includes("total");
-      return { metric: m.name, title: KNOWN[short] ?? short, ...(total && { instance: "total" }) };
+      const total = shortMetric(m.name) === "cpu_usage_ratio" && m.instances.includes("total");
+      return { metric: m.name, title: metricTitle(m.name), ...(total && { instance: "total" }) };
     });
 }
 
