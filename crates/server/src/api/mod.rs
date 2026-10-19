@@ -27,6 +27,13 @@
 //! | POST | `/api/sites/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
 //! | PUT | `/api/sensor_configs/{id}` | modify | body [`sensors::EntryRequest`], replaces the row; 200 [`sensors::Entry`] |
 //! | DELETE | `/api/sensor_configs/{id}` | modify | 204 |
+//! | GET | `/api/servers/{id}/thresholds/effective` | read | [`thresholds::Effective`]: thresholds in force, muted ones and origins |
+//! | GET | `/api/servers/{id}/thresholds` | read | [`thresholds::EntryList`] of the server's own rows |
+//! | POST | `/api/servers/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
+//! | GET | `/api/sites/{id}/thresholds` | read | [`thresholds::EntryList`] of the site's rows |
+//! | POST | `/api/sites/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
+//! | PUT | `/api/thresholds/{id}` | modify | body [`thresholds::EntryRequest`], replaces the row; 200 [`thresholds::Entry`] |
+//! | DELETE | `/api/thresholds/{id}` | modify | 204 |
 //! | GET | `/api/servers/{id}/metrics` | read | [`metrics::MetricList`]: metric names and instances of the last day |
 //! | GET | `/api/metrics/query` | read | [`metrics::QueryResult`], see below |
 //! | GET | `/api/metrics/query_range` | read | [`metrics::QueryResult`], see below |
@@ -65,6 +72,21 @@
 //! change is audited (`sensor_config.create`, `.update`, `.delete`,
 //! parameter names only) and bumps the revision, so agents get it at the
 //! next poll.
+//!
+//! # Thresholds
+//!
+//! Site and server rows of `thresholds` (ADR-0017). A body is `{"metric",
+//! "instance"?, "comparison", "warning"?, "critical"?, "duration_s"?,
+//! "hysteresis"?, "enabled"?}`: `metric` is `monitorflow_` and a sensor
+//! metric name, a null or absent `instance` covers every instance,
+//! `comparison` is `>`, `>=`, `<` or `<=`. An enabled row needs a warning
+//! or a critical value, critical on the alarm side of warning; `duration_s`
+//! is 0 to 86400 and `hysteresis` 0 or more. A disabled row mutes the same
+//! metric and instance of the layers below, built-in defaults included.
+//! Invalid rows are 400 saying why, a second row with the same metric and
+//! instance for one owner 409. Changes are audited (`threshold.create`,
+//! `.update`, `.delete`) and bump the revision, so the engine reloads them
+//! at its next poll. The API never writes incidents or alert states.
 //!
 //! # Metric queries
 //!
@@ -118,6 +140,7 @@ pub mod roles;
 pub mod sensors;
 pub mod servers;
 pub mod session;
+pub mod thresholds;
 pub mod users;
 
 use std::future::Future;
@@ -219,6 +242,22 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/sensor_configs/{id}",
             put(sensors::update).delete(sensors::delete),
+        )
+        .route(
+            "/api/servers/{id}/thresholds/effective",
+            get(thresholds::effective),
+        )
+        .route(
+            "/api/servers/{id}/thresholds",
+            get(thresholds::list_server).post(thresholds::create_server),
+        )
+        .route(
+            "/api/sites/{id}/thresholds",
+            get(thresholds::list_site).post(thresholds::create_site),
+        )
+        .route(
+            "/api/thresholds/{id}",
+            put(thresholds::update).delete(thresholds::delete),
         )
         .fallback(not_found)
         .layer(middleware::from_fn(auth::csrf_guard))

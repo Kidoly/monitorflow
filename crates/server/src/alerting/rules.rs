@@ -213,6 +213,14 @@ impl Rules {
     pub fn enabled(&self) -> impl Iterator<Item = &Rule> {
         self.entries.values().flatten()
     }
+
+    /// Every key with its threshold, `None` when muted, sorted by
+    /// `(metric, instance)`. For the API's view of the layers.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&str, Option<&str>, Option<&Rule>)> {
+        self.entries
+            .iter()
+            .map(|((metric, instance), rule)| (metric.as_str(), instance.as_deref(), rule.as_ref()))
+    }
 }
 
 /// The built-in defaults overlaid with `rows`, site rows before server
