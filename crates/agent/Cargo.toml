@@ -28,6 +28,7 @@ monitorflow-sensors.workspace = true
 prost.workspace = true
 ring.workspace = true
 base64.workspace = true
+rustix = { workspace = true, features = ["process"] }
 
 [dev-dependencies]
 rcgen.workspace = true
