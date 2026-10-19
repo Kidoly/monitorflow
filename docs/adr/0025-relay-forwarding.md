@@ -1,7 +1,7 @@
 # ADR-0025: Relay forwarding model
 
 Date: 2026-10-19
-Status: accepted
+Status: accepted; buffering and sequence numbers amended by ADR-0027
 
 ## Context
 
@@ -25,9 +25,9 @@ A relay sits on an isolated site and forwards its agents' streams to the central
 
 **Liveness follows the downstream.** When the agent's stream ends or fails, the relay ends the upstream stream, and the server removes the registry entry: the agent shows offline. The relay's listener sends HTTP/2 keepalives (30 s, 20 s timeout) to detect a silent agent, and the server's heartbeat timeout remains the backstop. Agents keep sending their heartbeats through the relay.
 
-**The relay has its own stream.** Like an agent, the relay keeps one `AgentService.Stream` open as itself (`Hello.agent_id` = its ID, no OS fields). The server updates `relays.last_seen_at` and lists it in the registry. It reconnects with the policy of ADR-0009. While that stream is not open, the relay refuses new agent streams with `UNAVAILABLE` without dialing, so agents back off. It does not close forwarded streams: each of those has its own connection and ends by itself if the upstream really is gone.
+**The relay has its own stream.** Like an agent, the relay keeps one `AgentService.Stream` open as itself (`Hello.agent_id` = its ID, no OS fields). The server updates `relays.last_seen_at` and lists it in the registry. It reconnects with the policy of ADR-0009. While that stream is not open, the relay does not dial for new agent streams; ADR-0027 accepts them and buffers their batches (the first version refused them with `UNAVAILABLE`). It does not close forwarded streams: each of those has its own connection and ends by itself if the upstream really is gone.
 
-**No disk buffer yet.** A down upstream means refused or closed agent streams; agents keep their samples in memory meanwhile (ADR-0016's uplink queue). Store-and-forward is the next roadmap task and will change this paragraph.
+**Store-and-forward.** ADR-0027 replaces the first version of this paragraph: while the upstream is down, agents are accepted and their batches buffered on disk, then replayed in order. The relay numbers the envelopes of the upstream streams it opens, instead of keeping the agent's sequence numbers.
 
 **Relay identity.** The relay enrolls with a relay token and stores its files under `<data_dir>/tls/` unless `[tls]` paths are set, like the agent and the server (ADR-0007). It renews its certificate as in ADR-0010, with the client code shared with the agent. A renewed certificate applies to new agent connections, new upstream dials and the relay's own stream, which reconnects at once. Open forwarded streams keep the connection they have; the old certificate stays valid until it expires (ADR-0010).
 

@@ -2,8 +2,9 @@
 //! heartbeat every interval, reconnecting with the policy of ADR-0009.
 //!
 //! While it is open, `upstream_up` is true and agent streams are forwarded;
-//! otherwise they are refused at once, so agents back off instead of making
-//! the relay dial a dead or refusing upstream for each of them (ADR-0025).
+//! otherwise they are accepted without dialing and their batches buffered,
+//! instead of making the relay dial a dead upstream for each of them
+//! (ADR-0027).
 //! A renewed certificate closes the stream, which reconnects with it.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -95,7 +96,7 @@ impl Control {
                 }
                 Failure::Transient(_) => {
                     let delay = backoff.next_delay();
-                    tracing::warn!(error = %failure, retry_in = ?delay, "upstream connection lost; refusing agents until it is back");
+                    tracing::warn!(error = %failure, retry_in = ?delay, "upstream connection lost; buffering agents' batches until it is back");
                     delay
                 }
                 Failure::Replaced => {
