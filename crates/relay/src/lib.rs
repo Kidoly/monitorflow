@@ -1,8 +1,11 @@
 //! MonitorFlow relay library (ADR-0025). `main.rs` only wires these
 //! modules together, so everything here is testable.
 //!
-//! [`listener`] accepts agents over mTLS with the CRL of the upstream, and
-//! [`forward`] pipes each agent stream to a stream of its own upstream.
+//! Start-up order: load the relay identity or enroll with the configured
+//! token, fetch the CRL from the upstream, open the relay's own stream,
+//! then accept agents and forward each of their streams upstream until
+//! SIGINT or SIGTERM, renewing the certificate before it expires.
 
+pub mod control;
 pub mod forward;
 pub mod listener;

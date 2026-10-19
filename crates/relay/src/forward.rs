@@ -74,7 +74,8 @@ pub struct Forwarder {
 
 impl Forwarder {
     /// `identity` is the relay's own, followed through renewals; agent
-    /// streams are refused without dialing while `upstream_up` is false.
+    /// streams are refused without dialing while `upstream_up` is false,
+    /// which [`crate::control`] sets while the relay's own stream is down.
     pub fn new(
         settings: ForwardSettings,
         identity: watch::Receiver<StoredIdentity>,
