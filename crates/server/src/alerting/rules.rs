@@ -36,7 +36,8 @@ impl Comparison {
         }
     }
 
-    fn above(self) -> bool {
+    /// Whether the alarm side is above the threshold (`>` and `>=`).
+    pub fn above(self) -> bool {
         matches!(self, Self::Gt | Self::Ge)
     }
 
