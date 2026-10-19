@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 use monitorflow_agent::backoff::Backoff;
 use monitorflow_agent::commands::{self, Dispatcher, DispatcherSettings, Handlers, Journal};
 use monitorflow_agent::enroll::{self, EnrollError};
+use monitorflow_agent::packages::{self, ApplyUpdatesHandler, Reports, Tools};
 use monitorflow_agent::renew::{Renewal, RenewalSettings};
 use monitorflow_agent::sensor_config::{self, Builtin, ConfigFile};
 use monitorflow_agent::sensors::Sensors;
@@ -16,7 +17,7 @@ use monitorflow_agent::stream::{Agent, StreamSettings};
 use monitorflow_agent::upload::{Uplink, UploadSettings};
 use monitorflow_agent::{os, shutdown};
 use monitorflow_common::config::{self, AgentConfig};
-use monitorflow_common::{logging, tls};
+use monitorflow_common::{command, logging, tls};
 use monitorflow_sensors::{metric_name, registry, Sample};
 
 #[derive(Parser, Debug)]
@@ -101,13 +102,23 @@ async fn main() -> anyhow::Result<()> {
         uplink.clone(),
     );
     let sensors = tokio::spawn(sensors.run(sensors_end, stop.clone()));
+    let tools = Tools::default();
+    let manager = packages::for_family(host.os_family, tools.clone());
+    let (reports, latest_report) = Reports::new(manager.clone());
+    let report_every = Duration::from_secs(config.packages.report_interval);
+    tokio::spawn(reports.clone().run(report_every, stop.clone()));
+    let mut handlers = Handlers::default();
+    handlers.register(
+        command::APPLY_UPDATES,
+        Arc::new(ApplyUpdatesHandler::new(manager, reports, tools)),
+    );
     let (commands_stream, commands_end) = commands::link();
     let ca_certs =
         tls::load_certs(&config.tls_paths().ca_cert).context("loading the CA certificate")?;
     let dispatcher = Dispatcher::new(
         identity.peer_id(),
         ca_certs,
-        Handlers::default(),
+        handlers,
         Journal::in_dir(&config.data_dir),
         DispatcherSettings::default(),
     );
@@ -118,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
         .with_sensors(stream_end)
         .with_upload(uplink)
         .with_commands(commands_stream)
+        .with_reports(latest_report)
         .run(stop)
         .await
         .context("cannot connect upstream");

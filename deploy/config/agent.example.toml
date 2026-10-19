@@ -54,3 +54,10 @@ upstream_url = "https://relay.example.com:7443"
 # whether matching lines exist, so keep this to logs the monitoring admins
 # may see. An empty list disables the log sensor.
 # log_dirs = ["/var/log"]
+
+[packages]
+# Seconds between two reports of the installed packages and the reboot
+# state; one is also sent at start and after every update (ADR-0031).
+# Updates run apt-get or dnf through `sudo -n` with the command lines
+# listed in ADR-0031, which the sudoers rules must allow.
+# report_interval = 21600
