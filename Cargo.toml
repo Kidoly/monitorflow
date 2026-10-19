@@ -56,8 +56,9 @@ async-trait = "0.1"
 # rustls on ring, like the rest of the workspace; no OpenSSL.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 snap = "1"
-# Safe syscall wrappers (statvfs) for the sensors, instead of raw libc.
-rustix = { version = "1", features = ["fs"] }
+# Safe syscall wrappers (statvfs, clock_gettime) for the sensors, instead
+# of raw libc.
+rustix = { version = "1", features = ["fs", "time"] }
 
 [profile.release]
 lto = "thin"

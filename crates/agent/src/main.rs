@@ -41,19 +41,25 @@ enum Command {
 
 #[derive(Subcommand, Debug)]
 enum SensorsCommand {
-    /// Collect each sensor twice, one second apart, with default
-    /// parameters, and print the second round. Needs no configuration.
+    /// Collect each sensor twice, one second apart, and print the second
+    /// round. Needs no configuration.
+    ///
+    /// Example: `sensors probe systemd --param units=ssh,cron`.
     Probe {
-        /// Sensor kinds to run; all when empty.
+        /// Sensor kinds to run; when empty, every kind that needs no
+        /// parameters.
         kinds: Vec<String>,
+        /// A parameter as `name=value`, given to every kind listed.
+        #[arg(long = "param", value_name = "NAME=VALUE", value_parser = parse_param)]
+        params: Vec<(String, String)>,
     },
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    if let Some(Command::Sensors(SensorsCommand::Probe { kinds })) = cli.command {
-        return probe(kinds).await;
+    if let Some(Command::Sensors(SensorsCommand::Probe { kinds, params })) = cli.command {
+        return probe(kinds, params.into_iter().collect()).await;
     }
     let config: AgentConfig = config::load(&cli.config)?;
     logging::init(&config.log);
@@ -103,16 +109,27 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
+fn parse_param(arg: &str) -> Result<(String, String), String> {
+    arg.split_once('=')
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .ok_or_else(|| "expected NAME=VALUE".to_owned())
+}
+
 /// One round of samples per sensor kind on stdout, in Prometheus text
 /// format. The first round only primes delta-based sensors like `cpu`.
-async fn probe(mut kinds: Vec<String>) -> anyhow::Result<()> {
-    if kinds.is_empty() {
-        kinds = registry::KINDS.iter().map(|k| k.to_string()).collect();
-    }
-    let sensors = kinds
-        .iter()
-        .map(|kind| Ok((kind, registry::build(kind, &BTreeMap::new())?)))
-        .collect::<Result<Vec<_>, registry::BuildError>>()?;
+async fn probe(kinds: Vec<String>, params: BTreeMap<String, String>) -> anyhow::Result<()> {
+    let sensors = if kinds.is_empty() {
+        // Kinds that need parameters, like `systemd`, refuse none.
+        registry::KINDS
+            .iter()
+            .filter_map(|kind| Some((kind.to_string(), registry::build(kind, &params).ok()?)))
+            .collect::<Vec<_>>()
+    } else {
+        kinds
+            .into_iter()
+            .map(|kind| Ok((kind.clone(), registry::build(&kind, &params)?)))
+            .collect::<Result<Vec<_>, registry::BuildError>>()?
+    };
     let deadline = || tokio::time::Instant::now() + Duration::from_secs(10);
     for (_, sensor) in &sensors {
         let _ = sensor.collect(deadline()).await;
