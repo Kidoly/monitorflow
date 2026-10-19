@@ -5,19 +5,26 @@
 //!
 //! Parameters are strict: an unknown name is an error, so a typo does not
 //! silently fall back to a default. See ADR-0015.
+//!
+//! [`build`] only checks syntax, so the server's API can use it. The agent
+//! calls [`build_local`] with its [`Local`] limits, which the server's
+//! configuration cannot change, and also refuses what this host does not
+//! allow, like a script nobody installed (ADR-0024).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::cpu::CpuSensor;
 use crate::disk::DiskSensor;
 use crate::memory::MemorySensor;
 use crate::port::PortSensor;
+use crate::script::{self, ScriptSensor};
 use crate::systemd::SystemdSensor;
 use crate::Sensor;
 
 /// Every kind [`build`] knows, in a stable order.
-pub const KINDS: &[&str] = &["cpu", "disk", "memory", "port", "systemd"];
+pub const KINDS: &[&str] = &["cpu", "disk", "memory", "port", "script", "systemd"];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BuildError {
@@ -31,16 +38,55 @@ pub enum BuildError {
         name: &'static str,
         reason: String,
     },
+    /// Valid, but not allowed or not possible on this host.
+    #[error("sensor `{kind}` refused by this agent: {reason}")]
+    Refused { kind: &'static str, reason: String },
 }
 
-/// Builds the sensor of kind `kind` with `params`.
+/// What the agent's own configuration allows sensors to touch. The
+/// server's configuration names things inside these limits only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Local {
+    /// Where the `script` sensor finds the scripts it may run.
+    pub script_dir: PathBuf,
+}
+
+impl Default for Local {
+    fn default() -> Self {
+        Self {
+            script_dir: script::DEFAULT_DIR.into(),
+        }
+    }
+}
+
+/// Builds the sensor of kind `kind` with `params`, checking their syntax
+/// only. The sensor uses the default [`Local`] limits.
 pub fn build(kind: &str, params: &BTreeMap<String, String>) -> Result<Arc<dyn Sensor>, BuildError> {
+    build_with(kind, params, None)
+}
+
+/// Like [`build`], within the `local` limits, and refuses with
+/// [`BuildError::Refused`] what they do not allow.
+pub fn build_local(
+    kind: &str,
+    params: &BTreeMap<String, String>,
+    local: &Local,
+) -> Result<Arc<dyn Sensor>, BuildError> {
+    build_with(kind, params, Some(local))
+}
+
+fn build_with(
+    kind: &str,
+    params: &BTreeMap<String, String>,
+    local: Option<&Local>,
+) -> Result<Arc<dyn Sensor>, BuildError> {
     let mut params = Params::new(kind, params)?;
     let sensor: Arc<dyn Sensor> = match params.kind {
         "cpu" => Arc::new(CpuSensor::new(params.bool("per_core", true)?)),
         "disk" => Arc::new(DiskSensor::from_params(&mut params)?),
         "memory" => Arc::new(MemorySensor),
         "port" => Arc::new(PortSensor::from_params(&mut params)?),
+        "script" => Arc::new(ScriptSensor::from_params(&mut params, local)?),
         "systemd" => Arc::new(SystemdSensor::from_params(&mut params)?),
         _ => unreachable!("Params::new only accepts KINDS"),
     };
@@ -78,6 +124,13 @@ impl<'a> Params<'a> {
         BuildError::BadParam {
             kind: self.kind,
             name,
+            reason: reason.into(),
+        }
+    }
+
+    pub(crate) fn refused(&self, reason: impl Into<String>) -> BuildError {
+        BuildError::Refused {
+            kind: self.kind,
             reason: reason.into(),
         }
     }
@@ -128,7 +181,11 @@ mod tests {
 
     #[test]
     fn every_kind_builds_with_defaults_or_asks_for_params() {
-        let required = [("port", "port", "22"), ("systemd", "units", "ssh")];
+        let required = [
+            ("port", "port", "22"),
+            ("script", "script", "check"),
+            ("systemd", "units", "ssh"),
+        ];
         for kind in KINDS {
             match required.iter().find(|(k, _, _)| k == kind) {
                 None => assert!(build(kind, &BTreeMap::new()).is_ok(), "{kind}"),
@@ -147,7 +204,7 @@ mod tests {
         assert_eq!(error, BuildError::UnknownKind("gpu".into()));
         assert!(error
             .to_string()
-            .contains("expected one of: cpu, disk, memory, port, systemd"));
+            .contains("expected one of: cpu, disk, memory, port, script, systemd"));
         assert_eq!(
             build("cpu", &params(&[("per_cores", "true")])).err(),
             Some(BuildError::UnknownParam {
@@ -155,6 +212,20 @@ mod tests {
                 name: "per_cores".into()
             })
         );
+    }
+
+    #[test]
+    fn local_limits_refuse_what_the_host_does_not_allow() {
+        let dir = tempfile::tempdir().unwrap();
+        let local = Local {
+            script_dir: dir.path().into(),
+        };
+        let params = params(&[("script", "missing")]);
+        assert!(build("script", &params).is_ok());
+        let error = build_local("script", &params, &local).err().unwrap();
+        assert!(matches!(error, BuildError::Refused { kind: "script", .. }));
+        assert!(error.to_string().contains("not installed"), "{error}");
+        assert!(build_local("cpu", &BTreeMap::new(), &local).is_ok());
     }
 
     #[test]

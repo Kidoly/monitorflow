@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use monitorflow_common::config::AgentSensorsConfig;
 use monitorflow_common::proto::v1::{SensorConfig, SensorConfigAck, SensorSpec, SensorSpecError};
+use monitorflow_sensors::registry::Local;
 use monitorflow_sensors::{self as sensors, Scheduler, SchedulerOptions, Sensor};
 use prost::Message;
 use tokio::sync::{mpsc, watch};
@@ -42,9 +44,30 @@ pub trait SensorFactory: Send + Sync + 'static {
     ) -> Result<Arc<dyn Sensor>, FactoryError>;
 }
 
-/// The built-in sensors of [`sensors::registry`] (ADR-0015).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Builtin;
+/// The built-in sensors of [`sensors::registry`] (ADR-0015), within the
+/// limits of the agent's own configuration (ADR-0024).
+#[derive(Debug, Clone, Default)]
+pub struct Builtin {
+    local: Local,
+}
+
+impl Builtin {
+    pub fn new(local: Local) -> Self {
+        Self { local }
+    }
+
+    /// The limits set by the `[sensors]` section of the agent's config.
+    pub fn from_config(config: &AgentSensorsConfig) -> Self {
+        Self::new(local(config))
+    }
+}
+
+/// The registry's [`Local`] limits from the agent's configuration.
+pub fn local(config: &AgentSensorsConfig) -> Local {
+    Local {
+        script_dir: config.script_dir.clone(),
+    }
+}
 
 impl SensorFactory for Builtin {
     fn build(
@@ -52,9 +75,11 @@ impl SensorFactory for Builtin {
         kind: &str,
         config: &sensors::SensorConfig,
     ) -> Result<Arc<dyn Sensor>, FactoryError> {
-        sensors::registry::build(kind, &config.params).map_err(|error| match error {
-            sensors::BuildError::UnknownKind(kind) => FactoryError::UnknownKind(kind),
-            other => FactoryError::Invalid(other.to_string()),
+        sensors::registry::build_local(kind, &config.params, &self.local).map_err(|error| {
+            match error {
+                sensors::BuildError::UnknownKind(kind) => FactoryError::UnknownKind(kind),
+                other => FactoryError::Invalid(other.to_string()),
+            }
         })
     }
 }
@@ -260,20 +285,43 @@ mod tests {
     fn builtin_builds_the_registry_kinds() {
         let mut config = sensors::SensorConfig::new("cpu", Duration::from_secs(60));
         // Every parameter a kind requires; the others ignore none of them.
-        let required = [("port", "port", "22"), ("systemd", "units", "ssh")];
+        let required = [
+            ("port", "port", "22"),
+            ("script", "script", "check"),
+            ("systemd", "units", "ssh"),
+        ];
+        let scripts = tempfile::tempdir().unwrap();
+        std::fs::write(scripts.path().join("check"), "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(
+            scripts.path().join("check"),
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        let builtin = Builtin::from_config(&AgentSensorsConfig {
+            script_dir: scripts.path().into(),
+        });
         for kind in sensors::registry::KINDS {
             let mut config = config.clone();
             if let Some((_, name, value)) = required.iter().find(|(k, _, _)| k == kind) {
                 config.params.insert(name.to_string(), value.to_string());
             }
-            assert!(Builtin.build(kind, &config).is_ok(), "{kind}");
+            assert!(builtin.build(kind, &config).is_ok(), "{kind}");
         }
+        // Valid for the server, refused by this host's limits.
+        let mut missing = config.clone();
+        missing.params.insert("script".into(), "missing".into());
+        let error = builtin.build("script", &missing).err().unwrap();
+        assert!(
+            matches!(&error, FactoryError::Invalid(m) if m.contains("refused by this agent") && m.contains("not installed")),
+            "{error}"
+        );
+        let builtin = Builtin::default();
         assert_eq!(
-            Builtin.build("gpu", &config).err(),
+            builtin.build("gpu", &config).err(),
             Some(FactoryError::UnknownKind("gpu".into()))
         );
         config.params.insert("per_cores".into(), "true".into());
-        let error = Builtin.build("cpu", &config).err().unwrap();
+        let error = builtin.build("cpu", &config).err().unwrap();
         assert!(
             matches!(&error, FactoryError::Invalid(m) if m.contains("per_cores")),
             "{error}"

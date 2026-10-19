@@ -8,7 +8,7 @@
 //! VictoriaMetrics label names and values on the server. See ADR-0012.
 //!
 //! The built-in sensors ([`cpu`], [`memory`], [`disk`], [`systemd`],
-//! [`port`]) are built by kind with [`registry::build`].
+//! [`port`], [`script`]) are built by kind with [`registry::build`].
 //! One sensor emits several metrics by setting [`Sample::sensor`] to a
 //! metric suffix, which the scheduler prefixes with the configured name
 //! ([`metric_name`]). See ADR-0015.
@@ -24,6 +24,7 @@ pub mod port;
 mod procfs;
 pub mod registry;
 pub mod scheduler;
+pub mod script;
 pub mod systemd;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

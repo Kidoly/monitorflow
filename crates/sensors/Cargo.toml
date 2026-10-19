@@ -11,7 +11,8 @@ testing = []
 
 [dependencies]
 async-trait.workspace = true
-rustix.workspace = true
+# `process` to kill a script's process group (ADR-0024).
+rustix = { workspace = true, features = ["process"] }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
