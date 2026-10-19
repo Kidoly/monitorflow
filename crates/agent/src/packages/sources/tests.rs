@@ -5,7 +5,7 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::panic::{self, AssertUnwindSafe};
 
-use monitorflow_common::proto::v1::configure_sources::{DnfRepository, SigningKey};
+use monitorflow_common::proto::v1::configure_sources::SigningKey;
 
 use super::*;
 
@@ -126,6 +126,25 @@ fn debian() -> tempfile::TempDir {
     root
 }
 
+fn rhel() -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    let r = root.path();
+    write(r, "/etc/yum.repos.d/rocky.repo", "[baseos]\nname=Rocky Linux BaseOS\nmirrorlist=https://mirrors.rockylinux.org/\nenabled=1\n\n[appstream]\nname=AppStream\n", 0o644);
+    write(
+        r,
+        "/etc/yum.repos.d/epel.repo",
+        "[epel]\nname=EPEL\nenabled = 1\n",
+        0o600,
+    );
+    write(
+        r,
+        "/etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9",
+        "rocky key\n",
+        0o644,
+    );
+    root
+}
+
 fn signing_key(name: &str, seed: u8) -> SigningKey {
     let (armored, fingerprint) = key::tests::test_key(seed);
     SigningKey {
@@ -149,6 +168,25 @@ fn apt_spec(mode: ProtoMode, snapshot: &str) -> ConfigureSources {
         ..Default::default()
     };
     spec.set_family(ProtoFamily::Apt);
+    spec.set_mode(mode);
+    spec
+}
+
+fn dnf_spec(mode: ProtoMode) -> ConfigureSources {
+    let repo = |id: &str| DnfRepository {
+        mirror: "rocky-9".into(),
+        snapshot: "2026-10-19".into(),
+        repo_id: id.into(),
+        name: String::new(),
+        gpgcheck: None,
+    };
+    let mut spec = ConfigureSources {
+        mirror_base_url: "https://mirror.example.net".into(),
+        dnf: vec![repo("baseos"), repo("appstream")],
+        keys: vec![signing_key("rocky", 2)],
+        ..Default::default()
+    };
+    spec.set_family(ProtoFamily::Dnf);
     spec.set_mode(mode);
     spec
 }
@@ -314,6 +352,53 @@ fn switching_mode_starts_again_from_the_originals() {
 }
 
 #[test]
+fn rhel_replace_disables_the_other_repositories() {
+    let root = rhel();
+    let r = root.path();
+    let before = snapshot(r);
+    apply(&dnf_spec(ProtoMode::Replace), r, &Check::ok()).unwrap();
+    assert_eq!(
+        read(r, "/etc/yum.repos.d/monitorflow-baseos.repo"),
+        format!(
+            "{HEADER}\n[monitorflow-baseos]\nname=monitorflow-baseos\nbaseurl=https://mirror.example.net/dnf/rocky-9/2026-10-19/\n\
+             enabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-monitorflow-rocky\n"
+        )
+    );
+    assert!(exists(r, "/etc/yum.repos.d/monitorflow-appstream.repo"));
+    assert_eq!(
+        read(r, "/etc/pki/rpm-gpg/RPM-GPG-KEY-monitorflow-rocky"),
+        key::tests::test_key(2).0
+    );
+    assert_eq!(
+        read(r, "/etc/yum.repos.d/epel.repo"),
+        "[epel]\nenabled=0\nname=EPEL\n"
+    );
+    let rocky = read(r, "/etc/yum.repos.d/rocky.repo");
+    assert_eq!(rocky.matches("enabled=0").count(), 2);
+    assert!(!rocky.contains("enabled=1"));
+    // The disabled file keeps its mode.
+    let mode = fs::metadata(r.join("etc/yum.repos.d/epel.repo"))
+        .unwrap()
+        .mode();
+    assert_eq!(mode & 0o7777, 0o600);
+    assert!(apply(&dnf_spec(ProtoMode::Replace), r, &Check::ok())
+        .unwrap()
+        .changed
+        .is_empty());
+    revert(r).unwrap();
+    assert_eq!(snapshot(r), before);
+}
+
+#[test]
+fn rhel_add_leaves_the_other_repositories_enabled() {
+    let root = rhel();
+    let r = root.path();
+    apply(&dnf_spec(ProtoMode::Add), r, &Check::ok()).unwrap();
+    assert!(read(r, "/etc/yum.repos.d/epel.repo").contains("enabled = 1"));
+    assert!(exists(r, "/etc/yum.repos.d/monitorflow-baseos.repo"));
+}
+
+#[test]
 fn an_existing_file_at_a_monitorflow_path_is_backed_up() {
     let root = debian();
     let r = root.path();
@@ -325,6 +410,26 @@ fn an_existing_file_at_a_monitorflow_path_is_backed_up() {
     );
     let before = snapshot(r);
     apply(&apt_spec(ProtoMode::Add, "current"), r, &Check::ok()).unwrap();
+    revert(r).unwrap();
+    assert_eq!(snapshot(r), before);
+}
+
+#[test]
+fn a_dropped_repository_over_an_original_is_set_aside() {
+    let root = rhel();
+    let r = root.path();
+    write(
+        r,
+        "/etc/yum.repos.d/monitorflow-appstream.repo",
+        "[old]\nenabled=1\n",
+        0o644,
+    );
+    let before = snapshot(r);
+    apply(&dnf_spec(ProtoMode::Replace), r, &Check::ok()).unwrap();
+    let mut spec = dnf_spec(ProtoMode::Replace);
+    spec.dnf.pop();
+    apply(&spec, r, &Check::ok()).unwrap();
+    assert!(!exists(r, "/etc/yum.repos.d/monitorflow-appstream.repo"));
     revert(r).unwrap();
     assert_eq!(snapshot(r), before);
 }
@@ -363,7 +468,7 @@ fn a_failed_post_check_reverts() {
 
 #[test]
 fn a_failure_midway_rolls_back() {
-    let root = debian();
+    let root = rhel();
     let r = root.path();
     let before = snapshot(r);
     let mut calls = 0;
@@ -374,7 +479,7 @@ fn a_failure_midway_rolls_back() {
             _ => Ok(()),
         }
     });
-    let result = apply(&apt_spec(ProtoMode::Replace, "current"), r, &Check::ok());
+    let result = apply(&dnf_spec(ProtoMode::Replace), r, &Check::ok());
     clear_hook();
     assert!(matches!(result, Err(Error::Io { .. })), "{result:?}");
     assert_eq!(snapshot(r), before);
@@ -441,7 +546,7 @@ fn invalid_specs_are_refused() {
         ("components", Box::new(|s| s.apt[0].components.clear())),
         (
             "family only",
-            Box::new(|s| s.dnf = vec![DnfRepository::default()]),
+            Box::new(|s| s.dnf = dnf_spec(ProtoMode::Add).dnf),
         ),
         ("signing key", Box::new(|s| s.keys.clear())),
         (
@@ -455,6 +560,12 @@ fn invalid_specs_are_refused() {
         let error = apply(&spec, r, &Check::ok()).unwrap_err().to_string();
         assert!(error.contains(expected), "{expected}: {error}");
     }
+    let mut spec = dnf_spec(ProtoMode::Add);
+    spec.dnf[1].repo_id = "baseos".into();
+    assert!(apply(&spec, r, &Check::ok())
+        .unwrap_err()
+        .to_string()
+        .contains("repeated"));
 }
 
 #[test]
