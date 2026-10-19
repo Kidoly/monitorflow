@@ -12,9 +12,13 @@ export const LOGIN_PATH = "/login/";
 
 export type Role = "viewer" | "operator" | "approver" | "administrator";
 
-/** A role granted on one site, or on every site when `site_id` is null. */
+/**
+ * A role granted on one site (`site_id`), on one customer and all its sites
+ * (`customer_id`), or on everything when both are null (ADR-0026).
+ */
 export interface RoleGrant {
   role: Role;
+  customer_id?: string | null;
   site_id: string | null;
 }
 
@@ -35,6 +39,8 @@ export interface Server {
   hostname: string;
   site_id: string;
   site_name: string;
+  customer_id: string;
+  customer_name: string;
   relay_id: string | null;
   /** `debian` or `rhel`. */
   os_family: string;
@@ -191,6 +197,84 @@ export interface Site {
   id: string;
   name: string;
   server_count: number;
+  /** Enrolled relays, revoked ones included. */
+  relay_count: number;
+  customer_id: string;
+  customer_name: string;
+}
+
+/** One entry of `GET /api/customers`. */
+export interface Customer {
+  id: string;
+  name: string;
+  /** Sites of the customer the user reads. */
+  site_count: number;
+}
+
+export interface CustomerList {
+  customers: Customer[];
+}
+
+/** One relay of `GET /api/relays` (ADR-0029). */
+export interface Relay {
+  id: string;
+  /** The relay certificate ID. */
+  peer_id: string;
+  name: string;
+  site_id: string;
+  site_name: string;
+  customer_id: string;
+  customer_name: string;
+  created_at: string;
+  revoked_at: string | null;
+  /** Online while the relay's own stream is open. */
+  status: ServerStatus;
+  connected_at: string | null;
+  last_heartbeat: string | null;
+  /** Latest expiry among unrevoked certificates; null when none. */
+  cert_not_after: string | null;
+  /** Names agents use to reach the relay, from its certificate. */
+  server_names: string[];
+  /** Servers whose latest connection came through the relay. */
+  server_count: number;
+  /** Agent streams it forwards right now. */
+  connected_agents: number;
+}
+
+/** A server attached to a relay. */
+export interface AttachedServer {
+  id: string;
+  peer_id: string;
+  hostname: string;
+  /** Online while its stream goes through this relay. */
+  status: ServerStatus;
+}
+
+/** `GET /api/relays/{id}`. */
+export interface RelayDetail extends Relay {
+  certificate: Certificate | null;
+  servers: AttachedServer[];
+}
+
+export interface RelayList {
+  relays: Relay[];
+  next_cursor: string | null;
+}
+
+/** RFC 5280 reasons the CA records. */
+export type RevocationReason =
+  | "unspecified"
+  | "key_compromise"
+  | "affiliation_changed"
+  | "superseded"
+  | "cessation_of_operation";
+
+/** Answer of the revoke routes. */
+export interface Revoked {
+  revoked_at: string;
+  reason: RevocationReason;
+  serials: string[];
+  closed_streams: number;
 }
 
 export interface SiteList {
@@ -309,7 +393,7 @@ export function setUnauthorizedHandler(handler: () => void): () => void {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "DELETE";
   body?: unknown;
   signal?: AbortSignal;
   /** Call the unauthorized handler on 401. Off for login, where 401 means bad credentials. */
@@ -432,6 +516,38 @@ export const api = {
     request<EffectiveSensors>(`/api/servers/${encodeURIComponent(serverId)}/sensors`, { signal }),
 
   sites: (signal?: AbortSignal) => request<SiteList>("/api/sites", { signal }),
+
+  customers: (signal?: AbortSignal) => request<CustomerList>("/api/customers", { signal }),
+
+  /** Creates the site `name` under `customerId`; customer administrators only. */
+  createSite: (customerId: string, name: string) =>
+    request<Site>(`/api/customers/${encodeURIComponent(customerId)}/sites`, {
+      method: "POST",
+      body: { name },
+    }),
+
+  /** Every relay the user may read, following `next_cursor` across pages. */
+  relays: async (signal?: AbortSignal): Promise<RelayList> => {
+    const relays: Relay[] = [];
+    let cursor: string | undefined;
+    do {
+      const path = cursor === undefined ? "/api/relays" : `/api/relays?cursor=${encodeURIComponent(cursor)}`;
+      const page = await request<RelayList>(path, { signal });
+      relays.push(...page.relays);
+      cursor = page.next_cursor ?? undefined;
+    } while (cursor !== undefined);
+    return { relays, next_cursor: null };
+  },
+
+  relay: (id: string, signal?: AbortSignal) =>
+    request<RelayDetail>(`/api/relays/${encodeURIComponent(id)}`, { signal }),
+
+  /** Revokes a server or relay and its certificates; cannot be undone. */
+  revoke: (kind: "servers" | "relays", id: string, reason: RevocationReason) =>
+    request<Revoked>(`/api/${kind}/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+      body: { reason },
+    }),
 
   incidents: (query: IncidentQuery, signal?: AbortSignal) => {
     const params = new URLSearchParams();

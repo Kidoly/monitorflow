@@ -1,7 +1,9 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { type ServerDetail, setUnauthorizedHandler } from "@/lib/api";
+import { As, customerAdmin, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { incident } from "@/test/incidents";
 
@@ -17,6 +19,8 @@ const web1: ServerDetail = {
   hostname: "web-1",
   site_id: "site-1",
   site_name: "paris",
+  customer_id: "c1",
+  customer_name: "acme",
   relay_id: null,
   os_family: "debian",
   os_version: "12",
@@ -135,6 +139,48 @@ describe("ServerPage", () => {
     render(<ServerPage id={ID} />);
     expect(await screen.findByText(/Threshold lines are not shown/)).toHaveTextContent("could not handle");
     expect(await screen.findByText(/No metrics yet/)).toBeInTheDocument();
+  });
+
+  it("lets administrators of the customer revoke the server after confirmation", async () => {
+    const page = {
+      [`GET /api/servers/${ID}/metrics`]: { status: 200, body: { metrics: [], truncated: false } },
+      [`GET /api/servers/${ID}/sensors`]: { status: 500, body: { error: "internal error" } },
+      [openIncidents]: noIncidents,
+      [`GET /api/servers/${ID}/thresholds/effective`]: noThresholds,
+    };
+    // Other customers' administrators and viewers get no button.
+    stubFetch({ ...detail(), ...page });
+    const { unmount } = render(
+      <As user={me({ role: "administrator", customer_id: "c2", site_id: null })}>
+        <ServerPage id={ID} />
+      </As>,
+    );
+    await screen.findByRole("heading", { level: 1, name: "web-1" });
+    expect(screen.queryByRole("button", { name: /Revoke/ })).not.toBeInTheDocument();
+    unmount();
+
+    const fetchMock = stubFetch({
+      ...page,
+      [`GET /api/servers/${ID}`]: [
+        { status: 200, body: web1 },
+        { status: 200, body: { ...web1, revoked_at: "2026-10-22T10:00:00Z", status: "offline" } },
+      ],
+      [`POST /api/servers/${ID}/revoke`]: {
+        status: 200,
+        body: { revoked_at: "2026-10-22T10:00:00Z", reason: "unspecified", serials: ["3f2a"], closed_streams: 1 },
+      },
+    });
+    render(
+      <As user={customerAdmin}>
+        <ServerPage id={ID} />
+      </As>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Revoke server…" }));
+    expect(screen.getByRole("form", { name: "Revoke web-1" })).toHaveTextContent("cannot be undone");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/revoke"))).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: "Revoke web-1" }));
+    expect(await screen.findByText(/^Revoked$/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Revoke/ })).not.toBeInTheDocument();
   });
 
   it("says when the server does not exist or is out of scope", async () => {

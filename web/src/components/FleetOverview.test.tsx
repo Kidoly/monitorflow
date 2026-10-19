@@ -13,6 +13,8 @@ function server(overrides: Partial<Server>): Server {
     hostname: "web-1",
     site_id: "site-1",
     site_name: "paris",
+    customer_id: "c1",
+    customer_name: "acme",
     relay_id: null,
     os_family: "debian",
     os_version: "12",
