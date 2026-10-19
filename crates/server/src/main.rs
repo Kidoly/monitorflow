@@ -185,6 +185,7 @@ async fn main() -> anyhow::Result<()> {
     // Every new mTLS connection uses the latest config from the publisher,
     // which carries a fresh CRL.
     let (crl, tls_config) = CrlPublisher::start(ca.clone(), identity.clone()).await?;
+    let crl = Arc::new(crl);
     let listener = TcpListener::bind(config.grpc_listen_addr)
         .await
         .with_context(|| format!("binding gRPC listener on {}", config.grpc_listen_addr))?;
@@ -238,7 +239,8 @@ async fn main() -> anyhow::Result<()> {
         .with_enrollment(EnrollmentSettings::from_config(
             &config,
             enroll::ca_fingerprint(&ca),
-        ));
+        ))
+        .with_crl(crl.clone());
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 

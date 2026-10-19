@@ -15,12 +15,14 @@ import {
   isAbortError,
 } from "@/lib/api";
 import { formatDateTime, formatOs, formatRelative } from "@/lib/format";
+import { administersCustomer, useMe } from "@/lib/me";
 import { thresholdLines } from "@/lib/thresholds";
 import { usePolling } from "@/lib/usePolling";
 import { UUID } from "@/lib/uuid";
 
 import { CertificateExpiry } from "./CertificateExpiry";
 import { REFRESH_MS, StatusBadge } from "./FleetOverview";
+import { RevokeControl } from "./RevokeControl";
 import { OpenIncidents } from "./OpenIncidents";
 import { SensorConfigPanel } from "./SensorConfigPanel";
 import { type ChartPlan, ServerGraphs } from "./ServerGraphs";
@@ -80,6 +82,7 @@ export function ServerPage({ id }: { id: string | null }) {
     [id],
   );
   usePolling(load, REFRESH_MS, valid);
+  const reload = useCallback(() => void load(new AbortController().signal), [load]);
   // The sensor panel's configuration, for the graphs' steps.
   const [sensors, setSensors] = useState<EffectiveSensor[]>();
   const onSensors = useCallback((config: EffectiveSensors) => setSensors(config.sensors), []);
@@ -115,7 +118,7 @@ export function ServerPage({ id }: { id: string | null }) {
   }
   return (
     <article aria-labelledby="server-title">
-      <ServerHeader server={server} now={updatedAt} />
+      <ServerHeader server={server} now={updatedAt} onRevoked={reload} />
       {error && (
         <p className={styles.error} role="alert">
           Refresh failed: {error} Showing the last data received.
@@ -131,8 +134,9 @@ export function ServerPage({ id }: { id: string | null }) {
   );
 }
 
-function ServerHeader({ server, now }: { server: ServerDetail; now: Date }) {
+function ServerHeader({ server, now, onRevoked }: { server: ServerDetail; now: Date; onRevoked: () => void }) {
   const { certificate } = server;
+  const me = useMe();
   return (
     <header className={styles.header}>
       <p className={styles.crumbs}>
@@ -173,6 +177,9 @@ function ServerHeader({ server, now }: { server: ServerDetail; now: Date }) {
         <Fact term="Enrolled">{formatDateTime(server.created_at)}</Fact>
         {server.revoked_at && <Fact term="Revoked">{formatDateTime(server.revoked_at)}</Fact>}
       </dl>
+      {!server.revoked_at && administersCustomer(me, server.customer_id) && (
+        <RevokeControl kind="servers" id={server.id} name={server.hostname} onRevoked={onRevoked} />
+      )}
     </header>
   );
 }

@@ -121,7 +121,12 @@ function ServerTable({ servers, now }: { servers: Server[]; now: Date }) {
   );
 }
 
-export function StatusBadge({ server }: { server: Server }) {
+/** Live status of a server, relay or attached agent. */
+export function StatusBadge({
+  server,
+}: {
+  server: Pick<Server, "status"> & { via_relay?: string | null; revoked_at?: string | null };
+}) {
   const online = server.status === "online";
   return (
     <span className={online ? styles.online : styles.offline}>

@@ -33,6 +33,9 @@ pub enum CloseReason {
     Replaced,
     /// The server is shutting down.
     Shutdown,
+    /// An administrator revoked the peer, or the relay carrying it
+    /// (ADR-0029).
+    Revoked,
 }
 
 /// Counters for one connection.
@@ -216,6 +219,26 @@ impl Registry {
             .map_err(|_| RegistryError::Disconnected(id.to_owned()))
     }
 
+    /// Closes the stream of `id` and every stream relayed by `id` with
+    /// `reason`, and removes them at once. Returns how many were closed.
+    pub fn close(&self, id: &str, reason: CloseReason) -> usize {
+        let closed: Vec<Entry> = {
+            let mut inner = self.lock();
+            let ids: Vec<String> = inner
+                .peers
+                .values()
+                .filter(|e| e.info.id == id || e.info.via_relay.as_deref() == Some(id))
+                .map(|e| e.info.id.clone())
+                .collect();
+            ids.iter().filter_map(|i| inner.peers.remove(i)).collect()
+        };
+        let count = closed.len();
+        for entry in closed {
+            entry.close(reason);
+        }
+        count
+    }
+
     /// Closes every stream and refuses new registrations.
     pub fn close_all(&self) {
         let peers = {
@@ -323,5 +346,24 @@ mod tests {
             registry.register(info("c"), tx).unwrap_err(),
             RegistryError::ShuttingDown
         );
+    }
+
+    #[tokio::test]
+    async fn close_ends_a_peer_and_the_streams_it_relays() {
+        let registry = Registry::default();
+        let (tx, _rx) = mpsc::channel(1);
+        let relayed = |id: &str| PeerInfo {
+            via_relay: Some("r1".into()),
+            ..info(id)
+        };
+        let relay = registry.register(info("r1"), tx.clone()).unwrap();
+        let behind = registry.register(relayed("a1"), tx.clone()).unwrap();
+        let (_other, _) = register(&registry, "a2");
+        assert_eq!(registry.close("r1", CloseReason::Revoked), 2);
+        assert_eq!(relay.close.await, Ok(CloseReason::Revoked));
+        assert_eq!(behind.close.await, Ok(CloseReason::Revoked));
+        let ids: Vec<_> = registry.connected().into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, ["a2"]);
+        assert_eq!(registry.close("nobody", CloseReason::Revoked), 0);
     }
 }

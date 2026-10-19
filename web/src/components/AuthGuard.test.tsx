@@ -32,6 +32,18 @@ describe("AuthGuard", () => {
     expect(screen.getByRole("banner")).toHaveTextContent("Signed in as alice (viewer)");
   });
 
+  it("shows Administration to administrators only", async () => {
+    stubFetch({ "GET /api/auth/me": { status: 200, body: alice } });
+    const { unmount } = render(<AuthGuard>fleet page</AuthGuard>);
+    await screen.findByText("fleet page");
+    expect(screen.queryByRole("link", { name: "Administration" })).not.toBeInTheDocument();
+    unmount();
+    const admin = { ...alice, roles: [{ role: "administrator", customer_id: "c1", site_id: null }] };
+    stubFetch({ "GET /api/auth/me": { status: 200, body: admin } });
+    render(<AuthGuard>fleet page</AuthGuard>);
+    expect(await screen.findByRole("link", { name: "Administration" })).toHaveAttribute("href", expect.stringMatching(/^\/admin\/relays\/?$/));
+  });
+
   it("shows an error when the server fails", async () => {
     stubFetch({ "GET /api/auth/me": { status: 500, body: { error: "internal error" } } });
     render(<AuthGuard>fleet page</AuthGuard>);
