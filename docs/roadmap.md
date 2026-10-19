@@ -27,8 +27,8 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] Server: threshold engine with warning/critical and duration; incidents table.
 - [x] API: sensors, thresholds, incidents, metric query proxy.
 - [x] Web: Next.js project, auth, fleet overview.
-- [ ] Web: server page with graphs and threshold lines.
-- [ ] Web: incidents list and timeline.
+- [x] Web: server page with graphs and threshold lines.
+- [x] Web: incidents list and timeline.
 
 ## Phase 3 — Relays
 
