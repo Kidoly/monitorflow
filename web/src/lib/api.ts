@@ -49,6 +49,8 @@ export interface Server {
   last_heartbeat: string | null;
   /** Peer ID of the relay carrying the live stream, if any. */
   via_relay: string | null;
+  /** Open incidents of the server (ADR-0019). */
+  open_incidents: number;
 }
 
 /** One page of `GET /api/servers`, sorted by site name, hostname and peer ID. */
@@ -156,6 +158,70 @@ export interface EffectiveThresholds {
   site_id: string;
   revision: number;
   thresholds: EffectiveThreshold[];
+}
+
+/** One entry of `GET /api/sites`. */
+export interface Site {
+  id: string;
+  name: string;
+  server_count: number;
+}
+
+export interface SiteList {
+  sites: Site[];
+}
+
+export type IncidentSeverity = "warning" | "critical";
+export type IncidentState = "open" | "resolved";
+
+/** The threshold an incident opened under, as it was then (ADR-0017). */
+export interface ThresholdSnapshot {
+  metric: string;
+  instance: string | null;
+  comparison: Comparison;
+  warning: number | null;
+  critical: number | null;
+  duration_s: number;
+  hysteresis: number;
+}
+
+/** One incident of `GET /api/incidents`. Times are sample times. */
+export interface Incident {
+  id: string;
+  server_id: string;
+  hostname: string;
+  site_id: string;
+  site_name: string;
+  metric: string;
+  /** `""` for a series without an instance. */
+  instance: string;
+  /** The current one, or the last one once resolved. */
+  severity: IncidentSeverity;
+  state: IncidentState;
+  opened_at: string;
+  resolved_at: string | null;
+  last_value: number;
+  last_value_at: string;
+  /** The worst value seen while open. */
+  peak_value: number;
+  threshold: ThresholdSnapshot;
+}
+
+/** One page of incidents: open ones first, then newest first. */
+export interface IncidentList {
+  incidents: Incident[];
+  next_cursor: string | null;
+}
+
+/** Filters of `GET /api/incidents`; all optional. */
+export interface IncidentQuery {
+  state?: IncidentState;
+  severity?: IncidentSeverity;
+  server_id?: string;
+  site_id?: string;
+  /** 1 to 500; the API's default is 100. */
+  limit?: number;
+  cursor?: string;
 }
 
 export interface Health {
@@ -313,6 +379,17 @@ export const api = {
 
   serverSensors: (serverId: string, signal?: AbortSignal) =>
     request<EffectiveSensors>(`/api/servers/${encodeURIComponent(serverId)}/sensors`, { signal }),
+
+  sites: (signal?: AbortSignal) => request<SiteList>("/api/sites", { signal }),
+
+  incidents: (query: IncidentQuery, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined) params.set(key, String(value));
+    }
+    const search = params.toString();
+    return request<IncidentList>(search ? `/api/incidents?${search}` : "/api/incidents", { signal });
+  },
 
   serverThresholds: (serverId: string, signal?: AbortSignal) =>
     request<EffectiveThresholds>(`/api/servers/${encodeURIComponent(serverId)}/thresholds/effective`, {

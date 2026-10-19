@@ -8,13 +8,12 @@ import { ApiError, type EffectiveThreshold, type Server, api, describeError, isA
 import { formatDateTime, formatOs, formatRelative } from "@/lib/format";
 import { thresholdLines } from "@/lib/thresholds";
 import { usePolling } from "@/lib/usePolling";
+import { UUID } from "@/lib/uuid";
 
 import { REFRESH_MS, StatusBadge } from "./FleetOverview";
 import { SensorConfigPanel } from "./SensorConfigPanel";
 import { type ChartPlan, ServerGraphs } from "./ServerGraphs";
 import styles from "./ServerPage.module.css";
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The server page for the `id` query parameter. */
 export function ServerView() {

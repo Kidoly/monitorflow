@@ -90,6 +90,7 @@ function AppHeader({ user }: { user: Me }) {
       <span className={styles.brand}>MonitorFlow</span>
       <nav aria-label="Main">
         <Link href="/">Fleet</Link>
+        <Link href="/incidents/">Incidents</Link>
       </nav>
       <div className={styles.user}>
         <span>

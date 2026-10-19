@@ -12,6 +12,11 @@
   font-weight: 700;
 }
 
+.header nav {
+  display: flex;
+  gap: 1rem;
+}
+
 .user {
   display: flex;
   align-items: center;

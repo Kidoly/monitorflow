@@ -1,0 +1,24 @@
+.warning,
+.critical,
+.resolved {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.warning {
+  color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.critical {
+  color: var(--critical);
+  background: var(--critical-bg);
+}
+
+.resolved {
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}

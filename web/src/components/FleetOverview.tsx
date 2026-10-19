@@ -5,7 +5,7 @@ import { useCallback, useState } from "react";
 
 import { type Server, api, describeError, isAbortError } from "@/lib/api";
 import { formatDateTime, formatOs, formatRelative } from "@/lib/format";
-import { serverHref } from "@/lib/routes";
+import { incidentsHref, serverHref } from "@/lib/routes";
 import { usePolling } from "@/lib/usePolling";
 
 import styles from "./FleetOverview.module.css";
@@ -79,6 +79,7 @@ function ServerTable({ servers, now }: { servers: Server[]; now: Date }) {
             <th scope="col">OS</th>
             <th scope="col">Agent</th>
             <th scope="col">Status</th>
+            <th scope="col">Incidents</th>
             <th scope="col">Last seen</th>
           </tr>
         </thead>
@@ -93,6 +94,9 @@ function ServerTable({ servers, now }: { servers: Server[]; now: Date }) {
               <td>{server.agent_version ?? "unknown"}</td>
               <td>
                 <StatusBadge server={server} />
+              </td>
+              <td>
+                <OpenIncidentsBadge server={server} />
               </td>
               <td>
                 {server.last_heartbeat ? (
@@ -119,5 +123,16 @@ export function StatusBadge({ server }: { server: Server }) {
       {server.via_relay && ` via ${server.via_relay}`}
       {server.revoked_at && ", revoked"}
     </span>
+  );
+}
+
+/** The server's open incidents, linking to them; a plain "None" without any. */
+export function OpenIncidentsBadge({ server }: { server: Server }) {
+  const count = server.open_incidents;
+  if (count === 0) return <span className={styles.none}>None</span>;
+  return (
+    <Link className={styles.incidents} href={incidentsHref({ state: "open", serverId: server.id })}>
+      {count} open
+    </Link>
   );
 }
