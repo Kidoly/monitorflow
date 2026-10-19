@@ -54,6 +54,11 @@ describe("FleetOverview", () => {
     expect(rows[1]).toHaveTextContent(/paris\s*web-1\s*Debian 12\s*0\.1\.0\s*● Online\s*just now/);
     expect(rows[2]).toHaveTextContent(/db-1\s*RHEL 9\s*unknown\s*○ Offline\s*never/);
     expect(screen.getByText(/2 servers, 1 online/)).toBeInTheDocument();
+    expect(within(rows[1]!).getByRole("link", { name: "web-1" })).toHaveAttribute(
+      "href",
+      // next/link adds the trailing slash only in a build with `trailingSlash`.
+      expect.stringMatching(/^\/servers\/view\/?\?id=s1$/),
+    );
   });
 
   it("shows an empty state", async () => {
