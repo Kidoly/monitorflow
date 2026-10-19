@@ -15,3 +15,13 @@ export function incidentsHref(filters: Partial<IncidentFilters> = {}): string {
 export function incidentHref(id: string): string {
   return `/incidents/view/?id=${encodeURIComponent(id)}`;
 }
+
+/** Administration pages (ADR-0029). */
+export const RELAYS_PATH = "/admin/relays/";
+export const SITES_PATH = "/admin/sites/";
+export const TOKENS_PATH = "/admin/tokens/";
+
+/** Link to the page of the relay `id`. */
+export function relayHref(id: string): string {
+  return `/admin/relays/view/?id=${encodeURIComponent(id)}`;
+}

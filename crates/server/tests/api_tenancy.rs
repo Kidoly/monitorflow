@@ -143,6 +143,8 @@ struct Tenant {
     site_threshold: Uuid,
     server_threshold: Uuid,
     incident: Uuid,
+    relay: Uuid,
+    token: Uuid,
 }
 
 async fn tenant(pool: &PgPool, name: &str) -> Tenant {
@@ -192,10 +194,27 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    let relay = one("INSERT INTO relays (peer_id, site_id, name) VALUES ($1, $2, $1) RETURNING id")
+        .bind(format!("relay-{name}"))
+        .bind(site)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let token = one(
+        "INSERT INTO enrollment_tokens (token_hash, role, peer_id, site_id, expires_at)
+         VALUES (sha256(convert_to($1, 'UTF8')), 'agent', $1, $2, now() + interval '1 hour') RETURNING id",
+    )
+    .bind(format!("agent-{name}-2"))
+    .bind(site)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     Tenant {
         customer,
         site,
         server,
+        relay,
+        token,
         site_sensor: ids[0],
         server_sensor: ids[1],
         site_threshold: ids[2],
@@ -337,6 +356,40 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 Ctx::mentions(&body, a.customer) && !Ctx::mentions(&body, b.customer),
                 "{body}"
             );
+        }
+        ("GET", "/api/relays") | ("GET", "/api/tokens") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            let (mine, theirs) = if path == "/api/relays" {
+                (a.relay, b.relay)
+            } else {
+                (a.token, b.token)
+            };
+            assert!(
+                Ctx::mentions(&body, mine) && !Ctx::mentions(&body, theirs),
+                "{body}"
+            );
+        }
+        ("GET", "/api/relays/{id}") => {
+            let uri = format!("/api/relays/{}", b.relay);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("POST", "/api/servers/{id}/revoke") | ("POST", "/api/relays/{id}/revoke") => {
+            let id = if path.starts_with("/api/servers") {
+                b.server
+            } else {
+                b.relay
+            };
+            let uri = path.replace("{id}", &id.to_string());
+            assert_eq!(ctx.status(method, &uri, Some(json!({}))).await, not_found);
+        }
+        ("POST", "/api/tokens") => {
+            let body = json!({ "role": "agent", "peer_id": "intruder", "site_id": b.site });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("DELETE", "/api/tokens/{id}") => {
+            let uri = format!("/api/tokens/{}", b.token);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
         }
         ("GET", "/api/incidents") => {
             for query in [
@@ -540,14 +593,14 @@ db_tests! {
                 .unwrap()
             }
         };
-        let rows = (before("sensor_configs").await, before("thresholds").await, before("sites").await);
+        let rows = (before("sensor_configs").await, before("thresholds").await, before("sites").await, before("enrollment_tokens").await, before("relays").await, before("servers").await);
 
         for (method, path) in &routes {
             check(&ctx, method, path).await;
         }
 
         // Writes against B changed nothing (A's rows were not touched either).
-        assert_eq!(rows, (before("sensor_configs").await, before("thresholds").await, before("sites").await));
+        assert_eq!(rows, (before("sensor_configs").await, before("thresholds").await, before("sites").await, before("enrollment_tokens").await, before("relays").await, before("servers").await));
         // Nothing about B ever reached VictoriaMetrics, while A's queries did.
         let seen = vm.seen();
         assert!(!seen.is_empty());

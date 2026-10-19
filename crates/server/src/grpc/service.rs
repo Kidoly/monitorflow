@@ -526,6 +526,10 @@ impl Connection {
                         reason = "replaced";
                         Status::aborted("replaced by a newer connection with the same ID")
                     }
+                    Ok(CloseReason::Revoked) => {
+                        reason = "revoked";
+                        Status::permission_denied("revoked by an administrator")
+                    }
                     Ok(CloseReason::Shutdown) | Err(_) => {
                         reason = "shutdown";
                         Status::unavailable("server shutting down")

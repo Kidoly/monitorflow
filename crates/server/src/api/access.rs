@@ -117,6 +117,20 @@ impl Access {
         Scope::Only(sites.into_iter().collect())
     }
 
+    /// Sites reached by global and customer grants whose role passes
+    /// `allowed`; site grants are left out.
+    pub fn customer_sites(&self, allowed: impl Fn(Role) -> bool) -> Scope {
+        let whole = Access {
+            grants: self
+                .grants
+                .iter()
+                .filter(|(_, coverage)| !matches!(coverage, Coverage::Site(_)))
+                .cloned()
+                .collect(),
+        };
+        whole.sites(allowed)
+    }
+
     /// Customers granted as a whole to roles passing `allowed`; customers
     /// reached only through a site grant are not included.
     pub fn customers(&self, allowed: impl Fn(Role) -> bool) -> Scope {
@@ -160,6 +174,14 @@ impl CurrentUser {
     pub fn administered_customers(&self) -> Scope {
         self.access.customers(|role| role == Role::Administrator)
     }
+
+    /// Sites of the customers the user administers as a whole, globally or
+    /// by customer grant: where it may enroll and revoke peers (ADR-0029).
+    /// A site administrator grant is not enough.
+    pub fn administered_sites(&self) -> Scope {
+        self.access
+            .customer_sites(|role| role == Role::Administrator)
+    }
 }
 
 /// The site `site` if the user may read it (and change it, with
@@ -178,6 +200,16 @@ pub(super) fn authorize(
         .filter(|s| user.readable_sites().contains(*s))
         .ok_or(ApiError::NotFound)?;
     if modify && !user.modifiable_sites().contains(site) {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(site)
+}
+
+/// Like [`authorize`] for reading, then 403 unless the user administers
+/// the site's customer ([`CurrentUser::administered_sites`]).
+pub(super) fn authorize_admin(user: &CurrentUser, site: Option<Uuid>) -> Result<Uuid, ApiError> {
+    let site = authorize(user, site, false)?;
+    if !user.administered_sites().contains(site) {
         return Err(ApiError::Forbidden);
     }
     Ok(site)
@@ -287,5 +319,31 @@ mod tests {
             authorize(&nobody, Some(site(1)), false),
             Err(ApiError::Forbidden)
         ));
+    }
+
+    #[test]
+    fn administration_needs_a_customer_or_global_administrator_grant() {
+        let user =
+            |grants: &[(Role, Option<Uuid>, Option<Uuid>)]| CurrentUser::for_tests(access(grants));
+        let customer = user(&[(Role::Administrator, Some(C1), None)]);
+        assert_eq!(customer.administered_sites(), only(&[site(1), site(2)]));
+        assert_eq!(authorize_admin(&customer, Some(site(2))).unwrap(), site(2));
+        assert!(matches!(
+            authorize_admin(&customer, Some(site(3))),
+            Err(ApiError::NotFound)
+        ));
+        let site_admin = user(&[(Role::Administrator, None, Some(site(1)))]);
+        assert_eq!(site_admin.administered_sites(), only(&[]));
+        assert!(matches!(
+            authorize_admin(&site_admin, Some(site(1))),
+            Err(ApiError::Forbidden)
+        ));
+        let operator = user(&[(Role::Operator, None, None)]);
+        assert!(matches!(
+            authorize_admin(&operator, Some(site(1))),
+            Err(ApiError::Forbidden)
+        ));
+        let global = user(&[(Role::Administrator, None, None)]);
+        assert_eq!(global.administered_sites(), Scope::All);
     }
 }

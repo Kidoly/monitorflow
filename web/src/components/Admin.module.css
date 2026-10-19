@@ -1,0 +1,142 @@
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.nav [aria-current="page"] {
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.meta,
+.note {
+  color: var(--muted);
+}
+
+.error {
+  padding: 0.5rem 0.75rem;
+  color: var(--error);
+  background: var(--error-bg);
+  border-radius: var(--radius);
+}
+
+.empty {
+  padding: 2rem;
+  text-align: center;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.table th,
+.table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+.table tbody th {
+  font-weight: 600;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  margin: 0.5rem 0 1.5rem;
+}
+
+.facts dt {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.facts dd {
+  margin: 0;
+}
+
+.revoked {
+  color: var(--critical);
+  font-weight: 600;
+}
+
+.form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+}
+
+.form input,
+.form select,
+.form textarea {
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: var(--radius);
+}
+
+.button,
+.danger {
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  color: var(--accent-text);
+  background: var(--accent);
+}
+
+.danger {
+  border-color: var(--critical);
+  background: var(--critical);
+}
+
+.secondary {
+  padding: 0.35rem 0.75rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--muted);
+  border-radius: var(--radius);
+}
+
+.confirm {
+  margin: 0.75rem 0;
+  padding: 0.75rem 1rem;
+  background: var(--critical-bg);
+  border: 1px solid var(--critical);
+  border-radius: var(--radius);
+}
+
+.customer {
+  margin-top: 1.5rem;
+}
+
+.success {
+  padding: 0.5rem 0.75rem;
+  color: var(--online);
+  background: var(--online-bg);
+  border-radius: var(--radius);
+}

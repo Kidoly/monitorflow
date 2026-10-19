@@ -13,6 +13,8 @@ import {
   isAbortError,
   setUnauthorizedHandler,
 } from "@/lib/api";
+import { MeContext, isAdministrator } from "@/lib/me";
+import { RELAYS_PATH } from "@/lib/routes";
 
 import styles from "./AuthGuard.module.css";
 
@@ -58,7 +60,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
     );
   }
   return (
-    <>
+    <MeContext.Provider value={user}>
       <a className="visually-hidden" href="#main">
         Skip to content
       </a>
@@ -66,7 +68,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
       <main id="main" className={styles.main}>
         {children}
       </main>
-    </>
+    </MeContext.Provider>
   );
 }
 
@@ -91,6 +93,7 @@ function AppHeader({ user }: { user: Me }) {
       <nav aria-label="Main">
         <Link href="/">Fleet</Link>
         <Link href="/incidents/">Incidents</Link>
+        {isAdministrator(user) && <Link href={RELAYS_PATH}>Administration</Link>}
       </nav>
       <div className={styles.user}>
         <span>

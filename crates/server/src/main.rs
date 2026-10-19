@@ -11,7 +11,9 @@ use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::{Identity, PeerRole};
 use monitorflow_server::alerting::{AlertStore, Alerts, EngineSettings, LogNotifier};
 use monitorflow_server::api::users::GrantScope;
-use monitorflow_server::api::{self, customers, users, ApiSettings, ApiState, Role};
+use monitorflow_server::api::{
+    self, customers, users, ApiSettings, ApiState, EnrollmentSettings, Role,
+};
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
 use monitorflow_server::crl::{self, CrlPublisher};
 use monitorflow_server::db;
@@ -183,6 +185,7 @@ async fn main() -> anyhow::Result<()> {
     // Every new mTLS connection uses the latest config from the publisher,
     // which carries a fresh CRL.
     let (crl, tls_config) = CrlPublisher::start(ca.clone(), identity.clone()).await?;
+    let crl = Arc::new(crl);
     let listener = TcpListener::bind(config.grpc_listen_addr)
         .await
         .with_context(|| format!("binding gRPC listener on {}", config.grpc_listen_addr))?;
@@ -232,7 +235,12 @@ async fn main() -> anyhow::Result<()> {
     let api_state = ApiState::new(pool.clone(), registry, ApiSettings::from_config(&config))
         .with_metrics(
             VmQuery::new(&config.victoriametrics_url).context("VictoriaMetrics query client")?,
-        );
+        )
+        .with_enrollment(EnrollmentSettings::from_config(
+            &config,
+            enroll::ca_fingerprint(&ca),
+        ))
+        .with_crl(crl.clone());
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
