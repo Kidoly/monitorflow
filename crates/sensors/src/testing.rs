@@ -107,3 +107,30 @@ impl Sensor for FakeSensor {
         }
     }
 }
+
+/// Writes an executable file through a child process, so this process
+/// never holds a write descriptor to it. Another test forking at the same
+/// moment would inherit such a descriptor until its `exec`, and running
+/// the file meanwhile fails with `ETXTBSY`.
+pub fn write_executable(path: &std::path::Path, body: &str, mode: u32) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", "cat > \"$0\" && chmod \"$1\" \"$0\""])
+        .arg(path)
+        .arg(format!("{mode:o}"))
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("cannot run /bin/sh");
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    stdin
+        .write_all(body.as_bytes())
+        .expect("cannot write the file");
+    drop(stdin);
+    assert!(
+        child.wait().expect("sh did not run").success(),
+        "cannot write {}",
+        path.display()
+    );
+}

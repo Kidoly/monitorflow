@@ -446,6 +446,44 @@ pub struct AgentConfig {
     pub heartbeat_interval: u64,
     pub tls: AgentTlsPaths,
     pub log: LogConfig,
+    pub sensors: AgentSensorsConfig,
+}
+
+/// What sensors configured by the server may touch on this host
+/// (ADR-0024). Only the host's administrator sets these.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentSensorsConfig {
+    /// Directory of the scripts the `script` sensor may run.
+    pub script_dir: PathBuf,
+    /// Directories the `log` sensor may read files under; empty disables
+    /// it.
+    pub log_dirs: Vec<PathBuf>,
+}
+
+impl Default for AgentSensorsConfig {
+    fn default() -> Self {
+        Self {
+            script_dir: "/etc/monitorflow/scripts.d".into(),
+            log_dirs: vec!["/var/log".into()],
+        }
+    }
+}
+
+impl AgentSensorsConfig {
+    fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
+        if !self.script_dir.is_absolute() {
+            return Err(check.fail("sensors.script_dir", "must be an absolute path"));
+        }
+        let plain = |p: &Path| p.is_absolute() && !p.components().any(|c| c.as_os_str() == "..");
+        if let Some(dir) = self.log_dirs.iter().find(|d| !plain(d)) {
+            return Err(check.fail(
+                "sensors.log_dirs",
+                format!("`{}` must be an absolute path without `..`", dir.display()),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Default for AgentConfig {
@@ -458,6 +496,7 @@ impl Default for AgentConfig {
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             tls: AgentTlsPaths::default(),
             log: LogConfig::default(),
+            sensors: AgentSensorsConfig::default(),
         }
     }
 }
@@ -498,6 +537,11 @@ impl LoadConfig for AgentConfig {
         env.set("data_dir", &mut self.data_dir)?;
         env.set_opt("enrollment_token", &mut self.enrollment_token)?;
         env.set("heartbeat_interval", &mut self.heartbeat_interval)?;
+        env.set("sensors.script_dir", &mut self.sensors.script_dir)?;
+        // Comma-separated; an empty variable is ignored like the others.
+        if let Some(dirs) = env.parse::<String>("sensors.log_dirs")? {
+            self.sensors.log_dirs = dirs.split(',').map(|d| d.trim().into()).collect();
+        }
         self.tls.apply_env(env)?;
         self.log.apply_env(env)
     }
@@ -507,7 +551,8 @@ impl LoadConfig for AgentConfig {
         if let Some(url) = &self.enroll_url {
             check.grpc_url("enroll_url", url)?;
         }
-        check.positive("heartbeat_interval", self.heartbeat_interval)
+        check.positive("heartbeat_interval", self.heartbeat_interval)?;
+        self.sensors.validate(check)
     }
 }
 

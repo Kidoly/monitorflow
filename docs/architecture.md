@@ -86,10 +86,10 @@ gRPC over HTTP/2 with mutual TLS on every link: agent ↔ relay, relay ↔ relay
 | Disk | Space and inodes per mount, I/O | Free space below a percentage |
 | Service | systemd unit state | Unit not active |
 | Port | TCP/UDP reachability, local or remote | Closed or timeout |
-| Log | Pattern matches in files or journald | Match count above N in a window |
-| Custom script | Any script returning a value and status | Defined by the script |
+| Log | Pattern matches in files under the agent's log directories (journald later) | Match count above N in a window |
+| Custom script | A script installed on the host by its administrator: Nagios exit code and `name=value` perfdata | Status WARNING or CRITICAL |
 
-Each sensor has a collection interval and one or more thresholds (warning, critical) with a duration, to avoid alerting on short spikes. Sensors implement one trait in `crates/sensors` and produce `Sample` values; the agent schedules them and ships samples upstream in batches.
+Each sensor has a collection interval and one or more thresholds (warning, critical) with a duration, to avoid alerting on short spikes. Sensors implement one trait in `crates/sensors` and produce `Sample` values; the agent schedules them and ships samples upstream in batches. Sensors configured by the server only touch what the agent's own configuration allows (scripts it installed, log directories), see ADR-0024.
 
 ### Threshold engine
 

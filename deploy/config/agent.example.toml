@@ -36,3 +36,21 @@ upstream_url = "https://relay.example.com:7443"
 # level = "info"
 # text or json.
 # format = "text"
+
+[sensors]
+# Limits on what the sensors configured by the server may touch on this host.
+# The server cannot change them (ADR-0024).
+#
+# Directory of the scripts the `script` sensor may run. A server
+# configuration only names a script in it. The directory and each script
+# must be owned by root (or the agent's user) and not writable by group or
+# other; scripts must start with "#!" or be ELF binaries. Install one with:
+#   install -o root -g root -m 0755 check_backup /etc/monitorflow/scripts.d/
+# script_dir = "/etc/monitorflow/scripts.d"
+
+# Directories the `log` sensor may read files under. A server configuration
+# names a file; it is read only if it resolves, symlinks included, under one
+# of these. Only match counts go upstream, but a pattern still reveals
+# whether matching lines exist, so keep this to logs the monitoring admins
+# may see. An empty list disables the log sensor.
+# log_dirs = ["/var/log"]

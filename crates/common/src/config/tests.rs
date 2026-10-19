@@ -140,6 +140,44 @@ fn agent_tls_paths_follow_data_dir() {
 }
 
 #[test]
+fn agent_sensor_limits_default_and_validate() {
+    let agent: AgentConfig = parse(AGENT_MIN).unwrap();
+    assert_eq!(
+        agent.sensors.script_dir,
+        Path::new("/etc/monitorflow/scripts.d")
+    );
+    let text = format!("{AGENT_MIN}\n[sensors]\nscript_dir = \"/opt/checks\"\n");
+    let agent: AgentConfig = parse(&text).unwrap();
+    assert_eq!(agent.sensors.script_dir, Path::new("/opt/checks"));
+    let vars = [("MONITORFLOW_SENSORS_SCRIPT_DIR", "/srv/checks")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert_eq!(agent.sensors.script_dir, Path::new("/srv/checks"));
+    let msg = err::<AgentConfig>(AGENT_MIN, &[("MONITORFLOW_SENSORS_SCRIPT_DIR", "checks")]);
+    assert!(
+        msg.contains("sensors.script_dir") && msg.contains("absolute"),
+        "{msg}"
+    );
+    assert_eq!(agent.sensors.log_dirs, [Path::new("/var/log")]);
+    let text = format!("{AGENT_MIN}\n[sensors]\nlog_dirs = [\"/var/log/app\", \"/srv/logs\"]\n");
+    let agent: AgentConfig = parse(&text).unwrap();
+    assert_eq!(
+        agent.sensors.log_dirs,
+        [Path::new("/var/log/app"), Path::new("/srv/logs")]
+    );
+    let agent: AgentConfig = parse(&format!("{AGENT_MIN}\n[sensors]\nlog_dirs = []\n")).unwrap();
+    assert!(agent.sensors.log_dirs.is_empty());
+    let vars = [("MONITORFLOW_SENSORS_LOG_DIRS", "/a, /b")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert_eq!(agent.sensors.log_dirs, [Path::new("/a"), Path::new("/b")]);
+    for bad in ["logs", "/var/log/../../etc"] {
+        let msg = err::<AgentConfig>(AGENT_MIN, &[("MONITORFLOW_SENSORS_LOG_DIRS", bad)]);
+        assert!(msg.contains("sensors.log_dirs"), "{msg}");
+    }
+    let msg = err::<AgentConfig>(&format!("{AGENT_MIN}\n[sensors]\nscripts = \"/x\""), &[]);
+    assert!(msg.contains("scripts"), "{msg}");
+}
+
+#[test]
 fn server_tls_paths_follow_data_dir() {
     let tls = parse::<ServerConfig>(SERVER_MIN).unwrap().tls_paths();
     assert_eq!(

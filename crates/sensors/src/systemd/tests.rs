@@ -220,11 +220,9 @@ struct FakeBinary {
 
 impl FakeBinary {
     fn new(script: &str) -> Self {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("systemctl");
-        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::testing::write_executable(&path, &format!("#!/bin/sh\n{script}\n"), 0o755);
         std::fs::create_dir(dir.path().join("booted")).unwrap();
         Self { dir }
     }

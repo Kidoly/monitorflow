@@ -42,9 +42,13 @@ enum Command {
 #[derive(Subcommand, Debug)]
 enum SensorsCommand {
     /// Collect each sensor twice, one second apart, and print the second
-    /// round. Needs no configuration.
+    /// round. Needs no configuration; when the agent's configuration file
+    /// exists, its `[sensors]` limits apply (script and log directories).
     ///
-    /// Example: `sensors probe systemd --param units=ssh,cron`.
+    /// Examples: `sensors probe systemd --param units=ssh,cron`,
+    /// `sensors probe script --param script=check_backup --param args=-w,2`,
+    /// `sensors probe log --param path=/var/log/syslog --param pattern=error`
+    /// (counts the lines written during the second between the rounds).
     Probe {
         /// Sensor kinds to run; when empty, every kind that needs no
         /// parameters.
@@ -59,7 +63,8 @@ enum SensorsCommand {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     if let Some(Command::Sensors(SensorsCommand::Probe { kinds, params })) = cli.command {
-        return probe(kinds, params.into_iter().collect()).await;
+        let local = probe_limits(&cli.config)?;
+        return probe(kinds, params.into_iter().collect(), &local).await;
     }
     let config: AgentConfig = config::load(&cli.config)?;
     logging::init(&config.log);
@@ -90,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
     let (stream_end, sensors_end) = sensor_config::link();
     let uplink = Uplink::new(UploadSettings::default());
     let sensors = Sensors::new(
-        Arc::new(Builtin),
+        Arc::new(Builtin::from_config(&config.sensors)),
         ConfigFile::in_dir(&config.data_dir),
         uplink.clone(),
     );
@@ -115,19 +120,38 @@ fn parse_param(arg: &str) -> Result<(String, String), String> {
         .ok_or_else(|| "expected NAME=VALUE".to_owned())
 }
 
+/// The `[sensors]` limits of the agent's configuration file, or the
+/// defaults when there is no file, so probing works before installing.
+fn probe_limits(path: &std::path::Path) -> anyhow::Result<registry::Local> {
+    if !path.exists() {
+        eprintln!(
+            "{} not found; using the default sensor limits",
+            path.display()
+        );
+        return Ok(registry::Local::default());
+    }
+    let config: AgentConfig = config::load(path)?;
+    Ok(sensor_config::local(&config.sensors))
+}
+
 /// One round of samples per sensor kind on stdout, in Prometheus text
 /// format. The first round only primes delta-based sensors like `cpu`.
-async fn probe(kinds: Vec<String>, params: BTreeMap<String, String>) -> anyhow::Result<()> {
+async fn probe(
+    kinds: Vec<String>,
+    params: BTreeMap<String, String>,
+    local: &registry::Local,
+) -> anyhow::Result<()> {
+    let build = |kind: &str| registry::build_local(kind, &params, local);
     let sensors = if kinds.is_empty() {
         // Kinds that need parameters, like `systemd`, refuse none.
         registry::KINDS
             .iter()
-            .filter_map(|kind| Some((kind.to_string(), registry::build(kind, &params).ok()?)))
+            .filter_map(|kind| Some((kind.to_string(), build(kind).ok()?)))
             .collect::<Vec<_>>()
     } else {
         kinds
             .into_iter()
-            .map(|kind| Ok((kind.clone(), registry::build(&kind, &params)?)))
+            .map(|kind| Ok((kind.clone(), build(&kind)?)))
             .collect::<Result<Vec<_>, registry::BuildError>>()?
     };
     let deadline = || tokio::time::Instant::now() + Duration::from_secs(10);
