@@ -12,7 +12,7 @@ use monitorflow_common::config::{self, RelayConfig};
 use monitorflow_common::logging;
 use monitorflow_relay::control::{Control, ControlSettings};
 use monitorflow_relay::forward::{ForwardSettings, Forwarder};
-use monitorflow_relay::listener::{self, CrlSettings, TlsPublisher};
+use monitorflow_relay::listener::{self, CrlCache, CrlSettings, Services, TlsPublisher};
 use monitorflow_relay::renew::{RenewProxy, RenewSettings};
 use tokio::net::TcpListener;
 
@@ -72,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
     let Some((publisher, tls)) = started else {
         return Ok(());
     };
+    let crl = CrlCache::new(publisher.crl());
     tokio::spawn(publisher.run(stop.clone()));
 
     let listener = TcpListener::bind(config.listen_addr)
@@ -88,7 +89,12 @@ async fn main() -> anyhow::Result<()> {
         upstream_up,
     );
     let mut until_stopped = stop.clone();
-    let served = listener::serve(listener, tls, forwarder, renew, async move {
+    let services = Services {
+        forwarder,
+        renew,
+        crl,
+    };
+    let served = listener::serve(listener, tls, services, async move {
         until_stopped.wait().await
     });
     tokio::pin!(served);
