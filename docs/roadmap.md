@@ -25,7 +25,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] Agent: sensor configuration pushed from the server, sample batching and upload.
 - [x] Server: write samples to VictoriaMetrics (remote write) and logs to VictoriaLogs.
 - [x] Server: threshold engine with warning/critical and duration; incidents table.
-- [ ] API: sensors, thresholds, incidents, metric query proxy.
+- [x] API: sensors, thresholds, incidents, metric query proxy.
 - [x] Web: Next.js project, auth, fleet overview.
 - [ ] Web: server page with graphs and threshold lines.
 - [ ] Web: incidents list and timeline.
