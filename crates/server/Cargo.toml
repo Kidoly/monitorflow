@@ -40,6 +40,8 @@ prost.workspace = true
 reqwest.workspace = true
 snap.workspace = true
 async-trait.workspace = true
+tower-http.workspace = true
+percent-encoding.workspace = true
 # Kills a timed-out mirror tool with the programs it started.
 rustix = { workspace = true, features = ["process"] }
 
