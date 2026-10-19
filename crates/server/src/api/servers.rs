@@ -1,11 +1,12 @@
-//! `GET /api/servers`: managed machines from the database, with their live
-//! connection status from the gRPC [`Registry`](crate::grpc::Registry).
+//! `GET /api/servers` and `GET /api/servers/{id}`: managed machines from
+//! the database, with their live connection status from the gRPC
+//! [`Registry`](crate::grpc::Registry).
 //!
 //! Pages are keyset-paginated on the sort key, so a server added or
 //! removed between two pages neither repeats nor skips the others.
 
 use axum::extract::rejection::QueryRejection;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -15,7 +16,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::auth::{CurrentUser, SiteScope};
+use super::sensors::parse_id;
 use super::{ApiError, ApiState};
+use crate::ca::Serial;
 
 /// Page size without `limit`.
 pub const DEFAULT_LIMIT: u32 = 500;
@@ -89,7 +92,74 @@ pub struct ServerView {
     pub via_relay: Option<String>,
     /// Threshold incidents currently open on this server.
     pub open_incidents: i64,
+    /// Latest expiry among the agent's unrevoked certificates; `null` when
+    /// it has none. Past dates mean every certificate has expired.
+    pub cert_not_after: Option<DateTime<Utc>>,
 }
+
+/// Body of `GET /api/servers/{id}`: the listing row plus the agent's
+/// current certificate.
+#[derive(Debug, Serialize)]
+pub struct ServerDetail {
+    #[serde(flatten)]
+    pub server: ServerView,
+    /// The certificate issued last to this agent, revoked or not; `null`
+    /// when the CA never issued one (a server row created by hand).
+    pub certificate: Option<CertificateView>,
+}
+
+/// A certificate from the `certificates` table.
+#[derive(Debug, Serialize)]
+pub struct CertificateView {
+    /// Lowercase hexadecimal without leading zeros.
+    pub serial: String,
+    pub not_before: DateTime<Utc>,
+    /// Expiry.
+    pub not_after: DateTime<Utc>,
+    pub issued_at: DateTime<Utc>,
+    pub revoked: bool,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub revocation_reason: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CertificateRow {
+    serial: Vec<u8>,
+    not_before: DateTime<Utc>,
+    not_after: DateTime<Utc>,
+    issued_at: DateTime<Utc>,
+    revoked_at: Option<DateTime<Utc>>,
+    revocation_reason: Option<String>,
+}
+
+impl From<CertificateRow> for CertificateView {
+    fn from(row: CertificateRow) -> Self {
+        Self {
+            serial: Serial::from_bytes(&row.serial).to_string(),
+            not_before: row.not_before,
+            not_after: row.not_after,
+            issued_at: row.issued_at,
+            revoked: row.revoked_at.is_some(),
+            revoked_at: row.revoked_at,
+            revocation_reason: row.revocation_reason,
+        }
+    }
+}
+
+/// Columns of [`Row`]; callers add the `WHERE` clause.
+const SELECT_SERVERS: &str =
+    "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name, s.relay_id,
+            s.os_family, s.os_version, s.agent_version, s.created_at, s.last_seen_at,
+            s.revoked_at,
+            -- One probe of the partial unique index on open incidents.
+            (SELECT count(*) FROM incidents i
+             WHERE i.server_id = s.id AND i.state = 'open') AS open_incidents,
+            -- One probe of the partial index on active certificates.
+            (SELECT max(c.not_after) FROM certificates c
+             WHERE c.peer_role = 'agent' AND c.peer_id = s.peer_id
+               AND c.revoked_at IS NULL) AS cert_not_after
+     FROM servers s
+     JOIN sites si ON si.id = s.site_id";
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -106,6 +176,7 @@ struct Row {
     last_seen_at: Option<DateTime<Utc>>,
     revoked_at: Option<DateTime<Utc>>,
     open_incidents: i64,
+    cert_not_after: Option<DateTime<Utc>>,
 }
 
 /// `GET /api/servers`: one page of the servers of the sites the user may
@@ -134,20 +205,13 @@ pub async fn list(
         }
         None => (None, None, None),
     };
-    let mut rows: Vec<Row> = sqlx::query_as(
-        "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name, s.relay_id,
-                s.os_family, s.os_version, s.agent_version, s.created_at, s.last_seen_at,
-                s.revoked_at,
-                -- One probe of the partial unique index on open incidents.
-                (SELECT count(*) FROM incidents i
-                 WHERE i.server_id = s.id AND i.state = 'open') AS open_incidents
-         FROM servers s
-         JOIN sites si ON si.id = s.site_id
+    let mut rows: Vec<Row> = sqlx::query_as(&format!(
+        "{SELECT_SERVERS}
          WHERE ($1 OR s.site_id = ANY($2))
            AND ($3::text IS NULL OR (si.name, s.hostname, s.peer_id) > ($3, $4, $5))
          ORDER BY si.name, s.hostname, s.peer_id
-         LIMIT $6",
-    )
+         LIMIT $6"
+    ))
     .bind(all_sites)
     .bind(&sites)
     .bind(after_site)
@@ -166,23 +230,7 @@ pub async fn list(
 
     let servers = rows
         .into_iter()
-        .map(|row| {
-            let live = state
-                .registry
-                .get(&row.peer_id)
-                .filter(|peer| peer.role == PeerRole::Agent);
-            match live {
-                Some(peer) => ServerView {
-                    status: Status::Online,
-                    connected_at: Some(peer.connected_at),
-                    last_heartbeat: Some(peer.last_seen),
-                    via_relay: peer.via_relay,
-                    agent_version: Some(peer.agent_version).filter(|v| !v.is_empty()),
-                    ..ServerView::offline(row)
-                },
-                None => ServerView::offline(row),
-            }
-        })
+        .map(|row| ServerView::new(&state, row))
         .collect();
     Ok(Json(ServerList {
         servers,
@@ -190,7 +238,61 @@ pub async fn list(
     }))
 }
 
+/// `GET /api/servers/{id}`: one server the user may read, with its
+/// current certificate. Outside the user's sites it is 404.
+pub async fn detail(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<ServerDetail>, ApiError> {
+    let id = parse_id(&id)?;
+    if !user.can_read() {
+        return Err(ApiError::Forbidden);
+    }
+    let row: Option<Row> = sqlx::query_as(&format!("{SELECT_SERVERS} WHERE s.id = $1"))
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await?;
+    let row = row
+        .filter(|row| user.can_read_site(row.site_id))
+        .ok_or(ApiError::NotFound)?;
+    // Newest first on the per-peer issued_at index.
+    let certificate: Option<CertificateRow> = sqlx::query_as(
+        "SELECT serial, not_before, not_after, issued_at, revoked_at, revocation_reason
+         FROM certificates
+         WHERE peer_role = 'agent' AND peer_id = $1
+         ORDER BY issued_at DESC, serial DESC
+         LIMIT 1",
+    )
+    .bind(&row.peer_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    Ok(Json(ServerDetail {
+        server: ServerView::new(&state, row),
+        certificate: certificate.map(CertificateView::from),
+    }))
+}
+
 impl ServerView {
+    /// `row` with the live status of its agent, if connected.
+    fn new(state: &ApiState, row: Row) -> Self {
+        let live = state
+            .registry
+            .get(&row.peer_id)
+            .filter(|peer| peer.role == PeerRole::Agent);
+        match live {
+            Some(peer) => Self {
+                status: Status::Online,
+                connected_at: Some(peer.connected_at),
+                last_heartbeat: Some(peer.last_seen),
+                via_relay: peer.via_relay,
+                agent_version: Some(peer.agent_version).filter(|v| !v.is_empty()),
+                ..Self::offline(row)
+            },
+            None => Self::offline(row),
+        }
+    }
+
     fn offline(row: Row) -> Self {
         Self {
             id: row.id,
@@ -209,6 +311,7 @@ impl ServerView {
             last_heartbeat: row.last_seen_at,
             via_relay: None,
             open_incidents: row.open_incidents,
+            cert_not_after: row.cert_not_after,
         }
     }
 }
