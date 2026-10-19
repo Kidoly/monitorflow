@@ -11,7 +11,7 @@ The last two Phase 2 sensors run a custom check and count pattern matches in a l
 
 ### Agent-side limits
 
-The agent's own configuration file, written by the host's administrator, sets what server-configured sensors may touch: the `[sensors]` section of `agent.toml`. The server's configuration only names things inside these limits. `registry::Local` carries them. `registry::build` checks parameters syntactically, with the default limits, and the API keeps using it; the agent calls `registry::build_local`, which also refuses (`BuildError::Refused`, "refused by this agent") what this host does not allow, like a script nobody installed. Refusals go into the configuration acknowledgement like any other refused spec (ADR-0016), so the operator sees them. What only shows at run time (a script whose mode changed after it was accepted) is a permanent sensor error: logged at error level, and the sensor stops until it is configured again or the agent restarts (ADR-0012).
+The agent's own configuration file, written by the host's administrator, sets what server-configured sensors may touch: the `[sensors]` section of `agent.toml`. The server's configuration only names things inside these limits. `registry::Local` carries them. `registry::build` checks parameters syntactically, with the default limits, and the API keeps using it; the agent calls `registry::build_local`, which also refuses (`BuildError::Refused`, "refused by this agent") what this host does not allow, like a script nobody installed. Refusals go into the configuration acknowledgement like any other refused spec (ADR-0016), so the operator sees them. What only shows at run time (a script whose mode changed after it was accepted) is a permanent sensor error: logged at error level, and the sensor stops until it is configured again, the agent restarts (ADR-0012) or a retry finds it working (amendment below).
 
 Neither sensor is in the built-in defaults; both need parameters only the operator knows.
 
@@ -70,9 +70,15 @@ With label `path` and the configured instance. `matches` is a gauge of the last 
 ## Consequences
 
 - The server can at worst run, with chosen plain-word arguments, scripts the host's administrator installed. Arguments are the remaining channel, so scripts must treat them as untrusted input.
-- A script installed or fixed after the configuration arrived runs once the configuration is resent or the agent restarts, because refused specs and permanent errors stop the sensor (ADR-0012). Retrying refused specs is a possible follow-up.
+- A script installed or fixed after the configuration arrived runs within five minutes (amendment below); before it, only after the configuration was resent with other specs or the agent restarted.
 - Scripts run as the agent's user. Dropping privileges per script (a `User=` setting, systemd-run) is a follow-up if agents run as root.
 - Lines written while the agent is stopped, or between the last collection and a configuration change (which rebuilds the sensor), are not counted. Persisting offsets is a possible follow-up.
 - An administrator narrows or empties `sensors.log_dirs` to limit what the server can probe; the default `/var/log` includes `auth.log`, whose match counts the server can see.
 - Stderr is discarded rather than logged, since it can contain anything; forwarding script output to VictoriaLogs needs agent log samples, which the protocol does not have yet.
 - Tests write scripts through a child process: a test forking in parallel would otherwise inherit the write descriptor until its `exec`, and running the file fails with `ETXTBSY`.
+
+## Amendment 2026-10-19: retrying refused and failed sensors
+
+The agent tries again, every five minutes (`sensors::RETRY_EVERY`), the specs of its current configuration that this host refused (`BuildError::Refused`) or that a permanent error stopped. Specs invalid on any host (bad name, interval or parameters, unknown kind, duplicates) are not retried. A retry builds the sensor with `registry::build_local` and runs one collection within its timeout, whose samples are dropped. If it builds and that collection does not fail permanently, the sensor starts in a scheduler of its own, so the sensors already running keep their schedule and state (a log sensor's offset); otherwise nothing is logged. Logs follow changes of state only: started after a retry (info), refused now failing or the reverse (warning). The scheduler still logs each permanent error of a running sensor once, as it stops it.
+
+The acknowledgement already lists per-spec errors, so the agent sends a new `SensorConfigAck` with the same revision whenever the list changes: a running sensor stopped by a permanent error is listed with "stopped by a permanent error: …", and a spec that starts after a retry leaves the list. The server records the revision and logs the errors as for any acknowledgement; no protocol change. The probe runs a script once more per retry while it fails, which a script must tolerate anyway (it runs every interval once it works).
