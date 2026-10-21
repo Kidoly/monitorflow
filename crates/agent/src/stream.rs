@@ -19,8 +19,11 @@
 //! in `SampleBatch` envelopes taken from the [`Uplink`] when a batch is
 //! full or at each flush interval; while disconnected they stay there.
 //!
-//! Envelope payloads are never logged, and commands are never executed:
-//! signed command execution is Phase 3.
+//! Commands go to the command dispatcher, which checks and runs them, and
+//! its results go up on the current stream (ADR-0031). Results produced
+//! while disconnected wait in its queue.
+//!
+//! Envelope payloads are never logged.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -29,7 +32,9 @@ pub use monitorflow_common::client::failure::{classify_status, Failure};
 use monitorflow_common::config::AgentConfig;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Envelope, Heartbeat, Hello, SampleBatch, SensorConfigAck};
+use monitorflow_common::proto::v1::{
+    CommandResult, Envelope, Heartbeat, Hello, SampleBatch, SensorConfigAck,
+};
 use monitorflow_common::tls::{self, error_chain, TlsError};
 use monitorflow_common::PROTOCOL_VERSION;
 use tokio::sync::{mpsc, watch};
@@ -39,6 +44,7 @@ use tonic::transport::Channel;
 use tonic::Streaming;
 
 use crate::backoff::Backoff;
+use crate::commands;
 use crate::identity::AgentIdentity;
 use crate::os::HostInfo;
 use crate::sensor_config::StreamEnd;
@@ -92,6 +98,7 @@ pub struct Agent {
     host: HostInfo,
     sensors: Option<StreamEnd>,
     uplink: Option<Uplink>,
+    commands: Option<commands::StreamEnd>,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
     // monotonic across restarts; the server only needs them per stream.
     sequence: u64,
@@ -106,6 +113,7 @@ impl Agent {
             host,
             sensors: None,
             uplink: None,
+            commands: None,
             sequence: 0,
         }
     }
@@ -120,6 +128,13 @@ impl Agent {
     /// acknowledgements upstream; without it they are ignored.
     pub fn with_sensors(mut self, sensors: StreamEnd) -> Self {
         self.sensors = Some(sensors);
+        self
+    }
+
+    /// Passes commands to the command dispatcher and sends its results
+    /// upstream; without it commands are ignored.
+    pub fn with_commands(mut self, commands: commands::StreamEnd) -> Self {
+        self.commands = Some(commands);
         self
     }
 
@@ -261,6 +276,12 @@ impl Agent {
                     }
                     None
                 }
+                Some(result) = next_result(&mut self.commands) => {
+                    let envelope = self.envelope(Payload::CommandResult(result));
+                    // Waits for room: results matter more than samples.
+                    let _ = tx.send(envelope).await;
+                    None
+                }
                 message = inbound.message() => match message {
                     Ok(Some(envelope)) => {
                         self.receive(envelope);
@@ -330,13 +351,18 @@ impl Agent {
                 }
                 None => tracing::debug!(sequence, "ignoring sensor configuration"),
             },
-            // TODO(phase3-commands): verify the signature, classify, execute.
-            Some(Payload::Command(command)) => tracing::warn!(
-                sequence,
-                command_id = %command.command_id,
-                kind = %command.kind,
-                "ignoring command: command execution is not supported by this agent yet"
-            ),
+            Some(Payload::Command(command)) => match &self.commands {
+                Some(commands) => {
+                    tracing::debug!(sequence, command_id = %command.command_id.escape_debug(), "command received");
+                    if commands.commands.try_send(command).is_err() {
+                        tracing::warn!(
+                            sequence,
+                            "command queue full; the server will send it again"
+                        );
+                    }
+                }
+                None => tracing::warn!(sequence, "ignoring command: no command dispatcher"),
+            },
             Some(other) => tracing::debug!(sequence, kind = kind(&other), "ignoring envelope"),
             None => tracing::debug!(sequence, "ignoring envelope without payload"),
         }
@@ -376,6 +402,14 @@ async fn filled(uplink: &Option<Uplink>) {
 async fn next_ack(sensors: &mut Option<StreamEnd>) -> Option<SensorConfigAck> {
     match sensors {
         Some(sensors) => sensors.acks.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// The next result of the command dispatcher; never without one.
+async fn next_result(commands: &mut Option<commands::StreamEnd>) -> Option<CommandResult> {
+    match commands {
+        Some(commands) => commands.results.recv().await,
         None => std::future::pending().await,
     }
 }

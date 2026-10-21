@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use monitorflow_agent::backoff::Backoff;
+use monitorflow_agent::commands::{self, Dispatcher, DispatcherSettings, Handlers, Journal};
 use monitorflow_agent::enroll::{self, EnrollError};
 use monitorflow_agent::renew::{Renewal, RenewalSettings};
 use monitorflow_agent::sensor_config::{self, Builtin, ConfigFile};
@@ -15,7 +16,7 @@ use monitorflow_agent::stream::{Agent, StreamSettings};
 use monitorflow_agent::upload::{Uplink, UploadSettings};
 use monitorflow_agent::{os, shutdown};
 use monitorflow_common::config::{self, AgentConfig};
-use monitorflow_common::logging;
+use monitorflow_common::{logging, tls};
 use monitorflow_sensors::{metric_name, registry, Sample};
 
 #[derive(Parser, Debug)]
@@ -100,11 +101,23 @@ async fn main() -> anyhow::Result<()> {
         uplink.clone(),
     );
     let sensors = tokio::spawn(sensors.run(sensors_end, stop.clone()));
+    let (commands_stream, commands_end) = commands::link();
+    let ca_certs =
+        tls::load_certs(&config.tls_paths().ca_cert).context("loading the CA certificate")?;
+    let dispatcher = Dispatcher::new(
+        identity.peer_id(),
+        ca_certs,
+        Handlers::default(),
+        Journal::in_dir(&config.data_dir),
+        DispatcherSettings::default(),
+    );
+    tokio::spawn(dispatcher.run(commands_end, stop.clone()));
     // The stream only returns on shutdown or a local error.
     let result = Agent::new(StreamSettings::from_config(&config), identity, host)
         .follow(updates)
         .with_sensors(stream_end)
         .with_upload(uplink)
+        .with_commands(commands_stream)
         .run(stop)
         .await
         .context("cannot connect upstream");

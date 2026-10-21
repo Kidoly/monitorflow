@@ -21,6 +21,7 @@ anyhow.workspace = true
 clap.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
+rustls.workspace = true
 serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true
@@ -33,6 +34,8 @@ monitorflow-sensors = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["test-util"] }
 monitorflow-server = { path = "../server" }
 tempfile.workspace = true
+pem.workspace = true
+uuid.workspace = true
 sqlx.workspace = true
 # For the fake VictoriaMetrics shared with the server's tests.
 axum.workspace = true

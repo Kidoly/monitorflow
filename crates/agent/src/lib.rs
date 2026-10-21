@@ -6,6 +6,7 @@
 //! then keep the stream to the upstream open until SIGINT or SIGTERM,
 //! renewing the certificate before it expires and running the sensors.
 
+pub mod commands;
 pub mod enroll;
 pub mod identity;
 pub mod os;
