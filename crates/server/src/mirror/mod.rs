@@ -6,16 +6,19 @@
 //! Mirrors are global, not per customer. [`model`] holds their rows and
 //! naming rules, [`store`] keeps them in PostgreSQL with their snapshots
 //! and runs, [`runner`] runs the tools; [`apt`], [`dnf`] and [`signing`]
-//! build their command lines over the files of [`layout`].
+//! build their command lines over the files of [`layout`], and [`jobs`]
+//! syncs and snapshots mirrors with them.
 
 pub mod apt;
 pub mod dnf;
+pub mod jobs;
 pub mod layout;
 pub mod model;
 pub mod runner;
 pub mod signing;
 pub mod store;
 
+pub use jobs::{Job, JobError, JobKind, Mirrors};
 pub use layout::Layout;
 pub use model::{
     Family, Mirror, MirrorSpec, Run, RunKind, RunState, Snapshot, SnapshotState, Trigger,
