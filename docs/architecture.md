@@ -116,6 +116,25 @@ The central server hosts full repository mirrors. Relays sync a copy. Agents poi
 
 Mirroring reuses proven tools, orchestrated from Rust, rather than reimplementing repository formats. Pulp is an alternative that handles both families in one tool, at the cost of a heavier deployment; it is not used in the first version.
 
+### Mirrors on the server
+
+Mirrors are global, managed by global administrators (ADR-0030). Each has a family, an upstream URL, for apt a suite and components, optional architectures and a sync interval or manual syncs. A sync runs `aptly mirror update` (one aptly mirror per component) or `reposync` then `createrepo_c`; by default it ends with a snapshot: an aptly publish for apt, a hardlinked dated directory for dnf. One job runs per mirror at a time, under a PostgreSQL advisory lock; every sync and snapshot is a run row with its status and tool output.
+
+A plain HTTP listener (`mirror_listen_addr`, default `0.0.0.0:7480`) serves `mirror_dir` (default `<data_dir>/mirrors`) with a fixed layout that relays and agents rely on:
+
+| URL | Content |
+| --- | --- |
+| `/apt/<mirror>/<snapshot>/`, `/apt/<mirror>/current/` | aptly publish of a snapshot; `current` is the newest |
+| `/dnf/<mirror>/<snapshot>/`, `/dnf/<mirror>/current/` | dnf repository of a snapshot; `current` is the newest |
+| `/keys/monitorflow-archive.asc` | public key signing apt `Release` files and dnf `repomd.xml` |
+
+Integrity comes from the signatures, not the transport. Setup on the server host:
+
+1. Install `aptly`, `dnf-plugins-core` (for `reposync`), `createrepo_c` and `gpg`, or set their paths under `[mirror]`.
+2. Create the signing key with `monitorflow-server mirror key generate`, or import an existing secret key with `monitorflow-server mirror key import --file key.asc`. It lives in `<mirror_dir>/gnupg` without a passphrase; the public half is written to `<mirror_dir>/keys/monitorflow-archive.asc`.
+3. For apt, add the upstream archive keys to the keyring aptly verifies with: `gpg --no-default-keyring --keyring <mirror_dir>/upstream-keyring.gpg --import /usr/share/keyrings/debian-archive-keyring.gpg`.
+4. `monitorflow-server mirror add …`, then `mirror sync --name <mirror>`.
+
 ### Source configuration
 
 - The agent rewrites `/etc/apt/sources.list.d/` or `/etc/yum.repos.d/` to point at its assigned mirror.
@@ -231,4 +250,4 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Relay chaining | Each relay has an admin-chosen parent; every hop adds the peer it verified to a `monitorflow-via` path, and the server accepts only paths along parent links down from the connecting relay; relays serve the CRL downstream (ADR-0028) |
 | Peer administration | Enrollment tokens and revocation of agents and relays from the API by customer administrators; tokens returned once; revocation updates rows, certificates and the CRL and closes live streams (ADR-0029) |
 | Relay store-and-forward | `SampleBatch` envelopes buffered on disk per origin (CRC-checked segments, size and age caps, oldest dropped first) while the upstream is down, replayed oldest first before live data with the stored Hello and `monitorflow-via` path; at-least-once for buffered data until server acks exist (ADR-0027) |
-| Commands and updates | Commands signed with the CA key over the agent ID, kind, payload and expiry; one in flight per server, resent on reconnect, results matched to the sending agent; agents journal command IDs on disk; `apply_updates` and `PackageReport` typed in `packages.proto` (ADR-0031) |
+| Package mirrors | Global, admin-managed; aptly and reposync + createrepo_c run behind a runner trait, one job per mirror under an advisory lock; snapshots are aptly publishes or hardlinked directories; served over plain HTTP at a fixed layout, integrity from the server's GPG signatures (ADR-0030) |

@@ -9,6 +9,7 @@ pub mod db;
 pub mod enroll;
 pub mod grpc;
 pub mod ingest;
+pub mod mirror;
 pub mod renew;
 pub mod sensor_config;
 pub mod vm_query;
