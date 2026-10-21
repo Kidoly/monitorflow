@@ -1,0 +1,34 @@
+// MonitorFlow package payloads, version 1. See ADR-0031.
+//
+// Rules: changes are additive only. Never renumber or reuse a field number.
+
+syntax = "proto3";
+
+package monitorflow.v1;
+
+// Payload of a Command of kind "apply_updates".
+message ApplyUpdates {
+  // Packages to upgrade, by name; empty upgrades every package.
+  repeated string packages = 1;
+  // Only upgrades coming from the distribution's security repositories.
+  bool security_only = 2;
+  // Reboot one minute after the upgrade when the host then needs it.
+  bool allow_reboot = 3;
+}
+
+// The packages installed on an agent's host, sent after every apply_updates
+// and periodically.
+message PackageReport {
+  repeated Package packages = 1;
+  bool reboot_required = 2;
+  int64 collected_at_unix_ms = 3;
+}
+
+message Package {
+  string name = 1;
+  // Installed version, as the package manager writes it.
+  string version = 2;
+  string arch = 3;
+  // Candidate version when an upgrade is available, else empty.
+  string upgradable_version = 4;
+}

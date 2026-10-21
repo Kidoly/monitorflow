@@ -678,6 +678,10 @@ impl Connection {
                 self.counters.command_results += 1;
                 tracing::debug!(agent_id = %id, sequence, command_id = %result.command_id, "command result");
             }
+            // TODO(phase4-packages): store the report (ADR-0031).
+            Some(Payload::PackageReport(report)) => {
+                tracing::debug!(agent_id = %id, sequence, packages = report.packages.len(), "package report");
+            }
             // TODO(relay-mux): on a relay connection, a later Hello opens a
             // sub-session for another agent behind the relay. It must pass
             // the RelayPolicy check, get its own registry entry and sequence

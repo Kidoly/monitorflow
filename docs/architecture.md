@@ -148,6 +148,8 @@ Integrity comes from the signatures, not the transport. Setup on the server host
 3. Agents apply updates and report installed packages and whether a reboot is required.
 4. Results appear per server in the web interface and in the audit log.
 
+Updates travel as `apply_updates` commands on the agent's stream, signed with the CA key, one in flight per server; the agent keeps a journal so a command redelivered after a reconnect never runs twice, runs apt or dnf through fixed `sudo -n` command lines, and sends a `PackageReport` after each update and every 6 hours (ADR-0031).
+
 ## 8. AI-driven remediation
 
 When a threshold is crossed, the central server can ask an external AI API to diagnose and propose shell commands. The AI layer is provider-agnostic: one trait, one adapter per provider. The Claude API is the first adapter.
