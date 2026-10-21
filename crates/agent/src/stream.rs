@@ -19,7 +19,8 @@
 //! in `SampleBatch` envelopes taken from the [`Uplink`] when a batch is
 //! full or at each flush interval; while disconnected they stay there.
 //!
-//! Commands go to the command dispatcher, which checks and runs them, and
+//! Package reports go up when published, or on the next connection
+//! (ADR-0031). Commands go to the command dispatcher, which checks and runs them, and
 //! its results go up on the current stream (ADR-0031). Results produced
 //! while disconnected wait in its queue.
 //!
@@ -33,7 +34,7 @@ use monitorflow_common::config::AgentConfig;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
-    CommandResult, Envelope, Heartbeat, Hello, SampleBatch, SensorConfigAck,
+    CommandResult, Envelope, Heartbeat, Hello, PackageReport, SampleBatch, SensorConfigAck,
 };
 use monitorflow_common::tls::{self, error_chain, TlsError};
 use monitorflow_common::PROTOCOL_VERSION;
@@ -99,6 +100,7 @@ pub struct Agent {
     sensors: Option<StreamEnd>,
     uplink: Option<Uplink>,
     commands: Option<commands::StreamEnd>,
+    reports: Option<watch::Receiver<Option<PackageReport>>>,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
     // monotonic across restarts; the server only needs them per stream.
     sequence: u64,
@@ -114,6 +116,7 @@ impl Agent {
             sensors: None,
             uplink: None,
             commands: None,
+            reports: None,
             sequence: 0,
         }
     }
@@ -135,6 +138,13 @@ impl Agent {
     /// upstream; without it commands are ignored.
     pub fn with_commands(mut self, commands: commands::StreamEnd) -> Self {
         self.commands = Some(commands);
+        self
+    }
+
+    /// Sends each package report published on `reports` (ADR-0031): at
+    /// once when connected, else on the next connection.
+    pub fn with_reports(mut self, reports: watch::Receiver<Option<PackageReport>>) -> Self {
+        self.reports = Some(reports);
         self
     }
 
@@ -282,6 +292,11 @@ impl Agent {
                     let _ = tx.send(envelope).await;
                     None
                 }
+                Some(report) = next_report(&mut self.reports) => {
+                    let envelope = self.envelope(Payload::PackageReport(report));
+                    let _ = tx.send(envelope).await;
+                    None
+                }
                 message = inbound.message() => match message {
                     Ok(Some(envelope)) => {
                         self.receive(envelope);
@@ -411,6 +426,23 @@ async fn next_result(commands: &mut Option<commands::StreamEnd>) -> Option<Comma
     match commands {
         Some(commands) => commands.results.recv().await,
         None => std::future::pending().await,
+    }
+}
+
+/// The next package report not sent yet; never without a publisher.
+async fn next_report(
+    reports: &mut Option<watch::Receiver<Option<PackageReport>>>,
+) -> Option<PackageReport> {
+    let Some(reports) = reports else {
+        return std::future::pending().await;
+    };
+    loop {
+        if reports.changed().await.is_err() {
+            return std::future::pending().await;
+        }
+        if let Some(report) = reports.borrow_and_update().clone() {
+            return Some(report);
+        }
     }
 }
 
