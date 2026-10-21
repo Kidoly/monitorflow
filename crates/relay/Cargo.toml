@@ -31,3 +31,5 @@ monitorflow-server = { path = "../server" }
 rcgen.workspace = true
 tempfile.workspace = true
 sqlx.workspace = true
+pem.workspace = true
+uuid.workspace = true

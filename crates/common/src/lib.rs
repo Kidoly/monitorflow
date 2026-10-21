@@ -2,6 +2,7 @@
 //! TLS helpers, configuration loading and common error types.
 
 pub mod client;
+pub mod command;
 pub mod config;
 pub mod grpc_url;
 pub mod logging;
@@ -19,7 +20,7 @@ pub mod proto {
 }
 
 /// Protocol version spoken by this build. Bump the minor on additive changes.
-pub const PROTOCOL_VERSION: &str = "1.0";
+pub const PROTOCOL_VERSION: &str = "1.1";
 
 #[cfg(test)]
 mod tests {

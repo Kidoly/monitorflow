@@ -518,3 +518,22 @@ fn relay_buffer_limits_are_checked() {
     let msg = err::<RelayConfig>(&format!("{AGENT_MIN}\nbuffer_max_bytes = 1"), &[]);
     assert!(msg.contains("unknown field `buffer_max_bytes`"), "{msg}");
 }
+
+#[test]
+fn agent_package_report_interval_defaults_and_validates() {
+    let agent: AgentConfig = parse(AGENT_MIN).unwrap();
+    assert_eq!(agent.packages.report_interval, 21_600);
+    let text = format!("{AGENT_MIN}\n[packages]\nreport_interval = 3600\n");
+    assert_eq!(
+        parse::<AgentConfig>(&text)
+            .unwrap()
+            .packages
+            .report_interval,
+        3600
+    );
+    let vars = [("MONITORFLOW_PACKAGES_REPORT_INTERVAL", "600")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert_eq!(agent.packages.report_interval, 600);
+    let msg = err::<AgentConfig>(AGENT_MIN, &[("MONITORFLOW_PACKAGES_REPORT_INTERVAL", "0")]);
+    assert!(msg.contains("packages.report_interval"), "{msg}");
+}

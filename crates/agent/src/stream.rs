@@ -19,8 +19,12 @@
 //! in `SampleBatch` envelopes taken from the [`Uplink`] when a batch is
 //! full or at each flush interval; while disconnected they stay there.
 //!
-//! Envelope payloads are never logged, and commands are never executed:
-//! signed command execution is Phase 3.
+//! Package reports go up when published, or on the next connection
+//! (ADR-0031). Commands go to the command dispatcher, which checks and runs them, and
+//! its results go up on the current stream (ADR-0031). Results produced
+//! while disconnected wait in its queue.
+//!
+//! Envelope payloads are never logged.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -29,7 +33,9 @@ pub use monitorflow_common::client::failure::{classify_status, Failure};
 use monitorflow_common::config::AgentConfig;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Envelope, Heartbeat, Hello, SampleBatch, SensorConfigAck};
+use monitorflow_common::proto::v1::{
+    CommandResult, Envelope, Heartbeat, Hello, PackageReport, SampleBatch, SensorConfigAck,
+};
 use monitorflow_common::tls::{self, error_chain, TlsError};
 use monitorflow_common::PROTOCOL_VERSION;
 use tokio::sync::{mpsc, watch};
@@ -39,6 +45,7 @@ use tonic::transport::Channel;
 use tonic::Streaming;
 
 use crate::backoff::Backoff;
+use crate::commands;
 use crate::identity::AgentIdentity;
 use crate::os::HostInfo;
 use crate::sensor_config::StreamEnd;
@@ -92,6 +99,8 @@ pub struct Agent {
     host: HostInfo,
     sensors: Option<StreamEnd>,
     uplink: Option<Uplink>,
+    commands: Option<commands::StreamEnd>,
+    reports: Option<watch::Receiver<Option<PackageReport>>>,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
     // monotonic across restarts; the server only needs them per stream.
     sequence: u64,
@@ -106,6 +115,8 @@ impl Agent {
             host,
             sensors: None,
             uplink: None,
+            commands: None,
+            reports: None,
             sequence: 0,
         }
     }
@@ -120,6 +131,20 @@ impl Agent {
     /// acknowledgements upstream; without it they are ignored.
     pub fn with_sensors(mut self, sensors: StreamEnd) -> Self {
         self.sensors = Some(sensors);
+        self
+    }
+
+    /// Passes commands to the command dispatcher and sends its results
+    /// upstream; without it commands are ignored.
+    pub fn with_commands(mut self, commands: commands::StreamEnd) -> Self {
+        self.commands = Some(commands);
+        self
+    }
+
+    /// Sends each package report published on `reports` (ADR-0031): at
+    /// once when connected, else on the next connection.
+    pub fn with_reports(mut self, reports: watch::Receiver<Option<PackageReport>>) -> Self {
+        self.reports = Some(reports);
         self
     }
 
@@ -261,6 +286,17 @@ impl Agent {
                     }
                     None
                 }
+                Some(result) = next_result(&mut self.commands) => {
+                    let envelope = self.envelope(Payload::CommandResult(result));
+                    // Waits for room: results matter more than samples.
+                    let _ = tx.send(envelope).await;
+                    None
+                }
+                Some(report) = next_report(&mut self.reports) => {
+                    let envelope = self.envelope(Payload::PackageReport(report));
+                    let _ = tx.send(envelope).await;
+                    None
+                }
                 message = inbound.message() => match message {
                     Ok(Some(envelope)) => {
                         self.receive(envelope);
@@ -330,13 +366,18 @@ impl Agent {
                 }
                 None => tracing::debug!(sequence, "ignoring sensor configuration"),
             },
-            // TODO(phase3-commands): verify the signature, classify, execute.
-            Some(Payload::Command(command)) => tracing::warn!(
-                sequence,
-                command_id = %command.command_id,
-                kind = %command.kind,
-                "ignoring command: command execution is not supported by this agent yet"
-            ),
+            Some(Payload::Command(command)) => match &self.commands {
+                Some(commands) => {
+                    tracing::debug!(sequence, command_id = %command.command_id.escape_debug(), "command received");
+                    if commands.commands.try_send(command).is_err() {
+                        tracing::warn!(
+                            sequence,
+                            "command queue full; the server will send it again"
+                        );
+                    }
+                }
+                None => tracing::warn!(sequence, "ignoring command: no command dispatcher"),
+            },
             Some(other) => tracing::debug!(sequence, kind = kind(&other), "ignoring envelope"),
             None => tracing::debug!(sequence, "ignoring envelope without payload"),
         }
@@ -360,6 +401,7 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::SensorConfigAck(_) => "sensor_config_ack",
         Payload::Command(_) => "command",
         Payload::CommandResult(_) => "command_result",
+        Payload::PackageReport(_) => "package_report",
     }
 }
 
@@ -376,6 +418,31 @@ async fn next_ack(sensors: &mut Option<StreamEnd>) -> Option<SensorConfigAck> {
     match sensors {
         Some(sensors) => sensors.acks.recv().await,
         None => std::future::pending().await,
+    }
+}
+
+/// The next result of the command dispatcher; never without one.
+async fn next_result(commands: &mut Option<commands::StreamEnd>) -> Option<CommandResult> {
+    match commands {
+        Some(commands) => commands.results.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// The next package report not sent yet; never without a publisher.
+async fn next_report(
+    reports: &mut Option<watch::Receiver<Option<PackageReport>>>,
+) -> Option<PackageReport> {
+    let Some(reports) = reports else {
+        return std::future::pending().await;
+    };
+    loop {
+        if reports.changed().await.is_err() {
+            return std::future::pending().await;
+        }
+        if let Some(report) = reports.borrow_and_update().clone() {
+            return Some(report);
+        }
     }
 }
 

@@ -145,6 +145,7 @@ struct Tenant {
     incident: Uuid,
     relay: Uuid,
     token: Uuid,
+    command: Uuid,
 }
 
 async fn tenant(pool: &PgPool, name: &str) -> Tenant {
@@ -209,7 +210,14 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    let command = one("INSERT INTO commands (server_id, kind, payload, expires_at)
+         VALUES ($1, 'apply_updates', '', now() + interval '1 hour') RETURNING id")
+    .bind(server)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     Tenant {
+        command,
         customer,
         site,
         server,
@@ -371,6 +379,30 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 Ctx::mentions(&body, mine) && !Ctx::mentions(&body, theirs),
                 "{body}"
             );
+        }
+        ("GET", "/api/servers/{id}/packages") | ("GET", "/api/servers/{id}/commands") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+            let uri = path.replace("{id}", &a.server.to_string());
+            let (status, body) = ctx.call(method, &uri, None).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            assert!(!Ctx::mentions(&body, b.command), "{body}");
+        }
+        ("POST", "/api/servers/{id}/commands") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = json!({ "kind": "apply_updates" });
+            assert_eq!(ctx.status(method, &uri, Some(body)).await, not_found);
+            let queued: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM commands WHERE server_id = $1")
+                    .bind(b.server)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(queued, 1, "only B's own fixture command");
+        }
+        ("GET", "/api/commands/{id}") => {
+            let uri = format!("/api/commands/{}", b.command);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
         }
         ("GET", "/api/relays/{id}") => {
             let uri = format!("/api/relays/{}", b.relay);

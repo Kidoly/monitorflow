@@ -466,6 +466,24 @@ pub struct AgentConfig {
     pub tls: AgentTlsPaths,
     pub log: LogConfig,
     pub sensors: AgentSensorsConfig,
+    pub packages: AgentPackagesConfig,
+}
+
+/// Package reports and updates (ADR-0031).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentPackagesConfig {
+    /// Seconds between two package reports; one is also sent at start and
+    /// after every update.
+    pub report_interval: u64,
+}
+
+impl Default for AgentPackagesConfig {
+    fn default() -> Self {
+        Self {
+            report_interval: 6 * 60 * 60,
+        }
+    }
 }
 
 /// What sensors configured by the server may touch on this host
@@ -516,6 +534,7 @@ impl Default for AgentConfig {
             tls: AgentTlsPaths::default(),
             log: LogConfig::default(),
             sensors: AgentSensorsConfig::default(),
+            packages: AgentPackagesConfig::default(),
         }
     }
 }
@@ -543,6 +562,10 @@ impl LoadConfig for AgentConfig {
         env.set_opt("enrollment_token", &mut self.enrollment_token)?;
         env.set("heartbeat_interval", &mut self.heartbeat_interval)?;
         env.set("sensors.script_dir", &mut self.sensors.script_dir)?;
+        env.set(
+            "packages.report_interval",
+            &mut self.packages.report_interval,
+        )?;
         // Comma-separated; an empty variable is ignored like the others.
         if let Some(dirs) = env.parse::<String>("sensors.log_dirs")? {
             self.sensors.log_dirs = dirs.split(',').map(|d| d.trim().into()).collect();
@@ -557,6 +580,7 @@ impl LoadConfig for AgentConfig {
             check.grpc_url("enroll_url", url)?;
         }
         check.positive("heartbeat_interval", self.heartbeat_interval)?;
+        check.positive("packages.report_interval", self.packages.report_interval)?;
         self.sensors.validate(check)
     }
 }
