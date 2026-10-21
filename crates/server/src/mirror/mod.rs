@@ -7,14 +7,17 @@
 //! naming rules, [`store`] keeps them in PostgreSQL with their snapshots
 //! and runs, [`runner`] runs the tools; [`apt`], [`dnf`] and [`signing`]
 //! build their command lines over the files of [`layout`], and [`jobs`]
-//! syncs and snapshots mirrors with them.
+//! syncs and snapshots mirrors with them, on request or from the
+//! [`scheduler`]. [`http`] serves the result.
 
 pub mod apt;
 pub mod dnf;
+pub mod http;
 pub mod jobs;
 pub mod layout;
 pub mod model;
 pub mod runner;
+pub mod scheduler;
 pub mod signing;
 pub mod store;
 
