@@ -15,6 +15,8 @@
 
 mod apt;
 mod backup;
+mod check;
+mod dnf;
 mod key;
 #[cfg(test)]
 mod tests;
@@ -25,12 +27,13 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use monitorflow_common::proto::v1::configure_sources::{
-    AptRepository, Family as ProtoFamily, Mode as ProtoMode,
+    AptRepository, DnfRepository, Family as ProtoFamily, Mode as ProtoMode,
 };
 use monitorflow_common::proto::v1::ConfigureSources;
 use serde::{Deserialize, Serialize};
 
 use backup::{disk_path, io_error, read_regular, Action, Backup};
+pub use check::SystemCheck;
 
 /// First lines of every file MonitorFlow writes.
 const HEADER: &str = "# Managed by MonitorFlow (ADR-0032). Changes are overwritten;\n\
@@ -101,6 +104,7 @@ struct Spec {
     /// Without the trailing slash.
     base: String,
     apt: Vec<AptRepository>,
+    dnf: Vec<DnfRepository>,
     keys: Vec<(String, key::PublicKey)>,
 }
 
@@ -110,6 +114,8 @@ enum Step {
     Write(PathBuf, Vec<u8>),
     /// Set aside: the copy in the backup is the only one left.
     Remove(PathBuf),
+    /// An original rewritten, keeping its mode and owner.
+    Rewrite(PathBuf, Vec<u8>),
 }
 
 /// Points the package manager at the mirror of `spec`.
@@ -182,7 +188,11 @@ fn plan(spec: &Spec, root: &Path, backup: &mut Backup) -> Result<Vec<Step>, Erro
             [apt::PARTS, apt::KEYRINGS],
             apt::others(root)?,
         ),
-        Family::Dnf => unreachable!("refused by Spec::check"),
+        Family::Dnf => (
+            dnf::files(spec),
+            [dnf::REPOS, dnf::KEYS],
+            dnf::others(root)?,
+        ),
     };
     let mut steps = Vec::new();
     for dir in dirs {
@@ -228,7 +238,10 @@ fn plan(spec: &Spec, root: &Path, backup: &mut Backup) -> Result<Vec<Step>, Erro
         };
         let (step, action) = match spec.family {
             Family::Apt => (Step::Remove(path.clone()), Action::Moved),
-            Family::Dnf => unreachable!("refused by Spec::check"),
+            Family::Dnf => match dnf::disable(&current) {
+                disabled if disabled == current => continue,
+                disabled => (Step::Rewrite(path.clone(), disabled), Action::Disabled),
+            },
         };
         match backup
             .entry(&path)
@@ -263,6 +276,11 @@ fn run(root: &Path, step: &Step) -> Result<(), Error> {
         }
         Step::Write(_, content) => backup::write_atomic(&disk, content, FILE_MODE, None),
         Step::Remove(_) => backup::remove_file(&disk).map(drop),
+        Step::Rewrite(_, content) => {
+            let meta = std::fs::metadata(&disk).map_err(io_error(&disk))?;
+            let owner = Some((meta.uid(), meta.gid()));
+            backup::write_atomic(&disk, content, meta.mode() & 0o7777, owner)
+        }
     }
 }
 
@@ -270,6 +288,7 @@ impl Step {
     fn path(&self) -> &Path {
         match self {
             Self::Mkdir(path) | Self::Write(path, _) | Self::Remove(path) => path,
+            Self::Rewrite(path, _) => path,
         }
     }
 }
@@ -308,7 +327,7 @@ impl Spec {
         let invalid = |message: String| Err(Error::Invalid(message));
         let family = match spec.family() {
             ProtoFamily::Apt => Family::Apt,
-            ProtoFamily::Dnf => return invalid("dnf sources are not supported yet".into()),
+            ProtoFamily::Dnf => Family::Dnf,
             ProtoFamily::Unspecified => return invalid("family is required".into()),
         };
         let mode = match spec.mode() {
@@ -379,6 +398,7 @@ impl Spec {
             mode,
             base: base.to_owned(),
             apt: spec.apt.clone(),
+            dnf: spec.dnf.clone(),
             keys,
         })
     }

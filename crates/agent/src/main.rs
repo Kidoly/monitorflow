@@ -8,6 +8,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use monitorflow_agent::backoff::Backoff;
 use monitorflow_agent::enroll::{self, EnrollError};
+use monitorflow_agent::packages::sources::{self, SystemCheck};
 use monitorflow_agent::renew::{Renewal, RenewalSettings};
 use monitorflow_agent::sensor_config::{self, Builtin, ConfigFile};
 use monitorflow_agent::sensors::Sensors;
@@ -16,7 +17,9 @@ use monitorflow_agent::upload::{Uplink, UploadSettings};
 use monitorflow_agent::{os, shutdown};
 use monitorflow_common::config::{self, AgentConfig};
 use monitorflow_common::logging;
+use monitorflow_common::proto::v1::ConfigureSources;
 use monitorflow_sensors::{metric_name, registry, Sample};
+use prost::Message;
 
 #[derive(Parser, Debug)]
 #[command(name = "monitorflow-agent", version, about = "MonitorFlow agent")]
@@ -37,6 +40,20 @@ enum Command {
     /// Debug helpers for the built-in sensors.
     #[command(subcommand)]
     Sensors(SensorsCommand),
+    /// Package source configuration, run as root through sudo by the
+    /// agent (ADR-0032). Always works on `/`.
+    #[command(subcommand)]
+    Sources(SourcesCommand),
+}
+
+#[derive(Subcommand, Debug, Clone, Copy)]
+enum SourcesCommand {
+    /// Read a `ConfigureSources` message (binary Protobuf) on stdin, point
+    /// the package manager at the mirror and check it with `apt-get
+    /// update` or `dnf makecache`; reverts on failure.
+    Apply,
+    /// Restore the sources `apply` changed.
+    Revert,
 }
 
 #[derive(Subcommand, Debug)]
@@ -65,6 +82,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(Command::Sensors(SensorsCommand::Probe { kinds, params })) = cli.command {
         let local = probe_limits(&cli.config)?;
         return probe(kinds, params.into_iter().collect(), &local).await;
+    }
+    if let Some(Command::Sources(command)) = cli.command {
+        return tokio::task::spawn_blocking(move || sources(command)).await?;
     }
     let config: AgentConfig = config::load(&cli.config)?;
     logging::init(&config.log);
@@ -112,6 +132,28 @@ async fn main() -> anyhow::Result<()> {
         let _ = sensors.await;
     }
     result
+}
+
+/// Prints the changed paths and the backup directory, one per line.
+fn sources(command: SourcesCommand) -> anyhow::Result<()> {
+    let root = std::path::Path::new("/");
+    let outcome = match command {
+        SourcesCommand::Apply => {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)?;
+            let spec = ConfigureSources::decode(bytes.as_slice())
+                .context("stdin is not a ConfigureSources message")?;
+            sources::apply(&spec, root, &SystemCheck::default())?
+        }
+        SourcesCommand::Revert => sources::revert(root)?,
+    };
+    for path in &outcome.changed {
+        println!("changed {}", path.display());
+    }
+    if let Some(dir) = &outcome.backup {
+        println!("backup {}", dir.display());
+    }
+    Ok(())
 }
 
 fn parse_param(arg: &str) -> Result<(String, String), String> {
