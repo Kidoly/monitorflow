@@ -5,9 +5,10 @@
 
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use monitorflow_common::proto::v1::CommandResult;
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::{PgExecutor, PgPool};
 use uuid::Uuid;
 
 use super::{CommandRow, Outcome, State};
@@ -47,6 +48,15 @@ impl CommandStore {
 
     /// Queues `new`; the dispatcher sends it once the agent is connected.
     pub async fn enqueue(&self, new: &NewCommand) -> Result<CommandRow, sqlx::Error> {
+        Self::enqueue_in(&self.pool, new).await
+    }
+
+    /// [`Self::enqueue`] in a caller's transaction, to audit it with the
+    /// insert.
+    pub async fn enqueue_in(
+        db: impl PgExecutor<'_>,
+        new: &NewCommand,
+    ) -> Result<CommandRow, sqlx::Error> {
         sqlx::query_as(&format!(
             "INSERT INTO commands AS c (server_id, kind, payload, expires_at, requested_by, campaign_id)
              VALUES ($1, $2, $3, now() + make_interval(secs => $4), $5, $6)
@@ -58,7 +68,31 @@ impl CommandStore {
         .bind(new.ttl.as_secs_f64())
         .bind(new.requested_by)
         .bind(new.campaign_id)
-        .fetch_one(&self.pool)
+        .fetch_one(db)
+        .await
+    }
+
+    /// Commands of `server_id`, newest first, issued before `before`
+    /// (`issued_at`, `id`) when set.
+    pub async fn list(
+        &self,
+        server_id: Uuid,
+        before: Option<(DateTime<Utc>, Uuid)>,
+        limit: i64,
+    ) -> Result<Vec<CommandRow>, sqlx::Error> {
+        let (before_at, before_id) = before.unzip();
+        sqlx::query_as(&format!(
+            "SELECT {COLUMNS} FROM commands c
+             WHERE c.server_id = $1
+               AND ($2::timestamptz IS NULL OR (c.issued_at, c.id) < ($2, $3))
+             ORDER BY c.issued_at DESC, c.id DESC
+             LIMIT $4"
+        ))
+        .bind(server_id)
+        .bind(before_at)
+        .bind(before_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
         .await
     }
 
