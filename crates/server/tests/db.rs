@@ -151,6 +151,7 @@ db_tests! {
                 "mirrors",
                 "relays",
                 "sensor_configs",
+                "server_packages",
                 "servers",
                 "sessions",
                 "sites",

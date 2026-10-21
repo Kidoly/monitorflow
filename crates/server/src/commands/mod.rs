@@ -4,8 +4,10 @@
 //! A command is `queued`, then `sent` on the agent's stream, `running` once
 //! the agent says it started, and ends `succeeded`, `failed`, `expired` or
 //! `cancelled`. At most one command per server is `sent` or `running`.
+//! Package reports from agents are stored here too.
 
 mod dispatcher;
+mod packages;
 mod store;
 
 use chrono::{DateTime, Utc};
@@ -14,6 +16,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 pub use dispatcher::{Commands, DispatcherSettings};
+pub use packages::{PackageStore, MAX_PACKAGES};
 pub use store::{CommandStore, NewCommand};
 
 /// Longest `stdout` or `stderr` stored, in bytes; the end is kept.

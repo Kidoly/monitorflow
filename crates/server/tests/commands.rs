@@ -11,11 +11,15 @@ use monitorflow_common::command;
 use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Command, CommandResult, CommandStatus, Envelope, Hello};
+use monitorflow_common::proto::v1::{
+    Command, CommandResult, CommandStatus, Envelope, Hello, Package, PackageReport,
+};
 use monitorflow_common::tls::{self, Identity};
 use monitorflow_common::PROTOCOL_VERSION;
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
-use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings, NewCommand, State};
+use monitorflow_server::commands::{
+    CommandStore, Commands, DispatcherSettings, NewCommand, PackageStore, State,
+};
 use monitorflow_server::grpc::{
     self, AgentStreamService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
 };
@@ -402,5 +406,51 @@ db_tests! {
         h.commands.dispatch("web-01");
         assert_eq!(peer.command().await.command_id, third.id.to_string());
         assert_eq!(h.registry.get("web-01").unwrap().counters.command_results, 2);
+    }
+
+    #[sqlx::test]
+    async fn package_reports_replace_older_ones_only(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        server(&pool, "web-01", paris).await;
+        let store = PackageStore::new(pool.clone());
+        let package = |name: &str, upgradable: &str| Package {
+            name: name.into(),
+            version: "1.0".into(),
+            arch: "amd64".into(),
+            upgradable_version: upgradable.into(),
+        };
+        let report = |at: i64, packages: Vec<Package>| PackageReport {
+            packages,
+            reboot_required: at % 2 == 0,
+            collected_at_unix_ms: at,
+        };
+        let stored = || async {
+            sqlx::query_as::<_, (String, Option<String>)>(
+                "SELECT name, upgradable_version FROM server_packages ORDER BY name",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+        let first = report(1_800_000_000_000, vec![package("old", "")]);
+        assert!(store.replace("web-01", &first).await.unwrap());
+        // Duplicates, empty and NUL names are dropped, not fatal.
+        let second = report(
+            1_800_000_000_001,
+            vec![package("bash", "1.1"), package("bash", ""), package("", ""), package("a\0b", ""), package("zsh", "")],
+        );
+        assert!(store.replace("web-01", &second).await.unwrap());
+        assert_eq!(stored().await, [("bash".into(), Some("1.1".into())), ("zsh".into(), None)]);
+        // Out of order or unknown: ignored.
+        assert!(!store.replace("web-01", &first).await.unwrap());
+        assert!(!store.replace("web-02", &second).await.unwrap());
+        assert_eq!(stored().await.len(), 2);
+        let flags: (Option<bool>, bool) = sqlx::query_as(
+            "SELECT reboot_required, packages_reported_at = to_timestamp(1800000000.001) FROM servers",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(flags, (Some(false), true));
     }
 }
