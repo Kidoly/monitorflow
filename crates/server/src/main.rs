@@ -15,6 +15,7 @@ use monitorflow_server::api::{
     self, customers, users, ApiSettings, ApiState, EnrollmentSettings, Role,
 };
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
+use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings};
 use monitorflow_server::crl::{self, CrlPublisher};
 use monitorflow_server::db;
 use monitorflow_server::enroll::{self, server_cert, token, Enroller, FailureLimiter};
@@ -220,6 +221,12 @@ async fn main() -> anyhow::Result<()> {
         registry.clone(),
         WatcherSettings::default(),
     );
+    let commands = Commands::spawn(
+        CommandStore::new(pool.clone()),
+        registry.clone(),
+        ca.clone(),
+        DispatcherSettings::default(),
+    );
     let service = AgentStreamService::new(
         registry.clone(),
         Arc::new(DbRelayPolicy::new(pool.clone())),
@@ -227,6 +234,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_inventory(Arc::new(DbInventory::new(pool.clone())))
     .with_sensor_configs(sensor_configs)
+    .with_commands(commands)
     .with_alerts(alerts)
     .with_ingest(Ingest {
         metrics: Some(metrics.queue()),
