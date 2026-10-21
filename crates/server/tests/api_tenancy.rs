@@ -238,6 +238,8 @@ struct Ctx {
     cookie: String,
     a: Tenant,
     b: Tenant,
+    /// A global mirror (ADR-0030).
+    mirror: Uuid,
 }
 
 impl Ctx {
@@ -437,6 +439,15 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let (_, body) = ctx.call(method, path, None).await;
             assert!(Ctx::mentions(&body, a.incident));
         }
+        // Mirrors are global: a customer administrator sees none of them.
+        ("GET", "/api/mirrors")
+        | ("GET", "/api/mirrors/{id}")
+        | ("POST", "/api/mirrors/{id}/sync")
+        | ("POST", "/api/mirrors/{id}/snapshots") => {
+            let uri = path.replace("{id}", &ctx.mirror.to_string());
+            let body = method.eq("POST").then(|| json!({}));
+            assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
+        }
         // Creation: a customer admin cannot create customers, nor sites of B.
         ("POST", "/api/customers") => {
             assert_eq!(
@@ -599,7 +610,14 @@ db_tests! {
         users::create_user_with(&pool, "admin-a", &Secret::new(PASSWORD), Role::Administrator, GrantScope::Customer(a.customer), "test")
             .await
             .unwrap();
-        let mut ctx = Ctx { pool: pool.clone(), vm: vm.clone(), vm_url, cookie: String::new(), a, b };
+        let mirror = sqlx::query_scalar(
+            "INSERT INTO mirrors (name, family, upstream_url, distribution, components)
+             VALUES ('debian', 'apt', 'https://deb.debian.org/debian', 'bookworm', '{main}') RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let mut ctx = Ctx { pool: pool.clone(), vm: vm.clone(), vm_url, cookie: String::new(), a, b, mirror };
         ctx.cookie = login(&ctx.app(), "admin-a").await.1;
 
         // The parsed list is the router's: listed methods are routed, the
@@ -631,6 +649,8 @@ db_tests! {
             check(&ctx, method, path).await;
         }
 
+        let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM mirror_runs").fetch_one(&pool).await.unwrap();
+        assert_eq!(runs, 0, "a customer administrator started a mirror job");
         // Writes against B changed nothing (A's rows were not touched either).
         assert_eq!(rows, (before("sensor_configs").await, before("thresholds").await, before("sites").await, before("enrollment_tokens").await, before("relays").await, before("servers").await));
         // Nothing about B ever reached VictoriaMetrics, while A's queries did.

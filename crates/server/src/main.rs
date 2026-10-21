@@ -23,7 +23,9 @@ use monitorflow_server::grpc::{
     self, AgentStreamService, CrlService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
 };
 use monitorflow_server::ingest::{Ingest, JsonLines, RemoteWrite, Writer, WriterSettings};
-use monitorflow_server::mirror::{self, CommandRunner, Layout, Mirrors};
+use monitorflow_server::mirror::{
+    self, CommandRunner, JobKind, Layout, MirrorSpec, Mirrors, Trigger,
+};
 use monitorflow_server::renew::Renewer;
 use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
 use monitorflow_server::vm_query::VmQuery;
@@ -60,6 +62,101 @@ enum Command {
     /// Manage customers (ADR-0026).
     #[command(subcommand)]
     Customer(CustomerCommand),
+    /// Manage package mirrors (ADR-0030).
+    #[command(subcommand)]
+    Mirror(MirrorCommand),
+}
+
+#[derive(Subcommand, Debug)]
+enum MirrorCommand {
+    /// Declare a mirror; nothing is downloaded until it syncs.
+    Add(AddMirror),
+    /// List mirrors with their current snapshot and last run.
+    List,
+    /// Sync a mirror now, in this process, and print the run's output.
+    /// With auto-snapshot, the sync ends with a snapshot.
+    Sync {
+        #[arg(long)]
+        name: String,
+    },
+    /// Snapshot what the last sync fetched and move `current` to it.
+    Snapshot {
+        #[arg(long)]
+        name: String,
+        /// Snapshot name; the UTC time (20261023T090000Z) by default.
+        #[arg(long)]
+        snapshot: Option<String>,
+    },
+    /// Manage the key signing published repositories.
+    #[command(subcommand)]
+    Key(KeyCommand),
+}
+
+#[derive(Args, Debug)]
+struct AddMirror {
+    /// 1 to 64 of a-z, 0-9, `.`, `_` and `-`; part of the mirror's URLs.
+    #[arg(long)]
+    name: String,
+    #[arg(long, value_parser = ["apt", "dnf"])]
+    family: String,
+    /// http or https URL of the upstream repository, without credentials.
+    #[arg(long)]
+    url: String,
+    /// apt suite, like bookworm.
+    #[arg(long, default_value = "")]
+    distribution: String,
+    /// apt component; repeat for several.
+    #[arg(long = "component", value_name = "COMPONENT")]
+    components: Vec<String>,
+    /// Architecture to mirror; repeat for several. All by default.
+    #[arg(long = "arch", value_name = "ARCH")]
+    architectures: Vec<String>,
+    /// Automatic sync interval like 6h or 1d (at least 15m), or `manual`.
+    #[arg(long, default_value = "1d", value_parser = parse_interval)]
+    interval: Interval,
+    /// Do not publish a snapshot at the end of each sync.
+    #[arg(long)]
+    no_auto_snapshot: bool,
+}
+
+#[derive(Subcommand, Debug)]
+enum KeyCommand {
+    /// Create the signing key (RSA 4096, no passphrase).
+    Generate {
+        #[arg(long, default_value = mirror::signing::DEFAULT_UID)]
+        uid: String,
+    },
+    /// Import an existing secret key from an OpenPGP file.
+    Import {
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
+}
+
+/// Seconds between automatic syncs; `None` for manual only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Interval(Option<i32>);
+
+/// `manual`, or a number of seconds with an `s`, `m`, `h` or `d` suffix.
+fn parse_interval(s: &str) -> Result<Interval, String> {
+    if s == "manual" {
+        return Ok(Interval(None));
+    }
+    let (number, unit) = s.split_at(s.len().saturating_sub(1));
+    let unit = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        _ => return Err("expected `manual` or a duration like 6h or 1d".into()),
+    };
+    number
+        .parse::<i32>()
+        .ok()
+        .and_then(|n| n.checked_mul(unit))
+        .filter(|&secs| secs >= mirror::model::MIN_SYNC_INTERVAL_S)
+        .map(|secs| Interval(Some(secs)))
+        .ok_or_else(|| "expected a duration of at least 15m, like 6h or 1d".into())
 }
 
 #[derive(Subcommand, Debug)]
@@ -159,7 +256,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Token(TokenCommand::Create(args))) => {
             return create_token(&config, args).await
         }
-        Some(Command::User { .. } | Command::Customer(_)) | None => {}
+        Some(Command::User { .. } | Command::Customer(_) | Command::Mirror(_)) | None => {}
     }
     logging::init(&config.log);
     tracing::info!(config = %cli.config.display(), protocol = monitorflow_common::PROTOCOL_VERSION, "starting server");
@@ -172,6 +269,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Command::User { command }) => return user_command(&pool, command).await,
         Some(Command::Customer(command)) => return customer_command(&pool, command).await,
+        Some(Command::Mirror(command)) => return mirror_command(&config, pool, command).await,
         Some(Command::Token(_)) | None => {}
     }
 
@@ -254,7 +352,8 @@ async fn main() -> anyhow::Result<()> {
             enroll::ca_fingerprint(&ca),
         ))
         .with_crl(crl.clone())
-        .with_commands(commands);
+        .with_commands(commands)
+        .with_mirrors(mirrors.clone());
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
@@ -400,6 +499,97 @@ async fn customer_command(pool: &sqlx::PgPool, command: CustomerCommand) -> anyh
     Ok(())
 }
 
+async fn mirror_command(
+    config: &ServerConfig,
+    pool: sqlx::PgPool,
+    command: MirrorCommand,
+) -> anyhow::Result<()> {
+    let mirrors = open_mirrors(config, pool.clone()).await?;
+    let find = |name: String| {
+        let pool = pool.clone();
+        async move {
+            mirror::store::by_name(&pool, &name)
+                .await?
+                .with_context(|| format!("mirror `{name}` does not exist"))
+        }
+    };
+    let (mirror, kind) = match command {
+        MirrorCommand::Add(args) => {
+            let spec = MirrorSpec {
+                name: args.name,
+                family: args.family.parse().map_err(anyhow::Error::msg)?,
+                upstream_url: args.url,
+                distribution: args.distribution,
+                components: args.components,
+                architectures: args.architectures,
+                sync_interval_s: args.interval.0,
+                auto_snapshot: !args.no_auto_snapshot,
+            };
+            let created = mirror::store::create(&pool, &spec, ("system", "cli")).await?;
+            println!("created mirror {} ({})", created.name, created.id);
+            return Ok(());
+        }
+        MirrorCommand::List => {
+            for m in mirror::store::list(&pool).await? {
+                let current = mirror::store::latest_published(&pool, m.id).await?;
+                let last = mirror::store::runs(&pool, m.id, 1).await?.pop();
+                let interval = m
+                    .sync_interval_s
+                    .map_or("manual".to_owned(), |s| format!("{s}s"));
+                println!(
+                    "{}\t{}\t{}\t{}\tcurrent={}\tlast={}",
+                    m.name,
+                    m.family,
+                    m.upstream_url,
+                    interval,
+                    current.map_or("-".to_owned(), |s| s.name),
+                    last.map_or("-".to_owned(), |r| format!(
+                        "{:?} {:?} {}",
+                        r.kind,
+                        r.state,
+                        r.started_at.format("%Y-%m-%d %H:%M:%S UTC")
+                    ))
+                    .to_lowercase(),
+                );
+            }
+            return Ok(());
+        }
+        MirrorCommand::Key(command) => {
+            let runner = CommandRunner::new(&config.mirror, mirrors.layout().gnupg());
+            let key = match command {
+                KeyCommand::Generate { uid } => {
+                    mirror::signing::generate(&runner, mirrors.layout(), &uid).await?
+                }
+                KeyCommand::Import { file } => {
+                    mirror::signing::import(&runner, mirrors.layout(), &file).await?
+                }
+            };
+            println!(
+                "signing key {key}; public key at {}",
+                mirrors.layout().public_key().display()
+            );
+            return Ok(());
+        }
+        MirrorCommand::Sync { name } => (find(name).await?, JobKind::Sync),
+        MirrorCommand::Snapshot { name, snapshot } => {
+            (find(name).await?, JobKind::Snapshot(snapshot))
+        }
+    };
+    let job = mirrors
+        .begin(&mirror, kind, Trigger::Manual, Some("cli"))
+        .await?;
+    mirror::jobs::audit_request(&pool, ("system", "cli"), &mirror, job.run()).await?;
+    let run = job.execute().await;
+    print!("{}", run.output);
+    match run.error {
+        None => {
+            println!("run {} succeeded", run.id);
+            Ok(())
+        }
+        Some(error) => anyhow::bail!("run {} failed: {error}", run.id),
+    }
+}
+
 /// Prompts twice without echo on a terminal; reads one line otherwise.
 fn read_password() -> anyhow::Result<Secret> {
     use std::io::{BufRead, IsTerminal};
@@ -498,4 +688,62 @@ fn shutdown_signal() -> anyhow::Result<impl std::future::Future<Output = ()>> {
         };
         tracing::info!(signal = name, "shutting down");
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intervals() {
+        assert_eq!(parse_interval("manual"), Ok(Interval(None)));
+        assert_eq!(parse_interval("15m"), Ok(Interval(Some(900))));
+        assert_eq!(parse_interval("6h"), Ok(Interval(Some(21_600))));
+        assert_eq!(parse_interval("1d"), Ok(Interval(Some(86_400))));
+        for bad in ["", "10m", "1w", "h", "-1d", "99999999d"] {
+            assert!(parse_interval(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn mirror_commands_parse() {
+        let cli = Cli::try_parse_from([
+            "monitorflow-server",
+            "mirror",
+            "add",
+            "--name",
+            "debian-12",
+            "--family",
+            "apt",
+            "--url",
+            "https://deb.debian.org/debian",
+            "--distribution",
+            "bookworm",
+            "--component",
+            "main",
+            "--component",
+            "contrib",
+            "--arch",
+            "amd64",
+            "--interval",
+            "manual",
+        ])
+        .unwrap();
+        let Some(Command::Mirror(MirrorCommand::Add(add))) = cli.command else {
+            panic!("not mirror add");
+        };
+        assert_eq!(add.components, ["main", "contrib"]);
+        assert_eq!(add.interval, Interval(None));
+        assert!(!add.no_auto_snapshot);
+        let cli = Cli::try_parse_from(["monitorflow-server", "mirror", "snapshot", "--name", "d"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Mirror(MirrorCommand::Snapshot {
+                snapshot: None,
+                ..
+            }))
+        ));
+        assert!(Cli::try_parse_from(["monitorflow-server", "mirror", "key", "import"]).is_err());
+    }
 }

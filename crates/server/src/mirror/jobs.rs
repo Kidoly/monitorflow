@@ -292,3 +292,29 @@ impl Job {
         Ok(size)
     }
 }
+
+/// Audits a sync or snapshot requested by `actor` (`(kind, id)` as in the
+/// audit log) as `mirror.sync` or `mirror.snapshot`. Scheduled runs are
+/// not audited; their rows are the record.
+pub async fn audit_request(
+    pool: &PgPool,
+    actor: (&str, &str),
+    mirror: &Mirror,
+    run: &Run,
+) -> Result<(), sqlx::Error> {
+    let action = match run.kind {
+        RunKind::Sync => "mirror.sync",
+        RunKind::Snapshot => "mirror.snapshot",
+    };
+    crate::api::audit::record(
+        pool,
+        crate::api::audit::Event {
+            actor_kind: actor.0,
+            actor_id: actor.1,
+            action,
+            target: Some(("mirror", &mirror.id.to_string())),
+            details: serde_json::json!({ "name": mirror.name, "run_id": run.id }),
+        },
+    )
+    .await
+}
