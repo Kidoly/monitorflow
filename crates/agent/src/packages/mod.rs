@@ -8,6 +8,7 @@ pub mod apply;
 pub mod apt;
 pub mod dnf;
 pub mod exec;
+pub mod sources;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
