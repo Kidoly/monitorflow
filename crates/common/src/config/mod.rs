@@ -732,6 +732,13 @@ pub struct ServerConfig {
     pub ingest: IngestConfig,
     pub tls: ServerTlsPaths,
     pub log: LogConfig,
+    /// Plain HTTP listener serving mirror content (ADR-0030). Clients
+    /// check it by its signatures, not by the transport.
+    pub mirror_listen_addr: SocketAddr,
+    /// Root of the mirrors, snapshots and signing key; defaults to
+    /// `<data_dir>/mirrors`, see [`Self::mirror_dir`].
+    pub mirror_dir: Option<PathBuf>,
+    pub mirror: MirrorConfig,
 }
 
 impl Default for ServerConfig {
@@ -753,6 +760,9 @@ impl Default for ServerConfig {
             ingest: IngestConfig::default(),
             tls: ServerTlsPaths::default(),
             log: LogConfig::default(),
+            mirror_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7480)),
+            mirror_dir: None,
+            mirror: MirrorConfig::default(),
         }
     }
 }
@@ -761,6 +771,75 @@ impl ServerConfig {
     /// Identity file paths, with defaults under `<data_dir>/tls/`.
     pub fn tls_paths(&self) -> TlsPaths {
         self.tls.resolve(&self.data_dir)
+    }
+
+    /// `mirror_dir`, or `<data_dir>/mirrors`.
+    pub fn mirror_dir(&self) -> PathBuf {
+        self.mirror_dir
+            .clone()
+            .unwrap_or_else(|| self.data_dir.join("mirrors"))
+    }
+}
+
+/// Tools and limits of the server's mirror jobs (ADR-0030).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MirrorConfig {
+    /// Programs, looked up on `PATH` unless absolute.
+    pub aptly: PathBuf,
+    pub reposync: PathBuf,
+    pub createrepo_c: PathBuf,
+    pub gpg: PathBuf,
+    /// Seconds one command of a sync or snapshot may run before it is
+    /// killed and the run fails.
+    pub sync_timeout: u64,
+    /// Scheduled syncs running at once; manual ones are not counted.
+    pub max_concurrent_syncs: usize,
+}
+
+impl Default for MirrorConfig {
+    fn default() -> Self {
+        Self {
+            aptly: "aptly".into(),
+            reposync: "reposync".into(),
+            createrepo_c: "createrepo_c".into(),
+            gpg: "gpg".into(),
+            // A first sync of a full distribution takes hours.
+            sync_timeout: 12 * 60 * 60,
+            max_concurrent_syncs: 2,
+        }
+    }
+}
+
+impl MirrorConfig {
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set("mirror.aptly", &mut self.aptly)?;
+        env.set("mirror.reposync", &mut self.reposync)?;
+        env.set("mirror.createrepo_c", &mut self.createrepo_c)?;
+        env.set("mirror.gpg", &mut self.gpg)?;
+        env.set("mirror.sync_timeout", &mut self.sync_timeout)?;
+        env.set(
+            "mirror.max_concurrent_syncs",
+            &mut self.max_concurrent_syncs,
+        )
+    }
+
+    fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
+        for (key, path) in [
+            ("mirror.aptly", &self.aptly),
+            ("mirror.reposync", &self.reposync),
+            ("mirror.createrepo_c", &self.createrepo_c),
+            ("mirror.gpg", &self.gpg),
+        ] {
+            if path.as_os_str().is_empty() {
+                return Err(check.fail(key, "must name a program"));
+            }
+        }
+        check.positive("mirror.sync_timeout", self.sync_timeout)?;
+        check.positive(
+            "mirror.max_concurrent_syncs",
+            self.max_concurrent_syncs as u64,
+        )
     }
 }
 
@@ -785,11 +864,15 @@ impl LoadConfig for ServerConfig {
         }
         self.ingest.apply_env(env)?;
         self.tls.apply_env(env)?;
+        env.set("mirror_listen_addr", &mut self.mirror_listen_addr)?;
+        env.set_opt("mirror_dir", &mut self.mirror_dir)?;
+        self.mirror.apply_env(env)?;
         self.log.apply_env(env)
     }
 
     fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
         check.positive("heartbeat_timeout", self.heartbeat_timeout)?;
+        self.mirror.validate(check)?;
         if self.server_names.is_empty() || self.server_names.iter().any(String::is_empty) {
             return Err(check.fail(
                 "server_names",
