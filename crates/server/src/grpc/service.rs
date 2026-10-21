@@ -1,7 +1,7 @@
 //! `AgentService::Stream`: identity checks, `Hello`, then the per-connection
 //! loop that tracks liveness and sequence numbers and hands samples to
 //! ingest (ADR-0013) and to the threshold engine (ADR-0017). Agents get their sensor configuration right after
-//! `Hello` (ADR-0016).
+//! `Hello` (ADR-0016), and their commands from the dispatcher (ADR-0031).
 //!
 //! Envelope payloads are never logged: command payloads and results will
 //! carry sensitive data.
@@ -29,6 +29,7 @@ use super::policy::RelayPolicy;
 use super::registry::{CloseReason, Counters, PeerInfo, Registry};
 use super::StreamSettings;
 use crate::alerting::Alerts;
+use crate::commands::Commands;
 use crate::ingest::{self, Identity, Ingest, LogRecord};
 use crate::renew::PresentedCert;
 use crate::sensor_config::{Resolved, SensorConfigs};
@@ -153,6 +154,7 @@ pub struct AgentStreamService {
     ingest: Ingest,
     sensor_configs: Option<SensorConfigs>,
     alerts: Option<Alerts>,
+    commands: Option<Commands>,
     settings: StreamSettings,
 }
 
@@ -167,8 +169,16 @@ impl AgentStreamService {
             ingest: Ingest::default(),
             sensor_configs: None,
             alerts: None,
+            commands: None,
             settings,
         }
+    }
+
+    /// Sends agents their commands and records results (ADR-0031);
+    /// without it results are counted and discarded.
+    pub fn with_commands(mut self, commands: Commands) -> Self {
+        self.commands = Some(commands);
+        self
     }
 
     /// Sends agents their sensor configuration after Hello and records
@@ -379,6 +389,9 @@ impl AgentService for AgentStreamService {
         }
         drop(outbound_tx);
         tracing::info!(%peer, agent_id = %id, connection = registration.connection, "stream opened");
+        if let (Some(commands), PeerRole::Agent) = (&self.commands, role) {
+            commands.dispatch(&id);
+        }
         let event = StreamEvent {
             peer: id.clone(),
             site: site.clone(),
@@ -408,6 +421,7 @@ impl AgentService for AgentStreamService {
             ingest: self.ingest.clone(),
             sensor_configs: self.sensor_configs.clone(),
             alerts: self.alerts.clone(),
+            commands: self.commands.clone(),
             event,
             invalid_logged: None,
         };
@@ -462,6 +476,7 @@ struct Connection {
     ingest: Ingest,
     sensor_configs: Option<SensorConfigs>,
     alerts: Option<Alerts>,
+    commands: Option<Commands>,
     event: StreamEvent,
     /// When invalid samples were last logged.
     invalid_logged: Option<Instant>,
@@ -673,10 +688,22 @@ impl Connection {
             Some(Payload::SensorConfig(_)) => {
                 tracing::warn!(agent_id = %id, sequence, "ignoring SensorConfig sent upstream")
             }
-            // TODO(phase2-ingest): record command results and audit them.
             Some(Payload::CommandResult(result)) => {
                 self.counters.command_results += 1;
-                tracing::debug!(agent_id = %id, sequence, command_id = %result.command_id, "command result");
+                tracing::debug!(agent_id = %id, sequence, command_id = %result.command_id.escape_debug(), "command result");
+                // A relay runs no commands; its agents' results come on
+                // their own streams.
+                if let (Some(commands), PeerRole::Agent) = (&self.commands, self.role) {
+                    let (commands, id) = (commands.clone(), id.clone());
+                    tokio::spawn(async move { commands.record(&id, result).await });
+                }
+            }
+            Some(Payload::PackageReport(report)) => {
+                tracing::debug!(agent_id = %id, sequence, packages = report.packages.len(), "package report");
+                if let (Some(commands), PeerRole::Agent) = (&self.commands, self.role) {
+                    let (commands, id) = (commands.clone(), id.clone());
+                    tokio::spawn(async move { commands.report(&id, report).await });
+                }
             }
             // TODO(relay-mux): on a relay connection, a later Hello opens a
             // sub-session for another agent behind the relay. It must pass

@@ -184,6 +184,39 @@ fn agent_sensor_limits_default_and_validate() {
 }
 
 #[test]
+fn server_mirror_settings() {
+    let server = parse::<ServerConfig>(SERVER_MIN).unwrap();
+    assert_eq!(server.mirror_listen_addr.to_string(), "0.0.0.0:7480");
+    assert_eq!(
+        server.mirror_dir(),
+        Path::new("/var/lib/monitorflow/server/mirrors")
+    );
+    assert_eq!(server.mirror, MirrorConfig::default());
+
+    let text = format!("{SERVER_MIN}\ndata_dir = \"/srv/mf\"\n[mirror]\naptly = \"/opt/aptly\"");
+    let vars = env(&[
+        ("MONITORFLOW_MIRROR_SYNC_TIMEOUT", "60"),
+        ("MONITORFLOW_MIRROR_LISTEN_ADDR", "127.0.0.1:8480"),
+    ]);
+    let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
+    assert_eq!(server.mirror_dir(), Path::new("/srv/mf/mirrors"));
+    assert_eq!(server.mirror.aptly, Path::new("/opt/aptly"));
+    assert_eq!(server.mirror.sync_timeout, 60);
+    assert_eq!(server.mirror_listen_addr.to_string(), "127.0.0.1:8480");
+    let vars = env(&[("MONITORFLOW_MIRROR_DIR", "/data/m")]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert_eq!(server.mirror_dir(), Path::new("/data/m"));
+
+    let msg = err::<ServerConfig>(
+        SERVER_MIN,
+        &[("MONITORFLOW_MIRROR_MAX_CONCURRENT_SYNCS", "0")],
+    );
+    assert!(msg.contains("mirror.max_concurrent_syncs"), "{msg}");
+    let msg = err::<ServerConfig>(&format!("{SERVER_MIN}\n[mirror]\ngpg = \"\""), &[]);
+    assert!(msg.contains("must name a program"), "{msg}");
+}
+
+#[test]
 fn server_tls_paths_follow_data_dir() {
     let tls = parse::<ServerConfig>(SERVER_MIN).unwrap().tls_paths();
     assert_eq!(
@@ -484,4 +517,23 @@ fn relay_buffer_limits_are_checked() {
     // The old top-level key is gone.
     let msg = err::<RelayConfig>(&format!("{AGENT_MIN}\nbuffer_max_bytes = 1"), &[]);
     assert!(msg.contains("unknown field `buffer_max_bytes`"), "{msg}");
+}
+
+#[test]
+fn agent_package_report_interval_defaults_and_validates() {
+    let agent: AgentConfig = parse(AGENT_MIN).unwrap();
+    assert_eq!(agent.packages.report_interval, 21_600);
+    let text = format!("{AGENT_MIN}\n[packages]\nreport_interval = 3600\n");
+    assert_eq!(
+        parse::<AgentConfig>(&text)
+            .unwrap()
+            .packages
+            .report_interval,
+        3600
+    );
+    let vars = [("MONITORFLOW_PACKAGES_REPORT_INTERVAL", "600")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert_eq!(agent.packages.report_interval, 600);
+    let msg = err::<AgentConfig>(AGENT_MIN, &[("MONITORFLOW_PACKAGES_REPORT_INTERVAL", "0")]);
+    assert!(msg.contains("packages.report_interval"), "{msg}");
 }

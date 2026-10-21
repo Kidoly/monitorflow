@@ -15,6 +15,7 @@ use monitorflow_server::api::{
     self, customers, users, ApiSettings, ApiState, EnrollmentSettings, Role,
 };
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
+use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings};
 use monitorflow_server::crl::{self, CrlPublisher};
 use monitorflow_server::db;
 use monitorflow_server::enroll::{self, server_cert, token, Enroller, FailureLimiter};
@@ -22,6 +23,7 @@ use monitorflow_server::grpc::{
     self, AgentStreamService, CrlService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
 };
 use monitorflow_server::ingest::{Ingest, JsonLines, RemoteWrite, Writer, WriterSettings};
+use monitorflow_server::mirror::{self, CommandRunner, Layout, Mirrors};
 use monitorflow_server::renew::Renewer;
 use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
 use monitorflow_server::vm_query::VmQuery;
@@ -195,6 +197,10 @@ async fn main() -> anyhow::Result<()> {
     let api_listener = TcpListener::bind(config.api_listen_addr)
         .await
         .with_context(|| format!("binding API listener on {}", config.api_listen_addr))?;
+    let mirror_listener = TcpListener::bind(config.mirror_listen_addr)
+        .await
+        .with_context(|| format!("binding mirror listener on {}", config.mirror_listen_addr))?;
+    let mirrors = open_mirrors(&config, pool.clone()).await?;
     // Storage writers (ADR-0013). Streams only push to their queues.
     let writer_settings = WriterSettings::from_config(&config.ingest);
     let metrics = Writer::spawn(
@@ -220,6 +226,12 @@ async fn main() -> anyhow::Result<()> {
         registry.clone(),
         WatcherSettings::default(),
     );
+    let commands = Commands::spawn(
+        CommandStore::new(pool.clone()),
+        registry.clone(),
+        ca.clone(),
+        DispatcherSettings::default(),
+    );
     let service = AgentStreamService::new(
         registry.clone(),
         Arc::new(DbRelayPolicy::new(pool.clone())),
@@ -227,6 +239,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_inventory(Arc::new(DbInventory::new(pool.clone())))
     .with_sensor_configs(sensor_configs)
+    .with_commands(commands.clone())
     .with_alerts(alerts)
     .with_ingest(Ingest {
         metrics: Some(metrics.queue()),
@@ -240,7 +253,8 @@ async fn main() -> anyhow::Result<()> {
             &config,
             enroll::ca_fingerprint(&ca),
         ))
-        .with_crl(crl.clone());
+        .with_crl(crl.clone())
+        .with_commands(commands);
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
@@ -261,6 +275,7 @@ async fn main() -> anyhow::Result<()> {
         grpc = %config.grpc_listen_addr,
         enroll = %config.enroll_listen_addr,
         api = %config.api_listen_addr,
+        mirrors = %config.mirror_listen_addr,
         "listening"
     );
     let served = tokio::try_join!(
@@ -290,6 +305,21 @@ async fn main() -> anyhow::Result<()> {
             api::serve(api_listener, api_state, until_stopped())
                 .await
                 .context("API server")
+        },
+        async {
+            mirror::http::serve(mirror_listener, mirrors.layout().clone(), until_stopped())
+                .await
+                .context("mirror server")
+        },
+        async {
+            mirror::scheduler::run(
+                mirrors.clone(),
+                config.mirror.max_concurrent_syncs,
+                mirror::scheduler::POLL,
+                until_stopped(),
+            )
+            .await;
+            Ok(())
         },
         async {
             crl.run(
@@ -393,6 +423,25 @@ async fn open_ca(config: &ServerConfig) -> anyhow::Result<CertificateAuthority> 
     })
     .await?
     .context("opening the certificate authority")
+}
+
+/// Prepares `mirror_dir` and exports the public signing key if there is
+/// one. Missing tools are not fatal: mirrors are optional.
+async fn open_mirrors(config: &ServerConfig, pool: sqlx::PgPool) -> anyhow::Result<Mirrors> {
+    let layout = Layout::new(config.mirror_dir());
+    let prepared = layout.clone();
+    tokio::task::spawn_blocking(move || prepared.prepare())
+        .await?
+        .with_context(|| format!("preparing {}", layout.root().display()))?;
+    let runner = Arc::new(CommandRunner::new(&config.mirror, layout.gnupg()));
+    match mirror::signing::export(runner.as_ref(), &layout).await {
+        Ok(Some(key)) => tracing::info!(%key, "mirror signing key exported"),
+        Ok(None) => tracing::info!(
+            "no mirror signing key; snapshots fail until `mirror key generate` or `mirror key import`"
+        ),
+        Err(error) => tracing::warn!(%error, "cannot export the mirror signing key"),
+    }
+    Ok(Mirrors::new(pool, runner, layout))
 }
 
 /// `token create`: no logging, so stdout holds only the token.

@@ -4,11 +4,13 @@
 pub mod alerting;
 pub mod api;
 pub mod ca;
+pub mod commands;
 pub mod crl;
 pub mod db;
 pub mod enroll;
 pub mod grpc;
 pub mod ingest;
+pub mod mirror;
 pub mod renew;
 pub mod sensor_config;
 pub mod vm_query;

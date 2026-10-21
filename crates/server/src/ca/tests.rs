@@ -422,3 +422,27 @@ fn verify_issued_accepts_only_this_cas_certificates() {
         .verify_issued(&CertificateDer::from(vec![1, 2, 3]))
         .is_err());
 }
+
+#[test]
+fn commands_signed_by_the_ca_verify_against_its_certificate() {
+    use monitorflow_common::command;
+    use monitorflow_common::proto::v1::Command;
+
+    let (_dir, ca) = new_ca();
+    let mut cmd = Command {
+        command_id: "c1".into(),
+        kind: command::APPLY_UPDATES.into(),
+        agent_id: "web-01".into(),
+        expires_at_unix_ms: 1,
+        ..Command::default()
+    };
+    cmd.signature = ca.sign_command(&command::signed_bytes(&cmd)).unwrap();
+    let ca_der = der(ca.ca_cert_pem());
+    assert_eq!(command::verify(&cmd, std::slice::from_ref(&ca_der)), Ok(()));
+    // The same CA reopened from disk signs with the same key.
+    let reopened = open(&ca.dir);
+    cmd.signature = reopened.sign_command(&command::signed_bytes(&cmd)).unwrap();
+    assert_eq!(command::verify(&cmd, std::slice::from_ref(&ca_der)), Ok(()));
+    let (_other_dir, other) = new_ca();
+    assert!(command::verify(&cmd, &[der(other.ca_cert_pem())]).is_err());
+}
