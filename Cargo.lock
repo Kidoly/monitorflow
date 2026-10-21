@@ -1280,6 +1280,7 @@ dependencies = [
  "prost",
  "rcgen",
  "ring",
+ "rustix",
  "serde",
  "sqlx",
  "tempfile",
