@@ -1,6 +1,7 @@
 //! Runs package tools: privileged ones through `sudo -n` with exactly the
-//! arguments listed in ADR-0031, so sudoers rules can name them, and reads
-//! as the agent's own user.
+//! arguments listed in ADR-0031 and ADR-0032, so sudoers rules can name
+//! them (`deploy/sudoers/monitorflow-agent`), and reads as the agent's own
+//! user.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -21,6 +22,8 @@ pub struct Tools {
     pub dnf: PathBuf,
     pub rpm: PathBuf,
     pub shutdown: PathBuf,
+    /// This binary, as sudoers names it, for the `sources` root helper.
+    pub agent: PathBuf,
     /// Exists when a Debian-family host needs a reboot.
     pub reboot_required_file: PathBuf,
 }
@@ -34,6 +37,7 @@ impl Default for Tools {
             dnf: "/usr/bin/dnf".into(),
             rpm: "/usr/bin/rpm".into(),
             shutdown: "/usr/sbin/shutdown".into(),
+            agent: "/usr/bin/monitorflow-agent".into(),
             reboot_required_file: "/var/run/reboot-required".into(),
         }
     }
@@ -67,12 +71,24 @@ impl Tools {
         program: &Path,
         args: &[&str],
     ) -> Result<Run, PackageError> {
+        self.privileged_with_input(env, program, args, None).await
+    }
+
+    /// [`Self::privileged`] with `input` written to the program's stdin,
+    /// which is then closed.
+    pub async fn privileged_with_input(
+        &self,
+        env: &[(&str, &str)],
+        program: &Path,
+        args: &[&str],
+        input: Option<&[u8]>,
+    ) -> Result<Run, PackageError> {
         let mut argv: Vec<String> = vec!["-n".into()];
         argv.extend(env.iter().map(|(k, v)| format!("{k}={v}")));
         argv.push(program.display().to_string());
         argv.extend(args.iter().map(|a| a.to_string()));
         let line = format!("sudo {}", argv.join(" "));
-        run(&self.sudo, &argv, &[], line, None).await
+        run(&self.sudo, &argv, &[], line, None, input).await
     }
 
     /// Runs `program args` as the agent's user, in the C locale, within
@@ -80,7 +96,15 @@ impl Tools {
     pub async fn read(&self, program: &Path, args: &[&str]) -> Result<Run, PackageError> {
         let line = format!("{} {}", program.display(), args.join(" "));
         let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-        run(program, &args, &[("LC_ALL", "C")], line, Some(READ_TIMEOUT)).await
+        run(
+            program,
+            &args,
+            &[("LC_ALL", "C")],
+            line,
+            Some(READ_TIMEOUT),
+            None,
+        )
+        .await
     }
 }
 
@@ -90,19 +114,32 @@ async fn run(
     env: &[(&str, &str)],
     line: String,
     limit: Option<Duration>,
+    input: Option<&[u8]>,
 ) -> Result<Run, PackageError> {
     let mut command = tokio::process::Command::new(program);
     command
         .args(args)
         .envs(env.iter().copied())
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let child = command
+    let mut child = command
         .spawn()
         .map_err(|e| PackageError::Spawn(program.display().to_string(), e.to_string()))?;
-    let output = child.wait_with_output();
+    let stdin = child.stdin.take();
+    let feed = async move {
+        if let (Some(mut stdin), Some(input)) = (stdin, input) {
+            // A program exiting without reading all of it is not an error
+            // here: its exit code says what happened.
+            let _ = tokio::io::AsyncWriteExt::write_all(&mut stdin, input).await;
+        }
+    };
+    let output = async move { tokio::join!(feed, child.wait_with_output()).1 };
     let output = match limit {
         Some(limit) => tokio::time::timeout(limit, output)
             .await

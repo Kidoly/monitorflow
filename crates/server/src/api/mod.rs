@@ -299,6 +299,7 @@ pub mod sensors;
 pub mod servers;
 pub mod session;
 pub mod sites;
+pub mod sources;
 pub mod thresholds;
 pub mod tokens;
 pub mod users;
@@ -336,6 +337,9 @@ pub struct ApiSettings {
     pub cookie_secure: bool,
     pub session_lifetime: Duration,
     pub session_idle_timeout: Duration,
+    /// Base URL of the mirrors in agents' sources (ADR-0035); `None`
+    /// refuses source configuration.
+    pub mirror_public_url: Option<String>,
 }
 
 impl ApiSettings {
@@ -344,6 +348,7 @@ impl ApiSettings {
             cookie_secure: config.api_cookie_secure,
             session_lifetime: Duration::from_secs(config.api_session_lifetime),
             session_idle_timeout: Duration::from_secs(config.api_session_idle_timeout),
+            mirror_public_url: config.mirror_public_url.clone(),
         }
     }
 }
@@ -489,6 +494,10 @@ pub fn router(state: ApiState) -> Router {
             get(commands::list).post(commands::create),
         )
         .route("/api/commands/{id}", get(commands::detail))
+        .route(
+            "/api/servers/{id}/sources",
+            post(sources::configure).delete(sources::revert),
+        )
         .fallback(not_found)
         .layer(middleware::from_fn(auth::csrf_guard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
