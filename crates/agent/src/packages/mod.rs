@@ -1,11 +1,13 @@
 //! Package operations (ADR-0031): one [`PackageManager`] per OS family,
-//! the `apply_updates` command and the periodic [`PackageReport`].
+//! the `apply_updates` command and the periodic [`PackageReport`]; the
+//! source configuration commands in [`configure`] (ADR-0035).
 //!
 //! Privileged steps run through `sudo -n` with fixed command lines (see
 //! [`exec`]); everything else runs as the agent's user.
 
 pub mod apply;
 pub mod apt;
+pub mod configure;
 pub mod dnf;
 pub mod exec;
 pub mod sources;
@@ -20,6 +22,7 @@ use tokio::sync::watch;
 use crate::os::OsFamily;
 use crate::shutdown::Shutdown;
 pub use apply::ApplyUpdatesHandler;
+pub use configure::{SourcesAction, SourcesHandler};
 pub use exec::{Run, Tools};
 
 /// Longest stderr line quoted in an error.
