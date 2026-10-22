@@ -15,6 +15,7 @@ use monitorflow_server::api::{
     self, customers, users, ApiSettings, ApiState, EnrollmentSettings, Role,
 };
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
+use monitorflow_server::campaign::{self, Runner};
 use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings};
 use monitorflow_server::crl::{self, CrlPublisher};
 use monitorflow_server::db;
@@ -330,6 +331,8 @@ async fn main() -> anyhow::Result<()> {
         ca.clone(),
         DispatcherSettings::default(),
     );
+    // Update campaigns (ADR-0033) queue through the same dispatcher.
+    let campaigns = Runner::new(pool.clone()).with_commands(commands.clone());
     let service = AgentStreamService::new(
         registry.clone(),
         Arc::new(DbRelayPolicy::new(pool.clone())),
@@ -418,6 +421,10 @@ async fn main() -> anyhow::Result<()> {
                 until_stopped(),
             )
             .await;
+            Ok(())
+        },
+        async {
+            campaigns.clone().run(campaign::POLL, until_stopped()).await;
             Ok(())
         },
         async {

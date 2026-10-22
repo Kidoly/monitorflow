@@ -16,7 +16,8 @@ use super::model::{
 };
 use crate::api::audit::{self, Event};
 
-const COLUMNS: &str = "id, customer_id, name, site_id, packages, security_only, allow_reboot,
+pub(super) const COLUMNS: &str =
+    "id, customer_id, name, site_id, packages, security_only, allow_reboot,
      command_ttl_s, failure_threshold, failure_threshold_unit, state, current_wave, error,
      created_by, created_at, started_at, finished_at";
 
