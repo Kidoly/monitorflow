@@ -62,3 +62,11 @@ Paths from the metadata must be relative, without `..`, empty or dot-prefixed se
 ## Amendment (2026-10-22): opt-in, non-fatal
 
 Relay mirroring is off by default (`mirror.enabled = false`). Enabled by default, every upgraded relay started copying tens of gigabytes without being asked, and bound `0.0.0.0:7480`, the default of the server's mirror listener, so a relay on the server's host failed to start. A failure to set up mirroring (preparing `mirror_dir`, building the sync client, binding `mirror_listen_addr`) is now logged as an error and the relay keeps forwarding agents without mirrors: mirroring is secondary to monitoring. Comma-separated environment overrides of lists (`MONITORFLOW_MIRROR_MIRRORS` and the others) drop empty items, so a value of only separators or spaces means an empty list, here every mirror.
+
+## Amendment (2026-10-22): review fixes
+
+Review fixes, the decision above unchanged:
+
+- A sync renames the staging directory of another snapshot, left by a failed sync, to its own instead of starting a new one, and removes any other: a mirror has at most one staging directory, and consecutive snapshots share most files, which are re-hashed before being kept. Files the new snapshot does not list are removed before publishing.
+- `mirror.max_snapshot_bytes` (default 256 GiB) bounds the total size the metadata of one snapshot lists. The relay does not check signatures, so a tampered or broken listing could otherwise fill the disk; a larger snapshot fails the sync before its files are fetched and leaves `current` as it was.
+- The SHA-256 in `.manifest` is computed while downloading, whatever algorithm the metadata uses; when it is another one, the manifest also records the metadata's checksum (`listed`). Manifests written earlier, holding the metadata's checksum only, stay readable: a file whose recorded checksums do not include the algorithm needed is hashed locally rather than fetched again.

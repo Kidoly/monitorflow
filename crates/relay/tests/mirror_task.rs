@@ -21,6 +21,7 @@ fn settings(upstream: &str, root: &Path) -> MirrorSettings {
         keep_snapshots: 2,
         max_downloads: 4,
         request_timeout: Duration::from_secs(10),
+        max_snapshot_bytes: 1 << 30,
     }
 }
 
