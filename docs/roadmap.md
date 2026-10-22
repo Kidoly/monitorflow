@@ -45,7 +45,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] Agent: rewrite package sources with backup and revert; distribute signing keys.
 - [x] Campaigns: model, waves, maintenance windows, stop on failure.
 - [x] Agent: apply updates, report packages and reboot-required.
-- [ ] Web: campaign creation and progress.
+- [x] Web: campaign creation and progress.
 
 ## Phase 5 — AI remediation
 
