@@ -4,7 +4,9 @@
 //! packages under `pool/` the same way.
 
 use std::io::BufRead;
+use std::path::Path;
 
+use super::compress::{self, Compression};
 use super::meta::{join, Algorithm, Checksum, Entry, MetaError};
 
 /// Signed files of a suite, not listed in `Release` itself; only
@@ -44,14 +46,16 @@ pub fn release(suite: &str, text: &str) -> Result<Vec<Entry>, MetaError> {
     Ok(entries)
 }
 
-/// The package lists among `entries`: for each directory, its `Packages`
-/// variants we can read, uncompressed first. One of each group is enough.
+/// The package lists among `entries`: for each directory, every
+/// `Packages` variant listed, in the order of [`Compression::ALL`].
+/// Publishers list compressions they do not generate, so any of them may
+/// be missing upstream.
 pub fn package_lists(entries: &[Entry]) -> Vec<Vec<Entry>> {
     let mut groups: Vec<(String, Vec<Entry>)> = Vec::new();
-    for preferred in ["Packages", "Packages.gz"] {
+    for compression in Compression::ALL {
         for entry in entries {
             let (dir, name) = entry.path.rsplit_once('/').unwrap_or(("", &entry.path));
-            if name != preferred {
+            if Compression::of(name) != (compression, "Packages") {
                 continue;
             }
             match groups.iter_mut().find(|(d, _)| d == dir) {
@@ -61,6 +65,12 @@ pub fn package_lists(entries: &[Entry]) -> Vec<Vec<Entry>> {
         }
     }
     groups.into_iter().map(|(_, group)| group).collect()
+}
+
+/// The packages of the `Packages` index `file`, stored at `path`, in any
+/// compression. Blocking.
+pub fn read_packages(file: &str, path: &Path) -> Result<Vec<Entry>, MetaError> {
+    packages(file, compress::open(file, path)?)
 }
 
 /// The packages a `Packages` index lists, with paths from the snapshot
@@ -149,6 +159,55 @@ mod tests {
         ] {
             assert!(release("bookworm", &bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn package_lists_group_every_compression() {
+        let listed = [
+            "main/binary-amd64/Packages.bz2",
+            "main/binary-amd64/Packages.xz",
+            "main/binary-amd64/Release",
+            "main/binary-arm64/Packages.zst",
+            "main/binary-amd64/Packages.diff/Index",
+            "main/binary-amd64/Packages.lz4",
+            "main/binary-amd64/Packages",
+            "main/i18n/Translation-en.xz",
+            "contrib/binary-amd64/Packages.gz",
+        ];
+        let text = listed.iter().fold("SHA256:\n".to_owned(), |text, path| {
+            format!("{text} {H1} 1 {path}\n")
+        });
+        let groups: Vec<Vec<String>> = package_lists(&release("b", &text).unwrap())
+            .into_iter()
+            .map(|g| g.into_iter().map(|e| e.path).collect())
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                vec![
+                    "dists/b/main/binary-amd64/Packages",
+                    "dists/b/main/binary-amd64/Packages.xz",
+                    "dists/b/main/binary-amd64/Packages.bz2",
+                ],
+                vec!["dists/b/contrib/binary-amd64/Packages.gz"],
+                vec!["dists/b/main/binary-arm64/Packages.zst"],
+            ]
+        );
+    }
+
+    #[test]
+    fn read_packages_decompresses() {
+        let text = format!("Filename: pool/a.deb\nSize: 3\nSHA256: {H1}\n");
+        let dir = tempfile::tempdir().unwrap();
+        for c in Compression::ALL {
+            let path = dir.path().join("p");
+            std::fs::write(&path, compress::tests::compress(c, text.as_bytes())).unwrap();
+            let file = format!("Packages{}", c.extension());
+            let entries = read_packages(&file, &path).unwrap();
+            assert_eq!(entries.len(), 1, "{c:?}");
+            assert_eq!(entries[0].path, "pool/a.deb");
+        }
+        assert!(read_packages("Packages.xz", &dir.path().join("absent")).is_err());
     }
 
     #[test]

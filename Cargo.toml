@@ -59,10 +59,15 @@ async-trait = "0.1"
 # rustls on ring, like the rest of the workspace; no OpenSSL.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 snap = "1"
-# Relay mirror sync (ADR-0034): dnf primary metadata is gzip or zstd XML.
-# Pure Rust, no C libraries.
+# Relay mirror sync (ADR-0034): apt `Packages` and dnf primary metadata
+# come plain, gzip, xz, bzip2 or zstd. Pure Rust, no C libraries.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 ruzstd = "0.8"
+# xz: lzma-rs and lzma-rust2 are the pure-Rust choices; lzma-rust2 has a
+# streaming `Read` decoder, lzma-rs only decodes into a buffer.
+lzma-rust2 = { version = "0.23", default-features = false, features = ["std", "xz"] }
+# bzip2 on libbz2-rs-sys, its default pure-Rust port of libbzip2.
+bzip2 = "0.6"
 quick-xml = "0.38"
 # CRC-32C of the relay buffer's records; already used by sqlx.
 crc = "3"

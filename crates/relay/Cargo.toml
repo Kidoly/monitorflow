@@ -32,6 +32,8 @@ ring.workspace = true
 serde.workspace = true
 flate2.workspace = true
 ruzstd.workspace = true
+lzma-rust2.workspace = true
+bzip2.workspace = true
 quick-xml.workspace = true
 
 [dev-dependencies]
@@ -41,3 +43,5 @@ tempfile.workspace = true
 sqlx.workspace = true
 pem.workspace = true
 uuid.workspace = true
+# The xz encoder writes the tests' fixtures only.
+lzma-rust2 = { workspace = true, features = ["encoder"] }
