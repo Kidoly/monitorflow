@@ -7,7 +7,7 @@ use clap::Parser;
 use monitorflow_common::client::backoff::Backoff;
 use monitorflow_common::client::enroll::{self, EnrollError, EnrollSettings};
 use monitorflow_common::client::renew::{Renewal, RenewalSettings};
-use monitorflow_common::client::shutdown;
+use monitorflow_common::client::shutdown::{self, Shutdown};
 use monitorflow_common::config::{self, RelayConfig};
 use monitorflow_common::logging;
 use monitorflow_common::mirror::serve;
@@ -104,29 +104,14 @@ async fn main() -> anyhow::Result<()> {
     );
     tokio::spawn(forwarder.clone().run_replays(stop.clone()));
     if config.mirror.enabled {
-        let root = config.mirror_dir();
-        let served = tokio::task::spawn_blocking(move || mirror::prepare(&root))
-            .await?
-            .with_context(|| format!("cannot prepare {}", config.mirror_dir().display()))?;
-        let mirror_listener = TcpListener::bind(config.mirror_listen_addr)
-            .await
-            .with_context(|| {
-                format!(
-                    "binding the mirror listener on {}",
-                    config.mirror_listen_addr
-                )
-            })?;
-        tracing::info!(listen = %config.mirror_listen_addr, dir = %config.mirror_dir().display(), "serving mirrors");
-        let mut until_stopped = stop.clone();
-        tokio::spawn(async move {
-            let shutdown = async move { until_stopped.wait().await };
-            if let Err(error) = serve::serve(mirror_listener, served, shutdown).await {
-                tracing::error!(%error, "mirror listener failed");
-            }
-        });
-        let task = MirrorTask::new(MirrorSettings::from_config(&config))
-            .context("cannot build the mirror sync client")?;
-        tokio::spawn(task.run(stop.clone()));
+        // Mirroring is secondary to monitoring: a busy port or a bad
+        // mirror directory must not stop agent forwarding (ADR-0034).
+        if let Err(error) = start_mirrors(&config, stop.clone()).await {
+            tracing::error!(
+                error = format!("{error:#}"),
+                "mirrors disabled; agent forwarding continues"
+            );
+        }
     }
     let mut until_stopped = stop.clone();
     let services = Services {
@@ -151,4 +136,89 @@ async fn main() -> anyhow::Result<()> {
     }
     tracing::info!("relay stopped");
     Ok(())
+}
+
+/// Starts the mirror listener and the sync loop (ADR-0034). Fails without
+/// spawning anything if the directory, listener or sync client cannot be
+/// set up.
+async fn start_mirrors(config: &RelayConfig, stop: Shutdown) -> anyhow::Result<()> {
+    let root = config.mirror_dir();
+    let served = tokio::task::spawn_blocking(move || mirror::prepare(&root))
+        .await?
+        .with_context(|| format!("cannot prepare {}", config.mirror_dir().display()))?;
+    let task = MirrorTask::new(MirrorSettings::from_config(config))
+        .context("cannot build the mirror sync client")?;
+    let mirror_listener = TcpListener::bind(config.mirror_listen_addr)
+        .await
+        .with_context(|| {
+            format!(
+                "binding the mirror listener on {}",
+                config.mirror_listen_addr
+            )
+        })?;
+    tracing::info!(listen = %config.mirror_listen_addr, dir = %config.mirror_dir().display(), "serving mirrors");
+    let mut until_stopped = stop.clone();
+    tokio::spawn(async move {
+        let shutdown = async move { until_stopped.wait().await };
+        if let Err(error) = serve::serve(mirror_listener, served, shutdown).await {
+            tracing::error!(%error, "mirror listener failed");
+        }
+    });
+    tokio::spawn(task.run(stop));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn relay_config(
+        dir: &std::path::Path,
+        mirror_listen_addr: std::net::SocketAddr,
+    ) -> RelayConfig {
+        let mut config: RelayConfig = config::parse_with_env(
+            r#"upstream_url = "https://127.0.0.1:1""#,
+            std::path::Path::new("relay.toml"),
+            &Default::default(),
+        )
+        .unwrap();
+        config.data_dir = dir.to_owned();
+        config.mirror_listen_addr = mirror_listen_addr;
+        config
+    }
+
+    #[tokio::test]
+    async fn a_busy_mirror_port_is_an_error_not_a_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let taken = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = relay_config(dir.path(), taken.local_addr().unwrap());
+        let (_trigger, stop) = shutdown::channel();
+        let error = start_mirrors(&config, stop).await.unwrap_err();
+        assert!(
+            format!("{error:#}").contains("binding the mirror listener"),
+            "{error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unusable_mirror_dir_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, b"").unwrap();
+        let mut config = relay_config(dir.path(), "127.0.0.1:0".parse().unwrap());
+        config.mirror_dir = Some(file.join("mirrors"));
+        let (_trigger, stop) = shutdown::channel();
+        let error = start_mirrors(&config, stop).await.unwrap_err();
+        assert!(format!("{error:#}").contains("cannot prepare"), "{error:#}");
+    }
+
+    #[tokio::test]
+    async fn mirrors_start_on_a_free_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = relay_config(dir.path(), "127.0.0.1:0".parse().unwrap());
+        let (trigger, stop) = shutdown::channel();
+        start_mirrors(&config, stop).await.unwrap();
+        assert!(dir.path().join("mirrors/apt").is_dir());
+        trigger.fire();
+    }
 }

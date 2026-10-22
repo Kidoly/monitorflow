@@ -22,8 +22,8 @@ upstream_url = "https://monitorflow.example.com:7443"
 # Prefer MONITORFLOW_ENROLLMENT_TOKEN, and remove it once enrolled.
 # enrollment_token = "mfe1...."
 
-# Identity files, the store-and-forward buffer (<data_dir>/buffer) and,
-# later, the mirror cache.
+# Identity files, the store-and-forward buffer (<data_dir>/buffer) and the
+# mirror copies (<data_dir>/mirrors).
 # data_dir = "/var/lib/monitorflow/relay"
 
 # Seconds between heartbeats on the relay's own stream to the server.
@@ -39,6 +39,41 @@ upstream_url = "https://monitorflow.example.com:7443"
 # Milliseconds between syncs to disk; a crash loses at most this much of the
 # buffer. 0 syncs after every record.
 # fsync_interval_ms = 1000
+
+# Plain HTTP listener serving the relay's copy of the package mirrors
+# (ADR-0034), only when [mirror] is enabled. Public, signed packages only;
+# agents check the signatures. Agents behind this relay use
+# http://<relay>:7480/apt/<mirror>/current/ or /dnf/<mirror>/current/.
+# Must not collide with another listener on this host, such as the server's
+# own mirror listener.
+# mirror_listen_addr = "0.0.0.0:7480"
+
+# Root of the mirror copies, laid out as apt/, dnf/ and keys/. Defaults to
+# <data_dir>/mirrors.
+# mirror_dir = "/var/lib/monitorflow/relay/mirrors"
+
+[mirror]
+# Copy the upstream's mirrors and serve them (ADR-0034). Off by default: a
+# relay holds several snapshots of every mirror, often tens of GB. If the
+# listener or the mirror directory cannot be set up, the relay logs an
+# error and keeps forwarding agents without mirrors.
+# enabled = false
+# Mirror listener of the upstream (the server, or the parent relay of a
+# chained relay), http or https. Defaults to the host of upstream_url on
+# port 7480.
+# upstream_url = "http://monitorflow.example.com:7480"
+# Seconds between syncs, at least 60.
+# sync_interval = 900
+# Mirror names to copy, like ["debian", "rocky9"]; empty copies every mirror
+# the upstream lists.
+# MONITORFLOW_MIRROR_MIRRORS takes a comma-separated list.
+# mirrors = []
+# Snapshots kept per mirror, including the current one, at least 1.
+# keep_snapshots = 3
+# Files downloaded at once, 1 to 64.
+# max_downloads = 4
+# Seconds a request may go without progress.
+# request_timeout = 600
 
 [tls]
 # Written by enrollment; each unset path defaults under data_dir.

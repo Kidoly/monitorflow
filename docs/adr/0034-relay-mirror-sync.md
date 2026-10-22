@@ -58,3 +58,7 @@ Paths from the metadata must be relative, without `..`, empty or dot-prefixed se
 - A campaign pinned to a snapshot the relay never saw as `current` finds nothing on the relay. The index could list pinned snapshots once campaigns exist; until then, keep `current` on the pinned snapshot during a campaign.
 - Not covered yet: dnf group and module metadata beyond what `repomd.xml` lists (copied like any listed file, but not parsed), apt `by-hash` paths, range requests to resume a single large file, and signature checks on the relay with a key pinned over mTLS.
 - The status of the sync is in the relay's logs only; reporting it to the server through the relay's own stream is a follow-up.
+
+## Amendment (2026-10-22): opt-in, non-fatal
+
+Relay mirroring is off by default (`mirror.enabled = false`). Enabled by default, every upgraded relay started copying tens of gigabytes without being asked, and bound `0.0.0.0:7480`, the default of the server's mirror listener, so a relay on the server's host failed to start. A failure to set up mirroring (preparing `mirror_dir`, building the sync client, binding `mirror_listen_addr`) is now logged as an error and the relay keeps forwarding agents without mirrors: mirroring is secondary to monitoring. Comma-separated environment overrides of lists (`MONITORFLOW_MIRROR_MIRRORS` and the others) drop empty items, so a value of only separators or spaces means an empty list, here every mirror.

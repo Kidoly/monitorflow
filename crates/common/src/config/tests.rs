@@ -37,6 +37,7 @@ fn example_files_parse() {
     assert_eq!(agent.upstream_url, "https://relay.example.com:7443");
     let relay: RelayConfig = load_with_env(&example("relay.example.toml"), &env).unwrap();
     assert_eq!(relay.upstream_url, "https://monitorflow.example.com:7443");
+    assert_eq!(relay.mirror, RelayMirrorConfig::default());
     let server: ServerConfig = load_with_env(&example("server.example.toml"), &env).unwrap();
     assert!(server.database_url.expose().starts_with("postgres://"));
 }
@@ -91,6 +92,11 @@ fn server_names_default_and_override() {
     let vars = env(&[("MONITORFLOW_SERVER_NAMES", "mf.example.com, 10.0.0.5")]);
     let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
     assert_eq!(server.server_names, ["mf.example.com", "10.0.0.5"]);
+    let vars = env(&[("MONITORFLOW_SERVER_NAMES", "mf.example.com,,")]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert_eq!(server.server_names, ["mf.example.com"]);
+    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_SERVER_NAMES", " , ")]);
+    assert!(msg.contains("server_names"), "{msg}");
     let text = format!("server_names = []\n{SERVER_MIN}");
     let err = parse::<ServerConfig>(&text).unwrap_err().to_string();
     assert!(err.contains("server_names"), "{err}");
@@ -173,6 +179,9 @@ fn agent_sensor_limits_default_and_validate() {
     let agent: AgentConfig = parse(&format!("{AGENT_MIN}\n[sensors]\nlog_dirs = []\n")).unwrap();
     assert!(agent.sensors.log_dirs.is_empty());
     let vars = [("MONITORFLOW_SENSORS_LOG_DIRS", "/a, /b")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert_eq!(agent.sensors.log_dirs, [Path::new("/a"), Path::new("/b")]);
+    let vars = [("MONITORFLOW_SENSORS_LOG_DIRS", " /a,, /b ,")];
     let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
     assert_eq!(agent.sensors.log_dirs, [Path::new("/a"), Path::new("/b")]);
     for bad in ["logs", "/var/log/../../etc"] {
@@ -549,7 +558,7 @@ fn relay_buffer_limits_are_checked() {
 fn relay_mirror_defaults_and_overrides() {
     let relay: RelayConfig = parse(AGENT_MIN).unwrap();
     assert_eq!(relay.mirror, RelayMirrorConfig::default());
-    assert!(relay.mirror.enabled);
+    assert!(!relay.mirror.enabled, "relay mirroring is opt-in");
     assert_eq!(relay.mirror_listen_addr, "0.0.0.0:7480".parse().unwrap());
     assert_eq!(
         relay.mirror_dir(),
@@ -574,6 +583,28 @@ fn relay_mirror_defaults_and_overrides() {
     assert_eq!(relay.mirror.keep_snapshots, 1);
     assert_eq!(relay.mirror.max_downloads, 8);
     assert_eq!(relay.mirror_listen_addr, "127.0.0.1:9480".parse().unwrap());
+}
+
+#[test]
+fn relay_mirror_list_override_drops_empty_items() {
+    let text = format!("{AGENT_MIN}\n[mirror]\nenabled = true\nmirrors = [\"debian\"]\n");
+    let relay = |value: &str| {
+        let vars = env(&[("MONITORFLOW_MIRROR_MIRRORS", value)]);
+        parse_with_env::<RelayConfig>(&text, path(), &vars).map(|r| r.mirror.mirrors)
+    };
+    assert_eq!(relay("rocky9, ,alma9,").unwrap(), ["rocky9", "alma9"]);
+    // Only separators or spaces: every mirror the upstream lists.
+    assert!(relay(" ").unwrap().is_empty());
+    assert!(relay(",").unwrap().is_empty());
+    // An empty variable is ignored like any other.
+    assert_eq!(relay("").unwrap(), ["debian"]);
+    let vars = env(&[("MONITORFLOW_MIRROR_ENABLED", "true")]);
+    assert!(
+        parse_with_env::<RelayConfig>(AGENT_MIN, path(), &vars)
+            .unwrap()
+            .mirror
+            .enabled
+    );
 }
 
 #[test]
