@@ -68,7 +68,7 @@ pub fn base_url(
 }
 
 /// The OS family a mirror family serves, as in `servers.os_family`.
-fn os_family(family: Family) -> &'static str {
+pub(crate) fn os_family(family: Family) -> &'static str {
     match family {
         Family::Apt => "debian",
         Family::Dnf => "rhel",

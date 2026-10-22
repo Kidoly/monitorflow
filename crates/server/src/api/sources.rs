@@ -86,7 +86,7 @@ pub async fn configure(
         let found = sources::select(&state.pool, &choice.name, &choice.snapshot).await?;
         selected.push(found.map_err(ApiError::Invalid)?);
     }
-    let relay = relays::for_server(&state.pool, target.id).await?;
+    let relay = relays::for_server(&mut *state.pool.acquire().await?, target.id).await?;
     let base = sources::base_url(
         state.settings.mirror_public_url.as_deref(),
         relay.as_ref(),

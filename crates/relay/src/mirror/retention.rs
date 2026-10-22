@@ -9,14 +9,15 @@ use monitorflow_common::mirror::read_current;
 use super::sync::{complete_snapshots, MANIFEST};
 
 /// Keeps the snapshot `current` names and the most recently completed
-/// others, `keep` in all, and removes the rest along with any staging
-/// directory (`.sync-*`): call it after a successful sync, when none is
-/// in progress. Returns the removed snapshots. Blocking.
-pub fn prune(dir: &Path, keep: usize) -> io::Result<Vec<String>> {
+/// others, `keep` in all, plus the `pinned` ones (ADR-0038), and removes
+/// the rest along with any staging directory (`.sync-*`): call it after a
+/// successful sync, when none is in progress. Returns the removed
+/// snapshots. Blocking.
+pub fn prune(dir: &Path, keep: usize, pinned: &[String]) -> io::Result<Vec<String>> {
     let current = read_current(dir);
     let mut others: Vec<(SystemTime, String)> = complete_snapshots(dir)
         .into_iter()
-        .filter(|s| Some(s) != current.as_ref())
+        .filter(|s| Some(s) != current.as_ref() && !pinned.contains(s))
         .map(|s| {
             let done = std::fs::metadata(dir.join(&s).join(MANIFEST))
                 .and_then(|m| m.modified())
@@ -65,7 +66,7 @@ mod tests {
         // current names an older snapshot, as after a rollback upstream.
         swap_current(d, "s2").unwrap();
 
-        let mut removed = prune(d, 2).unwrap();
+        let mut removed = prune(d, 2, &[]).unwrap();
         removed.sort();
         assert_eq!(removed, ["s1", "s3"]);
         assert!(d.join("s2").is_dir() && d.join("s4").is_dir());
@@ -73,8 +74,10 @@ mod tests {
         assert!(d.join("partial").is_dir(), "not a complete snapshot");
         assert_eq!(read_current(d).as_deref(), Some("s2"));
 
-        assert_eq!(prune(d, 1).unwrap(), ["s4"]);
-        assert!(prune(d, 1).unwrap().is_empty());
+        // Pinned snapshots are kept on top of the count.
+        assert!(prune(d, 1, &["s4".into()]).unwrap().is_empty());
+        assert_eq!(prune(d, 1, &[]).unwrap(), ["s4"]);
+        assert!(prune(d, 1, &[]).unwrap().is_empty());
         assert!(d.join("s2").is_dir());
     }
 }

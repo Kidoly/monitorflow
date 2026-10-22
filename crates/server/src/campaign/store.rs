@@ -11,15 +11,17 @@ use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use super::model::{
-    plan_waves, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime, UpdateSpec,
-    WaveSpec, Window, MAX_TARGETS, MAX_WINDOWS,
+    plan_waves, Action, CampaignState, FailureThreshold, FailureUnit, LocalTime, SourcesMode,
+    SourcesPin, UpdateSpec, WaveSpec, Window, MAX_TARGETS, MAX_WINDOWS,
 };
 use crate::api::audit::{self, Event};
+use crate::commands::sources::os_family;
+use crate::mirror::Family;
 
 pub(super) const COLUMNS: &str =
     "id, customer_id, name, site_id, packages, security_only, allow_reboot,
      command_ttl_s, failure_threshold, failure_threshold_unit, state, current_wave, error,
-     created_by, created_at, started_at, finished_at";
+     created_by, created_at, started_at, finished_at, sources_mode";
 
 /// Who acts, as `(actor_kind, actor_id)` of the audit log.
 pub type Actor<'a> = (&'a str, &'a str);
@@ -37,6 +39,8 @@ pub struct NewCampaign {
     pub command_ttl: Duration,
     pub failure_threshold: FailureThreshold,
     pub windows: Vec<Window>,
+    /// Snapshots to pin the servers to during their update (ADR-0038).
+    pub sources: Option<SourcesPin>,
     pub created_by: Option<Uuid>,
 }
 
@@ -76,6 +80,8 @@ pub struct CampaignRow {
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
+    /// Set when the campaign pins snapshots (ADR-0038).
+    pub sources_mode: Option<SourcesMode>,
 }
 
 impl CampaignRow {
@@ -158,16 +164,24 @@ impl CampaignStore {
         for window in &mut windows {
             window.validate().map_err(CampaignError::Invalid)?;
         }
+        if let Some(pin) = &new.sources {
+            pin.validate().map_err(CampaignError::Invalid)?;
+        }
         let mut tx = self.pool.begin().await?;
         check_timezones(&mut tx, &windows).await?;
         let targets = targets(&mut tx, new).await?;
         let waves =
             plan_waves(&targets, &new.waves).map_err(|e| CampaignError::Invalid(e.to_string()))?;
+        let pinned = match &new.sources {
+            Some(pin) => pinned_snapshots(&mut tx, pin, &targets).await?,
+            None => Vec::new(),
+        };
 
         let row: CampaignRow = sqlx::query_as(&format!(
             "INSERT INTO campaigns (customer_id, name, site_id, packages, security_only,
-                 allow_reboot, command_ttl_s, failure_threshold, failure_threshold_unit, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 allow_reboot, command_ttl_s, failure_threshold, failure_threshold_unit, created_by,
+                 sources_mode)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              RETURNING {COLUMNS}"
         ))
         .bind(new.customer_id)
@@ -180,7 +194,18 @@ impl CampaignStore {
         .bind(new.failure_threshold.value as i32)
         .bind(new.failure_threshold.unit)
         .bind(new.created_by)
+        .bind(new.sources.as_ref().map(|p| p.mode))
         .fetch_one(&mut *tx)
+        .await?;
+        let (mirror_ids, snapshot_ids): (Vec<Uuid>, Vec<Uuid>) = pinned.into_iter().unzip();
+        sqlx::query(
+            "INSERT INTO campaign_snapshots (campaign_id, mirror_id, snapshot_id)
+             SELECT $1, * FROM unnest($2::uuid[], $3::uuid[])",
+        )
+        .bind(row.id)
+        .bind(&mirror_ids)
+        .bind(&snapshot_ids)
+        .execute(&mut *tx)
         .await?;
         let (servers, positions): (Vec<Uuid>, Vec<i32>) = waves
             .iter()
@@ -224,6 +249,7 @@ impl CampaignStore {
                     "command_ttl_s": row.command_ttl_s,
                     "failure_threshold": new.failure_threshold,
                     "windows": windows,
+                    "sources": new.sources,
                 }),
             },
         )
@@ -348,9 +374,12 @@ pub(super) async fn cancel_queued(
     reason: &str,
     detach: bool,
 ) -> Result<Vec<Uuid>, sqlx::Error> {
+    // Restoring sources is never cancelled: it puts a server back.
     let ids: Vec<Uuid> = sqlx::query_scalar(
         "UPDATE commands SET state = 'cancelled', finished_at = now(), error = $2
          WHERE campaign_id = $1 AND state = 'queued'
+           AND id NOT IN (SELECT restore_command_id FROM campaign_targets
+                          WHERE campaign_id = $1 AND restore_command_id IS NOT NULL)
          RETURNING id",
     )
     .bind(campaign)
@@ -358,12 +387,66 @@ pub(super) async fn cancel_queued(
     .fetch_all(&mut *conn)
     .await?;
     if detach && !ids.is_empty() {
-        sqlx::query("UPDATE campaign_targets SET command_id = NULL WHERE command_id = ANY($1)")
-            .bind(&ids)
-            .execute(&mut *conn)
-            .await?;
+        sqlx::query(
+            "UPDATE campaign_targets SET
+                 command_id = CASE WHEN command_id = ANY($1) THEN NULL ELSE command_id END,
+                 sources_command_id = CASE WHEN sources_command_id = ANY($1) THEN NULL
+                                           ELSE sources_command_id END
+             WHERE command_id = ANY($1) OR sources_command_id = ANY($1)",
+        )
+        .bind(&ids)
+        .execute(&mut *conn)
+        .await?;
     }
     Ok(ids)
+}
+
+/// `(mirror_id, snapshot_id)` of each mirror `pin` names: the snapshot
+/// must be published, and every OS family among `targets` needs a mirror.
+async fn pinned_snapshots(
+    conn: &mut PgConnection,
+    pin: &SourcesPin,
+    targets: &[Uuid],
+) -> Result<Vec<(Uuid, Uuid)>, CampaignError> {
+    let mut pinned = Vec::with_capacity(pin.mirrors.len());
+    let mut families = Vec::new();
+    for m in &pin.mirrors {
+        let found: Option<(Uuid, Family, Option<Uuid>)> = sqlx::query_as(
+            "SELECT m.id, m.family, s.id FROM mirrors m
+             LEFT JOIN mirror_snapshots s
+                 ON s.mirror_id = m.id AND s.name = $2 AND s.state = 'published'
+             WHERE m.name = $1",
+        )
+        .bind(&m.name)
+        .bind(&m.snapshot)
+        .fetch_optional(&mut *conn)
+        .await?;
+        let invalid = |message: String| CampaignError::Invalid(message);
+        let (mirror, family, snapshot) =
+            found.ok_or_else(|| invalid(format!("no mirror named `{}`", m.name.escape_debug())))?;
+        let snapshot = snapshot.ok_or_else(|| {
+            invalid(format!(
+                "mirror `{}` has no published snapshot `{}`",
+                m.name,
+                m.snapshot.escape_debug()
+            ))
+        })?;
+        pinned.push((mirror, snapshot));
+        families.push(os_family(family));
+    }
+    let uncovered: Option<String> = sqlx::query_scalar(
+        "SELECT os_family FROM servers WHERE id = ANY($1) AND NOT (os_family = ANY($2)) LIMIT 1",
+    )
+    .bind(targets)
+    .bind(&families)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(os) = uncovered {
+        return Err(CampaignError::Invalid(format!(
+            "sources pin no mirror for the campaign's {os} servers"
+        )));
+    }
+    Ok(pinned)
 }
 
 async fn check_timezones(conn: &mut PgConnection, windows: &[Window]) -> Result<(), CampaignError> {

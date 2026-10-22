@@ -1,4 +1,6 @@
-//! Copies the `current` snapshot of one upstream mirror (ADR-0034).
+//! Copies the `current` snapshot of one upstream mirror (ADR-0034), or
+//! a snapshot pinned by an update campaign, which `current` keeps naming
+//! the newest (ADR-0038).
 //!
 //! The snapshot is built in `<family>/<mirror>/.sync-<snapshot>/`, hidden
 //! from the listener; the staging directory of another snapshot, left by
@@ -23,6 +25,7 @@ use std::sync::Arc;
 use monitorflow_common::config::DEFAULT_MIRROR_MAX_SNAPSHOT_BYTES;
 use monitorflow_common::mirror::{
     is_snapshot_name, read_current, swap_current, write_atomically, Family, IndexMirror,
+    PinnedSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
@@ -182,6 +185,22 @@ impl Syncer {
     /// Makes `current` of `mirror` name the snapshot the upstream's does,
     /// copying it first if needed.
     pub async fn sync(&self, mirror: &IndexMirror) -> Result<Outcome, SyncError> {
+        self.copy(mirror, true).await
+    }
+
+    /// Copies the pinned snapshot `pinned` of `mirror` if the relay does
+    /// not hold it yet, leaving `current` alone: `Unchanged` when held.
+    pub async fn keep(
+        &self,
+        mirror: &IndexMirror,
+        pinned: &PinnedSnapshot,
+    ) -> Result<Outcome, SyncError> {
+        self.copy(&mirror.at(pinned), false).await
+    }
+
+    /// Copies the snapshot `mirror.current` names, then points `current`
+    /// at it if `swap`.
+    async fn copy(&self, mirror: &IndexMirror, swap: bool) -> Result<Outcome, SyncError> {
         let dir = self.mirror_dir(mirror.family, &mirror.name);
         let snapshot = mirror.current.clone();
         tokio::fs::create_dir_all(&dir).await.map_err(io(&dir))?;
@@ -189,6 +208,9 @@ impl Syncer {
             .await
             .unwrap_or(false)
         {
+            if !swap {
+                return Ok(Outcome::Unchanged);
+            }
             let (d, s) = (dir.clone(), snapshot.clone());
             return tokio::task::spawn_blocking(move || {
                 if read_current(&d).as_deref() == Some(s.as_str()) {
@@ -275,8 +297,10 @@ impl Syncer {
 
         let staging = run.staging.clone();
         let stats = progress.stats;
-        tokio::task::spawn_blocking(move || publish(&dir, &staging, &snapshot, progress.done))
-            .await??;
+        tokio::task::spawn_blocking(move || {
+            publish(&dir, &staging, &snapshot, progress.done, swap)
+        })
+        .await??;
         Ok(Outcome::Synced(stats))
     }
 
@@ -536,13 +560,14 @@ fn read_manifest(snapshot: &Path) -> Result<Manifest, std::io::Error> {
 }
 
 /// Removes the files of `staging` that `files` does not list, then writes
-/// the manifest, renames `staging` to `<dir>/<snapshot>` and points
-/// `current` at it. Blocking.
+/// the manifest, renames `staging` to `<dir>/<snapshot>` and, if `swap`,
+/// points `current` at it. Blocking.
 fn publish(
     dir: &Path,
     staging: &Path,
     snapshot: &str,
     files: BTreeMap<String, Stored>,
+    swap: bool,
 ) -> Result<(), SyncError> {
     remove_unlisted(staging, staging, &files)?;
     let manifest = Manifest {
@@ -558,7 +583,10 @@ fn publish(
         _ => {}
     }
     std::fs::rename(staging, &target).map_err(io(&target))?;
-    Ok(swap_current(dir, snapshot).map_err(io(dir))?)
+    if swap {
+        swap_current(dir, snapshot).map_err(io(dir))?;
+    }
+    Ok(())
 }
 
 /// Removes every file under `dir` whose path relative to `base` is not in

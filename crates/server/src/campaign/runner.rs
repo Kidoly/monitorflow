@@ -8,6 +8,10 @@
 //!    inside a maintenance window, with a TTL capped at its end;
 //! 3. past the last wave, the campaign is completed.
 //!
+//! In a campaign pinned to snapshots, each server's sources are pointed
+//! at them before its update and restored after it ([`super::pin`],
+//! ADR-0038); restores are queued for campaigns in any state.
+//!
 //! A step only reads `commands` and the campaign's tables, so running it
 //! twice, or again after a restart, queues nothing twice.
 
@@ -16,15 +20,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use monitorflow_common::command::APPLY_UPDATES;
+use monitorflow_common::command::{APPLY_UPDATES, CONFIGURE_SOURCES};
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
+use super::model::SourcesMode;
+use super::pin::{self, Configurer, Next, Pending, PinSources};
 use super::store::{cancel_queued, close_waves, Actor, CampaignRow, COLUMNS};
 use crate::api::audit::{self, Event};
 use crate::commands::{CommandStore, Commands, NewCommand};
+use crate::mirror::{relays, Mirrors};
 
 /// How often active campaigns are looked at.
 pub const POLL: Duration = Duration::from_secs(10);
@@ -50,6 +57,7 @@ pub enum Step {
 pub struct Runner {
     pool: PgPool,
     commands: Option<Commands>,
+    sources: Option<PinSources>,
     wake: Arc<Notify>,
 }
 
@@ -58,6 +66,7 @@ impl Runner {
         Self {
             pool,
             commands: None,
+            sources: None,
             wake: Arc::new(Notify::new()),
         }
     }
@@ -68,17 +77,38 @@ impl Runner {
         self
     }
 
+    /// Builds `configure_sources` commands for pinned campaigns with the
+    /// signing key and layout of `mirrors` and `public_url`, and keeps
+    /// the `.pinned` files of its mirrors (ADR-0038).
+    pub fn with_sources(mut self, public_url: Option<String>, mirrors: Mirrors) -> Self {
+        self.sources = Some(PinSources {
+            public_url,
+            mirrors,
+        });
+        self
+    }
+
     /// Asks [`Self::run`] for a step of every campaign now, as after a
     /// start or resume.
     pub fn wake(&self) {
         self.wake.notify_one();
     }
 
-    /// One step of every active campaign, oldest first, at `now`.
-    /// Failures are logged; the campaign is retried at the next tick.
+    /// One step of every active campaign, and of every campaign with
+    /// sources to restore, oldest first, at `now`. Failures are logged;
+    /// the campaign is retried at the next tick.
     pub async fn tick(&self, now: DateTime<Utc>) {
+        if let Some(sources) = &self.sources {
+            if let Err(error) = pin::write_pins(&self.pool, sources.mirrors.layout()).await {
+                tracing::warn!(%error, "cannot record the snapshots campaigns pin; will retry");
+            }
+        }
         let ids: Vec<Uuid> = match sqlx::query_scalar(
-            "SELECT id FROM campaigns WHERE state IN ('scheduled', 'running') ORDER BY created_at",
+            "SELECT id FROM campaigns
+             WHERE state IN ('scheduled', 'running')
+                OR id IN (SELECT campaign_id FROM campaign_targets
+                          WHERE sources_command_id IS NOT NULL AND restore_command_id IS NULL)
+             ORDER BY created_at",
         )
         .fetch_all(&self.pool)
         .await
@@ -96,12 +126,13 @@ impl Runner {
         }
     }
 
-    /// One step of the campaign `id` at `now`.
+    /// One step of the campaign `id` at `now`. Restores of pinned sources
+    /// are queued whatever its state, and not reported in the step.
     pub async fn advance(&self, id: Uuid, now: DateTime<Utc>) -> Result<Step, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
         let row: Option<CampaignRow> = sqlx::query_as(&format!(
             "SELECT {COLUMNS} FROM campaigns
-             WHERE id = $1 AND state IN ('scheduled', 'running')
+             WHERE id = $1 AND (state IN ('scheduled', 'running') OR sources_mode IS NOT NULL)
              FOR UPDATE SKIP LOCKED"
         ))
         .bind(id)
@@ -110,8 +141,23 @@ impl Runner {
         let Some(row) = row else {
             return Ok(Step::Idle);
         };
-        let step = step(&mut tx, &row, now).await?;
+        let mut restored = Vec::new();
+        if row.sources_mode.is_some() {
+            let open = row.state.is_active() && window_ttl(&mut tx, &row, now).await?.is_some();
+            restored = pin::restore(&mut tx, &row, open).await?;
+        }
+        let step = if row.state.is_active() {
+            step(&mut tx, &row, now, self.sources.as_ref()).await?
+        } else {
+            Step::Idle
+        };
         tx.commit().await?;
+        if !restored.is_empty() {
+            tracing::info!(campaign = %id, commands = restored.len(), "campaign sources restores queued");
+            if let Some(commands) = &self.commands {
+                restored.iter().for_each(|peer| commands.dispatch(peer));
+            }
+        }
         match &step {
             Step::Queued(peers) => {
                 tracing::info!(campaign = %id, commands = peers.len(), "campaign commands queued");
@@ -155,17 +201,28 @@ async fn step(
     conn: &mut PgConnection,
     row: &CampaignRow,
     now: DateTime<Utc>,
+    sources: Option<&PinSources>,
 ) -> Result<Step, sqlx::Error> {
     let next = match row.current_wave {
         None => 0,
         Some(wave) => {
+            // With pinned sources, a server is done once restored too,
+            // and failed if that failed after its update.
             let tally: Tally = sqlx::query_as(
                 "SELECT count(*) AS size,
                      count(*) FILTER (WHERE t.error IS NOT NULL
-                                      OR c.state IN ('failed', 'expired', 'cancelled')) AS failed,
-                     count(*) FILTER (WHERE t.error IS NOT NULL
-                                      OR c.state IN ('succeeded', 'failed', 'expired', 'cancelled')) AS done
-                 FROM campaign_targets t LEFT JOIN commands c ON c.id = t.command_id
+                                      OR c.state IN ('failed', 'expired', 'cancelled')
+                                      OR (c.id IS NOT NULL
+                                          AND r.state IN ('failed', 'expired', 'cancelled'))) AS failed,
+                     count(*) FILTER (WHERE (t.error IS NOT NULL
+                                             OR c.state IN ('succeeded', 'failed', 'expired', 'cancelled'))
+                                        AND (cfg.sent_at IS NULL OR s.revoked_at IS NOT NULL
+                                             OR r.state IN ('succeeded', 'failed', 'expired', 'cancelled'))) AS done
+                 FROM campaign_targets t
+                 JOIN servers s ON s.id = t.server_id
+                 LEFT JOIN commands c ON c.id = t.command_id
+                 LEFT JOIN commands cfg ON cfg.id = t.sources_command_id
+                 LEFT JOIN commands r ON r.id = t.restore_command_id
                  WHERE t.campaign_id = $1 AND t.wave = $2",
             )
             .bind(row.id)
@@ -180,7 +237,7 @@ async fn step(
                 return Ok(Step::Failed);
             }
             if tally.done < tally.size {
-                return queue(conn, row, wave, now).await;
+                return queue(conn, row, wave, now, sources).await;
             }
             finish_wave(conn, row.id, wave, &tally).await?;
             wave + 1
@@ -195,7 +252,7 @@ async fn step(
         complete(conn, row.id).await?;
         return Ok(Step::Completed);
     }
-    let step = queue(conn, row, next, now).await?;
+    let step = queue(conn, row, next, now, sources).await?;
     if matches!(step, Step::Queued(_)) {
         sqlx::query("UPDATE campaigns SET state = 'running', current_wave = $2 WHERE id = $1")
             .bind(row.id)
@@ -206,27 +263,14 @@ async fn step(
     Ok(step)
 }
 
-/// Queues a command for every server of `wave` without one, if a window
-/// is open long enough; servers revoked since creation are skipped.
-async fn queue(
+/// The TTL of a command queued at `now`: the campaign's, capped at the
+/// end of the open window; `None` when no window stays open for
+/// [`MIN_WINDOW_LEFT`].
+async fn window_ttl(
     conn: &mut PgConnection,
     row: &CampaignRow,
-    wave: i32,
     now: DateTime<Utc>,
-) -> Result<Step, sqlx::Error> {
-    let missing: Vec<(Uuid, String, bool)> = sqlx::query_as(
-        "SELECT t.server_id, s.peer_id, s.revoked_at IS NOT NULL
-         FROM campaign_targets t JOIN servers s ON s.id = t.server_id
-         WHERE t.campaign_id = $1 AND t.wave = $2 AND t.command_id IS NULL AND t.error IS NULL
-         ORDER BY s.hostname, s.peer_id",
-    )
-    .bind(row.id)
-    .bind(wave)
-    .fetch_all(&mut *conn)
-    .await?;
-    if missing.is_empty() {
-        return Ok(Step::Idle);
-    }
+) -> Result<Option<Duration>, sqlx::Error> {
     let (open, end): (bool, Option<DateTime<Utc>>) = sqlx::query_as(
         "SELECT e IS NOT NULL, CASE WHEN e = 'infinity' THEN NULL ELSE e END
          FROM campaign_window_end($1, $2) e",
@@ -240,43 +284,112 @@ async fn queue(
         let left = (end - now).to_std().unwrap_or_default();
         ttl = ttl.min(left);
     }
-    if !open || ttl < MIN_WINDOW_LEFT {
+    Ok((open && ttl >= MIN_WINDOW_LEFT).then_some(ttl))
+}
+
+/// Queues a command for every server of `wave` without one, if a window
+/// is open long enough; servers revoked since creation are skipped. In a
+/// pinned campaign that command is first `configure_sources`, then the
+/// update once it succeeded.
+async fn queue(
+    conn: &mut PgConnection,
+    row: &CampaignRow,
+    wave: i32,
+    now: DateTime<Utc>,
+    sources: Option<&PinSources>,
+) -> Result<Step, sqlx::Error> {
+    let missing: Vec<Pending> = sqlx::query_as(
+        "SELECT t.server_id, s.peer_id, s.revoked_at IS NOT NULL AS revoked,
+             s.os_family, cfg.state AS configure_state, cfg.error AS configure_error,
+             t.restore_command_id, r.state AS restore_state
+         FROM campaign_targets t JOIN servers s ON s.id = t.server_id
+         LEFT JOIN commands cfg ON cfg.id = t.sources_command_id
+         LEFT JOIN commands r ON r.id = t.restore_command_id
+         WHERE t.campaign_id = $1 AND t.wave = $2 AND t.command_id IS NULL AND t.error IS NULL
+         ORDER BY s.hostname, s.peer_id",
+    )
+    .bind(row.id)
+    .bind(wave)
+    .fetch_all(&mut *conn)
+    .await?;
+    if missing.is_empty() {
         return Ok(Step::Idle);
     }
+    let Some(ttl) = window_ttl(conn, row, now).await? else {
+        return Ok(Step::Idle);
+    };
     let payload = row.spec().payload();
+    let mut configurer = None;
     let mut peers = Vec::new();
-    let mut skipped = 0;
-    for (server_id, peer_id, revoked) in missing {
-        if revoked {
-            sqlx::query(
-                "UPDATE campaign_targets SET error = 'server revoked'
-                 WHERE campaign_id = $1 AND server_id = $2",
-            )
-            .bind(row.id)
-            .bind(server_id)
-            .execute(&mut *conn)
-            .await?;
-            skipped += 1;
-            continue;
-        }
+    let (mut skipped, mut configured) = (0, 0);
+    for target in missing {
+        let next = match row.sources_mode {
+            _ if target.revoked => Next::Fail("server revoked".into()),
+            None => Next::Update,
+            Some(_) => target.next(),
+        };
+        let built = match next {
+            Next::Wait => continue,
+            Next::Fail(error) => Err(error),
+            Next::Update => Ok((APPLY_UPDATES, payload.clone())),
+            Next::Configure | Next::Restart => {
+                let configurer = match configurer {
+                    Some(ref c) => c,
+                    None => {
+                        let mode = row.sources_mode.unwrap_or(SourcesMode::Replace);
+                        configurer.insert(Configurer::new(conn, row, mode, sources).await?)
+                    }
+                };
+                let relay = relays::for_server(&mut *conn, target.server_id).await?;
+                configurer
+                    .payload(relay.as_ref(), &target.os_family)
+                    .map(|spec| (CONFIGURE_SOURCES, spec))
+                    .map_err(|error| format!("cannot configure sources: {error}"))
+            }
+        };
+        let (kind, payload) = match built {
+            Ok(command) => command,
+            Err(error) => {
+                sqlx::query(
+                    "UPDATE campaign_targets SET error = $3
+                     WHERE campaign_id = $1 AND server_id = $2",
+                )
+                .bind(row.id)
+                .bind(target.server_id)
+                .bind(error)
+                .execute(&mut *conn)
+                .await?;
+                skipped += 1;
+                continue;
+            }
+        };
         let new = NewCommand {
-            server_id,
-            kind: APPLY_UPDATES.into(),
-            payload: payload.clone(),
+            server_id: target.server_id,
+            kind: kind.into(),
+            payload,
             ttl,
             requested_by: None,
             campaign_id: Some(row.id),
         };
         let command = CommandStore::enqueue_in(&mut *conn, &new).await?;
-        sqlx::query(
-            "UPDATE campaign_targets SET command_id = $3 WHERE campaign_id = $1 AND server_id = $2",
-        )
+        let column = if kind == CONFIGURE_SOURCES {
+            configured += 1;
+            "sources_command_id = $3, restore_command_id = NULL"
+        } else {
+            "command_id = $3"
+        };
+        sqlx::query(&format!(
+            "UPDATE campaign_targets SET {column} WHERE campaign_id = $1 AND server_id = $2"
+        ))
         .bind(row.id)
-        .bind(server_id)
+        .bind(target.server_id)
         .bind(command.id)
         .execute(&mut *conn)
         .await?;
-        peers.push(peer_id);
+        peers.push(target.peer_id);
+    }
+    if peers.is_empty() && skipped == 0 {
+        return Ok(Step::Idle);
     }
     sqlx::query(
         "UPDATE campaign_waves SET started_at = COALESCE(started_at, now())
@@ -293,6 +406,7 @@ async fn queue(
         json!({
             "wave": wave,
             "commands": peers.len(),
+            "configure_sources": configured,
             "skipped": skipped,
             "ttl_s": ttl.as_secs(),
         }),
@@ -365,7 +479,7 @@ async fn fail(
     record(conn, row.id, "campaign.fail", details).await
 }
 
-async fn record(
+pub(super) async fn record(
     conn: &mut PgConnection,
     campaign: Uuid,
     action: &str,

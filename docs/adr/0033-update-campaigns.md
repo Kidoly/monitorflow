@@ -115,5 +115,5 @@ CampaignDetail is a Campaign plus:
 - Campaigns reuse signed commands, the agent journal and the dispatcher unchanged; anything ADR-0031 guarantees per command holds per campaign server.
 - A server can be in several campaigns at once; their commands run one after the other.
 - Window evaluation lives in a SQL function: changing its rules needs a new migration replacing the function.
-- Pinning a repository snapshot (architecture §7) needs the agent's source configuration per campaign (ADR-0032); a later change can add a `configure_sources` step before each server's update.
+- Pinning a repository snapshot (architecture §7) needs the agent's source configuration per campaign (ADR-0032); a later change can add a `configure_sources` step before each server's update. Done in ADR-0038: optional `sources` per campaign, configured before each server's update and restored after it.
 - No CLI yet; campaigns are managed through the API.

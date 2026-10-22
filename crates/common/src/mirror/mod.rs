@@ -16,7 +16,7 @@ pub mod index;
 pub mod serve;
 
 #[cfg(feature = "mirror")]
-pub use index::{Index, IndexMirror};
+pub use index::{read_pinned, write_pinned, Index, IndexMirror, PinnedSnapshot};
 #[cfg(feature = "mirror")]
 pub use serve::Served;
 
@@ -25,6 +25,10 @@ pub const CURRENT: &str = "current";
 
 /// File name of the public signing key under `/keys/`.
 pub const PUBLIC_KEY: &str = "monitorflow-archive.asc";
+
+/// File in a mirror's directory naming, one per line, the snapshots
+/// pinned by update campaigns (ADR-0038); hidden from the listener.
+pub const PINNED: &str = ".pinned";
 
 /// URL path of the index.
 pub const INDEX_PATH: &str = "/index.json";

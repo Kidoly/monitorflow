@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use monitorflow_common::config::valid_mirror_url;
 use monitorflow_common::mirror::{is_mirror_name, is_snapshot_name};
 use monitorflow_common::proto::v1::RelayMirrors;
-use sqlx::{PgExecutor, PgPool};
+use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use super::Family;
@@ -156,7 +156,7 @@ pub async fn record(
 /// What the relay the server `server_id` connects through serves, if that
 /// relay is not revoked and reported a mirror URL.
 pub async fn for_server(
-    db: impl PgExecutor<'_> + Copy,
+    db: &mut PgConnection,
     server_id: Uuid,
 ) -> Result<Option<Served>, sqlx::Error> {
     let found: Option<(Uuid, String)> = sqlx::query_as(
@@ -165,7 +165,7 @@ pub async fn for_server(
          WHERE s.id = $1 AND r.revoked_at IS NULL AND r.mirror_url IS NOT NULL",
     )
     .bind(server_id)
-    .fetch_optional(db)
+    .fetch_optional(&mut *db)
     .await?;
     let Some((relay, url)) = found else {
         return Ok(None);
@@ -175,7 +175,7 @@ pub async fn for_server(
          WHERE relay_id = $1 ORDER BY family, name",
     )
     .bind(relay)
-    .fetch_all(db)
+    .fetch_all(&mut *db)
     .await?;
     Ok(Some(Served { url, mirrors }))
 }
