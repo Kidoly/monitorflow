@@ -4,11 +4,14 @@
 //! under `mirror_dir`.
 //!
 //! [`meta`] describes the files of a snapshot, read by [`apt`] and [`dnf`]
-//! from the repository metadata.
+//! from the repository metadata; [`sync`] copies a snapshot with
+//! [`fetch`].
 
 pub mod apt;
 pub mod dnf;
+pub mod fetch;
 pub mod meta;
+pub mod sync;
 
 use std::io;
 use std::path::Path;
