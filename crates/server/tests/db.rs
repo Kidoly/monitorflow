@@ -140,6 +140,10 @@ db_tests! {
             [
                 "alert_states",
                 "audit_log",
+                "campaign_targets",
+                "campaign_waves",
+                "campaign_windows",
+                "campaigns",
                 "certificates",
                 "commands",
                 "customers",
