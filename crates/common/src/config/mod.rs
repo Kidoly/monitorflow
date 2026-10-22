@@ -159,6 +159,21 @@ impl Overrides<'_> {
             })
     }
 
+    /// A comma-separated list: items are trimmed and empty ones dropped, so
+    /// a variable of only separators or spaces sets an empty list. An empty
+    /// variable is ignored like the others.
+    pub fn list(&self, key: &str) -> Option<Vec<String>> {
+        let (_, value) = self.get(key)?;
+        Some(
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        )
+    }
+
     pub fn set<T: FromStr>(&self, key: &str, field: &mut T) -> Result<(), ConfigError>
     where
         T::Err: fmt::Display,
@@ -569,9 +584,8 @@ impl LoadConfig for AgentConfig {
             "packages.report_interval",
             &mut self.packages.report_interval,
         )?;
-        // Comma-separated; an empty variable is ignored like the others.
-        if let Some(dirs) = env.parse::<String>("sensors.log_dirs")? {
-            self.sensors.log_dirs = dirs.split(',').map(|d| d.trim().into()).collect();
+        if let Some(dirs) = env.list("sensors.log_dirs") {
+            self.sensors.log_dirs = dirs.into_iter().map(PathBuf::from).collect();
         }
         self.tls.apply_env(env)?;
         self.log.apply_env(env)
@@ -680,7 +694,8 @@ impl RelayConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RelayMirrorConfig {
-    /// Sync and serve mirrors at all.
+    /// Sync and serve mirrors at all. Off unless configured: a relay copies
+    /// tens of gigabytes only on request (ADR-0034, amendment).
     pub enabled: bool,
     /// Mirror listener of the upstream, `http(s)://host:port`. Defaults to
     /// the host of `upstream_url` on port 7480.
@@ -709,7 +724,7 @@ const MAX_MIRROR_DOWNLOADS: usize = 64;
 impl Default for RelayMirrorConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             upstream_url: None,
             sync_interval: 15 * 60,
             mirrors: Vec::new(),
@@ -726,8 +741,8 @@ impl RelayMirrorConfig {
         env.set("mirror.enabled", &mut self.enabled)?;
         env.set_opt("mirror.upstream_url", &mut self.upstream_url)?;
         env.set("mirror.sync_interval", &mut self.sync_interval)?;
-        if let Some((_, names)) = env.get("mirror.mirrors") {
-            self.mirrors = names.split(',').map(|n| n.trim().to_owned()).collect();
+        if let Some(names) = env.list("mirror.mirrors") {
+            self.mirrors = names;
         }
         env.set("mirror.keep_snapshots", &mut self.keep_snapshots)?;
         env.set("mirror.max_downloads", &mut self.max_downloads)?;
@@ -1035,8 +1050,8 @@ impl LoadConfig for ServerConfig {
         env.set("victorialogs_url", &mut self.victorialogs_url)?;
         env.set("data_dir", &mut self.data_dir)?;
         env.set("heartbeat_timeout", &mut self.heartbeat_timeout)?;
-        if let Some((_, names)) = env.get("server_names") {
-            self.server_names = names.split(',').map(|n| n.trim().to_owned()).collect();
+        if let Some(names) = env.list("server_names") {
+            self.server_names = names;
         }
         self.ingest.apply_env(env)?;
         self.tls.apply_env(env)?;

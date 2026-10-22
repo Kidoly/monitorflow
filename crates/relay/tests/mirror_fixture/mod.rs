@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use monitorflow_common::mirror::{serve, swap_current, Family, Index, IndexMirror, Served};
+use monitorflow_relay::mirror::compress::Compression;
 use monitorflow_relay::mirror::fetch::Fetcher;
 use tokio::net::TcpListener;
 
@@ -32,6 +33,32 @@ pub fn digest(algorithm: &str, bytes: &[u8]) -> String {
 pub fn write(path: &Path, bytes: &[u8]) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, bytes).unwrap();
+}
+
+/// `data` compressed with `compression`.
+pub fn compress(compression: Compression, data: &[u8]) -> Vec<u8> {
+    match compression {
+        Compression::Plain => data.to_vec(),
+        Compression::Gzip => {
+            let mut e = flate2::write::GzEncoder::new(Vec::new(), Default::default());
+            e.write_all(data).unwrap();
+            e.finish().unwrap()
+        }
+        Compression::Xz => {
+            let options = lzma_rust2::XzOptions::with_preset(1);
+            let mut e = lzma_rust2::XzWriter::new(Vec::new(), options).unwrap();
+            e.write_all(data).unwrap();
+            e.finish().unwrap()
+        }
+        Compression::Bzip2 => {
+            let mut e = bzip2::write::BzEncoder::new(Vec::new(), Default::default());
+            e.write_all(data).unwrap();
+            e.finish().unwrap()
+        }
+        Compression::Zstd => {
+            ruzstd::encoding::compress_to_vec(data, ruzstd::encoding::CompressionLevel::Fastest)
+        }
+    }
 }
 
 /// A mirror listener over a temporary tree.
@@ -73,6 +100,23 @@ impl Upstream {
     /// `Release` also lists a `Packages.gz` that does not exist, as a
     /// compression the publisher did not generate.
     pub fn apt(&self, mirror: &str, snapshot: &str, packages: &[(&str, &[u8])]) {
+        self.apt_lists(
+            mirror,
+            snapshot,
+            packages,
+            &[(Compression::Plain, true), (Compression::Gzip, false)],
+        );
+    }
+
+    /// [`Upstream::apt`] whose `Release` lists the `Packages` variants of
+    /// `lists`, in that order, and that serves those marked `true`.
+    pub fn apt_lists(
+        &self,
+        mirror: &str,
+        snapshot: &str,
+        packages: &[(&str, &[u8])],
+        lists: &[(Compression, bool)],
+    ) {
         let root = self.snapshot_dir(Family::Apt, mirror, snapshot);
         let mut index = String::new();
         for (name, content) in packages {
@@ -85,13 +129,18 @@ impl Upstream {
             ));
         }
         let dists = root.join("dists/bookworm");
-        write(&dists.join("main/binary-amd64/Packages"), index.as_bytes());
-        let release = format!(
-            "Origin: MonitorFlow\nSuite: bookworm\nSHA256:\n {} {} main/binary-amd64/Packages\n {} 99 main/binary-amd64/Packages.gz\n",
-            sha256(index.as_bytes()),
-            index.len(),
-            sha256(b"absent"),
-        );
+        let mut release = String::from("Origin: MonitorFlow\nSuite: bookworm\nSHA256:\n");
+        for (compression, served) in lists {
+            let name = format!("main/binary-amd64/Packages{}", compression.extension());
+            let content = if *served {
+                let content = compress(*compression, index.as_bytes());
+                write(&dists.join(&name), &content);
+                content
+            } else {
+                b"absent".to_vec()
+            };
+            release.push_str(&format!(" {} {} {name}\n", sha256(&content), content.len()));
+        }
         write(&dists.join("Release"), release.as_bytes());
         write(&dists.join("Release.gpg"), b"signature");
         write(
@@ -104,16 +153,29 @@ impl Upstream {
     /// A dnf snapshot with `packages` (path under `Packages/`, content),
     /// gzip primary metadata, published as `current`.
     pub fn dnf(&self, mirror: &str, snapshot: &str, packages: &[(&str, &[u8])]) {
-        self.dnf_with("sha256", mirror, snapshot, packages)
+        self.dnf_with("sha256", mirror, snapshot, packages, Compression::Gzip);
     }
 
-    /// [`Self::dnf`] with every checksum computed with `algorithm`.
+    /// [`Self::dnf`] with primary metadata in `compression`.
+    pub fn dnf_primary(
+        &self,
+        mirror: &str,
+        snapshot: &str,
+        packages: &[(&str, &[u8])],
+        compression: Compression,
+    ) {
+        self.dnf_with("sha256", mirror, snapshot, packages, compression);
+    }
+
+    /// [`Self::dnf`] with every checksum computed with `algorithm` and
+    /// primary metadata in `compression`.
     pub fn dnf_with(
         &self,
         algorithm: &str,
         mirror: &str,
         snapshot: &str,
         packages: &[(&str, &[u8])],
+        compression: Compression,
     ) {
         let root = self.snapshot_dir(Family::Dnf, mirror, snapshot);
         let mut primary = String::from(
@@ -129,15 +191,17 @@ impl Upstream {
             ));
         }
         primary.push_str("</metadata>");
-        let mut gz = flate2::write::GzEncoder::new(Vec::new(), Default::default());
-        gz.write_all(primary.as_bytes()).unwrap();
-        let gz = gz.finish().unwrap();
-        let primary_path = format!("repodata/{}-primary.xml.gz", sha256(&gz));
-        write(&root.join(&primary_path), &gz);
+        let raw = compress(compression, primary.as_bytes());
+        let primary_path = format!(
+            "repodata/{}-primary.xml{}",
+            sha256(&raw),
+            compression.extension()
+        );
+        write(&root.join(&primary_path), &raw);
         let repomd = format!(
             r#"<?xml version="1.0"?><repomd><data type="primary"><checksum type="{algorithm}">{}</checksum><location href="{primary_path}"/><size>{}</size></data></repomd>"#,
-            digest(algorithm, &gz),
-            gz.len()
+            digest(algorithm, &raw),
+            raw.len()
         );
         write(&root.join("repodata/repomd.xml"), repomd.as_bytes());
         write(&root.join("repodata/repomd.xml.asc"), b"signature");

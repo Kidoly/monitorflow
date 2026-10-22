@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -228,16 +228,26 @@ impl Syncer {
                     let listed = apt::release(suite, &text)?;
                     self.obtain(&run, listed.clone(), true, &mut progress)
                         .await?;
+                    // Every variant the upstream serves is published, so
+                    // the packages of each must be there.
                     for group in apt::package_lists(&listed) {
-                        let Some(list) = group.iter().find(|e| progress.done.contains_key(&e.path))
-                        else {
-                            return Err(SyncError::Missing(group[0].path.clone()));
-                        };
-                        let (name, path) = (list.path.clone(), run.staging.join(&list.path));
-                        packages.extend(
-                            tokio::task::spawn_blocking(move || read_packages(&name, &path))
+                        let served: Vec<String> = group
+                            .into_iter()
+                            .map(|e| e.path)
+                            .filter(|p| progress.done.contains_key(p))
+                            .collect();
+                        if served.is_empty() {
+                            tracing::warn!(mirror = %mirror.name, suite, "a package list is listed but missing upstream in every compression");
+                        }
+                        for name in served {
+                            let path = run.staging.join(&name);
+                            packages.extend(
+                                tokio::task::spawn_blocking(move || {
+                                    apt::read_packages(&name, &path)
+                                })
                                 .await??,
-                        );
+                            );
+                        }
                     }
                 }
                 packages
@@ -448,17 +458,6 @@ async fn reusable(known: &Stored, source: &Path, entry: &Entry) -> Option<Checks
 
 async fn remove_part(dest: &Path) {
     let _ = tokio::fs::remove_file(part_path(dest)).await;
-}
-
-/// Packages of an apt `Packages` index, plain or gzip. Blocking.
-fn read_packages(name: &str, path: &Path) -> Result<Vec<Entry>, SyncError> {
-    let file = File::open(path).map_err(io(path))?;
-    let reader: Box<dyn BufRead> = if name.ends_with(".gz") {
-        Box::new(BufReader::new(flate2::read::MultiGzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
-    Ok(apt::packages(name, reader)?)
 }
 
 /// Makes `staging` the only staging directory in `dir`: if it does not

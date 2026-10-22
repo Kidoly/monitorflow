@@ -36,8 +36,8 @@ What a network attacker gains, as for agents (ADR-0030): seeing which packages a
 
 **Checks.** The relay does not verify GPG signatures: it has no OpenPGP implementation, and the key at `/keys/` comes over the same channel, so checking against it would prove nothing; agents check signatures against the key they received with a pinned fingerprint (ADR-0032). The relay copies the signatures unchanged and checks every file against the checksums of the signed metadata, rooted at the files the signature covers:
 
-- apt: `dists/<suite>/Release` gives the size and SHA-256 of every index file under `dists/<suite>/`; each uncompressed `Packages` file listed gives the `Filename`, `Size` and `SHA256` of every package under `pool/`. `InRelease` and `Release.gpg` are copied as they are. A file listed in `Release` that the upstream does not have (a compression it did not generate) is skipped, as apt itself does; a missing package is an error.
-- dnf: `repodata/repomd.xml` gives the size and checksum (SHA-256 or SHA-512) of every metadata file; the `primary` metadata (`.xml`, `.gz` or `.zst`) gives every package's `location`, size and checksum. `repomd.xml.asc` is copied as it is.
+- apt: `dists/<suite>/Release` gives the size and SHA-256 of every index file under `dists/<suite>/`; each `Packages` file listed (plain, `.gz`, `.xz`, `.bz2` or `.zst`) gives the `Filename`, `Size` and `SHA256` of every package under `pool/`. `InRelease` and `Release.gpg` are copied as they are. A file listed in `Release` that the upstream does not have (a compression it did not generate) is skipped, as apt itself does. Every `Packages` variant the upstream serves is copied and read, so each package a published list names is fetched; a missing package is an error.
+- dnf: `repodata/repomd.xml` gives the size and checksum (SHA-256 or SHA-512) of every metadata file; the `primary` metadata (`.xml`, `.gz`, `.xz`, `.bz2` or `.zst`, read with pure-Rust decoders) gives every package's `location`, size and checksum. `repomd.xml.asc` is copied as it is.
 
 Paths from the metadata must be relative, without `..`, empty or dot-prefixed segments, or backslashes; any other path fails the sync. A download that grows past the expected size is cut off.
 
@@ -59,7 +59,11 @@ Paths from the metadata must be relative, without `..`, empty or dot-prefixed se
 - Not covered yet: dnf group and module metadata beyond what `repomd.xml` lists (copied like any listed file, but not parsed), apt `by-hash` paths, range requests to resume a single large file, and signature checks on the relay with a key pinned over mTLS.
 - The status of the sync is in the relay's logs only; reporting it to the server through the relay's own stream is a follow-up.
 
-## Amendment (2026-10-22)
+## Amendment (2026-10-22): opt-in, non-fatal
+
+Relay mirroring is off by default (`mirror.enabled = false`). Enabled by default, every upgraded relay started copying tens of gigabytes without being asked, and bound `0.0.0.0:7480`, the default of the server's mirror listener, so a relay on the server's host failed to start. A failure to set up mirroring (preparing `mirror_dir`, building the sync client, binding `mirror_listen_addr`) is now logged as an error and the relay keeps forwarding agents without mirrors: mirroring is secondary to monitoring. Comma-separated environment overrides of lists (`MONITORFLOW_MIRROR_MIRRORS` and the others) drop empty items, so a value of only separators or spaces means an empty list, here every mirror.
+
+## Amendment (2026-10-22): review fixes
 
 Review fixes, the decision above unchanged:
 
