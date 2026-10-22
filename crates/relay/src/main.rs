@@ -16,6 +16,7 @@ use monitorflow_relay::control::{Control, ControlSettings};
 use monitorflow_relay::forward::{ForwardSettings, Forwarder};
 use monitorflow_relay::listener::{self, CrlCache, CrlSettings, Services, TlsPublisher};
 use monitorflow_relay::mirror;
+use monitorflow_relay::mirror::task::{MirrorSettings, MirrorTask};
 use monitorflow_relay::renew::{RenewProxy, RenewSettings};
 use tokio::net::TcpListener;
 
@@ -123,6 +124,9 @@ async fn main() -> anyhow::Result<()> {
                 tracing::error!(%error, "mirror listener failed");
             }
         });
+        let task = MirrorTask::new(MirrorSettings::from_config(&config))
+            .context("cannot build the mirror sync client")?;
+        tokio::spawn(task.run(stop.clone()));
     }
     let mut until_stopped = stop.clone();
     let services = Services {
