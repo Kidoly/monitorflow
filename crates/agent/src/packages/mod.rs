@@ -3,7 +3,8 @@
 //! source configuration commands in [`configure`] (ADR-0035).
 //!
 //! Privileged steps run through `sudo -n` with fixed command lines (see
-//! [`exec`]); everything else runs as the agent's user.
+//! [`exec`]): updates go to the root helper in [`update`] (ADR-0036).
+//! Everything else runs as the agent's user.
 
 pub mod apply;
 pub mod apt;
@@ -11,12 +12,13 @@ pub mod configure;
 pub mod dnf;
 pub mod exec;
 pub mod sources;
+pub mod update;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use monitorflow_common::command;
-use monitorflow_common::proto::v1::{ApplyUpdates, Package, PackageReport};
+use monitorflow_common::proto::v1::{Package, PackageReport};
 use tokio::sync::watch;
 
 use crate::os::OsFamily;
@@ -27,6 +29,8 @@ pub use exec::{Run, Tools};
 
 /// Longest stderr line quoted in an error.
 const STDERR_QUOTED: usize = 200;
+/// Longest helper error line, which quotes a command line and its stderr.
+const HELPER_QUOTED: usize = 600;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PackageError {
@@ -40,6 +44,9 @@ pub enum PackageError {
         code: i32,
         stderr: String,
     },
+    /// A root helper failed; its own error line.
+    #[error("{0}")]
+    Helper(String),
 }
 
 impl PackageError {
@@ -52,17 +59,26 @@ impl PackageError {
             stderr: first.chars().take(STDERR_QUOTED).collect(),
         }
     }
+
+    /// A root helper's failure: its last stderr line, where it prints
+    /// `Error: …` after the output of what it ran.
+    pub fn helper(run: &Run) -> Self {
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        let last = stderr.lines().rev().find(|l| !l.trim().is_empty());
+        match last {
+            Some(line) => {
+                let line = line.strip_prefix("Error: ").unwrap_or(line);
+                Self::Helper(line.chars().take(HELPER_QUOTED).collect())
+            }
+            None => Self::failed(run),
+        }
+    }
 }
 
-/// The host's package manager.
+/// What the agent reads of the host's package manager; upgrades go
+/// through the root helper ([`update`]).
 #[async_trait::async_trait]
 pub trait PackageManager: Send + Sync + 'static {
-    /// Refreshes repository metadata, as root; `None` when the upgrade
-    /// does it itself.
-    async fn refresh(&self) -> Result<Option<Run>, PackageError>;
-    /// Upgrades what `request` asks, as root; `None` when nothing matched.
-    /// Package names are already checked with [`valid_name`].
-    async fn upgrade(&self, request: &ApplyUpdates) -> Result<Option<Run>, PackageError>;
     /// Installed packages with their upgradable version, from cached
     /// metadata.
     async fn inventory(&self) -> Result<Vec<Package>, PackageError>;

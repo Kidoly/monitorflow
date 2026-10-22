@@ -1,5 +1,5 @@
 //! `deploy/sudoers/monitorflow-agent` allows exactly the privileged command
-//! lines the agent runs (ADR-0031, ADR-0032, ADR-0035), with the program
+//! lines the agent runs (ADR-0031, ADR-0032, ADR-0035, ADR-0036), with the program
 //! paths of [`Tools::default`], no wildcard, and parses with `visudo -cf`
 //! where `visudo` is installed.
 
@@ -45,15 +45,12 @@ fn allowed() -> Vec<String> {
 #[test]
 fn the_rules_are_the_agents_exact_command_lines() {
     let tools = Tools::default();
-    let (apt, dnf) = (tools.apt_get.display(), tools.dnf.display());
+    let agent = tools.agent.display();
     let expected = [
-        format!("{apt} -q update"),
-        format!("{apt} -q -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade"),
-        format!("{dnf} -q -y upgrade"),
-        format!("{dnf} -q -y upgrade --security"),
+        format!("{agent} packages update"),
         format!("{} -r +1", tools.shutdown.display()),
-        format!("{} sources apply", tools.agent.display()),
-        format!("{} sources revert", tools.agent.display()),
+        format!("{agent} sources apply"),
+        format!("{agent} sources revert"),
     ];
     assert_eq!(allowed(), expected);
     assert_eq!(tools.agent, Path::new("/usr/bin/monitorflow-agent"));
@@ -64,7 +61,8 @@ fn the_rules_are_the_agents_exact_command_lines() {
         !rules.iter().any(|l| l.contains(['*', '?', '['])),
         "a wildcard"
     );
-    assert!(rules.contains(&"Defaults!MONITORFLOW_APT env_keep += \"DEBIAN_FRONTEND\""));
+    // The helper sets the package managers' environment itself.
+    assert!(!rules.iter().any(|l| l.starts_with("Defaults")));
     assert!(rules
         .iter()
         .any(|l| l.starts_with("monitorflow ALL=(root) NOPASSWD: ")));

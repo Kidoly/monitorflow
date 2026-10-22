@@ -2,21 +2,11 @@
 
 use std::collections::HashMap;
 
-use monitorflow_common::proto::v1::{ApplyUpdates, Package};
+use monitorflow_common::proto::v1::Package;
 
-use super::exec::{Run, Tools};
+use super::exec::Tools;
 use super::{PackageError, PackageManager};
 
-/// Keeps local configuration files and never asks.
-const UPGRADE_OPTIONS: [&str; 6] = [
-    "-q",
-    "-y",
-    "-o",
-    "Dpkg::Options::=--force-confdef",
-    "-o",
-    "Dpkg::Options::=--force-confold",
-];
-const NONINTERACTIVE: [(&str, &str); 1] = [("DEBIAN_FRONTEND", "noninteractive")];
 const DPKG_FORMAT: &str = "${Package}\\t${Version}\\t${Architecture}\\t${db:Status-Abbrev}\\n";
 
 #[derive(Debug, Clone)]
@@ -29,7 +19,8 @@ impl Apt {
         Self { tools }
     }
 
-    async fn simulate(&self) -> Result<Vec<Candidate>, PackageError> {
+    /// What `apt-get dist-upgrade` would install, from cached metadata.
+    pub async fn simulate(&self) -> Result<Vec<Candidate>, PackageError> {
         let run = self
             .tools
             .read(&self.tools.apt_get, &["-s", "-q", "dist-upgrade"])
@@ -43,44 +34,6 @@ impl Apt {
 
 #[async_trait::async_trait]
 impl PackageManager for Apt {
-    async fn refresh(&self) -> Result<Option<Run>, PackageError> {
-        let run = self
-            .tools
-            .privileged(&[], &self.tools.apt_get, &["-q", "update"])
-            .await?;
-        Ok(Some(run))
-    }
-
-    async fn upgrade(&self, request: &ApplyUpdates) -> Result<Option<Run>, PackageError> {
-        let mut packages = request.packages.clone();
-        if request.security_only {
-            let security: Vec<String> = self
-                .simulate()
-                .await?
-                .into_iter()
-                .filter(|c| c.security && c.installed.is_some())
-                .map(|c| c.name)
-                .filter(|name| packages.is_empty() || packages.contains(name))
-                .collect();
-            if security.is_empty() {
-                return Ok(None);
-            }
-            packages = security;
-        }
-        let mut args: Vec<&str> = UPGRADE_OPTIONS.to_vec();
-        if packages.is_empty() {
-            args.push("upgrade");
-        } else {
-            args.extend(["install", "--only-upgrade"]);
-            args.extend(packages.iter().map(String::as_str));
-        }
-        let run = self
-            .tools
-            .privileged(&NONINTERACTIVE, &self.tools.apt_get, &args)
-            .await?;
-        Ok(Some(run))
-    }
-
     async fn inventory(&self) -> Result<Vec<Package>, PackageError> {
         let run = self
             .tools

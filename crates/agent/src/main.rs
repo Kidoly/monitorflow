@@ -10,6 +10,7 @@ use monitorflow_agent::backoff::Backoff;
 use monitorflow_agent::commands::{self, Dispatcher, DispatcherSettings, Handlers, Journal};
 use monitorflow_agent::enroll::{self, EnrollError};
 use monitorflow_agent::packages::sources::{self, SystemCheck};
+use monitorflow_agent::packages::update::{self, UpdateSpec};
 use monitorflow_agent::packages::{
     self, ApplyUpdatesHandler, Reports, SourcesAction, SourcesHandler, Tools,
 };
@@ -48,6 +49,18 @@ enum Command {
     /// agent (ADR-0032). Always works on `/`.
     #[command(subcommand)]
     Sources(SourcesCommand),
+    /// Package updates, run as root through sudo by the agent (ADR-0036).
+    #[command(subcommand)]
+    Packages(PackagesCommand),
+}
+
+#[derive(Subcommand, Debug, Clone, Copy)]
+enum PackagesCommand {
+    /// Read an update spec (JSON, like `{"kind": "named", "packages":
+    /// ["openssl"]}`, kind `all`, `security` or `named`) on stdin, check
+    /// it, then refresh and upgrade with the host's apt or dnf. Exits with
+    /// the package manager's code when it fails.
+    Update,
 }
 
 #[derive(Subcommand, Debug, Clone, Copy)]
@@ -89,6 +102,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if let Some(Command::Sources(command)) = cli.command {
         return tokio::task::spawn_blocking(move || sources(command)).await?;
+    }
+    if let Some(Command::Packages(PackagesCommand::Update)) = cli.command {
+        return packages_update().await;
     }
     let config: AgentConfig = config::load(&cli.config)?;
     logging::init(&config.log);
@@ -186,6 +202,41 @@ fn sources(command: SourcesCommand) -> anyhow::Result<()> {
     }
     if let Some(dir) = &outcome.backup {
         println!("backup {}", dir.display());
+    }
+    Ok(())
+}
+
+/// Checks the spec before anything else, then prints each run's command
+/// line and output, and the error last on stderr.
+async fn packages_update() -> anyhow::Result<()> {
+    use std::io::Write;
+    use tokio::io::AsyncReadExt;
+
+    let mut bytes = Vec::new();
+    let limit = update::MAX_SPEC_BYTES as u64 + 1;
+    tokio::io::stdin()
+        .take(limit)
+        .read_to_end(&mut bytes)
+        .await?;
+    let spec = UpdateSpec::parse(&bytes)?;
+    let family = os::detect()
+        .context("cannot tell the package manager")?
+        .os_family;
+    let outcome = update::run(&spec, family, &Tools::default()).await;
+    let (mut stdout, mut stderr) = (std::io::stdout().lock(), std::io::stderr().lock());
+    for run in &outcome.runs {
+        writeln!(stdout, "$ {}", run.line)?;
+        stdout.write_all(&run.stdout)?;
+        stderr.write_all(&run.stderr)?;
+    }
+    if !outcome.upgraded && outcome.error.is_none() {
+        writeln!(stdout, "nothing to upgrade")?;
+    }
+    stdout.flush()?;
+    if let Some(error) = &outcome.error {
+        writeln!(stderr, "Error: {error}")?;
+        stderr.flush()?;
+        std::process::exit(outcome.exit_code());
     }
     Ok(())
 }

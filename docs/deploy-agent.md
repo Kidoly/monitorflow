@@ -1,10 +1,10 @@
 # Installing the agent
 
-How to install the agent on a Debian-family or RHEL-family server by hand, until there are packages. The packages will do the same steps. Background is in architecture §4 (least privilege) and §7 (packages), and in ADR-0031, ADR-0032 and ADR-0035.
+How to install the agent on a Debian-family or RHEL-family server by hand, until there are packages. The packages will do the same steps. Background is in architecture §4 (least privilege) and §7 (packages), and in ADR-0031, ADR-0032, ADR-0035 and ADR-0036.
 
 ## Binary and user
 
-The agent runs as the unprivileged system user `monitorflow`. Sudo runs it as root only for the source helper, and the sudoers rules name it by its full path, so it must be installed at exactly `/usr/bin/monitorflow-agent`, owned by root and writable by no one else:
+The agent runs as the unprivileged system user `monitorflow`. Sudo runs it as root only for its package and source helpers, and the sudoers rules name it by its full path, so it must be installed at exactly `/usr/bin/monitorflow-agent`, owned by root and writable by no one else:
 
 ```
 install -o root -g root -m 0755 monitorflow-agent /usr/bin/monitorflow-agent
@@ -42,12 +42,13 @@ What the rules allow:
 
 | Command | Used by |
 | --- | --- |
-| `apt-get -q update`, `apt-get … upgrade` (with `DEBIAN_FRONTEND` kept) | `apply_updates` on apt |
-| `dnf -q -y upgrade`, with or without `--security` | `apply_updates` on dnf |
+| `monitorflow-agent packages update` | `apply_updates`: every kind, all packages, security only or named packages |
 | `shutdown -r +1` | `apply_updates` with `allow_reboot` |
 | `monitorflow-agent sources apply`, `… sources revert` | `configure_sources`, `revert_sources` |
 
-There are no wildcards, so updates that name packages do not work: `apt-get install --only-upgrade <packages>` and `dnf upgrade <packages>`. Security-only updates on apt name their packages too, so they do not work either. To allow them, add a rule with a wildcard after `--only-upgrade` or `upgrade` yourself. Read ADR-0031 first: the rule is then only as narrow as the agent's package name check.
+There are no wildcards. The agent never runs `apt-get` or `dnf` through sudo: the `packages update` helper reads the kind of update and the package names on stdin, refuses names that are not package names (options, paths, shell characters), and runs `apt-get update` and the upgrade, or `dnf upgrade`, itself (ADR-0036). Security-only updates use `dnf upgrade --security` on dnf, and on apt the packages whose candidate comes from a `-security` suite.
+
+Hosts set up with an earlier version of this file, which allowed `apt-get` and `dnf` lines and no `packages update`, need the new file: until then every update fails with "a password is required". Remove any wildcard rule added for named updates at the same time; it is no longer used.
 
 ## Pointing a server at the mirrors
 

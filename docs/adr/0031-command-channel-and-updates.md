@@ -1,7 +1,7 @@
 # ADR-0031: Command channel, package updates and package reports
 
 Date: 2026-10-23
-Status: accepted
+Status: accepted; privileged update command lines amended by ADR-0036
 
 ## Context
 
