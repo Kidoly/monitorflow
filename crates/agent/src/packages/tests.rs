@@ -83,6 +83,7 @@ impl Fakes {
             dnf: self.path("dnf"),
             rpm: self.path("rpm"),
             shutdown: self.path("shutdown"),
+            agent: self.path("monitorflow-agent"),
             reboot_required_file: self.path("reboot-required"),
         }
     }
