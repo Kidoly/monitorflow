@@ -705,6 +705,22 @@ impl Connection {
                     tokio::spawn(async move { commands.report(&id, report).await });
                 }
             }
+            Some(Payload::RelayMirrors(report)) => {
+                tracing::debug!(agent_id = %id, sequence, mirrors = report.mirrors.len(), "relay mirror report");
+                // Only a relay speaks for its own mirrors.
+                if self.role == PeerRole::Relay {
+                    let (inventory, id) = (self.inventory.clone(), id.clone());
+                    let received_at = Utc::now();
+                    tokio::spawn(async move {
+                        if let Err(error) = inventory.relay_mirrors(&id, received_at, report).await
+                        {
+                            tracing::warn!(relay_id = %id, %error, "could not record the relay's mirrors");
+                        }
+                    });
+                } else {
+                    tracing::warn!(agent_id = %id, sequence, "ignoring RelayMirrors from an agent");
+                }
+            }
             // TODO(relay-mux): on a relay connection, a later Hello opens a
             // sub-session for another agent behind the relay. It must pass
             // the RelayPolicy check, get its own registry entry and sequence

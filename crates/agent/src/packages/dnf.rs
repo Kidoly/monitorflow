@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 
-use monitorflow_common::proto::v1::{ApplyUpdates, Package};
+use monitorflow_common::proto::v1::Package;
 
-use super::exec::{Run, Tools};
+use super::exec::Tools;
 use super::{PackageError, PackageManager};
 
 const RPM_FORMAT: &str = "%{NAME}\\t%|EPOCH?{%{EPOCH}:}:{}|%{VERSION}-%{RELEASE}\\t%{ARCH}\\n";
@@ -24,21 +24,6 @@ impl Dnf {
 
 #[async_trait::async_trait]
 impl PackageManager for Dnf {
-    /// `dnf upgrade` refreshes expired metadata itself.
-    async fn refresh(&self) -> Result<Option<Run>, PackageError> {
-        Ok(None)
-    }
-
-    async fn upgrade(&self, request: &ApplyUpdates) -> Result<Option<Run>, PackageError> {
-        let mut args = vec!["-q", "-y", "upgrade"];
-        if request.security_only {
-            args.push("--security");
-        }
-        args.extend(request.packages.iter().map(String::as_str));
-        let run = self.tools.privileged(&[], &self.tools.dnf, &args).await?;
-        Ok(Some(run))
-    }
-
     async fn inventory(&self) -> Result<Vec<Package>, PackageError> {
         let run = self
             .tools

@@ -12,7 +12,8 @@ use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
-    Command, Envelope, Heartbeat, Hello, Sample, SampleBatch, SensorConfigAck,
+    Command, Envelope, Heartbeat, Hello, RelayMirrors, Sample, SampleBatch, SensorConfigAck,
+    ServedMirror,
 };
 use monitorflow_common::tls::{self, Identity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
@@ -952,6 +953,63 @@ db_tests! {
         drop(peer);
         let mut again = h.open(&h.ca.client("agent-1", 11), hello("agent-1")).await.unwrap();
         assert_eq!(config(again.next().await.unwrap()), second);
+    }
+
+    #[sqlx::test]
+    async fn relays_report_their_mirrors_and_agents_cannot(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        sqlx::query("INSERT INTO relays (peer_id, site_id, name) VALUES ('relay-1', $1, 'relay-1')")
+            .bind(paris)
+            .execute(&pool)
+            .await
+            .unwrap();
+        enrolled(&pool, "agent-1", paris).await;
+        let h = db_harness(&pool, settings()).await;
+        let report = |url: &str, family: &str| RelayMirrors {
+            public_url: url.into(),
+            mirrors: vec![ServedMirror {
+                family: family.into(),
+                name: "debian-12".into(),
+                current: "s1".into(),
+                snapshots: vec!["s1".into()],
+            }],
+        };
+        let url = || async {
+            sqlx::query_scalar::<_, Option<String>>("SELECT mirror_url FROM relays WHERE peer_id = 'relay-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        let mirrors = || async {
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM relay_mirrors")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        let wait = |what: &'static str, want: Option<&'static str>, count: i64| {
+            let (url, mirrors) = (&url, &mirrors);
+            async move {
+                let deadline = tokio::time::Instant::now() + TIMEOUT;
+                while (url().await.as_deref(), mirrors().await) != (want, count) {
+                    assert!(tokio::time::Instant::now() < deadline, "timed out: {what}");
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }
+        };
+
+        // An agent's report is ignored.
+        let agent = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
+        agent.send(2, Payload::RelayMirrors(report("http://agent.example", "apt"))).await;
+        agent.send(3, heartbeat()).await;
+        h.wait_until("agent heartbeat", |r| r.get("agent-1").is_some_and(|i| i.last_sequence == 3)).await;
+        assert_eq!(url().await, None);
+
+        let relay = h.open(&h.ca.relay("relay-1", 10), hello("relay-1")).await.unwrap();
+        relay.send(2, Payload::RelayMirrors(report("http://relay.example:7480/", "apt"))).await;
+        wait("report stored", Some("http://relay.example:7480"), 1).await;
+        // An invalid report clears the relay's mirrors.
+        relay.send(3, Payload::RelayMirrors(report("http://relay.example:7480", "rpm"))).await;
+        wait("invalid report", None, 0).await;
     }
 
     #[sqlx::test]

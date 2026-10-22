@@ -139,6 +139,8 @@ Integrity comes from the signatures, not the transport. Setup on the server host
 
 Each relay keeps a copy of the upstream's published mirrors and serves it with the same layout on its own plain HTTP listener (`mirror_listen_addr`, default `0.0.0.0:7480`, over `mirror_dir`, default `<data_dir>/mirrors`), so agents behind it point their sources at the relay (ADR-0034). Every mirror listener also serves `/index.json`, built from its tree: each mirror, its family, the snapshot `current` names and, for apt, its distributions. A relay fetches the index and the snapshots over plain HTTP from `mirror.upstream_url` (by default port 7480 on the host of `upstream_url`, so a chained relay syncs from its parent), every `mirror.sync_interval` (15 minutes). It checks every file against the checksums of the signed metadata (`Release` then `Packages`, `repomd.xml` then `primary`), builds the snapshot in a hidden staging directory, reuses unchanged files of earlier snapshots through hardlinks, resumes an interrupted sync file by file, and swaps `current` atomically once the snapshot is complete. It keeps `mirror.keep_snapshots` (3) snapshots per mirror. Signatures are checked by the agents, not the relay.
 
+A mirroring relay with `mirror.public_url` set reports that URL and the snapshots it holds on its own stream, after `Hello` and on every change. Source configuration for a server whose agent connects through that relay uses the relay's URL when the relay holds every snapshot named, and the server's `mirror_public_url` otherwise (ADR-0037).
+
 ### Source configuration
 
 - The agent rewrites `/etc/apt/sources.list.d/` or `/etc/yum.repos.d/` to point at its assigned mirror.
@@ -155,7 +157,7 @@ Each relay keeps a copy of the upstream's published mirrors and serves it with t
 3. Agents apply updates and report installed packages and whether a reboot is required.
 4. Results appear per server in the web interface and in the audit log.
 
-Updates travel as `apply_updates` commands on the agent's stream, signed with the CA key, one in flight per server; the agent keeps a journal so a command redelivered after a reconnect never runs twice, runs apt or dnf through fixed `sudo -n` command lines, and sends a `PackageReport` after each update and every 6 hours (ADR-0031).
+Updates travel as `apply_updates` commands on the agent's stream, signed with the CA key, one in flight per server; the agent keeps a journal so a command redelivered after a reconnect never runs twice, runs apt or dnf through a root helper, `sudo -n monitorflow-agent packages update` with the kind of update and the package names on stdin (ADR-0036), and sends a `PackageReport` after each update and every 6 hours (ADR-0031).
 
 Campaigns belong to one customer and are created and driven by its administrators (ADR-0033):
 
@@ -270,4 +272,6 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Update campaigns | One customer each; targets frozen into waves at creation; weekly or one-off windows evaluated by PostgreSQL, command TTL capped at the window's end; a polling runner advances waves under the campaign's row lock and fails the campaign when a wave exceeds its count or percentage threshold (ADR-0033) |
 | Relay mirror sync | Relays copy `current` of every mirror listed in the upstream's `/index.json` over plain HTTP, checking each file against the signed metadata's checksums, staged then swapped atomically, unchanged files hardlinked from earlier snapshots, bounded retention; served with the server's layout from shared code (ADR-0034) |
 | Source configuration commands | `configure_sources` and `revert_sources` commands queued by customer administrators; spec built from the mirrors table, the archive key and `mirror_public_url`, chosen per site by one function a relay mirror URL will override; the agent runs the root helper through `sudo -n`, rules shipped in `deploy/sudoers/` (ADR-0035) |
+| Package update helper | Every update (all, security only, named packages) runs as root in `monitorflow-agent packages update`, which reads a JSON spec on stdin, checks package names against the distributions' grammar, detects the family and builds the apt or dnf command lines itself; apt security keeps the `-security` origin selection from a simulation; one exact sudoers line (ADR-0036) |
+| Relay mirror URLs | Relays report `mirror.public_url` and their complete snapshots on their own stream (`RelayMirrors`); the server stores them per relay and uses the relay's URL for servers attached to it when it holds every snapshot named, else `mirror_public_url` (ADR-0037) |
 | Campaign snapshots | Optional published snapshots per campaign and mirror; per server `configure_sources`, update, then restore of the last non-campaign configuration (or revert), restores never cancelled; `/index.json` lists pinned snapshots from `.pinned` files so relays copy and keep them beside `current` (ADR-0038) |

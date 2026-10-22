@@ -17,7 +17,7 @@ Questions: what the campaign stores, how the runner sequences the source command
 
 **Sequence per server.** Three campaign commands, each queued only after the previous one ended, so ADR-0031's one-in-flight rule needs nothing new:
 
-1. `configure_sources` for the pinned snapshots, with the base URL from `commands::sources::base_url` for the server's site, queued when the window is open, with the update's TTL rules;
+1. `configure_sources` for the pinned snapshots, with the base URL from `commands::sources::base_url`: the mirror URL of the server's relay when it holds every pinned snapshot (ADR-0037), else `mirror_public_url`, queued when the window is open, with the update's TTL rules;
 2. once it succeeded, `apply_updates`, inside the window as before;
 3. a restore, once the update ended whatever its result, or once it will not come now: the configuration failed, the campaign is paused, stopped or failed, or the window closed before the update could be queued.
 

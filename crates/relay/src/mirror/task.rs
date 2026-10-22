@@ -1,7 +1,9 @@
 //! The relay's mirror sync loop (ADR-0034): at start and then every
 //! `mirror.sync_interval`, copy the public key, read the upstream's
 //! `/index.json` and sync each listed mirror in turn, copy the snapshots
-//! campaigns pin (ADR-0038), then prune its old snapshots. Failures are logged with the time of the last success and
+//! campaigns pin (ADR-0038), then prune its old snapshots. After each
+//! mirror it reports what the relay serves to the control stream
+//! (ADR-0037). Failures are logged with the time of the last success and
 //! retried at the next cycle; they never stop the relay. A shutdown
 //! interrupts a sync, which resumes from its staging directory later.
 
@@ -14,10 +16,12 @@ use monitorflow_common::config::RelayConfig;
 use monitorflow_common::mirror::{
     write_atomically, write_pinned, Family, Index, IndexMirror, Served,
 };
+use monitorflow_common::proto::v1::RelayMirrors;
+use tokio::sync::watch;
 
 use super::fetch::{io, FetchError, Fetcher};
-use super::retention;
 use super::sync::{Outcome, Syncer};
+use super::{report, retention};
 
 /// Largest index and public key accepted.
 const INDEX_LIMIT: u64 = 4 * 1024 * 1024;
@@ -70,6 +74,8 @@ pub struct MirrorTask {
     served: Served,
     /// Last successful sync of each mirror.
     last_success: HashMap<(Family, String), Instant>,
+    /// The relay's `mirror.public_url` and where to publish its reports.
+    reports: Option<(String, watch::Sender<RelayMirrors>)>,
 }
 
 impl MirrorTask {
@@ -87,12 +93,26 @@ impl MirrorTask {
             fetcher,
             syncer,
             last_success: HashMap::new(),
+            reports: None,
         })
+    }
+
+    /// Publishes what the relay serves, reachable at `public_url`, on
+    /// `reports` at start and after each mirror.
+    pub fn with_reports(
+        mut self,
+        public_url: String,
+        reports: watch::Sender<RelayMirrors>,
+    ) -> Self {
+        self.reports = Some((public_url, reports));
+        self
     }
 
     /// Cycles until `shutdown` fires.
     pub async fn run(mut self, mut shutdown: Shutdown) {
         tracing::info!(upstream = %self.settings.upstream_url, interval = ?self.settings.interval, "mirror sync started");
+        // Snapshots kept from before a restart are served right away.
+        self.report().await;
         loop {
             tokio::select! {
                 _ = self.cycle() => {}
@@ -128,8 +148,28 @@ impl MirrorTask {
             }
             let result = self.sync(&mirror).await;
             report.mirrors.push((mirror, result));
+            self.report().await;
         }
         report
+    }
+
+    /// Scans the served tree and publishes it if it changed.
+    async fn report(&self) {
+        let Some((url, reports)) = &self.reports else {
+            return;
+        };
+        let (served, url) = (self.served.clone(), url.clone());
+        match tokio::task::spawn_blocking(move || report::scan(&served, &url)).await {
+            Ok(Ok(scanned)) => {
+                reports.send_if_modified(|last| {
+                    let changed = *last != scanned;
+                    *last = scanned;
+                    changed
+                });
+            }
+            Ok(Err(error)) => tracing::warn!(%error, "cannot list the served mirrors"),
+            Err(error) => tracing::warn!(%error, "mirror listing task failed"),
+        }
     }
 
     async fn index(&self) -> Result<Index, String> {

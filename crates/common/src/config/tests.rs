@@ -575,6 +575,7 @@ fn relay_mirror_defaults_and_overrides() {
         ("MONITORFLOW_MIRROR_MIRRORS", "debian, rocky9"),
         ("MONITORFLOW_MIRROR_MAX_DOWNLOADS", "8"),
         ("MONITORFLOW_MIRROR_LISTEN_ADDR", "127.0.0.1:9480"),
+        ("MONITORFLOW_MIRROR_PUBLIC_URL", "http://relay.example:7480"),
     ];
     let relay: RelayConfig = parse_with_env(&text, path(), &env(&vars)).unwrap();
     assert_eq!(relay.mirror_dir(), Path::new("/srv/m"));
@@ -583,6 +584,10 @@ fn relay_mirror_defaults_and_overrides() {
     assert_eq!(relay.mirror.keep_snapshots, 1);
     assert_eq!(relay.mirror.max_downloads, 8);
     assert_eq!(relay.mirror_listen_addr, "127.0.0.1:9480".parse().unwrap());
+    assert_eq!(
+        relay.mirror.public_url.as_deref(),
+        Some("http://relay.example:7480")
+    );
 }
 
 #[test]
@@ -611,6 +616,8 @@ fn relay_mirror_list_override_drops_empty_items() {
 fn relay_mirror_limits_are_checked() {
     for (line, key) in [
         ("upstream_url = \"ftp://x\"", "mirror.upstream_url"),
+        ("public_url = \"ftp://x\"", "mirror.public_url"),
+        ("public_url = \"http://x/?a=b\"", "mirror.public_url"),
         ("sync_interval = 59", "mirror.sync_interval"),
         ("mirrors = [\"../x\"]", "mirror.mirrors"),
         ("keep_snapshots = 0", "mirror.keep_snapshots"),

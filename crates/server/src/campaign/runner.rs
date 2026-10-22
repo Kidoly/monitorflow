@@ -31,7 +31,7 @@ use super::pin::{self, Configurer, Next, Pending, PinSources};
 use super::store::{cancel_queued, close_waves, Actor, CampaignRow, COLUMNS};
 use crate::api::audit::{self, Event};
 use crate::commands::{CommandStore, Commands, NewCommand};
-use crate::mirror::Mirrors;
+use crate::mirror::{relays, Mirrors};
 
 /// How often active campaigns are looked at.
 pub const POLL: Duration = Duration::from_secs(10);
@@ -299,7 +299,7 @@ async fn queue(
     sources: Option<&PinSources>,
 ) -> Result<Step, sqlx::Error> {
     let missing: Vec<Pending> = sqlx::query_as(
-        "SELECT t.server_id, s.peer_id, s.revoked_at IS NOT NULL AS revoked, s.site_id,
+        "SELECT t.server_id, s.peer_id, s.revoked_at IS NOT NULL AS revoked,
              s.os_family, cfg.state AS configure_state, cfg.error AS configure_error,
              t.restore_command_id, r.state AS restore_state
          FROM campaign_targets t JOIN servers s ON s.id = t.server_id
@@ -340,8 +340,9 @@ async fn queue(
                         configurer.insert(Configurer::new(conn, row, mode, sources).await?)
                     }
                 };
+                let relay = relays::for_server(&mut *conn, target.server_id).await?;
                 configurer
-                    .payload(target.site_id, &target.os_family)
+                    .payload(relay.as_ref(), &target.os_family)
                     .map(|spec| (CONFIGURE_SOURCES, spec))
                     .map_err(|error| format!("cannot configure sources: {error}"))
             }

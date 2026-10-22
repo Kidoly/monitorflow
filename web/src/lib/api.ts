@@ -400,6 +400,134 @@ export interface CreatedToken extends EnrollmentToken {
   enroll_url: string;
 }
 
+export type CampaignState = "draft" | "scheduled" | "running" | "paused" | "stopped" | "completed" | "failed";
+export type CampaignAction = "start" | "pause" | "resume" | "stop";
+
+/** A wave fails when more of its servers failed than `value` servers or percent (ADR-0033). */
+export interface FailureThreshold {
+  value: number;
+  unit: "count" | "percent";
+}
+
+/** A maintenance window; with none, a campaign may queue at any time. */
+export type CampaignWindow =
+  | {
+      kind: "weekly";
+      /** ISO: 1 is Monday, 7 Sunday. */
+      weekdays: number[];
+      /** Local `HH:MM`; an end before the start closes the next day. */
+      start: string;
+      end: string;
+      /** IANA name, like `Europe/Paris`. */
+      timezone: string;
+    }
+  | { kind: "once"; starts_at: string; ends_at: string };
+
+/** Explicit servers, a number of servers, or a percentage of all targets (rounded up). */
+export type WaveSpec = { servers: string[] } | { size: number } | { percent: number };
+
+/** The `ApplyUpdates` every command of a campaign carries. */
+export interface UpdateSpec {
+  /** Empty upgrades everything. */
+  packages: string[];
+  security_only: boolean;
+  allow_reboot: boolean;
+}
+
+/** Servers by status: `failed` includes expired and skipped, `in_progress` queued, sent and running. */
+export interface CampaignProgress {
+  total: number;
+  pending: number;
+  in_progress: number;
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+}
+
+/** One campaign of `GET /api/campaigns`. */
+export interface Campaign {
+  id: string;
+  customer_id: string;
+  customer_name: string;
+  name: string;
+  site_id: string | null;
+  state: CampaignState;
+  /** Why it ended, for final states. */
+  error: string | null;
+  spec: UpdateSpec;
+  command_ttl_s: number;
+  failure_threshold: FailureThreshold;
+  windows: CampaignWindow[];
+  wave_count: number;
+  /** Index from 0; null until the first wave is queued. */
+  current_wave: number | null;
+  progress: CampaignProgress;
+  created_by: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** `pending` before any command, a command state, or `skipped` with an `error`. */
+export type CampaignServerStatus =
+  | "pending"
+  | "queued"
+  | "sent"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "expired"
+  | "cancelled"
+  | "skipped";
+
+export interface CampaignServer {
+  server_id: string;
+  peer_id: string;
+  hostname: string;
+  site_id: string;
+  status: CampaignServerStatus;
+  command_id: string | null;
+  exit_code: number | null;
+  error: string | null;
+  finished_at: string | null;
+}
+
+export interface CampaignWave {
+  index: number;
+  state: "pending" | "running" | "done";
+  started_at: string | null;
+  finished_at: string | null;
+  progress: CampaignProgress;
+  servers: CampaignServer[];
+}
+
+/** `GET /api/campaigns/{id}` and the answer of every write. */
+export interface CampaignDetail extends Campaign {
+  waves: CampaignWave[];
+}
+
+/** One page of campaigns, newest first. */
+export interface CampaignList {
+  campaigns: Campaign[];
+  next_cursor: string | null;
+}
+
+/** Body of `POST /api/campaigns`; a `site_id` or `server_ids` is required. */
+export interface CampaignRequest {
+  customer_id: string;
+  name: string;
+  site_id?: string;
+  server_ids: string[];
+  waves: WaveSpec[];
+  packages: string[];
+  security_only: boolean;
+  allow_reboot: boolean;
+  /** 60 to 604800 seconds. */
+  command_ttl_s: number;
+  failure_threshold: FailureThreshold;
+  windows: CampaignWindow[];
+}
+
 export interface Health {
   status: "ok";
 }
@@ -621,6 +749,20 @@ export const api = {
 
   serverMetrics: (serverId: string, signal?: AbortSignal) =>
     request<MetricList>(`/api/servers/${encodeURIComponent(serverId)}/metrics`, { signal }),
+
+  /** The newest campaigns of the customers the user reads as a whole. */
+  campaigns: (signal?: AbortSignal) => request<CampaignList>("/api/campaigns", { signal }),
+
+  campaign: (id: string, signal?: AbortSignal) =>
+    request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}`, { signal }),
+
+  /** Creates a draft campaign; customer administrators only. */
+  createCampaign: (body: CampaignRequest) =>
+    request<CampaignDetail>("/api/campaigns", { method: "POST", body }),
+
+  /** 409 when the campaign's state does not allow `action`. */
+  campaignAction: (id: string, action: CampaignAction) =>
+    request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}/${action}`, { method: "POST" }),
 
   queryRange: (query: RangeQuery, signal?: AbortSignal) => {
     const params = new URLSearchParams({ server_id: query.serverId, metric: query.metric });

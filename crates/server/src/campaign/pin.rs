@@ -33,7 +33,7 @@ use super::store::CampaignRow;
 use crate::api::commands::MAX_TTL_S;
 use crate::commands::sources::{self, os_family, ArchiveKey, Selected};
 use crate::commands::{CommandStore, NewCommand, State};
-use crate::mirror::{store, Family, Layout, Mirrors};
+use crate::mirror::{relays, store, Family, Layout, Mirrors};
 
 /// Time to live of a restore: the longest a command may have, as putting
 /// a server back is never wrong, even late.
@@ -62,7 +62,6 @@ pub(super) struct Pending {
     pub server_id: Uuid,
     pub peer_id: String,
     pub revoked: bool,
-    pub site_id: Uuid,
     pub os_family: String,
     pub configure_state: Option<State>,
     pub configure_error: Option<String>,
@@ -154,17 +153,22 @@ impl Configurer {
         })
     }
 
-    /// The encoded spec for a server of `site` and `os_family`.
-    pub(super) fn payload(&self, site: Uuid, os: &str) -> Result<Vec<u8>, String> {
+    /// The encoded spec for a server of `os_family` connecting through
+    /// `relay`, if any.
+    pub(super) fn payload(
+        &self,
+        relay: Option<&relays::Served>,
+        os: &str,
+    ) -> Result<Vec<u8>, String> {
         let key = self.key.as_ref().map_err(Clone::clone)?;
-        let base = sources::base_url(self.public_url.as_deref(), site)
-            .ok_or("mirror_public_url is not configured")?;
         let selected: Vec<Selected> = self
             .pinned
             .iter()
             .filter(|s| os_family(s.mirror.family) == os)
             .cloned()
             .collect();
+        let base = sources::base_url(self.public_url.as_deref(), relay, &selected)
+            .ok_or("mirror_public_url is not configured")?;
         let spec = sources::build(&base, self.mode.into(), os, &selected, key)?;
         Ok(spec.encode_to_vec())
     }
@@ -295,7 +299,6 @@ mod tests {
             server_id: Uuid::nil(),
             peer_id: "agent-1".into(),
             revoked: false,
-            site_id: Uuid::nil(),
             os_family: "debian".into(),
             configure_state: configure,
             configure_error: Some("apt-get update failed".into()),

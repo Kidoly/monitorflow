@@ -13,8 +13,8 @@ import {
   isAbortError,
   setUnauthorizedHandler,
 } from "@/lib/api";
-import { MeContext, isAdministrator } from "@/lib/me";
-import { RELAYS_PATH } from "@/lib/routes";
+import { MeContext, isAdministrator, readsCustomers } from "@/lib/me";
+import { CAMPAIGNS_PATH, RELAYS_PATH } from "@/lib/routes";
 
 import styles from "./AuthGuard.module.css";
 
@@ -93,6 +93,7 @@ function AppHeader({ user }: { user: Me }) {
       <nav aria-label="Main">
         <Link href="/">Fleet</Link>
         <Link href="/incidents/">Incidents</Link>
+        {readsCustomers(user) && <Link href={CAMPAIGNS_PATH}>Campaigns</Link>}
         {isAdministrator(user) && <Link href={RELAYS_PATH}>Administration</Link>}
       </nav>
       <div className={styles.user}>
