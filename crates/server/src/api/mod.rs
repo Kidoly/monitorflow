@@ -58,6 +58,10 @@
 //! | GET | `/api/servers/{id}/commands` | read | [`commands::CommandList`], newest first, paginated |
 //! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
 //! | GET | `/api/commands/{id}` | read | [`commands::CommandDetail`]: the command and its output |
+//! | GET | `/api/campaigns` | customer role | [`campaigns::CampaignList`], newest first, paginated |
+//! | POST | `/api/campaigns` | customer administrator | body [`campaigns::CreateRequest`]; 201 [`campaigns::CampaignDetail`] |
+//! | GET | `/api/campaigns/{id}` | customer role | [`campaigns::CampaignDetail`]: the campaign, its waves and servers |
+//! | POST | `/api/campaigns/{id}/start`, `/pause`, `/resume`, `/stop` | customer administrator | 200 [`campaigns::CampaignDetail`]; 409 when the state does not allow it |
 //!
 //! # Authentication
 //!
@@ -215,6 +219,19 @@
 //! `limit` is 1 to 5000 (default 500). `reboot_required` and
 //! `reported_at` are `null` until the agent reported.
 //!
+//! # Campaigns
+//!
+//! Update campaigns (ADR-0033, which documents the JSON). A campaign
+//! belongs to one customer; reading it needs a role on that customer as a
+//! whole (global or customer grant), creating and acting an administrator
+//! role on it. Another customer's campaign is 404, one the user reads
+//! without administering it 403. Targets are `server_ids` and/or the
+//! unrevoked servers of `site_id`, all of the customer (others are 400
+//! `unknown server`), frozen into `waves` at creation. Listings take
+//! `customer_id`, `state`, `limit` (1 to 500, default 100) and `cursor`.
+//! Actions answer 409 `cannot <action> a campaign that is <state>` when
+//! the state does not allow them. Everything is audited (`campaign.*`).
+//!
 //! # Metric queries
 //!
 //! The query endpoints take `server_id`, `metric` (`monitorflow_` and a
@@ -283,6 +300,7 @@
 pub mod access;
 pub(crate) mod audit;
 pub mod auth;
+pub mod campaigns;
 pub mod commands;
 pub mod customers;
 mod error;
@@ -315,6 +333,7 @@ use monitorflow_common::config::ServerConfig;
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 
+use crate::campaign::Runner;
 use crate::commands::Commands;
 use crate::crl::CrlPublisher;
 use crate::grpc::Registry;
@@ -373,6 +392,9 @@ pub struct ApiState {
     pub commands: Option<Commands>,
     /// Runs mirror jobs; `None` refuses to start them.
     pub mirrors: Option<Mirrors>,
+    /// Woken when a campaign starts or resumes; `None` leaves it to the
+    /// runner's next poll.
+    pub campaigns: Option<Runner>,
 }
 
 impl ApiState {
@@ -386,7 +408,14 @@ impl ApiState {
             crl: None,
             commands: None,
             mirrors: None,
+            campaigns: None,
         }
+    }
+
+    /// Wakes `runner` when a campaign starts or resumes.
+    pub fn with_campaigns(mut self, runner: Runner) -> Self {
+        self.campaigns = Some(runner);
+        self
     }
 
     /// Wakes `commands` when a command is queued.
@@ -489,6 +518,15 @@ pub fn router(state: ApiState) -> Router {
             get(commands::list).post(commands::create),
         )
         .route("/api/commands/{id}", get(commands::detail))
+        .route(
+            "/api/campaigns",
+            get(campaigns::list).post(campaigns::create),
+        )
+        .route("/api/campaigns/{id}", get(campaigns::detail))
+        .route("/api/campaigns/{id}/start", post(campaigns::start))
+        .route("/api/campaigns/{id}/pause", post(campaigns::pause))
+        .route("/api/campaigns/{id}/resume", post(campaigns::resume))
+        .route("/api/campaigns/{id}/stop", post(campaigns::stop))
         .fallback(not_found)
         .layer(middleware::from_fn(auth::csrf_guard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

@@ -16,7 +16,8 @@ use super::model::{
 };
 use crate::api::audit::{self, Event};
 
-const COLUMNS: &str = "id, customer_id, name, site_id, packages, security_only, allow_reboot,
+pub(super) const COLUMNS: &str =
+    "id, customer_id, name, site_id, packages, security_only, allow_reboot,
      command_ttl_s, failure_threshold, failure_threshold_unit, state, current_wave, error,
      created_by, created_at, started_at, finished_at";
 
@@ -95,7 +96,7 @@ impl CampaignRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct WindowRow {
+pub(super) struct WindowRow {
     kind: String,
     weekdays: Option<Vec<i16>>,
     start_minute: Option<i16>,
@@ -106,7 +107,7 @@ struct WindowRow {
 }
 
 impl WindowRow {
-    fn window(self) -> Option<Window> {
+    pub(super) fn window(self) -> Option<Window> {
         match self.kind.as_str() {
             "weekly" => Some(Window::Weekly {
                 weekdays: self.weekdays?.into_iter().map(|d| d as u8).collect(),
