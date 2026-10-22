@@ -10,10 +10,13 @@ use monitorflow_common::client::renew::{Renewal, RenewalSettings};
 use monitorflow_common::client::shutdown;
 use monitorflow_common::config::{self, RelayConfig};
 use monitorflow_common::logging;
+use monitorflow_common::mirror::serve;
 use monitorflow_relay::buffer::{Buffer, BufferSettings};
 use monitorflow_relay::control::{Control, ControlSettings};
 use monitorflow_relay::forward::{ForwardSettings, Forwarder};
 use monitorflow_relay::listener::{self, CrlCache, CrlSettings, Services, TlsPublisher};
+use monitorflow_relay::mirror;
+use monitorflow_relay::mirror::task::{MirrorSettings, MirrorTask};
 use monitorflow_relay::renew::{RenewProxy, RenewSettings};
 use tokio::net::TcpListener;
 
@@ -100,6 +103,31 @@ async fn main() -> anyhow::Result<()> {
         buffer,
     );
     tokio::spawn(forwarder.clone().run_replays(stop.clone()));
+    if config.mirror.enabled {
+        let root = config.mirror_dir();
+        let served = tokio::task::spawn_blocking(move || mirror::prepare(&root))
+            .await?
+            .with_context(|| format!("cannot prepare {}", config.mirror_dir().display()))?;
+        let mirror_listener = TcpListener::bind(config.mirror_listen_addr)
+            .await
+            .with_context(|| {
+                format!(
+                    "binding the mirror listener on {}",
+                    config.mirror_listen_addr
+                )
+            })?;
+        tracing::info!(listen = %config.mirror_listen_addr, dir = %config.mirror_dir().display(), "serving mirrors");
+        let mut until_stopped = stop.clone();
+        tokio::spawn(async move {
+            let shutdown = async move { until_stopped.wait().await };
+            if let Err(error) = serve::serve(mirror_listener, served, shutdown).await {
+                tracing::error!(%error, "mirror listener failed");
+            }
+        });
+        let task = MirrorTask::new(MirrorSettings::from_config(&config))
+            .context("cannot build the mirror sync client")?;
+        tokio::spawn(task.run(stop.clone()));
+    }
     let mut until_stopped = stop.clone();
     let services = Services {
         forwarder,

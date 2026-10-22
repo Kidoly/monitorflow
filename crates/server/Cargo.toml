@@ -10,7 +10,7 @@ name = "monitorflow-server"
 path = "src/main.rs"
 
 [dependencies]
-monitorflow-common.workspace = true
+monitorflow-common = { workspace = true, features = ["mirror"] }
 monitorflow-sensors.workspace = true
 base64.workspace = true
 tokio.workspace = true
@@ -40,8 +40,6 @@ prost.workspace = true
 reqwest.workspace = true
 snap.workspace = true
 async-trait.workspace = true
-tower-http.workspace = true
-percent-encoding.workspace = true
 # Kills a timed-out mirror tool with the programs it started.
 rustix = { workspace = true, features = ["process"] }
 

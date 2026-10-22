@@ -7,11 +7,13 @@
 //! SIGINT or SIGTERM, renewing the certificate before it expires. Agents
 //! renew their certificates through the relay (ADR-0028). Agents' batches
 //! are kept on disk while the upstream is unreachable and sent in order
-//! once it is back (ADR-0027).
+//! once it is back (ADR-0027). The relay serves a copy of the upstream's
+//! package mirrors on a plain HTTP listener (ADR-0034).
 
 pub mod buffer;
 pub mod control;
 pub mod forward;
 pub mod listener;
+pub mod mirror;
 pub mod renew;
 mod session;

@@ -30,6 +30,9 @@ pub const DEFAULT_HEARTBEAT_INTERVAL: u64 = 30;
 /// Port of the server's enrollment listener unless configured otherwise.
 pub const DEFAULT_ENROLL_PORT: u16 = 7445;
 
+/// Port of the plain HTTP mirror listeners unless configured otherwise.
+pub const DEFAULT_MIRROR_PORT: u16 = 7480;
+
 /// Environment variables as a map, so tests can pass their own.
 pub type Env = HashMap<String, String>;
 
@@ -604,6 +607,13 @@ pub struct RelayConfig {
     pub buffer: BufferConfig,
     pub tls: RelayTlsPaths,
     pub log: LogConfig,
+    /// Plain HTTP listener serving the relay's copy of the mirrors
+    /// (ADR-0034), with the server's layout.
+    pub mirror_listen_addr: SocketAddr,
+    /// Root of the mirror copies; defaults to `<data_dir>/mirrors`, see
+    /// [`Self::mirror_dir`].
+    pub mirror_dir: Option<PathBuf>,
+    pub mirror: RelayMirrorConfig,
 }
 
 impl Default for RelayConfig {
@@ -618,6 +628,9 @@ impl Default for RelayConfig {
             buffer: BufferConfig::default(),
             tls: RelayTlsPaths::default(),
             log: LogConfig::default(),
+            mirror_listen_addr: SocketAddr::from(([0, 0, 0, 0], DEFAULT_MIRROR_PORT)),
+            mirror_dir: None,
+            mirror: RelayMirrorConfig::default(),
         }
     }
 }
@@ -638,6 +651,111 @@ impl RelayConfig {
     /// Directory of the store-and-forward buffer.
     pub fn buffer_dir(&self) -> PathBuf {
         self.data_dir.join("buffer")
+    }
+
+    /// `mirror_dir`, or `<data_dir>/mirrors`.
+    pub fn mirror_dir(&self) -> PathBuf {
+        self.mirror_dir
+            .clone()
+            .unwrap_or_else(|| self.data_dir.join("mirrors"))
+    }
+
+    /// The configured `mirror.upstream_url`, or `http://<upstream host>:7480`:
+    /// the mirror listener of the server or of the parent relay.
+    pub fn mirror_upstream_url(&self) -> String {
+        if let Some(url) = &self.mirror.upstream_url {
+            return url.trim_end_matches('/').to_owned();
+        }
+        match GrpcUrl::parse(&self.upstream_url) {
+            Ok(mut url) => {
+                url.port = DEFAULT_MIRROR_PORT;
+                format!("http://{}", url.authority())
+            }
+            Err(_) => String::new(),
+        }
+    }
+}
+
+/// The relay's copy of the upstream's mirrors (ADR-0034).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RelayMirrorConfig {
+    /// Sync and serve mirrors at all.
+    pub enabled: bool,
+    /// Mirror listener of the upstream, `http(s)://host:port`. Defaults to
+    /// the host of `upstream_url` on port 7480.
+    pub upstream_url: Option<String>,
+    /// Seconds between syncs.
+    pub sync_interval: u64,
+    /// Mirror names to copy; empty copies every mirror the upstream lists.
+    /// The environment override is a comma-separated list.
+    pub mirrors: Vec<String>,
+    /// Snapshots kept per mirror, including the current one.
+    pub keep_snapshots: usize,
+    /// Files downloaded at once.
+    pub max_downloads: usize,
+    /// Seconds a request may go without progress.
+    pub request_timeout: u64,
+}
+
+const MIN_MIRROR_SYNC_INTERVAL: u64 = 60;
+const MAX_MIRROR_DOWNLOADS: usize = 64;
+
+impl Default for RelayMirrorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            upstream_url: None,
+            sync_interval: 15 * 60,
+            mirrors: Vec::new(),
+            keep_snapshots: 3,
+            max_downloads: 4,
+            request_timeout: 600,
+        }
+    }
+}
+
+impl RelayMirrorConfig {
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set("mirror.enabled", &mut self.enabled)?;
+        env.set_opt("mirror.upstream_url", &mut self.upstream_url)?;
+        env.set("mirror.sync_interval", &mut self.sync_interval)?;
+        if let Some((_, names)) = env.get("mirror.mirrors") {
+            self.mirrors = names.split(',').map(|n| n.trim().to_owned()).collect();
+        }
+        env.set("mirror.keep_snapshots", &mut self.keep_snapshots)?;
+        env.set("mirror.max_downloads", &mut self.max_downloads)?;
+        env.set("mirror.request_timeout", &mut self.request_timeout)
+    }
+
+    fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
+        if let Some(url) = &self.upstream_url {
+            check.http_url("mirror.upstream_url", url)?;
+        }
+        if self.sync_interval < MIN_MIRROR_SYNC_INTERVAL {
+            return Err(check.fail(
+                "mirror.sync_interval",
+                format!("must be at least {MIN_MIRROR_SYNC_INTERVAL} seconds"),
+            ));
+        }
+        if let Some(bad) = self
+            .mirrors
+            .iter()
+            .find(|m| !crate::mirror::is_mirror_name(m))
+        {
+            return Err(check.fail(
+                "mirror.mirrors",
+                format!("`{bad}` is not a mirror name (a-z, 0-9, `.`, `_`, `-`)"),
+            ));
+        }
+        check.positive("mirror.keep_snapshots", self.keep_snapshots as u64)?;
+        if !(1..=MAX_MIRROR_DOWNLOADS).contains(&self.max_downloads) {
+            return Err(check.fail(
+                "mirror.max_downloads",
+                format!("must be 1 to {MAX_MIRROR_DOWNLOADS}"),
+            ));
+        }
+        check.positive("mirror.request_timeout", self.request_timeout)
     }
 }
 
@@ -712,6 +830,9 @@ impl LoadConfig for RelayConfig {
         env.set("heartbeat_interval", &mut self.heartbeat_interval)?;
         self.buffer.apply_env(env)?;
         self.tls.apply_env(env)?;
+        env.set("mirror_listen_addr", &mut self.mirror_listen_addr)?;
+        env.set_opt("mirror_dir", &mut self.mirror_dir)?;
+        self.mirror.apply_env(env)?;
         self.log.apply_env(env)
     }
 
@@ -721,7 +842,8 @@ impl LoadConfig for RelayConfig {
             check.grpc_url("enroll_url", url)?;
         }
         check.positive("heartbeat_interval", self.heartbeat_interval)?;
-        self.buffer.validate(check)
+        self.buffer.validate(check)?;
+        self.mirror.validate(check)
     }
 }
 

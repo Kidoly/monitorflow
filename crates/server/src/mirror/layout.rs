@@ -6,7 +6,7 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use super::model::{Family, Mirror, CURRENT};
+use super::model::{Family, Mirror};
 
 /// File name of the public signing key under `keys/`.
 pub const PUBLIC_KEY: &str = "monitorflow-archive.asc";
@@ -105,17 +105,7 @@ pub fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
     std::fs::rename(tmp, path)
 }
 
-/// Points `<dir>/current` at `snapshot`: a new link, then a rename over
-/// the old one, so readers always see one or the other. Blocking.
-pub fn swap_current(dir: &Path, snapshot: &str) -> io::Result<()> {
-    let tmp = dir.join(format!(".{CURRENT}.tmp"));
-    match std::fs::remove_file(&tmp) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
-        _ => {}
-    }
-    std::os::unix::fs::symlink(snapshot, &tmp)?;
-    std::fs::rename(&tmp, dir.join(CURRENT))
-}
+pub use monitorflow_common::mirror::swap_current;
 
 /// Apparent size of the files under `path`, without following symlinks;
 /// hardlinked files count each time. Blocking.

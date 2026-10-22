@@ -84,6 +84,7 @@ fn enroll_agent_and_list_it() {
     let password = format!("pw-{}", unique());
 
     let (grpc, enroll, api) = (free_addr(), free_addr(), free_addr());
+    let mirrors = free_addr();
     let server_dir = dir.path().join("server");
     let server_config = dir.path().join("server.toml");
     std::fs::write(
@@ -92,6 +93,7 @@ fn enroll_agent_and_list_it() {
             r#"grpc_listen_addr = "{grpc}"
 enroll_listen_addr = "{enroll}"
 api_listen_addr = "{api}"
+mirror_listen_addr = "{mirrors}"
 api_cookie_secure = false
 database_url = "{db}"
 data_dir = "{data}"
@@ -255,13 +257,13 @@ key = "{data}/tls/key.pem"
     assert_ne!(back["connected_at"], online["connected_at"]);
 
     // A relay for the site, then a second agent behind it (ADR-0025).
-    let relay_listen = free_addr();
+    let (relay_listen, relay_mirrors) = (free_addr(), free_addr());
     let relay_token = create_token("relay", RELAY_ID, &["--server-name", "127.0.0.1"]);
     let relay_config = dir.path().join("relay.toml");
     std::fs::write(
         &relay_config,
         format!(
-            "listen_addr = \"{relay_listen}\"\nupstream_url = \"https://{grpc}\"\nenroll_url = \"https://{enroll}\"\ndata_dir = \"{}\"\nheartbeat_interval = 1\nenrollment_token = \"{relay_token}\"\n",
+            "listen_addr = \"{relay_listen}\"\nupstream_url = \"https://{grpc}\"\nenroll_url = \"https://{enroll}\"\ndata_dir = \"{}\"\nheartbeat_interval = 1\nenrollment_token = \"{relay_token}\"\nmirror_listen_addr = \"{relay_mirrors}\"\n[mirror]\nupstream_url = \"http://{mirrors}\"\n",
             dir.path().join("relay").display()
         ),
     )
