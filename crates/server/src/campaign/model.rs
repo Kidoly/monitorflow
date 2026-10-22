@@ -6,10 +6,13 @@ use std::fmt;
 
 use chrono::{DateTime, Utc};
 use monitorflow_common::command::valid_package_name;
+use monitorflow_common::proto::v1::configure_sources::Mode;
 use monitorflow_common::proto::v1::ApplyUpdates;
 use prost::Message;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
+
+use crate::commands::sources::{CURRENT, MAX_MIRRORS};
 
 /// Most servers in one campaign.
 pub const MAX_TARGETS: usize = 10_000;
@@ -288,6 +291,61 @@ impl UpdateSpec {
     }
 }
 
+/// How pinned sources treat a host's other sources (ADR-0032).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
+pub enum SourcesMode {
+    Replace,
+    Add,
+}
+
+impl From<SourcesMode> for Mode {
+    fn from(mode: SourcesMode) -> Self {
+        match mode {
+            SourcesMode::Replace => Mode::Replace,
+            SourcesMode::Add => Mode::Add,
+        }
+    }
+}
+
+/// A mirror and the published snapshot a campaign pins it to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PinnedMirror {
+    pub name: String,
+    pub snapshot: String,
+}
+
+/// The snapshots every server of a campaign installs from (ADR-0038):
+/// each server uses the mirrors of its OS family.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourcesPin {
+    pub mode: SourcesMode,
+    pub mirrors: Vec<PinnedMirror>,
+}
+
+impl SourcesPin {
+    /// Checks the shape; the store checks the snapshots exist.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.mirrors.is_empty() || self.mirrors.len() > MAX_MIRRORS {
+            return Err(format!(
+                "sources.mirrors must list 1 to {MAX_MIRRORS} mirrors"
+            ));
+        }
+        for (i, m) in self.mirrors.iter().enumerate() {
+            if m.snapshot == CURRENT {
+                return Err("a pinned snapshot is a published snapshot, not `current`".into());
+            }
+            if self.mirrors[..i].iter().any(|o| o.name == m.name) {
+                return Err(format!("mirror `{}` is repeated", m.name.escape_debug()));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// One wave as requested: explicit servers, a number of servers, or a
 /// percentage of all targets (rounded up), taken in target order from
 /// those no explicit wave names.
@@ -519,5 +577,40 @@ mod tests {
         let many: Vec<Uuid> = ids(MAX_WAVES as u128 + 1);
         let specs = vec![WaveSpec::Size(1); MAX_WAVES + 1];
         assert_eq!(plan_waves(&many, &specs), Err(PlanError::TooManyWaves));
+    }
+
+    #[test]
+    fn pins_need_published_snapshots_once_per_mirror() {
+        let pin = |mirrors: &[(&str, &str)]| SourcesPin {
+            mode: SourcesMode::Replace,
+            mirrors: mirrors
+                .iter()
+                .map(|(name, snapshot)| PinnedMirror {
+                    name: (*name).into(),
+                    snapshot: (*snapshot).into(),
+                })
+                .collect(),
+        };
+        assert!(pin(&[("debian-12", "s1"), ("rocky-9", "s2")])
+            .validate()
+            .is_ok());
+        assert!(pin(&[]).validate().is_err());
+        assert!(pin(&[("debian-12", "current")])
+            .validate()
+            .unwrap_err()
+            .contains("not `current`"));
+        assert!(pin(&[("debian-12", "s1"), ("debian-12", "s2")])
+            .validate()
+            .unwrap_err()
+            .contains("repeated"));
+        let parsed: SourcesPin = serde_json::from_value(serde_json::json!({
+            "mode": "add", "mirrors": [{"name": "debian-12", "snapshot": "s1"}]
+        }))
+        .unwrap();
+        assert_eq!(Mode::from(parsed.mode), Mode::Add);
+        assert!(serde_json::from_value::<SourcesPin>(serde_json::json!({
+            "mirrors": [{"name": "debian-12", "snapshot": "s1"}]
+        }))
+        .is_err());
     }
 }

@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::model::{CampaignState, Window};
+use super::model::{CampaignState, PinnedMirror, Window};
 use super::store::{CampaignRow, WindowRow, COLUMNS};
 use crate::commands::State as CommandState;
 
@@ -62,12 +62,20 @@ pub struct TargetRow {
     /// The target's error, else its command's.
     pub error: Option<String>,
     pub finished_at: Option<DateTime<Utc>>,
+    pub sources_command_id: Option<Uuid>,
+    pub restore_command_id: Option<Uuid>,
+    pub restore_state: Option<CommandState>,
 }
 
 impl TargetRow {
-    /// `pending`, the command's state, or `skipped`.
+    /// `pending`, the command's state, or `skipped`; `failed` when the
+    /// sources could not be restored after the update.
     pub fn status(&self) -> &'static str {
+        let restore_failed = self
+            .restore_state
+            .is_some_and(|s| s.is_final() && s != CommandState::Succeeded);
         match (self.command_state, &self.error) {
+            (Some(_), _) if restore_failed => CommandState::Failed.as_str(),
             (Some(state), _) => state.as_str(),
             (None, Some(_)) => "skipped",
             (None, None) => "pending",
@@ -135,17 +143,23 @@ struct WindowWithCampaign {
 }
 
 /// Counts per wave of `campaigns`. `failed` counts failed and expired
-/// commands and skipped servers.
+/// commands, skipped servers and updates whose sources could not be
+/// restored, as [`TargetRow::status`].
 pub async fn counts(pool: &PgPool, campaigns: &[Uuid]) -> Result<Vec<WaveCounts>, sqlx::Error> {
     sqlx::query_as(
         "SELECT t.campaign_id, t.wave, count(*) AS total,
              count(*) FILTER (WHERE t.command_id IS NULL AND t.error IS NULL) AS pending,
              count(*) FILTER (WHERE c.state IN ('queued', 'sent', 'running')) AS in_progress,
-             count(*) FILTER (WHERE c.state = 'succeeded') AS succeeded,
+             count(*) FILTER (WHERE c.state = 'succeeded' AND NOT r.failed) AS succeeded,
              count(*) FILTER (WHERE (t.command_id IS NULL AND t.error IS NOT NULL)
-                              OR c.state IN ('failed', 'expired')) AS failed,
+                              OR c.state IN ('failed', 'expired')
+                              OR (c.state = 'succeeded' AND r.failed)) AS failed,
              count(*) FILTER (WHERE c.state = 'cancelled') AS cancelled
          FROM campaign_targets t LEFT JOIN commands c ON c.id = t.command_id
+         CROSS JOIN LATERAL (
+             SELECT COALESCE(bool_or(state IN ('failed', 'expired', 'cancelled')), false) AS failed
+             FROM commands WHERE id = t.restore_command_id
+         ) r
          WHERE t.campaign_id = ANY($1)
          GROUP BY t.campaign_id, t.wave
          ORDER BY t.campaign_id, t.wave",
@@ -169,17 +183,44 @@ pub async fn waves(pool: &PgPool, campaign: Uuid) -> Result<Vec<WaveRow>, sqlx::
 pub async fn targets(pool: &PgPool, campaign: Uuid) -> Result<Vec<TargetRow>, sqlx::Error> {
     sqlx::query_as(
         "SELECT t.wave, t.server_id, s.peer_id, s.hostname, s.site_id, t.command_id,
-             c.state AS command_state, c.exit_code, COALESCE(t.error, c.error) AS error,
-             c.finished_at
+             c.state AS command_state, c.exit_code,
+             COALESCE(t.error, c.error,
+                      CASE WHEN r.state IN ('failed', 'expired', 'cancelled')
+                           THEN 'restoring sources ' || r.state
+                                || COALESCE(': ' || r.error, '') END) AS error,
+             c.finished_at, t.sources_command_id, t.restore_command_id,
+             r.state AS restore_state
          FROM campaign_targets t
          JOIN servers s ON s.id = t.server_id
          LEFT JOIN commands c ON c.id = t.command_id
+         LEFT JOIN commands r ON r.id = t.restore_command_id
          WHERE t.campaign_id = $1
          ORDER BY t.wave, s.hostname, s.peer_id",
     )
     .bind(campaign)
     .fetch_all(pool)
     .await
+}
+
+/// Pinned snapshots of `campaigns`, each campaign's by mirror name.
+pub async fn pins(
+    pool: &PgPool,
+    campaigns: &[Uuid],
+) -> Result<Vec<(Uuid, PinnedMirror)>, sqlx::Error> {
+    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT cs.campaign_id, m.name, s.name FROM campaign_snapshots cs
+         JOIN mirrors m ON m.id = cs.mirror_id
+         JOIN mirror_snapshots s ON s.id = cs.snapshot_id
+         WHERE cs.campaign_id = ANY($1)
+         ORDER BY cs.campaign_id, m.name",
+    )
+    .bind(campaigns)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, snapshot)| (id, PinnedMirror { name, snapshot }))
+        .collect())
 }
 
 #[cfg(test)]
@@ -199,11 +240,19 @@ mod tests {
             exit_code: None,
             error: None,
             finished_at: None,
+            sources_command_id: None,
+            restore_command_id: None,
+            restore_state: None,
         };
         assert_eq!(row.status(), "pending");
         row.error = Some("server revoked".into());
         assert_eq!(row.status(), "skipped");
         row.command_state = Some(CommandState::Failed);
+        assert_eq!(row.status(), "failed");
+        row.command_state = Some(CommandState::Succeeded);
+        row.restore_state = Some(CommandState::Running);
+        assert_eq!(row.status(), "succeeded");
+        row.restore_state = Some(CommandState::Expired);
         assert_eq!(row.status(), "failed");
     }
 }

@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use mirror_fixture::Upstream;
-use monitorflow_common::mirror::{read_current, Family};
+use monitorflow_common::mirror::{read_current, read_pinned, write_pinned, Family};
 use monitorflow_relay::mirror::sync::Outcome;
 use monitorflow_relay::mirror::task::{MirrorSettings, MirrorTask};
 
@@ -173,4 +173,66 @@ async fn a_chained_relay_syncs_from_its_parent() {
         std::fs::read(rocky.join("current/Packages/b/b-1.rpm")).unwrap(),
         b"r2"
     );
+}
+
+#[tokio::test]
+async fn pinned_snapshots_are_copied_kept_and_passed_down() {
+    let up = Upstream::start().await;
+    for s in ["s1", "s2", "s3"] {
+        up.apt(
+            "debian",
+            s,
+            &[
+                ("a/a_1_all.deb", b"a1"),
+                (&format!("b/b_{s}_all.deb"), s.as_bytes()),
+            ],
+        );
+    }
+    // A campaign pins s1, which the relay never saw as current.
+    let upstream_dir = up.served.root(Family::Apt).join("debian");
+    write_pinned(&upstream_dir, &["s1".into()]).unwrap();
+
+    let parent_dir = tempfile::tempdir().unwrap();
+    let mut keep_one = settings(&up.base, parent_dir.path());
+    keep_one.keep_snapshots = 1;
+    let mut parent = MirrorTask::new(keep_one.clone()).unwrap();
+    let report = parent.cycle().await;
+    assert!(matches!(report.mirrors[0].1, Ok(Outcome::Synced(_))));
+    assert_eq!(report.mirrors[0].0.pinned[0].name, "s1");
+    let apt = parent_dir.path().join("apt/debian");
+    assert_eq!(read_current(&apt).as_deref(), Some("s3"));
+    assert_eq!(
+        tree(&apt.join("s1")),
+        tree(&up.snapshot_dir(Family::Apt, "debian", "s1"))
+    );
+    assert_eq!(read_pinned(&apt), ["s1"]);
+
+    // A new current: the pinned snapshot stays beside it, over the count.
+    up.apt("debian", "s4", &[("a/a_1_all.deb", b"a1")]);
+    parent.cycle().await;
+    assert_eq!(read_current(&apt).as_deref(), Some("s4"));
+    assert!(apt.join("s1").is_dir() && !apt.join("s3").exists());
+
+    // A chained relay gets it from its parent's index.
+    let parent_listener = Upstream::serve(parent_dir).await;
+    let child_dir = tempfile::tempdir().unwrap();
+    let mut child_settings = keep_one.clone();
+    child_settings.upstream_url = parent_listener.base.clone();
+    child_settings.root = child_dir.path().to_owned();
+    let mut child = MirrorTask::new(child_settings).unwrap();
+    child.cycle().await;
+    let child_apt = child_dir.path().join("apt/debian");
+    assert_eq!(read_current(&child_apt).as_deref(), Some("s4"));
+    assert_eq!(
+        tree(&child_apt.join("s1")),
+        tree(&up.snapshot_dir(Family::Apt, "debian", "s1"))
+    );
+
+    // Unpinned upstream, it goes at the next cycle.
+    write_pinned(&upstream_dir, &[]).unwrap();
+    let mut parent = MirrorTask::new(keep_one).unwrap();
+    parent.cycle().await;
+    let apt = parent_listener.served.root(Family::Apt).join("debian");
+    assert!(!apt.join("s1").exists());
+    assert!(read_pinned(&apt).is_empty());
 }

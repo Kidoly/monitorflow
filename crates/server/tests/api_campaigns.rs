@@ -177,8 +177,8 @@ db_tests! {
             [
                 "command_ttl_s", "created_at", "created_by", "current_wave", "customer_id",
                 "customer_name", "error", "failure_threshold", "finished_at", "id", "name",
-                "progress", "site_id", "spec", "started_at", "state", "wave_count", "waves",
-                "windows"
+                "progress", "site_id", "sources", "spec", "started_at", "state", "wave_count",
+                "waves", "windows"
             ]
         );
         assert_eq!(created["state"], "draft");
@@ -187,6 +187,7 @@ db_tests! {
         assert_eq!(created["command_ttl_s"], 3600);
         assert_eq!(created["failure_threshold"], json!({"value": 10, "unit": "percent"}));
         assert_eq!(created["windows"], h.body()["windows"]);
+        assert_eq!(created["sources"], Value::Null);
         assert_eq!(created["wave_count"], 2);
         assert_eq!(created["current_wave"], Value::Null);
         assert_eq!(
@@ -199,8 +200,8 @@ db_tests! {
         let server = &wave["servers"][0];
         assert_eq!(
             keys(server),
-            ["command_id", "error", "exit_code", "finished_at", "hostname", "peer_id", "server_id",
-             "site_id", "status"]
+            ["command_id", "error", "exit_code", "finished_at", "hostname", "peer_id",
+             "restore_command_id", "server_id", "site_id", "sources_command_id", "status"]
         );
         assert_eq!(server["hostname"], "web-1");
         assert_eq!(server["status"], "pending");

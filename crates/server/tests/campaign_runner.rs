@@ -95,6 +95,7 @@ impl Fleet {
             command_ttl: Duration::from_secs(3600),
             failure_threshold: FailureThreshold::default(),
             windows: Vec::new(),
+            sources: None,
             created_by: None,
         }
     }

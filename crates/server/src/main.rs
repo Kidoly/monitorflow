@@ -331,8 +331,11 @@ async fn main() -> anyhow::Result<()> {
         ca.clone(),
         DispatcherSettings::default(),
     );
-    // Update campaigns (ADR-0033) queue through the same dispatcher.
-    let campaigns = Runner::new(pool.clone()).with_commands(commands.clone());
+    // Update campaigns (ADR-0033) queue through the same dispatcher, and
+    // pin snapshots with the mirrors' key and public URL (ADR-0038).
+    let campaigns = Runner::new(pool.clone())
+        .with_commands(commands.clone())
+        .with_sources(config.mirror_public_url.clone(), mirrors.clone());
     let service = AgentStreamService::new(
         registry.clone(),
         Arc::new(DbRelayPolicy::new(pool.clone())),

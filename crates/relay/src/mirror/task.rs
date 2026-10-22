@@ -1,7 +1,7 @@
 //! The relay's mirror sync loop (ADR-0034): at start and then every
 //! `mirror.sync_interval`, copy the public key, read the upstream's
-//! `/index.json` and sync each listed mirror in turn, then prune its old
-//! snapshots. Failures are logged with the time of the last success and
+//! `/index.json` and sync each listed mirror in turn, copy the snapshots
+//! campaigns pin (ADR-0038), then prune its old snapshots. Failures are logged with the time of the last success and
 //! retried at the next cycle; they never stop the relay. A shutdown
 //! interrupts a sync, which resumes from its staging directory later.
 
@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 
 use monitorflow_common::client::shutdown::Shutdown;
 use monitorflow_common::config::RelayConfig;
-use monitorflow_common::mirror::{write_atomically, Family, Index, IndexMirror, Served};
+use monitorflow_common::mirror::{
+    write_atomically, write_pinned, Family, Index, IndexMirror, Served,
+};
 
 use super::fetch::{io, FetchError, Fetcher};
 use super::retention;
@@ -168,7 +170,56 @@ impl MirrorTask {
         Ok(())
     }
 
+    /// Syncs `current` of `mirror` and its pinned snapshots, then prunes
+    /// what neither keeps; the result is that of `current`.
     async fn sync(&mut self, mirror: &IndexMirror) -> Result<Outcome, String> {
+        let outcome = self.sync_current(mirror).await;
+        let pinned = self.keep_pinned(mirror).await;
+        let dir = self.syncer.mirror_dir(mirror.family, &mirror.name);
+        let keep = self.settings.keep_snapshots;
+        let prune = outcome.is_ok();
+        let pruned = tokio::task::spawn_blocking(move || {
+            // Advertised downstream through this relay's own index.
+            write_pinned(&dir, &pinned)?;
+            if !prune {
+                return Ok(Vec::new());
+            }
+            retention::prune(&dir, keep, &pinned)
+        })
+        .await;
+        match pruned {
+            Ok(Ok(removed)) if !removed.is_empty() => {
+                tracing::info!(mirror = %mirror.name, ?removed, "old mirror snapshots removed")
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(mirror = %mirror.name, %error, "cannot record pinned or remove old mirror snapshots")
+            }
+            Err(error) => tracing::warn!(%error, "mirror retention task failed"),
+        }
+        outcome
+    }
+
+    /// Copies the snapshots the upstream pins for `mirror` and returns
+    /// those held. A failure is logged and retried at the next cycle.
+    async fn keep_pinned(&self, mirror: &IndexMirror) -> Vec<String> {
+        let mut held = Vec::new();
+        for pinned in &mirror.pinned {
+            match self.syncer.keep(mirror, pinned).await {
+                Ok(Outcome::Synced(stats)) => {
+                    tracing::info!(family = %mirror.family, mirror = %mirror.name, snapshot = %pinned.name, downloaded = stats.downloaded, bytes = stats.bytes, linked = stats.linked, "pinned mirror snapshot copied");
+                    held.push(pinned.name.clone());
+                }
+                Ok(_) => held.push(pinned.name.clone()),
+                Err(error) => {
+                    tracing::warn!(family = %mirror.family, mirror = %mirror.name, snapshot = %pinned.name, %error, "cannot copy a pinned mirror snapshot; will retry");
+                }
+            }
+        }
+        held
+    }
+
+    async fn sync_current(&mut self, mirror: &IndexMirror) -> Result<Outcome, String> {
         let key = (mirror.family, mirror.name.clone());
         let started = Instant::now();
         let outcome = match self.syncer.sync(mirror).await {
@@ -193,18 +244,6 @@ impl MirrorTask {
             Outcome::Synced(stats) => {
                 tracing::info!(family = %mirror.family, mirror = %mirror.name, snapshot = %mirror.current, downloaded = stats.downloaded, bytes = stats.bytes, linked = stats.linked, kept = stats.kept, elapsed = ?started.elapsed(), "mirror synced")
             }
-        }
-        let dir = self.syncer.mirror_dir(mirror.family, &mirror.name);
-        let keep = self.settings.keep_snapshots;
-        match tokio::task::spawn_blocking(move || retention::prune(&dir, keep)).await {
-            Ok(Ok(removed)) if !removed.is_empty() => {
-                tracing::info!(mirror = %mirror.name, ?removed, "old mirror snapshots removed")
-            }
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => {
-                tracing::warn!(mirror = %mirror.name, %error, "cannot remove old mirror snapshots")
-            }
-            Err(error) => tracing::warn!(%error, "mirror retention task failed"),
         }
         Ok(outcome)
     }

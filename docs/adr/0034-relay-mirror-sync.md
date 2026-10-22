@@ -55,7 +55,7 @@ Paths from the metadata must be relative, without `..`, empty or dot-prefixed se
 
 - Agents behind a relay point at `http://<relay>:7480/apt/<mirror>/current/` (or a pinned snapshot it holds), with the same keys as for the server.
 - A relay holds `keep_snapshots` snapshots of every mirror the server publishes unless narrowed; disk use is that of one snapshot plus the changed files of the others, thanks to hardlinks.
-- A campaign pinned to a snapshot the relay never saw as `current` finds nothing on the relay. The index could list pinned snapshots once campaigns exist; until then, keep `current` on the pinned snapshot during a campaign.
+- A campaign pinned to a snapshot the relay never saw as `current` finds nothing on the relay. The index could list pinned snapshots once campaigns exist; until then, keep `current` on the pinned snapshot during a campaign. Done in ADR-0038: index entries list `pinned` snapshots, which relays copy and keep.
 - Not covered yet: dnf group and module metadata beyond what `repomd.xml` lists (copied like any listed file, but not parsed), apt `by-hash` paths, range requests to resume a single large file, and signature checks on the relay with a key pinned over mTLS.
 - The status of the sync is in the relay's logs only; reporting it to the server through the relay's own stream is a follow-up.
 

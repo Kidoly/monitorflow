@@ -4,7 +4,8 @@
 //! Campaigns span sites, so reading one needs a role on its customer as a
 //! whole (global or customer grant); creating and acting need an
 //! administrator role on it, as queuing a command does (ADR-0031). The
-//! JSON is documented in ADR-0033 and kept stable for the web interface.
+//! JSON is documented in ADR-0033, with pinned snapshots in ADR-0038, and
+//! kept stable for the web interface.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -25,9 +26,10 @@ use super::servers::{decode_cursor, encode_cursor, page_limit};
 use super::{ApiError, ApiState};
 use crate::campaign::query::{self, ListFilter, Listed, WaveCounts};
 use crate::campaign::{
-    Action, CampaignError, CampaignState, CampaignStore, FailureThreshold, NewCampaign, UpdateSpec,
-    WaveSpec, Window,
+    Action, CampaignError, CampaignState, CampaignStore, FailureThreshold, NewCampaign, SourcesPin,
+    UpdateSpec, WaveSpec, Window,
 };
+use crate::commands::sources::{self, KeyLookupError};
 
 /// Body of `POST /api/campaigns`.
 #[derive(Debug, Deserialize)]
@@ -52,6 +54,8 @@ pub struct CreateRequest {
     pub failure_threshold: FailureThreshold,
     #[serde(default)]
     pub windows: Vec<Window>,
+    /// Snapshots to pin every server to during its update (ADR-0038).
+    pub sources: Option<SourcesPin>,
 }
 
 /// Servers by status; `failed` includes expired commands and skipped
@@ -91,6 +95,8 @@ pub struct CampaignView {
     pub command_ttl_s: i32,
     pub failure_threshold: FailureThreshold,
     pub windows: Vec<Window>,
+    /// The pinned snapshots, if any (ADR-0038).
+    pub sources: Option<SourcesPin>,
     pub wave_count: usize,
     pub current_wave: Option<i32>,
     pub progress: Progress,
@@ -118,6 +124,10 @@ pub struct TargetView {
     pub exit_code: Option<i32>,
     pub error: Option<String>,
     pub finished_at: Option<DateTime<Utc>>,
+    /// With pinned snapshots: the `configure_sources` command before the
+    /// update and the command restoring the sources after it.
+    pub sources_command_id: Option<Uuid>,
+    pub restore_command_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
@@ -181,6 +191,10 @@ async fn views(state: &ApiState, rows: Vec<Listed>) -> Result<Vec<CampaignView>,
     for (id, window) in query::windows(&state.pool, &ids).await? {
         windows.entry(id).or_default().push(window);
     }
+    let mut pins: HashMap<Uuid, Vec<_>> = HashMap::new();
+    for (id, mirror) in query::pins(&state.pool, &ids).await? {
+        pins.entry(id).or_default().push(mirror);
+    }
     let mut counts: HashMap<Uuid, (Progress, usize)> = HashMap::new();
     for wave in query::counts(&state.pool, &ids).await? {
         let entry = counts.entry(wave.campaign_id).or_default();
@@ -199,6 +213,10 @@ async fn views(state: &ApiState, rows: Vec<Listed>) -> Result<Vec<CampaignView>,
                     spec: c.spec(),
                     failure_threshold: c.threshold(),
                     windows: windows.remove(&c.id).unwrap_or_default(),
+                    sources: c.sources_mode.map(|mode| SourcesPin {
+                        mode,
+                        mirrors: pins.remove(&c.id).unwrap_or_default(),
+                    }),
                     wave_count,
                     progress,
                     id: c.id,
@@ -252,6 +270,8 @@ async fn detail_of(state: &ApiState, id: Uuid) -> Result<CampaignDetail, ApiErro
                 exit_code: t.exit_code,
                 error: t.error,
                 finished_at: t.finished_at,
+                sources_command_id: t.sources_command_id,
+                restore_command_id: t.restore_command_id,
             });
         }
         let state = match (wave.started_at, wave.finished_at) {
@@ -322,6 +342,9 @@ pub async fn create(
     if request.site_id.is_none() && request.server_ids.is_empty() {
         return Err(ApiError::Invalid("give a site_id or server_ids".into()));
     }
+    if request.sources.is_some() {
+        check_sources(&state).await?;
+    }
     let new = NewCampaign {
         customer_id: request.customer_id,
         name: request.name,
@@ -336,6 +359,7 @@ pub async fn create(
         command_ttl: Duration::from_secs(ttl),
         failure_threshold: request.failure_threshold,
         windows: request.windows,
+        sources: request.sources,
         created_by: Some(user.id),
     };
     let actor = user.id.to_string();
@@ -344,6 +368,27 @@ pub async fn create(
         .await?;
     tracing::info!(user = %user.id, campaign = %row.id, "campaign created");
     Ok((StatusCode::CREATED, Json(detail_of(&state, row.id).await?)))
+}
+
+/// 409 unless the server can build `configure_sources` commands, as
+/// `POST /api/servers/{id}/sources` (ADR-0035).
+async fn check_sources(state: &ApiState) -> Result<(), ApiError> {
+    if state.settings.mirror_public_url.is_none() {
+        return Err(ApiError::Conflict(
+            "mirror_public_url is not configured".into(),
+        ));
+    }
+    let mirrors = state
+        .mirrors
+        .as_ref()
+        .ok_or_else(|| ApiError::Conflict("mirrors are not enabled on this server".into()))?;
+    sources::archive_key(mirrors.runner(), mirrors.layout())
+        .await
+        .map_err(|error| match error {
+            KeyLookupError::Key(key) => ApiError::Conflict(key.to_string()),
+            other => ApiError::Internal(other.to_string()),
+        })?;
+    Ok(())
 }
 
 /// `GET /api/campaigns/{id}`.
@@ -446,6 +491,13 @@ mod tests {
         assert_eq!(request.waves, [WaveSpec::Size(1), WaveSpec::Percent(50)]);
         assert_eq!(request.failure_threshold, FailureThreshold::default());
         assert!(request.server_ids.is_empty() && !request.allow_reboot);
+        assert_eq!(request.sources, None);
+        let pinned: CreateRequest = serde_json::from_value(json!({
+            "customer_id": Uuid::nil(), "name": "x",
+            "sources": {"mode": "replace", "mirrors": [{"name": "debian-12", "snapshot": "s1"}]}
+        }))
+        .unwrap();
+        assert_eq!(pinned.sources.unwrap().mirrors[0].snapshot, "s1");
         assert!(serde_json::from_value::<CreateRequest>(json!({
             "customer_id": Uuid::nil(), "name": "x", "extra": 1
         }))
