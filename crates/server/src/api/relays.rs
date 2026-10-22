@@ -57,6 +57,11 @@ pub struct RelayView {
     pub server_count: i64,
     /// Agent streams the relay forwards right now.
     pub connected_agents: usize,
+    /// Base URL of the relay's mirror listener as it last reported it;
+    /// `null` when it serves no mirrors (ADR-0037).
+    pub mirror_url: Option<String>,
+    /// When the relay last reported its mirrors.
+    pub mirror_reported_at: Option<DateTime<Utc>>,
 }
 
 /// Body of `GET /api/relays/{id}`.
@@ -82,7 +87,7 @@ pub struct AttachedServer {
 
 const SELECT_RELAYS: &str = "SELECT r.id, r.peer_id, r.name, r.site_id, si.name AS site_name,
             si.customer_id, c.name AS customer_name, r.created_at, r.last_seen_at,
-            r.revoked_at,
+            r.revoked_at, r.mirror_url, r.mirror_reported_at,
             (SELECT max(ce.not_after) FROM certificates ce
              WHERE ce.peer_role = 'relay' AND ce.peer_id = r.peer_id
                AND ce.revoked_at IS NULL) AS cert_not_after,
@@ -108,6 +113,8 @@ struct Row {
     created_at: DateTime<Utc>,
     last_seen_at: Option<DateTime<Utc>>,
     revoked_at: Option<DateTime<Utc>>,
+    mirror_url: Option<String>,
+    mirror_reported_at: Option<DateTime<Utc>>,
     cert_not_after: Option<DateTime<Utc>>,
     server_names: Vec<String>,
     server_count: i64,
@@ -247,6 +254,8 @@ impl RelayView {
             cert_not_after: row.cert_not_after,
             server_names: row.server_names,
             server_count: row.server_count,
+            mirror_url: row.mirror_url,
+            mirror_reported_at: row.mirror_reported_at,
         }
     }
 }

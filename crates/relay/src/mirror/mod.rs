@@ -6,13 +6,14 @@
 //! [`meta`] describes the files of a snapshot, read by [`apt`] and [`dnf`]
 //! from the repository metadata, decompressed by [`compress`]; [`sync`] copies a snapshot with
 //! [`fetch`]; [`task`] runs the sync loop and [`retention`] bounds the
-//! snapshots kept.
+//! snapshots kept. [`report`] tells the server what the relay serves.
 
 pub mod apt;
 pub mod compress;
 pub mod dnf;
 pub mod fetch;
 pub mod meta;
+pub mod report;
 pub mod retention;
 pub mod sync;
 pub mod task;

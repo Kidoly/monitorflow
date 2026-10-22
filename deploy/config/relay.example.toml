@@ -62,6 +62,11 @@ upstream_url = "https://monitorflow.example.com:7443"
 # chained relay), http or https. Defaults to the host of upstream_url on
 # port 7480.
 # upstream_url = "http://monitorflow.example.com:7480"
+# URL the hosts of this relay's agents reach mirror_listen_addr at, http or
+# https. Reported to the server, which then points those hosts' package
+# sources here instead of at its own mirror_public_url (ADR-0037). Unset,
+# they keep the server's.
+# public_url = "http://relay.example.com:7480"
 # Seconds between syncs, at least 60.
 # sync_interval = 900
 # Mirror names to copy, like ["debian", "rocky9"]; empty copies every mirror

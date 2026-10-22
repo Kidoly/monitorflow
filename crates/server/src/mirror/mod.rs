@@ -8,7 +8,8 @@
 //! and runs, [`runner`] runs the tools; [`apt`], [`dnf`] and [`signing`]
 //! build their command lines over the files of [`layout`], and [`jobs`]
 //! syncs and snapshots mirrors with them, on request or from the
-//! [`scheduler`]. [`http`] serves the result.
+//! [`scheduler`]. [`http`] serves the result; [`relays`] records the
+//! copies relays serve (ADR-0037).
 
 pub mod apt;
 pub mod dnf;
@@ -16,6 +17,7 @@ pub mod http;
 pub mod jobs;
 pub mod layout;
 pub mod model;
+pub mod relays;
 pub mod runner;
 pub mod scheduler;
 pub mod signing;

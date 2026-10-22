@@ -8,11 +8,10 @@ use monitorflow_common::proto::v1::configure_sources::{
 };
 use monitorflow_common::proto::v1::ConfigureSources;
 use sqlx::PgExecutor;
-use uuid::Uuid;
 
 use crate::mirror::layout::Layout;
 use crate::mirror::signing::{self, KeyError, SigningError};
-use crate::mirror::{store, Family, Mirror, RunError, Runner};
+use crate::mirror::{relays, store, Family, Mirror, RunError, Runner};
 
 /// Snapshot name that follows the newest published snapshot.
 pub const CURRENT: &str = "current";
@@ -49,14 +48,22 @@ pub enum KeyLookupError {
     Io(#[from] std::io::Error),
 }
 
-/// The base URL the agents of `site` reach the mirrors at, without the
-/// trailing slash; `None` when the server has none configured.
-///
-/// Today every site gets the server's `mirror_public_url`. Hook for the
-/// relay mirror sync (ADR-0034, follow-up of ADR-0035): a per-site or
-/// per-relay mirror URL, set when a relay of the site serves a copy, is
-/// looked up here first so agents behind that relay use it.
-pub fn base_url(public_url: Option<&str>, _site: Uuid) -> Option<String> {
+/// The base URL an agent reaches the `selected` mirrors at, without the
+/// trailing slash: the mirror URL of `relay`, the relay the agent connects
+/// through, when it holds every selected snapshot (ADR-0037); otherwise
+/// the server's `mirror_public_url`. `None` when neither applies.
+pub fn base_url(
+    public_url: Option<&str>,
+    relay: Option<&relays::Served>,
+    selected: &[Selected],
+) -> Option<String> {
+    if let Some(relay) = relay.filter(|relay| {
+        selected
+            .iter()
+            .all(|s| relay.holds(s.mirror.family, &s.mirror.name, &s.snapshot))
+    }) {
+        return Some(relay.url.trim_end_matches('/').to_owned());
+    }
     public_url.map(|url| url.trim_end_matches('/').to_owned())
 }
 
@@ -206,6 +213,7 @@ pub async fn archive_key(
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
+    use uuid::Uuid;
 
     use super::*;
 
@@ -326,12 +334,45 @@ mod tests {
     }
 
     #[test]
-    fn the_base_url_is_the_public_one_for_now() {
-        let site = Uuid::new_v4();
-        assert_eq!(base_url(None, site), None);
+    fn the_relay_url_is_used_when_the_relay_holds_every_snapshot() {
+        let public = Some("http://mf.example:7480/");
+        let debian = selected(mirror("debian-12", Family::Apt), "current");
+        let security = selected(mirror("debian-12-security", Family::Apt), "s1");
+        assert_eq!(base_url(None, None, std::slice::from_ref(&debian)), None);
         assert_eq!(
-            base_url(Some("http://mf.example:7480/"), site).as_deref(),
+            base_url(public, None, std::slice::from_ref(&debian)).as_deref(),
             Some("http://mf.example:7480")
+        );
+        let relay = relays::Served {
+            url: "http://relay.example:7480".into(),
+            mirrors: vec![relays::ServedMirror {
+                family: Family::Apt,
+                name: "debian-12".into(),
+                current: Some("s2".into()),
+                snapshots: vec!["s1".into(), "s2".into()],
+            }],
+        };
+        let base = |list: &[Selected]| base_url(public, Some(&relay), list);
+        assert_eq!(
+            base(std::slice::from_ref(&debian)).as_deref(),
+            Some("http://relay.example:7480")
+        );
+        assert_eq!(
+            base(&[selected(mirror("debian-12", Family::Apt), "s1")]).as_deref(),
+            Some("http://relay.example:7480")
+        );
+        // A snapshot or a mirror the relay lacks: the server for all.
+        for list in [
+            vec![selected(mirror("debian-12", Family::Apt), "s3")],
+            vec![debian.clone(), security],
+            vec![selected(mirror("debian-12", Family::Dnf), "current")],
+        ] {
+            assert_eq!(base(&list).as_deref(), Some("http://mf.example:7480"));
+        }
+        // Without a server URL, the relay alone.
+        assert_eq!(
+            base_url(None, Some(&relay), &[debian]).as_deref(),
+            Some("http://relay.example:7480")
         );
     }
 }

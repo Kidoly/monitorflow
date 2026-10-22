@@ -6,6 +6,10 @@
 //! instead of making the relay dial a dead upstream for each of them
 //! (ADR-0027).
 //! A renewed certificate closes the stream, which reconnects with it.
+//!
+//! After `Hello` and whenever it changes, the stream carries the report of
+//! the mirrors the relay serves (ADR-0037); a relay without mirrors sends
+//! an empty one, so the server forgets an earlier report.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -16,7 +20,7 @@ use monitorflow_common::client::shutdown::Shutdown;
 use monitorflow_common::config::RelayConfig;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Envelope, Heartbeat, Hello};
+use monitorflow_common::proto::v1::{Envelope, Heartbeat, Hello, RelayMirrors};
 use monitorflow_common::tls::{self, error_chain};
 use monitorflow_common::PROTOCOL_VERSION;
 use tokio::sync::{mpsc, watch};
@@ -58,6 +62,7 @@ pub struct Control {
     settings: ControlSettings,
     identity: watch::Receiver<StoredIdentity>,
     up: watch::Sender<bool>,
+    mirrors: watch::Receiver<RelayMirrors>,
     sequence: u64,
 }
 
@@ -73,9 +78,17 @@ impl Control {
             settings,
             identity,
             up,
+            // No mirrors until `with_mirrors`.
+            mirrors: watch::channel(RelayMirrors::default()).1,
             sequence: 0,
         };
         (control, rx)
+    }
+
+    /// Reports of the served mirrors, from the mirror task.
+    pub fn with_mirrors(mut self, mirrors: watch::Receiver<RelayMirrors>) -> Self {
+        self.mirrors = mirrors;
+        self
     }
 
     /// Keeps the stream open until `shutdown`.
@@ -155,6 +168,9 @@ impl Control {
         }));
         tx.try_send(hello)
             .expect("a new channel has room for Hello");
+        let report = self.mirror_report();
+        tx.try_send(report)
+            .expect("a new channel has room for Hello and the mirror report");
         let mut client = AgentServiceClient::new(channel);
         let open = timeout(OPEN_TIMEOUT, client.stream(ReceiverStream::new(rx)));
         let mut inbound = tokio::select! {
@@ -174,6 +190,11 @@ impl Control {
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
         // Set when the renewal task is gone, so nothing will change.
         let mut fixed = false;
+        // Set when the mirror task is gone, likewise.
+        let mut mirrors_fixed = false;
+        // A changed report the full queue did not take; retried with the
+        // next heartbeat.
+        let mut report_pending = false;
         loop {
             tokio::select! {
                 () = shutdown.wait() => return Ok(()),
@@ -188,7 +209,18 @@ impl Control {
                     if tx.try_send(envelope).is_err() {
                         tracing::debug!("upstream is not reading; heartbeat skipped");
                     }
+                    if report_pending {
+                        let report = self.mirror_report();
+                        report_pending = tx.try_send(report).is_err();
+                    }
                 }
+                changed = self.mirrors.changed(), if !mirrors_fixed => match changed {
+                    Ok(()) => {
+                        let report = self.mirror_report();
+                        report_pending = tx.try_send(report).is_err();
+                    }
+                    Err(_) => mirrors_fixed = true,
+                },
                 message = inbound.message() => match message {
                     // Nothing is sent to a relay for itself yet.
                     Ok(Some(envelope)) => tracing::debug!(sequence = envelope.sequence, "ignoring envelope for the relay"),
@@ -197,6 +229,12 @@ impl Control {
                 },
             }
         }
+    }
+
+    /// The latest mirror report, marked as seen.
+    fn mirror_report(&mut self) -> Envelope {
+        let report = self.mirrors.borrow_and_update().clone();
+        self.envelope(Payload::RelayMirrors(report))
     }
 
     fn envelope(&mut self, payload: Payload) -> Envelope {

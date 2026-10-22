@@ -700,6 +700,11 @@ pub struct RelayMirrorConfig {
     /// Mirror listener of the upstream, `http(s)://host:port`. Defaults to
     /// the host of `upstream_url` on port 7480.
     pub upstream_url: Option<String>,
+    /// Base URL this relay's agents reach `mirror_listen_addr` at, like
+    /// `http://relay.example.net:7480`, reported to the server so the
+    /// package sources it sends them point here (ADR-0037). Unset, they
+    /// keep the server's `mirror_public_url`.
+    pub public_url: Option<String>,
     /// Seconds between syncs.
     pub sync_interval: u64,
     /// Mirror names to copy; empty copies every mirror the upstream lists.
@@ -726,6 +731,7 @@ impl Default for RelayMirrorConfig {
         Self {
             enabled: false,
             upstream_url: None,
+            public_url: None,
             sync_interval: 15 * 60,
             mirrors: Vec::new(),
             keep_snapshots: 3,
@@ -740,6 +746,7 @@ impl RelayMirrorConfig {
     fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
         env.set("mirror.enabled", &mut self.enabled)?;
         env.set_opt("mirror.upstream_url", &mut self.upstream_url)?;
+        env.set_opt("mirror.public_url", &mut self.public_url)?;
         env.set("mirror.sync_interval", &mut self.sync_interval)?;
         if let Some(names) = env.list("mirror.mirrors") {
             self.mirrors = names;
@@ -753,6 +760,14 @@ impl RelayMirrorConfig {
     fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
         if let Some(url) = &self.upstream_url {
             check.http_url("mirror.upstream_url", url)?;
+        }
+        if let Some(url) = &self.public_url {
+            if !valid_mirror_url(url) {
+                return Err(check.fail(
+                    "mirror.public_url",
+                    "must be an http or https URL without user, query or fragment",
+                ));
+            }
         }
         if self.sync_interval < MIN_MIRROR_SYNC_INTERVAL {
             return Err(check.fail(
