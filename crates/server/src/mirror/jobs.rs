@@ -73,6 +73,11 @@ impl Mirrors {
         &self.layout
     }
 
+    /// Runs `gpg` for the source configuration commands (ADR-0035).
+    pub fn runner(&self) -> &dyn Runner {
+        self.runner.as_ref()
+    }
+
     /// Locks `mirror` and records a running run, or says why not.
     pub async fn begin(
         &self,
