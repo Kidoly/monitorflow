@@ -25,6 +25,11 @@ rustls.workspace = true
 x509-parser.workspace = true
 prost.workspace = true
 crc.workspace = true
+ring.workspace = true
+serde.workspace = true
+flate2.workspace = true
+ruzstd.workspace = true
+quick-xml.workspace = true
 
 [dev-dependencies]
 monitorflow-server = { path = "../server" }

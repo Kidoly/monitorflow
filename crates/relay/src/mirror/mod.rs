@@ -2,6 +2,13 @@
 //! on a plain HTTP listener with the server's layout
 //! ([`monitorflow_common::mirror::serve`]): `apt/`, `dnf/` and `keys/`
 //! under `mirror_dir`.
+//!
+//! [`meta`] describes the files of a snapshot, read by [`apt`] and [`dnf`]
+//! from the repository metadata.
+
+pub mod apt;
+pub mod dnf;
+pub mod meta;
 
 use std::io;
 use std::path::Path;
