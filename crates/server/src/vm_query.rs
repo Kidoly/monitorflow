@@ -1,5 +1,7 @@
 //! Read client for VictoriaMetrics' Prometheus-compatible query API
-//! (`/api/v1/query`, `/api/v1/query_range`, `/api/v1/series`).
+//! (`/api/v1/query`, `/api/v1/query_range`, `/api/v1/series`), and through
+//! [`VmQuery::get_raw`] for VictoriaLogs' LogsQL API, which answers JSON
+//! lines rather than an envelope.
 //!
 //! It only sends what the caller passes: never a header, cookie or
 //! credential of the API request it serves. Requests have a timeout,
@@ -60,6 +62,21 @@ impl VmQuery {
     /// GETs `path` with `params` and returns the `data` member of a
     /// `{"status": "success"}` answer.
     pub async fn get(&self, path: &str, params: &[(&str, String)]) -> Result<Value, QueryError> {
+        let body = self.get_raw(path, params).await?;
+        let mut envelope: Value =
+            serde_json::from_slice(&body).map_err(|e| QueryError::Malformed(e.to_string()))?;
+        if envelope["status"] != "success" {
+            return Err(QueryError::Malformed(excerpt(&body)));
+        }
+        Ok(envelope["data"].take())
+    }
+
+    /// GETs `path` with `params` and returns the body of a 2xx answer.
+    pub async fn get_raw(
+        &self,
+        path: &str,
+        params: &[(&str, String)],
+    ) -> Result<Vec<u8>, QueryError> {
         let response = self
             .client
             .get(format!("{}{path}", self.base))
@@ -79,12 +96,7 @@ impl VmQuery {
                 },
             );
         }
-        let mut envelope: Value =
-            serde_json::from_slice(&body).map_err(|e| QueryError::Malformed(e.to_string()))?;
-        if envelope["status"] != "success" {
-            return Err(QueryError::Malformed(excerpt(&body)));
-        }
-        Ok(envelope["data"].take())
+        Ok(body)
     }
 }
 

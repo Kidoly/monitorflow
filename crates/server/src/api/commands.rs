@@ -99,7 +99,7 @@ pub struct ListParams {
 }
 
 /// The payload as JSON. Keys appear by fingerprint, not armored.
-fn parameters(kind: &str, payload: &[u8]) -> Value {
+pub(crate) fn parameters(kind: &str, payload: &[u8]) -> Value {
     match kind {
         command::APPLY_UPDATES => match ApplyUpdates::decode(payload) {
             Ok(p) => json!({
