@@ -8,6 +8,10 @@ use crate::proto::v1::Command;
 
 /// Kind of [`crate::proto::v1::ApplyUpdates`] commands.
 pub const APPLY_UPDATES: &str = "apply_updates";
+/// Kind of [`crate::proto::v1::ConfigureSources`] commands (ADR-0035).
+pub const CONFIGURE_SOURCES: &str = "configure_sources";
+/// Kind of [`crate::proto::v1::RevertSources`] commands (ADR-0035).
+pub const REVERT_SOURCES: &str = "revert_sources";
 
 /// Package names in an `ApplyUpdates` reach a command line on the agent:
 /// letters, digits and `.+_:-`, at most 128 bytes, not starting with `-` so

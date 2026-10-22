@@ -217,6 +217,32 @@ fn server_mirror_settings() {
 }
 
 #[test]
+fn server_mirror_public_url() {
+    assert_eq!(
+        parse::<ServerConfig>(SERVER_MIN).unwrap().mirror_public_url,
+        None
+    );
+    let vars = env(&[("MONITORFLOW_MIRROR_PUBLIC_URL", "http://mf.example:7480")]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert_eq!(
+        server.mirror_public_url.as_deref(),
+        Some("http://mf.example:7480")
+    );
+    for bad in [
+        "ftp://mf.example",
+        "http://",
+        "http://user:pw@mf.example",
+        "https://mf.example/?x=1",
+        "https://mf.example/#a",
+        "https://mf example",
+    ] {
+        let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_MIRROR_PUBLIC_URL", bad)]);
+        assert!(msg.contains("mirror_public_url"), "{bad}: {msg}");
+    }
+    assert!(valid_mirror_url("https://mf.example/base/"));
+}
+
+#[test]
 fn server_tls_paths_follow_data_dir() {
     let tls = parse::<ServerConfig>(SERVER_MIN).unwrap().tls_paths();
     assert_eq!(

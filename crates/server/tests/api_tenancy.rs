@@ -400,6 +400,20 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .unwrap();
             assert_eq!(queued, 1, "only B's own fixture command");
         }
+        ("POST", "/api/servers/{id}/sources") | ("DELETE", "/api/servers/{id}/sources") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = method
+                .eq("POST")
+                .then(|| json!({ "mirrors": [{ "name": "debian" }], "mode": "replace" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found);
+            let queued: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM commands WHERE server_id = $1")
+                    .bind(b.server)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(queued, 1, "only B's own fixture command");
+        }
         ("GET", "/api/commands/{id}") => {
             let uri = format!("/api/commands/{}", b.command);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);

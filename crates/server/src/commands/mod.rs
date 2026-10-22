@@ -8,6 +8,7 @@
 
 mod dispatcher;
 mod packages;
+pub mod sources;
 mod store;
 
 use chrono::{DateTime, Utc};
