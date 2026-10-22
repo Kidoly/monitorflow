@@ -41,9 +41,9 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 ## Phase 4 — Packages and updates
 
 - [x] Mirror orchestration: aptly for apt, reposync + createrepo_c for dnf; snapshots.
-- [ ] Relay mirror sync.
+- [x] Relay mirror sync.
 - [x] Agent: rewrite package sources with backup and revert; distribute signing keys.
-- [ ] Campaigns: model, waves, maintenance windows, stop on failure.
+- [x] Campaigns: model, waves, maintenance windows, stop on failure.
 - [x] Agent: apply updates, report packages and reboot-required.
 - [ ] Web: campaign creation and progress.
 
