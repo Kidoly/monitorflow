@@ -520,6 +520,53 @@ fn relay_buffer_limits_are_checked() {
 }
 
 #[test]
+fn relay_mirror_defaults_and_overrides() {
+    let relay: RelayConfig = parse(AGENT_MIN).unwrap();
+    assert_eq!(relay.mirror, RelayMirrorConfig::default());
+    assert!(relay.mirror.enabled);
+    assert_eq!(relay.mirror_listen_addr, "0.0.0.0:7480".parse().unwrap());
+    assert_eq!(
+        relay.mirror_dir(),
+        Path::new("/var/lib/monitorflow/relay/mirrors")
+    );
+    assert_eq!(relay.mirror_upstream_url(), "http://relay:7480");
+    let v6: RelayConfig = parse(r#"upstream_url = "https://[::1]:9000""#).unwrap();
+    assert_eq!(v6.mirror_upstream_url(), "http://[::1]:7480");
+
+    let text = format!(
+        "{AGENT_MIN}\nmirror_dir = \"/srv/m\"\n[mirror]\nupstream_url = \"http://parent:8080/\"\nmirrors = [\"debian\"]\nkeep_snapshots = 1\n"
+    );
+    let vars = [
+        ("MONITORFLOW_MIRROR_MIRRORS", "debian, rocky9"),
+        ("MONITORFLOW_MIRROR_MAX_DOWNLOADS", "8"),
+        ("MONITORFLOW_MIRROR_LISTEN_ADDR", "127.0.0.1:9480"),
+    ];
+    let relay: RelayConfig = parse_with_env(&text, path(), &env(&vars)).unwrap();
+    assert_eq!(relay.mirror_dir(), Path::new("/srv/m"));
+    assert_eq!(relay.mirror_upstream_url(), "http://parent:8080");
+    assert_eq!(relay.mirror.mirrors, ["debian", "rocky9"]);
+    assert_eq!(relay.mirror.keep_snapshots, 1);
+    assert_eq!(relay.mirror.max_downloads, 8);
+    assert_eq!(relay.mirror_listen_addr, "127.0.0.1:9480".parse().unwrap());
+}
+
+#[test]
+fn relay_mirror_limits_are_checked() {
+    for (line, key) in [
+        ("upstream_url = \"ftp://x\"", "mirror.upstream_url"),
+        ("sync_interval = 59", "mirror.sync_interval"),
+        ("mirrors = [\"../x\"]", "mirror.mirrors"),
+        ("keep_snapshots = 0", "mirror.keep_snapshots"),
+        ("max_downloads = 0", "mirror.max_downloads"),
+        ("max_downloads = 65", "mirror.max_downloads"),
+        ("request_timeout = 0", "mirror.request_timeout"),
+    ] {
+        let msg = err::<RelayConfig>(&format!("{AGENT_MIN}\n[mirror]\n{line}"), &[]);
+        assert!(msg.contains(&format!("key `{key}`")), "{line}: {msg}");
+    }
+}
+
+#[test]
 fn agent_package_report_interval_defaults_and_validates() {
     let agent: AgentConfig = parse(AGENT_MIN).unwrap();
     assert_eq!(agent.packages.report_interval, 21_600);

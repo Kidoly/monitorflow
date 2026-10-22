@@ -6,6 +6,7 @@ pub mod command;
 pub mod config;
 pub mod grpc_url;
 pub mod logging;
+pub mod mirror;
 pub mod redact;
 pub mod tls;
 pub mod via;

@@ -135,6 +135,10 @@ Integrity comes from the signatures, not the transport. Setup on the server host
 3. For apt, add the upstream archive keys to the keyring aptly verifies with: `gpg --no-default-keyring --keyring <mirror_dir>/upstream-keyring.gpg --import /usr/share/keyrings/debian-archive-keyring.gpg`.
 4. `monitorflow-server mirror add …`, then `mirror sync --name <mirror>`.
 
+### Mirrors on relays
+
+Each relay keeps a copy of the upstream's published mirrors and serves it with the same layout on its own plain HTTP listener (`mirror_listen_addr`, default `0.0.0.0:7480`, over `mirror_dir`, default `<data_dir>/mirrors`), so agents behind it point their sources at the relay (ADR-0034). Every mirror listener also serves `/index.json`, built from its tree: each mirror, its family, the snapshot `current` names and, for apt, its distributions. A relay fetches the index and the snapshots over plain HTTP from `mirror.upstream_url` (by default port 7480 on the host of `upstream_url`, so a chained relay syncs from its parent), every `mirror.sync_interval` (15 minutes). It checks every file against the checksums of the signed metadata (`Release` then `Packages`, `repomd.xml` then `primary`), builds the snapshot in a hidden staging directory, reuses unchanged files of earlier snapshots through hardlinks, resumes an interrupted sync file by file, and swaps `current` atomically once the snapshot is complete. It keeps `mirror.keep_snapshots` (3) snapshots per mirror. Signatures are checked by the agents, not the relay.
+
 ### Source configuration
 
 - The agent rewrites `/etc/apt/sources.list.d/` or `/etc/yum.repos.d/` to point at its assigned mirror.
@@ -255,3 +259,4 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Relay store-and-forward | `SampleBatch` envelopes buffered on disk per origin (CRC-checked segments, size and age caps, oldest dropped first) while the upstream is down, replayed oldest first before live data with the stored Hello and `monitorflow-via` path; at-least-once for buffered data until server acks exist (ADR-0027) |
 | Package mirrors | Global, admin-managed; aptly and reposync + createrepo_c run behind a runner trait, one job per mirror under an advisory lock; snapshots are aptly publishes or hardlinked directories; served over plain HTTP at a fixed layout, integrity from the server's GPG signatures (ADR-0030) |
 | Package source configuration | Signed spec with inline keys checked by fingerprint; deb822 or `.repo` files under `/etc`; one active backup with a manifest synced before any change, revert byte for byte, automatic revert on a failed post-check; root helper via exact sudoers rules (ADR-0032) |
+| Relay mirror sync | Relays copy `current` of every mirror listed in the upstream's `/index.json` over plain HTTP, checking each file against the signed metadata's checksums, staged then swapped atomically, unchanged files hardlinked from earlier snapshots, bounded retention; served with the server's layout from shared code (ADR-0034) |
