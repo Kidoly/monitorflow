@@ -2,13 +2,13 @@
 //! `repomd.xml.asc`, lists the metadata files with their size and
 //! checksum; the `primary` one lists every package the same way.
 
-use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io::BufRead;
 use std::path::Path;
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
+use super::compress::{self, Compression};
 use super::meta::{join, Algorithm, Checksum, Entry, MetaError};
 
 pub const REPOMD: &str = "repodata/repomd.xml";
@@ -33,22 +33,17 @@ pub fn repomd(reader: impl BufRead) -> Result<Vec<Metadata>, MetaError> {
 }
 
 /// The packages the `primary` metadata at `path` lists, decompressed by
-/// its extension (`.xml`, `.gz`, `.zst`). Blocking.
+/// its extension (`.xml`, `.gz`, `.xz`, `.bz2`, `.zst`). Blocking.
 pub fn primary(file: &str, path: &Path) -> Result<Vec<Entry>, MetaError> {
-    let io = |e: io::Error| MetaError::invalid(file, e.to_string());
-    let raw = File::open(path).map_err(io)?;
-    let reader: Box<dyn BufRead> = if file.ends_with(".gz") {
-        Box::new(BufReader::new(flate2::read::MultiGzDecoder::new(raw)))
-    } else if file.ends_with(".zst") {
-        let decoder = ruzstd::decoding::StreamingDecoder::new(raw)
-            .map_err(|e| MetaError::invalid(file, e.to_string()))?;
-        Box::new(BufReader::new(decoder))
-    } else if file.ends_with(".xml") {
-        Box::new(BufReader::new(raw))
-    } else {
+    if !Compression::of(file).1.ends_with(".xml") {
         return Err(MetaError::invalid(file, "unsupported compression"));
-    };
-    let records = records(file, reader, b"package", Size::Attribute)?;
+    }
+    let records = records(
+        file,
+        compress::open(file, path)?,
+        b"package",
+        Size::Attribute,
+    )?;
     Ok(records.into_iter().map(|(_, entry)| entry).collect())
 }
 
@@ -198,8 +193,6 @@ fn entry(file: &str, r: Record) -> Result<(String, Entry), MetaError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
     use super::*;
 
     const H1: &str = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -274,17 +267,6 @@ mod tests {
         let xml = primary_xml();
         let plain = dir.path().join("p.xml");
         std::fs::write(&plain, &xml).unwrap();
-        let gz = dir.path().join("p.xml.gz");
-        let mut encoder =
-            flate2::write::GzEncoder::new(File::create(&gz).unwrap(), Default::default());
-        encoder.write_all(xml.as_bytes()).unwrap();
-        encoder.finish().unwrap();
-        let zst = dir.path().join("p.xml.zst");
-        let compressed = ruzstd::encoding::compress_to_vec(
-            xml.as_bytes(),
-            ruzstd::encoding::CompressionLevel::Fastest,
-        );
-        std::fs::write(&zst, compressed).unwrap();
 
         let expected = primary("p.xml", &plain).unwrap();
         assert_eq!(expected.len(), 2);
@@ -292,10 +274,16 @@ mod tests {
         assert_eq!(expected[0].size, 3);
         assert_eq!(expected[1].path, "Packages/b/b&c-2-1.noarch.rpm");
         assert_eq!(expected[1].checksum.algorithm, Algorithm::Sha512);
-        assert_eq!(primary("p.xml.gz", &gz).unwrap(), expected);
-        assert_eq!(primary("p.xml.zst", &zst).unwrap(), expected);
-        assert!(primary("p.xml.bz2", &plain).is_err());
+        for c in Compression::ALL {
+            let file = format!("p.xml{}", c.extension());
+            let path = dir.path().join(&file);
+            std::fs::write(&path, compress::tests::compress(c, xml.as_bytes())).unwrap();
+            assert_eq!(primary(&file, &path).unwrap(), expected, "{c:?}");
+        }
+        assert!(primary("p.xml.lz4", &plain).is_err());
+        assert!(primary("p.sqlite.xz", &dir.path().join("p.xml.xz")).is_err());
         assert!(primary("p.xml.zst", &plain).is_err(), "not zstd");
+        assert!(primary("p.xml.xz", &plain).is_err(), "not xz");
 
         let based = xml.replace(
             r#"<location href="Packages/a"#,

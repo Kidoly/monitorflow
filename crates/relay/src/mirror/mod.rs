@@ -4,11 +4,12 @@
 //! under `mirror_dir`.
 //!
 //! [`meta`] describes the files of a snapshot, read by [`apt`] and [`dnf`]
-//! from the repository metadata; [`sync`] copies a snapshot with
+//! from the repository metadata, decompressed by [`compress`]; [`sync`] copies a snapshot with
 //! [`fetch`]; [`task`] runs the sync loop and [`retention`] bounds the
 //! snapshots kept.
 
 pub mod apt;
+pub mod compress;
 pub mod dnf;
 pub mod fetch;
 pub mod meta;
