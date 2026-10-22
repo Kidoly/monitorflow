@@ -263,7 +263,7 @@ key = "{data}/tls/key.pem"
     std::fs::write(
         &relay_config,
         format!(
-            "listen_addr = \"{relay_listen}\"\nupstream_url = \"https://{grpc}\"\nenroll_url = \"https://{enroll}\"\ndata_dir = \"{}\"\nheartbeat_interval = 1\nenrollment_token = \"{relay_token}\"\nmirror_listen_addr = \"{relay_mirrors}\"\n[mirror]\nupstream_url = \"http://{mirrors}\"\n",
+            "listen_addr = \"{relay_listen}\"\nupstream_url = \"https://{grpc}\"\nenroll_url = \"https://{enroll}\"\ndata_dir = \"{}\"\nheartbeat_interval = 1\nenrollment_token = \"{relay_token}\"\nmirror_listen_addr = \"{relay_mirrors}\"\n[mirror]\nenabled = true\nupstream_url = \"http://{mirrors}\"\n",
             dir.path().join("relay").display()
         ),
     )
