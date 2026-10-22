@@ -146,6 +146,8 @@ struct Tenant {
     relay: Uuid,
     token: Uuid,
     command: Uuid,
+    /// A draft campaign of one wave with the server (ADR-0033).
+    campaign: Uuid,
 }
 
 async fn tenant(pool: &PgPool, name: &str) -> Tenant {
@@ -216,7 +218,23 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    let campaign = one("INSERT INTO campaigns (customer_id, name) VALUES ($1, $2) RETURNING id")
+        .bind(customer)
+        .bind(format!("campaign-{name}"))
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "WITH w AS (INSERT INTO campaign_waves (campaign_id, position) VALUES ($1, 0))
+         INSERT INTO campaign_targets (campaign_id, server_id, wave) VALUES ($1, $2, 0)",
+    )
+    .bind(campaign)
+    .bind(server)
+    .execute(pool)
+    .await
+    .unwrap();
     Tenant {
+        campaign,
         command,
         customer,
         site,
@@ -400,9 +418,80 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .unwrap();
             assert_eq!(queued, 1, "only B's own fixture command");
         }
+        ("POST", "/api/servers/{id}/sources") | ("DELETE", "/api/servers/{id}/sources") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = method
+                .eq("POST")
+                .then(|| json!({ "mirrors": [{ "name": "debian" }], "mode": "replace" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found);
+            let queued: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM commands WHERE server_id = $1")
+                    .bind(b.server)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(queued, 1, "only B's own fixture command");
+        }
         ("GET", "/api/commands/{id}") => {
             let uri = format!("/api/commands/{}", b.command);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("GET", "/api/campaigns") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(
+                Ctx::mentions(&body, a.campaign) && !Ctx::mentions(&body, b.campaign),
+                "{body}"
+            );
+            let uri = format!("{path}?customer_id={}", b.customer);
+            let (status, body) = ctx.call(method, &uri, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["campaigns"], json!([]));
+        }
+        ("POST", "/api/campaigns") => {
+            let body = json!({ "customer_id": b.customer, "name": "x", "site_id": b.site });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            // A's campaign cannot reach B's servers or sites.
+            for target in [
+                json!({ "server_ids": [b.server] }),
+                json!({ "site_id": b.site }),
+            ] {
+                let mut body = json!({ "customer_id": a.customer, "name": "x" });
+                body.as_object_mut()
+                    .unwrap()
+                    .extend(target.as_object().unwrap().clone());
+                let (status, answer) = ctx.call(method, path, Some(body)).await;
+                assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+            }
+            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM campaigns")
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+            assert_eq!(count, 2, "only the fixtures");
+        }
+        ("GET", "/api/campaigns/{id}") => {
+            let uri = format!("/api/campaigns/{}", b.campaign);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            let uri = format!("/api/campaigns/{}", a.campaign);
+            let (status, body) = ctx.call(method, &uri, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(
+                Ctx::mentions(&body, a.server) && !Ctx::mentions(&body, b.server),
+                "{body}"
+            );
+        }
+        ("POST", "/api/campaigns/{id}/start")
+        | ("POST", "/api/campaigns/{id}/pause")
+        | ("POST", "/api/campaigns/{id}/resume")
+        | ("POST", "/api/campaigns/{id}/stop") => {
+            let uri = path.replace("{id}", &b.campaign.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            let state: String = sqlx::query_scalar("SELECT state FROM campaigns WHERE id = $1")
+                .bind(b.campaign)
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+            assert_eq!(state, "draft");
         }
         ("GET", "/api/relays/{id}") => {
             let uri = format!("/api/relays/{}", b.relay);

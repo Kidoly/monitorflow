@@ -884,7 +884,28 @@ pub struct ServerConfig {
     /// Root of the mirrors, snapshots and signing key; defaults to
     /// `<data_dir>/mirrors`, see [`Self::mirror_dir`].
     pub mirror_dir: Option<PathBuf>,
+    /// Base URL agents reach `mirror_listen_addr` at, like
+    /// `http://mirror.example.net:7480`, written into the package sources
+    /// the server sends them (ADR-0035). Unset refuses source
+    /// configuration commands.
+    pub mirror_public_url: Option<String>,
     pub mirror: MirrorConfig,
+}
+
+/// Whether `url` can be written into agents' package sources: http or
+/// https, a host, no userinfo, query or fragment, no whitespace.
+pub fn valid_mirror_url(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let authority = rest.split('/').next().unwrap_or("");
+    !authority.is_empty()
+        && !authority.contains('@')
+        && !url.contains(['?', '#'])
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 impl Default for ServerConfig {
@@ -908,6 +929,7 @@ impl Default for ServerConfig {
             log: LogConfig::default(),
             mirror_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7480)),
             mirror_dir: None,
+            mirror_public_url: None,
             mirror: MirrorConfig::default(),
         }
     }
@@ -1012,6 +1034,7 @@ impl LoadConfig for ServerConfig {
         self.tls.apply_env(env)?;
         env.set("mirror_listen_addr", &mut self.mirror_listen_addr)?;
         env.set_opt("mirror_dir", &mut self.mirror_dir)?;
+        env.set_opt("mirror_public_url", &mut self.mirror_public_url)?;
         self.mirror.apply_env(env)?;
         self.log.apply_env(env)
     }
@@ -1019,6 +1042,14 @@ impl LoadConfig for ServerConfig {
     fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
         check.positive("heartbeat_timeout", self.heartbeat_timeout)?;
         self.mirror.validate(check)?;
+        if let Some(url) = &self.mirror_public_url {
+            if !valid_mirror_url(url) {
+                return Err(check.fail(
+                    "mirror_public_url",
+                    "must be an http or https URL without user, query or fragment",
+                ));
+            }
+        }
         if self.server_names.is_empty() || self.server_names.iter().any(String::is_empty) {
             return Err(check.fail(
                 "server_names",

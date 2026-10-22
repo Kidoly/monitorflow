@@ -10,7 +10,9 @@ use monitorflow_agent::backoff::Backoff;
 use monitorflow_agent::commands::{self, Dispatcher, DispatcherSettings, Handlers, Journal};
 use monitorflow_agent::enroll::{self, EnrollError};
 use monitorflow_agent::packages::sources::{self, SystemCheck};
-use monitorflow_agent::packages::{self, ApplyUpdatesHandler, Reports, Tools};
+use monitorflow_agent::packages::{
+    self, ApplyUpdatesHandler, Reports, SourcesAction, SourcesHandler, Tools,
+};
 use monitorflow_agent::renew::{Renewal, RenewalSettings};
 use monitorflow_agent::sensor_config::{self, Builtin, ConfigFile};
 use monitorflow_agent::sensors::Sensors;
@@ -130,8 +132,15 @@ async fn main() -> anyhow::Result<()> {
     let mut handlers = Handlers::default();
     handlers.register(
         command::APPLY_UPDATES,
-        Arc::new(ApplyUpdatesHandler::new(manager, reports, tools)),
+        Arc::new(ApplyUpdatesHandler::new(manager, reports, tools.clone())),
     );
+    for (kind, action) in [
+        (command::CONFIGURE_SOURCES, SourcesAction::Apply),
+        (command::REVERT_SOURCES, SourcesAction::Revert),
+    ] {
+        let handler = SourcesHandler::new(action, host.os_family, tools.clone());
+        handlers.register(kind, Arc::new(handler));
+    }
     let (commands_stream, commands_end) = commands::link();
     let ca_certs =
         tls::load_certs(&config.tls_paths().ca_cert).context("loading the CA certificate")?;

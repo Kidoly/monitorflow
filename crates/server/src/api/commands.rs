@@ -1,9 +1,10 @@
 //! Commands for agents (ADR-0031): queue one for a server, list a server's
 //! commands, read one with its output.
 //!
-//! Only `apply_updates` can be queued for now, by administrators of the
+//! Only `apply_updates` can be queued here, by administrators of the
 //! server's customer, the rule of ADR-0029 for decisions that change a
-//! host. Every role that reads the site reads its commands.
+//! host; source configuration has its own routes in [`super::sources`]
+//! under the same rule. Every role that reads the site reads its commands.
 
 use std::time::Duration;
 
@@ -13,7 +14,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
 use monitorflow_common::command::{self, valid_package_name};
-use monitorflow_common::proto::v1::ApplyUpdates;
+use monitorflow_common::proto::v1::{ApplyUpdates, ConfigureSources};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -97,13 +98,40 @@ pub struct ListParams {
     pub cursor: Option<String>,
 }
 
+/// The payload as JSON. Keys appear by fingerprint, not armored.
 fn parameters(kind: &str, payload: &[u8]) -> Value {
-    match (kind, ApplyUpdates::decode(payload)) {
-        (command::APPLY_UPDATES, Ok(p)) => json!({
-            "packages": p.packages,
-            "security_only": p.security_only,
-            "allow_reboot": p.allow_reboot,
-        }),
+    match kind {
+        command::APPLY_UPDATES => match ApplyUpdates::decode(payload) {
+            Ok(p) => json!({
+                "packages": p.packages,
+                "security_only": p.security_only,
+                "allow_reboot": p.allow_reboot,
+            }),
+            Err(_) => Value::Null,
+        },
+        command::CONFIGURE_SOURCES => match ConfigureSources::decode(payload) {
+            Ok(p) => {
+                let repositories: Vec<Value> = p
+                    .apt
+                    .iter()
+                    .map(|r| json!({"mirror": r.mirror, "snapshot": r.snapshot}))
+                    .chain(
+                        p.dnf
+                            .iter()
+                            .map(|r| json!({"mirror": r.mirror, "snapshot": r.snapshot})),
+                    )
+                    .collect();
+                json!({
+                    "mirror_base_url": p.mirror_base_url,
+                    "family": p.family().as_str_name(),
+                    "mode": p.mode().as_str_name(),
+                    "repositories": repositories,
+                    "key_fingerprints": p.keys.iter().map(|k| &k.fingerprint).collect::<Vec<_>>(),
+                })
+            }
+            Err(_) => Value::Null,
+        },
+        command::REVERT_SOURCES => json!({}),
         _ => Value::Null,
     }
 }
@@ -153,19 +181,25 @@ fn check(request: &CreateRequest) -> Result<(Vec<u8>, Duration), ApiError> {
             bad.escape_debug()
         )));
     }
-    let ttl = request.ttl_s.unwrap_or(DEFAULT_TTL_S);
-    if !(MIN_TTL_S..=MAX_TTL_S).contains(&ttl) {
-        return Err(ApiError::Invalid(format!(
-            "ttl_s must be between {MIN_TTL_S} and {MAX_TTL_S}"
-        )));
-    }
+    let ttl = ttl(request.ttl_s)?;
     let payload = ApplyUpdates {
         packages: request.packages.clone(),
         security_only: request.security_only,
         allow_reboot: request.allow_reboot,
     }
     .encode_to_vec();
-    Ok((payload, Duration::from_secs(ttl)))
+    Ok((payload, ttl))
+}
+
+/// `ttl_s` checked, [`DEFAULT_TTL_S`] when absent.
+pub(super) fn ttl(ttl_s: Option<u64>) -> Result<Duration, ApiError> {
+    let ttl = ttl_s.unwrap_or(DEFAULT_TTL_S);
+    if !(MIN_TTL_S..=MAX_TTL_S).contains(&ttl) {
+        return Err(ApiError::Invalid(format!(
+            "ttl_s must be between {MIN_TTL_S} and {MAX_TTL_S}"
+        )));
+    }
+    Ok(Duration::from_secs(ttl))
 }
 
 /// `POST /api/servers/{id}/commands`.
@@ -175,23 +209,65 @@ pub async fn create(
     Path(id): Path<String>,
     request: Result<Json<CreateRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<CommandDetail>), ApiError> {
-    let id = parse_id(&id)?;
-    let row: Option<(Uuid, String, bool)> = sqlx::query_as(
-        "SELECT site_id, peer_id, revoked_at IS NOT NULL FROM servers WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&state.pool)
-    .await?;
-    authorize_admin(&user, row.as_ref().map(|r| r.0))?;
-    let (_, peer_id, revoked) = row.ok_or(ApiError::NotFound)?;
+    let target = Target::find(&state, &user, &id).await?;
     let request = body(request)?;
     let (payload, ttl) = check(&request)?;
-    if revoked {
+    queue(&state, &user, &target, &request.kind, payload, ttl).await
+}
+
+/// A server a user may queue commands for.
+pub(super) struct Target {
+    pub id: Uuid,
+    pub site_id: Uuid,
+    pub peer_id: String,
+    pub os_family: String,
+    pub revoked: bool,
+}
+
+impl Target {
+    /// The server `id` once `user` administers its customer.
+    pub(super) async fn find(
+        state: &ApiState,
+        user: &CurrentUser,
+        id: &str,
+    ) -> Result<Self, ApiError> {
+        let id = parse_id(id)?;
+        let row: Option<(Uuid, String, String, bool)> = sqlx::query_as(
+            "SELECT site_id, peer_id, os_family, revoked_at IS NOT NULL
+             FROM servers WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await?;
+        authorize_admin(user, row.as_ref().map(|r| r.0))?;
+        let (site_id, peer_id, os_family, revoked) = row.ok_or(ApiError::NotFound)?;
+        Ok(Self {
+            id,
+            site_id,
+            peer_id,
+            os_family,
+            revoked,
+        })
+    }
+}
+
+/// Queues a checked command for `target`, audits it and wakes the
+/// dispatcher: 201 with the command.
+pub(super) async fn queue(
+    state: &ApiState,
+    user: &CurrentUser,
+    target: &Target,
+    kind: &str,
+    payload: Vec<u8>,
+    ttl: Duration,
+) -> Result<(StatusCode, Json<CommandDetail>), ApiError> {
+    if target.revoked {
         return Err(ApiError::Conflict("the server is revoked".into()));
     }
+    let (id, peer_id) = (target.id, &target.peer_id);
     let new = NewCommand {
         server_id: id,
-        kind: request.kind.clone(),
+        kind: kind.to_owned(),
         payload,
         ttl,
         requested_by: Some(user.id),
@@ -219,7 +295,7 @@ pub async fn create(
     .await?;
     tx.commit().await?;
     if let Some(commands) = &state.commands {
-        commands.dispatch(&peer_id);
+        commands.dispatch(peer_id);
     }
     tracing::info!(user = %user.id, command_id = %row.id, %peer_id, kind = %row.kind, "queued a command");
     Ok((StatusCode::CREATED, Json(row.into())))

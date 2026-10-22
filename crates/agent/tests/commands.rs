@@ -12,9 +12,12 @@ use monitorflow_agent::commands::{
     self, Dispatcher, DispatcherSettings, Handler, Handlers, Journal, Output,
 };
 use monitorflow_agent::os::{HostInfo, OsFamily};
+use monitorflow_agent::packages::{SourcesAction, SourcesHandler, Tools};
 use monitorflow_agent::shutdown::{self, Trigger};
 use monitorflow_agent::stream::{Agent, StreamSettings};
-use monitorflow_common::proto::v1::{Package, PackageReport};
+use monitorflow_common::command::{CONFIGURE_SOURCES, REVERT_SOURCES};
+use monitorflow_common::proto::v1::configure_sources::{Mode, SigningKey};
+use monitorflow_common::proto::v1::{ConfigureSources, Package, PackageReport, RevertSources};
 use monitorflow_common::tls;
 use monitorflow_server::commands::{
     CommandStore, Commands, DispatcherSettings as ServerDispatch, NewCommand, State,
@@ -22,6 +25,7 @@ use monitorflow_server::commands::{
 use monitorflow_server::grpc::{
     self, AgentStreamService, CloseReason, DbInventory, DbRelayPolicy, Registry,
 };
+use prost::Message;
 use sqlx::PgPool;
 use support::{agent_config, Pki};
 use tempfile::TempDir;
@@ -50,6 +54,9 @@ impl Handler for Echo {
 struct Setup {
     _pki: Pki,
     _data: TempDir,
+    /// Fake `sudo` and source helper; the helper keeps its stdin in
+    /// `stdin` and its arguments in `calls`.
+    fakes: TempDir,
     store: CommandStore,
     registry: Registry,
     server_id: Uuid,
@@ -103,6 +110,23 @@ impl Setup {
         let echo = Arc::new(Echo::default());
         let mut handlers = Handlers::default();
         handlers.register("echo", echo.clone());
+        let fakes = TempDir::new().unwrap();
+        let tools = Tools {
+            sudo: fake(&fakes, "sudo", "[ \"$1\" = -n ] || exit 1\nshift\nexec \"$@\""),
+            agent: fake(
+                &fakes,
+                "monitorflow-agent",
+                "echo \"$*\" >> calls\ncat > stdin\n[ \"$2\" = apply ] || { echo 'Error: backup refused' >&2; exit 3; }\necho changed /etc/apt/sources.list.d/monitorflow.sources",
+            ),
+            ..Tools::default()
+        };
+        for (kind, action) in [
+            (CONFIGURE_SOURCES, SourcesAction::Apply),
+            (REVERT_SOURCES, SourcesAction::Revert),
+        ] {
+            let handler = SourcesHandler::new(action, OsFamily::Debian, tools.clone());
+            handlers.register(kind, Arc::new(handler));
+        }
         let ca_certs = tls::load_certs(&config.tls_paths().ca_cert).unwrap();
         let dispatcher = Dispatcher::new(
             "web-01",
@@ -132,6 +156,7 @@ impl Setup {
         Self {
             _pki: pki,
             _data: data,
+            fakes,
             store,
             registry: upstream.registry,
             server_id,
@@ -171,6 +196,19 @@ impl Setup {
     fn runs(&self) -> usize {
         self.echo.runs.load(Ordering::SeqCst)
     }
+}
+
+/// An executable `name` in `dir` running `body` from `dir`.
+fn fake(dir: &TempDir, name: &str, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.path().join(name);
+    let script = format!(
+        "#!/bin/sh\ncd '{}' || exit 1\n{body}\n",
+        dir.path().display()
+    );
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
 }
 
 impl Drop for Setup {
@@ -214,6 +252,33 @@ db_tests! {
         let row = s.store.get(unknown).await.unwrap().unwrap();
         assert_eq!(row.error.as_deref(), Some("unknown command kind `reboot`"));
         assert_eq!(row.started_at, None);
+    }
+
+    #[sqlx::test(migrations = "../server/migrations")]
+    async fn source_commands_reach_the_helper_through_sudo(pool: PgPool) {
+        let s = Setup::start(&pool).await;
+        let spec = ConfigureSources {
+            mirror_base_url: "http://mf.example:7480".into(),
+            family: monitorflow_common::proto::v1::configure_sources::Family::Apt as i32,
+            mode: Mode::Replace as i32,
+            keys: vec![SigningKey { name: "archive".into(), armored: "KEY".into(), fingerprint: "FPR".into() }],
+            ..ConfigureSources::default()
+        }
+        .encode_to_vec();
+        let id = s.enqueue(CONFIGURE_SOURCES, &spec, Duration::from_secs(3600)).await;
+        s.wait_for(id, State::Succeeded).await;
+        let row = s.store.get(id).await.unwrap().unwrap();
+        let stdout = row.stdout.unwrap();
+        assert!(stdout.contains("sources apply") && stdout.contains("changed /etc/apt"), "{stdout}");
+        assert_eq!(std::fs::read(s.fakes.path().join("stdin")).unwrap(), spec);
+
+        let id = s.enqueue(REVERT_SOURCES, &RevertSources {}.encode_to_vec(), Duration::from_secs(3600)).await;
+        s.wait_for(id, State::Failed).await;
+        let row = s.store.get(id).await.unwrap().unwrap();
+        assert_eq!(row.exit_code, Some(3));
+        assert!(row.error.unwrap().ends_with("exited with 3: Error: backup refused"));
+        let calls = std::fs::read_to_string(s.fakes.path().join("calls")).unwrap();
+        assert_eq!(calls, "sources apply\nsources revert\n");
     }
 
     #[sqlx::test(migrations = "../server/migrations")]

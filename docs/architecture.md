@@ -157,6 +157,13 @@ Each relay keeps a copy of the upstream's published mirrors and serves it with t
 
 Updates travel as `apply_updates` commands on the agent's stream, signed with the CA key, one in flight per server; the agent keeps a journal so a command redelivered after a reconnect never runs twice, runs apt or dnf through fixed `sudo -n` command lines, and sends a `PackageReport` after each update and every 6 hours (ADR-0031).
 
+Campaigns belong to one customer and are created and driven by its administrators (ADR-0033):
+
+- Targets (servers and/or a site) are frozen at creation into ordered waves, given as explicit servers, sizes or percentages; the rest forms a last wave.
+- Maintenance windows are weekly (weekdays, local start and end, IANA time zone) or one-off ranges, evaluated by PostgreSQL; commands are queued only inside one, with a TTL capped at its end.
+- A runner task advances each campaign under its row lock every 10 s: it queues the current wave's commands, waits for their results, then moves on. A wave whose failures exceed the threshold (a count or a percentage of the wave) fails the campaign; queued commands are cancelled, sent ones finish.
+- States `draft`, `scheduled`, `running`, `paused`, `stopped`, `completed`, `failed`; start, pause, resume and stop are explicit, audited actions. All state is in the database, so a restart resumes where it was.
+
 ## 8. AI-driven remediation
 
 When a threshold is crossed, the central server can ask an external AI API to diagnose and propose shell commands. The AI layer is provider-agnostic: one trait, one adapter per provider. The Claude API is the first adapter.
@@ -259,4 +266,6 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Relay store-and-forward | `SampleBatch` envelopes buffered on disk per origin (CRC-checked segments, size and age caps, oldest dropped first) while the upstream is down, replayed oldest first before live data with the stored Hello and `monitorflow-via` path; at-least-once for buffered data until server acks exist (ADR-0027) |
 | Package mirrors | Global, admin-managed; aptly and reposync + createrepo_c run behind a runner trait, one job per mirror under an advisory lock; snapshots are aptly publishes or hardlinked directories; served over plain HTTP at a fixed layout, integrity from the server's GPG signatures (ADR-0030) |
 | Package source configuration | Signed spec with inline keys checked by fingerprint; deb822 or `.repo` files under `/etc`; one active backup with a manifest synced before any change, revert byte for byte, automatic revert on a failed post-check; root helper via exact sudoers rules (ADR-0032) |
+| Update campaigns | One customer each; targets frozen into waves at creation; weekly or one-off windows evaluated by PostgreSQL, command TTL capped at the window's end; a polling runner advances waves under the campaign's row lock and fails the campaign when a wave exceeds its count or percentage threshold (ADR-0033) |
 | Relay mirror sync | Relays copy `current` of every mirror listed in the upstream's `/index.json` over plain HTTP, checking each file against the signed metadata's checksums, staged then swapped atomically, unchanged files hardlinked from earlier snapshots, bounded retention; served with the server's layout from shared code (ADR-0034) |
+| Source configuration commands | `configure_sources` and `revert_sources` commands queued by customer administrators; spec built from the mirrors table, the archive key and `mirror_public_url`, chosen per site by one function a relay mirror URL will override; the agent runs the root helper through `sudo -n`, rules shipped in `deploy/sudoers/` (ADR-0035) |
