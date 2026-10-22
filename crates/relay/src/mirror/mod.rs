@@ -5,13 +5,16 @@
 //!
 //! [`meta`] describes the files of a snapshot, read by [`apt`] and [`dnf`]
 //! from the repository metadata; [`sync`] copies a snapshot with
-//! [`fetch`].
+//! [`fetch`]; [`task`] runs the sync loop and [`retention`] bounds the
+//! snapshots kept.
 
 pub mod apt;
 pub mod dnf;
 pub mod fetch;
 pub mod meta;
+pub mod retention;
 pub mod sync;
+pub mod task;
 
 use std::io;
 use std::path::Path;
