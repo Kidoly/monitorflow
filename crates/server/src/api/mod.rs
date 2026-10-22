@@ -44,6 +44,8 @@
 //! | POST | `/api/mirrors/{id}/snapshots` | global administrator | body `{"name"?}`; 202 [`mirrors::RunSummary`]; 409 while busy or never synced |
 //! | GET | `/api/incidents` | any role | [`incidents::IncidentList`], see below |
 //! | GET | `/api/incidents/{id}` | read | [`incidents::IncidentDetail`]: the incident and its `events` |
+//! | GET | `/api/remediation/incidents` | any role | [`remediation_incidents::IncidentList`], see below |
+//! | GET | `/api/remediation/incidents/{id}` | read | [`remediation_incidents::IncidentDetail`]: the incident, its `events` and `chain` |
 //! | GET | `/api/servers/{id}/thresholds/effective` | read | [`thresholds::Effective`]: thresholds in force, muted ones and origins |
 //! | GET | `/api/servers/{id}/thresholds` | read | [`thresholds::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
@@ -194,6 +196,22 @@
 //! servers. Unknown parameters and bad values are 400. A server or site
 //! outside the user's scope gives an empty list, an incident outside it 404.
 //!
+//! # Remediation incidents
+//!
+//! Read-only: the AI remediation loop owns them (ADR-0042).
+//! `GET /api/remediation/incidents` takes optional `state` (`open`,
+//! `running`, `awaiting_approval`, `resolved`, `escalated`, `failed`),
+//! `customer_id`, `site_id`, `server_id`, `alert_incident_id`, `limit` (1
+//! to 500, default 100) and `cursor`, newest `opened_at` first. An item is
+//! `{"id", "customer_id", "customer_name", "site_id", "site_name",
+//! "server_id", "hostname", "alert_incident_id", "metric", "instance",
+//! "state", "opened_at", "closed_at", "max_commands", "max_duration_s",
+//! "event_count"}`. The detail adds `events`: `[{"seq", "kind",
+//! "actor_kind", "actor_id", "payload", "created_at", "prev_hash",
+//! "hash"}]` by `seq`, hashes in hex, and `chain`: `{"valid", "events",
+//! "broken_at", "reason", "head_hash"}`, recomputed on every request.
+//! Scoping is as for incidents.
+//!
 //! # Commands and packages
 //!
 //! Commands for agents (ADR-0031). `POST /api/servers/{id}/commands` takes
@@ -311,6 +329,7 @@ pub mod mirrors;
 pub mod packages;
 pub mod password;
 pub mod relays;
+pub mod remediation_incidents;
 pub mod revoke;
 pub mod roles;
 pub mod sensors;
@@ -485,6 +504,14 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/mirrors/{id}/snapshots", post(mirrors::snapshot))
         .route("/api/incidents", get(incidents::list))
         .route("/api/incidents/{id}", get(incidents::detail))
+        .route(
+            "/api/remediation/incidents",
+            get(remediation_incidents::list),
+        )
+        .route(
+            "/api/remediation/incidents/{id}",
+            get(remediation_incidents::detail),
+        )
         .route("/api/servers/{id}/sensors", get(sensors::effective))
         .route("/api/servers/{id}/metrics", get(metrics::discover))
         .route("/api/metrics/query", get(metrics::query))
