@@ -44,6 +44,18 @@ describe("AuthGuard", () => {
     expect(await screen.findByRole("link", { name: "Administration" })).toHaveAttribute("href", expect.stringMatching(/^\/admin\/relays\/?$/));
   });
 
+  it("shows Campaigns to customer-wide roles only", async () => {
+    const site = { ...alice, roles: [{ role: "administrator", customer_id: null, site_id: "s1" }] };
+    stubFetch({ "GET /api/auth/me": { status: 200, body: site } });
+    const { unmount } = render(<AuthGuard>fleet page</AuthGuard>);
+    await screen.findByText("fleet page");
+    expect(screen.queryByRole("link", { name: "Campaigns" })).not.toBeInTheDocument();
+    unmount();
+    stubFetch({ "GET /api/auth/me": { status: 200, body: alice } });
+    render(<AuthGuard>fleet page</AuthGuard>);
+    expect(await screen.findByRole("link", { name: "Campaigns" })).toHaveAttribute("href", expect.stringMatching(/^\/campaigns\/?$/));
+  });
+
   it("shows an error when the server fails", async () => {
     stubFetch({ "GET /api/auth/me": { status: 500, body: { error: "internal error" } } });
     render(<AuthGuard>fleet page</AuthGuard>);

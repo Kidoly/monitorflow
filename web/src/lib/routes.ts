@@ -25,3 +25,12 @@ export const TOKENS_PATH = "/admin/tokens/";
 export function relayHref(id: string): string {
   return `/admin/relays/view/?id=${encodeURIComponent(id)}`;
 }
+
+/** Update campaigns (ADR-0033). */
+export const CAMPAIGNS_PATH = "/campaigns/";
+export const NEW_CAMPAIGN_PATH = "/campaigns/new/";
+
+/** Link to the page of the campaign `id`. */
+export function campaignHref(id: string): string {
+  return `/campaigns/view/?id=${encodeURIComponent(id)}`;
+}
