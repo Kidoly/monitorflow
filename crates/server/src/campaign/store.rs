@@ -96,7 +96,7 @@ impl CampaignRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct WindowRow {
+pub(super) struct WindowRow {
     kind: String,
     weekdays: Option<Vec<i16>>,
     start_minute: Option<i16>,
@@ -107,7 +107,7 @@ struct WindowRow {
 }
 
 impl WindowRow {
-    fn window(self) -> Option<Window> {
+    pub(super) fn window(self) -> Option<Window> {
         match self.kind.as_str() {
             "weekly" => Some(Window::Weekly {
                 weekdays: self.weekdays?.into_iter().map(|d| d as u8).collect(),

@@ -8,6 +8,7 @@
 //! ends `completed`, `stopped` or `failed`.
 
 mod model;
+pub mod query;
 mod runner;
 mod store;
 

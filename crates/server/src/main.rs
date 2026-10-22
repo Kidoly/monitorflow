@@ -356,7 +356,8 @@ async fn main() -> anyhow::Result<()> {
         ))
         .with_crl(crl.clone())
         .with_commands(commands)
-        .with_mirrors(mirrors.clone());
+        .with_mirrors(mirrors.clone())
+        .with_campaigns(campaigns.clone());
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
