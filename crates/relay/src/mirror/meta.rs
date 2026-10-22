@@ -134,6 +134,39 @@ impl Hasher {
     }
 }
 
+/// Digests of one file with the metadata's algorithm, to check it, and
+/// with SHA-256, which manifests record whatever the metadata uses.
+pub struct Digests {
+    listed: Hasher,
+    sha256: Option<Hasher>,
+}
+
+impl Digests {
+    pub fn new(algorithm: Algorithm) -> Self {
+        Self {
+            listed: algorithm.hasher(),
+            sha256: (algorithm != Algorithm::Sha256).then(|| Algorithm::Sha256.hasher()),
+        }
+    }
+
+    pub fn update(&mut self, data: &[u8]) {
+        self.listed.update(data);
+        if let Some(sha256) = &mut self.sha256 {
+            sha256.update(data);
+        }
+    }
+
+    /// The checksum with the metadata's algorithm, then the SHA-256.
+    pub fn finish(self) -> (Checksum, Checksum) {
+        let listed = self.listed.finish();
+        let sha256 = match self.sha256 {
+            Some(sha256) => sha256.finish(),
+            None => listed.clone(),
+        };
+        (listed, sha256)
+    }
+}
+
 /// One file of a snapshot, as its metadata describes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
@@ -221,5 +254,18 @@ mod tests {
         assert!(Checksum::new(Algorithm::Sha256, "abc").is_none());
         assert!(Checksum::new(Algorithm::Sha256, &"g".repeat(64)).is_none());
         assert!("md5:00".parse::<Checksum>().is_err());
+    }
+
+    #[test]
+    fn digests_always_include_sha256() {
+        let mut digests = Digests::new(Algorithm::Sha512);
+        digests.update(b"abc");
+        let (listed, sha256) = digests.finish();
+        assert_eq!(listed.algorithm, Algorithm::Sha512);
+        assert!(sha256.to_string().starts_with("sha256:ba7816bf"));
+        let mut digests = Digests::new(Algorithm::Sha256);
+        digests.update(b"abc");
+        let (listed, sha256) = digests.finish();
+        assert_eq!(listed, sha256);
     }
 }

@@ -98,14 +98,7 @@ impl Layout {
     }
 }
 
-/// Writes `path` through a temporary file and a rename.
-pub fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, contents)?;
-    std::fs::rename(tmp, path)
-}
-
-pub use monitorflow_common::mirror::swap_current;
+pub use monitorflow_common::mirror::{swap_current, write_atomically};
 
 /// Apparent size of the files under `path`, without following symlinks;
 /// hardlinked files count each time. Blocking.

@@ -92,6 +92,24 @@ pub fn swap_current(dir: &Path, snapshot: &str) -> io::Result<()> {
     std::fs::rename(&tmp, dir.join(CURRENT))
 }
 
+/// Writes `path` durably through `<path>.tmp`: the contents are synced
+/// before the rename and the directory after it, so a crash leaves the
+/// old file or the new one, never a truncated one. Blocking.
+pub fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    let tmp = path.with_extension("tmp");
+    let mut file = std::fs::File::create(&tmp)?;
+    file.write_all(contents)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&tmp, path)?;
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    std::fs::File::open(dir)?.sync_all()
+}
+
 /// The snapshot `<dir>/current` names, if it is a link to a valid name.
 /// Blocking.
 pub fn read_current(dir: &Path) -> Option<String> {
@@ -135,5 +153,17 @@ mod tests {
         std::os::unix::fs::symlink("../x", dir.path().join("bad")).unwrap();
         std::fs::rename(dir.path().join("bad"), dir.path().join(CURRENT)).unwrap();
         assert_eq!(read_current(dir.path()), None);
+    }
+
+    #[test]
+    fn files_are_replaced_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("monitorflow-archive.asc");
+        write_atomically(&path, b"one").unwrap();
+        write_atomically(&path, b"two").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"two");
+        // Nothing temporary is left.
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert!(write_atomically(&dir.path().join("missing/x"), b"x").is_err());
     }
 }

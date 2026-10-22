@@ -11,9 +11,9 @@ use std::time::{Duration, Instant};
 
 use monitorflow_common::client::shutdown::Shutdown;
 use monitorflow_common::config::RelayConfig;
-use monitorflow_common::mirror::{Family, Index, IndexMirror, Served};
+use monitorflow_common::mirror::{write_atomically, Family, Index, IndexMirror, Served};
 
-use super::fetch::{FetchError, Fetcher};
+use super::fetch::{io, FetchError, Fetcher};
 use super::retention;
 use super::sync::{Outcome, Syncer};
 
@@ -33,6 +33,8 @@ pub struct MirrorSettings {
     pub keep_snapshots: usize,
     pub max_downloads: usize,
     pub request_timeout: Duration,
+    /// Largest snapshot copied, in bytes.
+    pub max_snapshot_bytes: u64,
 }
 
 impl MirrorSettings {
@@ -46,6 +48,7 @@ impl MirrorSettings {
             keep_snapshots: mirror.keep_snapshots,
             max_downloads: mirror.max_downloads,
             request_timeout: Duration::from_secs(mirror.request_timeout),
+            max_snapshot_bytes: mirror.max_snapshot_bytes,
         }
     }
 }
@@ -74,7 +77,8 @@ impl MirrorTask {
             fetcher.clone(),
             settings.root.clone(),
             settings.max_downloads,
-        );
+        )
+        .with_max_snapshot_bytes(settings.max_snapshot_bytes);
         Ok(Self {
             served: Served::under(&settings.root),
             settings,
@@ -149,16 +153,17 @@ impl MirrorTask {
         if tokio::fs::read(&path).await.ok().as_deref() == Some(key.as_slice()) {
             return Ok(());
         }
-        let tmp = path.with_extension("tmp");
-        let io = |source| FetchError::Io {
-            path: path.clone(),
-            source,
-        };
-        if let Some(keys) = path.parent() {
-            tokio::fs::create_dir_all(keys).await.map_err(io)?;
-        }
-        tokio::fs::write(&tmp, key).await.map_err(io)?;
-        tokio::fs::rename(&tmp, &path).await.map_err(io)?;
+        let written = path.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Some(keys) = written.parent() {
+                std::fs::create_dir_all(keys)?;
+            }
+            write_atomically(&written, &key)
+        })
+        .await
+        .map_err(std::io::Error::other)
+        .and_then(|r| r)
+        .map_err(io(&path))?;
         tracing::info!(path = %path.display(), "mirror signing key updated");
         Ok(())
     }

@@ -58,3 +58,11 @@ Paths from the metadata must be relative, without `..`, empty or dot-prefixed se
 - A campaign pinned to a snapshot the relay never saw as `current` finds nothing on the relay. The index could list pinned snapshots once campaigns exist; until then, keep `current` on the pinned snapshot during a campaign.
 - Not covered yet: dnf group and module metadata beyond what `repomd.xml` lists (copied like any listed file, but not parsed), apt `by-hash` paths, range requests to resume a single large file, and signature checks on the relay with a key pinned over mTLS.
 - The status of the sync is in the relay's logs only; reporting it to the server through the relay's own stream is a follow-up.
+
+## Amendment (2026-10-22)
+
+Review fixes, the decision above unchanged:
+
+- A sync renames the staging directory of another snapshot, left by a failed sync, to its own instead of starting a new one, and removes any other: a mirror has at most one staging directory, and consecutive snapshots share most files, which are re-hashed before being kept. Files the new snapshot does not list are removed before publishing.
+- `mirror.max_snapshot_bytes` (default 256 GiB) bounds the total size the metadata of one snapshot lists. The relay does not check signatures, so a tampered or broken listing could otherwise fill the disk; a larger snapshot fails the sync before its files are fetched and leaves `current` as it was.
+- The SHA-256 in `.manifest` is computed while downloading, whatever algorithm the metadata uses; when it is another one, the manifest also records the metadata's checksum (`listed`). Manifests written earlier, holding the metadata's checksum only, stay readable: a file whose recorded checksums do not include the algorithm needed is hashed locally rather than fetched again.

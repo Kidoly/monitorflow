@@ -222,3 +222,155 @@ async fn an_interrupted_copy_resumes() {
     assert!(!apt.join("s1/pool/main/p/.p_0_all.deb.part").exists());
     assert!(!staging.exists());
 }
+
+/// Names of the staging directories of a mirror.
+fn staging_dirs(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.starts_with(".sync-"))
+        .collect();
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn failed_syncs_leave_one_staging_directory() {
+    let up = Upstream::start().await;
+    let packages: Vec<(String, Vec<u8>)> = (0..6)
+        .map(|i| (format!("p/p_{i}_all.deb"), vec![b'0' + i; 100]))
+        .collect();
+    let refs = |extra: &'static str| {
+        let mut refs: Vec<(&str, &[u8])> = packages
+            .iter()
+            .map(|(n, c)| (n.as_str(), c.as_slice()))
+            .collect();
+        refs.push((extra, extra.as_bytes()));
+        refs
+    };
+    let relay = tempfile::tempdir().unwrap();
+    let apt = relay.path().join("apt/debian");
+    let sync = syncer(&up, relay.path());
+    let fetcher = up.fetcher();
+
+    // Every sync stops at the package the upstream lost, while current
+    // moves s1 -> s2 -> s3 upstream.
+    for (snapshot, extra) in [
+        ("s1", "x/x_1_all.deb"),
+        ("s2", "y/y_1_all.deb"),
+        ("s3", "z/z_1_all.deb"),
+    ] {
+        up.apt("debian", snapshot, &refs(extra));
+        let name = extra.rsplit('/').next().unwrap();
+        let lost = up
+            .snapshot_dir(Family::Apt, "debian", snapshot)
+            .join(format!("pool/main/{}/{name}", &extra[..1]));
+        std::fs::remove_file(&lost).unwrap();
+        let error = sync
+            .sync(&entry(&fetcher, "debian").await)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, SyncError::Missing(_)), "{error}");
+        assert_eq!(staging_dirs(&apt), [format!(".sync-{snapshot}")]);
+        std::fs::write(&lost, extra).unwrap();
+    }
+    // A leftover of an older relay with several staging directories.
+    std::fs::create_dir_all(apt.join(".sync-s0/pool")).unwrap();
+
+    // The last one completes from the adopted staging directory, and
+    // keeps nothing of the earlier snapshots it did not list.
+    let Outcome::Synced(stats) = sync.sync(&entry(&fetcher, "debian").await).await.unwrap() else {
+        panic!("expected a copy");
+    };
+    assert!(stats.kept >= 1, "{stats:?}");
+    assert_eq!(stats.kept + stats.downloaded, 3 + 1 + 7, "{stats:?}");
+    assert!(staging_dirs(&apt).is_empty());
+    assert_eq!(read_current(&apt).as_deref(), Some("s3"));
+    let s3 = apt.join("s3/pool/main");
+    assert!(s3.join("z/z_1_all.deb").is_file());
+    assert!(!s3.join("x").exists() && !s3.join("y").exists());
+}
+
+#[tokio::test]
+async fn a_snapshot_over_the_size_bound_fails_before_fetching() {
+    let up = Upstream::start().await;
+    up.apt("debian", "s1", &[("a/a_1_all.deb", &[b'a'; 100])]);
+    let relay = tempfile::tempdir().unwrap();
+    let sync = syncer(&up, relay.path()).with_max_snapshot_bytes(2000);
+    let fetcher = up.fetcher();
+    sync.sync(&entry(&fetcher, "debian").await).await.unwrap();
+
+    // s2 lists 3000 bytes of packages: nothing of them is fetched.
+    up.apt(
+        "debian",
+        "s2",
+        &[
+            ("a/a_1_all.deb", &[b'a'; 100]),
+            ("b/b_1_all.deb", &[b'b'; 3000]),
+        ],
+    );
+    let error = sync
+        .sync(&entry(&fetcher, "debian").await)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, SyncError::TooLarge { limit: 2000 }),
+        "{error}"
+    );
+    let apt = relay.path().join("apt/debian");
+    assert_eq!(read_current(&apt).as_deref(), Some("s1"));
+    assert!(!apt.join("s2").exists());
+    assert!(!apt.join(".sync-s2/pool").exists());
+}
+
+#[tokio::test]
+async fn manifests_hold_sha256_whatever_the_metadata_uses() {
+    let up = Upstream::start().await;
+    let packages: [(&str, &[u8]); 2] = [("a/a-1.rpm", b"rpm-a"), ("b/b-1.rpm", b"rpm-b")];
+    up.dnf_with("sha512", "rocky", "s1", &packages);
+    let relay = tempfile::tempdir().unwrap();
+    let sync = syncer(&up, relay.path());
+    let fetcher = up.fetcher();
+    sync.sync(&entry(&fetcher, "rocky").await).await.unwrap();
+
+    let dnf = relay.path().join("dnf/rocky");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dnf.join("s1").join(MANIFEST)).unwrap()).unwrap();
+    let files = manifest["files"].as_array().unwrap();
+    assert_eq!(files.len(), 5);
+    for file in files {
+        let path = file["path"].as_str().unwrap();
+        let sha256 = mirror_fixture::sha256(&std::fs::read(dnf.join("s1").join(path)).unwrap());
+        assert_eq!(file["checksum"], format!("sha256:{sha256}"), "{path}");
+        let signed = path.starts_with("repodata/repomd.xml");
+        assert_eq!(file.get("listed").is_none(), signed, "{path}");
+    }
+
+    // The repository moves to SHA-256: the packages are linked, not
+    // fetched; the metadata changed.
+    up.dnf_with("sha256", "rocky", "s2", &packages);
+    let Outcome::Synced(stats) = sync.sync(&entry(&fetcher, "rocky").await).await.unwrap() else {
+        panic!("expected a copy");
+    };
+    assert_eq!((stats.downloaded, stats.linked), (3, 2), "{stats:?}");
+
+    // A manifest from before this change, with the SHA-512 of each file
+    // only, still lets the files be linked, after a local hash: the
+    // packages and the unchanged primary metadata.
+    let path = dnf.join("s2").join(MANIFEST);
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for file in manifest["files"].as_array_mut().unwrap() {
+        let content = std::fs::read(dnf.join("s2").join(file["path"].as_str().unwrap())).unwrap();
+        file["checksum"] = format!("sha512:{}", mirror_fixture::digest("sha512", &content)).into();
+    }
+    std::fs::write(&path, manifest.to_string()).unwrap();
+    std::fs::remove_dir_all(dnf.join("s1")).unwrap();
+    up.dnf_with("sha256", "rocky", "s3", &packages);
+    let Outcome::Synced(stats) = sync.sync(&entry(&fetcher, "rocky").await).await.unwrap() else {
+        panic!("expected a copy");
+    };
+    assert_eq!((stats.downloaded, stats.linked), (2, 3), "{stats:?}");
+    let a = "Packages/a/a-1.rpm";
+    assert_eq!(ino(&dnf.join("s2").join(a)), ino(&dnf.join("s3").join(a)));
+}

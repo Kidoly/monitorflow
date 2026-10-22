@@ -586,10 +586,28 @@ fn relay_mirror_limits_are_checked() {
         ("max_downloads = 0", "mirror.max_downloads"),
         ("max_downloads = 65", "mirror.max_downloads"),
         ("request_timeout = 0", "mirror.request_timeout"),
+        ("max_snapshot_bytes = 0", "mirror.max_snapshot_bytes"),
     ] {
         let msg = err::<RelayConfig>(&format!("{AGENT_MIN}\n[mirror]\n{line}"), &[]);
         assert!(msg.contains(&format!("key `{key}`")), "{line}: {msg}");
     }
+}
+
+#[test]
+fn relay_mirror_snapshot_size_bound() {
+    let relay: RelayConfig = parse(AGENT_MIN).unwrap();
+    assert_eq!(relay.mirror.max_snapshot_bytes, 256 << 30);
+    let text = format!("{AGENT_MIN}\n[mirror]\nmax_snapshot_bytes = 1000\n");
+    assert_eq!(
+        parse::<RelayConfig>(&text)
+            .unwrap()
+            .mirror
+            .max_snapshot_bytes,
+        1000
+    );
+    let vars = [("MONITORFLOW_MIRROR_MAX_SNAPSHOT_BYTES", "2000")];
+    let relay: RelayConfig = parse_with_env(&text, path(), &env(&vars)).unwrap();
+    assert_eq!(relay.mirror.max_snapshot_bytes, 2000);
 }
 
 #[test]

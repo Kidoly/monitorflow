@@ -12,7 +12,17 @@ use monitorflow_relay::mirror::fetch::Fetcher;
 use tokio::net::TcpListener;
 
 pub fn sha256(bytes: &[u8]) -> String {
-    ring::digest::digest(&ring::digest::SHA256, bytes)
+    digest("sha256", bytes)
+}
+
+/// Lowercase hex digest of `bytes` with `algorithm`, `sha256` or `sha512`.
+pub fn digest(algorithm: &str, bytes: &[u8]) -> String {
+    let algorithm = match algorithm {
+        "sha256" => &ring::digest::SHA256,
+        "sha512" => &ring::digest::SHA512,
+        other => panic!("unknown algorithm {other}"),
+    };
+    ring::digest::digest(algorithm, bytes)
         .as_ref()
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -94,6 +104,17 @@ impl Upstream {
     /// A dnf snapshot with `packages` (path under `Packages/`, content),
     /// gzip primary metadata, published as `current`.
     pub fn dnf(&self, mirror: &str, snapshot: &str, packages: &[(&str, &[u8])]) {
+        self.dnf_with("sha256", mirror, snapshot, packages)
+    }
+
+    /// [`Self::dnf`] with every checksum computed with `algorithm`.
+    pub fn dnf_with(
+        &self,
+        algorithm: &str,
+        mirror: &str,
+        snapshot: &str,
+        packages: &[(&str, &[u8])],
+    ) {
         let root = self.snapshot_dir(Family::Dnf, mirror, snapshot);
         let mut primary = String::from(
             r#"<?xml version="1.0"?><metadata xmlns="http://linux.duke.edu/metadata/common">"#,
@@ -102,8 +123,8 @@ impl Upstream {
             let path = format!("Packages/{name}");
             write(&root.join(&path), content);
             primary.push_str(&format!(
-                r#"<package type="rpm"><checksum type="sha256" pkgid="YES">{}</checksum><size package="{}"/><location href="{path}"/></package>"#,
-                sha256(content),
+                r#"<package type="rpm"><checksum type="{algorithm}" pkgid="YES">{}</checksum><size package="{}"/><location href="{path}"/></package>"#,
+                digest(algorithm, content),
                 content.len()
             ));
         }
@@ -114,8 +135,8 @@ impl Upstream {
         let primary_path = format!("repodata/{}-primary.xml.gz", sha256(&gz));
         write(&root.join(&primary_path), &gz);
         let repomd = format!(
-            r#"<?xml version="1.0"?><repomd><data type="primary"><checksum type="sha256">{}</checksum><location href="{primary_path}"/><size>{}</size></data></repomd>"#,
-            sha256(&gz),
+            r#"<?xml version="1.0"?><repomd><data type="primary"><checksum type="{algorithm}">{}</checksum><location href="{primary_path}"/><size>{}</size></data></repomd>"#,
+            digest(algorithm, &gz),
             gz.len()
         );
         write(&root.join("repodata/repomd.xml"), repomd.as_bytes());

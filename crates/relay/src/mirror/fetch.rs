@@ -11,7 +11,7 @@ use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use reqwest::StatusCode;
 use tokio::io::AsyncWriteExt;
 
-use super::meta::{Algorithm, Checksum, Entry};
+use super::meta::{Algorithm, Checksum, Digests, Entry};
 
 /// Characters kept as they are in a URL path segment.
 const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
@@ -40,16 +40,22 @@ pub enum FetchError {
         expected: String,
         got: String,
     },
-    #[error("{}: {source}", path.display())]
-    Io {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+    #[error(transparent)]
+    Io(#[from] IoError),
 }
 
-fn io(path: &Path) -> impl FnOnce(std::io::Error) -> FetchError + '_ {
-    move |source| FetchError::Io {
+/// A file system error and the path it happened on.
+#[derive(Debug, thiserror::Error)]
+#[error("{}: {source}", path.display())]
+pub struct IoError {
+    pub path: PathBuf,
+    #[source]
+    pub source: std::io::Error,
+}
+
+/// Maps an I/O error on `path` to an [`IoError`], for `map_err`.
+pub fn io(path: &Path) -> impl FnOnce(std::io::Error) -> IoError + '_ {
+    move |source| IoError {
         path: path.to_owned(),
         source,
     }
@@ -151,8 +157,9 @@ impl Fetcher {
     }
 
     /// Downloads `path` to `dest` through `.<name>.part`, checked against
-    /// `expect`, and makes it read-only. Returns the size and checksum, or
-    /// `None` for 404 (and leaves `dest` alone).
+    /// `expect`, and makes it read-only. Returns the size and SHA-256
+    /// (whatever algorithm `expect` uses), or `None` for 404 (and leaves
+    /// `dest` alone).
     pub async fn file(
         &self,
         path: &str,
@@ -162,9 +169,9 @@ impl Fetcher {
         let Some((url, mut response)) = self.get(path).await? else {
             return Ok(None);
         };
-        let (limit, mut hasher) = match expect {
-            Expect::Entry(e) => (e.size, e.checksum.algorithm.hasher()),
-            Expect::AtMost(limit) => (limit, Algorithm::Sha256.hasher()),
+        let (limit, mut digests) = match expect {
+            Expect::Entry(e) => (e.size, Digests::new(e.checksum.algorithm)),
+            Expect::AtMost(limit) => (limit, Digests::new(Algorithm::Sha256)),
         };
         let part = part_path(dest);
         if let Some(parent) = dest.parent() {
@@ -179,26 +186,27 @@ impl Fetcher {
             if size > limit {
                 return Err(FetchError::TooLarge { url, limit });
             }
-            hasher.update(&chunk);
+            digests.update(&chunk);
             file.write_all(&chunk).await.map_err(io(&part))?;
         }
         file.sync_all().await.map_err(io(&part))?;
         drop(file);
-        let got = Entry {
-            path: path.to_owned(),
-            size,
-            checksum: hasher.finish(),
-        };
+        let (listed, sha256) = digests.finish();
         if let Expect::Entry(e) = expect {
-            if (got.size, &got.checksum) != (e.size, &e.checksum) {
+            if (size, &listed) != (e.size, &e.checksum) {
                 let _ = tokio::fs::remove_file(&part).await;
                 return Err(FetchError::Mismatch {
                     url,
                     expected: format!("{} bytes {}", e.size, e.checksum),
-                    got: format!("{} bytes {}", got.size, got.checksum),
+                    got: format!("{size} bytes {listed}"),
                 });
             }
         }
+        let got = Entry {
+            path: path.to_owned(),
+            size,
+            checksum: sha256,
+        };
         tokio::fs::set_permissions(&part, std::fs::Permissions::from_mode(0o444))
             .await
             .map_err(io(&part))?;
@@ -214,20 +222,22 @@ pub fn part_path(dest: &Path) -> PathBuf {
     dest.with_file_name(format!(".{name}.part"))
 }
 
-/// Size and checksum of the file at `path` with `algorithm`. Blocking.
-pub fn hash_file(path: &Path, algorithm: Algorithm) -> std::io::Result<(u64, Checksum)> {
+/// Size of the file at `path`, its checksum with `algorithm` and its
+/// SHA-256. Blocking.
+pub fn hash_file(path: &Path, algorithm: Algorithm) -> std::io::Result<(u64, Checksum, Checksum)> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)?;
-    let mut hasher = algorithm.hasher();
+    let mut digests = Digests::new(algorithm);
     let mut buf = vec![0; 64 * 1024];
     let mut size = 0;
     loop {
         let n = file.read(&mut buf)?;
         if n == 0 {
-            return Ok((size, hasher.finish()));
+            let (listed, sha256) = digests.finish();
+            return Ok((size, listed, sha256));
         }
         size += n as u64;
-        hasher.update(&buf[..n]);
+        digests.update(&buf[..n]);
     }
 }
 
@@ -254,8 +264,12 @@ mod tests {
         let path = dir.path().join("a.deb");
         assert_eq!(part_path(&path), dir.path().join(".a.deb.part"));
         std::fs::write(&path, "abc").unwrap();
-        let (size, sum) = hash_file(&path, Algorithm::Sha256).unwrap();
+        let (size, sum, sha256) = hash_file(&path, Algorithm::Sha256).unwrap();
         assert_eq!(size, 3);
         assert!(sum.to_string().starts_with("sha256:ba7816bf"));
+        assert_eq!(sum, sha256);
+        let (_, sum, sha256) = hash_file(&path, Algorithm::Sha512).unwrap();
+        assert!(sum.to_string().starts_with("sha512:ddaf35a1"));
+        assert!(sha256.to_string().starts_with("sha256:ba7816bf"));
     }
 }
