@@ -1,25 +1,17 @@
 # MonitorFlow agent: the privileged commands it runs through `sudo -n`
-# (ADR-0031, ADR-0032, ADR-0035). Install as /etc/sudoers.d/monitorflow-agent,
-# owner root, mode 0440, and check with `visudo -cf`. See docs/deploy-agent.md.
+# (ADR-0031, ADR-0032, ADR-0035, ADR-0036). Install as
+# /etc/sudoers.d/monitorflow-agent, owner root, mode 0440, and check with
+# `visudo -cf`. See docs/deploy-agent.md.
 #
-# Exact command lines, no wildcards: sudo refuses any other argument. Without
-# a wildcard rule, updates of named packages (and security-only updates on
-# apt, which name their packages) fail with "a password is required"; full
-# upgrades and dnf's --security work. Add such a rule only knowingly, see
-# ADR-0031. In arguments, `:` and `=` are escaped as sudoers requires.
+# Exact command lines, no wildcards: sudo refuses any other argument.
+# Updates of every kind (all, security only, named packages) go through
+# the agent's own helper, which reads the packages to update on stdin and
+# checks them before running apt or dnf (ADR-0036).
 
-Cmnd_Alias MONITORFLOW_APT = \
-    /usr/bin/apt-get -q update, \
-    /usr/bin/apt-get -q -y -o Dpkg\:\:Options\:\:\=--force-confdef -o Dpkg\:\:Options\:\:\=--force-confold upgrade
-Cmnd_Alias MONITORFLOW_DNF = \
-    /usr/bin/dnf -q -y upgrade, \
-    /usr/bin/dnf -q -y upgrade --security
+Cmnd_Alias MONITORFLOW_PACKAGES = /usr/bin/monitorflow-agent packages update
 Cmnd_Alias MONITORFLOW_REBOOT = /usr/sbin/shutdown -r +1
 Cmnd_Alias MONITORFLOW_SOURCES = \
     /usr/bin/monitorflow-agent sources apply, \
     /usr/bin/monitorflow-agent sources revert
 
-# The agent sets DEBIAN_FRONTEND=noninteractive on the apt-get command line.
-Defaults!MONITORFLOW_APT env_keep += "DEBIAN_FRONTEND"
-
-monitorflow ALL=(root) NOPASSWD: MONITORFLOW_APT, MONITORFLOW_DNF, MONITORFLOW_REBOOT, MONITORFLOW_SOURCES
+monitorflow ALL=(root) NOPASSWD: MONITORFLOW_PACKAGES, MONITORFLOW_REBOOT, MONITORFLOW_SOURCES

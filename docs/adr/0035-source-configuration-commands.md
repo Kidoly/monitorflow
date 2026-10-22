@@ -1,7 +1,7 @@
 # ADR-0035: Source configuration commands
 
 Date: 2026-10-24
-Status: accepted
+Status: accepted; sudoers rules for updates amended by ADR-0036
 
 ## Context
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Me, RoleGrant } from "./api";
-import { administersCustomer, isAdministrator } from "./me";
+import { administersCustomer, isAdministrator, readsCustomers } from "./me";
 
 const me = (...roles: RoleGrant[]): Me => ({ id: "u1", username: "alice", roles });
 
@@ -23,5 +23,11 @@ describe("administration rights", () => {
     const global = me({ role: "administrator", customer_id: null, site_id: null });
     expect(administersCustomer(global, "c2")).toBe(true);
     expect(administersCustomer(me({ role: "operator", site_id: null }), "c1")).toBe(false);
+  });
+
+  it("needs a customer-wide role to read campaigns", () => {
+    expect(readsCustomers(null)).toBe(false);
+    expect(readsCustomers(me({ role: "administrator", site_id: "s1" }))).toBe(false);
+    expect(readsCustomers(me({ role: "viewer", customer_id: "c1", site_id: null }))).toBe(true);
   });
 });

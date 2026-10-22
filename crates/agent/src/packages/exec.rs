@@ -1,7 +1,7 @@
-//! Runs package tools: privileged ones through `sudo -n` with exactly the
-//! arguments listed in ADR-0031 and ADR-0032, so sudoers rules can name
-//! them (`deploy/sudoers/monitorflow-agent`), and reads as the agent's own
-//! user.
+//! Runs package tools: privileged ones through `sudo -n` with the fixed
+//! command lines of ADR-0031, ADR-0032 and ADR-0036, so sudoers rules can
+//! name them (`deploy/sudoers/monitorflow-agent`), reads as the agent's own
+//! user, and the package managers as the root helper itself.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -22,7 +22,8 @@ pub struct Tools {
     pub dnf: PathBuf,
     pub rpm: PathBuf,
     pub shutdown: PathBuf,
-    /// This binary, as sudoers names it, for the `sources` root helper.
+    /// This binary, as sudoers names it, for the `sources` and `packages`
+    /// root helpers.
     pub agent: PathBuf,
     /// Exists when a Debian-family host needs a reboot.
     pub reboot_required_file: PathBuf,
@@ -89,6 +90,19 @@ impl Tools {
         argv.extend(args.iter().map(|a| a.to_string()));
         let line = format!("sudo {}", argv.join(" "));
         run(&self.sudo, &argv, &[], line, None, input).await
+    }
+
+    /// Runs `program args` as the current user with `env` added: the root
+    /// helper running a package manager. No timeout, as for
+    /// [`Self::privileged`].
+    pub async fn direct(
+        &self,
+        env: &[(&str, &str)],
+        program: &Path,
+        args: &[String],
+    ) -> Result<Run, PackageError> {
+        let line = format!("{} {}", program.display(), args.join(" "));
+        run(program, args, env, line, None, None).await
     }
 
     /// Runs `program args` as the agent's user, in the C locale, within

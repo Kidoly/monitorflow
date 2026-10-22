@@ -1,5 +1,5 @@
-//! The `apply_updates` command: refresh, upgrade, report, and reboot when
-//! allowed and needed.
+//! The `apply_updates` command: the root helper refreshes and upgrades
+//! (ADR-0036), then the agent reports, and reboots when allowed and needed.
 
 use std::sync::Arc;
 
@@ -7,7 +7,8 @@ use monitorflow_common::proto::v1::ApplyUpdates;
 use prost::Message;
 
 use super::exec::{Run, Tools};
-use super::{valid_name, PackageError, PackageManager, Reports};
+use super::update::UpdateSpec;
+use super::{PackageError, PackageManager, Reports};
 use crate::commands::{Handler, Output};
 
 pub struct ApplyUpdatesHandler {
@@ -17,7 +18,8 @@ pub struct ApplyUpdatesHandler {
 }
 
 impl ApplyUpdatesHandler {
-    /// `tools` gives `sudo` and `shutdown` for the reboot.
+    /// `tools` gives `sudo`, the agent binary for the helper and
+    /// `shutdown` for the reboot.
     pub fn new(manager: Arc<dyn PackageManager>, reports: Reports, tools: Tools) -> Self {
         Self {
             manager,
@@ -26,33 +28,40 @@ impl ApplyUpdatesHandler {
         }
     }
 
-    /// The steps up to the reboot. Every run is appended to `output`;
-    /// the first failing one ends the command.
-    async fn apply(&self, request: &ApplyUpdates, output: &mut Output) -> Result<(), PackageError> {
-        if let Some(run) = self.manager.refresh().await? {
-            step(output, run)?;
-        }
-        match self.manager.upgrade(request).await? {
-            Some(run) => step(output, run)?,
-            None => output.stdout.extend_from_slice(b"nothing to upgrade\n"),
-        }
-        Ok(())
+    /// The steps up to the reboot: `sudo -n /usr/bin/monitorflow-agent
+    /// packages update` with `spec` on stdin. The helper prints what it
+    /// ran; when it fails, its last stderr line is the error.
+    async fn apply(&self, spec: &UpdateSpec, output: &mut Output) -> Result<(), PackageError> {
+        let run = self
+            .tools
+            .privileged_with_input(
+                &[],
+                &self.tools.agent,
+                &["packages", "update"],
+                Some(&spec.to_json()),
+            )
+            .await?;
+        tracing::info!(exit_code = run.code, "packages helper finished");
+        let error = (!run.success()).then(|| PackageError::helper(&run));
+        append(output, run);
+        error.map_or(Ok(()), Err)
     }
 }
 
 /// Appends `run` to the command's output; a failure becomes the error.
 fn step(output: &mut Output, run: Run) -> Result<(), PackageError> {
+    let error = (!run.success()).then(|| PackageError::failed(&run));
+    append(output, run);
+    error.map_or(Ok(()), Err)
+}
+
+fn append(output: &mut Output, run: Run) {
     output
         .stdout
         .extend_from_slice(format!("$ {}\n", run.line).as_bytes());
     output.stdout.extend_from_slice(&run.stdout);
     output.stderr.extend_from_slice(&run.stderr);
     output.exit_code = run.code;
-    if run.success() {
-        Ok(())
-    } else {
-        Err(PackageError::failed(&run))
-    }
 }
 
 #[async_trait::async_trait]
@@ -61,11 +70,12 @@ impl Handler for ApplyUpdatesHandler {
         let Ok(request) = ApplyUpdates::decode(payload) else {
             return Output::rejected("invalid ApplyUpdates payload");
         };
-        if let Some(bad) = request.packages.iter().find(|p| !valid_name(p)) {
-            return Output::rejected(format!("invalid package name `{}`", bad.escape_debug()));
+        let spec = UpdateSpec::from_request(&request);
+        if let Err(error) = spec.validate() {
+            return Output::rejected(error.to_string());
         }
         let mut output = Output::default();
-        let result = self.apply(&request, &mut output).await;
+        let result = self.apply(&spec, &mut output).await;
         // Whatever happened, the server gets the state of the host.
         self.reports.collect().await;
         if let Err(error) = result {
