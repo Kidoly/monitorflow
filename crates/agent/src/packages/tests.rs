@@ -1,5 +1,6 @@
-//! apt, dnf and the `apply_updates` handler against fake binaries: a fake
-//! `sudo` logs the exact command lines sudoers rules must allow.
+//! apt, dnf, the update helper and the `apply_updates` handler against
+//! fake binaries: a fake `sudo` logs the exact command lines sudoers rules
+//! must allow, the others the command lines the helper runs as root.
 
 use std::path::{Path, PathBuf};
 
@@ -8,6 +9,7 @@ use monitorflow_sensors::testing::write_executable;
 use prost::Message;
 use tempfile::TempDir;
 
+use super::update::{self, UpdateKind, UpdateSpec};
 use super::*;
 use crate::commands::{Handler, Output};
 
@@ -68,6 +70,20 @@ impl Fakes {
             ),
         );
         fake("shutdown", "exit 0".into());
+        // The packages helper: saves its stdin, exits with `helper-exit`.
+        let helper_exit = dir.path().join("helper-exit");
+        fake(
+            "monitorflow-agent",
+            format!(
+                "cat > '{}'
+code=$(cat '{}' 2>/dev/null || echo 0)
+echo '$ /usr/bin/apt-get -q update'
+                 [ \"$code\" = 0 ] || {{ echo 'E: broken' >&2; echo 'Error: `apt-get upgrade` exited with '\"$code\"': E: broken' >&2; }}
+exit \"$code\"",
+                dir.path().join("helper-stdin").display(),
+                helper_exit.display()
+            ),
+        );
         Self { dir }
     }
 
@@ -90,13 +106,27 @@ impl Fakes {
 
     /// The lines `sudo` was called with, the fake directory shown as `@`.
     fn sudo_calls(&self) -> Vec<String> {
+        self.calls_of("sudo")
+    }
+
+    /// The arguments `name` was called with, the fake directory shown as `@`.
+    fn calls_of(&self, name: &str) -> Vec<String> {
         let calls = std::fs::read_to_string(self.path("calls")).unwrap_or_default();
         let dir = format!("{}/", self.dir.path().display());
+        let prefix = format!("{name} ");
         calls
             .lines()
-            .filter_map(|l| l.strip_prefix("sudo "))
+            .filter_map(|l| l.strip_prefix(&prefix))
             .map(|l| l.replace(&dir, "@"))
             .collect()
+    }
+
+    fn helper_exits(&self, code: i32) {
+        std::fs::write(self.path("helper-exit"), code.to_string()).unwrap();
+    }
+
+    fn helper_stdin(&self) -> String {
+        std::fs::read_to_string(self.path("helper-stdin")).unwrap()
     }
 }
 
@@ -121,24 +151,19 @@ fn payload(packages: &[&str], security_only: bool, allow_reboot: bool) -> Vec<u8
     .encode_to_vec()
 }
 
-const APT_UPGRADE: &str = "-n DEBIAN_FRONTEND=noninteractive @apt-get -q -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold";
+const HELPER: &str = "-n @monitorflow-agent packages update";
 
 #[tokio::test]
-async fn apt_upgrades_everything_then_reports() {
+async fn updates_go_to_the_helper_then_report() {
     let fakes = Fakes::new(0, 0, 0);
     let (handler, report) = apply_handler(&fakes, OsFamily::Debian);
     let output = handler.run(&payload(&[], false, false)).await;
     assert_eq!((output.exit_code, &output.error), (0, &None), "{output:?}");
-    assert_eq!(
-        fakes.sudo_calls(),
-        [
-            "-n @apt-get -q update".to_owned(),
-            format!("{APT_UPGRADE} upgrade")
-        ]
-    );
+    assert_eq!(fakes.sudo_calls(), [HELPER]);
+    assert_eq!(fakes.helper_stdin(), r#"{"kind":"all"}"#);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("$ sudo -n") && stdout.contains("apt -q -y"),
+        stdout.starts_with("$ sudo -n ") && stdout.contains("$ /usr/bin/apt-get -q update"),
         "{stdout}"
     );
 
@@ -161,60 +186,194 @@ async fn apt_upgrades_everything_then_reports() {
 }
 
 #[tokio::test]
-async fn apt_security_only_upgrades_security_candidates_and_reboots_when_allowed() {
+async fn named_and_security_updates_send_their_spec_and_reboot_when_allowed() {
     let fakes = Fakes::new(0, 0, 0);
     std::fs::write(fakes.path("reboot-required"), "").unwrap();
     let (handler, report) = apply_handler(&fakes, OsFamily::Debian);
-    let output = handler.run(&payload(&[], true, true)).await;
+    let output = handler.run(&payload(&["openssl"], true, true)).await;
     assert_eq!(output.error, None);
+    assert_eq!(fakes.sudo_calls(), [HELPER, "-n @shutdown -r +1"]);
     assert_eq!(
-        fakes.sudo_calls(),
-        [
-            "-n @apt-get -q update".to_owned(),
-            format!("{APT_UPGRADE} install --only-upgrade libc6"),
-            "-n @shutdown -r +1".to_owned(),
-        ]
+        fakes.helper_stdin(),
+        r#"{"kind":"security","packages":["openssl"]}"#
     );
     assert!(report.borrow().as_ref().unwrap().reboot_required);
 
-    // Named packages without a security update: nothing to do.
     let fakes = Fakes::new(0, 0, 0);
-    let (handler, _) = apply_handler(&fakes, OsFamily::Debian);
-    let output = handler.run(&payload(&["tzdata"], true, false)).await;
+    let (handler, _) = apply_handler(&fakes, OsFamily::Rhel);
+    let output = handler
+        .run(&payload(&["openssl", "bash"], false, true))
+        .await;
     assert_eq!(output.error, None);
-    assert_eq!(fakes.sudo_calls(), ["-n @apt-get -q update"]);
-    assert!(String::from_utf8_lossy(&output.stdout).contains("nothing to upgrade"));
+    // needs-restarting exits 0: no reboot.
+    assert_eq!(fakes.sudo_calls(), [HELPER]);
+    assert_eq!(
+        fakes.helper_stdin(),
+        r#"{"kind":"named","packages":["openssl","bash"]}"#
+    );
 }
 
 #[tokio::test]
-async fn a_failed_upgrade_fails_the_command_but_still_reports() {
-    let fakes = Fakes::new(100, 0, 0);
+async fn a_failed_update_fails_with_the_helpers_error_but_still_reports() {
+    let fakes = Fakes::new(0, 0, 0);
+    fakes.helper_exits(100);
     let (handler, report) = apply_handler(&fakes, OsFamily::Debian);
     let output = handler.run(&payload(&["bash"], false, true)).await;
     assert_eq!(output.exit_code, 100);
-    let error = output.error.unwrap();
-    assert!(
-        error.contains("apt-get") && error.contains("100"),
-        "{error}"
+    assert_eq!(
+        output.error.as_deref(),
+        Some("`apt-get upgrade` exited with 100: E: broken")
     );
+    assert!(String::from_utf8_lossy(&output.stderr).starts_with("E: broken\n"));
     assert!(report.borrow().is_some());
     // No reboot after a failure, even when allowed.
-    assert!(!fakes.sudo_calls().iter().any(|c| c.contains("shutdown")));
+    assert_eq!(fakes.sudo_calls(), [HELPER]);
 }
 
 #[tokio::test]
-async fn dnf_upgrades_with_its_own_flags_and_reads_rpm() {
-    let fakes = Fakes::new(0, 0, 1);
-    let (handler, report) = apply_handler(&fakes, OsFamily::Rhel);
-    let output = handler
-        .run(&payload(&["openssl", "bash"], true, false))
-        .await;
-    assert_eq!(output.error, None, "{output:?}");
+async fn bad_payloads_are_rejected_before_running_anything() {
+    let fakes = Fakes::new(0, 0, 0);
+    let (handler, report) = apply_handler(&fakes, OsFamily::Debian);
+    let garbage = handler.run(b"\xff\xff").await;
+    assert!(garbage.rejected);
+    for name in ["-o", "a b", "x;reboot", "", "$(id)", "/tmp/x.deb"] {
+        let output: Output = handler.run(&payload(&[name], false, false)).await;
+        assert!(output.rejected, "{name}");
+        let output: Output = handler.run(&payload(&[name], true, false)).await;
+        assert!(output.rejected, "{name}");
+    }
+    assert!(fakes.sudo_calls().is_empty());
+    assert!(report.borrow().is_none());
+}
+
+fn spec(kind: UpdateKind, packages: &[&str]) -> UpdateSpec {
+    UpdateSpec {
+        kind,
+        packages: packages.iter().map(|p| p.to_string()).collect(),
+    }
+}
+
+const APT_UPGRADE: &str =
+    "-q -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold";
+
+#[tokio::test]
+async fn the_helper_runs_apt() {
+    let fakes = Fakes::new(0, 0, 0);
+    let outcome = update::run(
+        &spec(UpdateKind::All, &[]),
+        OsFamily::Debian,
+        &fakes.tools(),
+    )
+    .await;
+    assert!(outcome.upgraded && outcome.error.is_none(), "{outcome:?}");
     assert_eq!(
-        fakes.sudo_calls(),
-        ["-n @dnf -q -y upgrade --security openssl bash"]
+        fakes.calls_of("apt-get"),
+        ["-q update".to_owned(), format!("{APT_UPGRADE} upgrade")]
     );
-    assert_eq!(output.stderr, b"upgraded\n");
+    let lines: Vec<_> = outcome.runs.iter().map(|r| r.line.as_str()).collect();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].ends_with("/apt-get -q update"), "{lines:?}");
+    assert_eq!(
+        outcome.runs[1].stdout,
+        format!("apt {APT_UPGRADE} upgrade\n").as_bytes()
+    );
+
+    let fakes = Fakes::new(0, 0, 0);
+    let named = spec(UpdateKind::Named, &["openssl", "libssl3"]);
+    update::run(&named, OsFamily::Debian, &fakes.tools()).await;
+    assert_eq!(
+        fakes.calls_of("apt-get"),
+        [
+            "-q update".to_owned(),
+            format!("{APT_UPGRADE} install --only-upgrade openssl libssl3")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_helper_upgrades_apt_security_candidates() {
+    let fakes = Fakes::new(0, 0, 0);
+    let outcome = update::run(
+        &spec(UpdateKind::Security, &[]),
+        OsFamily::Debian,
+        &fakes.tools(),
+    )
+    .await;
+    assert!(outcome.upgraded && outcome.error.is_none(), "{outcome:?}");
+    assert_eq!(
+        fakes.calls_of("apt-get"),
+        [
+            "-q update".to_owned(),
+            "-s -q dist-upgrade".to_owned(),
+            format!("{APT_UPGRADE} install --only-upgrade libc6")
+        ]
+    );
+
+    // Named packages without a security update: nothing to do.
+    let fakes = Fakes::new(0, 0, 0);
+    let outcome = update::run(
+        &spec(UpdateKind::Security, &["tzdata"]),
+        OsFamily::Debian,
+        &fakes.tools(),
+    )
+    .await;
+    assert!(!outcome.upgraded && outcome.error.is_none(), "{outcome:?}");
+    assert_eq!(outcome.exit_code(), 0);
+    assert_eq!(
+        fakes.calls_of("apt-get"),
+        ["-q update", "-s -q dist-upgrade"]
+    );
+}
+
+#[tokio::test]
+async fn the_helper_stops_at_the_first_failure() {
+    let fakes = Fakes::new(100, 0, 0);
+    let outcome = update::run(
+        &spec(UpdateKind::All, &[]),
+        OsFamily::Debian,
+        &fakes.tools(),
+    )
+    .await;
+    assert_eq!(fakes.calls_of("apt-get"), ["-q update"]);
+    assert_eq!(outcome.exit_code(), 100);
+    let error = outcome.error.unwrap().to_string();
+    assert!(
+        error.contains("apt-get -q update` exited with 100"),
+        "{error}"
+    );
+
+    let tools = Tools {
+        dnf: "/nonexistent/dnf".into(),
+        ..Fakes::new(0, 0, 0).tools()
+    };
+    let outcome = update::run(&spec(UpdateKind::All, &[]), OsFamily::Rhel, &tools).await;
+    assert!(outcome.runs.is_empty());
+    assert_eq!(outcome.exit_code(), 1);
+}
+
+#[tokio::test]
+async fn the_helper_runs_dnf() {
+    let fakes = Fakes::new(0, 0, 0);
+    let security = spec(UpdateKind::Security, &["openssl", "bash"]);
+    let outcome = update::run(&security, OsFamily::Rhel, &fakes.tools()).await;
+    assert!(outcome.upgraded && outcome.error.is_none(), "{outcome:?}");
+    assert_eq!(
+        fakes.calls_of("dnf"),
+        ["-q -y upgrade --security openssl bash"]
+    );
+    assert_eq!(outcome.runs[0].stderr, b"upgraded\n");
+
+    let fakes = Fakes::new(0, 1, 0);
+    let outcome = update::run(&spec(UpdateKind::All, &[]), OsFamily::Rhel, &fakes.tools()).await;
+    assert_eq!(outcome.exit_code(), 1);
+    assert_eq!(fakes.calls_of("dnf"), ["-q -y upgrade"]);
+}
+
+#[tokio::test]
+async fn dnf_reports_from_rpm() {
+    let fakes = Fakes::new(0, 0, 1);
+    let (reports, report) = Reports::new(for_family(OsFamily::Rhel, fakes.tools()));
+    reports.collect().await;
     let report = report.borrow().clone().unwrap();
     assert!(report.reboot_required, "needs-restarting exited 1");
     let packages: Vec<_> = report
@@ -235,26 +394,6 @@ async fn dnf_upgrades_with_its_own_flags_and_reads_rpm() {
             ("openssl", "1:3.0.7-27.el9", "1:3.2.2-6.el9_5")
         ]
     );
-
-    let fakes = Fakes::new(0, 1, 0);
-    let (handler, _) = apply_handler(&fakes, OsFamily::Rhel);
-    let output = handler.run(&payload(&[], false, false)).await;
-    assert_eq!(output.exit_code, 1);
-    assert_eq!(fakes.sudo_calls(), ["-n @dnf -q -y upgrade"]);
-}
-
-#[tokio::test]
-async fn bad_payloads_are_rejected_before_running_anything() {
-    let fakes = Fakes::new(0, 0, 0);
-    let (handler, report) = apply_handler(&fakes, OsFamily::Debian);
-    let garbage = handler.run(b"\xff\xff").await;
-    assert!(garbage.rejected);
-    for name in ["-o", "a b", "x;reboot", "", "$(id)"] {
-        let output: Output = handler.run(&payload(&[name], false, false)).await;
-        assert!(output.rejected, "{name}");
-    }
-    assert!(fakes.sudo_calls().is_empty());
-    assert!(report.borrow().is_none());
 }
 
 #[tokio::test]
