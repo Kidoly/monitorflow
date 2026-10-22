@@ -2,13 +2,15 @@
 //! or refreshes its `servers` row, relays must have their `relays` row, and
 //! a revoked row refuses the stream even with a valid certificate.
 
-use monitorflow_common::proto::v1::Hello;
+use chrono::{DateTime, Utc};
+use monitorflow_common::proto::v1::{Hello, RelayMirrors};
 use monitorflow_common::tls::{PeerIdentity, PeerRole};
 use sqlx::{PgPool, Postgres, Transaction};
 use tonic::async_trait;
 use uuid::Uuid;
 
 use crate::api::audit::{self, Event};
+use crate::mirror::relays;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InventoryError {
@@ -48,6 +50,16 @@ pub trait Inventory: Send + Sync + 'static {
     async fn hello(&self, hello: AcceptedHello<'_>) -> Result<String, InventoryError>;
     /// Records that the peer `id` with `role` is still connected.
     async fn seen(&self, role: PeerRole, id: &str) -> Result<(), InventoryError>;
+    /// Records the mirrors the relay `id` serves, received at
+    /// `received_at` (ADR-0037). An invalid report clears them.
+    async fn relay_mirrors(
+        &self,
+        _id: &str,
+        _received_at: DateTime<Utc>,
+        _report: RelayMirrors,
+    ) -> Result<(), InventoryError> {
+        Ok(())
+    }
 }
 
 /// Records nothing, accepts every peer and reports no site. **Tests only**:
@@ -100,6 +112,27 @@ impl Inventory for DbInventory {
             }
         };
         sqlx::query(sql).bind(id).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    async fn relay_mirrors(
+        &self,
+        id: &str,
+        received_at: DateTime<Utc>,
+        report: RelayMirrors,
+    ) -> Result<(), InventoryError> {
+        let served = relays::check(&report).unwrap_or_else(|error| {
+            tracing::warn!(relay_id = id, %error, "ignoring the relay's invalid mirror report");
+            None
+        });
+        let stored = relays::record(&self.pool, id, received_at, served.as_ref()).await?;
+        tracing::debug!(
+            relay_id = id,
+            url = served.as_ref().map(|s| s.url.as_str()),
+            mirrors = served.as_ref().map_or(0, |s| s.mirrors.len()),
+            stored,
+            "relay mirror report"
+        );
         Ok(())
     }
 }

@@ -218,7 +218,6 @@ pub async fn create(
 /// A server a user may queue commands for.
 pub(super) struct Target {
     pub id: Uuid,
-    pub site_id: Uuid,
     pub peer_id: String,
     pub os_family: String,
     pub revoked: bool,
@@ -240,10 +239,9 @@ impl Target {
         .fetch_optional(&state.pool)
         .await?;
         authorize_admin(user, row.as_ref().map(|r| r.0))?;
-        let (site_id, peer_id, os_family, revoked) = row.ok_or(ApiError::NotFound)?;
+        let (_, peer_id, os_family, revoked) = row.ok_or(ApiError::NotFound)?;
         Ok(Self {
             id,
-            site_id,
             peer_id,
             os_family,
             revoked,

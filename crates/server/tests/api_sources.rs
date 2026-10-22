@@ -335,4 +335,68 @@ db_tests! {
         assert!(answer.to_string().contains("no signing key"), "{answer}");
         assert_eq!(h.commands().await, 0);
     }
+
+    #[sqlx::test]
+    async fn servers_behind_a_mirroring_relay_get_its_url(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let admin = h.login("admin", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let relay: Uuid = sqlx::query_scalar(
+            "INSERT INTO relays (peer_id, site_id, name, mirror_url, mirror_reported_at)
+             VALUES ('relay-1', $1, 'relay-1', 'http://relay.example:7480', now()) RETURNING id",
+        )
+        .bind(h.site)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO relay_mirrors (relay_id, family, name, current, snapshots)
+             VALUES ($1, 'apt', 'debian-12', 's1', '{s1}')",
+        )
+        .bind(relay)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO mirror_snapshots (mirror_id, name, state, published_at)
+             SELECT id, 's2', 'published', now() FROM mirrors WHERE name = 'debian-12'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let uri = format!("/api/servers/{}/sources", h.debian);
+        let base = |snapshot: &'static str, public: Option<&'static str>| {
+            let (uri, admin, h) = (uri.clone(), admin.clone(), &h);
+            async move {
+                let body = json!({"mirrors": [{"name": "debian-12", "snapshot": snapshot}], "mode": "add"});
+                let (status, created) = h.send_to(h.state(public), "POST", &uri, &admin, Some(body)).await;
+                (status, created["parameters"]["mirror_base_url"].as_str().map(str::to_owned))
+            }
+        };
+        let public = Some("http://mf.example:7480/");
+        let created = |url: &str| (StatusCode::CREATED, Some(url.to_owned()));
+
+        // Not attached to the relay yet: the server's URL.
+        assert_eq!(base("s1", public).await, created("http://mf.example:7480"));
+        sqlx::query("UPDATE servers SET relay_id = $1 WHERE id = $2")
+            .bind(relay)
+            .bind(h.debian)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(base("s1", public).await, created("http://relay.example:7480"));
+        assert_eq!(base("current", public).await, created("http://relay.example:7480"));
+        // Without a server URL, the relay's is enough.
+        assert_eq!(base("s1", None).await, created("http://relay.example:7480"));
+        // A snapshot the relay does not hold: the server's URL, or none.
+        assert_eq!(base("s2", public).await, created("http://mf.example:7480"));
+        assert_eq!(base("s2", None).await, (StatusCode::CONFLICT, None));
+
+        // A revoked relay is not used.
+        sqlx::query("UPDATE relays SET revoked_at = now() WHERE id = $1")
+            .bind(relay)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(base("s1", public).await, created("http://mf.example:7480"));
+    }
 }

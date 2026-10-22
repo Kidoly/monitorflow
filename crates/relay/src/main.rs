@@ -11,6 +11,7 @@ use monitorflow_common::client::shutdown::{self, Shutdown};
 use monitorflow_common::config::{self, RelayConfig};
 use monitorflow_common::logging;
 use monitorflow_common::mirror::serve;
+use monitorflow_common::proto::v1::RelayMirrors;
 use monitorflow_relay::buffer::{Buffer, BufferSettings};
 use monitorflow_relay::control::{Control, ControlSettings};
 use monitorflow_relay::forward::{ForwardSettings, Forwarder};
@@ -19,6 +20,7 @@ use monitorflow_relay::mirror;
 use monitorflow_relay::mirror::task::{MirrorSettings, MirrorTask};
 use monitorflow_relay::renew::{RenewProxy, RenewSettings};
 use tokio::net::TcpListener;
+use tokio::sync::watch;
 
 /// Time given to forwarded streams to end after a shutdown signal.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
@@ -67,7 +69,10 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(renewal.run(stop.clone()));
     let (control, upstream_up) =
         Control::new(ControlSettings::from_config(&config), identities.clone());
-    tokio::spawn(control.run(stop.clone()));
+    // Stays empty, so the server forgets earlier reports, unless the
+    // mirrors start with a public URL (ADR-0037).
+    let (mirror_reports, served_mirrors) = watch::channel(RelayMirrors::default());
+    tokio::spawn(control.with_mirrors(served_mirrors).run(stop.clone()));
 
     let crl = CrlSettings::for_upstream(&config.upstream_url);
     let started = TlsPublisher::start(crl, identities.clone(), Backoff::default(), stop.clone())
@@ -106,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
     if config.mirror.enabled {
         // Mirroring is secondary to monitoring: a busy port or a bad
         // mirror directory must not stop agent forwarding (ADR-0034).
-        if let Err(error) = start_mirrors(&config, stop.clone()).await {
+        if let Err(error) = start_mirrors(&config, stop.clone(), mirror_reports).await {
             tracing::error!(
                 error = format!("{error:#}"),
                 "mirrors disabled; agent forwarding continues"
@@ -141,13 +146,23 @@ async fn main() -> anyhow::Result<()> {
 /// Starts the mirror listener and the sync loop (ADR-0034). Fails without
 /// spawning anything if the directory, listener or sync client cannot be
 /// set up.
-async fn start_mirrors(config: &RelayConfig, stop: Shutdown) -> anyhow::Result<()> {
+async fn start_mirrors(
+    config: &RelayConfig,
+    stop: Shutdown,
+    reports: watch::Sender<RelayMirrors>,
+) -> anyhow::Result<()> {
     let root = config.mirror_dir();
     let served = tokio::task::spawn_blocking(move || mirror::prepare(&root))
         .await?
         .with_context(|| format!("cannot prepare {}", config.mirror_dir().display()))?;
-    let task = MirrorTask::new(MirrorSettings::from_config(config))
+    let mut task = MirrorTask::new(MirrorSettings::from_config(config))
         .context("cannot build the mirror sync client")?;
+    match &config.mirror.public_url {
+        Some(url) => task = task.with_reports(url.clone(), reports),
+        None => tracing::warn!(
+            "mirror.public_url is not set: the server keeps pointing this relay's agents at its own mirrors"
+        ),
+    }
     let mirror_listener = TcpListener::bind(config.mirror_listen_addr)
         .await
         .with_context(|| {
@@ -193,7 +208,9 @@ mod tests {
         let taken = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let config = relay_config(dir.path(), taken.local_addr().unwrap());
         let (_trigger, stop) = shutdown::channel();
-        let error = start_mirrors(&config, stop).await.unwrap_err();
+        let error = start_mirrors(&config, stop, watch::channel(RelayMirrors::default()).0)
+            .await
+            .unwrap_err();
         assert!(
             format!("{error:#}").contains("binding the mirror listener"),
             "{error:#}"
@@ -208,7 +225,9 @@ mod tests {
         let mut config = relay_config(dir.path(), "127.0.0.1:0".parse().unwrap());
         config.mirror_dir = Some(file.join("mirrors"));
         let (_trigger, stop) = shutdown::channel();
-        let error = start_mirrors(&config, stop).await.unwrap_err();
+        let error = start_mirrors(&config, stop, watch::channel(RelayMirrors::default()).0)
+            .await
+            .unwrap_err();
         assert!(format!("{error:#}").contains("cannot prepare"), "{error:#}");
     }
 
@@ -217,7 +236,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = relay_config(dir.path(), "127.0.0.1:0".parse().unwrap());
         let (trigger, stop) = shutdown::channel();
-        start_mirrors(&config, stop).await.unwrap();
+        start_mirrors(&config, stop, watch::channel(RelayMirrors::default()).0)
+            .await
+            .unwrap();
         assert!(dir.path().join("mirrors/apt").is_dir());
         trigger.fire();
     }

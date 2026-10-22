@@ -18,6 +18,7 @@ use super::commands::{queue, ttl, CommandDetail, Target};
 use super::sensors::body;
 use super::{ApiError, ApiState};
 use crate::commands::sources::{self, KeyLookupError, CURRENT, MAX_MIRRORS};
+use crate::mirror::relays;
 
 /// Body of `POST /api/servers/{id}/sources`.
 #[derive(Debug, Deserialize)]
@@ -76,8 +77,6 @@ pub async fn configure(
             "mirrors must list 1 to {MAX_MIRRORS} mirrors"
         )));
     }
-    let base = sources::base_url(state.settings.mirror_public_url.as_deref(), target.site_id)
-        .ok_or_else(|| ApiError::Conflict("mirror_public_url is not configured".into()))?;
     let mirrors = state
         .mirrors
         .as_ref()
@@ -87,6 +86,13 @@ pub async fn configure(
         let found = sources::select(&state.pool, &choice.name, &choice.snapshot).await?;
         selected.push(found.map_err(ApiError::Invalid)?);
     }
+    let relay = relays::for_server(&state.pool, target.id).await?;
+    let base = sources::base_url(
+        state.settings.mirror_public_url.as_deref(),
+        relay.as_ref(),
+        &selected,
+    )
+    .ok_or_else(|| ApiError::Conflict("mirror_public_url is not configured".into()))?;
     let key = sources::archive_key(mirrors.runner(), mirrors.layout())
         .await
         .map_err(|error| match error {

@@ -402,6 +402,7 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::Command(_) => "command",
         Payload::CommandResult(_) => "command_result",
         Payload::PackageReport(_) => "package_report",
+        Payload::RelayMirrors(_) => "relay_mirrors",
     }
 }
 

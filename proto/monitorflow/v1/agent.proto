@@ -27,6 +27,9 @@ message Envelope {
     SensorConfigAck sensor_config_ack = 14;
     // Agent to server: installed packages and reboot state (ADR-0031).
     PackageReport package_report = 15;
+    // Relay to server, on the relay's own stream: the mirrors it serves to
+    // its agents (ADR-0037).
+    RelayMirrors relay_mirrors = 16;
     Command command = 20;
     CommandResult command_result = 21;
   }
@@ -95,6 +98,25 @@ message SensorSpecError {
   string name = 1;
   string instance = 2;
   string message = 3;
+}
+
+// What a relay's mirror listener serves, sent after its Hello and again
+// whenever it changes (ADR-0037). Replaces the previous report.
+message RelayMirrors {
+  // Base URL the relay's agents reach its mirror listener at, from the
+  // relay's `mirror.public_url`. Empty when the relay serves no mirrors.
+  string public_url = 1;
+  repeated ServedMirror mirrors = 2;
+}
+
+message ServedMirror {
+  // "apt" or "dnf".
+  string family = 1;
+  string name = 2;
+  // Snapshot `current` names; empty when there is none.
+  string current = 3;
+  // Complete snapshots the relay holds, `current` included.
+  repeated string snapshots = 4;
 }
 
 // A command from the central server. Always signed; agents verify before
