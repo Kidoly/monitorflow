@@ -171,7 +171,11 @@ impl From<CampaignError> for ApiError {
 
 /// 404 unless the user reads `customer` as a whole; then, with `admin`,
 /// 403 unless it administers it.
-fn authorize_customer(user: &CurrentUser, customer: Uuid, admin: bool) -> Result<(), ApiError> {
+pub(super) fn authorize_customer(
+    user: &CurrentUser,
+    customer: Uuid,
+    admin: bool,
+) -> Result<(), ApiError> {
     if !user.can_read() {
         return Err(ApiError::Forbidden);
     }

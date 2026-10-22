@@ -62,6 +62,12 @@
 //! | POST | `/api/campaigns` | customer administrator | body [`campaigns::CreateRequest`]; 201 [`campaigns::CampaignDetail`] |
 //! | GET | `/api/campaigns/{id}` | customer role | [`campaigns::CampaignDetail`]: the campaign, its waves and servers |
 //! | POST | `/api/campaigns/{id}/start`, `/pause`, `/resume`, `/stop` | customer administrator | 200 [`campaigns::CampaignDetail`]; 409 when the state does not allow it |
+//! | GET | `/api/remediation/rules` | customer role | [`remediation::RuleList`], see below |
+//! | POST | `/api/remediation/rules` | customer administrator | body [`remediation::RuleRequest`]; 201 the stored rule |
+//! | DELETE | `/api/remediation/rules/{id}` | customer administrator | 204 |
+//! | GET | `/api/remediation/policies` | customer role | [`remediation::PolicyList`] |
+//! | PUT | `/api/remediation/policies` | customer administrator | body [`remediation::PolicyRequest`]; 200 the stored policy |
+//! | POST | `/api/remediation/classify` | customer role | body `{"customer_id", "site_id"?, "command"}`; 200 the decision |
 //!
 //! # Authentication
 //!
@@ -232,6 +238,27 @@
 //! Actions answer 409 `cannot <action> a campaign that is <state>` when
 //! the state does not allow them. Everything is audited (`campaign.*`).
 //!
+//! # Remediation rules
+//!
+//! Administrator rules of the risk classifier (ADR-0041), per customer
+//! and optionally per site, with the same access rules as campaigns. A
+//! rule is `{"id", "customer_id", "site_id", "kind", "pattern", "tier",
+//! "description", "created_by", "created_at"}`: `kind` `allow` (commands
+//! no built-in rule knows that match `pattern` as a whole get `tier`,
+//! `read_only` or `low_impact`), `deny` (commands containing a match
+//! anywhere are forbidden) or `cache_dir` (`pattern` is a directory that
+//! `find <dir> -mindepth 1 -delete` may clear as a low-impact change).
+//! Patterns are words where `*` and `?` glob within a word and `**`
+//! spans words. Invalid rules are 400 saying why, a site of another
+//! customer 400 `unknown site`, duplicates 409. Listings take
+//! `customer_id` and `site_id`. A policy is `{"customer_id", "site_id",
+//! "low_impact_auto", "updated_by", "updated_at"}`; a site row overrides
+//! the customer row, and without either low-impact commands need
+//! approval. `POST /api/remediation/classify` answers `{"tier", "rule":
+//! {"source": "builtin", "id"} | {"source": "configured", "id"},
+//! "reason"}` without storing the command. Changes are audited
+//! (`remediation_rule.create`, `.delete`, `remediation_policy.update`).
+//!
 //! # Metric queries
 //!
 //! The query endpoints take `server_id`, `metric` (`monitorflow_` and a
@@ -311,6 +338,7 @@ pub mod mirrors;
 pub mod packages;
 pub mod password;
 pub mod relays;
+pub mod remediation;
 pub mod revoke;
 pub mod roles;
 pub mod sensors;
@@ -536,6 +564,16 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/campaigns/{id}/pause", post(campaigns::pause))
         .route("/api/campaigns/{id}/resume", post(campaigns::resume))
         .route("/api/campaigns/{id}/stop", post(campaigns::stop))
+        .route(
+            "/api/remediation/rules",
+            get(remediation::list).post(remediation::create),
+        )
+        .route("/api/remediation/rules/{id}", delete(remediation::delete))
+        .route(
+            "/api/remediation/policies",
+            get(remediation::list_policies).put(remediation::set_policy),
+        )
+        .route("/api/remediation/classify", post(remediation::classify))
         .fallback(not_found)
         .layer(middleware::from_fn(auth::csrf_guard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
