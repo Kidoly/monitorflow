@@ -59,6 +59,11 @@ async-trait = "0.1"
 # rustls on ring, like the rest of the workspace; no OpenSSL.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 snap = "1"
+# Relay mirror sync (ADR-0034): dnf primary metadata is gzip or zstd XML.
+# Pure Rust, no C libraries.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+ruzstd = "0.8"
+quick-xml = "0.38"
 # CRC-32C of the relay buffer's records; already used by sqlx.
 crc = "3"
 # Linear-time matching for the log sensor's patterns, set by the server.

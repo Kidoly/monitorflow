@@ -2,6 +2,19 @@
 //! on a plain HTTP listener with the server's layout
 //! ([`monitorflow_common::mirror::serve`]): `apt/`, `dnf/` and `keys/`
 //! under `mirror_dir`.
+//!
+//! [`meta`] describes the files of a snapshot, read by [`apt`] and [`dnf`]
+//! from the repository metadata; [`sync`] copies a snapshot with
+//! [`fetch`]; [`task`] runs the sync loop and [`retention`] bounds the
+//! snapshots kept.
+
+pub mod apt;
+pub mod dnf;
+pub mod fetch;
+pub mod meta;
+pub mod retention;
+pub mod sync;
+pub mod task;
 
 use std::io;
 use std::path::Path;
