@@ -1,4 +1,6 @@
 .box {
+  /* Positioned, so visually hidden text in cells scrolls with the table instead of widening the page. */
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
   background: var(--surface);
@@ -52,8 +54,8 @@
   cursor: pointer;
 }
 
-th[aria-sort="ascending"],
-th[aria-sort="descending"] {
+.table th[aria-sort="ascending"],
+.table th[aria-sort="descending"] {
   color: var(--text);
 }
 
