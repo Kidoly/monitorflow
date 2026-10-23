@@ -5,6 +5,14 @@
   border-radius: var(--radius-panel);
   background: var(--surface);
   overflow: auto;
+  /* Contains visually hidden text (RelativeTime), which would otherwise widen the page past the scroll box. */
+  position: relative;
+}
+
+.bare {
+  border: 0;
+  border-radius: 0;
+  background: none;
 }
 
 .table {

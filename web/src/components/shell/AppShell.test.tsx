@@ -62,6 +62,7 @@ describe("AppShell", () => {
       "Relays",
       "Sites",
       "Enrollment tokens",
+      "Users and roles",
     ]);
     expect(within(nav()).queryByText("Remediation")).not.toBeInTheDocument();
     expect(within(nav()).getByText("Updates")).toBeInTheDocument();
