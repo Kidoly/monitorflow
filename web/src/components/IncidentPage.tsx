@@ -2,32 +2,44 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import {
   ApiError,
   type IncidentDetail,
   type IncidentEvent,
   type MetricSeries,
+  type RemediationIncident,
   type ThresholdSnapshot,
   api,
   describeError,
+  isUnauthorized,
   isAbortError,
 } from "@/lib/api";
-import { type Unit, formatDateTime, formatSeconds, formatValue, unitOf } from "@/lib/format";
-import { incidentSeconds, incidentWindow } from "@/lib/incidents";
-import { metricTitle } from "@/lib/metrics";
-import { incidentsHref, serverHref } from "@/lib/routes";
+import { metricsError } from "@/lib/charts";
+import { formatSeconds } from "@/lib/format";
+import { INCIDENT_MARGINS, incidentWindow, resolvesWhen } from "@/lib/incidents";
+import { incidentsHref, sensorHref, serverHref } from "@/lib/routes";
+import { scopedHref, useScope } from "@/lib/scope";
+import { formatSensorValue, seriesTitle } from "@/lib/sensors";
 import { SEVERITY_LABELS } from "@/lib/thresholds";
-import { usePolling } from "@/lib/usePolling";
+import { usePolledData } from "@/lib/usePolledData";
+import { useUrlParams } from "@/lib/urlState";
 import { UUID } from "@/lib/uuid";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { Button, ButtonLink } from "@/components/ui/Button";
+import { type Column, DataTable } from "@/components/ui/DataTable";
+import { FactsBox } from "@/components/ui/FactsBox";
+import { Page } from "@/components/ui/Page";
+import { Banner, ErrorState, LoadingBlock, NotFound, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
+import { Label, StatusLabel } from "@/components/ui/StatusLabel";
+import { StatTiles } from "@/components/ui/StatTiles";
+import { TableBox } from "@/components/ui/TableBox";
+import { type Threshold, TimeChart } from "@/components/ui/TimeChart";
+import { formatClock, formatDuration, formatExact, formatShortDate } from "@/components/ui/time";
+import type { Tone } from "@/components/ui/tone";
 
-import { REFRESH_MS } from "./FleetOverview";
-import { SeverityBadge } from "./IncidentBadges";
-import { Time } from "./IncidentList";
-import styles from "./IncidentPage.module.css";
-import { metricsError } from "./ServerGraphs";
-import { type ReferenceLine, TimeSeriesChart } from "./TimeSeriesChart";
+import styles from "./DetailPages.module.css";
 
 /** The incident page for the `id` query parameter. */
 export function IncidentView() {
@@ -35,224 +47,301 @@ export function IncidentView() {
   return <IncidentPage key={id} id={id} />;
 }
 
+type Margin = (typeof INCIDENT_MARGINS)[number];
 type Chart = { start: number; end: number; step: number } & ({ series: MetricSeries[] } | { error: string });
 
-interface State {
-  /** Undefined until loaded, null when not found. */
-  incident: IncidentDetail | null | undefined;
-  chart: Chart | null;
-  updatedAt: Date | null;
-  error: string | null;
+interface Loaded {
+  incident: IncidentDetail;
+  chart: Chart;
+  /** What the AI remediation loop did about it; null when nothing, or not readable. */
+  remediation: RemediationIncident | null;
+  margin: Margin;
 }
+
+async function loadIncident(id: string, margin: Margin, signal: AbortSignal): Promise<Loaded> {
+  const [incident, remediation] = await Promise.all([
+    api.incident(id, signal),
+    api.remediationIncidents(id, signal).then(
+      (page) => page.incidents[0] ?? null,
+      (e: unknown) => {
+        if (isAbortError(e)) throw e;
+        return null;
+      },
+    ),
+  ]);
+  const window = incidentWindow(incident.opened_at, incident.resolved_at, new Date(), margin.seconds);
+  let chart: Chart;
+  try {
+    const { series } = await api.queryRange(
+      {
+        serverId: incident.server_id,
+        metric: incident.metric,
+        // The series without an instance is the metric's only one.
+        instance: incident.instance || undefined,
+        start: new Date(window.start * 1000),
+        end: new Date(window.end * 1000),
+        step: window.step,
+      },
+      signal,
+    );
+    chart = { ...window, series };
+  } catch (e) {
+    if (isAbortError(e)) throw e;
+    chart = { ...window, error: metricsError(e) };
+  }
+  return { incident, chart, remediation, margin };
+}
+
+const minutes = (iso: string) => formatClock(new Date(iso)).slice(0, 5);
 
 export function IncidentPage({ id }: { id: string | null }) {
   const valid = id !== null && UUID.test(id);
-  const [state, setState] = useState<State>({ incident: undefined, chart: null, updatedAt: null, error: null });
-
-  const load = useCallback(
+  const scope = useScope();
+  const [params, setParams] = useUrlParams();
+  const margin = INCIDENT_MARGINS.find((m) => m.label.replace(/[± ]/g, "") === params.get("window")) ?? INCIDENT_MARGINS[0];
+  // A resolved incident no longer changes: refreshes reuse it until the window changes.
+  const last = useRef<Loaded | null>(null);
+  const fetcher = useCallback(
     async (signal: AbortSignal) => {
-      try {
-        const incident = await api.incident(id ?? "", signal);
-        const now = new Date();
-        const window = incidentWindow(incident.opened_at, incident.resolved_at, now);
-        let chart: Chart;
-        try {
-          const { series } = await api.queryRange(
-            {
-              serverId: incident.server_id,
-              metric: incident.metric,
-              // The series without an instance is the metric's only one.
-              instance: incident.instance || undefined,
-              start: new Date(window.start * 1000),
-              end: new Date(window.end * 1000),
-              step: window.step,
-            },
-            signal,
-          );
-          chart = { ...window, series };
-        } catch (e) {
-          if (isAbortError(e)) throw e;
-          chart = { ...window, error: metricsError(e) };
-        }
-        setState({ incident, chart, updatedAt: now, error: null });
-      } catch (e) {
-        if (isAbortError(e)) return;
-        if (e instanceof ApiError && e.status === 404) {
-          setState((s) => ({ ...s, incident: null }));
-        } else if (!(e instanceof ApiError && e.status === 401)) {
-          // A 401 has already been routed to the login page.
-          setState((s) => ({ ...s, error: describeError(e) }));
-        }
-      }
+      const previous = last.current;
+      if (previous?.incident.state === "resolved" && previous.margin === margin) return previous;
+      last.current = await loadIncident(id ?? "", margin, signal);
+      return last.current;
     },
-    [id],
+    [id, margin],
   );
-  // A resolved incident does not change any more.
-  usePolling(load, REFRESH_MS, valid && state.incident?.state !== "resolved");
+  const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher, { enabled: valid });
 
-  const { incident, chart, updatedAt, error } = state;
+  const incident = data?.incident;
+  const title = incident ? seriesTitle(undefined, incident.metric, incident.instance) : "";
   useEffect(() => {
-    if (incident) document.title = `${metricTitle(incident.metric)} on ${incident.hostname} · MonitorFlow`;
-  }, [incident]);
+    if (incident) document.title = `${title} on ${incident.hostname} · MonitorFlow`;
+  }, [incident, title]);
 
-  if (!valid || incident === null) {
+  if (!valid || (error instanceof ApiError && error.status === 404)) {
     return (
-      <section className={styles.notFound}>
-        <h1>Incident not found</h1>
-        <p>It may have been removed with its server, or your roles do not cover its site.</p>
-        <p>
-          <Link href={incidentsHref()}>Back to the incidents</Link>
-        </p>
-      </section>
+      <NotFound
+        title="Incident not found"
+        actions={<ButtonLink href={scopedHref(incidentsHref(), scope)}>Back to the incidents</ButtonLink>}
+      >
+        It may have been removed with its server, or your roles do not cover its site.
+      </NotFound>
     );
   }
-  if (!incident || !updatedAt) {
-    return error ? (
-      <p className={styles.error} role="alert">
-        {error}
-      </p>
+  if (!data || !incident || !updatedAt) {
+    return error !== null && !isUnauthorized(error) ? (
+      <ErrorState what="the incident" error={describeError(error)} onRetry={refresh} />
     ) : (
-      <p role="status">Loading incident…</p>
+      <LoadingBlock label="Loading incident" />
     );
   }
 
-  const unit = unitOf(incident.metric);
-  const title = metricTitle(incident.metric);
+  const { chart, remediation } = data;
+  const now = updatedAt;
+  const open = incident.state === "open";
+  const format = (v: number) => formatSensorValue(incident.metric, v);
+  const opened = Date.parse(incident.opened_at) / 1000;
+  const resolved = incident.resolved_at ? Date.parse(incident.resolved_at) / 1000 : null;
+  const tone: Tone = incident.severity === "critical" ? "bad" : "warn";
+  const ratio = incident.metric.endsWith("_ratio");
+
   return (
-    <article aria-labelledby="incident-title">
-      <header className={styles.header}>
-        <p className={styles.crumbs}>
-          <Link href={incidentsHref()}>Incidents</Link> / {incident.site_name}
-        </p>
-        <div className={styles.title}>
-          <h1 id="incident-title">
-            {title}
-            {incident.instance && <code className={styles.instance}>{incident.instance}</code>} on{" "}
-            <Link href={serverHref(incident.server_id)}>{incident.hostname}</Link>
-          </h1>
-          <SeverityBadge severity={incident.severity} state={incident.state} />
-          <span>{incident.state === "open" ? "Open" : "Resolved"}</span>
-        </div>
-        <dl className={styles.facts}>
-          <Fact term="Opened">{formatDateTime(incident.opened_at)}</Fact>
-          {incident.resolved_at && <Fact term="Resolved">{formatDateTime(incident.resolved_at)}</Fact>}
-          <Fact term={incident.resolved_at ? "Lasted" : "Open for"}>
-            {formatSeconds(incidentSeconds(incident.opened_at, incident.resolved_at, updatedAt))}
-          </Fact>
-          <Fact term="Last value">
-            {formatValue(incident.last_value, unit)}, <Time iso={incident.last_value_at} now={updatedAt} />
-          </Fact>
-          <Fact term="Peak">{formatValue(incident.peak_value, unit)}</Fact>
-        </dl>
-        <ThresholdFacts threshold={incident.threshold} unit={unit} />
-      </header>
-      {error && (
-        <p className={styles.error} role="alert">
-          Refresh failed: {error} Showing the last data received.
-        </p>
+    <Page>
+      <Breadcrumb parents={[{ label: "Incidents", href: scopedHref(incidentsHref(), scope) }]} current={`#${incident.id.slice(0, 8)}`} />
+      <PageHeader
+        detail
+        title={
+          <>
+            {title} on{" "}
+            <Link href={scopedHref(serverHref(incident.server_id), scope)} className={styles.underline}>
+              {incident.hostname}
+            </Link>
+          </>
+        }
+        status={
+          <>
+            <StatusLabel kind="severity" value={open ? incident.severity : "resolved"} />
+            <span className={styles.muted}>
+              {open ? "open" : `was ${SEVERITY_LABELS[incident.severity]}`} · {incident.site_name}
+            </span>
+          </>
+        }
+        meta={open ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : "Resolved: it no longer changes."}
+        actions={
+          <>
+            <ButtonLink href={scopedHref(sensorHref(incident.server_id, incident.metric, incident.instance), scope)}>Open sensor</ButtonLink>
+            <ButtonLink href={scopedHref(serverHref(incident.server_id), scope)}>Open {incident.hostname}</ButtonLink>
+          </>
+        }
+      />
+      {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
+      <StatTiles
+        compact
+        label="Summary"
+        tiles={[
+          { label: "Last value", value: format(incident.last_value), tone: open ? tone : "plain" },
+          { label: "Peak", value: format(incident.peak_value) },
+          {
+            label: new Date(incident.opened_at).toDateString() === now.toDateString()
+              ? "Opened"
+              : `Opened, ${formatShortDate(new Date(incident.opened_at))}`,
+            value: minutes(incident.opened_at),
+          },
+          { label: open ? "Duration" : "Lasted", value: formatDuration(((resolved ?? now.getTime() / 1000) - opened)) },
+        ]}
+      />
+      {"error" in chart ? (
+        <Banner tone="bad">{chart.error}</Banner>
+      ) : (
+        <TimeChart
+          title="Around the incident"
+          subtitle={`${minutes(new Date(chart.start * 1000).toISOString())} → ${minutes(new Date(chart.end * 1000).toISOString())} · hover or use ← → for exact values`}
+          actions={
+            <div role="group" aria-label="Window" className={styles.segments}>
+              {INCIDENT_MARGINS.map((m) => (
+                <Button
+                  key={m.label}
+                  aria-pressed={m === margin}
+                  onClick={() => setParams({ window: m === INCIDENT_MARGINS[0] ? null : m.label.replace(/[± ]/g, "") })}
+                >
+                  {m.label}
+                </Button>
+              ))}
+            </div>
+          }
+          series={chart.series.map((s) => ({ label: s.labels.instance ? seriesTitle(undefined, incident.metric, s.labels.instance) : title, points: s.points }))}
+          start={chart.start}
+          end={chart.end}
+          step={chart.step}
+          format={format}
+          min={ratio ? 0 : undefined}
+          max={ratio ? 1 : undefined}
+          thresholds={snapshotLines(incident.threshold)}
+          markers={[
+            { t: opened, label: `Opened ${minutes(incident.opened_at)}`, kind: "opened" },
+            resolved !== null
+              ? { t: resolved, label: `Resolved ${minutes(incident.resolved_at!)}`, kind: "resolved" }
+              : { t: chart.end, label: "Now · open", kind: "now" },
+          ]}
+          band={{ start: opened, end: resolved ?? undefined, severity: incident.severity }}
+          emptyText="No data around this incident. Metrics are kept for a limited time."
+        />
       )}
-      <section className={styles.section} aria-labelledby="chart-title">
-        <h2 id="chart-title">Around the incident</h2>
-        {chart && "error" in chart ? (
-          <p className={styles.error} role="alert">
-            {chart.error}
-          </p>
-        ) : (
-          chart && (
-            <TimeSeriesChart
-              title={title}
-              unit={unit}
-              start={chart.start}
-              end={chart.end}
-              step={chart.step}
-              series={chart.series.map((s) => ({ label: s.labels.instance || title, points: s.points }))}
-              referenceLines={snapshotLines(incident.threshold)}
-              markers={[
-                { t: Date.parse(incident.opened_at) / 1000, label: "Opened" },
-                ...(incident.resolved_at ? [{ t: Date.parse(incident.resolved_at) / 1000, label: "Resolved" }] : []),
-              ]}
-              emptyText="No data around this incident. Metrics are kept for a limited time."
-            />
-          )
-        )}
-      </section>
-      <section className={styles.section} aria-labelledby="timeline-title">
-        <h2 id="timeline-title">Timeline</h2>
-        <Timeline events={incident.events} unit={unit} />
-      </section>
-    </article>
+      <div className={styles.pair}>
+        <FactsBox title="Threshold when it opened" facts={thresholdFacts(incident.threshold, format)} />
+        <TableBox title="Timeline">
+          <Timeline events={incident.events} format={format} now={now} />
+        </TableBox>
+      </div>
+      {remediation && <Remediation remediation={remediation} />}
+    </Page>
   );
 }
 
-const COMPARISONS: Record<string, string> = {
-  ">": "above",
-  ">=": "at or above",
-  "<": "below",
-  "<=": "at or below",
-};
-
 /** Warning and critical lines of the threshold the incident opened under. */
-export function snapshotLines(threshold: ThresholdSnapshot): ReferenceLine[] {
+export function snapshotLines(threshold: ThresholdSnapshot): Threshold[] {
   return (["warning", "critical"] as const).flatMap((severity) => {
     const value = threshold[severity];
     return value === null ? [] : [{ severity, value, label: SEVERITY_LABELS[severity] }];
   });
 }
 
-function ThresholdFacts({ threshold, unit }: { threshold: ThresholdSnapshot; unit: Unit }) {
-  return (
-    <section className={styles.threshold} aria-labelledby="threshold-title">
-      <h2 id="threshold-title">Threshold when it opened</h2>
-      <dl className={styles.facts}>
-        <Fact term="Fires when">
-          {COMPARISONS[threshold.comparison] ?? threshold.comparison} the threshold (
-          <code>{threshold.comparison}</code>)
-        </Fact>
-        <Fact term="Warning">{formatValue(threshold.warning, unit)}</Fact>
-        <Fact term="Critical">{formatValue(threshold.critical, unit)}</Fact>
-        <Fact term="For">{formatSeconds(threshold.duration_s)}</Fact>
-        <Fact term="Hysteresis">{formatValue(threshold.hysteresis, unit)}</Fact>
-        <Fact term="Applies to">
-          {threshold.instance === null ? "every instance" : <code>{threshold.instance || "no instance"}</code>}
-        </Fact>
-      </dl>
-    </section>
-  );
+function thresholdFacts(threshold: ThresholdSnapshot, format: (v: number) => string) {
+  const above = threshold.comparison === ">" || threshold.comparison === ">=";
+  const resolves = resolvesWhen(threshold, format);
+  return [
+    { label: "Comparison", value: threshold.comparison, mono: true },
+    { label: "Warning", value: threshold.warning === null ? "none" : format(threshold.warning) },
+    { label: "Critical", value: threshold.critical === null ? "none" : format(threshold.critical) },
+    {
+      label: "Duration",
+      value: (
+        <>
+          {formatSeconds(threshold.duration_s)} <span className={styles.muted}>past the threshold before opening</span>
+        </>
+      ),
+    },
+    {
+      label: "Hysteresis",
+      value: (
+        <>
+          {format(threshold.hysteresis)} <span className={styles.muted}>{above ? "below" : "above"} the threshold before resolving</span>
+        </>
+      ),
+    },
+    ...(resolves ? [{ label: "Resolves when", value: resolves }] : []),
+    ...(threshold.instance === null ? [] : [{ label: "Applies to", value: threshold.instance || "no instance", mono: true }]),
+  ];
 }
 
-const EVENT_LABELS: Record<string, string> = {
-  opened: "Opened",
-  escalated: "Escalated",
-  deescalated: "De-escalated",
-  resolved: "Resolved",
+const EVENT_TONES: Record<IncidentEvent["kind"], (e: IncidentEvent) => Tone> = {
+  opened: (e) => (e.severity === "critical" ? "bad" : "warn"),
+  escalated: (e) => (e.severity === "critical" ? "bad" : "warn"),
+  deescalated: (e) => (e.severity === "critical" ? "bad" : "warn"),
+  resolved: () => "neutral",
 };
 
-/** The events in the API's order, which is the order the engine made them. */
-function Timeline({ events, unit }: { events: IncidentEvent[]; unit: Unit }) {
-  if (events.length === 0) return <p className={styles.muted}>No events recorded.</p>;
-  return (
-    <ol className={styles.timeline}>
-      {events.map((event) => {
-        const reason = typeof event.details.reason === "string" ? event.details.reason.replaceAll("_", " ") : null;
-        return (
-          <li key={event.id}>
-            <time dateTime={event.occurred_at}>{formatDateTime(event.occurred_at)}</time>
-            <strong>{EVENT_LABELS[event.kind] ?? event.kind}</strong>
-            {event.severity && <SeverityBadge severity={event.severity} />}
-            {event.value !== null && <span>at {formatValue(event.value, unit)}</span>}
-            {reason && <span className={styles.muted}>({reason})</span>}
-          </li>
-        );
-      })}
-    </ol>
-  );
+/** "Opened as Warning", "Escalated to Critical", "Resolved". */
+function eventWords(event: IncidentEvent): string {
+  const severity = event.severity ? SEVERITY_LABELS[event.severity] : "";
+  switch (event.kind) {
+    case "opened":
+      return `Opened as ${severity}`;
+    case "escalated":
+      return `Escalated to ${severity}`;
+    case "deescalated":
+      return `De-escalated to ${severity}`;
+    case "resolved":
+      return "Resolved";
+  }
 }
 
-function Fact({ term, children }: { term: string; children: ReactNode }) {
+/** The events in the API's order, which is the order the engine made them. */
+function Timeline({ events, format, now }: { events: IncidentEvent[]; format: (v: number) => string; now: Date }) {
+  if (events.length === 0) return <p>No events recorded.</p>;
+  const columns: Column<IncidentEvent>[] = [
+    {
+      key: "time",
+      header: "Time",
+      className: styles.muted,
+      cell: (e) => {
+        const at = new Date(e.occurred_at);
+        const today = at.toDateString() === now.toDateString();
+        return (
+          <time dateTime={e.occurred_at} title={formatExact(at)}>
+            {today ? formatClock(at) : `${formatShortDate(at)} ${formatClock(at)}`}
+          </time>
+        );
+      },
+    },
+    {
+      key: "event",
+      header: "Event",
+      cell: (e) => {
+        const reason = typeof e.details.reason === "string" ? e.details.reason.replaceAll("_", " ") : null;
+        return (
+          <>
+            <Label tone={EVENT_TONES[e.kind](e)}>{eventWords(e)}</Label>
+            {reason && <span className={styles.muted}> · {reason}</span>}
+          </>
+        );
+      },
+    },
+    { key: "value", header: "Value", cell: (e) => (e.value === null ? <span className={styles.muted}>—</span> : format(e.value)) },
+  ];
+  return <DataTable bare dense label="Timeline" columns={columns} rows={events} rowKey={(e) => String(e.id)} pageSize={100} />;
+}
+
+/** One line on what the AI remediation loop did; its decisions are made elsewhere. */
+function Remediation({ remediation }: { remediation: RemediationIncident }) {
   return (
-    <div>
-      <dt>{term}</dt>
-      <dd>{children}</dd>
+    <div className={styles.remediation}>
+      <strong>AI remediation</strong>
+      <StatusLabel kind="remediation" value={remediation.state} />
+      <span>
+        {remediation.event_count} {remediation.event_count === 1 ? "event" : "events"} · opened {minutes(remediation.opened_at)}
+        {remediation.closed_at && ` · closed ${minutes(remediation.closed_at)}`}
+      </span>
     </div>
   );
 }

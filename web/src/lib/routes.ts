@@ -1,8 +1,16 @@
 import { type IncidentFilters, NO_FILTERS, filtersToQuery } from "./incidents";
+import { shortMetric } from "./metrics";
 
-/** Link to the page of the server `id` (a query parameter, ADR-0020). */
-export function serverHref(id: string): string {
-  return `/servers/view/?id=${encodeURIComponent(id)}`;
+/** Link to the page of the server `id` (a query parameter, ADR-0020), on `tab` when given. */
+export function serverHref(id: string, tab?: "sensors" | "updates" | "commands"): string {
+  return `/servers/view/?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ""}`;
+}
+
+/** Link to the page of one sensor's metric on the server `id`; `instance` "" is none. */
+export function sensorHref(id: string, metric: string, instance = ""): string {
+  const params = new URLSearchParams({ id, sensor: shortMetric(metric) });
+  if (instance) params.set("instance", instance);
+  return `/servers/sensor/?${params}`;
 }
 
 /** Link to the incidents list with `filters` (see `lib/incidents.ts`). */

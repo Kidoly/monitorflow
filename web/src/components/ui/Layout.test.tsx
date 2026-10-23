@@ -61,7 +61,8 @@ describe("Tabs", () => {
     const list = screen.getByRole("tablist", { name: "Server sections" });
     const [sensors, updates, commands] = within(list).getAllByRole("tab");
     expect(sensors).toHaveAttribute("aria-selected", "true");
-    expect(sensors).toHaveTextContent("Sensors· 11");
+    expect(sensors).toHaveTextContent("Sensors · 11");
+    expect(sensors).toHaveAccessibleName("Sensors · 11");
     expect(updates).toHaveAttribute("tabindex", "-1");
     expect(screen.getByRole("tabpanel")).toHaveTextContent("sensors panel");
     expect(screen.getByRole("tabpanel")).toHaveAccessibleName(/Sensors/);

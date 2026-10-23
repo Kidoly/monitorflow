@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 
 import { ServerView } from "@/components/ServerPage";
+import { LoadingBlock } from "@/components/ui/PageState";
 
 export const metadata: Metadata = { title: "Server · MonitorFlow" };
 
@@ -9,7 +10,7 @@ export const metadata: Metadata = { title: "Server · MonitorFlow" };
 // segment: a static export cannot serve dynamic routes (ADR-0020).
 export default function ServerViewPage() {
   return (
-    <Suspense fallback={<p role="status">Loading server…</p>}>
+    <Suspense fallback={<LoadingBlock label="Loading server" />}>
       <ServerView />
     </Suspense>
   );

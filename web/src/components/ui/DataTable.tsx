@@ -95,6 +95,8 @@ export function PrimaryCell({ title, href, sub }: { title: ReactNode; href?: str
  * `onSortChange` make it controlled (see `useUrlSort`), otherwise it keeps
  * its own. Without a sort, rows follow `defaultOrder` (e.g. `problemsFirst`).
  *
+ * `bare` drops the border, for a table under a heading inside a box.
+ *
  * Paging: rows past `pageSize` hide behind "Load more", which shows the next
  * page and moves focus to the first link of the first new row. Give
  * `onLoadMore` and `hasMore` to fetch pages from the API instead. Change the

@@ -1,274 +1,204 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { ApiError, type Incident, type Server, type Site, api, describeError, isAbortError } from "@/lib/api";
-import { formatDateTime, formatRelative, formatSeconds, formatValue, unitOf } from "@/lib/format";
-import { type IncidentFilters, NO_FILTERS, apiQuery, filtersFromQuery, incidentSeconds } from "@/lib/incidents";
-import { metricTitle } from "@/lib/metrics";
-import { incidentHref, incidentsHref, serverHref } from "@/lib/routes";
-import { usePolling } from "@/lib/usePolling";
+import { type Incident, type Server, type Site, api, describeError, isUnauthorized } from "@/lib/api";
+import { type IncidentFilters, apiQuery, filtersFromQuery } from "@/lib/incidents";
+import { incidentHref, serverHref } from "@/lib/routes";
+import { type Scope, scopedHref, useScope } from "@/lib/scope";
+import { formatSensorValue, seriesTitle } from "@/lib/sensors";
+import { usePolledData } from "@/lib/usePolledData";
+import { replaceParams } from "@/lib/urlState";
+import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
+import { FilterBar } from "@/components/ui/FilterBar";
+import { Page } from "@/components/ui/Page";
+import { EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
+import { StatusLabel } from "@/components/ui/StatusLabel";
+import { formatDay, formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
-import { REFRESH_MS } from "./FleetOverview";
-import { SeverityBadge } from "./IncidentBadges";
 import styles from "./IncidentList.module.css";
 
-/** Incidents per "load more". */
+/** Incidents per "Load more". */
 export const PAGE_SIZE = 50;
-/** The API's largest page, which caps what a refresh reloads. */
+/** The API's largest page, which caps how far "Load more" goes. */
 const MAX_LIMIT = 500;
 
 /** The incidents list for the page's query string, which holds its filters. */
 export function IncidentsView() {
-  const router = useRouter();
   const search = useSearchParams().toString();
   const filters = useMemo(() => filtersFromQuery(new URLSearchParams(search)), [search]);
-  const onFiltersChange = useCallback(
-    (next: IncidentFilters) => router.replace(incidentsHref(next), { scroll: false }),
-    [router],
-  );
   // New filters start from the first page instead of extending the old list.
-  return <IncidentList key={search} filters={filters} onFiltersChange={onFiltersChange} />;
+  return <IncidentList key={search} filters={filters} />;
 }
 
-interface State {
-  incidents: Incident[] | null;
-  nextCursor: string | null;
-  updatedAt: Date | null;
-  error: string | null;
+interface Loaded {
+  incidents: Incident[];
+  more: boolean;
+  /** Every open incident, for the counts in the title line. */
+  open: Incident[];
 }
 
-interface Props {
-  filters: IncidentFilters;
-  onFiltersChange: (filters: IncidentFilters) => void;
+/** Sites of the scope's customer; null is every site. */
+function scopeSites(scope: Scope, sites: Site[]): Set<string> | null {
+  if (scope.siteId) return new Set([scope.siteId]);
+  if (!scope.customerId) return null;
+  return new Set(sites.filter((s) => s.customer_id === scope.customerId).map((s) => s.id));
 }
 
-export function IncidentList({ filters, onFiltersChange }: Props) {
-  const [state, setState] = useState<State>({ incidents: null, nextCursor: null, updatedAt: null, error: null });
-  const [loadingMore, setLoadingMore] = useState(false);
-  // How many incidents are shown, so a refresh reloads all of them at once
-  // rather than collapsing the list back to its first page.
-  const shown = useRef(PAGE_SIZE);
-
-  const load = useCallback(
-    async (signal: AbortSignal) => {
-      const limit = Math.min(MAX_LIMIT, Math.max(PAGE_SIZE, shown.current));
-      try {
-        const page = await api.incidents({ ...apiQuery(filters), limit }, signal);
-        setState({ incidents: page.incidents, nextCursor: page.next_cursor, updatedAt: new Date(), error: null });
-      } catch (e) {
-        // A 401 has already been routed to the login page.
-        if (!isAbortError(e) && !(e instanceof ApiError && e.status === 401)) {
-          setState((s) => ({ ...s, error: describeError(e) }));
-        }
-      }
-    },
-    [filters],
-  );
-  usePolling(load, REFRESH_MS);
-
-  async function loadMore() {
-    if (!state.nextCursor) return;
-    setLoadingMore(true);
-    try {
-      const page = await api.incidents({ ...apiQuery(filters), limit: PAGE_SIZE, cursor: state.nextCursor });
-      setState((s) => {
-        const incidents = [...(s.incidents ?? []), ...page.incidents];
-        shown.current = incidents.length;
-        return { ...s, incidents, nextCursor: page.next_cursor, error: null };
-      });
-    } catch (e) {
-      if (!(e instanceof ApiError && e.status === 401)) {
-        setState((s) => ({ ...s, error: describeError(e) }));
-      }
-    } finally {
-      setLoadingMore(false);
-    }
-  }
-
-  const { incidents, nextCursor, updatedAt, error } = state;
-  const filtered = incidentsHref(filters) !== incidentsHref();
-
-  return (
-    <section aria-labelledby="incidents-title">
-      <div className={styles.heading}>
-        <h1 id="incidents-title">Incidents</h1>
-        {updatedAt && (
-          <p className={styles.meta}>
-            Updated {updatedAt.toLocaleTimeString("en")}, refreshes every {REFRESH_MS / 1000} seconds.
-          </p>
-        )}
-      </div>
-      <Filters filters={filters} onChange={onFiltersChange} />
-      {error && (
-        <p className={styles.error} role="alert">
-          {incidents ? `Refresh failed: ${error} Showing the last data received.` : error}
-        </p>
-      )}
-      {!incidents && !error && <p role="status">Loading incidents…</p>}
-      {incidents?.length === 0 && (
-        <p className={styles.empty}>
-          {filtered ? "No incidents match these filters." : "No incidents. Thresholds have not fired yet."}
-        </p>
-      )}
-      {incidents && updatedAt && incidents.length > 0 && (
-        <>
-          <IncidentTable incidents={incidents} now={updatedAt} />
-          {nextCursor && (
-            <button className={styles.more} type="button" onClick={loadMore} disabled={loadingMore}>
-              {loadingMore ? "Loading…" : "Load more"}
-            </button>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
-function Filters({ filters, onChange }: { filters: IncidentFilters; onChange: (f: IncidentFilters) => void }) {
+export function IncidentList({ filters }: { filters: IncidentFilters }) {
+  const scope = useScope();
+  const [limit, setLimit] = useState(PAGE_SIZE);
   const [sites, setSites] = useState<Site[]>([]);
   const [servers, setServers] = useState<Server[]>([]);
 
-  // Options load once; a failure leaves the choices that are in the URL.
+  // Filter choices and customer names load once; a failure leaves the choices in the URL.
   useEffect(() => {
     const controller = new AbortController();
     api.sites(controller.signal).then((r) => setSites(r.sites), () => {});
-    api.servers(controller.signal).then(
-      (r) => setServers([...r.servers].sort((a, b) => a.hostname.localeCompare(b.hostname))),
-      () => {},
-    );
+    api.servers(controller.signal).then((r) => setServers(r.servers), () => {});
     return () => controller.abort();
   }, []);
 
-  const set = (patch: Partial<IncidentFilters>) => onChange({ ...filters, ...patch });
-  const siteOptions = withCurrent(sites.map((s) => [s.id, s.name]), filters.siteId, "Selected site");
-  const serverOptions = withCurrent(
-    servers.filter((s) => !filters.siteId || s.site_id === filters.siteId).map((s) => [s.id, s.hostname]),
-    filters.serverId,
-    "Selected server",
+  const fetcher = useCallback(
+    async (signal: AbortSignal): Promise<Loaded> => {
+      const [page, open] = await Promise.all([
+        api.incidents({ ...apiQuery(filters), limit }, signal),
+        api.incidents({ state: "open", limit: MAX_LIMIT }, signal),
+      ]);
+      return { incidents: page.incidents, more: page.next_cursor !== null, open: open.incidents };
+    },
+    [filters, limit],
   );
+  const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher);
 
+  const inScope = scopeSites(scope, sites);
+  const visible = (i: Incident) => !inScope || inScope.has(i.site_id);
+  const incidents = data?.incidents.filter(visible) ?? [];
+  const open = data?.open.filter(visible) ?? [];
+  const customers = new Map(sites.map((s) => [s.id, s.customer_name]));
+  const now = updatedAt ?? new Date();
+  const filtered = Boolean(filters.severity || filters.serverId || filters.state !== "all" || (filters.siteId && !scope.siteId));
+
+  const siteChoices = sites.filter((s) => !scope.customerId || s.customer_id === scope.customerId);
+  const serverChoices = servers
+    .filter((s) => (!scope.customerId || s.customer_id === scope.customerId) && (!filters.siteId || s.site_id === filters.siteId))
+    .sort((a, b) => a.hostname.localeCompare(b.hostname, "en", { numeric: true }));
+
+  const columns: Column<Incident>[] = [
+    {
+      key: "severity",
+      header: "Severity",
+      cell: (i) =>
+        i.state === "open" ? (
+          <StatusLabel kind="severity" value={i.severity} />
+        ) : (
+          <>
+            <StatusLabel kind="severity" value="resolved" />{" "}
+            <span className={styles.small}>was {i.severity === "critical" ? "Critical" : "Warning"}</span>
+          </>
+        ),
+    },
+    {
+      key: "server",
+      header: "Server",
+      cell: (i) => (
+        <PrimaryCell
+          title={i.hostname}
+          href={scopedHref(serverHref(i.server_id), scope)}
+          sub={[i.site_name, customers.get(i.site_id)].filter(Boolean).join(" · ")}
+        />
+      ),
+    },
+    {
+      key: "metric",
+      header: "Metric",
+      cell: (i) => (
+        <Link href={scopedHref(incidentHref(i.id), scope)} className={i.state === "open" ? styles.strong : undefined}>
+          {seriesTitle(undefined, i.metric, i.instance)}
+        </Link>
+      ),
+    },
+    {
+      key: "opened",
+      header: "Opened",
+      cell: (i) => (
+        <time dateTime={i.opened_at} title={formatExact(new Date(i.opened_at))}>
+          {formatDay(new Date(i.opened_at), now)}
+        </time>
+      ),
+    },
+    { key: "state", header: "State", cell: (i) => (i.resolved_at ? `Resolved ${formatSince(new Date(i.resolved_at), now)}` : "Open") },
+    {
+      key: "duration",
+      header: "Duration",
+      cell: (i) => formatDuration(((i.resolved_at ? Date.parse(i.resolved_at) : now.getTime()) - Date.parse(i.opened_at)) / 1000),
+    },
+    {
+      key: "last",
+      header: "Last value",
+      cell: (i) => <span className={i.state === "open" ? styles.strong : undefined}>{formatSensorValue(i.metric, i.last_value)}</span>,
+    },
+    { key: "peak", header: "Peak", cell: (i) => formatSensorValue(i.metric, i.peak_value) },
+  ];
+
+  const critical = open.filter((i) => i.severity === "critical").length;
   return (
-    <form className={styles.filters} aria-label="Filters" onSubmit={(e) => e.preventDefault()}>
-      <label>
-        State
-        <select value={filters.state} onChange={(e) => set({ state: e.target.value as IncidentFilters["state"] })}>
-          <option value="all">All</option>
-          <option value="open">Open</option>
-          <option value="resolved">Resolved</option>
-        </select>
-      </label>
-      <label>
-        Severity
-        <select
-          value={filters.severity ?? ""}
-          onChange={(e) => set({ severity: (e.target.value || null) as IncidentFilters["severity"] })}
-        >
-          <option value="">Any</option>
-          <option value="warning">Warning</option>
-          <option value="critical">Critical</option>
-        </select>
-      </label>
-      <label>
-        Site
-        <select value={filters.siteId ?? ""} onChange={(e) => set({ siteId: e.target.value || null, serverId: null })}>
-          <option value="">Any</option>
-          {siteOptions.map(([id, name]) => (
-            <option key={id} value={id}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Server
-        <select value={filters.serverId ?? ""} onChange={(e) => set({ serverId: e.target.value || null })}>
-          <option value="">Any</option>
-          {serverOptions.map(([id, name]) => (
-            <option key={id} value={id}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </label>
-      {incidentsHref(filters) !== incidentsHref() && (
-        <button className={styles.clear} type="button" onClick={() => onChange(NO_FILTERS)}>
-          Clear filters
-        </button>
+    <Page>
+      <PageHeader
+        title="Incidents"
+        meta={
+          <>
+            {data && `${open.length} open, ${critical} critical · `}
+            <RefreshLine updatedAt={updatedAt} stale={stale} />
+          </>
+        }
+      />
+      <FilterBar
+        filters={[
+          {
+            name: "state",
+            label: "State",
+            options: [
+              { value: "open", label: "Open" },
+              { value: "resolved", label: "Resolved" },
+            ],
+          },
+          {
+            name: "severity",
+            label: "Severity",
+            options: [
+              { value: "critical", label: "Critical" },
+              { value: "warning", label: "Warning" },
+            ],
+          },
+          ...(scope.siteId ? [] : [{ name: "site", label: "Site", options: siteChoices.map((s) => ({ value: s.id, label: s.name })) }]),
+          { name: "server", label: "Server", options: serverChoices.map((s) => ({ value: s.id, label: s.hostname })) },
+        ]}
+        // Another site's server would match nothing.
+        onChange={(next) => next.get("site") !== (filters.siteId ?? null) && next.get("server") && replaceParams({ server: null })}
+      />
+      {stale && updatedAt && (
+        <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
       )}
-    </form>
-  );
-}
-
-/** `options`, plus the selected ID when the options do not include it (yet). */
-function withCurrent(options: string[][], current: string | null, label: string): string[][] {
-  return current && !options.some(([id]) => id === current) ? [...options, [current, label]] : options;
-}
-
-function IncidentTable({ incidents, now }: { incidents: Incident[]; now: Date }) {
-  return (
-    <div className={styles.scroll}>
-      <table className={styles.table} aria-labelledby="incidents-title">
-        <thead>
-          <tr>
-            <th scope="col">Severity</th>
-            <th scope="col">Server</th>
-            <th scope="col">Metric</th>
-            <th scope="col">Opened</th>
-            <th scope="col">State</th>
-            <th scope="col">Duration</th>
-            <th scope="col">Last value</th>
-            <th scope="col">Peak</th>
-          </tr>
-        </thead>
-        <tbody>
-          {incidents.map((incident) => {
-            const unit = unitOf(incident.metric);
-            return (
-              <tr key={incident.id}>
-                <td>
-                  <SeverityBadge severity={incident.severity} state={incident.state} />
-                </td>
-                <td>
-                  <Link href={serverHref(incident.server_id)}>{incident.hostname}</Link>{" "}
-                  <span className={styles.muted}>{incident.site_name}</span>
-                </td>
-                <th scope="row">
-                  <Link href={incidentHref(incident.id)}>
-                    {metricTitle(incident.metric)}
-                    {incident.instance && <code className={styles.instance}>{incident.instance}</code>}
-                  </Link>
-                </th>
-                <td>
-                  <Time iso={incident.opened_at} now={now} />
-                </td>
-                <td>
-                  {incident.resolved_at ? (
-                    <>
-                      Resolved <Time iso={incident.resolved_at} now={now} />
-                    </>
-                  ) : (
-                    <strong>Open</strong>
-                  )}
-                </td>
-                <td>{formatSeconds(incidentSeconds(incident.opened_at, incident.resolved_at, now))}</td>
-                <td>{formatValue(incident.last_value, unit)}</td>
-                <td>{formatValue(incident.peak_value, unit)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-export function Time({ iso, now }: { iso: string; now: Date }) {
-  return (
-    <time dateTime={iso} title={formatDateTime(iso)}>
-      {formatRelative(iso, now)}
-    </time>
+      {!data && error !== null && !isUnauthorized(error) ? (
+        <ErrorState what="incidents" error={describeError(error)} onRetry={refresh} />
+      ) : data && incidents.length === 0 ? (
+        <EmptyState>{filtered ? "No incidents match these filters." : "No incidents. Thresholds have not fired yet."}</EmptyState>
+      ) : (
+        <DataTable
+          label="Incidents"
+          columns={columns}
+          rows={incidents}
+          rowKey={(i) => i.id}
+          rowMuted={(i) => i.state === "resolved"}
+          loading={!data}
+          hasMore={Boolean(data?.more) && limit < MAX_LIMIT}
+          onLoadMore={() => setLimit((n) => Math.min(MAX_LIMIT, n + PAGE_SIZE))}
+          summary={(shown) => `Showing ${shown} ${shown === 1 ? "incident" : "incidents"} · ${PAGE_SIZE} per page`}
+        />
+      )}
+    </Page>
   );
 }

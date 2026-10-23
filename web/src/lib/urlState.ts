@@ -23,7 +23,9 @@ export function hrefWith(changes: ParamChanges, location: Location = window.loca
  * no history entry, and Next's `useSearchParams` follows it.
  */
 export function replaceParams(changes: ParamChanges) {
-  window.history.replaceState(window.history.state, "", hrefWith(changes));
+  // `null`, not Next's own state: Next ignores a replaceState carrying its
+  // internal state, and useSearchParams would not follow.
+  window.history.replaceState(null, "", hrefWith(changes));
 }
 
 /**

@@ -1,0 +1,58 @@
+/* The sensor and incident pages. */
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.strong {
+  font-weight: 600;
+}
+
+/* "1 h 6 h 24 h …": a segmented group of 36 px buttons. */
+.segments {
+  display: flex;
+  gap: 4px;
+}
+
+/* Configuration beside the incidents, one under the other when narrow. */
+.pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* "AI remediation  Awaiting approval  3 events · opened 11:40". */
+.remediation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.remediation > span:last-child {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.underline {
+  text-decoration: underline;
+}

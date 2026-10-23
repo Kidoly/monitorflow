@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { NO_FILTERS, apiQuery, filtersFromQuery, filtersToQuery, incidentSeconds, incidentWindow } from "./incidents";
+import {
+  INCIDENT_MARGINS,
+  NO_FILTERS,
+  apiQuery,
+  filtersFromQuery,
+  filtersToQuery,
+  incidentSeconds,
+  incidentWindow,
+  resolvesWhen,
+} from "./incidents";
 import { incidentsHref } from "./routes";
 
 const SITE = "0b8d2f6e-1c4a-4f7e-9d2b-3a5c6e7f8a90";
@@ -79,5 +88,25 @@ describe("incidentWindow", () => {
     const { start, end, step } = incidentWindow("2026-09-19T12:00:00Z", null, now);
     expect((end - start) / step).toBeLessThanOrEqual(360);
     expect(start % step).toBe(0);
+  });
+});
+
+describe("incident window margins and recovery", () => {
+  const now = new Date("2026-10-19T12:00:00Z");
+
+  it("uses the margin chosen with the window buttons", () => {
+    const window = incidentWindow("2026-10-19T11:00:00Z", "2026-10-19T11:10:00Z", now, 3 * 3600);
+    expect(window.start).toBeLessThanOrEqual(Date.parse("2026-10-19T08:00:00Z") / 1000);
+    expect(window.end).toBeGreaterThanOrEqual(now.getTime() / 1000 - window.step);
+    expect(INCIDENT_MARGINS.map((m) => m.label)).toEqual(["± 3 h", "± 12 h", "± 3 d"]);
+  });
+
+  it("says when the engine resolves, past the lowest threshold by the hysteresis", () => {
+    const pct = (v: number) => `${Math.round(v * 100)}%`;
+    const threshold = { metric: "m", instance: null, comparison: ">" as const, warning: 0.85, critical: 0.95, duration_s: 300, hysteresis: 0.02 };
+    expect(resolvesWhen(threshold, pct)).toBe("the value is at or below 83%");
+    expect(resolvesWhen({ ...threshold, warning: null }, pct)).toBe("the value is at or below 93%");
+    expect(resolvesWhen({ ...threshold, comparison: "<", warning: 0.1, critical: null }, pct)).toBe("the value is at or above 12%");
+    expect(resolvesWhen({ ...threshold, warning: null, critical: null }, pct)).toBeNull();
   });
 });
