@@ -14,7 +14,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
 use monitorflow_common::command::{self, valid_package_name};
-use monitorflow_common::proto::v1::{ApplyUpdates, ConfigureSources};
+use monitorflow_common::proto::v1::{ApplyUpdates, ConfigureSources, ShellCommand};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -132,6 +132,11 @@ pub(crate) fn parameters(kind: &str, payload: &[u8]) -> Value {
             Err(_) => Value::Null,
         },
         command::REVERT_SOURCES => json!({}),
+        // Queued by the remediation loop only (ADR-0043).
+        command::SHELL => match ShellCommand::decode(payload) {
+            Ok(p) => json!({"command": p.command, "timeout_seconds": p.timeout_seconds}),
+            Err(_) => Value::Null,
+        },
         _ => Value::Null,
     }
 }
@@ -380,7 +385,15 @@ mod tests {
             parameters("apply_updates", &payload),
             json!({"packages": ["libc6", "g++"], "security_only": true, "allow_reboot": false})
         );
-        assert_eq!(parameters("shell", &payload), Value::Null);
+        assert_eq!(parameters("reboot", &payload), Value::Null);
+        let shell = ShellCommand {
+            command: "df -h".into(),
+            timeout_seconds: 120,
+        };
+        assert_eq!(
+            parameters("shell", &shell.encode_to_vec()),
+            json!({"command": "df -h", "timeout_seconds": 120})
+        );
 
         for bad in [
             json!({"kind": "shell"}),

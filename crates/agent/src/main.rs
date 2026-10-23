@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use monitorflow_agent::backoff::Backoff;
+use monitorflow_agent::commands::shell::ShellHandler;
 use monitorflow_agent::commands::{self, Dispatcher, DispatcherSettings, Handlers, Journal};
 use monitorflow_agent::enroll::{self, EnrollError};
 use monitorflow_agent::packages::sources::{self, SystemCheck};
@@ -157,6 +158,10 @@ async fn main() -> anyhow::Result<()> {
         let handler = SourcesHandler::new(action, host.os_family, tools.clone());
         handlers.register(kind, Arc::new(handler));
     }
+    handlers.register(
+        command::SHELL,
+        Arc::new(ShellHandler::new(config.commands.shell)),
+    );
     let (commands_stream, commands_end) = commands::link();
     let ca_certs =
         tls::load_certs(&config.tls_paths().ca_cert).context("loading the CA certificate")?;

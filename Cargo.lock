@@ -1533,6 +1533,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
+ "monitorflow-ai",
  "monitorflow-common",
  "monitorflow-sensors",
  "pem",

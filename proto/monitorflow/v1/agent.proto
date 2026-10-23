@@ -161,3 +161,14 @@ message CommandResult {
   // Why the command failed or was not run, in one line; empty on success.
   string error = 8;
 }
+
+// Payload of "shell" commands (ADR-0043): one command line an AI provider
+// proposed and the server's risk rules let through, run by the agent with
+// `/bin/sh -c` as its own user. Agents refuse it unless `commands.shell`
+// is enabled in their configuration.
+message ShellCommand {
+  string command = 1;
+  // The agent kills the command and what it started after this many
+  // seconds; 0 means the agent's default.
+  uint32 timeout_seconds = 2;
+}

@@ -98,6 +98,18 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # Seconds one request to the API may take; answers can take minutes.
 # request_timeout = 300
 
+[remediation]
+# Limits of each AI remediation incident (ADR-0043), which opens for every
+# new threshold incident while [ai] is enabled. Hitting one hands the
+# incident to a human. Read-only commands run automatically; others wait
+# for approval or are refused, by the rules of ADR-0041 only.
+# Most commands run for one incident.
+# max_commands = 10
+# Seconds from opening to escalation, waiting for approval included.
+# max_duration = 1800
+# Seconds one command may take from queueing to its result (at most 3600).
+# command_timeout = 120
+
 # Proxmox VE VM snapshots before change-tier remediation commands
 # (ADR-0044). Off by default. Map servers to VMs with
 # PUT /api/servers/{id}/proxmox; servers without a mapping run commands
@@ -131,3 +143,4 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # level = "info"
 # text or json; use json in production.
 # format = "text"
+

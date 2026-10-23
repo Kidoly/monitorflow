@@ -159,6 +159,8 @@ db_tests! {
                 "relays",
                 "remediation_incident_events",
                 "remediation_incidents",
+                "remediation_loop_leases",
+                "remediation_pending_commands",
                 "remediation_policies",
                 "remediation_rules",
                 "sensor_configs",

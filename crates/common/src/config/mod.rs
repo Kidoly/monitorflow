@@ -485,6 +485,17 @@ pub struct AgentConfig {
     pub log: LogConfig,
     pub sensors: AgentSensorsConfig,
     pub packages: AgentPackagesConfig,
+    pub commands: AgentCommandsConfig,
+}
+
+/// Which optional command kinds the server may send this host. Only the
+/// host's administrator sets these.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentCommandsConfig {
+    /// Runs `shell` commands of the AI remediation loop (ADR-0043), with
+    /// `/bin/sh -c` as the agent's user. Off unless enabled here.
+    pub shell: bool,
 }
 
 /// Package reports and updates (ADR-0031).
@@ -553,6 +564,7 @@ impl Default for AgentConfig {
             log: LogConfig::default(),
             sensors: AgentSensorsConfig::default(),
             packages: AgentPackagesConfig::default(),
+            commands: AgentCommandsConfig::default(),
         }
     }
 }
@@ -584,6 +596,7 @@ impl LoadConfig for AgentConfig {
             "packages.report_interval",
             &mut self.packages.report_interval,
         )?;
+        env.set("commands.shell", &mut self.commands.shell)?;
         if let Some(dirs) = env.list("sensors.log_dirs") {
             self.sensors.log_dirs = dirs.into_iter().map(PathBuf::from).collect();
         }
@@ -933,6 +946,9 @@ pub struct ServerConfig {
     /// Proxmox VE clusters snapshotted before change-tier commands
     /// (ADR-0044). Off by default.
     pub proxmox: ProxmoxConfig,
+    /// Limits of the remediation loop (ADR-0043), which runs when `ai` is
+    /// enabled.
+    pub remediation: RemediationConfig,
 }
 
 /// Whether `url` can be written into agents' package sources: http or
@@ -976,6 +992,7 @@ impl Default for ServerConfig {
             mirror: MirrorConfig::default(),
             ai: AiConfig::default(),
             proxmox: ProxmoxConfig::default(),
+            remediation: RemediationConfig::default(),
         }
     }
 }
@@ -1109,6 +1126,56 @@ impl AiConfig {
         check.required("ai.model", &self.model)?;
         check.positive("ai.max_tokens", self.max_tokens.into())?;
         check.positive("ai.request_timeout", self.request_timeout)
+    }
+}
+
+/// Longest `remediation.command_timeout`, the agent's own limit.
+pub const MAX_REMEDIATION_COMMAND_TIMEOUT: u64 = 60 * 60;
+
+/// Limits of each remediation incident (ADR-0043). Hitting one hands the
+/// incident to a human. They are copied into the incident when it opens.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RemediationConfig {
+    /// Most commands run for one incident.
+    pub max_commands: u32,
+    /// Seconds from opening to escalation, waiting for approval included.
+    pub max_duration: u64,
+    /// Seconds one command may take from queueing to its result.
+    pub command_timeout: u64,
+}
+
+impl Default for RemediationConfig {
+    fn default() -> Self {
+        Self {
+            max_commands: 10,
+            max_duration: 30 * 60,
+            command_timeout: 120,
+        }
+    }
+}
+
+impl RemediationConfig {
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set("remediation.max_commands", &mut self.max_commands)?;
+        env.set("remediation.max_duration", &mut self.max_duration)?;
+        env.set("remediation.command_timeout", &mut self.command_timeout)
+    }
+
+    fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
+        check.positive("remediation.max_commands", self.max_commands.into())?;
+        check.positive("remediation.max_duration", self.max_duration)?;
+        if self.max_duration > i32::MAX as u64 {
+            return Err(check.fail("remediation.max_duration", "is too large"));
+        }
+        check.positive("remediation.command_timeout", self.command_timeout)?;
+        if self.command_timeout > MAX_REMEDIATION_COMMAND_TIMEOUT {
+            return Err(check.fail(
+                "remediation.command_timeout",
+                format!("must be at most {MAX_REMEDIATION_COMMAND_TIMEOUT} seconds"),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -1281,6 +1348,7 @@ impl LoadConfig for ServerConfig {
         self.mirror.apply_env(env)?;
         self.ai.apply_env(env)?;
         self.proxmox.apply_env(env)?;
+        self.remediation.apply_env(env)?;
         self.log.apply_env(env)
     }
 
@@ -1289,6 +1357,7 @@ impl LoadConfig for ServerConfig {
         self.mirror.validate(check)?;
         self.ai.validate(check)?;
         self.proxmox.validate(check)?;
+        self.remediation.validate(check)?;
         if let Some(url) = &self.mirror_public_url {
             if !valid_mirror_url(url) {
                 return Err(check.fail(

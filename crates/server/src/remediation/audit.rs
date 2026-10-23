@@ -21,6 +21,8 @@ use serde_json::{json, Value};
 use sqlx::{PgExecutor, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
+use super::risk::Decision;
+
 /// Largest payload accepted, as JSON text.
 pub const MAX_PAYLOAD_BYTES: usize = 1024 * 1024;
 
@@ -158,13 +160,28 @@ impl NewEvent {
         )
     }
 
-    /// The tier the rules gave `command`, and the rule that decided it
-    /// (`None` for the unknown-command default).
-    pub fn classification(command: &str, tier: &str, rule: Option<&str>) -> Self {
+    /// The AI's decision to stop, `outcome` being `resolved` or
+    /// `escalate`. Untrusted text.
+    pub fn ai_stop(model: &str, diagnosis: &str, outcome: &str, reason: &str) -> Self {
+        Self::new(
+            EventKind::AiProposal,
+            Actor::Ai(model.to_owned()),
+            json!({ "diagnosis": diagnosis, "command": null, "stop": outcome, "reason": reason }),
+        )
+    }
+
+    /// The tier the rules gave `command`, the rule that decided it and
+    /// why (ADR-0041).
+    pub fn classification(command: &str, decision: &Decision) -> Self {
         Self::new(
             EventKind::Classification,
             Actor::System,
-            json!({ "command": command, "tier": tier, "rule": rule }),
+            json!({
+                "command": command,
+                "tier": decision.tier,
+                "rule": decision.rule,
+                "reason": decision.reason,
+            }),
         )
     }
 
@@ -200,13 +217,14 @@ impl NewEvent {
     }
 
     /// What `peer` reported for `command_id`; `exit_code` is `None` when
-    /// the command did not run to completion.
+    /// the command did not run to completion, `error` says why.
     pub fn command_result(
         peer: &str,
         command_id: Uuid,
         exit_code: Option<i32>,
         stdout: &str,
         stderr: &str,
+        error: Option<&str>,
         duration: Duration,
     ) -> Self {
         Self::new(
@@ -217,6 +235,7 @@ impl NewEvent {
                 "exit_code": exit_code,
                 "stdout": stdout,
                 "stderr": stderr,
+                "error": error,
                 "duration_ms": u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
             }),
         )
@@ -568,6 +587,7 @@ mod tests {
             Some(0),
             "ok",
             "",
+            None,
             Duration::from_millis(1500),
         );
         assert_eq!(event.actor.columns(), ("peer", "agent-1".to_owned()));
