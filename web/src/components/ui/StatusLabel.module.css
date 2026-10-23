@@ -1,0 +1,42 @@
+.label {
+  display: inline-flex;
+  align-items: center;
+  height: var(--label-h);
+  padding: 0 10px;
+  border-radius: var(--radius-label);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Inside tabs and dense lines. */
+.small {
+  height: 20px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.bad {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.neutral {
+  background: var(--neutral-bg);
+  color: var(--neutral);
+}
+
+.info {
+  background: var(--info-bg);
+  color: var(--info);
+}

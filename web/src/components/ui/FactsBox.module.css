@@ -1,0 +1,46 @@
+.box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 20px;
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+}
+
+.two {
+  grid-template-columns: max-content 1fr max-content 1fr;
+  column-gap: 28px;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+@media (max-width: 1280px) {
+  .two {
+    grid-template-columns: max-content 1fr;
+    column-gap: 20px;
+  }
+}

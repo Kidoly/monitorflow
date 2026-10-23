@@ -6,11 +6,11 @@
 }
 
 .expiring {
-  color: var(--warning);
-  background: var(--warning-bg);
+  color: var(--warn);
+  background: var(--warn-bg);
 }
 
 .expired {
-  color: var(--critical);
-  background: var(--critical-bg);
+  color: var(--bad);
+  background: var(--bad-bg);
 }

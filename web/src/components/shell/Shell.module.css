@@ -1,0 +1,392 @@
+.app {
+  min-height: 100vh;
+  display: flex;
+  align-items: stretch;
+}
+
+.skip {
+  position: absolute;
+  left: 8px;
+  top: -40px;
+  background: var(--surface);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  z-index: 9;
+}
+
+.skip:focus {
+  top: 8px;
+}
+
+.side {
+  flex: 0 0 var(--sidebar-w);
+  width: var(--sidebar-w);
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.main {
+  flex: 1 1 560px;
+  min-width: 0;
+  padding: 24px 28px;
+}
+
+.brand,
+.item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
+  color: var(--text);
+  position: relative;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 15px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+
+.brandShort {
+  display: none;
+}
+
+.item:hover {
+  background: var(--hl);
+  text-decoration: none;
+}
+
+.item[aria-current="page"],
+.item[aria-current="page"]:hover {
+  background: var(--text);
+  color: var(--bg);
+  font-weight: 500;
+}
+
+.heading {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 14px 10px 4px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.wideHidden {
+  display: none;
+}
+
+.count {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.item[aria-current="page"] .count {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.foot {
+  margin-top: auto;
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.who {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.signOut {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  text-decoration: underline;
+  position: relative;
+}
+
+.signOut svg {
+  display: none;
+}
+
+.error {
+  margin: 0 10px 8px;
+  color: var(--bad);
+  font-size: 12px;
+}
+
+.themeButton {
+  justify-content: center;
+  position: relative;
+}
+
+.themeButton svg {
+  display: none;
+}
+
+/* Scope switcher */
+.scope {
+  position: relative;
+  margin-bottom: 6px;
+}
+
+.scopeButton {
+  width: 100%;
+  justify-content: space-between;
+  position: relative;
+}
+
+.scopeIcon {
+  display: none;
+}
+
+.scopeName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 100%;
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.popup ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.option {
+  padding: 6px 10px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.option:hover,
+.option:focus-visible {
+  background: var(--hl);
+  outline: none;
+}
+
+.option[aria-selected="true"] {
+  font-weight: 600;
+}
+
+.siteOption {
+  padding-left: 24px;
+  color: var(--muted);
+}
+
+/* Phone top bar */
+.topBar {
+  display: none;
+}
+
+/* Collapsed: icons with tooltips. The text stays in the DOM (opacity, not
+   display), so every link keeps its accessible name. */
+@media (max-width: 1099px) and (min-width: 800px) {
+  .side {
+    flex-basis: 64px;
+    width: 64px;
+    padding: 16px 12px;
+    overflow: visible;
+  }
+
+  .brand {
+    justify-content: center;
+    padding: 6px 0;
+  }
+
+  .brandFull {
+    display: none;
+  }
+
+  .brandShort {
+    display: inline;
+  }
+
+  .item {
+    justify-content: center;
+    padding: 10px;
+  }
+
+  .wideHidden {
+    display: block;
+  }
+
+  .heading {
+    font-size: 0;
+    padding: 0;
+    margin: 8px 4px;
+    border-top: 1px solid var(--border);
+  }
+
+  .text,
+  .scopeName,
+  .themeText,
+  .signOutText {
+    position: absolute;
+    left: calc(100% + 10px);
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 30;
+    padding: 4px 8px;
+    border-radius: var(--radius-control);
+    background: var(--text);
+    color: var(--bg);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    text-decoration: none;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .item:hover .text,
+  .item:focus-visible .text,
+  .scopeButton:hover .scopeName,
+  .scopeButton:focus-visible .scopeName,
+  .themeButton:hover .themeText,
+  .themeButton:focus-visible .themeText,
+  .signOut:hover .signOutText,
+  .signOut:focus-visible .signOutText {
+    opacity: 1;
+  }
+
+  .count {
+    position: absolute;
+    top: 0;
+    right: -4px;
+    margin: 0;
+    padding: 0 5px;
+    font-size: 11px;
+  }
+
+  .scopeButton {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .scopeIcon {
+    display: block;
+  }
+
+  .scopeChevron {
+    display: none;
+  }
+
+  .popup {
+    left: calc(100% + 8px);
+    top: 0;
+    min-width: 220px;
+  }
+
+  .foot {
+    flex-direction: column;
+    padding: 10px 0;
+  }
+
+  .who {
+    display: none;
+  }
+
+  .signOut svg,
+  .themeButton svg {
+    display: block;
+  }
+
+  .themeButton {
+    padding: 0;
+  }
+}
+
+/* Phone: a top bar with a menu button; the sidebar opens under it. */
+@media (max-width: 799px) {
+  .app {
+    flex-direction: column;
+  }
+
+  .topBar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .menuButton {
+    padding: 0 10px;
+  }
+
+  .topTitle {
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .topCount {
+    margin-left: auto;
+  }
+
+  .side {
+    display: none;
+    position: static;
+    width: auto;
+    height: auto;
+    flex-basis: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .side.open {
+    display: flex;
+  }
+
+  .side .brand {
+    display: none;
+  }
+
+  .main {
+    padding: 14px;
+  }
+}

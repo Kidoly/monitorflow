@@ -12,7 +12,7 @@ import { REFRESH_MS } from "./FleetOverview";
 
 /** `/admin/sites/`: sites grouped by customer, with a create form per administered customer. */
 export function SitesAdminPage() {
-  return <AdminLayout current="Sites">{(me) => <SitesAdmin me={me} />}</AdminLayout>;
+  return <AdminLayout>{(me) => <SitesAdmin me={me} />}</AdminLayout>;
 }
 
 interface Data {

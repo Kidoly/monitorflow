@@ -33,7 +33,6 @@ describe("RelayListPage", () => {
       expect.stringMatching(/^\/admin\/relays\/view\/?\?id=6f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a02$/),
     );
     expect(rows[2]).toHaveTextContent(/relay-2\s*○ Offline/);
-    expect(screen.getByRole("navigation", { name: "Administration" })).toBeInTheDocument();
   });
 
   it("is only shown to administrators", () => {

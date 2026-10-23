@@ -33,7 +33,7 @@
   font: inherit;
   background: var(--surface);
   border: 1px solid var(--muted);
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
 }
 
 .clear,
@@ -42,7 +42,7 @@
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--muted);
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
 }
 
 .more {
@@ -51,9 +51,9 @@
 
 .error {
   padding: 0.5rem 0.75rem;
-  color: var(--error);
-  background: var(--error-bg);
-  border-radius: var(--radius);
+  color: var(--bad);
+  background: var(--bad-bg);
+  border-radius: var(--radius-control);
 }
 
 .empty {
@@ -61,7 +61,7 @@
   text-align: center;
   background: var(--surface);
   border: 1px dashed var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
 }
 
 .scroll {

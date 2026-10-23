@@ -33,24 +33,24 @@
 .inSync,
 .pending {
   padding: 0.5rem 0.75rem;
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
 }
 
 .inSync {
-  color: var(--online);
-  background: var(--online-bg);
+  color: var(--ok);
+  background: var(--ok-bg);
 }
 
 .pending {
-  color: var(--offline);
-  background: var(--offline-bg);
+  color: var(--bad);
+  background: var(--bad-bg);
 }
 
 .error {
   padding: 0.5rem 0.75rem;
-  color: var(--error);
-  background: var(--error-bg);
-  border-radius: var(--radius);
+  color: var(--bad);
+  background: var(--bad-bg);
+  border-radius: var(--radius-control);
 }
 
 .empty {
@@ -58,7 +58,7 @@
   text-align: center;
   background: var(--surface);
   border: 1px dashed var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
 }
 
 .note {

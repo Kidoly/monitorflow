@@ -25,17 +25,17 @@
 }
 
 .range:first-child {
-  border-radius: var(--radius) 0 0 var(--radius);
+  border-radius: var(--radius-control) 0 0 var(--radius-control);
 }
 
 .range:last-child {
-  border-radius: 0 var(--radius) var(--radius) 0;
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
 }
 
 .range[aria-pressed="true"] {
-  color: var(--accent-text);
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--bg);
+  background: var(--text);
+  border-color: var(--text);
   font-weight: 600;
 }
 
@@ -54,7 +54,7 @@
   padding: 0.75rem 1rem;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
 }
 
 .failed figcaption {
@@ -62,14 +62,14 @@
 }
 
 .failed p {
-  color: var(--error);
+  color: var(--bad);
 }
 
 .error {
   padding: 0.5rem 0.75rem;
-  color: var(--error);
-  background: var(--error-bg);
-  border-radius: var(--radius);
+  color: var(--bad);
+  background: var(--bad-bg);
+  border-radius: var(--radius-control);
 }
 
 .empty {
@@ -77,7 +77,7 @@
   text-align: center;
   background: var(--surface);
   border: 1px dashed var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
 }
 
 .note {

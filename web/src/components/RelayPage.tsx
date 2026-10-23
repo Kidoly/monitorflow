@@ -20,7 +20,7 @@ import { RevokeControl } from "./RevokeControl";
 /** `/admin/relays/view/?id=…` (ADR-0020 routing). */
 export function RelayView() {
   const id = useSearchParams().get("id");
-  return <AdminLayout current="Relays">{(me) => <RelayPage key={id} id={id} me={me} />}</AdminLayout>;
+  return <AdminLayout>{(me) => <RelayPage key={id} id={id} me={me} />}</AdminLayout>;
 }
 
 export function RelayPage({ id, me }: { id: string | null; me: Me }) {
