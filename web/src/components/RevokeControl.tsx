@@ -6,7 +6,8 @@ import { type RevocationReason, type Revoked, api, describeError } from "@/lib/a
 
 import styles from "./Admin.module.css";
 
-const REASONS: [RevocationReason, string][] = [
+/** Revocation reasons and their words, for the confirmations. */
+export const REVOCATION_REASONS: [RevocationReason, string][] = [
   ["unspecified", "Unspecified"],
   ["cessation_of_operation", "Decommissioned"],
   ["key_compromise", "Key compromised"],
@@ -68,7 +69,7 @@ export function RevokeControl({
         <label>
           Reason
           <select value={reason} onChange={(e) => setReason(e.target.value as RevocationReason)}>
-            {REASONS.map(([value, label]) => (
+            {REVOCATION_REASONS.map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
               </option>

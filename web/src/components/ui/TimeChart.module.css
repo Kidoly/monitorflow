@@ -163,3 +163,8 @@
   color: var(--muted);
   text-align: center;
 }
+
+.footer {
+  margin-left: auto;
+  font-size: 13px;
+}

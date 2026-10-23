@@ -355,6 +355,65 @@ export interface IncidentQuery {
   cursor?: string;
 }
 
+export type CommandState = "queued" | "sent" | "running" | "succeeded" | "failed" | "expired" | "cancelled";
+
+/** One command of `GET /api/servers/{id}/commands`, without its output (ADR-0031). */
+export interface Command {
+  id: string;
+  server_id: string;
+  /** `apply_updates`, `configure_sources` or `revert_sources`. */
+  kind: string;
+  /** The payload as JSON for kinds the API knows, else null. */
+  parameters: Record<string, unknown> | null;
+  state: CommandState;
+  issued_at: string;
+  expires_at: string;
+  sent_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  exit_code: number | null;
+  error: string | null;
+  /** The user who queued it; null for the system. */
+  requested_by: string | null;
+  campaign_id: string | null;
+}
+
+/** `GET /api/commands/{id}`: the command and the last 64 KiB of each output. */
+export interface CommandDetail extends Command {
+  stdout: string | null;
+  stderr: string | null;
+}
+
+/** One page of a server's commands, newest first. */
+export interface CommandList {
+  commands: Command[];
+  next_cursor: string | null;
+}
+
+export type RemediationState = "open" | "running" | "awaiting_approval" | "resolved" | "escalated" | "failed";
+
+/** One incident of the AI remediation loop (ADR-0042), read-only. */
+export interface RemediationIncident {
+  id: string;
+  server_id: string;
+  hostname: string;
+  /** The threshold incident that opened it. */
+  alert_incident_id: string | null;
+  metric: string;
+  instance: string;
+  state: RemediationState;
+  opened_at: string;
+  closed_at: string | null;
+  max_commands: number;
+  max_duration_s: number;
+  event_count: number;
+}
+
+export interface RemediationIncidentList {
+  incidents: RemediationIncident[];
+  next_cursor: string | null;
+}
+
 export type TokenRole = "agent" | "relay";
 export type TokenState = "pending" | "used" | "expired";
 
@@ -625,6 +684,11 @@ async function errorMessage(response: Response): Promise<string> {
   return response.statusText || `HTTP ${response.status}`;
 }
 
+/** A 401: the unauthorized handler has already sent the user to the login page. */
+export function isUnauthorized(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
 export function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
@@ -763,6 +827,35 @@ export const api = {
   /** 409 when the campaign's state does not allow `action`. */
   campaignAction: (id: string, action: CampaignAction) =>
     request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}/${action}`, { method: "POST" }),
+
+  /** One page of the server's commands, newest first. */
+  serverCommands: (serverId: string, query: { limit?: number; cursor?: string } = {}, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (query.limit !== undefined) params.set("limit", String(query.limit));
+    if (query.cursor !== undefined) params.set("cursor", query.cursor);
+    const search = params.toString();
+    return request<CommandList>(
+      `/api/servers/${encodeURIComponent(serverId)}/commands${search ? `?${search}` : ""}`,
+      { signal },
+    );
+  },
+
+  command: (id: string, signal?: AbortSignal) =>
+    request<CommandDetail>(`/api/commands/${encodeURIComponent(id)}`, { signal }),
+
+  /** The remediation incidents a threshold incident opened, newest first. */
+  remediationIncidents: (alertIncidentId: string, signal?: AbortSignal) =>
+    request<RemediationIncidentList>(
+      `/api/remediation/incidents?alert_incident_id=${encodeURIComponent(alertIncidentId)}&limit=1`,
+      { signal },
+    ),
+
+  /** The latest value of each series of `metric`, as of now. */
+  queryInstant: (query: { serverId: string; metric: string; instance?: string }, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ server_id: query.serverId, metric: query.metric });
+    if (query.instance !== undefined) params.set("instance", query.instance);
+    return request<QueryResult>(`/api/metrics/query?${params}`, { signal });
+  },
 
   queryRange: (query: RangeQuery, signal?: AbortSignal) => {
     const params = new URLSearchParams({ server_id: query.serverId, metric: query.metric });

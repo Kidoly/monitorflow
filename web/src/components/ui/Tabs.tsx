@@ -67,7 +67,8 @@ export function Tabs({
             onClick={() => onSelect(tab.id)}
           >
             {tab.label}
-            {tab.extra !== undefined && <span className={styles.extra}>{tab.extra}</span>}
+            {/* The space keeps "Sensors · 11" one phrase in the accessible name. */}
+            {tab.extra !== undefined && <> <span className={styles.extra}>{tab.extra}</span></>}
           </button>
         );
       })}

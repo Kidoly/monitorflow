@@ -1,52 +1,34 @@
-.heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 1.5rem;
-}
-
-.meta {
+.muted {
   color: var(--muted);
 }
 
-.error {
-  padding: 0.5rem 0.75rem;
-  color: var(--bad);
-  background: var(--bad-bg);
-  border-radius: var(--radius-control);
-}
-
-.empty {
-  padding: 2rem;
-  text-align: center;
-  background: var(--surface);
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-control);
-}
-
-.scroll {
-  overflow-x: auto;
-}
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--surface);
-  border: 1px solid var(--border);
-}
-
-.table th,
-.table td {
-  padding: 0.5rem 0.75rem;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-.table tbody th {
+/* "Critical  Disk used /var 96.8% · 4 h 20 min": the words bold, the figures grey. */
+.problem {
   font-weight: 600;
 }
 
+.problem > span:last-child {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.summary {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* StatusBadge, kept for the relay pages until their redesign. */
 .online,
 .offline {
   padding: 0.1rem 0.5rem;
@@ -62,21 +44,4 @@
 .offline {
   color: var(--bad);
   background: var(--bad-bg);
-}
-
-.none {
-  color: var(--muted);
-}
-
-.incidents {
-  padding: 0.1rem 0.5rem;
-  color: var(--bad);
-  background: var(--bad-bg);
-  border-radius: 999px;
-  font-weight: 600;
-}
-
-.cert:not(:empty) {
-  margin-left: 0.5rem;
-  font-size: 0.875rem;
 }
