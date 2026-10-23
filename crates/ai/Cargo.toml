@@ -1,0 +1,24 @@
+[package]
+name = "monitorflow-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+# Exposes `testing::MockProvider` to other crates' tests.
+testing = []
+
+[dependencies]
+monitorflow-common.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+tempfile.workspace = true

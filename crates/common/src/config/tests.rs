@@ -226,6 +226,50 @@ fn server_mirror_settings() {
 }
 
 #[test]
+fn server_ai_defaults_overrides_and_checks() {
+    let server = parse::<ServerConfig>(SERVER_MIN).unwrap();
+    assert_eq!(server.ai, AiConfig::default());
+    assert!(!server.ai.enabled, "AI remediation is opt-in");
+    assert_eq!(server.ai.model, "claude-opus-5-5");
+
+    let text = format!(
+        "{SERVER_MIN}\n[ai]\nenabled = true\nprovider = \"claude\"\napi_key_file = \"/etc/mf/ai.key\"\nmax_tokens = 8000"
+    );
+    let vars = env(&[
+        ("MONITORFLOW_AI_MODEL", "claude-sonnet-5-5"),
+        ("MONITORFLOW_AI_REQUEST_TIMEOUT", "60"),
+    ]);
+    let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
+    assert!(server.ai.enabled);
+    assert_eq!(server.ai.provider, AiProviderKind::Claude);
+    assert_eq!(
+        server.ai.api_key_file.as_deref(),
+        Some(Path::new("/etc/mf/ai.key"))
+    );
+    assert_eq!(server.ai.model, "claude-sonnet-5-5");
+    assert_eq!(server.ai.max_tokens, 8000);
+    assert_eq!(server.ai.request_timeout, 60);
+
+    // Settings of a disabled section are not checked.
+    parse::<ServerConfig>(&format!("{SERVER_MIN}\n[ai]\nmax_tokens = 0")).unwrap();
+    let on = [("MONITORFLOW_AI_ENABLED", "true")];
+    let msg = err::<ServerConfig>(SERVER_MIN, &on);
+    assert!(
+        msg.contains("ai.api_key_file") && msg.contains("MONITORFLOW_AI_API_KEY_FILE"),
+        "{msg}"
+    );
+    let with_key = [on[0], ("MONITORFLOW_AI_API_KEY_FILE", "/k")];
+    let msg = err::<ServerConfig>(&format!("{SERVER_MIN}\n[ai]\nmax_tokens = 0"), &with_key);
+    assert!(msg.contains("ai.max_tokens"), "{msg}");
+    let msg = err::<ServerConfig>(&format!("{SERVER_MIN}\n[ai]\nmodel = \"\""), &with_key);
+    assert!(msg.contains("ai.model"), "{msg}");
+    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_AI_PROVIDER", "openai")]);
+    assert!(msg.contains("MONITORFLOW_AI_PROVIDER"), "{msg}");
+    let msg = err::<ServerConfig>(&format!("{SERVER_MIN}\n[ai]\napi_key = \"sk\""), &[]);
+    assert!(msg.contains("unknown field"), "{msg}");
+}
+
+#[test]
 fn server_mirror_public_url() {
     assert_eq!(
         parse::<ServerConfig>(SERVER_MIN).unwrap().mirror_public_url,

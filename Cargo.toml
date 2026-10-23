@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/common",
     "crates/sensors",
+    "crates/ai",
     "crates/agent",
     "crates/relay",
     "crates/server",
@@ -19,6 +20,7 @@ rust-version = "1.99"
 [workspace.dependencies]
 monitorflow-common = { path = "crates/common" }
 monitorflow-sensors = { path = "crates/sensors" }
+monitorflow-ai = { path = "crates/ai" }
 
 tokio = { version = "1", features = ["full"] }
 tonic = { version = "0.13", features = ["tls-ring"] }

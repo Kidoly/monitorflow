@@ -928,6 +928,8 @@ pub struct ServerConfig {
     /// configuration commands.
     pub mirror_public_url: Option<String>,
     pub mirror: MirrorConfig,
+    /// AI provider of the remediation loop (ADR-0039). Off by default.
+    pub ai: AiConfig,
 }
 
 /// Whether `url` can be written into agents' package sources: http or
@@ -969,6 +971,7 @@ impl Default for ServerConfig {
             mirror_dir: None,
             mirror_public_url: None,
             mirror: MirrorConfig::default(),
+            ai: AiConfig::default(),
         }
     }
 }
@@ -1049,6 +1052,80 @@ impl MirrorConfig {
     }
 }
 
+/// Model the Claude adapter uses unless configured otherwise.
+pub const DEFAULT_AI_MODEL: &str = "claude-opus-5-5";
+
+/// External AI API used to diagnose incidents and propose commands
+/// (ADR-0039). Its answers are untrusted text whatever the provider.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AiConfig {
+    pub enabled: bool,
+    pub provider: AiProviderKind,
+    /// File holding the API key, read at start. The key itself never goes
+    /// in this file, the environment or logs.
+    pub api_key_file: Option<PathBuf>,
+    pub model: String,
+    /// Most tokens one answer may use, thinking included.
+    pub max_tokens: u32,
+    /// Seconds one HTTP request may take, connection included.
+    pub request_timeout: u64,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: AiProviderKind::Claude,
+            api_key_file: None,
+            model: DEFAULT_AI_MODEL.into(),
+            max_tokens: 16_000,
+            // Answers with thinking may take minutes.
+            request_timeout: 300,
+        }
+    }
+}
+
+impl AiConfig {
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set("ai.enabled", &mut self.enabled)?;
+        env.set("ai.provider", &mut self.provider)?;
+        env.set_opt("ai.api_key_file", &mut self.api_key_file)?;
+        env.set("ai.model", &mut self.model)?;
+        env.set("ai.max_tokens", &mut self.max_tokens)?;
+        env.set("ai.request_timeout", &mut self.request_timeout)
+    }
+
+    fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let key_file = self.api_key_file.as_deref().unwrap_or(Path::new(""));
+        check.required("ai.api_key_file", &key_file.to_string_lossy())?;
+        check.required("ai.model", &self.model)?;
+        check.positive("ai.max_tokens", self.max_tokens.into())?;
+        check.positive("ai.request_timeout", self.request_timeout)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiProviderKind {
+    #[default]
+    Claude,
+}
+
+impl FromStr for AiProviderKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "claude" => Ok(Self::Claude),
+            _ => Err(format!("unknown AI provider `{s}`, expected claude")),
+        }
+    }
+}
+
 impl LoadConfig for ServerConfig {
     fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
         env.set("grpc_listen_addr", &mut self.grpc_listen_addr)?;
@@ -1074,12 +1151,14 @@ impl LoadConfig for ServerConfig {
         env.set_opt("mirror_dir", &mut self.mirror_dir)?;
         env.set_opt("mirror_public_url", &mut self.mirror_public_url)?;
         self.mirror.apply_env(env)?;
+        self.ai.apply_env(env)?;
         self.log.apply_env(env)
     }
 
     fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
         check.positive("heartbeat_timeout", self.heartbeat_timeout)?;
         self.mirror.validate(check)?;
+        self.ai.validate(check)?;
         if let Some(url) = &self.mirror_public_url {
             if !valid_mirror_url(url) {
                 return Err(check.fail(
