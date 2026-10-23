@@ -5,6 +5,10 @@
   overflow: auto;
 }
 
+.bare {
+  overflow: auto;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -52,8 +56,8 @@
   cursor: pointer;
 }
 
-th[aria-sort="ascending"],
-th[aria-sort="descending"] {
+.table th[aria-sort="ascending"],
+.table th[aria-sort="descending"] {
   color: var(--text);
 }
 
