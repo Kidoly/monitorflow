@@ -143,11 +143,16 @@ struct Tenant {
     site_threshold: Uuid,
     server_threshold: Uuid,
     incident: Uuid,
+    /// A remediation of `incident` (ADR-0042).
+    remediation: Uuid,
     relay: Uuid,
     token: Uuid,
     command: Uuid,
     /// A draft campaign of one wave with the server (ADR-0033).
     campaign: Uuid,
+    /// A customer-wide deny rule; the customer also has a remediation
+    /// policy (ADR-0041).
+    remediation_rule: Uuid,
 }
 
 async fn tenant(pool: &PgPool, name: &str) -> Tenant {
@@ -197,6 +202,17 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    let remediation = one(
+        "INSERT INTO remediation_incidents (customer_id, server_id, alert_incident_id, metric,
+                                            max_commands, max_duration_s)
+         VALUES ($1, $2, $3, 'monitorflow_cpu_usage_ratio', 5, 600) RETURNING id",
+    )
+    .bind(customer)
+    .bind(server)
+    .bind(incident)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     let relay = one("INSERT INTO relays (peer_id, site_id, name) VALUES ($1, $2, $1) RETURNING id")
         .bind(format!("relay-{name}"))
         .bind(site)
@@ -233,9 +249,26 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .execute(pool)
     .await
     .unwrap();
+    let remediation_rule = one(
+        "INSERT INTO remediation_rules (customer_id, kind, pattern) VALUES ($1, 'deny', 'reboot')
+         RETURNING id",
+    )
+    .bind(customer)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO remediation_policies (customer_id, low_impact_auto) VALUES ($1, true)",
+    )
+    .bind(customer)
+    .execute(pool)
+    .await
+    .unwrap();
     Tenant {
+        remediation,
         campaign,
         command,
+        remediation_rule,
         customer,
         site,
         server,
@@ -493,6 +526,84 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 .unwrap();
             assert_eq!(state, "draft");
         }
+        ("GET", "/api/remediation/rules") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(
+                Ctx::mentions(&body, a.remediation_rule)
+                    && !Ctx::mentions(&body, b.remediation_rule),
+                "{body}"
+            );
+            let uri = format!("{path}?customer_id={}", b.customer);
+            let (_, body) = ctx.call(method, &uri, None).await;
+            assert_eq!(body["rules"], json!([]));
+        }
+        ("POST", "/api/remediation/rules") => {
+            let body = json!({ "customer_id": b.customer, "kind": "deny", "pattern": "x" });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            let body = json!({
+                "customer_id": a.customer, "site_id": b.site, "kind": "deny", "pattern": "x"
+            });
+            assert_eq!(
+                ctx.status(method, path, Some(body)).await,
+                StatusCode::BAD_REQUEST
+            );
+            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM remediation_rules")
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+            assert_eq!(count, 2, "only the fixtures");
+        }
+        ("DELETE", "/api/remediation/rules/{id}") => {
+            let uri = format!("/api/remediation/rules/{}", b.remediation_rule);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            let kept: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM remediation_rules WHERE id = $1")
+                    .bind(b.remediation_rule)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(kept, 1);
+        }
+        ("GET", "/api/remediation/policies") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(
+                Ctx::mentions(&body, a.customer) && !Ctx::mentions(&body, b.customer),
+                "{body}"
+            );
+            let uri = format!("{path}?customer_id={}", b.customer);
+            let (_, body) = ctx.call(method, &uri, None).await;
+            assert_eq!(body["policies"], json!([]));
+        }
+        ("PUT", "/api/remediation/policies") => {
+            let body = json!({ "customer_id": b.customer, "low_impact_auto": false });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            let body = json!({
+                "customer_id": a.customer, "site_id": b.site, "low_impact_auto": false
+            });
+            assert_eq!(
+                ctx.status(method, path, Some(body)).await,
+                StatusCode::BAD_REQUEST
+            );
+            let auto: bool = sqlx::query_scalar(
+                "SELECT low_impact_auto FROM remediation_policies WHERE customer_id = $1",
+            )
+            .bind(b.customer)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            assert!(auto);
+        }
+        ("POST", "/api/remediation/classify") => {
+            let body = json!({ "customer_id": b.customer, "command": "reboot" });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            let body = json!({ "customer_id": a.customer, "site_id": b.site, "command": "x" });
+            assert_eq!(
+                ctx.status(method, path, Some(body)).await,
+                StatusCode::BAD_REQUEST
+            );
+        }
         ("GET", "/api/relays/{id}") => {
             let uri = format!("/api/relays/{}", b.relay);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
@@ -560,6 +671,25 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .await,
                 not_found
             );
+        }
+        ("GET", "/api/remediation/incidents") => {
+            for query in [
+                String::new(),
+                format!("?customer_id={}", b.customer),
+                format!("?server_id={}", b.server),
+                format!("?site_id={}", b.site),
+                format!("?alert_incident_id={}", b.incident),
+            ] {
+                let (status, body) = ctx.call(method, &format!("{path}{query}"), None).await;
+                assert_eq!(status, StatusCode::OK, "{query}");
+                assert!(!Ctx::mentions(&body, b.remediation), "{query}: {body}");
+            }
+            let (_, body) = ctx.call(method, path, None).await;
+            assert!(Ctx::mentions(&body, a.remediation));
+        }
+        ("GET", "/api/remediation/incidents/{id}") => {
+            let uri = format!("/api/remediation/incidents/{}", b.remediation);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
         }
         ("GET", "/api/incidents/{id}") => {
             assert_eq!(
