@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page states — MonitorFlow</title>
+</head>
+<body>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0}
+.app{--bg:#ffffff;--sf:#ffffff;--ink:#0a0a0a;--dim:#666666;--line:#eaeaea;--hl:#f5f5f5;--okbg:#dff3e6;--ok:#0b5c27;--badbg:#fde3e3;--bad:#9b1c1c;--wnbg:#fff0c2;--wn:#6d4e00;--ntbg:#ececec;--nt:#444444;--infobg:#e3edff;--info:#1b3f8f;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font:14px/1.5 Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg);letter-spacing:-.01em}
+.app.dark{--bg:#0a0a0a;--sf:#111111;--ink:#ededed;--dim:#a1a1a1;--line:#262626;--hl:#171717;--okbg:#0f2e1c;--ok:#7ee2a0;--badbg:#3b1515;--bad:#ffa3a3;--wnbg:#3a2a08;--wn:#ffd37a;--ntbg:#262626;--nt:#c7c7c7;--infobg:#14264d;--info:#b9d0ff}
+.app *{box-sizing:border-box}
+.app a{color:var(--ink);text-decoration:none}.app a:hover{text-decoration:underline}
+.app :focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.lab{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:5px;font-size:13px;font-weight:600;white-space:nowrap}
+.l-ok{background:var(--okbg);color:var(--ok)}.l-bad{background:var(--badbg);color:var(--bad)}.l-wn{background:var(--wnbg);color:var(--wn)}.l-nt{background:var(--ntbg);color:var(--nt)}.l-info{background:var(--infobg);color:var(--info)}
+.t{width:100%;border-collapse:collapse}
+.t th{text-align:left;font-weight:500;color:var(--dim);font-size:13px;padding:0 14px;height:40px;border-bottom:1px solid var(--line);white-space:nowrap}
+.t td{padding:0 14px;height:52px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:middle}
+.t tr:last-child td{border-bottom:0}
+.host b{font-size:15px;font-weight:600}.host span{display:block;font-size:12px;color:var(--dim);margin-top:1px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:6px;border:1px solid var(--line);background:var(--sf);font:inherit;font-size:13px;font-weight:500;color:var(--ink);cursor:pointer;white-space:nowrap}
+.app .btn-k{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.box{border:1px solid var(--line);border-radius:8px;background:var(--sf)}
+.dim{color:var(--dim)}
+.banner{display:flex;gap:10px;padding:12px 14px;border-radius:8px;font-size:13px}
+.empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:40px 24px;text-align:center;color:var(--dim)}
+.skel{background:linear-gradient(90deg,var(--hl),var(--line),var(--hl));border-radius:4px;height:12px}
+.frame{display:flex;flex-direction:column;gap:12px}
+.frame>h2{font-size:12px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+.crumb{display:flex;gap:8px;font-size:13px;color:var(--dim)}
+h1,h2,h3{margin:0}
+</style>
+<div class="app" style="min-height: 100vh; padding: 28px 32px; display: flex; flex-direction: column; gap: 32px">
+<header style="display: flex; flex-direction: column; gap: 4px"><h1 style="font-size: 22px; font-weight: 700; letter-spacing: -.02em">Page states</h1><p class="dim" style="margin: 0">Each state keeps the page chrome (sidebar, title, refresh line) so the user never loses their place. Shown here without the sidebar, at content width.</p></header>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(640px, 100%), 1fr)); gap: 32px">
+
+<section class="frame"><h2>Fleet · loading — first load only, never a spinner on refresh</h2>
+<div style="display: flex; align-items: center; gap: 12px"><h3 style="font-size: 22px; font-weight: 700; letter-spacing: -.02em">Fleet</h3><span class="dim">Loading servers…</span></div>
+<div class="box" style="overflow: hidden" aria-busy="true"><table class="t"><thead><tr><th>Host</th><th>Status</th><th>Problem</th><th>Site</th><th>Last seen</th></tr></thead><tbody>
+<tr><td><div class="skel" style="width: 70px; height: 14px"></div><div class="skel" style="width: 120px; margin-top: 6px; height: 10px"></div></td><td><div class="skel" style="width: 70px; height: 26px; border-radius: 5px"></div></td><td><div class="skel" style="width: 180px"></div></td><td><div class="skel" style="width: 70px"></div></td><td><div class="skel" style="width: 50px"></div></td></tr>
+<tr><td><div class="skel" style="width: 60px; height: 14px"></div><div class="skel" style="width: 140px; margin-top: 6px; height: 10px"></div></td><td><div class="skel" style="width: 70px; height: 26px; border-radius: 5px"></div></td><td><div class="skel" style="width: 120px"></div></td><td><div class="skel" style="width: 70px"></div></td><td><div class="skel" style="width: 50px"></div></td></tr>
+<tr><td><div class="skel" style="width: 76px; height: 14px"></div><div class="skel" style="width: 110px; margin-top: 6px; height: 10px"></div></td><td><div class="skel" style="width: 70px; height: 26px; border-radius: 5px"></div></td><td><div class="skel" style="width: 40px"></div></td><td><div class="skel" style="width: 70px"></div></td><td><div class="skel" style="width: 50px"></div></td></tr>
+</tbody></table></div>
+</section>
+
+<section class="frame"><h2>Fleet · empty</h2>
+<div style="display: flex; align-items: center; gap: 12px"><h3 style="font-size: 22px; font-weight: 700; letter-spacing: -.02em">Fleet</h3><span class="dim">0 servers · Updated 14:32:05, refreshes every 15 seconds</span></div>
+<div class="box empty"><strong style="color: var(--ink); font-size: 16px">No servers yet</strong><span>Enroll an agent with an enrollment token.</span><a href="#" class="btn btn-k" style="margin-top: 6px">Create an enrollment token</a></div>
+</section>
+
+<section class="frame"><h2>Fleet · error on first load</h2>
+<div style="display: flex; align-items: center; gap: 12px"><h3 style="font-size: 22px; font-weight: 700; letter-spacing: -.02em">Fleet</h3><span class="dim">Could not load. Retrying every 15 seconds.</span></div>
+<div class="banner l-bad" role="alert"><div><strong>Could not load the fleet:</strong> 502 Bad Gateway from mf.acme.example. Retrying automatically. <a href="#" style="text-decoration: underline">Retry now</a></div></div>
+<div class="box empty" style="padding: 28px"><span>Nothing to show until the first successful load.</span></div>
+</section>
+
+<section class="frame"><h2>Fleet · stale data after a failed refresh</h2>
+<div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap"><h3 style="font-size: 22px; font-weight: 700; letter-spacing: -.02em">Fleet</h3><span class="dim">17 servers, 13 online · <strong style="color: var(--wn)">Updated 14:31:50</strong>, refreshes every 15 seconds</span></div>
+<div class="banner l-wn" role="status"><div><strong>Refresh failed:</strong> the server did not respond (timeout after 10 s). Showing the last data received, from 14:31:50. 3 attempts failed. <a href="#" style="text-decoration: underline">Retry now</a></div></div>
+<div class="box" style="overflow: hidden; opacity: .9"><table class="t"><thead><tr><th>Host</th><th>Status</th><th>Problem</th><th>Site</th><th>Last seen</th></tr></thead><tbody>
+<tr><td class="host"><a href="#"><b>db-01</b></a><span>Rocky 9 · agent 0.4.2</span></td><td><span class="lab l-ok">Online</span></td><td><span class="lab l-bad">Critical</span>&nbsp; Disk used /var <span class="dim">96.8 %</span></td><td>paris-dc1</td><td class="dim">8 s ago <span style="font-size: 12px">(at 14:31:50)</span></td></tr>
+<tr><td class="host"><a href="#"><b>web-03</b></a><span>Debian 12 · agent 0.4.1</span></td><td><span class="lab l-bad">Offline</span></td><td class="dim">No heartbeat since 13:51</td><td>paris-dc1</td><td class="dim">41 min ago <span style="font-size: 12px">(at 14:31:50)</span></td></tr>
+</tbody></table></div>
+<p class="dim" style="margin: 0; font-size: 13px">Relative times freeze at the last successful refresh and say so, instead of counting on.</p>
+</section>
+
+<section class="frame"><h2>Server · not found or out of scope</h2>
+<nav class="crumb" aria-label="Breadcrumb"><a href="#" style="text-decoration: underline">Fleet</a><span>/</span><span>?id=srv_7fa1…</span></nav>
+<div class="box empty"><strong style="color: var(--ink); font-size: 16px">Server not found</strong><span>It may have been removed, or your roles do not cover its site.</span><div style="display: flex; gap: 8px; margin-top: 6px"><a href="#" class="btn btn-k">Back to Fleet</a><a href="#" class="btn">Search the fleet</a></div></div>
+<p class="dim" style="margin: 0; font-size: 13px">Same copy for a missing and an out-of-scope server: the page never reveals whether the ID exists.</p>
+</section>
+
+<section class="frame"><h2>Administration · no permission</h2>
+<div style="display: flex; align-items: center; gap: 12px"><h3 style="font-size: 22px; font-weight: 700; letter-spacing: -.02em">Administration</h3></div>
+<div class="box empty"><strong style="color: var(--ink); font-size: 16px">Administration needs an administrator role.</strong><span>You are signed in as <strong>carol</strong> with the operator role on Acme Hosting. Ask an administrator to grant you access, or go back to <a href="#" style="text-decoration: underline">Fleet</a>.</span></div>
+<p class="dim" style="margin: 0; font-size: 13px">The Administration section is also hidden from the sidebar for non-administrators; this page only appears on a direct link.</p>
+</section>
+
+<section class="frame"><h2>Incident · resolved — title and label variant</h2>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px"><h3 style="font-size: 22px; font-weight: 700; letter-spacing: -.02em">Memory used on <a href="#" style="text-decoration: underline">mail-01</a></h3><span class="lab l-nt">Resolved</span><span class="lab l-wn">was Warning</span><span class="dim" style="font-size: 13px">Resolved yesterday 16:40 · lasted 35 min</span></div>
+<div class="banner l-info"><div>Resolved incidents stop refreshing. The chart keeps both markers, <strong>Opened 16:05</strong> and <strong>Resolved 16:40</strong>.</div></div>
+</section>
+
+<section class="frame"><h2>Phone · incidents, read-only check (390 px)</h2>
+<div style="display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap">
+<div class="box" style="width: 390px; max-width: 100%; padding: 14px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: center; gap: 10px"><button class="btn" aria-label="Menu" style="padding: 0 10px"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12"></path></svg></button><strong style="font-size: 16px">Incidents</strong><span class="lab l-bad" style="margin-left: auto">3 open</span></div>
+<p class="dim" style="margin: 0; font-size: 13px">Updated 14:32:05, refreshes every 15 seconds.</p>
+<a href="#" class="box" style="display: flex; flex-direction: column; gap: 6px; padding: 12px"><div style="display: flex; gap: 8px; align-items: center"><span class="lab l-bad">Critical</span><strong style="font-size: 15px">db-01</strong><span class="dim" style="margin-left: auto; font-size: 13px">4 h 20 min</span></div><span>Disk used /var · 96.8 %</span></a>
+<a href="#" class="box" style="display: flex; flex-direction: column; gap: 6px; padding: 12px"><div style="display: flex; gap: 8px; align-items: center"><span class="lab l-bad">Critical</span><strong style="font-size: 15px">web-11</strong><span class="dim" style="margin-left: auto; font-size: 13px">2 h 52 min</span></div><span>Disk used /var · 94.2 %</span></a>
+<a href="#" class="box" style="display: flex; flex-direction: column; gap: 6px; padding: 12px"><div style="display: flex; gap: 8px; align-items: center"><span class="lab l-wn">Warning</span><strong style="font-size: 15px">build-01</strong><span class="dim" style="margin-left: auto; font-size: 13px">34 min</span></div><span>Load average 5 min · 6.8</span></a>
+</div>
+<p class="dim" style="margin: 0; font-size: 13px; max-width: 220px">Below 800 px the incidents table becomes a list of cards with the four essential facts. No actions on a phone.</p>
+</div>
+</section>
+
+</div>
+</div>
+</body>
+</html>
