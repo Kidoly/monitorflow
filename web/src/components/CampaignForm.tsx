@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 
@@ -21,8 +20,10 @@ import {
 import { administersCustomer, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH, campaignHref } from "@/lib/routes";
 
-import styles from "./Admin.module.css";
 import own from "./Campaigns.module.css";
+import { Breadcrumb } from "./ui/Breadcrumb";
+import { Button, fieldClass } from "./ui/Button";
+import { Banner, EmptyState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
 
 /** Command validity choices; the API takes 60 s to 7 days. */
 const TTLS: [number, string][] = [
@@ -38,9 +39,9 @@ export function NewCampaignPage() {
   const me = useMe();
   if (!me || !administersCustomer(me)) {
     return (
-      <p className={styles.empty}>
-        Creating a campaign needs an administrator role on a whole customer. Ask an administrator for one.
-      </p>
+      <NoPermission title="Creating a campaign needs an administrator">
+        It needs an administrator role on a whole customer. Ask an administrator for one.
+      </NoPermission>
     );
   }
   return <CampaignForm me={me} />;
@@ -79,16 +80,10 @@ export function CampaignForm({ me }: { me: Me }) {
   const set = (patch: Partial<CampaignDraft>) => setDraft((d) => ({ ...d, ...patch }));
 
   if (!inventory) {
-    return error ? (
-      <p className={styles.error} role="alert">
-        {error}
-      </p>
-    ) : (
-      <p role="status">Loading servers…</p>
-    );
+    return error ? <Banner tone="bad">{error}</Banner> : <LoadingBlock label="Loading servers" />;
   }
   if (inventory.customers.length === 0) {
-    return <p className={styles.empty}>You administer no customer to update.</p>;
+    return <EmptyState>You administer no customer to update.</EmptyState>;
   }
 
   const sites = inventory.sites.filter((s) => s.customer_id === draft.customerId);
@@ -115,37 +110,45 @@ export function CampaignForm({ me }: { me: Me }) {
   }
 
   return (
-    <section aria-labelledby="new-campaign-title">
-      <p className={styles.meta}>
-        <Link href={CAMPAIGNS_PATH}>Campaigns</Link> / New
-      </p>
-      <h1 id="new-campaign-title">New campaign</h1>
-      <p className={styles.note}>
-        The campaign is created as a draft; nothing runs until you start it. Its servers are fixed now.
-      </p>
-      <form className={styles.form} onSubmit={submit} aria-label="New campaign" noValidate>
-        <label>
-          Customer
-          <select
-            value={draft.customerId}
-            onChange={(e) => set({ customerId: e.target.value, siteId: "", serverIds: [], waves: [] })}
-          >
-            {inventory.customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Name
-          <input value={draft.name} onChange={(e) => set({ name: e.target.value })} maxLength={64} required />
-        </label>
+    <div className={own.page}>
+      <Breadcrumb parents={[{ label: "Campaigns", href: CAMPAIGNS_PATH }]} current="New campaign" />
+      <PageHeader
+        detail
+        title="New campaign"
+        meta="The campaign is created as a draft; nothing runs until you start it. Its servers are fixed now."
+      />
+      <form className={own.form} onSubmit={submit} aria-label="New campaign" noValidate>
+        <div className={own.grid}>
+          <label className={own.fld}>
+            Customer
+            <select
+              className={fieldClass}
+              value={draft.customerId}
+              onChange={(e) => set({ customerId: e.target.value, siteId: "", serverIds: [], waves: [] })}
+            >
+              {inventory.customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={own.fld}>
+            Name
+            <input
+              className={fieldClass}
+              value={draft.name}
+              onChange={(e) => set({ name: e.target.value })}
+              maxLength={64}
+              required
+            />
+          </label>
+        </div>
 
         <Fieldset legend="Servers">
-          <label>
+          <label className={own.fld}>
             Every server of the site
-            <select value={draft.siteId} onChange={(e) => set({ siteId: e.target.value })}>
+            <select className={fieldClass} value={draft.siteId} onChange={(e) => set({ siteId: e.target.value })}>
               <option value="">No site</option>
               {sites.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -154,7 +157,7 @@ export function CampaignForm({ me }: { me: Me }) {
               ))}
             </select>
           </label>
-          <p className={styles.note}>And or instead, these servers:</p>
+          <p className={own.note}>And or instead, these servers:</p>
           <ul className={own.servers} aria-label="Servers">
             {servers.map((s) => (
               <li key={s.id}>
@@ -165,12 +168,12 @@ export function CampaignForm({ me }: { me: Me }) {
                     disabled={s.site_id === draft.siteId}
                     onChange={(e) => set({ serverIds: toggle(draft.serverIds, s.id, e.target.checked) })}
                   />
-                  {s.hostname} <span className={styles.meta}>({s.site_name})</span>
+                  {s.hostname} <span className={own.dim}>({s.site_name})</span>
                 </label>
               </li>
             ))}
           </ul>
-          <p role="status">
+          <p className={own.note} role="status">
             {targets.length} server{targets.length === 1 ? "" : "s"} targeted.
           </p>
         </Fieldset>
@@ -186,13 +189,11 @@ export function CampaignForm({ me }: { me: Me }) {
               onRemove={() => set({ waves: draft.waves.filter((_, j) => j !== i) })}
             />
           ))}
-          <button
-            className={styles.secondary}
-            type="button"
-            onClick={() => set({ waves: [...draft.waves, { kind: "size", value: "1", servers: [] }] })}
-          >
-            Add wave
-          </button>
+          <div className={own.row}>
+            <Button onClick={() => set({ waves: [...draft.waves, { kind: "size", value: "1", servers: [] }] })}>
+              Add wave
+            </Button>
+          </div>
           <WavePlan draft={draft} targets={targets} />
         </Fieldset>
 
@@ -212,9 +213,10 @@ export function CampaignForm({ me }: { me: Me }) {
             ))}
           </div>
           {draft.update === "packages" && (
-            <label>
+            <label className={own.fld}>
               Packages
               <textarea
+                className={own.textarea}
                 value={draft.packages}
                 onChange={(e) => set({ packages: e.target.value })}
                 rows={2}
@@ -231,9 +233,9 @@ export function CampaignForm({ me }: { me: Me }) {
               />
               Allow reboot
             </label>
-            <label>
+            <label className={own.fld}>
               Each command may start within
-              <select value={draft.ttl} onChange={(e) => set({ ttl: Number(e.target.value) })}>
+              <select className={fieldClass} value={draft.ttl} onChange={(e) => set({ ttl: Number(e.target.value) })}>
                 {TTLS.map(([seconds, label]) => (
                   <option key={seconds} value={seconds}>
                     {label}
@@ -245,7 +247,7 @@ export function CampaignForm({ me }: { me: Me }) {
         </Fieldset>
 
         <Fieldset legend="Maintenance windows">
-          {draft.windows.length === 0 && <p className={styles.note}>No window: commands may be queued at any time.</p>}
+          {draft.windows.length === 0 && <p className={own.note}>No window: commands may be queued at any time.</p>}
           {draft.windows.map((window, i) => (
             <WindowRow
               key={i}
@@ -255,36 +257,28 @@ export function CampaignForm({ me }: { me: Me }) {
               onRemove={() => set({ windows: draft.windows.filter((_, j) => j !== i) })}
             />
           ))}
-          <button
-            className={styles.secondary}
-            type="button"
-            onClick={() => set({ windows: [...draft.windows, newWindow("weekly")] })}
-          >
-            Add weekly window
-          </button>{" "}
-          <button
-            className={styles.secondary}
-            type="button"
-            onClick={() => set({ windows: [...draft.windows, newWindow("once")] })}
-          >
-            Add one-off window
-          </button>
+          <div className={own.row}>
+            <Button onClick={() => set({ windows: [...draft.windows, newWindow("weekly")] })}>Add weekly window</Button>
+            <Button onClick={() => set({ windows: [...draft.windows, newWindow("once")] })}>Add one-off window</Button>
+          </div>
         </Fieldset>
 
         <Fieldset legend="Failure threshold">
           <div className={own.row}>
-            <label>
+            <label className={own.fld}>
               Stop when more than
               <input
+                className={fieldClass}
                 type="number"
                 min={0}
                 value={draft.thresholdValue}
                 onChange={(e) => set({ thresholdValue: e.target.value })}
               />
             </label>
-            <label>
+            <label className={own.fld}>
               Unit
               <select
+                className={fieldClass}
                 value={draft.thresholdUnit}
                 onChange={(e) => set({ thresholdUnit: e.target.value as CampaignDraft["thresholdUnit"] })}
               >
@@ -296,25 +290,23 @@ export function CampaignForm({ me }: { me: Me }) {
         </Fieldset>
 
         {submitted && errors.length > 0 && (
-          <div className={styles.error} role="alert">
-            <p>Fix these first:</p>
-            <ul>
+          <Banner tone="bad">
+            <strong>Fix these first:</strong>
+            <ul className={own.errors}>
               {errors.map((e) => (
                 <li key={e}>{e}</li>
               ))}
             </ul>
-          </div>
+          </Banner>
         )}
-        {error && (
-          <p className={styles.error} role="alert">
-            {error}
-          </p>
-        )}
-        <button className={styles.button} type="submit" disabled={busy}>
-          Create campaign
-        </button>
+        {error && <Banner tone="bad">{error}</Banner>}
+        <div className={own.row}>
+          <Button variant="k" type="submit" disabled={busy}>
+            Create campaign
+          </Button>
+        </div>
       </form>
-    </section>
+    </div>
   );
 }
 
@@ -334,18 +326,19 @@ function WaveRow({
   const label = `Wave ${index + 1}`;
   return (
     <div className={own.row} role="group" aria-label={label}>
-      <label>
+      <label className={own.fld}>
         {label}
-        <select value={wave.kind} onChange={(e) => onChange({ ...wave, kind: e.target.value as WaveDraft["kind"] })}>
+        <select className={fieldClass} value={wave.kind} onChange={(e) => onChange({ ...wave, kind: e.target.value as WaveDraft["kind"] })}>
           <option value="size">Number of servers</option>
           <option value="percent">Percentage of servers</option>
           <option value="servers">Chosen servers</option>
         </select>
       </label>
       {wave.kind === "servers" ? (
-        <label>
+        <label className={own.fld}>
           Servers
           <select
+            className={own.multiple}
             multiple
             value={wave.servers}
             onChange={(e) => onChange({ ...wave, servers: [...e.target.selectedOptions].map((o) => o.value) })}
@@ -358,9 +351,10 @@ function WaveRow({
           </select>
         </label>
       ) : (
-        <label>
+        <label className={own.fld}>
           {wave.kind === "size" ? "Servers" : "Percent"}
           <input
+            className={fieldClass}
             type="number"
             min={1}
             max={wave.kind === "percent" ? 100 : undefined}
@@ -369,9 +363,9 @@ function WaveRow({
           />
         </label>
       )}
-      <button className={styles.secondary} type="button" onClick={onRemove} aria-label={`Remove ${label.toLowerCase()}`}>
+      <Button onClick={onRemove} aria-label={`Remove ${label.toLowerCase()}`}>
         Remove
-      </button>
+      </Button>
     </div>
   );
 }
@@ -383,10 +377,10 @@ function WavePlan({ draft, targets }: { draft: CampaignDraft; targets: Server[] 
     targets.map((t) => t.id),
     toRequest(draft).waves,
   );
-  if ("error" in plan) return <p className={styles.note}>Waves cannot be planned: {plan.error}.</p>;
+  if ("error" in plan) return <p className={own.note}>Waves cannot be planned: {plan.error}.</p>;
   const sizes = plan.waves.map((w, i) => `wave ${i + 1}: ${w.length}`).join(", ");
   return (
-    <p className={styles.note}>
+    <p className={own.note}>
       Servers per wave: {sizes}. Servers not placed by a wave form the last one.
     </p>
   );
@@ -419,34 +413,34 @@ function WindowRow({
               {day}
             </label>
           ))}
-          <label>
+          <label className={own.fld}>
             From
-            <input type="time" value={window.start} onChange={(e) => set({ start: e.target.value })} />
+            <input className={fieldClass} type="time" value={window.start} onChange={(e) => set({ start: e.target.value })} />
           </label>
-          <label>
+          <label className={own.fld}>
             To
-            <input type="time" value={window.end} onChange={(e) => set({ end: e.target.value })} />
+            <input className={fieldClass} type="time" value={window.end} onChange={(e) => set({ end: e.target.value })} />
           </label>
-          <label>
+          <label className={own.fld}>
             Time zone
-            <input value={window.timezone} onChange={(e) => set({ timezone: e.target.value })} />
+            <input className={fieldClass} value={window.timezone} onChange={(e) => set({ timezone: e.target.value })} />
           </label>
         </>
       ) : (
         <>
-          <label>
+          <label className={own.fld}>
             Starts (your local time)
-            <input type="datetime-local" value={window.startsAt} onChange={(e) => set({ startsAt: e.target.value })} />
+            <input className={fieldClass} type="datetime-local" value={window.startsAt} onChange={(e) => set({ startsAt: e.target.value })} />
           </label>
-          <label>
+          <label className={own.fld}>
             Ends
-            <input type="datetime-local" value={window.endsAt} onChange={(e) => set({ endsAt: e.target.value })} />
+            <input className={fieldClass} type="datetime-local" value={window.endsAt} onChange={(e) => set({ endsAt: e.target.value })} />
           </label>
         </>
       )}
-      <button className={styles.secondary} type="button" onClick={onRemove} aria-label={`Remove ${label.toLowerCase()}`}>
+      <Button onClick={onRemove} aria-label={`Remove ${label.toLowerCase()}`}>
         Remove
-      </button>
+      </Button>
     </div>
   );
 }
@@ -455,7 +449,7 @@ function Fieldset({ legend, children }: { legend: string; children: ReactNode })
   return (
     <fieldset className={own.fieldset}>
       <legend>{legend}</legend>
-      {children}
+      <div className={own.fields}>{children}</div>
     </fieldset>
   );
 }

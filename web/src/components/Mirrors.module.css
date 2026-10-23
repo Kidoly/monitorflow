@@ -1,0 +1,62 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dim {
+  color: var(--muted);
+}
+
+.strong {
+  font-weight: 600;
+}
+
+/* Upstream URLs can be long: the sub-line wraps. */
+.page td.wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 200px;
+}
+
+/* Errors can be long: they wrap instead of widening the table. */
+.page td.summary {
+  white-space: normal;
+  min-width: 240px;
+}
+
+.note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.note code {
+  font-family: var(--mono);
+}
+
+/* Width 0 then 100 %: long lines scroll inside instead of widening the table. */
+.log {
+  width: 0;
+  min-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.log pre {
+  align-self: stretch;
+  margin: 0;
+  max-height: 320px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+}
+
+.log pre.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

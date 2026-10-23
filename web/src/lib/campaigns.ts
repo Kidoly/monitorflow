@@ -2,17 +2,23 @@
 // the checks the API makes, so most mistakes show before a request; the
 // state machine for the action buttons; and display strings.
 
+import type { Tone } from "@/components/ui/tone";
+
 import type {
+  Campaign,
   CampaignAction,
+  CampaignServerStatus,
   CampaignRequest,
   CampaignState,
   CampaignWindow,
   FailureThreshold,
   Server,
+  SourcesPin,
   UpdateSpec,
   WaveSpec,
 } from "./api";
 import { formatDateTime } from "./format";
+import { shortTime } from "./mirrors";
 
 /** Limits of `crates/server/src/campaign/model.rs` and the API. */
 export const MAX_NAME_LEN = 64;
@@ -282,4 +288,61 @@ export function describeWindow(window: CampaignWindow): string {
   }
   const days = window.weekdays.map((d) => WEEKDAYS[d - 1] ?? String(d)).join(", ");
   return `${days} ${window.start}–${window.end} (${window.timezone})`;
+}
+
+/** Status words of campaigns and their servers (the handoff says Succeeded for completed). */
+export const CAMPAIGN_STATES: Record<CampaignState, readonly [string, Tone]> = {
+  draft: ["Draft", "neutral"],
+  scheduled: ["Scheduled", "neutral"],
+  running: ["Running", "info"],
+  paused: ["Paused", "warn"],
+  stopped: ["Stopped", "neutral"],
+  completed: ["Succeeded", "ok"],
+  failed: ["Failed", "bad"],
+};
+
+export const SERVER_STATUSES: Record<CampaignServerStatus, readonly [string, Tone]> = {
+  pending: ["Pending", "neutral"],
+  queued: ["Queued", "neutral"],
+  sent: ["Sent", "info"],
+  running: ["Running", "info"],
+  succeeded: ["Succeeded", "ok"],
+  failed: ["Failed", "bad"],
+  expired: ["Expired", "bad"],
+  cancelled: ["Cancelled", "neutral"],
+  skipped: ["Skipped", "bad"],
+};
+
+/** "debian-12/20261022T143000Z, rocky-9/…". */
+export function describeSources(pin: SourcesPin): string {
+  return pin.mirrors.map((m) => `${m.name}/${m.snapshot}`).join(", ");
+}
+
+/** The grey line under a campaign's name: "2 waves · snapshot debian-12/s1 · security only · reboot allowed". */
+export function campaignSubline(campaign: Pick<Campaign, "wave_count" | "sources" | "spec">): string {
+  const { spec } = campaign;
+  return [
+    `${campaign.wave_count} wave${campaign.wave_count === 1 ? "" : "s"}`,
+    campaign.sources && `snapshot${campaign.sources.mirrors.length === 1 ? "" : "s"} ${describeSources(campaign.sources)}`,
+    spec.packages.length > 0
+      ? `${spec.packages.length} package${spec.packages.length === 1 ? "" : "s"}`
+      : spec.security_only
+        ? "security only"
+        : "all packages",
+    spec.allow_reboot && "reboot allowed",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** A window in a table cell: "Sat, Sun 22:00–04:00", "23 Oct 02:00–05:00". */
+export function shortWindow(window: CampaignWindow): string {
+  if (window.kind === "weekly") {
+    return `${window.weekdays.map((d) => WEEKDAYS[d - 1] ?? String(d)).join(", ")} ${window.start}–${window.end}`;
+  }
+  const start = new Date(window.starts_at);
+  const end = new Date(window.ends_at);
+  // shortTime writes the date for any other day than its second argument.
+  const dated = (date: Date) => shortTime(date, new Date(0));
+  return `${dated(start)}–${shortTime(end, start)}`;
 }

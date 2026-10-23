@@ -1,4 +1,6 @@
 .box {
+  /* Positioned, so visually hidden text in cells scrolls with the table instead of widening the page. */
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
   background: var(--surface);
@@ -87,6 +89,12 @@
   padding: 0 14px 14px;
   white-space: normal;
   background: none;
+}
+
+/* Command output and run logs (03d, 10b): a grey inset across the row. */
+.table tr.detail.inset td {
+  padding: 12px 20px;
+  background: var(--hl);
 }
 
 .title {

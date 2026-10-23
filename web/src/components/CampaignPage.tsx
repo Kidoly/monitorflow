@@ -2,36 +2,48 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { type ReactNode, useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   ApiError,
   type CampaignAction,
   type CampaignDetail,
+  type CampaignServer,
   type CampaignWave,
   type Me,
   api,
   describeError,
   isAbortError,
 } from "@/lib/api";
-import { canAct, describeThreshold, describeUpdate, describeWindow, isFinal } from "@/lib/campaigns";
+import { canAct, describeSources, describeThreshold, describeUpdate, describeWindow, isFinal } from "@/lib/campaigns";
 import { formatDateTime } from "@/lib/format";
 import { administersCustomer, readsCustomers, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH, serverHref } from "@/lib/routes";
 import { usePolling } from "@/lib/usePolling";
 import { UUID } from "@/lib/uuid";
 
-import styles from "./Admin.module.css";
-import { Progress, StateBadge, waveText } from "./CampaignList";
+import { CampaignStateLabel, ServerStatusLabel, waveText } from "./CampaignList";
 import own from "./Campaigns.module.css";
 import { REFRESH_MS } from "./FleetOverview";
+import { Breadcrumb } from "./ui/Breadcrumb";
+import { Button, ButtonLink } from "./ui/Button";
+import { type Column, DataTable } from "./ui/DataTable";
+import { FactsBox } from "./ui/FactsBox";
+import { InlineConfirm } from "./ui/InlineConfirm";
+import { Banner, LoadingBlock, NoPermission, NotFound, PageHeader } from "./ui/PageState";
+import { StatTiles } from "./ui/StatTiles";
+import { Label } from "./ui/StatusLabel";
 
 /** `/campaigns/view/?id=…` (ADR-0020 routing). */
 export function CampaignView() {
   const id = useSearchParams().get("id");
   const me = useMe();
   if (!me || !readsCustomers(me)) {
-    return <p className={styles.empty}>Campaigns need a role on a whole customer. Ask an administrator for one.</p>;
+    return (
+      <NoPermission title="Campaigns need a customer role">
+        Campaigns need a role on a whole customer. Ask an administrator for one.
+      </NoPermission>
+    );
   }
   return <CampaignPage key={id} id={id} me={me} />;
 }
@@ -63,57 +75,74 @@ export function CampaignPage({ id, me }: { id: string | null; me: Me }) {
   // Polls while the runner or agents may still change something; an
   // action's answer restarts it.
   usePolling(load, REFRESH_MS, valid && !settled(campaign));
+  useEffect(() => {
+    if (campaign) document.title = `${campaign.name} · MonitorFlow`;
+  }, [campaign]);
 
   if (!valid || campaign === null) {
     return (
-      <section className={styles.empty}>
-        <h1>Campaign not found</h1>
-        <p>It may not exist, or your roles do not cover its customer.</p>
-        <Link href={CAMPAIGNS_PATH}>Back to campaigns</Link>
-      </section>
+      <NotFound title="Campaign not found" actions={<ButtonLink href={CAMPAIGNS_PATH}>Back to campaigns</ButtonLink>}>
+        It may not exist, or your roles do not cover its customer.
+      </NotFound>
     );
   }
   if (!campaign) {
-    return error ? (
-      <p className={styles.error} role="alert">
-        {error}
-      </p>
-    ) : (
-      <p role="status">Loading campaign…</p>
-    );
+    return error ? <Banner tone="bad">{error}</Banner> : <LoadingBlock label="Loading campaign" />;
   }
+  const { progress } = campaign;
+  const facts = [
+    { label: "Customer", value: campaign.customer_name },
+    { label: "Update", value: describeUpdate(campaign.spec) },
+    { label: "Stops at", value: describeThreshold(campaign.failure_threshold) },
+    {
+      label: "Windows",
+      value: campaign.windows.length === 0 ? "any time" : campaign.windows.map(describeWindow).join("; "),
+    },
+    ...(campaign.sources
+      ? [
+          {
+            label: "Snapshots",
+            value: `${describeSources(campaign.sources)} (${campaign.sources.mode === "replace" ? "other sources set aside" : "other sources kept"})`,
+          },
+        ]
+      : []),
+    { label: "Created", value: formatDateTime(campaign.created_at) },
+    ...(campaign.started_at ? [{ label: "Started", value: formatDateTime(campaign.started_at) }] : []),
+    ...(campaign.finished_at ? [{ label: "Finished", value: formatDateTime(campaign.finished_at) }] : []),
+  ];
+
   return (
-    <article aria-labelledby="campaign-title">
-      <p className={styles.meta}>
-        <Link href={CAMPAIGNS_PATH}>Campaigns</Link> / {campaign.customer_name}
-      </p>
-      <h1 id="campaign-title">{campaign.name}</h1>
-      {error && (
-        <p className={styles.error} role="alert">
-          Refresh failed: {error} Showing the last data received.
-        </p>
-      )}
-      <dl className={styles.facts}>
-        <Fact term="State">
-          <StateBadge state={campaign.state} />
-        </Fact>
-        <Fact term="Progress">{waveText(campaign)}</Fact>
-        <Fact term="Update">{describeUpdate(campaign.spec)}</Fact>
-        <Fact term="Stops at">{describeThreshold(campaign.failure_threshold)}</Fact>
-        <Fact term="Windows">
-          {campaign.windows.length === 0 ? "any time" : campaign.windows.map(describeWindow).join("; ")}
-        </Fact>
-        <Fact term="Created">{formatDateTime(campaign.created_at)}</Fact>
-        {campaign.started_at && <Fact term="Started">{formatDateTime(campaign.started_at)}</Fact>}
-        {campaign.finished_at && <Fact term="Finished">{formatDateTime(campaign.finished_at)}</Fact>}
-      </dl>
-      {campaign.error && <p className={styles.error}>{campaign.error}</p>}
-      <Progress progress={campaign.progress} />
-      {administersCustomer(me, campaign.customer_id) && <Actions campaign={campaign} onChange={setCampaign} />}
+    <div className={own.page}>
+      <Breadcrumb parents={[{ label: "Campaigns", href: CAMPAIGNS_PATH }]} current={campaign.name} />
+      <PageHeader
+        detail
+        title={campaign.name}
+        status={<CampaignStateLabel state={campaign.state} />}
+        meta={waveText(campaign)}
+        actions={
+          administersCustomer(me, campaign.customer_id) && <Actions campaign={campaign} onChange={setCampaign} />
+        }
+      />
+      {error && <Banner tone="warn">Refresh failed: {error} Showing the last data received.</Banner>}
+      {campaign.error && <Banner tone="bad" role="status">{campaign.error}</Banner>}
+      <FactsBox columns={2} facts={facts} />
+      <StatTiles
+        compact
+        label="Servers by status"
+        tiles={[
+          { label: "Succeeded", value: progress.succeeded, total: progress.total, tone: "ok" },
+          { label: "Failed", value: progress.failed, tone: progress.failed > 0 ? "bad" : "plain" },
+          { label: "In progress", value: progress.in_progress, tone: progress.in_progress > 0 ? "info" : "plain" },
+          { label: "Pending", value: progress.pending, tone: "plain" },
+          ...(progress.cancelled > 0
+            ? [{ label: "Cancelled", value: progress.cancelled, tone: "plain" as const }]
+            : []),
+        ]}
+      />
       {campaign.waves.map((wave) => (
-        <Wave key={wave.index} wave={wave} />
+        <Wave key={wave.index} wave={wave} current={wave.index === (campaign.current_wave ?? 0)} />
       ))}
-    </article>
+    </div>
   );
 }
 
@@ -121,7 +150,6 @@ const LABELS: Record<CampaignAction, string> = { start: "Start", pause: "Pause",
 
 function Actions({ campaign, onChange }: { campaign: CampaignDetail; onChange: (c: CampaignDetail) => void }) {
   const [busy, setBusy] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function act(action: CampaignAction) {
@@ -129,7 +157,6 @@ function Actions({ campaign, onChange }: { campaign: CampaignDetail; onChange: (
     setError(null);
     try {
       onChange(await api.campaignAction(campaign.id, action));
-      setConfirming(false);
     } catch (e) {
       setError(`${LABELS[action]} failed. ${describeError(e)}`);
     } finally {
@@ -138,100 +165,90 @@ function Actions({ campaign, onChange }: { campaign: CampaignDetail; onChange: (
   }
 
   return (
-    <>
-      <div className={own.actions}>
-        {(["start", "pause", "resume"] as const).map((action) => (
-          <button
+    <div className={own.actions}>
+      {(["start", "pause", "resume"] as const)
+        .filter((action) => canAct(action, campaign.state))
+        .map((action) => (
+          <Button
             key={action}
-            className={styles.button}
-            type="button"
-            disabled={busy || !canAct(action, campaign.state)}
+            variant={action === "start" ? "k" : "default"}
+            disabled={busy}
             onClick={() => void act(action)}
           >
             {LABELS[action]}
-          </button>
+          </Button>
         ))}
-        <button
-          className={styles.danger}
-          type="button"
-          disabled={busy || confirming || !canAct("stop", campaign.state)}
-          onClick={() => setConfirming(true)}
-        >
-          Stop…
-        </button>
-      </div>
-      {confirming && (
-        <div className={styles.confirm} role="group" aria-label="Stop the campaign">
-          <p>
-            Stopping is final. Commands not sent yet are cancelled; those already on their servers finish and are
-            counted.
-          </p>
-          <button className={styles.danger} type="button" disabled={busy} onClick={() => void act("stop")}>
-            Stop the campaign
-          </button>{" "}
-          <button className={styles.secondary} type="button" onClick={() => setConfirming(false)}>
-            Cancel
-          </button>
-        </div>
+      {canAct("stop", campaign.state) && (
+        <InlineConfirm
+          trigger="Stop…"
+          title={`Stop ${campaign.name}?`}
+          consequence="Stopping is final. Commands not sent yet are cancelled; those already on their servers finish and are counted."
+          confirmLabel="Stop the campaign"
+          pendingLabel="Stopping…"
+          onConfirm={async () => onChange(await api.campaignAction(campaign.id, "stop"))}
+          describeError={(e) => `Stop failed. ${describeError(e)}`}
+        />
       )}
       {error && (
-        <p className={styles.error} role="alert">
+        <p className={own.error} role="alert">
           {error}
         </p>
       )}
-    </>
-  );
-}
-
-function Wave({ wave }: { wave: CampaignWave }) {
-  const title = `Wave ${wave.index + 1}`;
-  return (
-    <section className={own.wave} aria-label={title}>
-      <h2>
-        {title} <StateBadge state={wave.state === "done" ? "completed" : wave.state} />
-      </h2>
-      <p className={styles.meta}>
-        {wave.started_at ? `Started ${formatDateTime(wave.started_at)}` : "Not started"}
-        {wave.finished_at && `, finished ${formatDateTime(wave.finished_at)}`}
-      </p>
-      <Progress progress={wave.progress} />
-      <div className={styles.scroll}>
-        <table className={styles.table} aria-label={`Servers of ${title.toLowerCase()}`}>
-          <thead>
-            <tr>
-              <th scope="col">Server</th>
-              <th scope="col">Status</th>
-              <th scope="col">Exit code</th>
-              <th scope="col">Finished</th>
-              <th scope="col">Error</th>
-            </tr>
-          </thead>
-          <tbody>
-            {wave.servers.map((server) => (
-              <tr key={server.server_id}>
-                <th scope="row">
-                  <Link href={serverHref(server.server_id)}>{server.hostname}</Link>
-                </th>
-                <td>
-                  <StateBadge state={server.status} />
-                </td>
-                <td>{server.exit_code ?? "–"}</td>
-                <td>{server.finished_at ? formatDateTime(server.finished_at) : "–"}</td>
-                <td>{server.error ?? ""}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-function Fact({ term, children }: { term: string; children: ReactNode }) {
-  return (
-    <div>
-      <dt>{term}</dt>
-      <dd>{children}</dd>
     </div>
+  );
+}
+
+const SERVER_COLUMNS: Column<CampaignServer>[] = [
+  {
+    key: "server",
+    header: "Server",
+    cell: (s) => (
+      <Link href={serverHref(s.server_id)}>
+        <b>{s.hostname}</b>
+      </Link>
+    ),
+  },
+  { key: "status", header: "State", cell: (s) => <ServerStatusLabel status={s.status} /> },
+  { key: "exit", header: "Exit code", cell: (s) => s.exit_code ?? <span className={own.dim}>—</span> },
+  {
+    key: "finished",
+    header: "Finished",
+    cell: (s) => (s.finished_at ? formatDateTime(s.finished_at) : <span className={own.dim}>—</span>),
+  },
+  { key: "error", header: "Error", className: own.wrap, cell: (s) => s.error ?? "" },
+];
+
+const WAVE_STATES = { pending: ["Pending", "neutral"], running: ["Running", "info"], done: ["Done", "ok"] } as const;
+
+/** A wave as a `<details>` block: state, a `<progress>` with its percentage, then its servers. */
+function Wave({ wave, current }: { wave: CampaignWave; current: boolean }) {
+  const title = `Wave ${wave.index + 1}`;
+  const { total, succeeded, failed, cancelled } = wave.progress;
+  const done = succeeded + failed + cancelled;
+  const percent = total ? Math.round((done * 100) / total) : 0;
+  const [word, tone] = WAVE_STATES[wave.state];
+  return (
+    <section aria-label={title}>
+      <details className={own.wave} open={current || wave.state === "running"}>
+        <summary>
+          <strong>{title}</strong>
+          <Label tone={tone}>{word}</Label>
+          <progress max={total} value={done} aria-label={`${title} progress`} />
+          <span>{percent} %</span>
+          <span className={own.dim}>
+            {succeeded} succeeded{failed > 0 && `, ${failed} failed`} of {total}
+            {wave.started_at ? ` · started ${formatDateTime(wave.started_at)}` : " · not started"}
+            {wave.finished_at && `, finished ${formatDateTime(wave.finished_at)}`}
+          </span>
+        </summary>
+        <DataTable
+          dense
+          label={`Servers of ${title.toLowerCase()}`}
+          columns={SERVER_COLUMNS}
+          rows={wave.servers}
+          rowKey={(s) => s.server_id}
+        />
+      </details>
+    </section>
   );
 }

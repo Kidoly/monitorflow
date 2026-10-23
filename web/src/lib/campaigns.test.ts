@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { server } from "@/test/campaigns";
+import { campaign, server } from "@/test/campaigns";
 
 import type { CampaignRequest } from "./api";
 import {
+  campaignSubline,
   campaignTargets,
   canAct,
   describeThreshold,
@@ -11,6 +12,7 @@ import {
   describeWindow,
   emptyDraft,
   planWaves,
+  shortWindow,
   toRequest,
   validateCampaign,
 } from "./campaigns";
@@ -153,5 +155,24 @@ describe("campaign states and labels", () => {
     expect(
       describeWindow({ kind: "weekly", weekdays: [6, 7], start: "22:00", end: "04:00", timezone: "Europe/Paris" }),
     ).toBe("Sat, Sun 22:00–04:00 (Europe/Paris)");
+  });
+
+  it("sums a campaign up on one line and windows in a cell", () => {
+    expect(campaignSubline(campaign())).toBe("2 waves · security only");
+    expect(
+      campaignSubline(
+        campaign({
+          wave_count: 1,
+          spec: { packages: [], security_only: false, allow_reboot: true },
+          sources: { mode: "replace", mirrors: [{ name: "debian-12", snapshot: "s1" }] },
+        }),
+      ),
+    ).toBe("1 wave · snapshot debian-12/s1 · all packages · reboot allowed");
+    expect(shortWindow({ kind: "weekly", weekdays: [6, 7], start: "22:00", end: "04:00", timezone: "UTC" })).toBe(
+      "Sat, Sun 22:00–04:00",
+    );
+    const once = (a: Date, b: Date) => shortWindow({ kind: "once", starts_at: a.toISOString(), ends_at: b.toISOString() });
+    expect(once(new Date(2026, 9, 23, 2, 0), new Date(2026, 9, 23, 5, 0))).toBe("23 Oct 02:00–05:00");
+    expect(once(new Date(2026, 9, 23, 22, 0), new Date(2026, 9, 24, 4, 0))).toBe("23 Oct 22:00–24 Oct 04:00");
   });
 });
