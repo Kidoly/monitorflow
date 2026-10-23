@@ -1,40 +1,17 @@
-/* Colours meet WCAG AA contrast (4.5:1) against their backgrounds. */
+/*
+ * Base rules only. Colours, sizes and fonts come from tokens.css (the design
+ * handoff, docs/design/); components style themselves with CSS Modules.
+ */
 :root {
+  color-scheme: light dark;
+}
+
+:root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --text: #1b1f24;
-  --muted: #4b5563;
-  --border: #d0d5dd;
-  --accent: #1d4ed8;
-  --accent-text: #ffffff;
-  --online: #116329;
-  --online-bg: #dcfce7;
-  --offline: #9a1c1c;
-  --offline-bg: #fee2e2;
-  --warning: #7a4a00;
-  --warning-bg: #fef3c7;
-  --critical: #9a1c1c;
-  --critical-bg: #fee2e2;
-  --error: #9a1c1c;
-  --error-bg: #fef2f2;
-  --focus: #1d4ed8;
-  --radius: 6px;
-  /* Chart series in this fixed order (colour-blind checked as adjacent pairs). */
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --series-3: #1baf7a;
-  --series-4: #eda100;
-  --series-5: #e87ba4;
-  --series-6: #008300;
-  --series-7: #6250d6;
-  --series-8: #e34948;
-  /* Threshold lines; always drawn with a text label, never colour alone. */
-  --warning-line: #b77f00;
-  --critical-line: #d03b3b;
-  --grid: #e1e0d9;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  line-height: 1.5;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 *,
@@ -45,22 +22,47 @@
 
 body {
   margin: 0;
-  background: var(--bg);
+  font: var(--font);
+  letter-spacing: -0.01em;
   color: var(--text);
+  background: var(--bg);
 }
 
+h1,
+h2,
+h3 {
+  margin: 0;
+}
+
+/* Buttons drawn on links (`.btn-k` on <a>) override this with a two-class selector. */
 a {
-  color: var(--accent);
+  color: var(--text);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
 }
 
 :focus-visible {
-  outline: 3px solid var(--focus);
+  outline: 2px solid var(--text);
   outline-offset: 2px;
 }
 
-button {
+button,
+input,
+select,
+textarea {
   font: inherit;
+  letter-spacing: inherit;
+}
+
+button {
   cursor: pointer;
+}
+
+table {
+  font-variant-numeric: tabular-nums;
 }
 
 .visually-hidden:not(:focus):not(:active) {
