@@ -110,6 +110,34 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # Seconds one command may take from queueing to its result (at most 3600).
 # command_timeout = 120
 
+# Proxmox VE VM snapshots before change-tier remediation commands
+# (ADR-0044). Off by default. Map servers to VMs with
+# PUT /api/servers/{id}/proxmox; servers without a mapping run commands
+# with limited rollback.
+[proxmox]
+# enabled = false
+# Snapshots kept per VM; older ones MonitorFlow took are deleted. Snapshots
+# made by anyone else are never touched.
+# keep_snapshots = 3
+# Seconds one HTTP request may take.
+# request_timeout = 30
+# Seconds a snapshot, rollback or deletion task may run.
+# task_timeout = 600
+
+# One entry per cluster; any node's API URL works. The token needs
+# VM.Snapshot, VM.Snapshot.Rollback and VM.Audit on the mapped VMs.
+# [[proxmox.clusters]]
+# name = "pve"
+# url = "https://pve1.example.net:8006"
+# token_id = "monitorflow@pve!snapshots"
+# File holding the token secret alone, readable by the server only. Never
+# put the secret itself in this file.
+# token_secret_file = "/etc/monitorflow/proxmox-pve.secret"
+# CA certificates (PEM) trusted for this cluster instead of the public
+# roots, like a copy of /etc/pve/pve-root-ca.pem. Certificates are always
+# verified.
+# ca_file = "/etc/monitorflow/proxmox-pve-ca.pem"
+
 [log]
 # trace, debug, info, warn or error.
 # level = "info"

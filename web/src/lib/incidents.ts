@@ -1,4 +1,4 @@
-import type { IncidentQuery, IncidentSeverity, IncidentState } from "./api";
+import type { IncidentQuery, IncidentSeverity, IncidentState, ThresholdSnapshot } from "./api";
 import { UUID } from "./uuid";
 
 /** What the incidents list shows; reflected in its query string. */
@@ -68,20 +68,48 @@ const MAX_POINTS = 360;
 
 /**
  * The time range of an incident's chart, in unix seconds: from a margin
- * before it opened (a quarter of its duration, at least 15 minutes) to as
- * long after it resolved, or to now. The step keeps it to a few hundred
- * points and the ends are aligned to it.
+ * before it opened (`marginS`, by default a quarter of its duration and at
+ * least 15 minutes) to as long after it resolved, or to now. The step
+ * keeps it to a few hundred points and the ends are aligned to it.
  */
 export function incidentWindow(
   openedAt: string,
   resolvedAt: string | null,
   now: Date,
+  marginS?: number,
 ): { start: number; end: number; step: number } {
   const opened = Date.parse(openedAt) / 1000;
   const until = Math.max(opened, (resolvedAt ? Date.parse(resolvedAt) : now.getTime()) / 1000);
-  const margin = Math.max(900, (until - opened) / 4);
+  const margin = marginS ?? Math.max(900, (until - opened) / 4);
   const from = opened - margin;
   const to = resolvedAt ? Math.min(until + margin, now.getTime() / 1000) : until;
   const step = CHART_STEPS.find((s) => (to - from) / s <= MAX_POINTS) ?? 86_400;
   return { start: Math.floor(from / step) * step, end: Math.ceil(to / step) * step, step };
+}
+
+/** Margins of the incident chart's window buttons, "± 3 h" and so on. */
+export const INCIDENT_MARGINS = [
+  { label: "± 3 h", seconds: 10_800 },
+  { label: "± 12 h", seconds: 43_200 },
+  { label: "± 3 d", seconds: 259_200 },
+] as const;
+
+const RECOVERY: Record<ThresholdSnapshot["comparison"], string> = {
+  ">": "at or below",
+  ">=": "below",
+  "<": "at or above",
+  "<=": "above",
+};
+
+/**
+ * When the engine resolves an incident under `threshold` (ADR-0017): once
+ * the value is back past the lowest threshold set by the hysteresis, at
+ * once. `format` writes values in the metric's unit. Null without a value.
+ */
+export function resolvesWhen(threshold: ThresholdSnapshot, format: (value: number) => string): string | null {
+  const above = threshold.comparison === ">" || threshold.comparison === ">=";
+  const lowest = threshold.warning ?? threshold.critical;
+  if (lowest === null) return null;
+  const limit = above ? lowest - threshold.hysteresis : lowest + threshold.hysteresis;
+  return `the value is ${RECOVERY[threshold.comparison]} ${format(limit)}`;
 }

@@ -1,0 +1,30 @@
+.box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.meta {
+  color: var(--muted);
+}
+
+/* An empty note inside the box. */
+.box > p {
+  margin: 0;
+  padding: 14px 20px;
+  color: var(--muted);
+}

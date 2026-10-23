@@ -2,7 +2,7 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { COPIED_MS, SecretField } from "./SecretField";
+import { COPIED_MS, CopyButton, SecretField } from "./SecretField";
 
 const TOKEN = "mft_9Qk2Zr7wLx3pV8hN4sT6uB1cE0fG5jM2aD7yR";
 
@@ -37,4 +37,20 @@ describe("SecretField", () => {
     await user.click(screen.getByRole("button", { name: "Copy" }));
     expect(document.querySelector("[aria-live=polite]")).toHaveTextContent("Copying failed; select the text instead.");
   });
+
+  it("names the Copy button when asked, and copies any text with CopyButton", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <SecretField label="Token" value={TOKEN} copyName="Copy token" />
+        <CopyButton text="token = 1" name="Copy configuration snippet" size="small" />
+      </>,
+    );
+    await user.click(screen.getByRole("button", { name: "Copy token" }));
+    expect(await navigator.clipboard.readText()).toBe(TOKEN);
+    await user.click(screen.getByRole("button", { name: "Copy configuration snippet" }));
+    expect(await navigator.clipboard.readText()).toBe("token = 1");
+    expect(screen.getByRole("button", { name: "Copy configuration snippet" })).toHaveTextContent("Copied");
+  });
 });
+

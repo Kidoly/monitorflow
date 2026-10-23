@@ -73,6 +73,7 @@ export function TimeChart({
   markers = [],
   band,
   emptyText = "No data in this range.",
+  footer,
 }: {
   title: string;
   /** Grey text beside the title: "Last 6 h · now 94.2 %". */
@@ -94,6 +95,8 @@ export function TimeChart({
   markers?: Marker[];
   band?: Band;
   emptyText?: string;
+  /** At the right end of the legend row, like a "Download CSV" link. */
+  footer?: ReactNode;
 }) {
   const titleId = useId();
   const series = allSeries.slice(0, MAX_SERIES);
@@ -348,6 +351,7 @@ export function TimeChart({
         {allSeries.length > MAX_SERIES && (
           <span className={styles.subtitle}>{allSeries.length - MAX_SERIES} more series not shown.</span>
         )}
+        {footer && <span className={styles.footer}>{footer}</span>}
       </div>
     </figure>
   );

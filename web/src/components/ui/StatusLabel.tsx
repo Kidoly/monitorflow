@@ -17,6 +17,7 @@ export const STATUS_WORDS = {
   token: { pending: ["Pending", "info"], used: ["Used", "ok"], expired: ["Expired", "neutral"], revoked: ["Revoked", "neutral"] },
   run: {
     running: ["Running", "info"],
+    sent: ["Sent", "info"],
     succeeded: ["Succeeded", "ok"],
     failed: ["Failed", "bad"],
     queued: ["Queued", "neutral"],
@@ -29,6 +30,14 @@ export const STATUS_WORDS = {
     installed: ["Installed", "ok"],
     failed: ["Failed", "bad"],
     rejected: ["Rejected", "neutral"],
+  },
+  remediation: {
+    open: ["Open", "warn"],
+    running: ["Running", "info"],
+    awaiting_approval: ["Awaiting approval", "warn"],
+    resolved: ["Resolved", "ok"],
+    escalated: ["Escalated", "bad"],
+    failed: ["Failed", "bad"],
   },
   approval: { waiting: ["Waiting", "warn"], approved: ["Approved", "ok"], rejected: ["Rejected", "neutral"] },
   risk: {

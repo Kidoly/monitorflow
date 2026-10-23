@@ -95,6 +95,8 @@ export function PrimaryCell({ title, href, sub }: { title: ReactNode; href?: str
  * `onSortChange` make it controlled (see `useUrlSort`), otherwise it keeps
  * its own. Without a sort, rows follow `defaultOrder` (e.g. `problemsFirst`).
  *
+ * `bare` drops the border, for a table under a heading inside a box.
+ *
  * Paging: rows past `pageSize` hide behind "Load more", which shows the next
  * page and moves focus to the first link of the first new row. Give
  * `onLoadMore` and `hasMore` to fetch pages from the API instead. Change the
@@ -111,12 +113,14 @@ export function DataTable<T>({
   rowActions,
   rowMuted,
   rowDetail,
+  detailInset,
   pageSize = 50,
   hasMore,
   onLoadMore,
   summary,
   loading,
   dense,
+  bare,
 }: {
   /** Accessible name of the table. */
   label: string;
@@ -132,6 +136,8 @@ export function DataTable<T>({
   rowMuted?: (row: T) => boolean;
   /** Content under the row across all columns, like command output; null for none. */
   rowDetail?: (row: T) => ReactNode;
+  /** Draws `rowDetail` in the grey inset of command output and run logs. */
+  detailInset?: boolean;
   pageSize?: number;
   hasMore?: boolean;
   onLoadMore?: () => void;
@@ -140,6 +146,8 @@ export function DataTable<T>({
   /** First load: three skeleton rows of the real height. */
   loading?: boolean;
   dense?: boolean;
+  /** No border of its own, inside a section box that has one. */
+  bare?: boolean;
 }) {
   const [ownSort, setOwnSort] = useState<SortState | null>(null);
   const sort = controlledSort === undefined ? ownSort : controlledSort;
@@ -171,7 +179,7 @@ export function DataTable<T>({
 
   return (
     <div>
-      <div className={styles.box}>
+      <div className={cx(styles.box, bare && styles.bare)}>
         <table className={cx(styles.table, dense && styles.dense)} aria-label={label} aria-busy={loading || undefined}>
           <thead>
             <tr>
@@ -227,7 +235,7 @@ export function DataTable<T>({
                         )}
                       </tr>
                       {detail != null && detail !== false && (
-                        <tr className={styles.detail}>
+                        <tr className={cx(styles.detail, detailInset && styles.inset)}>
                           <td colSpan={span}>{detail}</td>
                         </tr>
                       )}
