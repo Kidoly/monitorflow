@@ -8,6 +8,7 @@ use std::time::Duration;
 use monitorflow_server::remediation::audit::{
     self, Actor, AuditError, EventKind, IncidentState, NewEvent, NewIncident, GENESIS,
 };
+use monitorflow_server::remediation::risk::{classify, RuleSet};
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -110,7 +111,10 @@ fn story(user: Uuid, command: Uuid) -> Vec<NewEvent> {
             "logs grow",
             Some("du -sh /var/log"),
         ),
-        NewEvent::classification("du -sh /var/log", "read_only", Some("du")),
+        NewEvent::classification(
+            "du -sh /var/log",
+            &classify("du -sh /var/log", &RuleSet::default()),
+        ),
         NewEvent::approval(Actor::System, "du -sh /var/log"),
         NewEvent::command_queued(command, "du -sh /var/log"),
         NewEvent::command_result(
@@ -119,6 +123,7 @@ fn story(user: Uuid, command: Uuid) -> Vec<NewEvent> {
             Some(0),
             "4G /var/log",
             "",
+            None,
             Duration::from_millis(80),
         ),
         NewEvent::ai_proposal(

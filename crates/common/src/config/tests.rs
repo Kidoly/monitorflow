@@ -721,3 +721,20 @@ fn agent_shell_commands_are_off_unless_enabled() {
     let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
     assert!(agent.commands.shell);
 }
+
+#[test]
+fn remediation_limits_default_and_validate() {
+    let server: ServerConfig = parse(SERVER_MIN).unwrap();
+    assert_eq!(server.remediation, RemediationConfig::default());
+    assert_eq!(server.remediation.max_commands, 10);
+    let vars = [("MONITORFLOW_REMEDIATION_MAX_DURATION", "600")];
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &env(&vars)).unwrap();
+    assert_eq!(server.remediation.max_duration, 600);
+    for (key, value) in [
+        ("MONITORFLOW_REMEDIATION_MAX_COMMANDS", "0"),
+        ("MONITORFLOW_REMEDIATION_COMMAND_TIMEOUT", "3601"),
+    ] {
+        let msg = err::<ServerConfig>(SERVER_MIN, &[(key, value)]);
+        assert!(msg.contains("remediation."), "{msg}");
+    }
+}

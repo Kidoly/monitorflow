@@ -943,6 +943,9 @@ pub struct ServerConfig {
     pub mirror: MirrorConfig,
     /// AI provider of the remediation loop (ADR-0039). Off by default.
     pub ai: AiConfig,
+    /// Limits of the remediation loop (ADR-0043), which runs when `ai` is
+    /// enabled.
+    pub remediation: RemediationConfig,
 }
 
 /// Whether `url` can be written into agents' package sources: http or
@@ -985,6 +988,7 @@ impl Default for ServerConfig {
             mirror_public_url: None,
             mirror: MirrorConfig::default(),
             ai: AiConfig::default(),
+            remediation: RemediationConfig::default(),
         }
     }
 }
@@ -1121,6 +1125,56 @@ impl AiConfig {
     }
 }
 
+/// Longest `remediation.command_timeout`, the agent's own limit.
+pub const MAX_REMEDIATION_COMMAND_TIMEOUT: u64 = 60 * 60;
+
+/// Limits of each remediation incident (ADR-0043). Hitting one hands the
+/// incident to a human. They are copied into the incident when it opens.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RemediationConfig {
+    /// Most commands run for one incident.
+    pub max_commands: u32,
+    /// Seconds from opening to escalation, waiting for approval included.
+    pub max_duration: u64,
+    /// Seconds one command may take from queueing to its result.
+    pub command_timeout: u64,
+}
+
+impl Default for RemediationConfig {
+    fn default() -> Self {
+        Self {
+            max_commands: 10,
+            max_duration: 30 * 60,
+            command_timeout: 120,
+        }
+    }
+}
+
+impl RemediationConfig {
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set("remediation.max_commands", &mut self.max_commands)?;
+        env.set("remediation.max_duration", &mut self.max_duration)?;
+        env.set("remediation.command_timeout", &mut self.command_timeout)
+    }
+
+    fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
+        check.positive("remediation.max_commands", self.max_commands.into())?;
+        check.positive("remediation.max_duration", self.max_duration)?;
+        if self.max_duration > i32::MAX as u64 {
+            return Err(check.fail("remediation.max_duration", "is too large"));
+        }
+        check.positive("remediation.command_timeout", self.command_timeout)?;
+        if self.command_timeout > MAX_REMEDIATION_COMMAND_TIMEOUT {
+            return Err(check.fail(
+                "remediation.command_timeout",
+                format!("must be at most {MAX_REMEDIATION_COMMAND_TIMEOUT} seconds"),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AiProviderKind {
@@ -1165,6 +1219,7 @@ impl LoadConfig for ServerConfig {
         env.set_opt("mirror_public_url", &mut self.mirror_public_url)?;
         self.mirror.apply_env(env)?;
         self.ai.apply_env(env)?;
+        self.remediation.apply_env(env)?;
         self.log.apply_env(env)
     }
 
@@ -1172,6 +1227,7 @@ impl LoadConfig for ServerConfig {
         check.positive("heartbeat_timeout", self.heartbeat_timeout)?;
         self.mirror.validate(check)?;
         self.ai.validate(check)?;
+        self.remediation.validate(check)?;
         if let Some(url) = &self.mirror_public_url {
             if !valid_mirror_url(url) {
                 return Err(check.fail(

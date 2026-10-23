@@ -13,6 +13,7 @@ use monitorflow_server::api::users;
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::grpc::Registry;
 use monitorflow_server::remediation::audit::{self, Actor, NewEvent, NewIncident};
+use monitorflow_server::remediation::risk::{classify, RuleSet};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -179,6 +180,7 @@ db_tests! {
         assert_eq!(item["closed_at"], Value::Null);
         assert_eq!((item["max_commands"].clone(), item["max_duration_s"].clone()), (json!(5), json!(600)));
         assert_eq!(item["event_count"], 0);
+        assert_eq!(item["pending_command"], Value::Null);
 
         let site_viewer = session(&pool, "site-viewer", Role::Viewer, None, Some(acme.sites[1])).await;
         let (_, body) = get(&pool, &site_viewer, "/api/remediation/incidents").await;
@@ -279,10 +281,10 @@ db_tests! {
         for event in [
             NewEvent::context_sent("claude/test", json!({ "metric": "disk", "logs": "[REDACTED]" })),
             NewEvent::ai_proposal("claude/test", "disk full", "journal is large", Some("journalctl --disk-usage")),
-            NewEvent::classification("journalctl --disk-usage", "read_only", Some("journalctl")),
+            NewEvent::classification("journalctl --disk-usage", &classify("journalctl --disk-usage", &RuleSet::default())),
             NewEvent::approval(Actor::User(user), "journalctl --disk-usage"),
             NewEvent::command_queued(command, "journalctl --disk-usage"),
-            NewEvent::command_result("agent-acme-0", command, Some(0), "4.0G", "", Duration::from_millis(12)),
+            NewEvent::command_result("agent-acme-0", command, Some(0), "4.0G", "", None, Duration::from_millis(12)),
         ] {
             audit::append(&pool, id, event).await.unwrap();
         }
@@ -307,6 +309,25 @@ db_tests! {
             "valid": true, "events": 6, "broken_at": null, "reason": null,
             "head_hash": events[5]["hash"],
         }));
+
+        // A proposal waiting for approval shows with the incident (ADR-0043).
+        sqlx::query(
+            "INSERT INTO remediation_pending_commands
+                 (incident_id, proposal_seq, command, diagnosis, reasoning, tier, rule, reason)
+             VALUES ($1, 2, 'systemctl restart nginx', 'disk full', 'restart', 'low_impact',
+                     '{\"source\": \"builtin\", \"id\": \"low.systemctl\"}', 'restarts a unit')",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (_, body) = get(&pool, &viewer, &uri).await;
+        let pending = &body["pending_command"];
+        assert_eq!(pending["command"], "systemctl restart nginx");
+        assert_eq!(pending["tier"], "low_impact");
+        assert_eq!(pending["rule"]["id"], "low.systemctl");
+        assert_eq!(pending["reasoning"], "restart");
+        assert!(pending["proposed_at"].is_string());
 
         // A superuser rewrites the approver behind the triggers' back.
         let mut conn = pool.acquire().await.unwrap();

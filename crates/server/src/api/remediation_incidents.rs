@@ -1,8 +1,8 @@
 //! Remediation incident endpoints (ADR-0042): read-only views of what the
 //! AI remediation loop did, with each incident's chained history.
 //!
-//! The loop owns `remediation_incidents` and their events; nothing here
-//! writes them. Every role reads the incidents of the servers of its
+//! The loop owns `remediation_incidents`, their events and their pending
+//! commands (ADR-0043); nothing here writes them. Every role reads the incidents of the servers of its
 //! sites, and an incident outside them is not found.
 
 use axum::extract::rejection::QueryRejection;
@@ -62,6 +62,11 @@ pub struct IncidentView {
     pub max_duration_s: i32,
     /// Number of events.
     pub event_count: i64,
+    /// The command waiting for approval in `awaiting_approval`, else
+    /// `null` (ADR-0043): `id`, `command`, the AI's `diagnosis` and
+    /// `reasoning` (untrusted text), the rules' `tier`, `rule` and
+    /// `reason`, and `proposed_at`.
+    pub pending_command: Option<serde_json::Value>,
 }
 
 /// Body of `GET /api/remediation/incidents`.
@@ -87,7 +92,14 @@ const SELECT: &str = "SELECT i.id, i.customer_id, c.name AS customer_name, s.sit
                              si.name AS site_name, i.server_id, s.hostname,
                              i.alert_incident_id, i.metric, i.instance, i.state,
                              i.opened_at, i.closed_at, i.max_commands, i.max_duration_s,
-                             i.head_seq AS event_count
+                             i.head_seq AS event_count,
+                             (SELECT jsonb_build_object(
+                                         'id', p.id, 'command', p.command,
+                                         'diagnosis', p.diagnosis, 'reasoning', p.reasoning,
+                                         'tier', p.tier, 'rule', p.rule, 'reason', p.reason,
+                                         'proposed_at', p.created_at)
+                              FROM remediation_pending_commands p
+                              WHERE p.incident_id = i.id AND p.state = 'pending') AS pending_command
                       FROM remediation_incidents i
                       JOIN servers s ON s.id = i.server_id
                       JOIN sites si ON si.id = s.site_id
