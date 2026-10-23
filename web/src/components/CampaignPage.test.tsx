@@ -24,24 +24,26 @@ describe("CampaignPage", () => {
     const first = screen.getByRole("region", { name: "Wave 1" });
     const row = within(first).getByRole("link", { name: "web-1" }).closest("tr")!;
     expect(within(row).getByRole("link")).toHaveAttribute("href", expect.stringContaining(`id=${WEB1}`));
-    expect(row).toHaveTextContent("failed");
+    expect(row).toHaveTextContent("Failed");
     expect(row).toHaveTextContent("100");
     expect(row).toHaveTextContent("dpkg lock");
-    expect(within(screen.getByRole("region", { name: "Wave 2" })).getByText("pending", { selector: "td span" })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Wave 2" })).getByText("Pending", { selector: "td span" })).toBeInTheDocument();
+    expect(within(first).getByRole("progressbar", { name: "Wave 1 progress" })).toHaveAttribute("value", "0");
+    expect(screen.getByRole("group", { name: "Servers by status" })).toHaveTextContent("In progress1");
   });
 
-  it("enables the actions the state allows and applies their answer", async () => {
+  it("offers the actions the state allows and applies their answer", async () => {
     const fetchMock = stubFetch({
       [`GET ${PATH}`]: { status: 200, body: detail() },
       [`POST ${PATH}/pause`]: { status: 200, body: detail({ state: "paused" }) },
     });
     render(<CampaignPage id={CAMPAIGN_ID} me={customerAdmin} />);
     const pause = await screen.findByRole("button", { name: "Pause" });
-    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Resume" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Start" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
     await userEvent.click(pause);
     expect(await screen.findByRole("button", { name: "Resume" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument();
     const call = fetchMock.mock.calls.findIndex(([url]) => String(url).endsWith("/pause"));
     expect(requestHeaders(fetchMock, call)[CSRF_HEADER]).toBe("1");
   });
@@ -80,9 +82,9 @@ describe("CampaignPage", () => {
         ],
       });
       render(<CampaignPage id={CAMPAIGN_ID} me={customerAdmin} />);
-      expect(await screen.findByText("running", { selector: "dd span" })).toBeInTheDocument();
+      expect(await screen.findByText("Running", { selector: "h1 + span" })).toBeInTheDocument();
       await act(() => vi.advanceTimersByTimeAsync(REFRESH_MS));
-      expect(await screen.findByText("completed", { selector: "dd span" })).toBeInTheDocument();
+      expect(await screen.findByText("Succeeded", { selector: "h1 + span" })).toBeInTheDocument();
       await act(() => vi.advanceTimersByTimeAsync(3 * REFRESH_MS));
       expect(fetchMock).toHaveBeenCalledTimes(2);
     } finally {
@@ -93,6 +95,18 @@ describe("CampaignPage", () => {
   it("says when the campaign is not found", async () => {
     stubFetch({ [`GET ${PATH}`]: { status: 404, body: { error: "not found" } } });
     render(<CampaignPage id={CAMPAIGN_ID} me={customerAdmin} />);
-    expect(await screen.findByRole("heading", { name: "Campaign not found" })).toBeInTheDocument();
+    expect(await screen.findByText("Campaign not found")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to campaigns" })).toBeInTheDocument();
+  });
+
+  it("shows the pinned snapshots", async () => {
+    stubFetch({
+      [`GET ${PATH}`]: {
+        status: 200,
+        body: detail({ sources: { mode: "replace", mirrors: [{ name: "debian-12", snapshot: "s1" }] } }),
+      },
+    });
+    render(<CampaignPage id={CAMPAIGN_ID} me={customerAdmin} />);
+    expect(await screen.findByText("debian-12/s1 (other sources set aside)")).toBeInTheDocument();
   });
 });

@@ -434,6 +434,13 @@ export interface UpdateSpec {
   allow_reboot: boolean;
 }
 
+/** Published mirror snapshots a campaign installs from (ADR-0038). */
+export interface SourcesPin {
+  /** `replace` sets the host's other sources aside, `add` keeps them. */
+  mode: "replace" | "add";
+  mirrors: { name: string; snapshot: string }[];
+}
+
 /** Servers by status: `failed` includes expired and skipped, `in_progress` queued, sent and running. */
 export interface CampaignProgress {
   total: number;
@@ -458,6 +465,8 @@ export interface Campaign {
   command_ttl_s: number;
   failure_threshold: FailureThreshold;
   windows: CampaignWindow[];
+  /** The pinned snapshots, if any. */
+  sources: SourcesPin | null;
   wave_count: number;
   /** Index from 0; null until the first wave is queued. */
   current_wave: number | null;
@@ -490,6 +499,9 @@ export interface CampaignServer {
   exit_code: number | null;
   error: string | null;
   finished_at: string | null;
+  /** With pinned snapshots: the `configure_sources` before the update and the restore after it. */
+  sources_command_id: string | null;
+  restore_command_id: string | null;
 }
 
 export interface CampaignWave {
@@ -848,8 +860,8 @@ export const api = {
   serverMetrics: (serverId: string, signal?: AbortSignal) =>
     request<MetricList>(`/api/servers/${encodeURIComponent(serverId)}/metrics`, { signal }),
 
-  /** The newest campaigns of the customers the user reads as a whole. */
-  campaigns: (signal?: AbortSignal) => request<CampaignList>("/api/campaigns", { signal }),
+  /** The newest 500 campaigns of the customers the user reads as a whole. */
+  campaigns: (signal?: AbortSignal) => request<CampaignList>("/api/campaigns?limit=500", { signal }),
 
   campaign: (id: string, signal?: AbortSignal) =>
     request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}`, { signal }),
