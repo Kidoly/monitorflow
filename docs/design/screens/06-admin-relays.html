@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Administration: Relays — MonitorFlow</title>
+</head>
+<body>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0}
+.app{--bg:#ffffff;--sf:#ffffff;--ink:#0a0a0a;--dim:#666666;--line:#eaeaea;--hl:#f5f5f5;--okbg:#dff3e6;--ok:#0b5c27;--badbg:#fde3e3;--bad:#9b1c1c;--wnbg:#fff0c2;--wn:#6d4e00;--ntbg:#ececec;--nt:#444444;--infobg:#e3edff;--info:#1b3f8f;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font:14px/1.5 Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg);letter-spacing:-.01em}
+.app.dark{--bg:#0a0a0a;--sf:#111111;--ink:#ededed;--dim:#a1a1a1;--line:#262626;--hl:#171717;--okbg:#0f2e1c;--ok:#7ee2a0;--badbg:#3b1515;--bad:#ffa3a3;--wnbg:#3a2a08;--wn:#ffd37a;--ntbg:#262626;--nt:#c7c7c7;--infobg:#14264d;--info:#b9d0ff}
+.app *{box-sizing:border-box}
+.app a{color:var(--ink);text-decoration:none}.app a:hover{text-decoration:underline}
+.app :focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.skip{position:absolute;left:8px;top:-40px;background:var(--sf);padding:6px 10px;border:1px solid var(--line);border-radius:6px;z-index:9}.skip:focus{top:8px}
+.side a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;color:var(--ink)}.side a[aria-current=page]{background:var(--ink);color:var(--bg);font-weight:500}.side a:hover{background:var(--hl);text-decoration:none}.side a[aria-current=page]:hover{background:var(--ink)}
+.side .h{font-size:11px;color:var(--dim);padding:14px 10px 4px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.ic{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.cnt{margin-left:auto;font-size:12px;font-weight:600;padding:1px 7px;border-radius:999px}
+.lab{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:5px;font-size:13px;font-weight:600;white-space:nowrap}
+.l-ok{background:var(--okbg);color:var(--ok)}.l-bad{background:var(--badbg);color:var(--bad)}.l-wn{background:var(--wnbg);color:var(--wn)}.l-nt{background:var(--ntbg);color:var(--nt)}.l-info{background:var(--infobg);color:var(--info)}
+.t{width:100%;border-collapse:collapse}
+.t th{text-align:left;font-weight:500;color:var(--dim);font-size:13px;padding:0 14px;height:40px;border-bottom:1px solid var(--line);white-space:nowrap}
+.t td{padding:0 14px;height:52px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:middle}
+.t tr:last-child td{border-bottom:0}
+.t tr:hover td{background:var(--hl)}
+.host b{font-size:15px;font-weight:600}.host span{display:block;font-size:12px;color:var(--dim);margin-top:1px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:6px;border:1px solid var(--line);background:var(--sf);font:inherit;font-size:13px;font-weight:500;color:var(--ink);cursor:pointer;white-space:nowrap}
+.app .btn-k{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.app .btn-danger{background:var(--badbg);color:var(--bad);border-color:transparent}
+.box{border:1px solid var(--line);border-radius:8px;background:var(--sf)}
+.facts{display:grid;grid-template-columns:max-content 1fr;gap:8px 20px;margin:0}.facts dt{color:var(--dim)}.facts dd{margin:0}
+.mono{font-family:var(--mono);font-size:13px}
+.dim{color:var(--dim)}
+.crumb{display:flex;gap:8px;font-size:13px;color:var(--dim)}
+.node{display:flex;flex-direction:column;gap:2px;padding:10px 14px;border:1px solid var(--line);border-radius:8px;background:var(--sf);min-width:160px}
+.node b{font-size:14px}.node.cur{border-color:var(--ink);border-width:2px}
+.arrow{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:13px;white-space:nowrap}.arrow i{display:block;width:28px;height:1px;background:var(--line)}
+h1,h2,h3{margin:0}
+</style>
+<div class="app" style="min-height: 100vh; display: flex; flex-wrap: wrap; align-items: stretch">
+<a href="#main" class="skip">Skip to content</a>
+<nav class="side" aria-label="Main" style="flex: 0 0 240px; padding: 16px 12px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--line); background: var(--sf)">
+<a href="#" style="font-weight: 700; font-size: 15px; padding: 6px 10px; margin-bottom: 8px">MonitorFlow</a>
+<button class="btn" aria-haspopup="listbox" aria-label="Scope: all customers" style="justify-content: space-between; margin-bottom: 6px">All customers<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></button>
+<div class="h">Monitoring</div>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="4" rx="1"></rect><rect x="2" y="9" width="12" height="4" rx="1"></rect></svg>Fleet</a>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"></circle><path d="M8 5v3.5M8 11v.5"></path></svg>Incidents<span class="cnt l-bad" aria-label="3 open incidents">3</span></a>
+<div class="h">Updates</div>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"></circle><path d="M8 5v3l2 1"></path></svg>Mirrors</a>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"></path></svg>Campaigns</a>
+<div class="h">Remediation</div>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8l3 3 7-7"></path></svg>Approvals<span class="cnt l-wn" aria-label="1 pending approval">1</span></a>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3h8v10H4zM6 6h4M6 9h4"></path></svg>Audit log</a>
+<div class="h">Administration</div>
+<a href="#" aria-current="page">Relays</a><a href="#">Sites</a><a href="#">Enrollment tokens</a><a href="#">Users and roles</a>
+<div style="margin-top: auto; padding: 10px; display: flex; justify-content: space-between; font-size: 13px; gap: 8px"><span class="dim">alice · administrator</span><a href="#" style="text-decoration: underline">Sign out</a></div>
+<button class="btn" style="justify-content: center" aria-label="Switch theme">Theme: Light</button>
+</nav>
+
+<main id="main" style="flex: 999 1 560px; min-width: 0; padding: 24px 28px; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px"><h1 style="font-size: 22px; font-weight: 700; letter-spacing: -.02em">Relays</h1><span class="dim" aria-live="polite">3 relays, 3 online · Updated 14:32:05, refreshes every 15 seconds</span><a href="#" class="btn btn-k" style="margin-left: auto">New relay token</a></div>
+
+<div class="box" style="overflow: auto"><table class="t" aria-label="Relays"><thead><tr><th>Relay</th><th>Status</th><th>Agents</th><th>Server names</th><th>Certificate</th><th>Last seen</th></tr></thead><tbody>
+<tr><td class="host"><a href="#"><b>relay-paris-1</b></a><span>paris-dc1 · Acme Hosting · 0.4.2</span></td><td><span class="lab l-ok">Online</span></td><td><strong>4</strong> <span class="dim">connected / 5 total · + 1 relay</span></td><td class="mono">relay-paris-1.acme.example · 10.0.0.5</td><td>Valid · 2027-02-11</td><td class="dim">4 s ago</td></tr>
+<tr><td class="host"><a href="#"><b>relay-lyon-1</b></a><span>lyon-office · Acme Hosting · 0.4.2 · forwards to relay-paris-1</span></td><td><span class="lab l-ok">Online</span></td><td><strong>2</strong> <span class="dim">connected / 3 total</span></td><td class="mono">relay-lyon-1.acme.example · 10.1.0.5</td><td><span class="lab l-wn">Expires in 5 days</span></td><td class="dim">6 s ago</td></tr>
+<tr><td class="host"><a href="#"><b>relay-berlin-1</b></a><span>berlin-hq · Northwind Logistics · 0.4.2</span></td><td><span class="lab l-ok">Online</span></td><td><strong>2</strong> <span class="dim">connected / 2 total</span></td><td class="mono">relay.berlin.northwind.example</td><td>Valid · 2027-05-30</td><td class="dim">2 s ago</td></tr>
+</tbody></table></div>
+
+<hr style="border: 0; border-top: 1px dashed var(--line); margin: 12px 0">
+
+<nav class="crumb" aria-label="Breadcrumb"><a href="#" style="text-decoration: underline">Relays</a><span>/</span><span aria-current="page" style="color: var(--ink)">relay-lyon-1</span></nav>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px">
+<h2 style="font-size: 26px; font-weight: 700; letter-spacing: -.02em">relay-lyon-1</h2>
+<span class="lab l-ok">Online</span>
+<div style="margin-left: auto; display: flex; gap: 8px"><a href="#" class="btn">Renew certificate</a><button class="btn btn-danger" aria-expanded="false">Revoke relay-lyon-1…</button></div>
+</div>
+
+<div class="box" style="padding: 18px 20px">
+<dl class="facts" style="grid-template-columns: max-content 1fr max-content 1fr; column-gap: 28px">
+<dt>Site</dt><dd>lyon-office · Acme Hosting</dd>
+<dt>Last seen</dt><dd>6 s ago</dd>
+<dt>OS</dt><dd>Debian 12</dd>
+<dt>Connected since</dt><dd>2026-10-15 07:40</dd>
+<dt>Version</dt><dd>0.4.2</dd>
+<dt>Certificate</dt><dd><span class="lab l-wn">Expires in 5 days</span> 2026-10-27</dd>
+<dt>Parent relay</dt><dd><a href="#">relay-paris-1</a></dd>
+<dt>Certificate ID</dt><dd>pk_41c0e7a9d25b8f136e0a7c4d</dd>
+<dt>Server names</dt><dd>relay-lyon-1.acme.example, 10.1.0.5</dd>
+<dt>Enrolled</dt><dd>2026-04-27 07:40</dd>
+</dl>
+</div>
+
+<section class="box" aria-labelledby="att-title">
+<div style="padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 12px"><h3 id="att-title" style="font-size: 16px; font-weight: 600">Servers connecting through relay-lyon-1</h3><span class="dim">3 servers, 2 connected now</span></div>
+<table class="t"><thead><tr><th>Host</th><th>Status</th><th>Problem</th><th>Last seen</th></tr></thead><tbody>
+<tr><td class="host"><a href="#"><b>build-01</b></a><span>Ubuntu 24.04 · agent 0.4.2</span></td><td><span class="lab l-ok">Online</span></td><td><span class="lab l-wn">Warning</span>&nbsp; Load average 5 min <span class="dim">6.8</span></td><td class="dim">13 s ago</td></tr>
+<tr><td class="host"><a href="#"><b>web-09</b></a><span>Debian 12 · agent 0.4.2</span></td><td><span class="lab l-ok">Online</span></td><td class="dim">—</td><td class="dim">15 s ago</td></tr>
+<tr><td class="host"><a href="#"><b>backup-01</b></a><span>Debian 12 · agent 0.4.1</span></td><td><span class="lab l-bad">Offline</span></td><td class="dim">No heartbeat since yesterday 22:05</td><td class="dim">16 h ago</td></tr>
+</tbody></table>
+</section>
+</main>
+</div>
+</body>
+</html>

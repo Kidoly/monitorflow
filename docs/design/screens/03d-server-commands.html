@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Server web-01: Commands — MonitorFlow</title>
+</head>
+<body>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0}
+.app{--bg:#ffffff;--sf:#ffffff;--ink:#0a0a0a;--dim:#666666;--line:#eaeaea;--hl:#f5f5f5;--okbg:#dff3e6;--ok:#0b5c27;--badbg:#fde3e3;--bad:#9b1c1c;--wnbg:#fff0c2;--wn:#6d4e00;--ntbg:#ececec;--nt:#444444;--infobg:#e3edff;--info:#1b3f8f;--grid:#e5e5e5;--thw:#b77f00;--thc:#d03b3b;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font:14px/1.5 Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg);letter-spacing:-.01em}
+.app.dark{--bg:#0a0a0a;--sf:#111111;--ink:#ededed;--dim:#a1a1a1;--line:#262626;--hl:#171717;--okbg:#0f2e1c;--ok:#7ee2a0;--badbg:#3b1515;--bad:#ffa3a3;--wnbg:#3a2a08;--wn:#ffd37a;--ntbg:#262626;--nt:#c7c7c7;--infobg:#14264d;--info:#b9d0ff;--grid:#262626;--thw:#e0a21a;--thc:#ff6b6b}
+.app *{box-sizing:border-box}
+.app a{color:var(--ink);text-decoration:none}.app a:hover{text-decoration:underline}
+.app :focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.skip{position:absolute;left:8px;top:-40px;background:var(--sf);padding:6px 10px;border:1px solid var(--line);border-radius:6px;z-index:9}.skip:focus{top:8px}
+.side a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;color:var(--ink)}.side a[aria-current=page]{background:var(--ink);color:var(--bg);font-weight:500}.side a:hover{background:var(--hl);text-decoration:none}.side a[aria-current=page]:hover{background:var(--ink)}
+.side .h{font-size:11px;color:var(--dim);padding:14px 10px 4px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.ic{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.cnt{margin-left:auto;font-size:12px;font-weight:600;padding:1px 7px;border-radius:999px}
+.lab{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:5px;font-size:13px;font-weight:600;white-space:nowrap}
+.l-ok{background:var(--okbg);color:var(--ok)}.l-bad{background:var(--badbg);color:var(--bad)}.l-wn{background:var(--wnbg);color:var(--wn)}.l-nt{background:var(--ntbg);color:var(--nt)}.l-info{background:var(--infobg);color:var(--info)}
+.t{width:100%;border-collapse:collapse}
+.t th{text-align:left;font-weight:500;color:var(--dim);font-size:13px;padding:0 14px;height:40px;border-bottom:1px solid var(--line);white-space:nowrap}
+.t td{padding:0 14px;height:48px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:middle}
+.t tr:last-child td{border-bottom:0}
+.t tr:hover td{background:var(--hl)}
+.pb{font-weight:600}.pb span{font-weight:400;color:var(--dim)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:6px;border:1px solid var(--line);background:var(--sf);font:inherit;font-size:13px;font-weight:500;color:var(--ink);cursor:pointer;white-space:nowrap}
+.stat{display:flex;flex-direction:column;justify-content:space-between;gap:6px;padding:14px 16px;border-radius:8px;min-height:84px;border:1px solid transparent}.stat:hover{text-decoration:none;border-color:currentColor}.stat span{font-size:13px;font-weight:600}.stat b{font-size:30px;font-weight:700;line-height:1;letter-spacing:-.03em}
+.app .btn-k{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.app .btn-danger{background:var(--badbg);color:var(--bad);border-color:transparent}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.box{border:1px solid var(--line);border-radius:8px;background:var(--sf)}
+.facts{display:grid;grid-template-columns:max-content 1fr;gap:8px 20px;margin:0}.facts dt{color:var(--dim)}.facts dd{margin:0}
+.mono{font-family:var(--mono);font-size:13px}
+.dim{color:var(--dim)}
+.banner{display:flex;gap:10px;padding:12px 14px;border-radius:8px;font-size:13px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);flex-wrap:wrap}.tab{padding:10px 14px;border:0;background:none;color:var(--dim);font:inherit;font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;display:inline-flex;align-items:center;gap:8px}.tab[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink)}
+.chip{display:inline-block;padding:2px 7px;border-radius:4px;background:var(--hl);border:1px solid var(--line);font-family:var(--mono);font-size:12px}
+.chart{padding:14px 16px;display:flex;flex-direction:column;gap:8px}.chart h3{font-size:14px;font-weight:600}
+.chart svg text{font-size:10px;fill:var(--dim)}.chart .grid line{stroke:var(--grid)}.chart .thw{stroke:var(--thw)}.chart .thc{stroke:var(--thc)}.chart .thw+text{fill:var(--thw);font-weight:600}.chart .thc+text{fill:var(--thc);font-weight:600}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px}.legend span{display:inline-flex;align-items:center;gap:6px}.legend i{width:12px;height:3px;display:block}
+.crumb{display:flex;gap:8px;font-size:13px;color:var(--dim)}
+h1,h2,h3{margin:0}
+</style>
+<div class="app" style="min-height: 100vh; display: flex; flex-wrap: wrap; align-items: stretch">
+<a href="#main" class="skip">Skip to content</a>
+<nav class="side" aria-label="Main" style="flex: 0 0 240px; padding: 16px 12px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--line); background: var(--sf)">
+<a href="#" style="font-weight: 700; font-size: 15px; padding: 6px 10px; margin-bottom: 8px">MonitorFlow</a>
+<button class="btn" aria-haspopup="listbox" aria-label="Scope: Acme Hosting" style="justify-content: space-between; margin-bottom: 6px">Acme Hosting<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></button>
+<div class="h">Monitoring</div>
+<a href="#" aria-current="page"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="4" rx="1"></rect><rect x="2" y="9" width="12" height="4" rx="1"></rect></svg>Fleet</a>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"></circle><path d="M8 5v3.5M8 11v.5"></path></svg>Incidents<span class="cnt l-bad" aria-label="3 open incidents">3</span></a>
+<div class="h">Updates</div>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"></circle><path d="M8 5v3l2 1"></path></svg>Mirrors</a>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"></path></svg>Campaigns</a>
+<div class="h">Remediation</div>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8l3 3 7-7"></path></svg>Approvals<span class="cnt l-wn" aria-label="1 pending approval">1</span></a>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3h8v10H4zM6 6h4M6 9h4"></path></svg>Audit log</a>
+<div class="h">Administration</div>
+<a href="#">Relays</a><a href="#">Sites</a><a href="#">Enrollment tokens</a><a href="#">Users and roles</a>
+<div style="margin-top: auto; padding: 10px; display: flex; justify-content: space-between; font-size: 13px; gap: 8px"><span class="dim">alice · administrator</span><a href="#" style="text-decoration: underline">Sign out</a></div>
+<button class="btn" style="justify-content: center" aria-label="Switch theme">Theme: Light</button>
+</nav>
+
+<main id="main" style="flex: 999 1 560px; min-width: 0; padding: 24px 28px; display: flex; flex-direction: column; gap: 20px">
+<nav class="crumb" aria-label="Breadcrumb"><a href="#" style="text-decoration: underline">Fleet</a><span>/</span><span aria-current="page" style="color: var(--ink)">web-01</span></nav>
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px">
+<h1 style="font-size: 26px; font-weight: 700; letter-spacing: -.02em">web-01</h1>
+<span class="lab l-ok">Online</span>
+<span class="dim" style="font-size: 13px" aria-live="polite">Updated 14:32:05, refreshes every 15 seconds</span>
+<div style="margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap"><button class="btn">Apply updates…</button><button class="btn btn-danger" aria-expanded="false">Revoke web-01…</button></div>
+</div>
+
+<div class="box" style="padding: 18px 20px">
+<dl class="facts" style="grid-template-columns: max-content 1fr max-content 1fr; column-gap: 28px">
+<dt>Site</dt><dd>paris-dc1 · Acme Hosting</dd>
+<dt>Last seen</dt><dd>12 s ago</dd>
+<dt>OS</dt><dd>Debian 12</dd>
+<dt>Connected since</dt><dd>2026-10-19 02:14</dd>
+<dt>Agent</dt><dd>0.4.2 · via relay-paris-1</dd>
+<dt>Certificate</dt><dd><span class="lab l-wn">Expires in 12 days</span> 2026-11-03</dd>
+<dt>Enrolled</dt><dd>2026-05-03 09:12</dd>
+<dt>Certificate ID</dt><dd>pk_8f3a9c1e4b7d2f60a5e8c21e</dd>
+</dl>
+</div>
+
+<div class="tabs" role="tablist" aria-label="Server sections">
+<button class="tab" role="tab" aria-selected="false">Sensors <span class="dim" style="font-weight: 400">· 11</span></button>
+<button class="tab" role="tab" aria-selected="false">Updates <span class="lab l-wn" style="height: 20px; padding: 0 6px; font-size: 12px">Reboot required</span></button>
+<button class="tab" role="tab" aria-selected="true">Commands <span class="dim" style="font-weight: 400">· 1 running</span></button>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 12px; max-width: 800px" role="group" aria-label="Summary, click to filter">
+<a href="#" class="stat l-info"><span>Running</span><b>1</b></a>
+<a href="#" class="stat l-nt"><span>Queued</span><b>0</b></a>
+<a href="#" class="stat l-ok"><span>Succeeded, 30 d</span><b>6</b></a>
+<a href="#" class="stat l-bad"><span>Failed, 30 d</span><b>1</b></a>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center"><button class="btn">State</button><button class="btn">Period</button><input class="btn" type="search" aria-label="Search" placeholder="Command" style="width: 200px; font-weight: 400"></div>
+<div class="box" style="overflow: auto"><table class="t" aria-label="Commands"><thead><tr><th>Command</th><th>State</th><th>Exit code</th><th>Queued</th><th>By</th><th></th></tr></thead><tbody>
+<tr><td class="host"><b>Security updates, no reboot</b><span>9 packages · snapshot debian-bookworm/2026-10-22-1430</span></td><td><span class="lab l-info">Running</span> <span class="dim">sent 14:20:05</span></td><td class="dim">—</td><td class="dim">Today 14:20</td><td>bob</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Log</button> <button class="btn" style="height: 30px">Cancel</button></td></tr>
+<tr><td class="host"><b>Campaign "Debian security — September", wave 2</b><span>14 packages · rebooted</span></td><td><span class="lab l-ok">Succeeded</span> <span class="dim">02:18</span></td><td>0</td><td class="dim">Yesterday 02:00</td><td>campaign</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Log</button></td></tr>
+<tr style="background: var(--hl)"><td class="host"><b>Selected: nginx</b><span>1 package</span></td><td><span class="lab l-bad">Failed</span> <span class="dim">09:12:19</span></td><td>100</td><td class="dim">2026-10-15 09:12</td><td>bob</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Hide log</button> <button class="btn" style="height: 30px">Retry</button></td></tr>
+<tr><td colspan="6" style="padding: 12px 20px; background: var(--hl); height: auto; white-space: normal"><pre style="margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.55; white-space: pre; overflow: auto">queued 09:12:00 → sent 09:12:03 → running 09:12:04 → failed 09:12:19 (exit 100)
+Reading package lists...
+Building dependency tree...
+nginx is already the newest version (1.22.1-9).
+E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 41822 (unattended-upgr)
+E: Unable to acquire the dpkg frontend lock</pre></td></tr>
+<tr class="dim"><td class="host"><b>All packages, allow reboot</b><span>23 packages</span></td><td><span class="lab l-nt">Expired</span> <span>agent offline</span></td><td>—</td><td>2026-10-14 18:00</td><td>alice</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Retry</button></td></tr>
+<tr class="dim"><td class="host"><b>All packages, allow reboot</b><span>23 packages</span></td><td><span class="lab l-nt">Cancelled</span></td><td>—</td><td>2026-10-14 17:55</td><td>alice</td><td style="text-align: right; white-space: nowrap"></td></tr>
+</tbody></table></div>
+</main>
+</div>
+</body>
+</html>

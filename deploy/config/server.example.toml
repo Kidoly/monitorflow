@@ -83,6 +83,21 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # Scheduled syncs running at once.
 # max_concurrent_syncs = 2
 
+# AI-driven remediation (ADR-0039). Off by default. The AI only proposes
+# commands; each one is risk-classified by rules and approved as configured.
+[ai]
+# enabled = false
+# Only "claude" (Anthropic Messages API) for now.
+# provider = "claude"
+# File holding the API key alone, readable by the server only. Required when
+# enabled. Never put the key itself in this file.
+# api_key_file = "/etc/monitorflow/ai-api-key"
+# model = "claude-opus-5-5"
+# Most tokens one answer may use, thinking included.
+# max_tokens = 16000
+# Seconds one request to the API may take; answers can take minutes.
+# request_timeout = 300
+
 [log]
 # trace, debug, info, warn or error.
 # level = "info"

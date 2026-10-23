@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Administration: Sites — MonitorFlow</title>
+</head>
+<body>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0}
+.app{--bg:#ffffff;--sf:#ffffff;--ink:#0a0a0a;--dim:#666666;--line:#eaeaea;--hl:#f5f5f5;--okbg:#dff3e6;--ok:#0b5c27;--badbg:#fde3e3;--bad:#9b1c1c;--wnbg:#fff0c2;--wn:#6d4e00;--ntbg:#ececec;--nt:#444444;--infobg:#e3edff;--info:#1b3f8f;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font:14px/1.5 Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg);letter-spacing:-.01em}
+.app.dark{--bg:#0a0a0a;--sf:#111111;--ink:#ededed;--dim:#a1a1a1;--line:#262626;--hl:#171717;--okbg:#0f2e1c;--ok:#7ee2a0;--badbg:#3b1515;--bad:#ffa3a3;--wnbg:#3a2a08;--wn:#ffd37a;--ntbg:#262626;--nt:#c7c7c7;--infobg:#14264d;--info:#b9d0ff}
+.app *{box-sizing:border-box}
+.app a{color:var(--ink);text-decoration:none}.app a:hover{text-decoration:underline}
+.app :focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.skip{position:absolute;left:8px;top:-40px;background:var(--sf);padding:6px 10px;border:1px solid var(--line);border-radius:6px;z-index:9}.skip:focus{top:8px}
+.side a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;color:var(--ink)}.side a[aria-current=page]{background:var(--ink);color:var(--bg);font-weight:500}.side a:hover{background:var(--hl);text-decoration:none}.side a[aria-current=page]:hover{background:var(--ink)}
+.side .h{font-size:11px;color:var(--dim);padding:14px 10px 4px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.ic{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.cnt{margin-left:auto;font-size:12px;font-weight:600;padding:1px 7px;border-radius:999px}
+.lab{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:5px;font-size:13px;font-weight:600;white-space:nowrap}
+.l-ok{background:var(--okbg);color:var(--ok)}.l-bad{background:var(--badbg);color:var(--bad)}.l-wn{background:var(--wnbg);color:var(--wn)}.l-nt{background:var(--ntbg);color:var(--nt)}.l-info{background:var(--infobg);color:var(--info)}
+.t{width:100%;border-collapse:collapse}
+.t th{text-align:left;font-weight:500;color:var(--dim);font-size:13px;padding:0 14px;height:40px;border-bottom:1px solid var(--line);white-space:nowrap}
+.t td{padding:0 14px;height:52px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:middle}
+.t tr:hover td{background:var(--hl)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:6px;border:1px solid var(--line);background:var(--sf);font:inherit;font-size:13px;font-weight:500;color:var(--ink);cursor:pointer;white-space:nowrap}
+.app .btn-k{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.box{border:1px solid var(--line);border-radius:8px;background:var(--sf)}
+.dim{color:var(--dim)}
+.banner{display:flex;gap:10px;padding:12px 14px;border-radius:8px;font-size:13px}
+h1,h2,h3{margin:0}
+</style>
+<div class="app" style="min-height: 100vh; display: flex; flex-wrap: wrap; align-items: stretch">
+<a href="#main" class="skip">Skip to content</a>
+<nav class="side" aria-label="Main" style="flex: 0 0 240px; padding: 16px 12px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--line); background: var(--sf)">
+<a href="#" style="font-weight: 700; font-size: 15px; padding: 6px 10px; margin-bottom: 8px">MonitorFlow</a>
+<button class="btn" aria-haspopup="listbox" aria-label="Scope: all customers" style="justify-content: space-between; margin-bottom: 6px">All customers<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></button>
+<div class="h">Monitoring</div>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="4" rx="1"></rect><rect x="2" y="9" width="12" height="4" rx="1"></rect></svg>Fleet</a>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"></circle><path d="M8 5v3.5M8 11v.5"></path></svg>Incidents<span class="cnt l-bad" aria-label="3 open incidents">3</span></a>
+<div class="h">Updates</div>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"></circle><path d="M8 5v3l2 1"></path></svg>Mirrors</a>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"></path></svg>Campaigns</a>
+<div class="h">Remediation</div>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8l3 3 7-7"></path></svg>Approvals<span class="cnt l-wn" aria-label="1 pending approval">1</span></a>
+<a href="#"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3h8v10H4zM6 6h4M6 9h4"></path></svg>Audit log</a>
+<div class="h">Administration</div>
+<a href="#">Relays</a><a href="#" aria-current="page">Sites</a><a href="#">Enrollment tokens</a><a href="#">Users and roles</a>
+<div style="margin-top: auto; padding: 10px; display: flex; justify-content: space-between; font-size: 13px; gap: 8px"><span class="dim">alice · administrator</span><a href="#" style="text-decoration: underline">Sign out</a></div>
+<button class="btn" style="justify-content: center" aria-label="Switch theme">Theme: Light</button>
+</nav>
+
+<main id="main" style="flex: 999 1 560px; min-width: 0; padding: 24px 28px; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px"><h1 style="font-size: 22px; font-weight: 700; letter-spacing: -.02em">Sites</h1><span class="dim">2 customers, 3 sites · Updated 14:32:05, refreshes every 15 seconds</span></div>
+<div class="banner l-info"><div>Sites cannot be renamed or moved to another customer, because the site name labels every stored metric. Choose names that will still make sense in two years.</div></div>
+
+<section class="box" aria-labelledby="c-acme">
+<div style="padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap"><h2 id="c-acme" style="font-size: 16px; font-weight: 600">Acme Hosting</h2><span class="dim">2 sites · 15 servers · 2 relays</span></div>
+<table class="t"><thead><tr><th>Site</th><th>Servers</th><th>Relays</th><th>Created</th></tr></thead><tbody>
+<tr><td><a href="#" style="font-weight: 600; font-size: 15px">paris-dc1</a></td><td><strong>11</strong> <span class="dim">· 9 online</span></td><td><strong>1</strong> <span class="dim">· relay-paris-1</span></td><td class="dim">2026-04-02</td></tr>
+<tr><td><a href="#" style="font-weight: 600; font-size: 15px">lyon-office</a></td><td><strong>4</strong> <span class="dim">· 2 online</span></td><td><strong>1</strong> <span class="dim">· relay-lyon-1</span></td><td class="dim">2026-04-27</td></tr>
+</tbody></table>
+<form style="padding: 14px 20px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; border-top: 1px solid var(--line); background: var(--hl); border-radius: 0 0 8px 8px" aria-label="New site for Acme Hosting">
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 500">New site name<input class="btn" placeholder="e.g. marseille-dc2" pattern="[a-z0-9-]+" style="width: 280px; font-weight: 400"></label>
+<span class="dim" style="font-size: 13px; padding-bottom: 9px">Lowercase letters, digits and dashes. Permanent.</span>
+<button class="btn btn-k" type="submit">Create site</button>
+</form>
+</section>
+
+<section class="box" aria-labelledby="c-nw">
+<div style="padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap"><h2 id="c-nw" style="font-size: 16px; font-weight: 600">Northwind Logistics</h2><span class="dim">1 site · 2 servers · 1 relay</span></div>
+<table class="t"><thead><tr><th>Site</th><th>Servers</th><th>Relays</th><th>Created</th></tr></thead><tbody>
+<tr><td><a href="#" style="font-weight: 600; font-size: 15px">berlin-hq</a></td><td><strong>2</strong> <span class="dim">· 2 online</span></td><td><strong>1</strong> <span class="dim">· relay-berlin-1</span></td><td class="dim">2026-06-15</td></tr>
+</tbody></table>
+<form style="padding: 14px 20px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; border-top: 1px solid var(--line); background: var(--hl); border-radius: 0 0 8px 8px" aria-label="New site for Northwind Logistics">
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 500">New site name<input class="btn" value="berlin-hq" aria-invalid="true" aria-describedby="err-nw" style="width: 280px; font-weight: 400; border-color: var(--bad)"></label>
+<span id="err-nw" style="color: var(--bad); font-size: 13px; padding-bottom: 9px; font-weight: 500">A site named "berlin-hq" already exists for this customer.</span>
+<button class="btn btn-k" type="submit">Create site</button>
+</form>
+</section>
+</main>
+</div>
+</body>
+</html>
