@@ -40,6 +40,8 @@ prost.workspace = true
 reqwest.workspace = true
 snap.workspace = true
 async-trait.workspace = true
+# Secret redaction of AI context (ADR-0040).
+regex.workspace = true
 # Kills a timed-out mirror tool with the programs it started.
 rustix = { workspace = true, features = ["process"] }
 
