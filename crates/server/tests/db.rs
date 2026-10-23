@@ -156,6 +156,8 @@ db_tests! {
                 "mirrors",
                 "relay_mirrors",
             "relays",
+                "remediation_policies",
+                "remediation_rules",
                 "sensor_configs",
                 "server_packages",
                 "servers",
