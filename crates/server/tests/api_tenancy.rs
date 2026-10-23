@@ -143,6 +143,8 @@ struct Tenant {
     site_threshold: Uuid,
     server_threshold: Uuid,
     incident: Uuid,
+    /// A remediation of `incident` (ADR-0042).
+    remediation: Uuid,
     relay: Uuid,
     token: Uuid,
     command: Uuid,
@@ -197,6 +199,17 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    let remediation = one(
+        "INSERT INTO remediation_incidents (customer_id, server_id, alert_incident_id, metric,
+                                            max_commands, max_duration_s)
+         VALUES ($1, $2, $3, 'monitorflow_cpu_usage_ratio', 5, 600) RETURNING id",
+    )
+    .bind(customer)
+    .bind(server)
+    .bind(incident)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     let relay = one("INSERT INTO relays (peer_id, site_id, name) VALUES ($1, $2, $1) RETURNING id")
         .bind(format!("relay-{name}"))
         .bind(site)
@@ -234,6 +247,7 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .await
     .unwrap();
     Tenant {
+        remediation,
         campaign,
         command,
         customer,
@@ -560,6 +574,25 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .await,
                 not_found
             );
+        }
+        ("GET", "/api/remediation/incidents") => {
+            for query in [
+                String::new(),
+                format!("?customer_id={}", b.customer),
+                format!("?server_id={}", b.server),
+                format!("?site_id={}", b.site),
+                format!("?alert_incident_id={}", b.incident),
+            ] {
+                let (status, body) = ctx.call(method, &format!("{path}{query}"), None).await;
+                assert_eq!(status, StatusCode::OK, "{query}");
+                assert!(!Ctx::mentions(&body, b.remediation), "{query}: {body}");
+            }
+            let (_, body) = ctx.call(method, path, None).await;
+            assert!(Ctx::mentions(&body, a.remediation));
+        }
+        ("GET", "/api/remediation/incidents/{id}") => {
+            let uri = format!("/api/remediation/incidents/{}", b.remediation);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
         }
         ("GET", "/api/incidents/{id}") => {
             assert_eq!(
