@@ -1,43 +1,29 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { NoPermission } from "@/components/ui/PageState";
 import { type Me } from "@/lib/api";
 import { isAdministrator, useMe } from "@/lib/me";
-import { RELAYS_PATH, SITES_PATH, TOKENS_PATH } from "@/lib/routes";
-
-import styles from "./Admin.module.css";
-
-const SECTIONS = [
-  { href: RELAYS_PATH, label: "Relays" },
-  { href: SITES_PATH, label: "Sites" },
-  { href: TOKENS_PATH, label: "Enrollment tokens" },
-] as const;
-
-export type AdminSection = (typeof SECTIONS)[number]["label"];
 
 /**
- * The Administration sub-navigation, then `children` for administrators.
- * Other users get a note instead; the API refuses them anyway (ADR-0029).
+ * `children` for administrators; the sidebar's Administration section is
+ * the navigation between these pages. Other users get a note instead (the
+ * sidebar hides the section from them, so only a direct link lands here);
+ * the API refuses them anyway (ADR-0029).
  */
-export function AdminLayout({ current, children }: { current: AdminSection; children: (me: Me) => ReactNode }) {
+export function AdminLayout({ children }: { children: (me: Me) => ReactNode }) {
   const me = useMe();
   if (!me || !isAdministrator(me)) {
     return (
-      <p className={styles.empty}>
-        Administration needs an administrator role. Ask an administrator for one.
-      </p>
+      <NoPermission title="Administration needs an administrator role.">
+        {me && (
+          <>
+            You are signed in as <strong>{me.username}</strong>.{" "}
+          </>
+        )}
+        Ask an administrator to grant you access, or go back to <Link href="/">Fleet</Link>.
+      </NoPermission>
     );
   }
-  return (
-    <>
-      <nav className={styles.nav} aria-label="Administration">
-        {SECTIONS.map(({ href, label }) => (
-          <Link key={href} href={href} aria-current={label === current ? "page" : undefined}>
-            {label}
-          </Link>
-        ))}
-      </nav>
-      {children(me)}
-    </>
-  );
+  return <>{children(me)}</>;
 }
