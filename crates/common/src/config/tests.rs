@@ -710,3 +710,14 @@ fn agent_package_report_interval_defaults_and_validates() {
     let msg = err::<AgentConfig>(AGENT_MIN, &[("MONITORFLOW_PACKAGES_REPORT_INTERVAL", "0")]);
     assert!(msg.contains("packages.report_interval"), "{msg}");
 }
+
+#[test]
+fn agent_shell_commands_are_off_unless_enabled() {
+    let agent: AgentConfig = parse(AGENT_MIN).unwrap();
+    assert!(!agent.commands.shell);
+    let text = format!("{AGENT_MIN}\n[commands]\nshell = true\n");
+    assert!(parse::<AgentConfig>(&text).unwrap().commands.shell);
+    let vars = [("MONITORFLOW_COMMANDS_SHELL", "true")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert!(agent.commands.shell);
+}

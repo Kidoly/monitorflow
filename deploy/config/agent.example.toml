@@ -61,3 +61,11 @@ upstream_url = "https://relay.example.com:7443"
 # Updates run apt-get or dnf through `sudo -n` with the command lines
 # listed in ADR-0031, which the sudoers rules must allow.
 # report_interval = 21600
+
+[commands]
+# Run the `shell` commands of the AI remediation loop (ADR-0043): single
+# command lines the server's risk rules classified as read-only, or that an
+# approver accepted, run with /bin/sh -c as the agent's user, environment
+# reset to PATH and LC_ALL=C. Off unless enabled here; the server cannot
+# change it.
+# shell = false

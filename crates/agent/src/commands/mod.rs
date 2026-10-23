@@ -24,6 +24,7 @@
 //! `FAILED`), the expiry (`EXPIRED`), then the kind (`REJECTED`).
 
 pub mod journal;
+pub mod shell;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;

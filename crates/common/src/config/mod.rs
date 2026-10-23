@@ -485,6 +485,17 @@ pub struct AgentConfig {
     pub log: LogConfig,
     pub sensors: AgentSensorsConfig,
     pub packages: AgentPackagesConfig,
+    pub commands: AgentCommandsConfig,
+}
+
+/// Which optional command kinds the server may send this host. Only the
+/// host's administrator sets these.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentCommandsConfig {
+    /// Runs `shell` commands of the AI remediation loop (ADR-0043), with
+    /// `/bin/sh -c` as the agent's user. Off unless enabled here.
+    pub shell: bool,
 }
 
 /// Package reports and updates (ADR-0031).
@@ -553,6 +564,7 @@ impl Default for AgentConfig {
             log: LogConfig::default(),
             sensors: AgentSensorsConfig::default(),
             packages: AgentPackagesConfig::default(),
+            commands: AgentCommandsConfig::default(),
         }
     }
 }
@@ -584,6 +596,7 @@ impl LoadConfig for AgentConfig {
             "packages.report_interval",
             &mut self.packages.report_interval,
         )?;
+        env.set("commands.shell", &mut self.commands.shell)?;
         if let Some(dirs) = env.list("sensors.log_dirs") {
             self.sensors.log_dirs = dirs.into_iter().map(PathBuf::from).collect();
         }
