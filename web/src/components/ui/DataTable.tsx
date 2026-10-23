@@ -111,6 +111,7 @@ export function DataTable<T>({
   rowActions,
   rowMuted,
   rowDetail,
+  detailInset,
   pageSize = 50,
   hasMore,
   onLoadMore,
@@ -132,6 +133,8 @@ export function DataTable<T>({
   rowMuted?: (row: T) => boolean;
   /** Content under the row across all columns, like command output; null for none. */
   rowDetail?: (row: T) => ReactNode;
+  /** Draws `rowDetail` in the grey inset of command output and run logs. */
+  detailInset?: boolean;
   pageSize?: number;
   hasMore?: boolean;
   onLoadMore?: () => void;
@@ -227,7 +230,7 @@ export function DataTable<T>({
                         )}
                       </tr>
                       {detail != null && detail !== false && (
-                        <tr className={styles.detail}>
+                        <tr className={cx(styles.detail, detailInset && styles.inset)}>
                           <td colSpan={span}>{detail}</td>
                         </tr>
                       )}
