@@ -8,13 +8,13 @@
 }
 
 .warning {
-  color: var(--warning);
-  background: var(--warning-bg);
+  color: var(--warn);
+  background: var(--warn-bg);
 }
 
 .critical {
-  color: var(--critical);
-  background: var(--critical-bg);
+  color: var(--bad);
+  background: var(--bad-bg);
 }
 
 .resolved {

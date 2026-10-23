@@ -11,9 +11,9 @@
 
 .error {
   padding: 0.5rem 0.75rem;
-  color: var(--error);
-  background: var(--error-bg);
-  border-radius: var(--radius);
+  color: var(--bad);
+  background: var(--bad-bg);
+  border-radius: var(--radius-control);
 }
 
 .empty {
@@ -21,7 +21,7 @@
   text-align: center;
   background: var(--surface);
   border: 1px dashed var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
 }
 
 .scroll {
@@ -55,13 +55,13 @@
 }
 
 .online {
-  color: var(--online);
-  background: var(--online-bg);
+  color: var(--ok);
+  background: var(--ok-bg);
 }
 
 .offline {
-  color: var(--offline);
-  background: var(--offline-bg);
+  color: var(--bad);
+  background: var(--bad-bg);
 }
 
 .none {
@@ -70,8 +70,8 @@
 
 .incidents {
   padding: 0.1rem 0.5rem;
-  color: var(--critical);
-  background: var(--critical-bg);
+  color: var(--bad);
+  background: var(--bad-bg);
   border-radius: 999px;
   font-weight: 600;
 }

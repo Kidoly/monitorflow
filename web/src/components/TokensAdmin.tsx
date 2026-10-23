@@ -30,7 +30,7 @@ const TTLS: [number, string][] = [
 
 /** `/admin/tokens/`: create, list and revoke enrollment tokens (ADR-0029). */
 export function TokensAdminPage() {
-  return <AdminLayout current="Enrollment tokens">{(me) => <TokensAdmin me={me} />}</AdminLayout>;
+  return <AdminLayout>{(me) => <TokensAdmin me={me} />}</AdminLayout>;
 }
 
 export function TokensAdmin({ me }: { me: Me }) {

@@ -22,7 +22,7 @@
 
 .error {
   padding: 0.5rem 0.75rem;
-  color: var(--error);
-  background: var(--error-bg);
-  border-radius: var(--radius);
+  color: var(--bad);
+  background: var(--bad-bg);
+  border-radius: var(--radius-control);
 }

@@ -15,7 +15,7 @@ import { REFRESH_MS, StatusBadge } from "./FleetOverview";
 
 /** `/admin/relays/`: every relay the user reads. */
 export function RelayListPage() {
-  return <AdminLayout current="Relays">{() => <RelayList />}</AdminLayout>;
+  return <AdminLayout>{() => <RelayList />}</AdminLayout>;
 }
 
 export function RelayList() {

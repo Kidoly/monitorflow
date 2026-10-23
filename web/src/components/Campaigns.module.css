@@ -10,15 +10,15 @@
 }
 
 .succeeded {
-  background: var(--online);
+  background: var(--ok);
 }
 
 .failed {
-  background: var(--critical);
+  background: var(--bad);
 }
 
 .inProgress {
-  background: var(--accent);
+  background: var(--text);
 }
 
 .cancelled {
@@ -41,20 +41,20 @@
 }
 
 .state[data-tone="good"] {
-  color: var(--online);
-  background: var(--online-bg);
+  color: var(--ok);
+  background: var(--ok-bg);
   border-color: transparent;
 }
 
 .state[data-tone="bad"] {
-  color: var(--critical);
-  background: var(--critical-bg);
+  color: var(--bad);
+  background: var(--bad-bg);
   border-color: transparent;
 }
 
 .state[data-tone="busy"] {
-  color: var(--warning);
-  background: var(--warning-bg);
+  color: var(--warn);
+  background: var(--warn-bg);
   border-color: transparent;
 }
 
@@ -75,7 +75,7 @@
   padding: 0.75rem 1rem;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
 }
 
 .row {
