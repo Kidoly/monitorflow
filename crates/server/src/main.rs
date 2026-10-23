@@ -27,6 +27,8 @@ use monitorflow_server::ingest::{Ingest, JsonLines, RemoteWrite, Writer, WriterS
 use monitorflow_server::mirror::{
     self, CommandRunner, JobKind, Layout, MirrorSpec, Mirrors, Trigger,
 };
+use monitorflow_server::remediation::context::Backends;
+use monitorflow_server::remediation::runner::{self, Remediation};
 use monitorflow_server::renew::Renewer;
 use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
 use monitorflow_server::vm_query::VmQuery;
@@ -358,9 +360,10 @@ async fn main() -> anyhow::Result<()> {
             enroll::ca_fingerprint(&ca),
         ))
         .with_crl(crl.clone())
-        .with_commands(commands)
+        .with_commands(commands.clone())
         .with_mirrors(mirrors.clone())
         .with_campaigns(campaigns.clone());
+    let remediation = remediation_loop(&config, pool.clone(), commands.clone()).await?;
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
@@ -432,6 +435,12 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         },
         async {
+            if let Some(remediation) = remediation {
+                remediation.run(until_stopped()).await;
+            }
+            Ok(())
+        },
+        async {
             crl.run(
                 crl::refresh_interval(&CaOptions::default()),
                 until_stopped(),
@@ -446,6 +455,35 @@ async fn main() -> anyhow::Result<()> {
     served?;
     tracing::info!("server stopped");
     Ok(())
+}
+
+/// The AI remediation loop (ADR-0043), when `[ai]` is enabled.
+async fn remediation_loop(
+    config: &ServerConfig,
+    pool: sqlx::PgPool,
+    commands: Commands,
+) -> anyhow::Result<Option<Remediation>> {
+    let Some(provider) = monitorflow_ai::from_config(&config.ai)
+        .await
+        .context("AI provider")?
+    else {
+        tracing::info!("AI remediation disabled ([ai] enabled = false)");
+        return Ok(None);
+    };
+    let backends = Backends {
+        pool,
+        metrics: Some(
+            VmQuery::new(&config.victoriametrics_url).context("VictoriaMetrics query client")?,
+        ),
+        logs: Some(VmQuery::new(&config.victorialogs_url).context("VictoriaLogs query client")?),
+    };
+    Ok(Some(Remediation::new(
+        provider,
+        &config.ai.model,
+        commands,
+        backends,
+        runner::Settings::from_config(&config.remediation),
+    )))
 }
 
 async fn user_command(pool: &sqlx::PgPool, command: UserCommand) -> anyhow::Result<()> {

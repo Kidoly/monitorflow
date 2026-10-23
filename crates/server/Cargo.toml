@@ -12,6 +12,8 @@ path = "src/main.rs"
 [dependencies]
 monitorflow-common = { workspace = true, features = ["mirror"] }
 monitorflow-sensors.workspace = true
+# AI remediation loop (ADR-0039, ADR-0043).
+monitorflow-ai.workspace = true
 base64.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
@@ -50,3 +52,4 @@ tower.workspace = true
 tempfile.workspace = true
 tokio-rustls.workspace = true
 monitorflow-sensors = { workspace = true, features = ["testing"] }
+monitorflow-ai = { workspace = true, features = ["testing"] }
