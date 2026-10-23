@@ -21,22 +21,30 @@ export interface StatTile {
 
 /**
  * The counters under a list page's title. Tiles with `href` are links that
- * filter the list; `compact` is the smaller variant of detail pages.
+ * filter the list; `compact` is the smaller variant of detail pages;
+ * `dense` the 84 px counters of the updates, approvals and users pages.
  */
 export function StatTiles({
   tiles,
   label = "Summary, click to filter",
   compact,
-  maxWidth = compact ? 900 : 640,
+  dense,
+  maxWidth = compact ? 900 : dense ? 800 : 640,
 }: {
   tiles: StatTile[];
   /** Accessible name of the group. */
   label?: string;
   compact?: boolean;
+  dense?: boolean;
   maxWidth?: number;
 }) {
   return (
-    <div className={cx(styles.tiles, compact && styles.compact)} style={{ maxWidth }} role="group" aria-label={label}>
+    <div
+      className={cx(styles.tiles, compact && styles.compact, dense && styles.dense)}
+      style={{ maxWidth }}
+      role="group"
+      aria-label={label}
+    >
       {tiles.map((tile) => {
         const className = cx(
           styles.tile,

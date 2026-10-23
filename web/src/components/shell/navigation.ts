@@ -1,6 +1,6 @@
 import type { Me } from "@/lib/api";
-import { isAdministrator, readsCustomers } from "@/lib/me";
-import { CAMPAIGNS_PATH, RELAYS_PATH, SITES_PATH, TOKENS_PATH } from "@/lib/routes";
+import { administersEverything, isAdministrator, readsCustomers } from "@/lib/me";
+import { CAMPAIGNS_PATH, MIRRORS_PATH, RELAYS_PATH, SITES_PATH, TOKENS_PATH, USERS_PATH } from "@/lib/routes";
 
 import type { IconName } from "./icons";
 
@@ -15,6 +15,8 @@ export interface NavItem {
   alsoCurrent?: string[];
   /** Shows the open incidents count. */
   incidentCount?: boolean;
+  /** UX only, like the section's: hides the item from roles the API refuses. */
+  visible?: (me: Me) => boolean;
 }
 
 export interface NavSection {
@@ -39,7 +41,7 @@ export const NAVIGATION: NavSection[] = [
   {
     heading: "Updates",
     items: [
-      { label: "Mirrors", href: null, icon: "mirrors" },
+      { label: "Mirrors", href: MIRRORS_PATH, icon: "mirrors", visible: administersEverything },
       // The handoff moves it to /updates/campaigns/ with its redesign.
       { label: "Campaigns", href: CAMPAIGNS_PATH, icon: "campaigns" },
     ],
@@ -58,7 +60,7 @@ export const NAVIGATION: NavSection[] = [
       { label: "Relays", href: RELAYS_PATH, icon: "relays", iconWhenCollapsed: true },
       { label: "Sites", href: SITES_PATH, icon: "sites", iconWhenCollapsed: true },
       { label: "Enrollment tokens", href: TOKENS_PATH, icon: "tokens", iconWhenCollapsed: true },
-      { label: "Users and roles", href: null, icon: "users", iconWhenCollapsed: true },
+      { label: "Users and roles", href: USERS_PATH, icon: "users", iconWhenCollapsed: true },
     ],
     visible: isAdministrator,
   },
@@ -74,6 +76,9 @@ export function isCurrent(item: NavItem, pathname: string): boolean {
 /** The sections and items `me` sees, empty sections dropped. */
 export function visibleNavigation(me: Me): NavSection[] {
   return NAVIGATION.filter((section) => section.visible?.(me) ?? true)
-    .map((section) => ({ ...section, items: section.items.filter((item) => item.href !== null) }))
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => item.href !== null && (item.visible?.(me) ?? true)),
+    }))
     .filter((section) => section.items.length > 0);
 }

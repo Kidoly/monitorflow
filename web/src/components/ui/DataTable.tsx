@@ -113,6 +113,7 @@ export function DataTable<T>({
   rowActions,
   rowMuted,
   rowDetail,
+  detailInset,
   pageSize = 50,
   hasMore,
   onLoadMore,
@@ -135,6 +136,8 @@ export function DataTable<T>({
   rowMuted?: (row: T) => boolean;
   /** Content under the row across all columns, like command output; null for none. */
   rowDetail?: (row: T) => ReactNode;
+  /** Draws `rowDetail` in the grey inset of command output and run logs. */
+  detailInset?: boolean;
   pageSize?: number;
   hasMore?: boolean;
   onLoadMore?: () => void;
@@ -143,7 +146,7 @@ export function DataTable<T>({
   /** First load: three skeleton rows of the real height. */
   loading?: boolean;
   dense?: boolean;
-  /** No border of its own, for a table inside a titled box ("Incidents on this sensor"). */
+  /** No border of its own, inside a section box that has one. */
   bare?: boolean;
 }) {
   const [ownSort, setOwnSort] = useState<SortState | null>(null);
@@ -176,7 +179,7 @@ export function DataTable<T>({
 
   return (
     <div>
-      <div className={bare ? styles.bare : styles.box}>
+      <div className={cx(styles.box, bare && styles.bare)}>
         <table className={cx(styles.table, dense && styles.dense)} aria-label={label} aria-busy={loading || undefined}>
           <thead>
             <tr>
@@ -232,7 +235,7 @@ export function DataTable<T>({
                         )}
                       </tr>
                       {detail != null && detail !== false && (
-                        <tr className={styles.detail}>
+                        <tr className={cx(styles.detail, detailInset && styles.inset)}>
                           <td colSpan={span}>{detail}</td>
                         </tr>
                       )}

@@ -28,6 +28,14 @@ export function incidentHref(id: string): string {
 export const RELAYS_PATH = "/admin/relays/";
 export const SITES_PATH = "/admin/sites/";
 export const TOKENS_PATH = "/admin/tokens/";
+export const USERS_PATH = "/admin/users/";
+
+export const MIRRORS_PATH = "/admin/mirrors/";
+
+/** Link to the page of the mirror `id`. */
+export function mirrorHref(id: string): string {
+  return `/admin/mirrors/view/?id=${encodeURIComponent(id)}`;
+}
 
 /** Link to the page of the relay `id`. */
 export function relayHref(id: string): string {

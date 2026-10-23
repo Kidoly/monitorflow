@@ -34,6 +34,17 @@ export function administersCustomer(me: Me | null, customerId?: string): boolean
 }
 
 /**
+ * Whether `me` is a global administrator, which mirrors need as they are
+ * shared by every customer (ADR-0030). UX only.
+ */
+export function administersEverything(me: Me | null): boolean {
+  return (
+    me?.roles.some((grant) => grant.role === "administrator" && grant.customer_id === null && grant.site_id === null) ??
+    false
+  );
+}
+
+/**
  * Whether `me` has a role on a whole customer or on everything, which
  * campaigns need, as they span sites (ADR-0033). UX only.
  */

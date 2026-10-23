@@ -56,3 +56,16 @@ a.tile:hover,
 .plain .label {
   color: var(--muted);
 }
+
+/* Updates, mirrors, campaigns, approvals, users: 150 px columns, smaller tiles. */
+.dense {
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+}
+
+.dense .tile {
+  min-height: 84px;
+}
+
+.dense .value {
+  font-size: 30px;
+}
