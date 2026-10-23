@@ -1,0 +1,58 @@
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
+  gap: 12px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: var(--radius-panel);
+  min-height: 92px;
+  border: 1px solid transparent;
+}
+
+a.tile:hover,
+.tile.active {
+  text-decoration: none;
+  border-color: currentColor;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.value {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.total {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* Detail pages: smaller facts, not filters. */
+.compact .tile {
+  justify-content: flex-start;
+  gap: 4px;
+  min-height: 84px;
+}
+
+.compact .value {
+  font-size: 28px;
+}
+
+.plain {
+  background: var(--hl);
+}
+
+.plain .label {
+  color: var(--muted);
+}

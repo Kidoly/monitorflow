@@ -1,0 +1,113 @@
+.box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 0 14px;
+  height: var(--thead-h);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 0 14px;
+  height: var(--row-h);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.dense td {
+  height: 48px;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table tbody tr:hover td {
+  background: var(--hl);
+}
+
+.sort {
+  display: inline-flex;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+th[aria-sort="ascending"],
+th[aria-sort="descending"] {
+  color: var(--text);
+}
+
+.actionsHead,
+.actions {
+  text-align: right;
+}
+
+.actions > span {
+  display: inline-flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.muted td,
+.muted td a {
+  color: var(--muted);
+}
+
+/* Output or reasoning expanded under its row. */
+.table tr.detail td {
+  height: auto;
+  padding: 0 14px 14px;
+  white-space: normal;
+  background: none;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.sub {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+.skel {
+  background: linear-gradient(90deg, var(--hl), var(--border), var(--hl));
+  border-radius: 4px;
+  height: 12px;
+}
+
+.more {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}

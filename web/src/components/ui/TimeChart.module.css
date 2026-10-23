@@ -1,0 +1,165 @@
+.figure {
+  margin: 0;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.subtitle {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: pan-y;
+}
+
+.svg text {
+  font-size: 11px;
+  fill: var(--muted);
+}
+
+.grid line {
+  stroke: var(--chart-grid);
+}
+
+.warning line {
+  stroke: var(--threshold-warn);
+}
+
+.critical line {
+  stroke: var(--threshold-crit);
+}
+
+.svg .warning text {
+  fill: var(--threshold-warn);
+  font-weight: 600;
+}
+
+.svg .critical text {
+  fill: var(--threshold-crit);
+  font-weight: 600;
+}
+
+.svg .marker text,
+.svg .readout text {
+  fill: var(--text);
+}
+
+.svg .marker text,
+.svg .readout .time {
+  font-weight: 600;
+}
+
+.marker line,
+.guide {
+  stroke: var(--text);
+}
+
+.readout rect.box {
+  fill: var(--surface);
+  stroke: var(--border);
+}
+
+.plot {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+.plot:focus {
+  outline: none;
+}
+
+.plot:focus-visible {
+  stroke: var(--text);
+  stroke-width: 2;
+}
+
+.line {
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.off {
+  opacity: 0.15;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.toggle[aria-pressed="false"] {
+  color: var(--muted);
+}
+
+.toggle[aria-pressed="false"] .swatch {
+  opacity: 0.3;
+}
+
+.swatch {
+  display: block;
+  width: 12px;
+  height: 3px;
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.empty {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+}

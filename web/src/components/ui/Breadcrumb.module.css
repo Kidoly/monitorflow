@@ -1,0 +1,15 @@
+.crumb {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.crumb a {
+  text-decoration: underline;
+}
+
+.current {
+  color: var(--text);
+}

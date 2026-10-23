@@ -1,0 +1,76 @@
+/* Two-class selectors throughout, so a button drawn on <a> wins over the global link rules. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-h);
+  padding: 0 14px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+a.btn:hover {
+  text-decoration: none;
+}
+
+.btn.k,
+a.btn.k {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+
+.btn.danger,
+a.btn.danger {
+  background: var(--bad-bg);
+  color: var(--bad);
+  border-color: transparent;
+}
+
+/* An active filter or a chosen option. */
+.btn.active {
+  border-color: var(--text);
+}
+
+/* A chosen option of a segmented group ("± 3 h"). */
+.btn[aria-pressed="true"] {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+
+/* A filter toggle stays white with the black border ("Has incidents ×"). */
+.btn.active[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.small {
+  height: 30px;
+}
+
+/* Sign-in form. */
+.large {
+  height: 40px;
+  justify-content: center;
+  font-size: 14px;
+}
+
+/* An input or select drawn like a button (filter bar, reason, secret). */
+.field {
+  font-weight: 400;
+}

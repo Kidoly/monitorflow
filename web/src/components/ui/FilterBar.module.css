@@ -1,0 +1,30 @@
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.search {
+  width: 240px;
+}
+
+.select {
+  appearance: auto;
+}
+
+.clear {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.trailing {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
