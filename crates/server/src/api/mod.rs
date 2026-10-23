@@ -70,6 +70,9 @@
 //! | GET | `/api/remediation/policies` | customer role | [`remediation::PolicyList`] |
 //! | PUT | `/api/remediation/policies` | customer administrator | body [`remediation::PolicyRequest`]; 200 the stored policy |
 //! | POST | `/api/remediation/classify` | customer role | body `{"customer_id", "site_id"?, "command"}`; 200 the decision |
+//! | GET | `/api/servers/{id}/proxmox` | customer administrator | [`proxmox::ProxmoxView`], see below |
+//! | PUT | `/api/servers/{id}/proxmox` | customer administrator | body [`proxmox::MappingRequest`]; 200 [`proxmox::ProxmoxView`] |
+//! | DELETE | `/api/servers/{id}/proxmox` | customer administrator | 204; 404 without a mapping |
 //!
 //! # Authentication
 //!
@@ -277,6 +280,20 @@
 //! "reason"}` without storing the command. Changes are audited
 //! (`remediation_rule.create`, `.delete`, `remediation_policy.update`).
 //!
+//! # Proxmox VM mappings
+//!
+//! The Proxmox VE VM of a server, snapshotted before change-tier
+//! commands (ADR-0044), with the same access rules as revocation. The
+//! view is `{"server_id", "mapping": null | {"cluster", "node", "vmid",
+//! "updated_by", "updated_at"}, "snapshots": {"available", "reason"}}`;
+//! `available` needs `[proxmox]` enabled, a mapping and its cluster
+//! configured, else `reason` is `disabled`, `not_mapped` or
+//! `unknown_cluster` and rollback is limited. `PUT` takes `{"cluster",
+//! "node", "vmid"}`: a configured cluster name, the node's host name and
+//! a VM ID from 100 to 999999999, else 400; a VM already mapped to
+//! another server is 409. Changes are audited (`server.proxmox.set` with
+//! the `previous` mapping, `server.proxmox.clear`).
+//!
 //! # Metric queries
 //!
 //! The query endpoints take `server_id`, `metric` (`monitorflow_` and a
@@ -355,6 +372,7 @@ pub mod metrics;
 pub mod mirrors;
 pub mod packages;
 pub mod password;
+pub mod proxmox;
 pub mod relays;
 pub mod remediation;
 pub mod remediation_incidents;
@@ -406,6 +424,9 @@ pub struct ApiSettings {
     /// Base URL of the mirrors in agents' sources (ADR-0035); `None`
     /// refuses source configuration.
     pub mirror_public_url: Option<String>,
+    /// Whether `[proxmox]` is on, and its cluster names (ADR-0044).
+    pub proxmox_enabled: bool,
+    pub proxmox_clusters: Vec<String>,
 }
 
 impl ApiSettings {
@@ -415,6 +436,13 @@ impl ApiSettings {
             session_lifetime: Duration::from_secs(config.api_session_lifetime),
             session_idle_timeout: Duration::from_secs(config.api_session_idle_timeout),
             mirror_public_url: config.mirror_public_url.clone(),
+            proxmox_enabled: config.proxmox.enabled,
+            proxmox_clusters: config
+                .proxmox
+                .clusters
+                .iter()
+                .map(|c| c.name.clone())
+                .collect(),
         }
     }
 }
@@ -601,6 +629,10 @@ pub fn router(state: ApiState) -> Router {
             get(remediation::list_policies).put(remediation::set_policy),
         )
         .route("/api/remediation/classify", post(remediation::classify))
+        .route(
+            "/api/servers/{id}/proxmox",
+            get(proxmox::get).put(proxmox::set).delete(proxmox::clear),
+        )
         .fallback(not_found)
         .layer(middleware::from_fn(auth::csrf_guard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

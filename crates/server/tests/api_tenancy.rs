@@ -617,6 +617,20 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let uri = path.replace("{id}", &id.to_string());
             assert_eq!(ctx.status(method, &uri, Some(json!({}))).await, not_found);
         }
+        ("GET", "/api/servers/{id}/proxmox")
+        | ("PUT", "/api/servers/{id}/proxmox")
+        | ("DELETE", "/api/servers/{id}/proxmox") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = method
+                .eq("PUT")
+                .then(|| json!({ "cluster": "pve", "node": "pve1", "vmid": 101 }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found);
+            let mapped: i64 = sqlx::query_scalar("SELECT count(*) FROM server_proxmox_vms")
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+            assert_eq!(mapped, 0);
+        }
         ("POST", "/api/tokens") => {
             let body = json!({ "role": "agent", "peer_id": "intruder", "site_id": b.site });
             assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
