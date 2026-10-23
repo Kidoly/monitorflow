@@ -158,6 +158,8 @@ db_tests! {
                 "relays",
                 "remediation_incident_events",
                 "remediation_incidents",
+                "remediation_policies",
+                "remediation_rules",
                 "sensor_configs",
                 "server_packages",
                 "servers",

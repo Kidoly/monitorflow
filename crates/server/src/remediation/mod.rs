@@ -1,5 +1,7 @@
-//! AI-driven remediation (architecture §8).
+//! Automated remediation (architecture §8): what the server does with the
+//! commands an AI provider proposes for an incident.
 
 pub mod audit;
 pub mod context;
 pub mod redact;
+pub mod risk;
