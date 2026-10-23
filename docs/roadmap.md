@@ -52,7 +52,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] AI provider trait and Claude adapter.
 - [x] Context gathering with secret redaction.
 - [x] Risk classifier: allow-lists, deny patterns, default to high-impact.
-- [ ] Incident loop with command and duration limits.
+- [x] Incident loop with command and duration limits.
 - [ ] Approval queue, API and web.
 - [x] Append-only audit log.
 - [ ] Proxmox snapshot integration before change-tier commands.
