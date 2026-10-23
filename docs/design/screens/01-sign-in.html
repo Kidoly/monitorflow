@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — MonitorFlow</title>
+</head>
+<body>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0}
+.app{--bg:#ffffff;--sf:#ffffff;--ink:#0a0a0a;--dim:#666666;--line:#eaeaea;--hl:#f5f5f5;--badbg:#fde3e3;--bad:#9b1c1c;--wnbg:#fff0c2;--wn:#6d4e00;font:14px/1.5 Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg);letter-spacing:-.01em}
+.app.dark{--bg:#0a0a0a;--sf:#111111;--ink:#ededed;--dim:#a1a1a1;--line:#262626;--hl:#171717;--badbg:#3b1515;--bad:#ffa3a3;--wnbg:#3a2a08;--wn:#ffd37a}
+.app *{box-sizing:border-box}
+.app a{color:var(--ink)}
+.app :focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:40px;padding:0 14px;border-radius:6px;border:1px solid var(--line);background:var(--sf);font:inherit;font-weight:500;color:var(--ink);cursor:pointer}
+.app .btn-k{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.input{height:40px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--sf);color:var(--ink);font:inherit;width:100%}
+.input:focus{border-color:var(--ink)}
+.box{border:1px solid var(--line);border-radius:10px;background:var(--sf)}
+.banner{display:flex;gap:10px;padding:12px 14px;border-radius:8px;font-size:13px}
+.dim{color:var(--dim)}
+h1,h2{margin:0}
+label{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:500}
+</style>
+<div class="app" style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 16px; gap: 48px">
+
+<main id="main" style="width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 24px">
+<h1 style="font-size: 18px; font-weight: 700; letter-spacing: -.02em">MonitorFlow</h1>
+<form class="box" style="padding: 28px; display: flex; flex-direction: column; gap: 16px" aria-labelledby="signin-title">
+<h2 id="signin-title" style="font-size: 20px; font-weight: 700; letter-spacing: -.02em">Sign in</h2>
+<label>Username<input class="input" name="username" autocomplete="username" value="alice"></label>
+<label>Password<input class="input" name="password" type="password" autocomplete="current-password" value="••••••••••"></label>
+<button class="btn btn-k" type="submit" style="margin-top: 4px">Sign in</button>
+</form>
+<p class="dim" style="margin: 0; font-size: 13px; text-align: center">mf.acme.example · MonitorFlow 0.4.2</p>
+</main>
+
+<section aria-label="Error states" style="width: 100%; max-width: 840px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr)); gap: 24px">
+<div class="box" style="padding: 28px; display: flex; flex-direction: column; gap: 16px">
+<h2 style="font-size: 20px; font-weight: 700; letter-spacing: -.02em">Sign in</h2>
+<div class="banner" role="alert" style="background: var(--badbg); color: var(--bad)"><div><strong>Wrong username or password.</strong> Check both and try again.</div></div>
+<label>Username<input class="input" value="alice" aria-invalid="true" style="border-color: var(--bad)"></label>
+<label>Password<input class="input" type="password" value="" aria-invalid="true" style="border-color: var(--bad)"></label>
+<button class="btn btn-k" type="button" style="margin-top: 4px">Sign in</button>
+</div>
+<div class="box" style="padding: 28px; display: flex; flex-direction: column; gap: 16px">
+<h2 style="font-size: 20px; font-weight: 700; letter-spacing: -.02em">Sign in</h2>
+<div class="banner" role="alert" style="background: var(--wnbg); color: var(--wn)"><div><strong>Server unreachable.</strong> mf.acme.example did not respond. Your credentials were not sent.</div></div>
+<label>Username<input class="input" value="alice"></label>
+<label>Password<input class="input" type="password" value="••••••••••"></label>
+<button class="btn btn-k" type="button" style="margin-top: 4px" disabled>Retrying in 5 s…</button>
+</div>
+</section>
+
+</div>
+</body>
+</html>

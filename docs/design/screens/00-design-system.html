@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MonitorFlow design system</title>
+</head>
+<body>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0}
+.app{--bg:#ffffff;--sf:#ffffff;--ink:#0a0a0a;--dim:#666666;--line:#eaeaea;--hl:#f5f5f5;--okbg:#dff3e6;--ok:#0b5c27;--badbg:#fde3e3;--bad:#9b1c1c;--wnbg:#fff0c2;--wn:#6d4e00;--ntbg:#ececec;--nt:#444444;--infobg:#e3edff;--info:#1b3f8f;--grid:#e5e5e5;--thw:#b77f00;--thc:#d03b3b;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font:14px/1.5 Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg);letter-spacing:-.01em}
+.app.dark{--bg:#0a0a0a;--sf:#111111;--ink:#ededed;--dim:#a1a1a1;--line:#262626;--hl:#171717;--okbg:#0f2e1c;--ok:#7ee2a0;--badbg:#3b1515;--bad:#ffa3a3;--wnbg:#3a2a08;--wn:#ffd37a;--ntbg:#262626;--nt:#c7c7c7;--infobg:#14264d;--info:#b9d0ff;--grid:#262626;--thw:#e0a21a;--thc:#ff6b6b}
+.app *{box-sizing:border-box}
+.app a{color:var(--ink);text-decoration:none}.app a:hover{text-decoration:underline}
+.app :focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.side a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;color:var(--ink)}.side a[aria-current=page]{background:var(--ink);color:var(--bg);font-weight:500}.side a:hover{background:var(--hl);text-decoration:none}.side a[aria-current=page]:hover{background:var(--ink)}
+.side .h{font-size:11px;color:var(--dim);padding:14px 10px 4px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.ic{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.cnt{margin-left:auto;font-size:12px;font-weight:600;padding:1px 7px;border-radius:999px}
+.lab{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:5px;font-size:13px;font-weight:600;white-space:nowrap}
+.l-ok{background:var(--okbg);color:var(--ok)}.l-bad{background:var(--badbg);color:var(--bad)}.l-wn{background:var(--wnbg);color:var(--wn)}.l-nt{background:var(--ntbg);color:var(--nt)}.l-info{background:var(--infobg);color:var(--info)}
+.stat{display:flex;flex-direction:column;justify-content:space-between;gap:6px;padding:14px 16px;border-radius:8px;min-height:92px;border:1px solid transparent}.stat:hover{text-decoration:none;border-color:currentColor}.stat span{font-size:13px;font-weight:600}.stat b{font-size:34px;font-weight:700;line-height:1;letter-spacing:-.03em}
+.t{width:100%;border-collapse:collapse}
+.t th{text-align:left;font-weight:500;color:var(--dim);font-size:13px;padding:0 14px;height:40px;border-bottom:1px solid var(--line);white-space:nowrap}
+.t td{padding:0 14px;height:52px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:middle}
+.t tr:hover td{background:var(--hl)}
+.host b{font-size:15px;font-weight:600}.host span{display:block;font-size:12px;color:var(--dim);margin-top:1px}
+.pb{font-weight:600}.pb span{font-weight:400;color:var(--dim)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:6px;border:1px solid var(--line);background:var(--sf);font:inherit;font-size:13px;font-weight:500;color:var(--ink);cursor:pointer;white-space:nowrap}
+.app .btn-k{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.app .btn-danger{background:var(--badbg);color:var(--bad);border-color:transparent}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.box{border:1px solid var(--line);border-radius:8px;background:var(--sf)}
+.facts{display:grid;grid-template-columns:max-content 1fr;gap:8px 20px;margin:0}.facts dt{color:var(--dim)}.facts dd{margin:0}
+.mono{font-family:var(--mono);font-size:13px}
+.dim{color:var(--dim)}
+.banner{display:flex;gap:10px;padding:12px 14px;border-radius:8px;font-size:13px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line)}.tab{padding:10px 14px;border:0;background:none;color:var(--dim);font:inherit;font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer}.tab[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink)}
+.chip{display:inline-block;padding:2px 7px;border-radius:4px;background:var(--hl);border:1px solid var(--line);font-family:var(--mono);font-size:12px}
+.code{font-family:var(--mono);font-size:13px;background:var(--hl);border:1px solid var(--line);border-radius:8px;padding:12px 14px;white-space:pre;overflow:auto;margin:0;line-height:1.55}
+.chart svg text{font-size:11px;fill:var(--dim)}.chart .grid line{stroke:var(--grid)}.chart .thw{stroke:var(--thw)}.chart .thc{stroke:var(--thc)}.chart .thw+text{fill:var(--thw);font-weight:600}.chart .thc+text{fill:var(--thc);font-weight:600}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px}.legend span{display:inline-flex;align-items:center;gap:6px}.legend i{width:12px;height:3px;display:block}
+h1,h2,h3{margin:0}
+.sw{display:flex;flex-direction:column;gap:4px;font-size:12px}.sw i{display:block;height:40px;border-radius:6px;border:1px solid var(--line)}.sw code{font-family:var(--mono);font-size:11px;color:var(--dim)}
+.sec{display:flex;flex-direction:column;gap:14px}.sec>h2{font-size:16px;font-weight:600;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.k{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.skel{background:linear-gradient(90deg,var(--hl),var(--line),var(--hl));border-radius:4px;height:12px}
+.empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:32px;text-align:center;color:var(--dim)}
+</style>
+<div class="app" style="min-height: 100vh; padding: 32px 40px; display: flex; flex-direction: column; gap: 36px; max-width: 1280px; margin: 0 auto">
+
+<header style="display: flex; flex-direction: column; gap: 6px">
+<h1 style="font-size: 26px; font-weight: 700; letter-spacing: -.02em">MonitorFlow design system</h1>
+<p class="dim" style="margin: 0; max-width: 760px">Black on white, Inter 14 px, thin borders, 52 px table rows. Status is always a word in a tinted label, never a symbol or a colour alone. Tokens map one to one to CSS custom properties on <code class="mono">:root</code> and <code class="mono">:root[data-theme="dark"]</code>.</p>
+</header>
+
+<section class="sec"><h2>Colour — light</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(130px, 100%), 1fr)); gap: 14px">
+<div class="sw"><i style="background: #ffffff"></i><b>--bg / --surface</b><code>#ffffff</code></div>
+<div class="sw"><i style="background: #f5f5f5"></i><b>--hl</b><code>#f5f5f5 · hover, group rows</code></div>
+<div class="sw"><i style="background: #0a0a0a"></i><b>--ink</b><code>#0a0a0a · text, primary button</code></div>
+<div class="sw"><i style="background: #666666"></i><b>--dim</b><code>#666666 · 5.7:1</code></div>
+<div class="sw"><i style="background: #eaeaea"></i><b>--line</b><code>#eaeaea</code></div>
+<div class="sw"><i style="background: #dff3e6; color: #0b5c27; display: flex; align-items: center; justify-content: center; font-weight: 600">Online</i><b>--ok on --okbg</b><code>#0b5c27 on #dff3e6 · 7.9:1</code></div>
+<div class="sw"><i style="background: #fde3e3; color: #9b1c1c; display: flex; align-items: center; justify-content: center; font-weight: 600">Critical</i><b>--bad on --badbg</b><code>#9b1c1c on #fde3e3 · 6.6:1</code></div>
+<div class="sw"><i style="background: #fff0c2; color: #6d4e00; display: flex; align-items: center; justify-content: center; font-weight: 600">Warning</i><b>--wn on --wnbg</b><code>#6d4e00 on #fff0c2 · 7.2:1</code></div>
+<div class="sw"><i style="background: #e3edff; color: #1b3f8f; display: flex; align-items: center; justify-content: center; font-weight: 600">Pending</i><b>--info on --infobg</b><code>#1b3f8f on #e3edff · 7.6:1</code></div>
+<div class="sw"><i style="background: #ececec; color: #444444; display: flex; align-items: center; justify-content: center; font-weight: 600">Revoked</i><b>--nt on --ntbg</b><code>#444444 on #ececec · 7.9:1</code></div>
+</div>
+</section>
+
+<section class="sec"><h2>Colour — dark</h2>
+<div class="app dark" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(130px, 100%), 1fr)); gap: 14px; padding: 16px; border-radius: 10px">
+<div class="sw"><i style="background: #0a0a0a"></i><b>--bg</b><code>#0a0a0a</code></div>
+<div class="sw"><i style="background: #111111"></i><b>--surface</b><code>#111111</code></div>
+<div class="sw"><i style="background: #171717"></i><b>--hl</b><code>#171717</code></div>
+<div class="sw"><i style="background: #ededed"></i><b>--ink</b><code>#ededed</code></div>
+<div class="sw"><i style="background: #a1a1a1"></i><b>--dim</b><code>#a1a1a1 · 7.4:1</code></div>
+<div class="sw"><i style="background: #262626"></i><b>--line</b><code>#262626</code></div>
+<div class="sw"><i style="background: #0f2e1c; color: #7ee2a0; display: flex; align-items: center; justify-content: center; font-weight: 600">Online</i><b>--ok on --okbg</b><code>#7ee2a0 on #0f2e1c</code></div>
+<div class="sw"><i style="background: #3b1515; color: #ffa3a3; display: flex; align-items: center; justify-content: center; font-weight: 600">Critical</i><b>--bad on --badbg</b><code>#ffa3a3 on #3b1515</code></div>
+<div class="sw"><i style="background: #3a2a08; color: #ffd37a; display: flex; align-items: center; justify-content: center; font-weight: 600">Warning</i><b>--wn on --wnbg</b><code>#ffd37a on #3a2a08</code></div>
+<div class="sw"><i style="background: #14264d; color: #b9d0ff; display: flex; align-items: center; justify-content: center; font-weight: 600">Pending</i><b>--info on --infobg</b><code>#b9d0ff on #14264d</code></div>
+<div class="sw"><i style="background: #262626; color: #c7c7c7; display: flex; align-items: center; justify-content: center; font-weight: 600">Revoked</i><b>--nt on --ntbg</b><code>#c7c7c7 on #262626</code></div>
+</div>
+</section>
+
+<section class="sec"><h2>Chart series and threshold colours (from the brief, colour-blind checked)</h2>
+<div style="display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end">
+<div class="sw" style="width: 96px"><i style="background: #2a78d6; height: 20px"></i><code>1 · #2a78d6</code></div>
+<div class="sw" style="width: 96px"><i style="background: #eb6834; height: 20px"></i><code>2 · #eb6834</code></div>
+<div class="sw" style="width: 96px"><i style="background: #1baf7a; height: 20px"></i><code>3 · #1baf7a</code></div>
+<div class="sw" style="width: 96px"><i style="background: #eda100; height: 20px"></i><code>4 · #eda100</code></div>
+<div class="sw" style="width: 96px"><i style="background: #e87ba4; height: 20px"></i><code>5 · #e87ba4</code></div>
+<div class="sw" style="width: 96px"><i style="background: #008300; height: 20px"></i><code>6 · #008300</code></div>
+<div class="sw" style="width: 96px"><i style="background: #6250d6; height: 20px"></i><code>7 · #6250d6</code></div>
+<div class="sw" style="width: 96px"><i style="background: #e34948; height: 20px"></i><code>8 · #e34948</code></div>
+<div class="sw" style="width: 150px; margin-left: 16px"><i style="height: 20px; border: 0; background: repeating-linear-gradient(90deg, #b77f00 0 6px, transparent 6px 10px) center / 100% 2px no-repeat"></i><code>--thw #b77f00 · dark #e0a21a</code></div>
+<div class="sw" style="width: 150px"><i style="height: 20px; border: 0; background: repeating-linear-gradient(90deg, #d03b3b 0 6px, transparent 6px 10px) center / 100% 2px no-repeat"></i><code>--thc #d03b3b · dark #ff6b6b</code></div>
+<div class="sw" style="width: 150px"><i style="height: 20px; background: #e5e5e5"></i><code>--grid #e5e5e5 · dark #262626</code></div>
+</div>
+</section>
+
+<section class="sec"><h2>Type, spacing, radius</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 28px">
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div class="k">Type — Inter, system-ui fallback, tabular numerals in tables</div>
+<div style="font-size: 26px; font-weight: 700; letter-spacing: -.02em">26 / 700 · page title</div>
+<div style="font-size: 22px; font-weight: 700; letter-spacing: -.02em">22 / 700 · page title, dense pages</div>
+<div style="font-size: 16px; font-weight: 600">16 / 600 · section title</div>
+<div style="font-size: 15px; font-weight: 600">15 / 600 · hostname in tables</div>
+<div style="font-size: 14px">14 / 400 · body, cells, facts</div>
+<div style="font-size: 13px" class="dim">13 · labels, buttons, table headers, banners</div>
+<div style="font-size: 12px" class="dim">12 · sub-lines under hostnames, legends</div>
+<div class="k">11 / 600 uppercase · sidebar section headers</div>
+<div class="mono">ui-monospace 13 · IDs, commands, logs</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div class="k">Spacing — 4 px base</div>
+<div class="dim">Page gutter 28 px · section gap 20 px · table row 52 px · header row 40 px · control height 36 px · label height 26 px · sidebar 240 px.</div>
+<div class="k" style="margin-top: 8px">Radius and elevation</div>
+<div style="display: flex; gap: 12px; flex-wrap: wrap">
+<div class="box" style="padding: 10px 14px; border-radius: 5px">5 · labels</div>
+<div class="box" style="padding: 10px 14px; border-radius: 6px">6 · buttons, inputs, nav items</div>
+<div class="box" style="padding: 10px 14px; border-radius: 8px">8 · tables, panels, banners</div>
+<div class="box" style="padding: 10px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.12)">menus only · one shadow</div>
+</div>
+<div class="dim">Everything else is flat: borders, not shadows.</div>
+</div>
+</div>
+</section>
+
+<section class="sec"><h2>Buttons</h2>
+<div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center">
+<button class="btn btn-k">Enroll agent</button>
+<button class="btn">Refresh</button>
+<button class="btn btn-danger">Revoke web-01</button>
+<button class="btn btn-danger" disabled>Revoke web-01</button>
+<button class="btn">Status</button>
+<button class="btn" style="border-color: var(--ink)">Has incidents ×</button>
+<button class="btn" aria-label="Copy token"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="1.5"></rect><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"></path></svg>Copy</button>
+<span style="display: inline-flex; align-items: center; gap: 8px"><button class="btn" style="outline: 2px solid var(--ink); outline-offset: 2px">Focused</button><span class="dim" style="font-size: 13px">2 px ring, 2 px offset</span></span>
+</div>
+</section>
+
+<section class="sec"><h2>Labels — always a word, never a symbol</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 18px">
+<div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Server status</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-ok">Online</span><span class="lab l-bad">Offline</span><span class="lab l-nt">Revoked</span></div><span class="dim" style="font-size: 12px">"via relay-paris-1" goes in the grey sub-line, not in the label.</span></div>
+<div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Severity</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-bad">Critical</span><span class="lab l-wn">Warning</span><span class="lab l-nt">Resolved</span></div></div>
+<div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Certificate</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-wn">Expires in 5 days</span><span class="lab l-bad">Revoked</span><span class="dim">Valid · 2027-03-02</span></div></div>
+<div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Token state</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-info">Pending</span><span class="lab l-ok">Used</span><span class="lab l-nt">Expired</span><span class="lab l-nt">Revoked</span></div></div>
+<div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Run and command state</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-info">Running</span><span class="lab l-ok">Succeeded</span><span class="lab l-bad">Failed</span><span class="lab l-nt">Queued</span><span class="lab l-nt">Expired</span><span class="lab l-nt">Cancelled</span></div></div>
+<div style="display: flex; flex-direction: column; gap: 8px"><div class="k">Risk tier — set by rules, not by the AI</div><div style="display: flex; flex-wrap: wrap; gap: 8px"><span class="lab l-ok">Read-only</span><span class="lab l-info">Low-impact</span><span class="lab l-wn">High-impact</span><span class="lab l-bad">Forbidden</span></div></div>
+</div>
+</section>
+
+<section class="sec"><h2>Stat panels, banners, inline confirmation</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 12px; max-width: 560px">
+<a href="#" class="stat l-ok"><span>Online</span><b>13 <span style="font-size: 14px; font-weight: 500">/ 17</span></b></a>
+<a href="#" class="stat l-bad"><span>Critical incidents</span><b>2</b></a>
+<a href="#" class="stat l-wn"><span>Warnings</span><b>1</b></a>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 14px">
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div class="banner l-bad" role="alert"><div><strong>Refresh failed:</strong> the server did not respond (timeout after 10 s). Showing the last data received, from 14:31:50.</div></div>
+<div class="banner l-wn" role="status"><div><strong>Stale data.</strong> Updated 14:31:50, 4 refreshes failed. Retrying every 15 seconds. <a href="#" style="text-decoration: underline">Retry now</a></div></div>
+<div class="banner l-info"><div><strong>Note:</strong> sites cannot be renamed or moved to another customer, because the site name labels every stored metric.</div></div>
+<div class="banner" style="background: var(--hl); color: var(--dim)"><div>No subscription on this server. Every feature stays available.</div></div>
+</div>
+<div class="box" style="padding: 16px; display: flex; flex-direction: column; gap: 12px; border-color: var(--bad)">
+<div><strong>Revoke web-01?</strong> The agent will be disconnected and its certificate rejected. This cannot be undone.</div>
+<label style="display: flex; flex-direction: column; gap: 4px"><span class="dim" style="font-size: 13px">Reason</span><select class="btn" style="max-width: 320px; font-weight: 400"><option>Choose a reason…</option><option>Unspecified</option><option>Decommissioned</option><option>Key compromised</option><option>Moved to another organisation</option><option>Replaced by a new enrollment</option></select></label>
+<div style="display: flex; gap: 8px"><button class="btn">Cancel</button><button class="btn btn-danger" disabled>Revoke web-01</button></div>
+</div>
+</div>
+</section>
+
+<section class="sec"><h2>Filter bar, tabs, facts</h2>
+<div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center"><input class="btn" aria-label="Search" placeholder="Search hosts…" style="width: 240px; font-weight: 400"><button class="btn">Status</button><button class="btn">Site</button><button class="btn">OS</button><button class="btn" style="border-color: var(--ink)">Has incidents ×</button><a href="#" class="dim" style="font-size: 13px; text-decoration: underline">Clear</a><button class="btn" style="margin-left: auto">Problems first</button></div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 24px">
+<div class="tabs" role="tablist"><button class="tab" role="tab" aria-selected="true">Metrics</button><button class="tab" role="tab" aria-selected="false">Sensors</button><button class="tab" role="tab" aria-selected="false">Packages <span class="lab l-wn" style="height: 20px; padding: 0 6px; font-size: 12px; margin-left: 4px">reboot</span></button><button class="tab" role="tab" aria-selected="false">Commands</button></div>
+<dl class="facts">
+<dt>Site</dt><dd><a href="#" style="text-decoration: underline">paris-dc1</a> · Acme Hosting</dd>
+<dt>Certificate ID</dt><dd class="mono">pk_8f3a9c1e4b7d2f60a5e8c21e</dd>
+<dt>Certificate expires</dt><dd><span class="lab l-wn">Expires in 12 days</span> <span class="dim">2026-11-03 09:12</span></dd>
+<dt>Last seen</dt><dd><time title="2026-10-22 14:31:53">12 s ago</time></dd>
+</dl>
+</div>
+</section>
+
+<section class="sec"><h2>Table — 52 px rows, five columns, facts in the sub-line</h2>
+<div class="box" style="overflow: hidden"><table class="t"><thead><tr><th>Host</th><th>Status</th><th>Problem</th><th>Site</th><th>Last seen</th></tr></thead><tbody>
+<tr><td class="host"><a href="#"><b>db-01</b></a><span>Rocky 9 · agent 0.4.2</span></td><td><span class="lab l-ok">Online</span></td><td class="pb"><span class="lab l-bad">Critical</span>&nbsp; Disk used /var <span>96.8 % · 4 h 20 min</span></td><td>paris-dc1</td><td class="dim">8 s ago</td></tr>
+<tr><td class="host"><a href="#"><b>web-03</b></a><span>Debian 12 · agent 0.4.1</span></td><td><span class="lab l-bad">Offline</span></td><td class="dim">No heartbeat since 13:51</td><td>paris-dc1</td><td class="dim">41 min ago</td></tr>
+<tr><td class="host"><a href="#"><b>web-01</b></a><span>Debian 12 · agent 0.4.2 · via relay-paris-1</span></td><td><span class="lab l-ok">Online</span></td><td class="dim">—</td><td>paris-dc1</td><td class="dim">12 s ago</td></tr>
+</tbody></table></div>
+</section>
+
+<section class="sec"><h2>Copy field, code and log blocks, empty and loading states</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 24px">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<label style="display: flex; flex-direction: column; gap: 4px"><span class="dim" style="font-size: 13px">Enrollment token — shown once</span><span style="display: flex; gap: 6px"><input class="btn mono" readonly value="mft_9Qk2Zr7wLx3pV8hN4sT6uB1cE0fG5jM2aD7yR" style="flex: 1 1 auto; font-weight: 400"><button class="btn">Copy</button></span></label>
+<pre class="code">[upstream]
+url = "https://relay-paris-1.acme.example:8443"
+[enrollment]
+url = "https://mf.acme.example/enroll"
+token = "mft_9Qk2…"</pre>
+<pre class="code" style="font-size: 12px; max-height: 96px">2026-10-22T14:30:01Z apt-mirror: fetching dists/bookworm/InRelease
+2026-10-22T14:30:02Z apt-mirror: 1,204 packages up to date, 38 new
+2026-10-22T14:31:41Z run finished: succeeded (1 min 40 s)</pre>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<div class="box empty"><strong style="color: var(--ink); font-size: 15px">No servers yet</strong><span>Enroll an agent with an enrollment token.</span><a href="#" class="btn btn-k" style="margin-top: 4px">Create an enrollment token</a></div>
+<div class="box" style="padding: 14px; display: flex; flex-direction: column; gap: 12px" aria-busy="true" aria-label="Loading"><div class="skel" style="width: 40%"></div><div class="skel" style="width: 90%"></div><div class="skel" style="width: 75%"></div><span class="dim" style="font-size: 12px">Skeleton rows keep the 52 px height so nothing jumps.</span></div>
+</div>
+</div>
+</section>
+
+<section class="sec"><h2>Anatomy of a chart</h2>
+<figure class="box chart" style="margin: 0; padding: 16px; display: flex; flex-direction: column; gap: 10px; max-width: 760px">
+<div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap"><h3 style="font-size: 15px; font-weight: 600">Disk used /var</h3><span class="dim" style="font-size: 13px">Last 6 h · now 94.2 %</span></div>
+<svg viewBox="0 0 720 220" width="100%" role="img" aria-label="Disk used /var over the last 6 hours, warning threshold 80 percent, critical 90 percent, incident opened 11:40 and still open">
+<g class="grid" stroke-width="1"><line x1="48" y1="20" x2="700" y2="20"></line><line x1="48" y1="56" x2="700" y2="56"></line><line x1="48" y1="92" x2="700" y2="92"></line><line x1="48" y1="128" x2="700" y2="128"></line><line x1="48" y1="164" x2="700" y2="164"></line></g>
+<g text-anchor="end"><text x="40" y="24">100 %</text><text x="40" y="60">75 %</text><text x="40" y="96">50 %</text><text x="40" y="132">25 %</text><text x="40" y="168">0</text></g>
+<g text-anchor="middle"><text x="48" y="186">08:30</text><text x="178" y="186">09:30</text><text x="308" y="186">10:30</text><text x="439" y="186">11:30</text><text x="569" y="186">12:30</text><text x="700" y="186">13:30</text></g>
+<rect x="420" y="20" width="280" height="144" fill="#d03b3b" opacity=".06"></rect>
+<line class="thw" x1="48" y1="48.8" x2="700" y2="48.8" stroke-dasharray="4 3" stroke-width="1.5"></line><text x="698" y="45" text-anchor="end">Warning 80 %</text>
+<line class="thc" x1="48" y1="34.4" x2="700" y2="34.4" stroke-dasharray="4 3" stroke-width="1.5"></line><text x="698" y="31" text-anchor="end">Critical 90 %</text>
+<polyline fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" points="48,70 100,68 152,66 204,63 256,60 308,57 360,52 400,47 420,40 460,36 500,33 540,31 580,30 620,29 660,28 700,28.4"></polyline>
+<polyline fill="none" stroke="#eb6834" stroke-width="2" stroke-linejoin="round" points="48,120 100,118 152,119 204,117 256,116 308,116 360,115 420,114 500,113 580,112 700,111"></polyline>
+<line x1="420" y1="14" x2="420" y2="170" stroke="currentColor" stroke-width="1.5"></line><text x="424" y="12" style="fill: var(--ink); font-weight: 600">Opened 11:40</text>
+<line x1="548" y1="20" x2="548" y2="170" stroke="currentColor" stroke-dasharray="2 2" opacity=".5"></line>
+<g><rect x="556" y="60" width="138" height="54" rx="6" style="fill: var(--sf); stroke: var(--line)"></rect><text x="564" y="76" style="fill: var(--ink); font-weight: 600">12:30:00</text><rect x="564" y="85" width="10" height="3" fill="#2a78d6"></rect><text x="580" y="91" style="fill: var(--ink)">/var  92.1 %</text><rect x="564" y="101" width="10" height="3" fill="#eb6834"></rect><text x="580" y="107" style="fill: var(--ink)">/home  34.8 %</text></g>
+</svg>
+<div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center"><button class="btn" aria-pressed="true" style="height: 30px"><i style="width: 12px; height: 3px; background: #2a78d6; display: block"></i>/var</button><button class="btn" aria-pressed="true" style="height: 30px"><i style="width: 12px; height: 3px; background: #eb6834; display: block"></i>/home</button><span class="dim" style="font-size: 12px">Legend buttons toggle a series. Hover or ← → moves the readout.</span></div>
+</figure>
+</section>
+
+</div>
+</body>
+</html>
