@@ -23,4 +23,11 @@ describe("StatTiles", () => {
     expect(within(group).getAllByRole("link")).toHaveLength(2);
     expect(within(group).getByText("94.6 %")).toBeInTheDocument();
   });
+
+  it("draws the dense variant with its own class and width", () => {
+    render(<StatTiles dense tiles={[{ label: "Running", value: 1, tone: "info" }]} />);
+    const group = screen.getByRole("group");
+    expect(group.className).toMatch(/dense/);
+    expect(group).toHaveStyle({ maxWidth: "800px" });
+  });
 });

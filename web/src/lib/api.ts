@@ -528,6 +528,25 @@ export interface CampaignRequest {
   windows: CampaignWindow[];
 }
 
+/** A package of a server's latest report (ADR-0031). */
+export interface Package {
+  name: string;
+  arch: string;
+  version: string;
+  /** Null when no upgrade is available. */
+  upgradable_version: string | null;
+}
+
+/** `GET /api/servers/{id}/packages`: the latest report, by name and architecture. */
+export interface PackageList {
+  /** Null until the agent sent a report. */
+  reboot_required: boolean | null;
+  /** When the agent collected the report, by its clock. */
+  reported_at: string | null;
+  packages: Package[];
+  next_cursor: string | null;
+}
+
 export interface Health {
   status: "ok";
 }
@@ -687,6 +706,22 @@ export const api = {
 
   serverSensors: (serverId: string, signal?: AbortSignal) =>
     request<EffectiveSensors>(`/api/servers/${encodeURIComponent(serverId)}/sensors`, { signal }),
+
+  /** The server's whole package report, following `next_cursor` across pages. */
+  serverPackages: async (serverId: string, signal?: AbortSignal): Promise<PackageList> => {
+    const base = `/api/servers/${encodeURIComponent(serverId)}/packages?limit=5000`;
+    const packages: Package[] = [];
+    let cursor: string | undefined;
+    let page: PackageList;
+    do {
+      page = await request<PackageList>(cursor === undefined ? base : `${base}&cursor=${encodeURIComponent(cursor)}`, {
+        signal,
+      });
+      packages.push(...page.packages);
+      cursor = page.next_cursor ?? undefined;
+    } while (cursor !== undefined);
+    return { ...page, packages, next_cursor: null };
+  },
 
   sites: (signal?: AbortSignal) => request<SiteList>("/api/sites", { signal }),
 
