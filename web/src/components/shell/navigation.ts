@@ -1,6 +1,6 @@
 import type { Me } from "@/lib/api";
 import { isAdministrator, readsCustomers } from "@/lib/me";
-import { CAMPAIGNS_PATH, RELAYS_PATH, SITES_PATH, TOKENS_PATH } from "@/lib/routes";
+import { CAMPAIGNS_PATH, RELAYS_PATH, SITES_PATH, TOKENS_PATH, USERS_PATH } from "@/lib/routes";
 
 import type { IconName } from "./icons";
 
@@ -58,7 +58,7 @@ export const NAVIGATION: NavSection[] = [
       { label: "Relays", href: RELAYS_PATH, icon: "relays", iconWhenCollapsed: true },
       { label: "Sites", href: SITES_PATH, icon: "sites", iconWhenCollapsed: true },
       { label: "Enrollment tokens", href: TOKENS_PATH, icon: "tokens", iconWhenCollapsed: true },
-      { label: "Users and roles", href: null, icon: "users", iconWhenCollapsed: true },
+      { label: "Users and roles", href: USERS_PATH, icon: "users", iconWhenCollapsed: true },
     ],
     visible: isAdministrator,
   },

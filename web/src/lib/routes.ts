@@ -20,6 +20,7 @@ export function incidentHref(id: string): string {
 export const RELAYS_PATH = "/admin/relays/";
 export const SITES_PATH = "/admin/sites/";
 export const TOKENS_PATH = "/admin/tokens/";
+export const USERS_PATH = "/admin/users/";
 
 /** Link to the page of the relay `id`. */
 export function relayHref(id: string): string {

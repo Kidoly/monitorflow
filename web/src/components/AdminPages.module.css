@@ -1,0 +1,238 @@
+/* The administration pages (docs/design/screens/06, 07, 08, 14). */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dim {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+/* A bordered section: a 16 px title line, then a bare table or a form. */
+.section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.sectionHead {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sectionTitle {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.sectionNote {
+  margin: 0;
+  padding: 14px 20px;
+  color: var(--muted);
+}
+
+/* The grey sentence closing a list page. */
+.footnote {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.footnote code,
+.sectionNote code {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* A label and its control, stacked. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.fieldNote {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.fieldError {
+  border-color: var(--bad);
+}
+
+.wrap {
+  white-space: normal;
+}
+
+/* Sites: the New site form under each customer's table. */
+.newSite {
+  padding: 14px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  background: var(--hl);
+  border-radius: 0 0 8px 8px;
+}
+
+.siteName {
+  width: 280px;
+  max-width: 100%;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+  padding-bottom: 9px;
+}
+
+.hintError {
+  color: var(--bad);
+  font-size: 13px;
+  padding-bottom: 9px;
+  font-weight: 500;
+}
+
+/* Enrollment tokens: the form and the success panel. */
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.created {
+  border-color: var(--ok);
+}
+
+.panelTitle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.radios {
+  display: flex;
+  gap: 16px;
+  height: 36px;
+  align-items: center;
+}
+
+.radios label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.formFoot {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.formError {
+  margin: 0;
+  color: var(--bad);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.createdGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.snippet {
+  position: relative;
+}
+
+.code {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--hl);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  white-space: pre;
+  overflow: auto;
+  margin: 0;
+  line-height: 1.55;
+  font-weight: 400;
+}
+
+.snippetCopy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.check {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.peer {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+

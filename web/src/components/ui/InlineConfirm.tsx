@@ -2,7 +2,7 @@
 
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
-import { Button, buttonClass, fieldClass } from "./Button";
+import { Button, type ButtonVariant, buttonClass, fieldClass } from "./Button";
 import { cx } from "./cx";
 import styles from "./InlineConfirm.module.css";
 
@@ -14,6 +14,9 @@ import styles from "./InlineConfirm.module.css";
  * open (the confirm button when there are no reasons) and back to the
  * trigger on cancel. `onConfirm` rejecting keeps the box open with
  * `describeError`'s text.
+ *
+ * `layout="row"` is the compact form inside a table row (enrollment tokens):
+ * one line with the question, Cancel and the danger button, all 30 px.
  */
 export function InlineConfirm<R extends string>({
   trigger,
@@ -24,9 +27,16 @@ export function InlineConfirm<R extends string>({
   pendingLabel = "Working…",
   onConfirm,
   describeError = () => "It failed. Try again.",
+  layout = "box",
+  triggerVariant = "danger",
+  triggerName,
 }: {
   /** Label of the trigger button: "Revoke web-01…". */
   trigger: string;
+  /** Accessible name of the trigger when its label alone is ambiguous, as in a table row. */
+  triggerName?: string;
+  triggerVariant?: ButtonVariant;
+  layout?: "box" | "row";
   /** Bold question opening the box: "Revoke web-01?". */
   title: string;
   consequence: ReactNode;
@@ -81,11 +91,39 @@ export function InlineConfirm<R extends string>({
     }
   }
 
+  const size = layout === "row" ? "small" : undefined;
   if (!open) {
     return (
-      <Button ref={triggerRef} variant="danger" aria-expanded={false} onClick={show}>
+      <Button
+        ref={triggerRef}
+        variant={triggerVariant}
+        size={size}
+        aria-label={triggerName}
+        aria-expanded={false}
+        onClick={show}
+      >
         {trigger}
       </Button>
+    );
+  }
+  if (layout === "row") {
+    return (
+      <form className={styles.row} onSubmit={submit} aria-label={title}>
+        <span>
+          <strong>{title}</strong> {consequence}
+        </span>
+        <Button size="small" onClick={cancel} disabled={busy}>
+          Cancel
+        </Button>
+        <button ref={confirmRef} type="submit" className={buttonClass({ variant: "danger", size: "small" })} disabled={busy}>
+          {busy ? pendingLabel : confirmLabel}
+        </button>
+        {error && (
+          <span className={styles.error} role="alert">
+            {error}
+          </span>
+        )}
+      </form>
     );
   }
   return (

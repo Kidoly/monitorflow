@@ -81,4 +81,28 @@ describe("InlineConfirm", () => {
     await user.keyboard("{Enter}");
     expect(onConfirm).toHaveBeenCalledWith(null);
   });
+
+  it("fits in a table row with layout row, named by its row", async () => {
+    const user = userEvent.setup();
+    render(
+      <InlineConfirm
+        layout="row"
+        trigger="Revoke"
+        triggerVariant="default"
+        triggerName="Revoke the token for web-13"
+        title="Revoke this token?"
+        consequence="web-13 will not be able to enroll with it."
+        confirmLabel="Revoke token"
+        onConfirm={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Revoke the token for web-13" });
+    expect(trigger).toHaveTextContent("Revoke");
+    await user.click(trigger);
+    expect(screen.getByRole("form", { name: "Revoke this token?" })).toHaveTextContent(
+      "Revoke this token? web-13 will not be able to enroll with it.",
+    );
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Revoke the token for web-13" })).toHaveFocus();
+  });
 });

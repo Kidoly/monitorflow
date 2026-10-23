@@ -37,3 +37,20 @@
   color: var(--bad);
   font-size: 13px;
 }
+
+/* `layout="row"`: inside a table cell, without reasons. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  white-space: normal;
+  font-size: 13px;
+  text-align: left;
+  /* The question stays readable when the table squeezes the actions cell. */
+  min-width: 420px;
+}
+
+.row .error {
+  flex-basis: 100%;
+}
