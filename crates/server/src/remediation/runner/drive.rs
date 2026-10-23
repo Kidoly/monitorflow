@@ -24,8 +24,6 @@ use crate::remediation::risk::{self, Decision, RuleSet, Tier};
 
 /// Longest diagnosis, reasoning or reason of the AI stored, in bytes.
 const AI_TEXT_BYTES: usize = 8 * 1024;
-/// Time allowed after the command timeout for the agent's result to come.
-const RESULT_GRACE: Duration = Duration::from_secs(15);
 
 /// Whether a pass should run again.
 enum Pass {
@@ -86,10 +84,7 @@ async fn pass(shared: &Shared, incident: &Incident) -> Result<Pass, DriveError> 
             proposal,
         } => {
             if progress.commands_queued >= incident.max_commands() {
-                let reason = format!(
-                    "the limit of {} commands was reached",
-                    incident.max_commands
-                );
+                let reason = format!("the command limit of {} was reached", incident.max_commands);
                 return finish(shared, incident, IncidentState::Escalated, &reason).await;
             }
             route(
@@ -425,8 +420,10 @@ async fn wait(
         .await;
     };
     let limit = (row.issued_at
-        + chrono::Duration::from_std(shared.settings.command_timeout + RESULT_GRACE)
-            .unwrap_or_default())
+        + chrono::Duration::from_std(
+            shared.settings.command_timeout + shared.settings.result_grace,
+        )
+        .unwrap_or_default())
     .min(incident.deadline());
     let mut row = row;
     while !row.state.is_final() && Utc::now() < limit {
@@ -540,7 +537,9 @@ async fn finish_as(
 ) -> Result<Pass, DriveError> {
     close(&shared.pool, incident.id, to, reason, pending).await?;
     store::release(&shared.pool, Some(incident.id), shared.holder).await?;
-    tracing::info!(incident = %incident.id, state = to.as_str(), reason, "remediation incident closed");
+    // The reason may quote the AI, untrusted text: it stays in the audit
+    // trail, out of the logs.
+    tracing::info!(incident = %incident.id, state = to.as_str(), "remediation incident closed");
     Ok(Pass::Done)
 }
 

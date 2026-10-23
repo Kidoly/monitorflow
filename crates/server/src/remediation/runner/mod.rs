@@ -51,6 +51,9 @@ pub struct Settings {
     pub max_duration: Duration,
     /// Time one command may take; also its expiry and the agent's timeout.
     pub command_timeout: Duration,
+    /// Time allowed after `command_timeout` for the agent's result to
+    /// arrive before the command counts as timed out.
+    pub result_grace: Duration,
     /// Time between two supervisor polls.
     pub poll_interval: Duration,
     /// Time between two looks at a command's result or an alert.
@@ -79,6 +82,7 @@ impl Settings {
             max_commands: config.max_commands,
             max_duration: Duration::from_secs(config.max_duration),
             command_timeout: Duration::from_secs(config.command_timeout),
+            result_grace: Duration::from_secs(15),
             poll_interval: POLL,
             result_poll: Duration::from_secs(1),
             lease_ttl: Duration::from_secs(60),
@@ -291,6 +295,11 @@ impl Remediation {
                     () = keep_lease(&shared, id) => {
                         tracing::warn!(incident = %id, "lost the remediation lease; stopped driving");
                     }
+                }
+                // Only this holder's lease goes; the next poll takes it again
+                // if the incident still needs driving.
+                if let Err(error) = store::release(&shared.pool, Some(id), shared.holder).await {
+                    tracing::warn!(incident = %id, %error, "could not release a remediation lease; it expires");
                 }
                 id
             });
