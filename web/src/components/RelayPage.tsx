@@ -2,20 +2,50 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { type ReactNode, useCallback, useState } from "react";
+import { useCallback } from "react";
 
-import { ApiError, type Me, type RelayDetail, api, describeError, isAbortError } from "@/lib/api";
-import { formatDateTime, formatRelative } from "@/lib/format";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
+import { type Fact, FactsBox } from "@/components/ui/FactsBox";
+import { InlineConfirm } from "@/components/ui/InlineConfirm";
+import { ErrorState, LoadingBlock, NotFound, PageHeader, StaleBanner } from "@/components/ui/PageState";
+import { RelativeTime } from "@/components/ui/RelativeTime";
+import { StatusLabel } from "@/components/ui/StatusLabel";
+import {
+  ApiError,
+  type AttachedServer,
+  type Incident,
+  type Me,
+  type RelayDetail,
+  type RevocationReason,
+  type Server,
+  api,
+  describeError,
+} from "@/lib/api";
+import { certificateState } from "@/lib/certificates";
+import { formatDay, formatMinute, formatWhen } from "@/lib/clock";
+import { formatOs, formatValue, unitOf } from "@/lib/format";
 import { administersCustomer } from "@/lib/me";
+import { metricTitle } from "@/lib/metrics";
 import { RELAYS_PATH, serverHref } from "@/lib/routes";
-import { usePolling } from "@/lib/usePolling";
+import { usePolledData } from "@/lib/usePolledData";
 import { UUID } from "@/lib/uuid";
 
-import styles from "./Admin.module.css";
-import { AdminLayout } from "./AdminNav";
-import { CertificateExpiry } from "./CertificateExpiry";
-import { REFRESH_MS, StatusBadge } from "./FleetOverview";
-import { RevokeControl } from "./RevokeControl";
+import { AdminLayout } from "./AdminLayout";
+import styles from "./AdminPages.module.css";
+import { CertificateCell, relayStatus } from "./RelayList";
+
+/** RFC 5280 reasons, as the revoke route takes them (ADR-0029). */
+const REASONS: { value: RevocationReason; label: string }[] = [
+  { value: "cessation_of_operation", label: "Decommissioned" },
+  { value: "key_compromise", label: "Key compromised" },
+  { value: "affiliation_changed", label: "Moved to another organisation" },
+  { value: "superseded", label: "Replaced by a new enrollment" },
+  { value: "unspecified", label: "Unspecified" },
+];
+
+/** Open incidents fetched to fill the Problem column; the API has no per-relay filter. */
+const INCIDENT_LIMIT = 500;
 
 /** `/admin/relays/view/?id=…` (ADR-0020 routing). */
 export function RelayView() {
@@ -23,114 +53,206 @@ export function RelayView() {
   return <AdminLayout>{(me) => <RelayPage key={id} id={id} me={me} />}</AdminLayout>;
 }
 
-export function RelayPage({ id, me }: { id: string | null; me: Me }) {
-  const valid = id !== null && UUID.test(id);
-  /** Undefined until loaded, null when not found or out of scope. */
-  const [relay, setRelay] = useState<RelayDetail | null | undefined>(undefined);
-  const [updatedAt, setUpdatedAt] = useState(new Date());
-  const [error, setError] = useState<string | null>(null);
-  const load = useCallback(
-    async (signal?: AbortSignal) => {
-      try {
-        setRelay(await api.relay(id ?? "", signal));
-        setUpdatedAt(new Date());
-        setError(null);
-      } catch (e) {
-        if (isAbortError(e)) return;
-        if (e instanceof ApiError && e.status === 404) setRelay(null);
-        else setError(describeError(e));
-      }
-    },
-    [id],
-  );
-  usePolling(load, REFRESH_MS, valid);
-
-  if (!valid || relay === null) {
-    return (
-      <section className={styles.empty}>
-        <h1>Relay not found</h1>
-        <p>It may not exist, or your roles do not cover its site.</p>
-        <Link href={RELAYS_PATH}>Back to relays</Link>
-      </section>
-    );
-  }
-  if (!relay) {
-    return error ? (
-      <p className={styles.error} role="alert">
-        {error}
-      </p>
-    ) : (
-      <p role="status">Loading relay…</p>
-    );
-  }
-  const { certificate } = relay;
-  return (
-    <article aria-labelledby="relay-title">
-      <p className={styles.meta}>
-        <Link href={RELAYS_PATH}>Relays</Link> / {relay.customer_name} / {relay.site_name}
-      </p>
-      <h1 id="relay-title">{relay.peer_id}</h1>
-      {error && (
-        <p className={styles.error} role="alert">
-          Refresh failed: {error} Showing the last data received.
-        </p>
-      )}
-      <dl className={styles.facts}>
-        <Fact term="Status">
-          <StatusBadge server={relay} />
-        </Fact>
-        <Fact term="Site">{relay.site_name}</Fact>
-        <Fact term="Last seen">
-          {relay.last_heartbeat ? formatRelative(relay.last_heartbeat, updatedAt) : "never"}
-        </Fact>
-        <Fact term="Server names">{relay.server_names.join(", ") || "none"}</Fact>
-        <Fact term="Certificate expires">
-          {relay.cert_not_after ? <CertificateExpiry notAfter={relay.cert_not_after} now={updatedAt} /> : "no valid certificate"}
-        </Fact>
-        {certificate?.revoked && (
-          <Fact term="Certificate revoked">
-            <span className={styles.revoked}>
-              {certificate.revoked_at ? formatDateTime(certificate.revoked_at) : "Yes"}
-              {certificate.revocation_reason && ` (${certificate.revocation_reason})`}
-            </span>
-          </Fact>
-        )}
-        <Fact term="Enrolled">{formatDateTime(relay.created_at)}</Fact>
-        {relay.revoked_at && (
-          <Fact term="Revoked">
-            <span className={styles.revoked}>{formatDateTime(relay.revoked_at)}</span>
-          </Fact>
-        )}
-      </dl>
-      {!relay.revoked_at && administersCustomer(me, relay.customer_id) && (
-        <RevokeControl kind="relays" id={relay.id} name={relay.peer_id} onRevoked={() => void load()} />
-      )}
-      <section aria-labelledby="attached-title">
-        <h2 id="attached-title">Attached agents</h2>
-        <p className={styles.meta}>
-          Servers whose latest connection came through this relay; {relay.connected_agents} connected now.
-        </p>
-        {relay.servers.length === 0 ? (
-          <p className={styles.empty}>No agent has connected through this relay yet.</p>
-        ) : (
-          <ul>
-            {relay.servers.map((server) => (
-              <li key={server.id}>
-                <Link href={serverHref(server.id)}>{server.hostname}</Link> <StatusBadge server={server} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-    </article>
-  );
+/** An attached server with what the servers and incidents lists add to it. */
+interface Row extends AttachedServer {
+  server?: Server;
+  /** Its open incidents, worst first. */
+  incidents: Incident[];
 }
 
-function Fact({ term, children }: { term: string; children: ReactNode }) {
+interface Data {
+  relay: RelayDetail;
+  rows: Row[];
+}
+
+const severityRank = (incident: Incident) => (incident.severity === "critical" ? 0 : 1);
+
+async function load(id: string, signal: AbortSignal): Promise<Data | null> {
+  let relay: RelayDetail;
+  try {
+    relay = await api.relay(id, signal);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  }
+  if (relay.servers.length === 0) return { relay, rows: [] };
+  const [{ servers }, { incidents }] = await Promise.all([
+    api.servers(signal),
+    api.incidents({ state: "open", limit: INCIDENT_LIMIT }, signal),
+  ]);
+  const rows = relay.servers.map((attached) => ({
+    ...attached,
+    server: servers.find((s) => s.id === attached.id),
+    incidents: incidents.filter((i) => i.server_id === attached.id).sort((a, b) => severityRank(a) - severityRank(b)),
+  }));
+  return { relay, rows };
+}
+
+/** The worst open incident, else why an offline server is quiet. */
+function Problem({ row, now }: { row: Row; now: Date }) {
+  const [worst, ...others] = row.incidents;
+  if (worst) {
+    return (
+      <>
+        <StatusLabel kind="severity" value={worst.severity} />
+        &nbsp; {metricTitle(worst.metric)}
+        {worst.instance && ` ${worst.instance}`}{" "}
+        <span className={styles.dim}>{formatValue(worst.last_value, unitOf(worst.metric))}</span>
+        {others.length > 0 && <span className={styles.dim}> · {others.length} more</span>}
+      </>
+    );
+  }
+  if (row.status === "offline") {
+    const last = row.server?.last_heartbeat;
+    return (
+      <span className={styles.dim}>
+        {last ? `No heartbeat since ${formatWhen(new Date(last), now)}` : "Never connected"}
+      </span>
+    );
+  }
+  return <span className={styles.dim}>—</span>;
+}
+
+export function RelayPage({ id, me }: { id: string | null; me: Me }) {
+  const valid = id !== null && UUID.test(id);
+  const fetcher = useCallback((signal: AbortSignal) => load(id ?? "", signal), [id]);
+  const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher, { enabled: valid });
+
+  const crumb = (current: string) => <Breadcrumb parents={[{ label: "Relays", href: RELAYS_PATH }]} current={current} />;
+  if (!valid || data === null) {
+    return (
+      <div className={styles.page}>
+        {crumb("Not found")}
+        <NotFound title="Relay not found" actions={<Link href={RELAYS_PATH}>Back to relays</Link>} />
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div className={styles.page}>
+        {crumb("Relay")}
+        {error ? <ErrorState what="the relay" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock label="Loading relay" />}
+      </div>
+    );
+  }
+
+  const { relay, rows } = data;
+  const now = updatedAt ?? new Date();
+  const { certificate } = relay;
+  const facts: Fact[] = [
+    { label: "Site", value: `${relay.site_name} · ${relay.customer_name}` },
+    {
+      label: "Last seen",
+      value: relay.last_heartbeat ? <RelativeTime value={relay.last_heartbeat} now={now} /> : "never",
+    },
+    {
+      label: "Connected since",
+      value: relay.status === "online" && relay.connected_at ? formatMinute(new Date(relay.connected_at)) : "—",
+    },
+    {
+      label: "Certificate",
+      value: certificate?.revoked ? (
+        <StatusLabel kind="certificate" value="revoked" />
+      ) : relay.cert_not_after && certificateState(relay.cert_not_after, now) !== "valid" ? (
+        <>
+          <CertificateCell notAfter={relay.cert_not_after} now={now} /> {formatDay(new Date(relay.cert_not_after))}
+        </>
+      ) : (
+        <CertificateCell notAfter={relay.cert_not_after} now={now} />
+      ),
+    },
+    { label: "Server names", value: relay.server_names.join(", ") || "—" },
+    ...(certificate ? [{ label: "Certificate serial", value: certificate.serial, mono: true }] : []),
+    { label: "Enrolled", value: formatMinute(new Date(relay.created_at)) },
+    ...(relay.revoked_at
+      ? [
+          { label: "Revoked", value: formatMinute(new Date(relay.revoked_at)) },
+          ...(certificate?.revocation_reason ? [
+                {
+                  label: "Reason",
+                  value:
+                    REASONS.find((r) => r.value === certificate.revocation_reason)?.label ??
+                    certificate.revocation_reason,
+                },
+              ] : []),
+        ]
+      : []),
+  ];
+
+  const connected = rows.filter((row) => row.status === "online").length;
+  const columns: Column<Row>[] = [
+    {
+      key: "host",
+      header: "Host",
+      cell: (row) => (
+        <PrimaryCell
+          title={row.hostname}
+          href={serverHref(row.id)}
+          sub={
+            row.server &&
+            [formatOs(row.server.os_family, row.server.os_version), row.server.agent_version && `agent ${row.server.agent_version}`]
+              .filter(Boolean)
+              .join(" · ")
+          }
+        />
+      ),
+    },
+    { key: "status", header: "Status", cell: (row) => <StatusLabel kind="server" value={row.status} /> },
+    { key: "problem", header: "Problem", cell: (row) => <Problem row={row} now={now} /> },
+    {
+      key: "seen",
+      header: "Last seen",
+      className: styles.dim,
+      cell: (row) =>
+        row.server?.last_heartbeat ? <RelativeTime value={row.server.last_heartbeat} now={now} /> : "never",
+    },
+  ];
+
   return (
-    <div>
-      <dt>{term}</dt>
-      <dd>{children}</dd>
+    <div className={styles.page}>
+      {crumb(relay.peer_id)}
+      <PageHeader
+        detail
+        title={relay.peer_id}
+        status={<StatusLabel kind="server" value={relayStatus(relay)} />}
+        actions={
+          !relay.revoked_at &&
+          administersCustomer(me, relay.customer_id) && (
+            <InlineConfirm
+              trigger={`Revoke ${relay.peer_id}…`}
+              title={`Revoke ${relay.peer_id}?`}
+              consequence="Its certificates go into the revocation list, its connections close now, including the agents it forwards, and it cannot connect again. This cannot be undone: enrolling it again needs a new ID."
+              reasons={REASONS}
+              confirmLabel={`Revoke ${relay.peer_id}`}
+              pendingLabel="Revoking…"
+              onConfirm={async (reason) => {
+                await api.revoke("relays", relay.id, reason ?? "unspecified");
+                refresh();
+              }}
+              describeError={(e) => `Revocation failed. ${describeError(e)}`}
+            />
+          )
+        }
+      />
+      {stale && updatedAt && (
+        <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
+      )}
+      <FactsBox columns={2} facts={facts} />
+      <section className={styles.section} aria-labelledby="attached-title">
+        <div className={styles.sectionHead}>
+          <h2 id="attached-title" className={styles.sectionTitle}>
+            Servers connecting through {relay.peer_id}
+          </h2>
+          <span className={styles.dim}>
+            {rows.length} {rows.length === 1 ? "server" : "servers"}, {connected} connected now
+          </span>
+        </div>
+        {rows.length === 0 ? (
+          <p className={styles.sectionNote}>No agent has connected through this relay yet.</p>
+        ) : (
+          <DataTable bare label={`Servers connecting through ${relay.peer_id}`} columns={columns} rows={rows} rowKey={(row) => row.id} />
+        )}
+      </section>
     </div>
   );
 }

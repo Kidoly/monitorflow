@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { CSRF_HEADER, type CreatedToken, type EnrollmentToken } from "@/lib/api";
 import { customerAdmin, siteAdmin } from "@/test/admin";
@@ -46,6 +46,8 @@ const sites = {
 };
 
 describe("TokensAdmin", () => {
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
   it("creates a relay token and shows it once with its configuration", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({
@@ -57,21 +59,30 @@ describe("TokensAdmin", () => {
       "POST /api/tokens": { status: 201, body: created },
     });
     render(<TokensAdmin me={customerAdmin} />);
-    const form = await screen.findByRole("form", { name: "New enrollment token" });
+    const form = await screen.findByRole("form", { name: "New token" });
+    expect(form).toHaveTextContent("Recorded in the audit log as alice.");
     // Only sites of administered customers are offered.
     const site = within(form).getByLabelText("Site");
-    expect(within(site).getAllByRole("option").map((o) => o.textContent)).toEqual(["acme / paris"]);
-    await user.selectOptions(within(form).getByLabelText("Role"), "relay");
+    await within(site).findByRole("option");
+    expect(within(site).getAllByRole("option").map((o) => o.textContent)).toEqual(["acme › paris"]);
+    // Server names are for relays only.
+    expect(within(form).getByLabelText(/Server names/)).toBeDisabled();
+    await user.click(within(form).getByRole("radio", { name: "Relay" }));
     await user.type(within(form).getByLabelText("Peer ID"), "relay-1");
-    await user.selectOptions(within(form).getByLabelText("Valid for"), "86400");
+    await user.selectOptions(within(form).getByLabelText("Expires in"), "86400");
     await user.type(within(form).getByLabelText(/Server names/), "relay1.example, 10.0.0.5");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
 
-    expect(await screen.findByLabelText("Enrollment token")).toHaveTextContent(SECRET);
-    expect(screen.getByText(/shown only once/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Configuration")).toHaveTextContent(
+    const panel = await screen.findByRole("region", { name: /^Token for relay-1 · expires/ });
+    expect(within(panel).getByRole("textbox", { name: "Token" })).toHaveValue(SECRET);
+    // The warning comes before the secret.
+    const alert = within(panel).getByRole("alert");
+    expect(alert).toHaveTextContent("This token will not be shown again.");
+    expect(alert.compareDocumentPosition(within(panel).getByRole("textbox"))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(within(panel).getByLabelText(/Configuration snippet/)).toHaveTextContent(
       `upstream_url = "https://mf.example:7443" enroll_url = "https://mf.example:7445" enrollment_token = "${SECRET}"`,
     );
+    expect(panel).toHaveTextContent("/etc/monitorflow/relay.toml");
     const post = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "POST");
     expect(requestHeaders(fetchMock, post)[CSRF_HEADER]).toBe("1");
     expect(JSON.parse(String(fetchMock.mock.calls[post]?.[1]?.body))).toEqual({
@@ -82,18 +93,29 @@ describe("TokensAdmin", () => {
       server_names: ["relay1.example", "10.0.0.5"],
     });
 
-    await user.click(screen.getByRole("button", { name: "Copy token" }));
+    await user.click(within(panel).getByRole("button", { name: "Copy token" }));
     expect(await navigator.clipboard.readText()).toBe(SECRET);
-    expect(screen.getByRole("status")).toHaveTextContent("Token copied.");
+    expect(within(panel).getByRole("button", { name: "Copy token" })).toHaveTextContent("Copied");
+    await user.click(within(panel).getByRole("button", { name: "Copy configuration snippet" }));
+    expect(await navigator.clipboard.readText()).toBe(configSnippet(created));
 
     // Once dismissed, nothing on the page shows the token again.
     await user.click(screen.getByRole("button", { name: "Done" }));
-    expect(screen.queryByText(SECRET, { exact: false })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue(SECRET)).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain(SECRET);
     expect(await screen.findByRole("row", { name: /relay-1/ })).toBeInTheDocument();
   });
 
-  it("revokes a pending token after confirmation", async () => {
+  it("preselects Relay from the relays page's link", async () => {
+    window.history.replaceState(null, "", "/admin/tokens/?role=relay");
+    stubFetch({ "GET /api/tokens": { status: 200, body: { tokens: [], next_cursor: null } }, "GET /api/sites": sites });
+    render(<TokensAdmin me={customerAdmin} />);
+    expect(await screen.findByRole("radio", { name: "Relay" })).toBeChecked();
+    expect(screen.getByLabelText(/Server names/)).toBeEnabled();
+  });
+
+  it("hides used tokens until asked, and revokes a pending one in its row", async () => {
+    const user = userEvent.setup();
     const fetchMock = stubFetch({
       "GET /api/tokens": [
         {
@@ -109,12 +131,21 @@ describe("TokensAdmin", () => {
       "DELETE /api/tokens/t1": { status: 204 },
     });
     render(<TokensAdmin me={customerAdmin} />);
-    const used = await screen.findByRole("row", { name: /web-02/ });
+    const pending = await screen.findByRole("row", { name: /web-01/ });
+    expect(pending).toHaveTextContent(/web-01\s*Agent\s*paris\s*Pending/);
+    expect(screen.getByRole("region", { name: "Tokens" })).toHaveTextContent("1 pending");
+    expect(screen.queryByRole("row", { name: /web-02/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: "Hide used and expired" }));
+    const used = screen.getByRole("row", { name: /web-02/ });
     expect(within(used).queryByRole("button")).not.toBeInTheDocument();
-    expect(used).toHaveTextContent("used");
-    await userEvent.click(screen.getByRole("button", { name: "Revoke the token for web-01" }));
+    expect(used).toHaveTextContent(/Used.*used /);
+
+    await user.click(within(pending).getByRole("button", { name: "Revoke the token for web-01" }));
+    const confirm = within(pending).getByRole("form", { name: "Revoke this token?" });
+    expect(confirm).toHaveTextContent("web-01 will not be able to enroll with it.");
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
-    await userEvent.click(screen.getByRole("button", { name: "Confirm revoke" }));
+    await user.click(within(confirm).getByRole("button", { name: "Revoke token" }));
     expect(await screen.findByText("No tokens yet.")).toBeInTheDocument();
     const call = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "DELETE");
     expect(requestHeaders(fetchMock, call)[CSRF_HEADER]).toBe("1");
