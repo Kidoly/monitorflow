@@ -83,6 +83,12 @@
   background: none;
 }
 
+/* Command output and run logs (03d, 10b): a grey inset across the row. */
+.table tr.detail.inset td {
+  padding: 12px 20px;
+  background: var(--hl);
+}
+
 .title {
   font-size: 15px;
   font-weight: 600;

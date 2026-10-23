@@ -434,6 +434,13 @@ export interface UpdateSpec {
   allow_reboot: boolean;
 }
 
+/** Published mirror snapshots a campaign installs from (ADR-0038). */
+export interface SourcesPin {
+  /** `replace` sets the host's other sources aside, `add` keeps them. */
+  mode: "replace" | "add";
+  mirrors: { name: string; snapshot: string }[];
+}
+
 /** Servers by status: `failed` includes expired and skipped, `in_progress` queued, sent and running. */
 export interface CampaignProgress {
   total: number;
@@ -458,6 +465,8 @@ export interface Campaign {
   command_ttl_s: number;
   failure_threshold: FailureThreshold;
   windows: CampaignWindow[];
+  /** The pinned snapshots, if any. */
+  sources: SourcesPin | null;
   wave_count: number;
   /** Index from 0; null until the first wave is queued. */
   current_wave: number | null;
@@ -490,6 +499,9 @@ export interface CampaignServer {
   exit_code: number | null;
   error: string | null;
   finished_at: string | null;
+  /** With pinned snapshots: the `configure_sources` before the update and the restore after it. */
+  sources_command_id: string | null;
+  restore_command_id: string | null;
 }
 
 export interface CampaignWave {
@@ -545,6 +557,69 @@ export interface PackageList {
   reported_at: string | null;
   packages: Package[];
   next_cursor: string | null;
+}
+
+export type MirrorRunState = "running" | "succeeded" | "failed";
+
+/** A sync or snapshot run of a mirror, without its output (ADR-0030). */
+export interface MirrorRunSummary {
+  id: string;
+  kind: "sync" | "snapshot";
+  trigger: "schedule" | "manual";
+  /** `user:<id>` for manual runs. */
+  requested_by: string | null;
+  state: MirrorRunState;
+  snapshot_id: string | null;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/** A run with the tools' output. */
+export interface MirrorRun extends MirrorRunSummary {
+  mirror_id: string;
+  output: string;
+}
+
+/** One mirror of `GET /api/mirrors`; mirrors are global. */
+export interface Mirror {
+  id: string;
+  name: string;
+  family: "apt" | "dnf";
+  upstream_url: string;
+  /** apt suite; empty for dnf. */
+  distribution: string;
+  components: string[];
+  /** Empty: every architecture of the upstream. */
+  architectures: string[];
+  /** Null: synced only on request. */
+  sync_interval_s: number | null;
+  auto_snapshot: boolean;
+  created_at: string;
+  /** Name of the newest published snapshot. */
+  current_snapshot: string | null;
+  last_run: MirrorRunSummary | null;
+}
+
+export interface MirrorList {
+  mirrors: Mirror[];
+}
+
+export interface MirrorSnapshot {
+  id: string;
+  mirror_id: string;
+  name: string;
+  state: "creating" | "published" | "failed";
+  size_bytes: number | null;
+  error: string | null;
+  created_at: string;
+  published_at: string | null;
+}
+
+/** `GET /api/mirrors/{id}`: the newest 100 snapshots and 10 runs first. */
+export interface MirrorDetail extends Mirror {
+  snapshots: MirrorSnapshot[];
+  runs: MirrorRun[];
 }
 
 export interface Health {
@@ -785,8 +860,8 @@ export const api = {
   serverMetrics: (serverId: string, signal?: AbortSignal) =>
     request<MetricList>(`/api/servers/${encodeURIComponent(serverId)}/metrics`, { signal }),
 
-  /** The newest campaigns of the customers the user reads as a whole. */
-  campaigns: (signal?: AbortSignal) => request<CampaignList>("/api/campaigns", { signal }),
+  /** The newest 500 campaigns of the customers the user reads as a whole. */
+  campaigns: (signal?: AbortSignal) => request<CampaignList>("/api/campaigns?limit=500", { signal }),
 
   campaign: (id: string, signal?: AbortSignal) =>
     request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}`, { signal }),
@@ -798,6 +873,20 @@ export const api = {
   /** 409 when the campaign's state does not allow `action`. */
   campaignAction: (id: string, action: CampaignAction) =>
     request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}/${action}`, { method: "POST" }),
+
+  /** Every mirror, by name; global administrators only. */
+  mirrors: (signal?: AbortSignal) => request<MirrorList>("/api/mirrors", { signal }),
+
+  mirror: (id: string, signal?: AbortSignal) =>
+    request<MirrorDetail>(`/api/mirrors/${encodeURIComponent(id)}`, { signal }),
+
+  /** Starts a sync; 409 while another run of the mirror is going. */
+  syncMirror: (id: string) =>
+    request<MirrorRunSummary>(`/api/mirrors/${encodeURIComponent(id)}/sync`, { method: "POST" }),
+
+  /** Starts a snapshot named after the time; 409 while busy or before the first sync. */
+  snapshotMirror: (id: string) =>
+    request<MirrorRunSummary>(`/api/mirrors/${encodeURIComponent(id)}/snapshots`, { method: "POST", body: {} }),
 
   queryRange: (query: RangeQuery, signal?: AbortSignal) => {
     const params = new URLSearchParams({ server_id: query.serverId, metric: query.metric });
