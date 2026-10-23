@@ -930,6 +930,9 @@ pub struct ServerConfig {
     pub mirror: MirrorConfig,
     /// AI provider of the remediation loop (ADR-0039). Off by default.
     pub ai: AiConfig,
+    /// Proxmox VE clusters snapshotted before change-tier commands
+    /// (ADR-0044). Off by default.
+    pub proxmox: ProxmoxConfig,
 }
 
 /// Whether `url` can be written into agents' package sources: http or
@@ -972,6 +975,7 @@ impl Default for ServerConfig {
             mirror_public_url: None,
             mirror: MirrorConfig::default(),
             ai: AiConfig::default(),
+            proxmox: ProxmoxConfig::default(),
         }
     }
 }
@@ -1126,6 +1130,130 @@ impl FromStr for AiProviderKind {
     }
 }
 
+/// Proxmox VE integration (ADR-0044): VM snapshots before change-tier
+/// commands of the remediation loop. Off by default; servers are mapped to
+/// VMs through the API.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProxmoxConfig {
+    pub enabled: bool,
+    /// Snapshots MonitorFlow keeps per VM; older ones it took are deleted.
+    pub keep_snapshots: u32,
+    /// Seconds one HTTP request may take, connection included.
+    pub request_timeout: u64,
+    /// Seconds a snapshot, rollback or deletion task may run.
+    pub task_timeout: u64,
+    /// Only from the file; the environment overrides the keys above.
+    pub clusters: Vec<ProxmoxClusterConfig>,
+}
+
+impl Default for ProxmoxConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            keep_snapshots: 3,
+            request_timeout: 30,
+            task_timeout: 600,
+            clusters: Vec::new(),
+        }
+    }
+}
+
+/// One Proxmox VE cluster, reached through any of its nodes.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProxmoxClusterConfig {
+    /// Name used in server mappings, 1 to 64 of `[A-Za-z0-9._-]`.
+    pub name: String,
+    /// Base URL of the API, like `https://pve1.example.net:8006`.
+    pub url: String,
+    /// API token ID, `user@realm!tokenid`.
+    pub token_id: String,
+    /// File holding the token secret alone. The secret never goes in this
+    /// file, the environment or logs.
+    pub token_secret_file: PathBuf,
+    /// PEM CA certificates trusted for this cluster instead of the
+    /// built-in web roots, for self-signed clusters. Certificates are
+    /// always verified.
+    pub ca_file: Option<PathBuf>,
+}
+
+impl ProxmoxConfig {
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set("proxmox.enabled", &mut self.enabled)?;
+        env.set("proxmox.keep_snapshots", &mut self.keep_snapshots)?;
+        env.set("proxmox.request_timeout", &mut self.request_timeout)?;
+        env.set("proxmox.task_timeout", &mut self.task_timeout)
+    }
+
+    fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
+        let mut names = std::collections::HashSet::new();
+        for cluster in &self.clusters {
+            if !valid_proxmox_cluster_name(&cluster.name) {
+                return Err(check.fail(
+                    "proxmox.clusters.name",
+                    "must be 1 to 64 letters, digits, `.`, `_` or `-`",
+                ));
+            }
+            if !names.insert(cluster.name.as_str()) {
+                return Err(check.fail(
+                    "proxmox.clusters.name",
+                    format!("`{}` is listed twice", cluster.name),
+                ));
+            }
+            let key = |field: &str| format!("proxmox.clusters.{}.{field}", cluster.name);
+            check
+                .url(&key("url"), &cluster.url, &["https"])
+                .map_err(|_| check.fail(&key("url"), "must be an https URL"))?;
+            if !valid_proxmox_token_id(&cluster.token_id) {
+                return Err(check.fail(&key("token_id"), "must look like user@realm!tokenid"));
+            }
+            if cluster.token_secret_file.as_os_str().is_empty() {
+                return Err(check.fail(&key("token_secret_file"), "is required"));
+            }
+        }
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.clusters.is_empty() {
+            return Err(check.fail("proxmox.clusters", "must list at least one cluster"));
+        }
+        check.positive("proxmox.keep_snapshots", self.keep_snapshots.into())?;
+        check.positive("proxmox.request_timeout", self.request_timeout)?;
+        check.positive("proxmox.task_timeout", self.task_timeout)
+    }
+}
+
+/// Whether `name` can name a Proxmox cluster in mappings.
+pub fn valid_proxmox_cluster_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))
+}
+
+/// Whether `id` is a Proxmox API token ID: `user@realm!tokenid`, realm and
+/// token ID a letter then letters, digits, `.`, `_` or `-`.
+pub fn valid_proxmox_token_id(id: &str) -> bool {
+    let ident = |s: &str| {
+        s.starts_with(|c: char| c.is_ascii_alphabetic())
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))
+    };
+    let Some((user_realm, token)) = id.rsplit_once('!') else {
+        return false;
+    };
+    let Some((user, realm)) = user_realm.rsplit_once('@') else {
+        return false;
+    };
+    !user.is_empty()
+        && user
+            .chars()
+            .all(|c| c.is_ascii_graphic() && !"@!=".contains(c))
+        && ident(realm)
+        && ident(token)
+}
+
 impl LoadConfig for ServerConfig {
     fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
         env.set("grpc_listen_addr", &mut self.grpc_listen_addr)?;
@@ -1152,6 +1280,7 @@ impl LoadConfig for ServerConfig {
         env.set_opt("mirror_public_url", &mut self.mirror_public_url)?;
         self.mirror.apply_env(env)?;
         self.ai.apply_env(env)?;
+        self.proxmox.apply_env(env)?;
         self.log.apply_env(env)
     }
 
@@ -1159,6 +1288,7 @@ impl LoadConfig for ServerConfig {
         check.positive("heartbeat_timeout", self.heartbeat_timeout)?;
         self.mirror.validate(check)?;
         self.ai.validate(check)?;
+        self.proxmox.validate(check)?;
         if let Some(url) = &self.mirror_public_url {
             if !valid_mirror_url(url) {
                 return Err(check.fail(

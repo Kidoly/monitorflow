@@ -270,6 +270,78 @@ fn server_ai_defaults_overrides_and_checks() {
 }
 
 #[test]
+fn server_proxmox_defaults_overrides_and_checks() {
+    let server = parse::<ServerConfig>(SERVER_MIN).unwrap();
+    assert_eq!(server.proxmox, ProxmoxConfig::default());
+    assert!(!server.proxmox.enabled, "Proxmox snapshots are opt-in");
+    assert_eq!(server.proxmox.keep_snapshots, 3);
+
+    let cluster = "[[proxmox.clusters]]\nname = \"pve-1\"\nurl = \"https://pve1.example.net:8006\"\ntoken_id = \"monitorflow@pve!snapshots\"\ntoken_secret_file = \"/etc/mf/pve.secret\"";
+    let text = format!("{SERVER_MIN}\n[proxmox]\nenabled = true\nkeep_snapshots = 5\n{cluster}\nca_file = \"/etc/mf/pve-ca.pem\"");
+    let vars = env(&[("MONITORFLOW_PROXMOX_TASK_TIMEOUT", "60")]);
+    let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
+    let proxmox = &server.proxmox;
+    assert!(proxmox.enabled);
+    assert_eq!((proxmox.keep_snapshots, proxmox.task_timeout), (5, 60));
+    assert_eq!(proxmox.clusters[0].name, "pve-1");
+    assert_eq!(
+        proxmox.clusters[0].ca_file.as_deref(),
+        Some(Path::new("/etc/mf/pve-ca.pem"))
+    );
+
+    let on = [("MONITORFLOW_PROXMOX_ENABLED", "true")];
+    let msg = err::<ServerConfig>(SERVER_MIN, &on);
+    assert!(msg.contains("proxmox.clusters"), "{msg}");
+    let msg = err::<ServerConfig>(
+        &format!("{SERVER_MIN}\n{cluster}"),
+        &[("MONITORFLOW_PROXMOX_KEEP_SNAPSHOTS", "0"), on[0]],
+    );
+    assert!(msg.contains("proxmox.keep_snapshots"), "{msg}");
+    for (bad, key) in [
+        ("http://pve1:8006", "proxmox.clusters.pve-1.url"),
+        ("https://", "proxmox.clusters.pve-1.url"),
+    ] {
+        let text = format!(
+            "{SERVER_MIN}\n{}",
+            cluster.replace("https://pve1.example.net:8006", bad)
+        );
+        let msg = err::<ServerConfig>(&text, &[]);
+        assert!(msg.contains(key), "{msg}");
+    }
+    let text = format!(
+        "{SERVER_MIN}\n{}",
+        cluster.replace("monitorflow@pve!snapshots", "monitorflow@pve")
+    );
+    assert!(err::<ServerConfig>(&text, &[]).contains("token_id"));
+    let text = format!("{SERVER_MIN}\n{cluster}\n{cluster}");
+    assert!(err::<ServerConfig>(&text, &[]).contains("listed twice"));
+    let text = format!("{SERVER_MIN}\n{cluster}\ntoken_secret = \"abc\"");
+    assert!(err::<ServerConfig>(&text, &[]).contains("unknown field"));
+}
+
+#[test]
+fn proxmox_names_and_token_ids() {
+    assert!(valid_proxmox_cluster_name("pve_1.lab-a"));
+    assert!(!valid_proxmox_cluster_name(""));
+    assert!(!valid_proxmox_cluster_name("pve 1"));
+    assert!(!valid_proxmox_cluster_name(&"a".repeat(65)));
+    assert!(valid_proxmox_token_id("monitorflow@pve!snap-1"));
+    assert!(valid_proxmox_token_id("root@pam!mf"));
+    for bad in [
+        "",
+        "root@pam",
+        "root!mf",
+        "@pam!mf",
+        "root@pam!",
+        "root@pam!1mf",
+        "ro ot@pam!mf",
+        "root@pam!mf=secret",
+    ] {
+        assert!(!valid_proxmox_token_id(bad), "{bad}");
+    }
+}
+
+#[test]
 fn server_mirror_public_url() {
     assert_eq!(
         parse::<ServerConfig>(SERVER_MIN).unwrap().mirror_public_url,
