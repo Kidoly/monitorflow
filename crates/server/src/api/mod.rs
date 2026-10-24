@@ -49,6 +49,7 @@
 //! | GET | `/api/remediation/approvals` | any role | [`approvals::PendingList`], see below |
 //! | POST | `/api/remediation/approvals/{id}/approve` | approver, see below | body `{"command"?}`; 200 [`approvals::DecisionView`]; 409 once decided or past the deadline |
 //! | POST | `/api/remediation/approvals/{id}/reject` | approver | body `{"reason"}`; 200 [`approvals::DecisionView`]; 409 as for approve |
+//! | GET | `/api/remediation/events` | any role | [`remediation_events::EventList`], see below |
 //! | GET | `/api/servers/{id}/thresholds/effective` | read | [`thresholds::Effective`]: thresholds in force, muted ones and origins |
 //! | GET | `/api/servers/{id}/thresholds` | read | [`thresholds::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
@@ -250,6 +251,18 @@
 //! `remediation.reject`). A pending command outside the user's sites is
 //! 404, one it reads without the role 403.
 //!
+//! `GET /api/remediation/events` is the remediation audit log: the events
+//! of the incidents of readable sites, newest first, filtered by optional
+//! `customer_id`, `site_id`, `server_id`, `incident_id`, `kind`,
+//! `actor_kind` (`user`, `system`, `ai`, `peer`), `actor_id`, `from` and
+//! `to` (RFC 3339, `from` included), with `limit` (1 to 500, default 100)
+//! and `cursor`. An item is an incident event (`incident_id`, `seq`,
+//! `kind`, `actor_kind`, `actor_id`, `actor_name`, `payload`,
+//! `created_at`, `hash`) with its incident's customer, site, server,
+//! `metric` and `instance`. `payload` leaves out `context.rendered` and
+//! command `stdout`/`stderr`; the incident detail has them and verifies
+//! the chain.
+//!
 //! # Commands and packages
 //!
 //! Commands for agents (ADR-0031). `POST /api/servers/{id}/commands` takes
@@ -405,6 +418,7 @@ pub mod password;
 pub mod proxmox;
 pub mod relays;
 pub mod remediation;
+pub mod remediation_events;
 pub mod remediation_incidents;
 pub mod revoke;
 pub mod roles;
@@ -607,6 +621,7 @@ pub fn router(state: ApiState) -> Router {
             "/api/remediation/approvals/{id}/reject",
             post(approvals::reject),
         )
+        .route("/api/remediation/events", get(remediation_events::list))
         .route("/api/servers/{id}/sensors", get(sensors::effective))
         .route("/api/servers/{id}/metrics", get(metrics::discover))
         .route("/api/metrics/query", get(metrics::query))

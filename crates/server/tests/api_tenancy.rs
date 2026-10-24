@@ -762,6 +762,21 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .unwrap();
             assert_eq!(state, "pending");
         }
+        ("GET", "/api/remediation/events") => {
+            for query in [
+                String::new(),
+                format!("?customer_id={}", b.customer),
+                format!("?server_id={}", b.server),
+                format!("?site_id={}", b.site),
+                format!("?incident_id={}", b.remediation),
+            ] {
+                let (status, body) = ctx.call(method, &format!("{path}{query}"), None).await;
+                assert_eq!(status, StatusCode::OK, "{query}");
+                assert!(!Ctx::mentions(&body, b.remediation), "{query}: {body}");
+            }
+            let (_, body) = ctx.call(method, path, None).await;
+            assert!(Ctx::mentions(&body, a.remediation), "{body}");
+        }
         ("GET", "/api/remediation/incidents/{id}") => {
             let uri = format!("/api/remediation/incidents/{}", b.remediation);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
