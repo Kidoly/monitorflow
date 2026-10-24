@@ -48,7 +48,7 @@ describe("AppShell", () => {
     expect(within(nav()).getByRole("link", { name: "Fleet" })).toHaveAttribute("aria-current", "page");
   });
 
-  it("lists the built pages of the handoff's navigation and hides the others", () => {
+  it("lists the pages of the handoff's navigation", () => {
     renderShell();
     const links = within(nav())
       .getAllByRole("link")
@@ -59,12 +59,14 @@ describe("AppShell", () => {
       "Incidents",
       "Mirrors",
       "Campaigns",
+      "Approvals",
+      "Audit log",
       "Relays",
       "Sites",
       "Enrollment tokens",
       "Users and roles",
     ]);
-    expect(within(nav()).queryByText("Remediation")).not.toBeInTheDocument();
+    expect(within(nav()).getByText("Remediation")).toBeInTheDocument();
     expect(within(nav()).getByText("Updates")).toBeInTheDocument();
   });
 

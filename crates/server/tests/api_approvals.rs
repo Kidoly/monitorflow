@@ -1,4 +1,4 @@
-//! The approval queue against a real
+//! The approval queue and the remediation audit log against a real
 //! PostgreSQL (ADR-0045): listing, approving, editing, rejecting, double
 //! decisions, deadlines, roles and scoping. Parked incidents are written
 //! the way the loop writes them. Ignored without `DATABASE_URL`.
@@ -525,5 +525,71 @@ db_tests! {
         tx.commit().await.unwrap();
         let (status, _) = post(&pool, &admin, &reject_uri(closed), json!({ "reason": "no" })).await;
         assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[sqlx::test]
+    async fn the_audit_log_reads_events_across_incidents(pool: PgPool) {
+        let acme = tenant(&pool, "acme").await;
+        let globex = tenant(&pool, "globex").await;
+        let (a, pending) = park(&pool, acme.servers[0], LOW, HOUR).await;
+        let (b, _) = park(&pool, acme.servers[1], HIGH, HOUR).await;
+        let (g, _) = park(&pool, globex.servers[0], LOW, HOUR).await;
+        let admin = session(&pool, "admin", Role::Administrator, None, None).await;
+        let (status, _) = post(&pool, &admin, &approve_uri(pending), json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let viewer = session(&pool, "viewer", Role::Viewer, Some(acme.customer), None).await;
+        let (status, body) = get(&pool, &viewer, "/api/remediation/events?limit=500").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let events = body["events"].as_array().unwrap();
+        // Five events per parked incident, two more for the approval.
+        assert_eq!(events.len(), 5 + 5 + 2);
+        assert!(events.iter().all(|e| e["incident_id"] != json!(g)));
+        assert!(body["next_cursor"].is_null());
+        let newest = &events[0];
+        assert_eq!((newest["incident_id"].clone(), newest["kind"].as_str()), (json!(a), Some("state_change")));
+        assert_eq!((newest["actor_kind"].as_str(), newest["actor_name"].as_str()), (Some("user"), Some("admin")));
+        assert_eq!((newest["hostname"].as_str(), newest["site_name"].as_str()), (Some("agent-acme-0"), Some("acme-0")));
+        assert_eq!(newest["hash"].as_str().unwrap().len(), 64);
+        // The large texts stay in the incident detail.
+        let context = events.iter().find(|e| e["kind"] == "context_sent").unwrap();
+        assert_eq!(context["payload"], json!({ "model": "mock/m", "context": { "redactions": {} } }));
+        assert!(context["actor_name"].is_null());
+
+        let me = user_id(&pool, "admin").await;
+        for (query, want) in [
+            (format!("incident_id={b}"), 5),
+            (format!("server_id={}", acme.servers[0]), 7),
+            (format!("site_id={}", acme.sites[1]), 5),
+            ("kind=approval".to_owned(), 1),
+            ("actor_kind=ai".to_owned(), 2),
+            (format!("actor_kind=user&actor_id={me}"), 2),
+            ("from=2000-01-01T00:00:00Z&to=2100-01-01T00:00:00Z".to_owned(), 12),
+            ("to=2000-01-01T00:00:00Z".to_owned(), 0),
+            (format!("customer_id={}", globex.customer), 0),
+            (format!("incident_id={g}"), 0),
+        ] {
+            let (status, body) = get(&pool, &viewer, &format!("/api/remediation/events?{query}")).await;
+            assert_eq!(status, StatusCode::OK, "{query}");
+            assert_eq!(body["events"].as_array().unwrap().len(), want, "{query}");
+        }
+
+        // Pages follow the same order without gaps or repeats.
+        let mut seen = Vec::new();
+        let mut uri = "/api/remediation/events?limit=4".to_owned();
+        loop {
+            let (_, body) = get(&pool, &viewer, &uri).await;
+            seen.extend(body["events"].as_array().unwrap().iter().map(|e| (e["incident_id"].clone(), e["seq"].clone())));
+            match body["next_cursor"].as_str() {
+                Some(cursor) => uri = format!("/api/remediation/events?limit=4&cursor={cursor}"),
+                None => break,
+            }
+        }
+        let all: Vec<_> = events.iter().map(|e| (e["incident_id"].clone(), e["seq"].clone())).collect();
+        assert_eq!(seen, all);
+        for bad in ["kind=deletion", "actor_kind=root", "limit=0", "cursor=!!", "from=today"] {
+            let (status, _) = get(&pool, &viewer, &format!("/api/remediation/events?{bad}")).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+        }
     }
 }

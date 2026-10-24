@@ -1,6 +1,15 @@
 import type { Me } from "@/lib/api";
 import { administersEverything, isAdministrator, readsCustomers } from "@/lib/me";
-import { CAMPAIGNS_PATH, MIRRORS_PATH, RELAYS_PATH, SITES_PATH, TOKENS_PATH, USERS_PATH } from "@/lib/routes";
+import {
+  APPROVALS_PATH,
+  AUDIT_PATH,
+  CAMPAIGNS_PATH,
+  MIRRORS_PATH,
+  RELAYS_PATH,
+  SITES_PATH,
+  TOKENS_PATH,
+  USERS_PATH,
+} from "@/lib/routes";
 
 import type { IconName } from "./icons";
 
@@ -50,8 +59,8 @@ export const NAVIGATION: NavSection[] = [
   {
     heading: "Remediation",
     items: [
-      { label: "Approvals", href: null, icon: "approvals" },
-      { label: "Audit log", href: null, icon: "audit" },
+      { label: "Approvals", href: APPROVALS_PATH, icon: "approvals" },
+      { label: "Audit log", href: AUDIT_PATH, icon: "audit" },
     ],
   },
   {
