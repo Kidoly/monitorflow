@@ -50,3 +50,12 @@ export const NEW_CAMPAIGN_PATH = "/campaigns/new/";
 export function campaignHref(id: string): string {
   return `/campaigns/view/?id=${encodeURIComponent(id)}`;
 }
+
+/** The approval queue and the remediation audit log (ADR-0045). */
+export const APPROVALS_PATH = "/remediation/approvals/";
+export const AUDIT_PATH = "/remediation/audit/";
+
+/** Link to the remediation audit log, filtered to one incident when given. */
+export function auditHref(filters: { incident?: string } = {}): string {
+  return filters.incident ? `${AUDIT_PATH}?incident=${encodeURIComponent(filters.incident)}` : AUDIT_PATH;
+}

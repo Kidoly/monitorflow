@@ -143,8 +143,10 @@ struct Tenant {
     site_threshold: Uuid,
     server_threshold: Uuid,
     incident: Uuid,
-    /// A remediation of `incident` (ADR-0042).
+    /// A remediation of `incident` (ADR-0042), waiting for approval.
     remediation: Uuid,
+    /// Its pending command (ADR-0045).
+    pending: Uuid,
     relay: Uuid,
     token: Uuid,
     command: Uuid,
@@ -213,6 +215,29 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    sqlx::query(
+        "INSERT INTO remediation_incident_events
+             (incident_id, seq, kind, actor_kind, actor_id, payload, prev_hash, hash)
+         VALUES ($1, 1, 'ai_proposal', 'ai', 'mock/m', '{\"command\": \"uptime\"}',
+                 decode(repeat('00', 32), 'hex'), decode(repeat('00', 32), 'hex'))",
+    )
+    .bind(remediation)
+    .execute(pool)
+    .await
+    .unwrap();
+    let pending = one("INSERT INTO remediation_pending_commands
+             (incident_id, proposal_seq, command, diagnosis, reasoning, tier, rule, reason)
+         VALUES ($1, 1, 'systemctl restart nginx', 'd', 'r', 'low_impact', '{}', 'restart')
+         RETURNING id")
+    .bind(remediation)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE remediation_incidents SET state = 'awaiting_approval' WHERE id = $1")
+        .bind(remediation)
+        .execute(pool)
+        .await
+        .unwrap();
     let relay = one("INSERT INTO relays (peer_id, site_id, name) VALUES ($1, $2, $1) RETURNING id")
         .bind(format!("relay-{name}"))
         .bind(site)
@@ -266,6 +291,7 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .unwrap();
     Tenant {
         remediation,
+        pending,
         campaign,
         command,
         remediation_rule,
@@ -700,6 +726,56 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             }
             let (_, body) = ctx.call(method, path, None).await;
             assert!(Ctx::mentions(&body, a.remediation));
+        }
+        ("GET", "/api/remediation/approvals") => {
+            for query in [
+                String::new(),
+                format!("?customer_id={}", b.customer),
+                format!("?server_id={}", b.server),
+                format!("?site_id={}", b.site),
+            ] {
+                let (status, body) = ctx.call(method, &format!("{path}{query}"), None).await;
+                assert_eq!(status, StatusCode::OK, "{query}");
+                assert!(!Ctx::mentions(&body, b.pending), "{query}: {body}");
+            }
+            let (_, body) = ctx.call(method, path, None).await;
+            assert!(Ctx::mentions(&body, a.pending), "{body}");
+        }
+        ("POST", "/api/remediation/approvals/{id}/approve")
+        | ("POST", "/api/remediation/approvals/{id}/reject") => {
+            let uri = path.replace("{id}", &b.pending.to_string());
+            let body = if path.ends_with("reject") {
+                json!({ "reason": "no" })
+            } else {
+                json!({})
+            };
+            assert_eq!(
+                ctx.status(method, &uri, Some(body)).await,
+                not_found,
+                "{uri}"
+            );
+            let state: String =
+                sqlx::query_scalar("SELECT state FROM remediation_pending_commands WHERE id = $1")
+                    .bind(b.pending)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(state, "pending");
+        }
+        ("GET", "/api/remediation/events") => {
+            for query in [
+                String::new(),
+                format!("?customer_id={}", b.customer),
+                format!("?server_id={}", b.server),
+                format!("?site_id={}", b.site),
+                format!("?incident_id={}", b.remediation),
+            ] {
+                let (status, body) = ctx.call(method, &format!("{path}{query}"), None).await;
+                assert_eq!(status, StatusCode::OK, "{query}");
+                assert!(!Ctx::mentions(&body, b.remediation), "{query}: {body}");
+            }
+            let (_, body) = ctx.call(method, path, None).await;
+            assert!(Ctx::mentions(&body, a.remediation), "{body}");
         }
         ("GET", "/api/remediation/incidents/{id}") => {
             let uri = format!("/api/remediation/incidents/{}", b.remediation);
