@@ -46,6 +46,9 @@
 //! | GET | `/api/incidents/{id}` | read | [`incidents::IncidentDetail`]: the incident and its `events` |
 //! | GET | `/api/remediation/incidents` | any role | [`remediation_incidents::IncidentList`], see below |
 //! | GET | `/api/remediation/incidents/{id}` | read | [`remediation_incidents::IncidentDetail`]: the incident, its `events` and `chain` |
+//! | GET | `/api/remediation/approvals` | any role | [`approvals::PendingList`], see below |
+//! | POST | `/api/remediation/approvals/{id}/approve` | approver, see below | body `{"command"?}`; 200 [`approvals::DecisionView`]; 409 once decided or past the deadline |
+//! | POST | `/api/remediation/approvals/{id}/reject` | approver | body `{"reason"}`; 200 [`approvals::DecisionView`]; 409 as for approve |
 //! | GET | `/api/servers/{id}/thresholds/effective` | read | [`thresholds::Effective`]: thresholds in force, muted ones and origins |
 //! | GET | `/api/servers/{id}/thresholds` | read | [`thresholds::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
@@ -221,6 +224,32 @@
 //! "broken_at", "reason", "head_hash"}`, recomputed on every request.
 //! Scoping is as for incidents.
 //!
+//! # Approval queue
+//!
+//! Commands the risk rules parked for a human (ADR-0043, ADR-0045).
+//! `GET /api/remediation/approvals` takes optional `customer_id`,
+//! `site_id` and `server_id` and lists up to 500 pending commands of
+//! readable sites, nearest `deadline` first. An item is `{"id",
+//! "incident_id", "customer_id", "customer_name", "site_id", "site_name",
+//! "server_id", "hostname", "alert_incident_id", "metric", "instance",
+//! "command", "diagnosis", "reasoning", "tier", "rule", "reason",
+//! "commands_run", "max_commands", "opened_at", "proposed_at",
+//! "deadline", "can_approve", "can_reject", "snapshots": {"available",
+//! "reason"}}`; `diagnosis` and `reasoning` are the AI's untrusted text.
+//! Approving a `low_impact` command needs an approver or administrator
+//! role covering the server's site, a `high_impact` one an administrator
+//! role; rejecting needs an approver role or above whatever the tier.
+//! `approve` takes `{}` or `{"command"}` to run an edited command, which
+//! the rules classify again: forbidden is 400, and the role needed is
+//! that of the higher tier of the two. `reject` takes `{"reason"}`, 1 to
+//! 1000 characters, which the AI gets back. A decision appends `edit`
+//! and `approval`, or `rejection`, and a `state_change` to the incident's
+//! chain, and the loop resumes on its own. It is 409 when the command was
+//! already decided, the incident no longer waits for approval, or its
+//! deadline passed. Decisions are audited (`remediation.approve`,
+//! `remediation.reject`). A pending command outside the user's sites is
+//! 404, one it reads without the role 403.
+//!
 //! # Commands and packages
 //!
 //! Commands for agents (ADR-0031). `POST /api/servers/{id}/commands` takes
@@ -360,6 +389,7 @@
 //! A server outside the user's sites, or an ID that is not a UUID, is 404.
 
 pub mod access;
+pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
 pub mod campaigns;
@@ -567,6 +597,15 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/remediation/incidents/{id}",
             get(remediation_incidents::detail),
+        )
+        .route("/api/remediation/approvals", get(approvals::list))
+        .route(
+            "/api/remediation/approvals/{id}/approve",
+            post(approvals::approve),
+        )
+        .route(
+            "/api/remediation/approvals/{id}/reject",
+            post(approvals::reject),
         )
         .route("/api/servers/{id}/sensors", get(sensors::effective))
         .route("/api/servers/{id}/metrics", get(metrics::discover))

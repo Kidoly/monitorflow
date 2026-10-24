@@ -17,13 +17,16 @@ use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{CommandResult, CommandStatus, Envelope, Hello, ShellCommand};
+use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::{self, Identity};
 use monitorflow_common::PROTOCOL_VERSION;
+use monitorflow_server::api::{users, Role};
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
 use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings};
 use monitorflow_server::grpc::{
     self, AgentStreamService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
 };
+use monitorflow_server::remediation::approval::{self, Verdict};
 use monitorflow_server::remediation::audit::{self, StoredEvent};
 use monitorflow_server::remediation::context::Backends;
 use monitorflow_server::remediation::runner::{Remediation, Settings};
@@ -442,6 +445,32 @@ fn settings() -> Settings {
     }
 }
 
+/// Decides the pending command of the parked incident `id` as a new
+/// approver would through the API.
+async fn decide(pool: &PgPool, id: Uuid, verdict: Verdict) {
+    let pending: Uuid = sqlx::query_scalar(
+        "SELECT id FROM remediation_pending_commands WHERE incident_id = $1 AND state = 'pending'",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let user = users::create_user(
+        pool,
+        "dave",
+        &Secret::new("correct horse battery"),
+        Role::Approver,
+        "test",
+    )
+    .await
+    .unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    approval::decide(&mut tx, pending, user, &verdict)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+}
+
 async fn last_escalation(h: &Harness) -> String {
     let events = h.events().await;
     of_kind(&events, "escalation")
@@ -696,5 +725,62 @@ db_tests! {
         assert_eq!(last_escalation(&h).await, "the AI escalated: grow the volume");
         assert!(audit::verify(&pool, h.incident().await).await.unwrap().valid);
         assert_eq!(h.leases().await, 0);
+    }
+
+    #[sqlx::test]
+    async fn an_edited_approval_resumes_the_loop(pool: PgPool) {
+        let h = Harness::start(&pool, &[("systemctl reload nginx", Reply::Run { exit_code: 0, stdout: "" })]).await;
+        let ai = Arc::new(MockProvider::new([
+            Step::run("nginx leaks memory", "systemctl restart nginx", "restart it"),
+            Step::stop("reloaded", StopOutcome::Resolved, "memory released"),
+        ]));
+        let running = h.remediation(&ai, settings());
+        let id = h.wait_state("awaiting_approval").await;
+        decide(&pool, id, Verdict::Approve { edited: Some("systemctl reload nginx".into()) }).await;
+        // The loop picks the incident up again on its own.
+        h.wait_event("ai_proposal", |p| p["stop"] == "resolved").await;
+        h.resolve_alert().await;
+        h.wait_state("resolved").await;
+        running.stop().await;
+
+        assert_eq!(h.agent.seen(), ["systemctl reload nginx"]);
+        let events = h.events().await;
+        assert_eq!(kinds(&events), [
+            "state_change", "context_sent", "ai_proposal", "classification", "state_change",
+            "edit", "approval", "state_change", "snapshot", "command_queued", "command_result",
+            "ai_proposal", "note", "state_change",
+        ]);
+        assert_eq!(events[6].actor_kind, "user");
+        let requests = ai.requests();
+        assert_eq!(requests.len(), 2);
+        let CommandOutcome::Executed { command, exit_code, .. } = &requests[1].history[0].outcome else {
+            panic!("not executed");
+        };
+        assert_eq!((command.as_str(), *exit_code), ("systemctl reload nginx", Some(0)));
+        assert!(audit::verify(&pool, id).await.unwrap().valid);
+        assert_eq!(h.leases().await, 0);
+    }
+
+    #[sqlx::test]
+    async fn a_rejection_goes_back_to_the_ai(pool: PgPool) {
+        let h = Harness::start(&pool, &[]).await;
+        let ai = Arc::new(MockProvider::new([
+            Step::run("nginx leaks memory", "systemctl restart nginx", "restart it"),
+            Step::stop("cannot fix without a restart", StopOutcome::Escalate, "a human must restart nginx"),
+        ]));
+        let running = h.remediation(&ai, settings());
+        let id = h.wait_state("awaiting_approval").await;
+        decide(&pool, id, Verdict::Reject { reason: "not during business hours".into() }).await;
+        h.wait_state("escalated").await;
+        running.stop().await;
+
+        assert!(h.agent.seen().is_empty());
+        let requests = ai.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[1].history[0].outcome,
+            CommandOutcome::NotRun { reason: "rejected by an approver: not during business hours".into() }
+        );
+        assert_eq!(last_escalation(&h).await, "the AI escalated: a human must restart nginx");
     }
 }

@@ -164,6 +164,11 @@ impl CurrentUser {
         self.access.sites(Role::can_modify)
     }
 
+    /// Sites where the user holds `role` or a role above it, by any grant.
+    pub fn sites_with(&self, role: Role) -> Scope {
+        self.access.sites(|r| r >= role)
+    }
+
     /// Customers granted to the user as a whole, by any role. Customers of
     /// readable sites are visible too; see `customers::list`.
     pub fn visible_customers(&self) -> Scope {
