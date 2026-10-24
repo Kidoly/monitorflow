@@ -29,6 +29,7 @@ use monitorflow_server::mirror::{
 };
 use monitorflow_server::remediation::context::Backends;
 use monitorflow_server::remediation::runner::{self, Remediation};
+use monitorflow_server::remediation::snapshot::{ProxmoxSnapshotter, SnapshotHook};
 use monitorflow_server::renew::Renewer;
 use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
 use monitorflow_server::vm_query::VmQuery;
@@ -470,6 +471,17 @@ async fn remediation_loop(
         tracing::info!("AI remediation disabled ([ai] enabled = false)");
         return Ok(None);
     };
+    // Snapshots before change-tier commands (ADR-0046); without `[proxmox]`
+    // every server records that rollback is limited.
+    let snapshots = ProxmoxSnapshotter::from_config(pool.clone(), &config.proxmox)
+        .await
+        .context("Proxmox snapshots")?;
+    if config.proxmox.enabled {
+        tracing::info!(
+            clusters = config.proxmox.clusters.len(),
+            "Proxmox snapshots before remediation changes"
+        );
+    }
     let backends = Backends {
         pool,
         metrics: Some(
@@ -477,13 +489,17 @@ async fn remediation_loop(
         ),
         logs: Some(VmQuery::new(&config.victorialogs_url).context("VictoriaLogs query client")?),
     };
-    Ok(Some(Remediation::new(
+    let remediation = Remediation::new(
         provider,
         &config.ai.model,
         commands,
         backends,
         runner::Settings::from_config(&config.remediation),
-    )))
+    );
+    Ok(Some(remediation.with_hook(Arc::new(SnapshotHook::new(
+        Arc::new(snapshots),
+        "proxmox",
+    )))))
 }
 
 async fn user_command(pool: &sqlx::PgPool, command: UserCommand) -> anyhow::Result<()> {

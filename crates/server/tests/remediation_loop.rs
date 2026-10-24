@@ -1,7 +1,7 @@
 //! The remediation loop (ADR-0043) against a real PostgreSQL, a scripted
 //! AI provider and a test agent on a real mTLS stream that checks every
 //! command's signature: automatic runs, approval parking, forbidden
-//! commands, limits, and restarts. Ignored without `DATABASE_URL`.
+//! commands, limits, restarts, and the snapshot hook. Ignored without `DATABASE_URL`.
 
 #[path = "../../common/tests/support/mod.rs"]
 mod support;
@@ -26,6 +26,7 @@ use monitorflow_server::grpc::{
 };
 use monitorflow_server::remediation::audit::{self, StoredEvent};
 use monitorflow_server::remediation::context::Backends;
+use monitorflow_server::remediation::runner::hook::{self, Change, ChangeHook};
 use monitorflow_server::remediation::runner::{Remediation, Settings};
 use prost::Message;
 use rustls::pki_types::CertificateDer;
@@ -224,6 +225,16 @@ impl Harness {
 
     /// A remediation loop on `provider`, running until stopped.
     fn remediation(&self, provider: &Arc<MockProvider>, settings: Settings) -> Running {
+        self.remediation_with(provider, settings, Arc::new(hook::NoSnapshot))
+    }
+
+    /// The same, with `hook` before every change.
+    fn remediation_with(
+        &self,
+        provider: &Arc<MockProvider>,
+        settings: Settings,
+        hook: Arc<dyn ChangeHook>,
+    ) -> Running {
         let remediation = Remediation::new(
             provider.clone(),
             "test-model",
@@ -234,7 +245,8 @@ impl Harness {
                 logs: None,
             },
             settings,
-        );
+        )
+        .with_hook(hook);
         let (stop, stopped) = oneshot::channel::<()>();
         let task = tokio::spawn(remediation.run(async move {
             let _ = stopped.await;
@@ -428,6 +440,64 @@ fn of_kind<'a>(events: &'a [StoredEvent], kind: &str) -> Vec<&'a Value> {
         .filter(|e| kind_of(e) == kind)
         .map(|e| &e.payload)
         .collect()
+}
+
+/// What [`StubHook`] does.
+#[derive(Debug, Clone, Copy)]
+enum HookMode {
+    Snapshot,
+    Fail,
+    Hang,
+}
+
+/// A snapshot hook that records its calls and answers as told.
+#[derive(Debug)]
+struct StubHook {
+    mode: HookMode,
+    calls: Mutex<Vec<(u32, String)>>,
+}
+
+impl StubHook {
+    fn new(mode: HookMode) -> Arc<Self> {
+        Arc::new(Self {
+            mode,
+            calls: Mutex::default(),
+        })
+    }
+
+    fn calls(&self) -> Vec<(u32, String)> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl ChangeHook for StubHook {
+    async fn before_change(&self, change: &Change<'_>) -> Result<hook::Snapshot, String> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((change.step, change.command.to_owned()));
+        match self.mode {
+            HookMode::Snapshot => Ok(hook::Snapshot {
+                method: "proxmox".into(),
+                name: Some(format!("mf-test-{}", change.step)),
+                detail: "proxmox snapshot of VM 101".into(),
+            }),
+            HookMode::Fail => Err("Proxmox task failed: VM is locked (backup)".into()),
+            HookMode::Hang => std::future::pending().await,
+        }
+    }
+}
+
+/// Low-impact commands run without approval on the harness's customer.
+async fn low_impact_auto(h: &Harness) {
+    sqlx::query(
+        "INSERT INTO remediation_policies (customer_id, low_impact_auto) VALUES ($1, true)",
+    )
+    .bind(h.customer)
+    .execute(&h.pool)
+    .await
+    .unwrap();
 }
 
 fn settings() -> Settings {
@@ -696,5 +766,74 @@ db_tests! {
         assert_eq!(last_escalation(&h).await, "the AI escalated: grow the volume");
         assert!(audit::verify(&pool, h.incident().await).await.unwrap().valid);
         assert_eq!(h.leases().await, 0);
+    }
+
+    #[sqlx::test]
+    async fn the_hook_snapshots_before_changes_only(pool: PgPool) {
+        let script = [
+            ("df -h", Reply::Run { exit_code: 0, stdout: "97%" }),
+            ("systemctl restart rsyslog", Reply::Run { exit_code: 0, stdout: "" }),
+        ];
+        let h = Harness::start(&pool, &script).await;
+        low_impact_auto(&h).await;
+        let ai = Arc::new(MockProvider::new([
+            Step::run("full", "df -h", "usage"),
+            Step::run("rsyslog holds deleted files", "systemctl restart rsyslog", "release them"),
+            Step::stop("freed", StopOutcome::Resolved, "usage dropped"),
+        ]));
+        let stub = StubHook::new(HookMode::Snapshot);
+        let running = h.remediation_with(&ai, settings(), stub.clone());
+        h.wait_event("ai_proposal", |p| p["stop"] == "resolved").await;
+        h.resolve_alert().await;
+        h.wait_state("resolved").await;
+        running.stop().await;
+
+        assert_eq!(stub.calls(), [(2, "systemctl restart rsyslog".to_owned())]);
+        assert_eq!(h.agent.seen(), ["df -h", "systemctl restart rsyslog"]);
+        let events = h.events().await;
+        let kinds = kinds(&events);
+        let at = kinds.iter().position(|k| k == "snapshot").unwrap();
+        assert_eq!(kinds[at + 1], "command_queued");
+        assert_eq!(of_kind(&events, "snapshot"), [&serde_json::json!({
+            "method": "proxmox",
+            "name": "mf-test-2",
+            "detail": "proxmox snapshot of VM 101",
+        })]);
+        assert_eq!(of_kind(&events, "command_queued")[1]["command"], "systemctl restart rsyslog");
+    }
+
+    #[sqlx::test]
+    async fn a_failed_snapshot_escalates_without_running_the_change(pool: PgPool) {
+        let h = Harness::start(&pool, &[("systemctl restart rsyslog", Reply::Run { exit_code: 0, stdout: "" })]).await;
+        low_impact_auto(&h).await;
+        let ai = Arc::new(MockProvider::new([Step::run("stuck", "systemctl restart rsyslog", "restart")]));
+        let stub = StubHook::new(HookMode::Fail);
+        let running = h.remediation_with(&ai, settings(), stub.clone());
+        h.wait_state("escalated").await;
+        running.stop().await;
+        assert_eq!(stub.calls().len(), 1);
+        assert!(h.agent.seen().is_empty());
+        let events = h.events().await;
+        assert!(of_kind(&events, "snapshot").is_empty());
+        assert!(of_kind(&events, "command_queued").is_empty());
+        assert_eq!(
+            last_escalation(&h).await,
+            "the snapshot before the change failed: Proxmox task failed: VM is locked (backup)"
+        );
+    }
+
+    #[sqlx::test]
+    async fn a_hanging_snapshot_stops_at_the_duration_limit(pool: PgPool) {
+        let h = Harness::start(&pool, &[("systemctl restart rsyslog", Reply::Run { exit_code: 0, stdout: "" })]).await;
+        low_impact_auto(&h).await;
+        let ai = Arc::new(MockProvider::new([Step::run("stuck", "systemctl restart rsyslog", "restart")]));
+        let stub = StubHook::new(HookMode::Hang);
+        let settings = Settings { max_duration: Duration::from_secs(2), ..settings() };
+        let running = h.remediation_with(&ai, settings, stub.clone());
+        h.wait_state("escalated").await;
+        running.stop().await;
+        assert_eq!(stub.calls().len(), 1);
+        assert!(h.agent.seen().is_empty());
+        assert_eq!(last_escalation(&h).await, "the duration limit of 2 s was reached");
     }
 }
