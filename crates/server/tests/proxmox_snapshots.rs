@@ -1,6 +1,6 @@
 //! Proxmox VE snapshots (ADR-0044) against a fake Proxmox API served over
 //! TLS with a test CA: tasks, failures, timeouts, authentication and
-//! retention. Never contacts a real Proxmox. Database tests are ignored
+//! retention, and the remediation loop's hook over them. Never contacts a real Proxmox. Database tests are ignored
 //! without `DATABASE_URL`.
 
 use std::collections::HashMap;
@@ -14,8 +14,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Form, Json, Router};
 use monitorflow_common::redact::Secret;
+use monitorflow_server::remediation::risk::Tier;
+use monitorflow_server::remediation::runner::hook::{Change, ChangeHook};
 use monitorflow_server::remediation::snapshot::{
-    ProxmoxClient, ProxmoxOptions, ProxmoxSnapshotter, SnapshotError, SnapshotName,
+    ProxmoxClient, ProxmoxOptions, ProxmoxSnapshotter, SnapshotError, SnapshotHook, SnapshotName,
     SnapshotRequest, Snapshotter, Unsupported, VmRef,
 };
 use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair};
@@ -696,5 +698,47 @@ db_tests! {
         let disabled = ProxmoxSnapshotter::new(pool.clone(), HashMap::new(), 3);
         assert_eq!(disabled.support(unmapped).await.unwrap().reason(), Some(Unsupported::Disabled));
         assert!(h.fake.seen.lock().unwrap().is_empty());
+    }
+
+    #[sqlx::test]
+    async fn the_change_hook_snapshots_mapped_servers_and_falls_back_for_others(pool: PgPool) {
+        let h = Harness::start().await;
+        let mapped = server(&pool, Some(vm())).await;
+        let hook = SnapshotHook::new(Arc::new(snapshotter(&h, &pool, 3)), "proxmox");
+        let incident = Uuid::from_u128(0x0123_abcd_ef45 << 80);
+        let change = |server, step| Change {
+            incident_id: incident,
+            server_id: server,
+            step,
+            command: "systemctl restart nginx",
+            tier: Tier::LowImpact,
+        };
+
+        let recorded = hook.before_change(&change(mapped, 2)).await.unwrap();
+        assert_eq!(recorded.method, "proxmox");
+        assert_eq!(recorded.name.as_deref(), Some("mf-0123abcdef45-2"));
+        assert!(recorded.detail.contains("VM 101 on pve/pve1"), "{}", recorded.detail);
+        assert_eq!(h.fake.names(), ["mf-0123abcdef45-2"]);
+        // A resumed incident asks again for the same step: no second task.
+        let posts = h.fake.seen(Method::POST).len();
+        assert_eq!(hook.before_change(&change(mapped, 2)).await.unwrap(), recorded);
+        assert_eq!(h.fake.seen(Method::POST).len(), posts);
+
+        // A failed task is an error, so the loop escalates.
+        h.outcome(Outcome::Fail("VM is locked (backup)"));
+        let error = hook.before_change(&change(mapped, 3)).await.unwrap_err();
+        assert!(error.contains("VM is locked (backup)"), "{error}");
+
+        // Unmapped servers, and no cluster at all, never reach Proxmox.
+        let requests = h.fake.seen.lock().unwrap().len();
+        sqlx::query("DELETE FROM server_proxmox_vms").execute(&pool).await.unwrap();
+        let recorded = hook.before_change(&change(mapped, 4)).await.unwrap();
+        assert_eq!((recorded.method.as_str(), recorded.name), ("none", None));
+        assert!(recorded.detail.contains("not mapped"), "{}", recorded.detail);
+        let off = SnapshotHook::new(Arc::new(ProxmoxSnapshotter::new(pool.clone(), HashMap::new(), 3)), "proxmox");
+        let recorded = off.before_change(&change(mapped, 4)).await.unwrap();
+        assert_eq!(recorded.method, "none");
+        assert!(recorded.detail.ends_with("rollback is limited"), "{}", recorded.detail);
+        assert_eq!(h.fake.seen.lock().unwrap().len(), requests);
     }
 }
