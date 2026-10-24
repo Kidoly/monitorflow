@@ -101,7 +101,10 @@ async fn pass(shared: &Shared, incident: &Incident) -> Result<Pass, DriveError> 
             command,
             by_system,
             snapshot_done,
-        } => run(shared, incident, &command, by_system, snapshot_done).await,
+        } => {
+            let step = progress.commands_queued + 1;
+            run(shared, incident, &command, by_system, snapshot_done, step).await
+        }
         Next::Wait {
             command_id,
             command,
@@ -328,6 +331,7 @@ async fn run(
     command: &str,
     by_system: bool,
     snapshot_done: bool,
+    step: u32,
 ) -> Result<Pass, DriveError> {
     // The rules again, on exactly what is about to run: an edited command
     // is still refused when forbidden, and a system approval needs a tier
@@ -348,11 +352,15 @@ async fn run(
         let change = Change {
             incident_id: incident.id,
             server_id: incident.server_id,
+            step,
             command,
             tier: decision.tier,
         };
-        return match shared.hook.before_change(&change).await {
-            Ok(snapshot) => {
+        let deadline = instant(incident.deadline());
+        return match tokio::time::timeout_at(deadline, shared.hook.before_change(&change)).await {
+            // The next pass escalates at the duration limit.
+            Err(_) => Ok(Pass::Again),
+            Ok(Ok(snapshot)) => {
                 let event = NewEvent::snapshot(
                     &snapshot.method,
                     snapshot.name.as_deref(),
@@ -361,7 +369,7 @@ async fn run(
                 audit::append(&shared.pool, incident.id, event).await?;
                 Ok(Pass::Again)
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 let reason = format!("the snapshot before the change failed: {error}");
                 finish(shared, incident, IncidentState::Escalated, &reason).await
             }

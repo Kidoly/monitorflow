@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use async_trait::async_trait;
 use monitorflow_common::redact::Secret;
 use uuid::Uuid;
 
@@ -183,4 +184,131 @@ async fn without_a_platform_nothing_is_supported() {
         none.take(server, request).await,
         Err(SnapshotError::Unsupported(Unsupported::Disabled))
     ));
+}
+
+/// Answers `support` and `take` as told, counting takes.
+struct Scripted {
+    support: Support,
+    take: fn() -> Result<Snapshot, SnapshotError>,
+    taken: std::sync::Mutex<Vec<(Uuid, SnapshotRequest)>>,
+}
+
+#[async_trait]
+impl Snapshotter for Scripted {
+    async fn support(&self, _server: Uuid) -> Result<Support, SnapshotError> {
+        Ok(self.support.clone())
+    }
+
+    async fn take(
+        &self,
+        server: Uuid,
+        request: SnapshotRequest,
+    ) -> Result<Snapshot, SnapshotError> {
+        self.taken.lock().unwrap().push((server, request));
+        (self.take)()
+    }
+
+    async fn list(&self, _server: Uuid) -> Result<Vec<Snapshot>, SnapshotError> {
+        Ok(Vec::new())
+    }
+
+    async fn rollback(&self, _: Uuid, _: &SnapshotName) -> Result<(), SnapshotError> {
+        Ok(())
+    }
+}
+
+fn scripted(
+    support: Support,
+    take: fn() -> Result<Snapshot, SnapshotError>,
+) -> (std::sync::Arc<Scripted>, SnapshotHook) {
+    let snapshots = std::sync::Arc::new(Scripted {
+        support,
+        take,
+        taken: std::sync::Mutex::default(),
+    });
+    let hook = SnapshotHook::new(snapshots.clone(), "proxmox");
+    (snapshots, hook)
+}
+
+fn change(command: &str) -> crate::remediation::runner::hook::Change<'_> {
+    crate::remediation::runner::hook::Change {
+        incident_id: Uuid::from_u128(0x0123_abcd_ef45 << 80),
+        server_id: Uuid::from_u128(5),
+        step: 3,
+        command,
+        tier: crate::remediation::risk::Tier::LowImpact,
+    }
+}
+
+#[tokio::test]
+async fn the_hook_snapshots_supported_servers_for_the_step() {
+    use crate::remediation::runner::hook::ChangeHook;
+    let (snapshots, hook) = scripted(Support::Available(vm("pve", "pve1", 101)), || {
+        Ok(Snapshot {
+            name: "mf-0123abcdef45-3".into(),
+            description: String::new(),
+            created_at: None,
+            managed: true,
+        })
+    });
+    let change = change("systemctl restart nginx");
+    let recorded = hook.before_change(&change).await.unwrap();
+    assert_eq!(recorded.method, "proxmox");
+    assert_eq!(recorded.name.as_deref(), Some("mf-0123abcdef45-3"));
+    assert!(
+        recorded.detail.contains("VM 101 on pve/pve1"),
+        "{}",
+        recorded.detail
+    );
+    assert!(
+        recorded.detail.contains("low_impact"),
+        "{}",
+        recorded.detail
+    );
+    let taken = snapshots.taken.lock().unwrap().clone();
+    assert_eq!(
+        taken,
+        [(
+            change.server_id,
+            SnapshotRequest {
+                incident: change.incident_id,
+                step: 3
+            }
+        )]
+    );
+}
+
+#[tokio::test]
+async fn the_hook_falls_back_without_support_and_fails_on_errors() {
+    use crate::remediation::runner::hook::ChangeHook;
+    for reason in [
+        Unsupported::Disabled,
+        Unsupported::NotMapped,
+        Unsupported::UnknownCluster,
+    ] {
+        let (snapshots, hook) = scripted(Support::Unavailable(reason), || unreachable!());
+        let recorded = hook.before_change(&change("x")).await.unwrap();
+        assert_eq!((recorded.method.as_str(), recorded.name), ("none", None));
+        assert!(
+            recorded.detail.ends_with("rollback is limited"),
+            "{}",
+            recorded.detail
+        );
+        assert!(snapshots.taken.lock().unwrap().is_empty());
+    }
+    // Unmapped between `support` and `take`: still a fallback.
+    let (_, hook) = scripted(Support::Available(vm("pve", "pve1", 101)), || {
+        Err(SnapshotError::Unsupported(Unsupported::NotMapped))
+    });
+    assert_eq!(
+        hook.before_change(&change("x")).await.unwrap().method,
+        "none"
+    );
+    // A supported server whose snapshot fails: the loop escalates.
+    let (_, hook) = scripted(Support::Available(vm("pve", "pve1", 101)), || {
+        Err(SnapshotError::TaskFailed("VM is locked (backup)".into()))
+    });
+    let error = hook.before_change(&change("x")).await.unwrap_err();
+    assert!(error.contains("VM is locked (backup)"), "{error}");
+    assert!(!format!("{hook:?}").is_empty());
 }

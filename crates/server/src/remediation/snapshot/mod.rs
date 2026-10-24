@@ -11,8 +11,10 @@
 //! Snapshot names are deterministic, [`SnapshotName::for_step`], so a retry
 //! of the same step finds the snapshot it already took. Only snapshots
 //! MonitorFlow recorded as its own are ever rolled back to or deleted by
-//! retention.
+//! retention. [`SnapshotHook`] is what the remediation loop calls
+//! (ADR-0046).
 
+pub mod hook;
 pub mod proxmox;
 pub mod store;
 #[cfg(test)]
@@ -25,6 +27,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
+pub use hook::SnapshotHook;
 pub use proxmox::{ProxmoxClient, ProxmoxOptions, ProxmoxSnapshotter};
 pub use store::VmRef;
 
