@@ -414,6 +414,144 @@ export interface RemediationIncidentList {
   next_cursor: string | null;
 }
 
+export type RemediationEventKind =
+  | "context_sent"
+  | "ai_proposal"
+  | "classification"
+  | "approval"
+  | "rejection"
+  | "edit"
+  | "command_queued"
+  | "command_result"
+  | "snapshot"
+  | "escalation"
+  | "state_change"
+  | "note";
+
+/** `user`, `system`, `ai` (the model) or `peer` (the agent), as in the audit log. */
+export type ActorKind = "user" | "system" | "ai" | "peer";
+
+/** One event of an incident's hash-chained history (ADR-0042). */
+export interface RemediationIncidentEvent {
+  seq: number;
+  kind: RemediationEventKind;
+  actor_kind: ActorKind;
+  actor_id: string;
+  /** Fields depend on `kind`; AI text in it is untrusted. */
+  payload: Record<string, unknown>;
+  created_at: string;
+  prev_hash: string;
+  hash: string;
+}
+
+/** The hash chain of an incident, recomputed on each request. */
+export interface ChainReport {
+  valid: boolean;
+  events: number;
+  broken_at: number | null;
+  reason: "gap" | "prev_hash" | "hash" | "head" | null;
+  head_hash: string | null;
+}
+
+/** `GET /api/remediation/incidents/{id}`. */
+export interface RemediationIncidentDetail extends RemediationIncident {
+  site_name: string;
+  customer_name: string;
+  events: RemediationIncidentEvent[];
+  chain: ChainReport;
+}
+
+/** One event of `GET /api/remediation/events`, with its incident's server (ADR-0045). */
+export interface RemediationEvent {
+  incident_id: string;
+  seq: number;
+  kind: RemediationEventKind;
+  actor_kind: ActorKind;
+  actor_id: string;
+  /** The user's name for user actors. */
+  actor_name: string | null;
+  /** Without the rendered context and command output; the incident detail has them. */
+  payload: Record<string, unknown>;
+  created_at: string;
+  hash: string;
+  customer_id: string;
+  customer_name: string;
+  site_id: string;
+  site_name: string;
+  server_id: string;
+  hostname: string;
+  metric: string;
+  instance: string;
+}
+
+export interface RemediationEventList {
+  events: RemediationEvent[];
+  next_cursor: string | null;
+}
+
+export interface RemediationEventQuery {
+  customer_id?: string;
+  site_id?: string;
+  incident_id?: string;
+  server_id?: string;
+  kind?: RemediationEventKind;
+  actor_kind?: ActorKind;
+  actor_id?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
+export type RiskTier = "read_only" | "low_impact" | "high_impact" | "forbidden";
+
+/** Why a server cannot be snapshotted before a change (ADR-0044). */
+export type SnapshotUnsupported = "disabled" | "not_mapped" | "unknown_cluster";
+
+/** One command waiting for approval (ADR-0045). */
+export interface PendingApproval {
+  id: string;
+  incident_id: string;
+  customer_id: string;
+  customer_name: string;
+  site_id: string;
+  site_name: string;
+  server_id: string;
+  hostname: string;
+  alert_incident_id: string | null;
+  metric: string;
+  instance: string;
+  command: string;
+  /** The AI's text: untrusted, shown as data. */
+  diagnosis: string;
+  reasoning: string;
+  tier: RiskTier;
+  rule: { source: "builtin" | "configured"; id: string };
+  reason: string;
+  commands_run: number;
+  max_commands: number;
+  opened_at: string;
+  proposed_at: string;
+  /** The incident escalates then; a decision after it is refused. */
+  deadline: string;
+  /** What the user's roles allow; the API checks again. */
+  can_approve: boolean;
+  can_reject: boolean;
+  snapshots: { available: boolean; reason: SnapshotUnsupported | null };
+}
+
+export interface PendingApprovalList {
+  approvals: PendingApproval[];
+}
+
+/** Answer of approve and reject. */
+export interface ApprovalDecision {
+  id: string;
+  incident_id: string;
+  state: "approved" | "rejected";
+  command: string;
+  edited: boolean;
+}
+
 export type TokenRole = "agent" | "relay";
 export type TokenState = "pending" | "used" | "expired";
 
@@ -973,6 +1111,39 @@ export const api = {
       `/api/remediation/incidents?alert_incident_id=${encodeURIComponent(alertIncidentId)}&limit=1`,
       { signal },
     ),
+
+  /** Every command waiting for approval in the user's sites, nearest deadline first. */
+  approvals: (signal?: AbortSignal) => request<PendingApprovalList>("/api/remediation/approvals", { signal }),
+
+  /** Runs the pending command, or `command` instead when given; 409 once decided or past the deadline. */
+  approve: (id: string, command?: string) =>
+    request<ApprovalDecision>(`/api/remediation/approvals/${encodeURIComponent(id)}/approve`, {
+      method: "POST",
+      body: command === undefined ? {} : { command },
+    }),
+
+  /** Drops the pending command; the reason goes back to the AI. */
+  reject: (id: string, reason: string) =>
+    request<ApprovalDecision>(`/api/remediation/approvals/${encodeURIComponent(id)}/reject`, {
+      method: "POST",
+      body: { reason },
+    }),
+
+  /** One remediation incident with its events and verified chain. */
+  remediationIncident: (id: string, signal?: AbortSignal) =>
+    request<RemediationIncidentDetail>(`/api/remediation/incidents/${encodeURIComponent(id)}`, { signal }),
+
+  /** Remediation events across incidents, newest first. */
+  remediationEvents: (query: RemediationEventQuery, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined) params.set(key, String(value));
+    }
+    const search = params.toString();
+    return request<RemediationEventList>(search ? `/api/remediation/events?${search}` : "/api/remediation/events", {
+      signal,
+    });
+  },
 
   /** The latest value of each series of `metric`, as of now. */
   queryInstant: (query: { serverId: string; metric: string; instance?: string }, signal?: AbortSignal) => {
