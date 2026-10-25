@@ -555,14 +555,15 @@ impl Default for AgentSensorsConfig {
     }
 }
 
-/// Windows has no common log directory like `/var/log`: the log sensor is
-/// off until the administrator lists directories.
+/// The `log` sensor does not run on Windows (ADR-0048), so it gets no
+/// directories; the Event Log channels are the same as on Unix.
 #[cfg(windows)]
 impl Default for AgentSensorsConfig {
     fn default() -> Self {
         Self {
             script_dir: windows_base_dir().join("scripts.d"),
             log_dirs: Vec::new(),
+            event_channels: vec!["Application".into(), "System".into()],
         }
     }
 }
