@@ -1,6 +1,9 @@
 //! Commands end to end (ADR-0031): the server's dispatcher and the agent's
 //! dispatcher over a real mTLS stream, with PostgreSQL.
 
+// The real server and the Linux helpers only build on Unix (ADR-0047).
+#![cfg(unix)]
+
 mod support;
 
 use std::sync::atomic::{AtomicUsize, Ordering};

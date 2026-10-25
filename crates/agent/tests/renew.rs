@@ -3,6 +3,9 @@
 //! reported as ignored without `DATABASE_URL` at build time (see
 //! `build.rs`).
 
+// The real server and the Linux helpers only build on Unix (ADR-0047).
+#![cfg(unix)]
+
 mod support;
 
 use std::time::{Duration, SystemTime};

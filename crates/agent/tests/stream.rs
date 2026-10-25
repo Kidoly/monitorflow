@@ -1,6 +1,9 @@
 //! The agent's stream against the real `AgentService` over mTLS on
 //! 127.0.0.1: Hello and heartbeats, reconnects, revocation, shutdown.
 
+// The real server and the Linux helpers only build on Unix (ADR-0047).
+#![cfg(unix)]
+
 mod support;
 
 use std::time::Duration;

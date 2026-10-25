@@ -3,6 +3,9 @@
 //! configuration at start-up, and, with a database, a configured sensor's
 //! samples reaching a fake VictoriaMetrics with the agent's identity.
 
+// The real server and the Linux helpers only build on Unix (ADR-0047).
+#![cfg(unix)]
+
 #[path = "../../server/tests/fake_http/mod.rs"]
 mod fake_http;
 mod support;

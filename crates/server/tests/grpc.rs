@@ -404,7 +404,7 @@ async fn shutdown_closes_streams_and_stops_serving() {
 #[tokio::test]
 async fn agent_hello_without_a_valid_os_family_is_rejected() {
     let h = Harness::start(settings(), Arc::new(AllowAllRelayedAgents)).await;
-    for os_family in ["", "windows"] {
+    for os_family in ["", "macos"] {
         let mut envelope = hello_v("agent-1", PROTOCOL_VERSION);
         if let Some(Payload::Hello(hello)) = envelope.payload.as_mut() {
             hello.os_family = os_family.into();
@@ -754,6 +754,17 @@ db_tests! {
         assert_eq!(updated.agent_version.as_deref(), Some("0.2.0"));
         assert!(updated.last_seen_at >= row.last_seen_at);
         assert_eq!(audit_count(&pool, "server.create").await, 1);
+
+        // Windows agents (ADR-0047).
+        let windows = with_hello("agent-1", |hello| {
+            hello.hostname = "WIN-01".into();
+            hello.os_family = "windows".into();
+            hello.os_version = "Windows Server 2022 Datacenter 21H2 build 20348.2849".into();
+        });
+        let _peer = h.open(&h.ca.client("agent-1", 12), windows).await.unwrap();
+        let updated = server_row(&pool, "agent-1").await.unwrap();
+        assert_eq!(updated.os_family, "windows");
+        assert_eq!(updated.hostname, "WIN-01");
     }
 
     #[sqlx::test]

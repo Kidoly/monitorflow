@@ -5,13 +5,23 @@
 //! Privileged steps run through `sudo -n` with fixed command lines (see
 //! [`exec`]): updates go to the root helper in [`update`] (ADR-0036).
 //! Everything else runs as the agent's user.
+//!
+//! On Windows only the platform-neutral parts build: [`PackageManager`],
+//! [`Reports`] and [`exec`]; apt, dnf and the root helpers are Unix only
+//! (ADR-0047).
 
+#[cfg(unix)]
 pub mod apply;
+#[cfg(unix)]
 pub mod apt;
+#[cfg(unix)]
 pub mod configure;
+#[cfg(unix)]
 pub mod dnf;
 pub mod exec;
+#[cfg(unix)]
 pub mod sources;
+#[cfg(unix)]
 pub mod update;
 
 use std::sync::Arc;
@@ -21,9 +31,12 @@ use monitorflow_common::command;
 use monitorflow_common::proto::v1::{Package, PackageReport};
 use tokio::sync::watch;
 
+#[cfg(unix)]
 use crate::os::OsFamily;
 use crate::shutdown::Shutdown;
+#[cfg(unix)]
 pub use apply::ApplyUpdatesHandler;
+#[cfg(unix)]
 pub use configure::{SourcesAction, SourcesHandler};
 pub use exec::{Run, Tools};
 
@@ -86,6 +99,7 @@ pub trait PackageManager: Send + Sync + 'static {
 }
 
 /// apt on the Debian family, dnf on the RHEL family.
+#[cfg(unix)]
 pub fn for_family(family: OsFamily, tools: Tools) -> Arc<dyn PackageManager> {
     match family {
         OsFamily::Debian => Arc::new(apt::Apt::new(tools)),
@@ -166,5 +180,5 @@ fn unix_ms() -> i64 {
         .map_or(0, |d| d.as_millis() as i64)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
