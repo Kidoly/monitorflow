@@ -30,16 +30,26 @@ monitorflow-sensors.workspace = true
 prost.workspace = true
 ring.workspace = true
 base64.workspace = true
+
+[target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["process"] }
+
+[target.'cfg(windows)'.dependencies]
+# Service control manager and OS version (ADR-0047).
+windows-service.workspace = true
+windows-registry.workspace = true
 
 [dev-dependencies]
 rcgen.workspace = true
 monitorflow-sensors = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["test-util"] }
-monitorflow-server = { path = "../server" }
 tempfile.workspace = true
 pem.workspace = true
 uuid.workspace = true
+
+# The integration tests run a real server, which only builds on Unix.
+[target.'cfg(unix)'.dev-dependencies]
+monitorflow-server = { path = "../server" }
 sqlx.workspace = true
 # For the fake VictoriaMetrics shared with the server's tests.
 axum.workspace = true

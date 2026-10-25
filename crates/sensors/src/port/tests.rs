@@ -122,6 +122,10 @@ async fn ipv6_when_the_host_has_it() {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows retries a refused connect for about 2 s, so a refused ::1 takes the whole deadline; left to the Windows sensors task"
+)]
 async fn localhost_is_resolved() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();

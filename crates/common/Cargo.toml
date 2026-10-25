@@ -31,6 +31,10 @@ tower-http = { workspace = true, optional = true }
 percent-encoding = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
+[target.'cfg(windows)'.dependencies]
+# The private-file ACLs that replace Unix modes (ADR-0047).
+windows-sys = { workspace = true }
+
 [features]
 # Serving mirror content (ADR-0030, ADR-0034), for the server and relays.
 mirror = ["dep:axum", "dep:tower-http", "dep:percent-encoding", "dep:serde_json"]

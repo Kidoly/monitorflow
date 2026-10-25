@@ -119,8 +119,8 @@ fn check_version(peer: &str) -> Result<(), HandshakeError> {
 }
 
 /// Values stored in the `servers` row (ADR-0008); the schema accepts these
-/// `os_family` values only.
-const OS_FAMILIES: [&str; 2] = ["debian", "rhel"];
+/// `os_family` values only; `windows` since ADR-0047.
+const OS_FAMILIES: [&str; 3] = ["debian", "rhel", "windows"];
 const MAX_HOSTNAME: usize = 253;
 const MAX_VERSION: usize = 128;
 
@@ -800,10 +800,11 @@ mod tests {
     fn agent_hello_needs_a_known_os_family_and_a_hostname() {
         assert!(check_agent_hello(&agent_hello("debian", "web-01")).is_ok());
         assert!(check_agent_hello(&agent_hello("rhel", "web-01")).is_ok());
+        assert!(check_agent_hello(&agent_hello("windows", "WIN-01")).is_ok());
         for (os_family, hostname) in [
             ("", "web-01"),
             ("Debian", "web-01"),
-            ("windows", "web-01"),
+            ("Windows", "web-01"),
             ("debian", ""),
             ("debian", &"a".repeat(MAX_HOSTNAME + 1)),
         ] {

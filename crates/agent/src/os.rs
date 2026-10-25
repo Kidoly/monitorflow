@@ -1,5 +1,6 @@
 //! Host facts sent in `Hello`: package family and version from
-//! `/etc/os-release`, and the host name.
+//! `/etc/os-release`, and the host name. On Windows the family is
+//! `windows`, the version comes from the registry (ADR-0047).
 //!
 //! For tests only, [`OS_RELEASE_PATH_ENV`] points the agent at another
 //! os-release file, so the end-to-end test can pose as a supported
@@ -24,6 +25,9 @@ pub enum OsFamily {
     Debian,
     /// RHEL, Rocky, AlmaLinux, CentOS and derivatives: dnf.
     Rhel,
+    /// Windows and Windows Server; no package manager support yet.
+    #[cfg(windows)]
+    Windows,
 }
 
 impl OsFamily {
@@ -32,6 +36,8 @@ impl OsFamily {
         match self {
             Self::Debian => "debian",
             Self::Rhel => "rhel",
+            #[cfg(windows)]
+            Self::Windows => "windows",
         }
     }
 
@@ -71,10 +77,13 @@ pub enum OsError {
         "unsupported distribution `{id}` (ID_LIKE `{id_like}`): the agent supports the debian and rhel families"
     )]
     Unsupported { id: String, id_like: String },
+    #[error("cannot read the Windows version from the registry: {0}")]
+    Registry(String),
 }
 
 /// Reads the host name and `os-release`, failing on an unsupported family.
 /// Honours [`OS_RELEASE_PATH_ENV`] when it is set and not empty.
+#[cfg(unix)]
 pub fn detect() -> Result<HostInfo, OsError> {
     let path = std::env::var_os(OS_RELEASE_PATH_ENV)
         .filter(|path| !path.is_empty())
@@ -124,11 +133,80 @@ fn read_os_release() -> Result<String, OsError> {
     Err(OsError::Missing)
 }
 
+/// Reads the host name and the Windows version from the registry.
+#[cfg(windows)]
+pub fn detect() -> Result<HostInfo, OsError> {
+    let key = windows_registry::LOCAL_MACHINE
+        .open(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+        .map_err(|e| OsError::Registry(e.to_string()))?;
+    let product = key
+        .get_string("ProductName")
+        .map_err(|e| OsError::Registry(format!("ProductName: {e}")))?;
+    let build = key
+        .get_string("CurrentBuildNumber")
+        .map_err(|e| OsError::Registry(format!("CurrentBuildNumber: {e}")))?;
+    // Missing before Windows 10 20H2 and Server 2022.
+    let display = key.get_string("DisplayVersion").ok();
+    let ubr = key.get_u32("UBR").ok();
+    Ok(HostInfo {
+        hostname: hostname(),
+        os_family: OsFamily::Windows,
+        os_version: windows_version(&product, display.as_deref(), &build, ubr),
+    })
+}
+
+/// Longest `os_version` the server accepts.
+const MAX_VERSION: usize = 128;
+
+/// Like `Windows Server 2022 Datacenter 21H2 build 20348.2849`, from the
+/// registry's `ProductName`, `DisplayVersion`, `CurrentBuildNumber` and
+/// `UBR`. Windows 11 still says "Windows 10" in `ProductName`; its builds
+/// start at 22000.
+pub fn windows_version(
+    product: &str,
+    display: Option<&str>,
+    build: &str,
+    ubr: Option<u32>,
+) -> String {
+    let product = product.trim();
+    let eleven = build.trim().parse::<u32>().is_ok_and(|b| b >= 22000);
+    let mut version = match product.strip_prefix("Windows 10") {
+        Some(rest) if eleven => format!("Windows 11{rest}"),
+        _ => product.to_owned(),
+    };
+    if let Some(display) = display.map(str::trim).filter(|d| !d.is_empty()) {
+        version.push(' ');
+        version.push_str(display);
+    }
+    version.push_str(" build ");
+    version.push_str(build.trim());
+    if let Some(ubr) = ubr {
+        version.push_str(&format!(".{ubr}"));
+    }
+    version.chars().take(MAX_VERSION).collect()
+}
+
 /// The kernel's host name, or `unknown` if it cannot be read.
+#[cfg(unix)]
 pub fn hostname() -> String {
     ["/proc/sys/kernel/hostname", "/etc/hostname"]
         .iter()
         .filter_map(|path| std::fs::read_to_string(path).ok())
+        .map(|name| name.trim().to_owned())
+        .find(|name| !name.is_empty())
+        .unwrap_or_else(|| "unknown".into())
+}
+
+/// The DNS host name from the TCP/IP parameters, else `COMPUTERNAME`
+/// (the NetBIOS name), else `unknown`.
+#[cfg(windows)]
+pub fn hostname() -> String {
+    let dns = windows_registry::LOCAL_MACHINE
+        .open(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters")
+        .and_then(|key| key.get_string("Hostname"))
+        .ok();
+    dns.into_iter()
+        .chain(std::env::var("COMPUTERNAME").ok())
         .map(|name| name.trim().to_owned())
         .find(|name| !name.is_empty())
         .unwrap_or_else(|| "unknown".into())
@@ -257,6 +335,48 @@ mod tests {
             err.starts_with("cannot read") && err.contains("missing"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn windows_versions() {
+        assert_eq!(
+            windows_version(
+                "Windows Server 2022 Datacenter",
+                Some("21H2"),
+                "20348",
+                Some(2849)
+            ),
+            "Windows Server 2022 Datacenter 21H2 build 20348.2849"
+        );
+        assert_eq!(
+            windows_version("Windows 10 Pro", Some("23H2"), "22631", Some(4317)),
+            "Windows 11 Pro 23H2 build 22631.4317"
+        );
+        assert_eq!(
+            windows_version("Windows 10 Enterprise", Some("22H2"), "19045", None),
+            "Windows 10 Enterprise 22H2 build 19045"
+        );
+        assert_eq!(
+            windows_version("Windows Server 2019 Standard", None, "17763", Some(1)),
+            "Windows Server 2019 Standard build 17763.1"
+        );
+        assert_eq!(
+            windows_version(&"x".repeat(200), None, "1", None).len(),
+            128
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn detects_this_windows_host() {
+        let host = detect().unwrap();
+        assert_eq!(host.os_family, OsFamily::Windows);
+        assert!(
+            host.os_version.starts_with("Windows"),
+            "{}",
+            host.os_version
+        );
+        assert!(host.os_version.contains(" build "), "{}", host.os_version);
     }
 
     #[test]

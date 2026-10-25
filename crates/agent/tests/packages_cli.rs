@@ -3,6 +3,9 @@
 //! before anything runs are tested here; what it runs is tested in the
 //! library against fake tools.
 
+// The real server and the Linux helpers only build on Unix (ADR-0047).
+#![cfg(unix)]
+
 use std::io::Write;
 use std::process::{Command, Stdio};
 

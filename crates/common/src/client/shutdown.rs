@@ -34,6 +34,7 @@ impl Shutdown {
 }
 
 /// Fires `trigger` on SIGINT or SIGTERM.
+#[cfg(unix)]
 pub fn on_signals(trigger: Trigger) -> std::io::Result<()> {
     use tokio::signal::unix::{signal, SignalKind};
     let mut term = signal(SignalKind::terminate())?;
@@ -42,6 +43,29 @@ pub fn on_signals(trigger: Trigger) -> std::io::Result<()> {
         let name = tokio::select! {
             _ = term.recv() => "SIGTERM",
             _ = int.recv() => "SIGINT",
+        };
+        tracing::info!(signal = name, "shutting down");
+        trigger.fire();
+    });
+    Ok(())
+}
+
+/// Fires `trigger` on Ctrl+C, Ctrl+Break or the console closing, for a
+/// process run from a console. A Windows service is stopped through its
+/// control handler instead (ADR-0047).
+#[cfg(windows)]
+pub fn on_signals(trigger: Trigger) -> std::io::Result<()> {
+    use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close, ctrl_shutdown};
+    let mut c = ctrl_c()?;
+    let mut brk = ctrl_break()?;
+    let mut close = ctrl_close()?;
+    let mut shutdown = ctrl_shutdown()?;
+    tokio::spawn(async move {
+        let name = tokio::select! {
+            _ = c.recv() => "CTRL_C",
+            _ = brk.recv() => "CTRL_BREAK",
+            _ = close.recv() => "CTRL_CLOSE",
+            _ = shutdown.recv() => "CTRL_SHUTDOWN",
         };
         tracing::info!(signal = name, "shutting down");
         trigger.fire();
