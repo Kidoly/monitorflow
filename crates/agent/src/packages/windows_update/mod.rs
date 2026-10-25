@@ -11,6 +11,8 @@
 //! holds the agent's side; the COM calls and the pipe itself are in
 //! `wua` and `pipe`, Windows only.
 
+pub mod client;
+
 use monitorflow_common::command::valid_windows_update_name;
 use monitorflow_common::proto::v1::{ApplyUpdates, Package};
 use serde::de::DeserializeOwned;
