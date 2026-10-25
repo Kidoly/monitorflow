@@ -12,6 +12,12 @@
 #
 # Run: MONITORFLOW_DOMAIN=monitor.example.com caddy run --config deploy/caddy/Caddyfile
 
+{
+	# Clients connecting to an IP address send no SNI: give them the site's
+	# certificate, which Caddy could not pick otherwise.
+	default_sni {$MONITORFLOW_DOMAIN:localhost}
+}
+
 {$MONITORFLOW_DOMAIN:localhost} {
 	encode zstd gzip
 

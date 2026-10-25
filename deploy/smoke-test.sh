@@ -6,7 +6,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-export DOMAIN=localhost SERVER_NAMES=localhost
+# An IP address as DOMAIN: clients send no SNI to it, the harder case.
+export DOMAIN=127.0.0.1 SERVER_NAMES=localhost
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
 export POSTGRES_PASSWORD
 export HTTPS_PORT=18443 HTTP_PORT=18080 GRPC_PORT=17443 ENROLL_PORT=17445
@@ -43,8 +44,8 @@ not_published() {
     ! grep -q HostPort <<<"$ports"
 }
 
-check "API ready behind Caddy" curl -fsk "https://localhost:$HTTPS_PORT/api/health/ready"
-check "web interface served" curl -fsk -o /dev/null "https://localhost:$HTTPS_PORT/"
+check "API ready behind Caddy" curl -fsk "https://127.0.0.1:$HTTPS_PORT/api/health/ready"
+check "web interface served" curl -fsk -o /dev/null "https://127.0.0.1:$HTTPS_PORT/"
 check "enrollment listener: certificate" cert_names_localhost "$ENROLL_PORT"
 check "gRPC listener: certificate" cert_names_localhost "$GRPC_PORT"
 check "database connections use TLS" db_link_uses_tls
