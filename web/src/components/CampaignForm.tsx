@@ -214,13 +214,13 @@ export function CampaignForm({ me }: { me: Me }) {
           </div>
           {draft.update === "packages" && (
             <label className={own.fld}>
-              Packages
+              Packages, or KB numbers for Windows servers
               <textarea
                 className={own.textarea}
                 value={draft.packages}
                 onChange={(e) => set({ packages: e.target.value })}
                 rows={2}
-                placeholder="openssl libssl3"
+                placeholder="openssl libssl3 or KB5034441"
               />
             </label>
           )}

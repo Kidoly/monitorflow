@@ -34,6 +34,14 @@ pub struct PackageView {
     pub version: String,
     /// `null` when no upgrade is available.
     pub upgradable_version: Option<String>,
+    /// Windows updates only (ADR-0049), `null` for Linux packages.
+    pub title: Option<String>,
+    pub classification: Option<String>,
+    pub severity: Option<String>,
+    pub size_bytes: Option<i64>,
+    /// A Windows update that may need a restart (pending) or waits for one
+    /// (installed); always false for Linux packages.
+    pub reboot_required: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -68,7 +76,9 @@ pub async fn list(
         params.cursor.as_deref().map(decode_cursor).transpose()?;
     let (after_name, after_arch) = after.unzip();
     let mut packages: Vec<PackageView> = sqlx::query_as(
-        "SELECT name, arch, version, upgradable_version FROM server_packages
+        "SELECT name, arch, version, upgradable_version, title, classification, severity,
+             size_bytes, reboot_required
+         FROM server_packages
          WHERE server_id = $1
            AND (NOT $2 OR upgradable_version IS NOT NULL)
            AND ($3::text IS NULL OR (name, arch) > ($3, $4))

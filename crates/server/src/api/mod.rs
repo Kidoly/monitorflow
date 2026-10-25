@@ -269,7 +269,8 @@
 //! `{"kind": "apply_updates", "packages"?, "security_only"?,
 //! "allow_reboot"?, "ttl_s"?}`: `packages` empty or absent upgrades
 //! everything, names are letters, digits and `.+_:-` not starting with
-//! `-`; `ttl_s` (60 s to 7 days, default one hour) is how long the agent
+//! `-`, and for a Windows server KB numbers (`KB5034441`) or update IDs
+//! (ADR-0049); `ttl_s` (60 s to 7 days, default one hour) is how long the agent
 //! may still start it. It needs an administrator role on the server's
 //! customer, as revocation does (ADR-0029); a revoked server is 409. The
 //! command is queued, sent as soon as the agent is connected and has no
@@ -283,8 +284,11 @@
 //!
 //! `GET /api/servers/{id}/packages` returns `{"reboot_required",
 //! "reported_at", "packages": [{"name", "arch", "version",
-//! "upgradable_version"}], "next_cursor"}` from the latest report, by name
-//! and architecture; `upgradable=true` keeps packages with an upgrade,
+//! "upgradable_version", "title", "classification", "severity",
+//! "size_bytes", "reboot_required"}], "next_cursor"}` from the latest
+//! report, by name and architecture; the four fields after
+//! `upgradable_version` are `null` and `reboot_required` false except for
+//! Windows updates (ADR-0049); `upgradable=true` keeps packages with an upgrade,
 //! `limit` is 1 to 5000 (default 500). `reboot_required` and
 //! `reported_at` are `null` until the agent reported.
 //!

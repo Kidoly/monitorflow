@@ -311,6 +311,7 @@ db_tests! {
             version: "2.36-9".into(),
             arch: "amd64".into(),
             upgradable_version: "2.36-9+deb12u4".into(),
+            ..Package::default()
         };
         s.reports.send_replace(Some(PackageReport {
             packages: vec![package],

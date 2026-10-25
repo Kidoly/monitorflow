@@ -1,7 +1,7 @@
 # ADR-0047: Windows agent
 
 Date: 2026-10-29
-Status: accepted
+Status: accepted; Windows Update and its privileged component in ADR-0049
 
 ## Context
 
