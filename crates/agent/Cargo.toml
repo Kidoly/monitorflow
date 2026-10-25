@@ -38,6 +38,9 @@ rustix = { workspace = true, features = ["process"] }
 # Service control manager and OS version (ADR-0047).
 windows-service.workspace = true
 windows-registry.workspace = true
+# Windows Update calls and the update service's pipe (ADR-0049).
+windows.workspace = true
+windows-sys.workspace = true
 
 [dev-dependencies]
 rcgen.workspace = true

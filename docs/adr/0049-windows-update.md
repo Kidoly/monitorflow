@@ -60,7 +60,7 @@ SYSTEM has full access, and the agent's service SID may read and write. Administ
 | --- | --- |
 | `{"op": "scan"}` | `{"updates": {"updates": [Update], "reboot_required": bool}}` |
 | `{"op": "status"}` | `{"status": {"reboot_required": bool}}` |
-| `{"op": "install", "kind": "all" \| "security" \| "named", "updates": [name]}` | `{"installed": {"results": [Result], "reboot_required": bool}}` |
+| `{"op": "install", "kind": "all" \| "security" \| "named", "updates": [name]}` | `{"installed": {"results": [Result], "not_pending": [name], "reboot_required": bool}}` |
 | `{"op": "reboot"}` | `{"rebooting": null}` |
 | any, on failure | `{"error": "…"}` |
 
