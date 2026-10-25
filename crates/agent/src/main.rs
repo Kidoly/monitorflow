@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 use monitorflow_agent::backoff::Backoff;
 use monitorflow_agent::commands::{self, Dispatcher, DispatcherSettings, Handlers, Journal};
 use monitorflow_agent::enroll::{self, EnrollError};
+use monitorflow_agent::init_config;
 use monitorflow_agent::os::HostInfo;
 use monitorflow_agent::renew::{Renewal, RenewalSettings};
 use monitorflow_agent::sensor_config::{self, Builtin, ConfigFile};
@@ -50,6 +51,17 @@ enum Command {
     /// control manager starts the agent this way (ADR-0047).
     #[cfg(windows)]
     Service,
+    /// Write the configuration file `--config` with these keys, unless it
+    /// already exists; the MSI package runs this (ADR-0050). Empty values
+    /// count as unset.
+    InitConfig {
+        #[arg(long)]
+        upstream_url: String,
+        #[arg(long, default_value = "")]
+        enroll_url: String,
+        #[arg(long, default_value = "")]
+        enrollment_token: String,
+    },
 }
 
 #[cfg(unix)]
@@ -130,6 +142,24 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
         Some(Command::Packages(PackagesCommand::Update)) => return packages_update().await,
         #[cfg(windows)]
         Some(Command::Service) => unreachable!("started before the runtime"),
+        Some(Command::InitConfig {
+            upstream_url,
+            enroll_url,
+            enrollment_token,
+        }) => {
+            let settings =
+                init_config::Settings::from_args(upstream_url, enroll_url, enrollment_token);
+            let path = cli.config.clone();
+            let outcome =
+                tokio::task::spawn_blocking(move || init_config::write_new(&path, &settings))
+                    .await??;
+            let done = match outcome {
+                init_config::Outcome::Written => "wrote",
+                init_config::Outcome::Kept => "kept the existing",
+            };
+            println!("{done} {}", cli.config.display());
+            return Ok(());
+        }
         None => {}
     }
     let config = load(&cli.config, Logs::Stdout)?;
@@ -417,7 +447,8 @@ async fn probe(
 /// The Windows service (ADR-0047): reports `Running`, fires the shutdown
 /// on `Stop`, `Shutdown` or `Preshutdown`, and reports `Stopped` with exit
 /// code 1 when the agent ended with an error, which the service control
-/// manager logs to the System event log.
+/// manager logs to the System event log. The error itself goes to the
+/// Application event log (ADR-0050).
 #[cfg(windows)]
 mod service {
     use std::ffi::OsString;
@@ -425,7 +456,7 @@ mod service {
     use std::sync::OnceLock;
     use std::time::Duration;
 
-    use monitorflow_agent::shutdown;
+    use monitorflow_agent::{eventlog, shutdown};
     use windows_service::service::{
         ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
         ServiceType,
@@ -458,9 +489,10 @@ mod service {
 
     fn service_main(_arguments: Vec<OsString>) {
         if let Err(error) = serve() {
-            // Logs may not be set up yet; the exit code reaches the
-            // event log.
-            tracing::error!(error = format!("{error:#}"), "the agent service stopped");
+            // Logs may not be set up yet; the event log has the error.
+            let error = format!("{error:#}");
+            tracing::error!(%error, "the agent service stopped");
+            eventlog::report_error(&format!("The MonitorFlow agent service stopped: {error}"));
         }
     }
 
@@ -515,7 +547,9 @@ mod service {
             Err(_) => ServiceExitCode::ServiceSpecific(1),
         };
         if let Err(error) = &result {
-            tracing::error!(error = format!("{error:#}"), "the agent failed");
+            let error = format!("{error:#}");
+            tracing::error!(%error, "the agent failed");
+            eventlog::report_error(&format!("The MonitorFlow agent failed: {error}"));
         }
         handle.set_service_status(status(ServiceState::Stopped, exit_code, Duration::ZERO))?;
         Ok(())

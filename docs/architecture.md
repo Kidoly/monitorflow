@@ -262,6 +262,7 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Peer identity | Role and ID in a `monitorflow://<role>/<id>` URI SAN; relays speak only for agents of their site |
 | Web API transport | Plain HTTP on loopback behind a TLS reverse proxy; server-side sessions (ADR-0006) |
 | Sensor scheduling | One task per sensor, jittered first tick, timeout within the interval, missed ticks skipped, full channel drops new samples (ADR-0012) |
+| Windows packaging | WiX v5 MSI: per-machine, service under its virtual account with restart actions, protected ACLs by SID on `%ProgramData%\MonitorFlow`; `agent.toml` written from `UPSTREAM_URL` and a hidden `ENROLLMENT_TOKEN` by `monitorflow-agent init-config` only when absent; data kept on upgrade and uninstall unless `REMOVE_DATA=1`; an Event Log source for the service's fatal error; `AgentHelpers` component group for ADR-0049 (ADR-0050) |
 | Windows sensors | Same kinds where the measure is the same; `windows_service` and `eventlog` as Windows kinds; agents refuse other platforms' kinds (ADR-0048) |
 | Sensor configuration | Built-in defaults, then site rows, then server rows in PostgreSQL; pushed after Hello and on revision change, polled every 10 s; agents acknowledge and persist it (ADR-0016) |
 | Threshold engine | Thresholds per metric with site and server layers over built-in defaults; per-severity timers on sample time with hysteresis; one open incident per series by partial unique index; state in `alert_states` reloaded at start (ADR-0017) |

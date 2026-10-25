@@ -35,9 +35,11 @@ base64.workspace = true
 rustix = { workspace = true, features = ["process"] }
 
 [target.'cfg(windows)'.dependencies]
-# Service control manager and OS version (ADR-0047).
+# Service control manager and OS version (ADR-0047); the service's
+# fatal error in the Event Log (ADR-0050).
 windows-service.workspace = true
 windows-registry.workspace = true
+windows-sys = { workspace = true, features = ["Win32_System_EventLog"] }
 
 [dev-dependencies]
 rcgen.workspace = true

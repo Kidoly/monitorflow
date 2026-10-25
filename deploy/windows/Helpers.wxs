@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Extension point of the MSI package (ADR-0050): components of other parts
+  of the agent, installed with the agent feature. The privileged Windows
+  Update component of ADR-0049 adds its binary, service and ACLs here, in
+  INSTALLFOLDER and with its own directories as needed.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <ComponentGroup Id="AgentHelpers" />
+  </Fragment>
+</Wix>

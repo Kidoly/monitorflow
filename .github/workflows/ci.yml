@@ -35,9 +35,9 @@ jobs:
       - run: cargo test --workspace
         env:
           DATABASE_URL: postgres://monitorflow:monitorflow@localhost:5432/monitorflow
-  # The Windows agent (ADR-0047): the agent and the crates it builds on.
-  # The server and relay are Unix only; tests that need them or
-  # PostgreSQL are compiled out on Windows.
+  # The Windows agent (ADR-0047): the agent and the crates it builds on,
+  # then its MSI package (ADR-0050). The server and relay are Unix only;
+  # tests that need them or PostgreSQL are compiled out on Windows.
   windows:
     runs-on: windows-latest
     env:
@@ -51,10 +51,37 @@ jobs:
       - run: cargo clippy -p monitorflow-agent -p monitorflow-sensors -p monitorflow-common --all-targets -- -D warnings
       - run: cargo test --no-fail-fast -p monitorflow-agent -p monitorflow-sensors -p monitorflow-common
       - run: cargo build --release -p monitorflow-agent
+      # The MSI package (ADR-0050), and a second one with a higher version
+      # to test upgrades; the smoke test installs, upgrades and removes
+      # them on this runner.
+      - name: Build the MSI
+        shell: pwsh
+        run: |
+          deploy/windows/build-msi.ps1
+          deploy/windows/build-msi.ps1 -OutDir target\msi-upgrade -Version 255.0.0
+      - name: Smoke-test the MSI
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem target\msi\*.msi).FullName
+          deploy/windows/smoke-test.ps1 -Msi $msi -UpgradeMsi target\msi-upgrade\monitorflow-agent-255.0.0-x64.msi
+      - name: Upload the MSI logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-smoke-test-logs
+          path: |
+            ${{ runner.temp }}/monitorflow-msi
+            C:/ProgramData/MonitorFlow/agent/logs
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: monitorflow-agent-windows-x86_64
           path: target/release/monitorflow-agent.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monitorflow-agent-windows-x86_64-msi
+          path: target/msi/*.msi
           if-no-files-found: error
   web:
     runs-on: ubuntu-latest
