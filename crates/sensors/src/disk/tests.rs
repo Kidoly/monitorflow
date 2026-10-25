@@ -84,13 +84,19 @@ fn params_are_checked() {
         crate::registry::build("disk", &map).map(|_| ())
     };
     assert!(build(&[("fstypes_include", "tmpfs"), ("mounts_exclude", "/a,/b")]).is_ok());
-    assert!(matches!(
-        build(&[("mounts_exclude", "relative")]),
-        Err(BuildError::BadParam {
-            name: "mounts_exclude",
-            ..
-        })
-    ));
+    assert!(build(&[("mounts_exclude", "D:,e:\\data")]).is_ok());
+    for bad in ["relative", "D", ":\\", "D:data", "1:\\"] {
+        assert!(
+            matches!(
+                build(&[("mounts_exclude", bad)]),
+                Err(BuildError::BadParam {
+                    name: "mounts_exclude",
+                    ..
+                })
+            ),
+            "{bad}"
+        );
+    }
     assert!(build(&[("fstypes_exclude", "")]).is_err());
     assert!(build(&[("fstype_include", "tmpfs")]).is_err());
 }

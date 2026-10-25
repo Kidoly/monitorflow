@@ -49,9 +49,10 @@ data_dir = 'C:\ProgramData\MonitorFlow\agent'
 # Directory of the scripts the `script` sensor may run.
 script_dir = 'C:\ProgramData\MonitorFlow\scripts.d'
 
-# Directories the `log` sensor may read files under. Windows has no common
-# log directory, so the log sensor is off until directories are listed here.
-# log_dirs = []
+# Event Log channels the `eventlog` sensor may read (ADR-0048). Match
+# counts of `Security` reveal logon activity; add it deliberately. An empty
+# list disables the sensor. The `log` sensor does not run on Windows.
+# event_channels = ["Application", "System"]
 
 [commands]
 # Ignored on Windows: `shell` commands are refused, because the server's

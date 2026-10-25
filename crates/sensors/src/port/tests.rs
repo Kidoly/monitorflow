@@ -122,17 +122,15 @@ async fn ipv6_when_the_host_has_it() {
 }
 
 #[tokio::test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows retries a refused connect for about 2 s, so a refused ::1 takes the whole deadline; left to the Windows sensors task"
-)]
 async fn localhost_is_resolved() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let sensor = PortSensor::new(Host::Name("localhost".into()), port);
     // localhost may resolve to ::1 first, where nothing listens: the next
-    // address is tried.
-    let samples = sensor.collect(in_ms(2000)).await.unwrap();
+    // address is tried. Windows takes about 2 s to report the refusal, as
+    // it retries the SYN after a reset (ADR-0048).
+    let deadline = in_ms(if cfg!(windows) { 6000 } else { 2000 });
+    let samples = sensor.collect(deadline).await.unwrap();
     assert_eq!(values(&samples)["up"], 1.0);
     assert!(!sensor.resolving.load(Ordering::SeqCst));
 }

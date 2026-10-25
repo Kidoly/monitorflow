@@ -18,6 +18,10 @@
 //! still running is skipped until it returns, so a hung mount holds one
 //! thread, not one per tick.
 //!
+//! On Windows, fixed volumes with a drive letter are reported instead,
+//! with `GetDiskFreeSpaceExW` and no inodes; see [`windows`](self) and
+//! ADR-0048.
+//!
 //! TODO: I/O counters from `/proc/diskstats`.
 
 use std::collections::{BTreeSet, HashSet};
@@ -29,10 +33,13 @@ use tokio::time::{timeout_at, Instant};
 
 use crate::procfs;
 use crate::registry::{BuildError, Params};
-use crate::{Sample, Sensor, SensorError};
+#[cfg(any(unix, test))]
+use crate::Sensor;
+use crate::{Sample, SensorError};
 
 const MOUNTINFO: &str = "/proc/self/mountinfo";
 /// Thousands of mounts on a busy container host still fit.
+#[cfg(unix)]
 const MOUNTINFO_CAP: usize = 4 << 20;
 /// Time kept before the deadline to return the samples gathered so far.
 const MARGIN: Duration = Duration::from_millis(200);
@@ -193,6 +200,7 @@ pub struct Usage {
     pub inodes_free: u64,
 }
 
+#[cfg(unix)]
 impl From<rustix::fs::StatVfs> for Usage {
     fn from(s: rustix::fs::StatVfs) -> Self {
         let bytes = |blocks: u64| blocks.saturating_mul(s.f_frsize);
@@ -271,7 +279,15 @@ impl DiskSensor {
         let include = params.list("fstypes_include")?.unwrap_or_default();
         let exclude = params.list("fstypes_exclude")?.unwrap_or_default();
         let mounts = params.list("mounts_exclude")?.unwrap_or_default();
-        if mounts.iter().any(|m| !m.starts_with('/')) {
+        // Windows agents get the same configuration: `D:` or `D:\` too.
+        let drive = |m: &str| {
+            let b = m.as_bytes();
+            b.len() >= 2
+                && b[0].is_ascii_alphabetic()
+                && b[1] == b':'
+                && b.get(2).is_none_or(|c| *c == b'\\')
+        };
+        if mounts.iter().any(|m| !m.starts_with('/') && !drive(m)) {
             return Err(params.bad("mounts_exclude", "must list absolute paths"));
         }
         Ok(Self::new(Filter::new(&include, &exclude, &mounts)))
@@ -332,10 +348,12 @@ impl DiskSensor {
     }
 }
 
+#[cfg(unix)]
 fn statvfs(path: &str) -> std::io::Result<Usage> {
     Ok(rustix::fs::statvfs(path)?.into())
 }
 
+#[cfg(unix)]
 #[async_trait::async_trait]
 impl Sensor for DiskSensor {
     async fn collect(&self, deadline: Instant) -> Result<Vec<Sample>, SensorError> {
@@ -346,6 +364,9 @@ impl Sensor for DiskSensor {
         Ok(self.stat_all(mounts, deadline - margin, statvfs).await)
     }
 }
+
+#[cfg(windows)]
+mod windows;
 
 #[cfg(test)]
 mod tests;

@@ -7,38 +7,39 @@
 //! Names and labels are checked by [`validate`] because they become
 //! VictoriaMetrics label names and values on the server. See ADR-0012.
 //!
-//! The built-in sensors ([`cpu`], [`memory`], [`disk`], [`systemd`],
-//! [`port`], [`script`], [`log`]) are built by kind with [`registry::build`].
-//! One sensor emits several metrics by setting [`Sample::sensor`] to a
-//! metric suffix, which the scheduler prefixes with the configured name
-//! ([`metric_name`]). See ADR-0015.
+//! The built-in sensors ([`cpu`], [`memory`], [`disk`], `systemd`,
+//! [`windows_service`], [`port`], [`script`], `log`, [`eventlog`]) are
+//! built by kind with [`registry::build`]. One sensor emits several
+//! metrics by setting [`Sample::sensor`] to a metric suffix, which the
+//! scheduler prefixes with the configured name ([`metric_name`]). See
+//! ADR-0015. `cpu`, `memory`, `disk` and `script` read Win32 APIs on
+//! Windows; `systemd` and `log` are Unix only, `eventlog` and
+//! `windows_service` Windows only (ADR-0048).
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// Linux implementations; on Windows `registry` refuses these kinds until
-// they have their own (ADR-0047).
-#[cfg(unix)]
 pub mod cpu;
-#[cfg(unix)]
 pub mod disk;
+pub mod eventlog;
 #[cfg(unix)]
 pub mod log;
-#[cfg(unix)]
 pub mod memory;
+mod pattern;
 pub mod port;
-#[cfg(unix)]
 mod procfs;
 pub mod registry;
 pub mod scheduler;
-#[cfg(unix)]
 pub mod script;
 #[cfg(unix)]
 pub mod systemd;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod validate;
+#[cfg(windows)]
+mod win;
+pub mod windows_service;
 
 pub use registry::BuildError;
 pub use scheduler::{Scheduler, SchedulerHandle, SchedulerOptions, Stats};

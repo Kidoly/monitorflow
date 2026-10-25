@@ -105,7 +105,7 @@ Enroll and run the agent through the service only. Started from an elevated cons
 | Feature | State |
 | --- | --- |
 | Enrollment, certificate renewal, stream, inventory | As on Linux; `os_family` is `windows`, the version comes from the registry, like `Windows Server 2022 Datacenter 21H2 build 20348.2849` |
-| Sensors | `port`. The other kinds are refused with "not available on this platform" in the agent's configuration acknowledgement, until the Windows sensors task |
+| Sensors | `cpu`, `memory`, `disk`, `port`, `script` (PowerShell or a program), `windows_service` and `eventlog` (ADR-0048). `systemd` and `log` are refused as "not supported on this platform" in the agent's configuration acknowledgement |
 | `apply_updates`, `configure_sources`, `revert_sources` | Refused with "package updates are not supported on Windows yet" ("package sources …" for the source commands). Leave Windows servers out of update campaigns |
 | `shell` (AI remediation) | Refused even with `commands.shell = true`: the server's risk rules assume `/bin/sh` (ADR-0047), so a remediation on a Windows server escalates at its first command |
 

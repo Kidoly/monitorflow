@@ -15,6 +15,7 @@ fn agent_defaults_live_under_program_data() {
     assert_eq!(agent.tls_paths().key, base.join(r"agent\tls\key.pem"));
     assert_eq!(agent.sensors.script_dir, base.join("scripts.d"));
     assert!(agent.sensors.log_dirs.is_empty());
+    assert_eq!(agent.sensors.event_channels, ["Application", "System"]);
 }
 
 #[test]

@@ -19,21 +19,37 @@
 //! The script runs without a shell, with an empty environment apart from
 //! `PATH` and `LC_ALL=C`, in `/`, in its own process group, which is
 //! killed at the deadline and after every run.
+//!
+//! On Windows the script is a PowerShell script or a program, the checks
+//! read its owner and access list, and a job object replaces the process
+//! group; see [`windows`](self) and ADR-0048.
 
 use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
 use std::path::{Path, PathBuf};
-use std::process::{ExitStatus, Stdio};
+use std::process::ExitStatus;
+#[cfg(unix)]
+use std::process::Stdio;
 use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 use tokio::time::{timeout_at, Instant};
 
-use crate::registry::{BuildError, Local, Params};
-use crate::{validate, Sample, Sensor, SensorError};
+#[cfg(unix)]
+use crate::registry::Local;
+use crate::registry::{BuildError, Params};
+#[cfg(unix)]
+use crate::Sensor;
+use crate::{validate, Sample, SensorError};
 
 /// Default [`Local::script_dir`].
+#[cfg(unix)]
 pub const DEFAULT_DIR: &str = "/etc/monitorflow/scripts.d";
+/// Default [`Local::script_dir`].
+#[cfg(windows)]
+pub const DEFAULT_DIR: &str = r"C:\ProgramData\MonitorFlow\scripts.d";
 /// Most bytes of standard output read; a script writing more is UNKNOWN.
 pub const MAX_OUTPUT: usize = 64 * 1024;
 /// Most perfdata gauges per run; later lines are ignored.
@@ -50,6 +66,7 @@ const OWN_METRICS: [&str; 2] = ["status", "duration_seconds"];
 /// cancelled with nothing, which could not alert.
 const MARGIN: Duration = Duration::from_millis(200);
 /// The only environment, with `LC_ALL=C`.
+#[cfg(unix)]
 const PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 /// A file name of `[A-Za-z0-9_.-]`, not starting with `.` or `-`: no path
@@ -99,6 +116,7 @@ fn shown(text: &str) -> String {
 /// directory must be owned by one of `owners` and not writable by group
 /// or other; the file must be a regular executable starting with `#!` or
 /// an ELF header, so nothing falls back to a shell.
+#[cfg(unix)]
 pub fn check(dir: &Path, name: &str, owners: &[u32]) -> Result<PathBuf, String> {
     script_name(name)?;
     check_dir(dir, owners)?;
@@ -136,6 +154,7 @@ pub fn check(dir: &Path, name: &str, owners: &[u32]) -> Result<PathBuf, String> 
     Ok(path)
 }
 
+#[cfg(unix)]
 fn check_dir(dir: &Path, owners: &[u32]) -> Result<(), String> {
     let meta =
         std::fs::metadata(dir).map_err(|e| format!("script directory {}: {e}", dir.display()))?;
@@ -190,8 +209,10 @@ pub fn status(exit: ExitStatus) -> f64 {
 /// Kills a process group when dropped: at the deadline, when the
 /// scheduler cancels the collection, and after a normal exit, so nothing
 /// the script started in the background outlives the run.
+#[cfg(unix)]
 struct Group(Option<rustix::process::Pid>);
 
+#[cfg(unix)]
 impl Drop for Group {
     fn drop(&mut self) {
         if let Some(pid) = self.0 {
@@ -201,6 +222,90 @@ impl Drop for Group {
     }
 }
 
+/// The `script` and `args` parameters, checked.
+fn parse_params(params: &mut Params<'_>) -> Result<(String, Vec<String>), BuildError> {
+    let Some(script) = params.get("script") else {
+        return Err(params.bad("script", "is required"));
+    };
+    script_name(script).map_err(|reason| params.bad("script", reason))?;
+    let args = params.list("args")?.unwrap_or_default();
+    if args.len() > MAX_ARGS {
+        return Err(params.bad("args", format!("may list at most {MAX_ARGS} arguments")));
+    }
+    for arg in &args {
+        script_arg(arg).map_err(|reason| params.bad("args", reason))?;
+    }
+    Ok((script.to_owned(), args))
+}
+
+/// A spawn error: permanent when the file vanished or cannot be run (a
+/// `noexec` mount), transient otherwise.
+fn spawn_error(script: &str, e: io::Error) -> SensorError {
+    let message = format!("cannot run script `{script}`: {e}");
+    match e.kind() {
+        io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied => {
+            SensorError::Permanent(message)
+        }
+        _ => SensorError::Transient(message),
+    }
+}
+
+/// Reads the output of `child` and waits for its exit until `cutoff`:
+/// `None` when it timed out or wrote too much.
+async fn wait(
+    child: &mut tokio::process::Child,
+    script: &str,
+    cutoff: Instant,
+) -> Result<Option<(ExitStatus, Vec<u8>)>, SensorError> {
+    let mut stdout = child.stdout.take().expect("stdout is piped");
+    let run = async {
+        let mut output = Vec::new();
+        (&mut stdout)
+            .take(MAX_OUTPUT as u64 + 1)
+            .read_to_end(&mut output)
+            .await?;
+        if output.len() > MAX_OUTPUT {
+            return Ok(None);
+        }
+        Ok::<_, io::Error>(Some((child.wait().await?, output)))
+    };
+    match timeout_at(cutoff, run).await {
+        Ok(Ok(Some(done))) => Ok(Some(done)),
+        Ok(Ok(None)) => {
+            tracing::debug!(script = %script, "output over {MAX_OUTPUT} bytes");
+            Ok(None)
+        }
+        Ok(Err(e)) => Err(SensorError::Transient(format!("script `{script}`: {e}"))),
+        Err(_) => {
+            tracing::debug!(script = %script, "timed out");
+            Ok(None)
+        }
+    }
+}
+
+/// The samples of a run of `script` that started at `started`.
+fn report(script: &str, started: Instant, outcome: Option<(ExitStatus, Vec<u8>)>) -> Vec<Sample> {
+    let sample =
+        |metric: &str, value: f64| Sample::metric(metric, value).with_label("script", script);
+    let mut samples = vec![
+        sample(
+            "status",
+            outcome.as_ref().map_or(UNKNOWN, |(exit, _)| status(*exit)),
+        ),
+        sample("duration_seconds", started.elapsed().as_secs_f64()),
+    ];
+    if let Some((_, output)) = outcome {
+        let output = String::from_utf8_lossy(&output);
+        samples.extend(
+            parse_perfdata(&output)
+                .into_iter()
+                .map(|(n, v)| sample(&n, v)),
+        );
+    }
+    samples
+}
+
+#[cfg(unix)]
 #[derive(Debug)]
 pub struct ScriptSensor {
     script: String,
@@ -210,6 +315,7 @@ pub struct ScriptSensor {
     owners: Vec<u32>,
 }
 
+#[cfg(unix)]
 impl ScriptSensor {
     /// Runs `script` from `dir` with `args`, all already checked, when it
     /// is owned by one of `owners`.
@@ -226,20 +332,10 @@ impl ScriptSensor {
         params: &mut Params<'_>,
         local: Option<&Local>,
     ) -> Result<Self, BuildError> {
-        let Some(script) = params.get("script") else {
-            return Err(params.bad("script", "is required"));
-        };
-        script_name(script).map_err(|reason| params.bad("script", reason))?;
-        let args = params.list("args")?.unwrap_or_default();
-        if args.len() > MAX_ARGS {
-            return Err(params.bad("args", format!("may list at most {MAX_ARGS} arguments")));
-        }
-        for arg in &args {
-            script_arg(arg).map_err(|reason| params.bad("args", reason))?;
-        }
+        let (script, args) = parse_params(params)?;
         let owners = vec![0, rustix::process::geteuid().as_raw()];
         let dir = local.map_or_else(|| DEFAULT_DIR.into(), |l| l.script_dir.clone());
-        let sensor = Self::new(script.to_owned(), args, dir, owners);
+        let sensor = Self::new(script, args, dir, owners);
         if local.is_some() {
             check(&sensor.dir, &sensor.script, &sensor.owners)
                 .map_err(|reason| params.refused(reason))?;
@@ -266,51 +362,18 @@ impl ScriptSensor {
             .process_group(0)
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| {
-                let message = format!("cannot run script `{}`: {e}", self.script);
-                match e.kind() {
-                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied => {
-                        SensorError::Permanent(message)
-                    }
-                    _ => SensorError::Transient(message),
-                }
-            })?;
+            .map_err(|e| spawn_error(&self.script, e))?;
         // The child leads its own group, whose ID is its PID.
         let _group = Group(
             child
                 .id()
                 .and_then(|id| rustix::process::Pid::from_raw(id as i32)),
         );
-        let mut stdout = child.stdout.take().expect("stdout is piped");
-        let run = async {
-            let mut output = Vec::new();
-            (&mut stdout)
-                .take(MAX_OUTPUT as u64 + 1)
-                .read_to_end(&mut output)
-                .await?;
-            if output.len() > MAX_OUTPUT {
-                return Ok(None);
-            }
-            Ok::<_, io::Error>(Some((child.wait().await?, output)))
-        };
-        match timeout_at(cutoff, run).await {
-            Ok(Ok(Some(done))) => Ok(Some(done)),
-            Ok(Ok(None)) => {
-                tracing::debug!(script = %self.script, "output over {MAX_OUTPUT} bytes");
-                Ok(None)
-            }
-            Ok(Err(e)) => Err(SensorError::Transient(format!(
-                "script `{}`: {e}",
-                self.script
-            ))),
-            Err(_) => {
-                tracing::debug!(script = %self.script, "timed out");
-                Ok(None)
-            }
-        }
+        wait(&mut child, &self.script, cutoff).await
     }
 }
 
+#[cfg(unix)]
 #[async_trait::async_trait]
 impl Sensor for ScriptSensor {
     async fn collect(&self, deadline: Instant) -> Result<Vec<Sample>, SensorError> {
@@ -319,27 +382,14 @@ impl Sensor for ScriptSensor {
         // A few stats of a local directory, like the /proc reads.
         let path = check(&self.dir, &self.script, &self.owners).map_err(SensorError::Permanent)?;
         let outcome = self.run(&path, cutoff).await?;
-        let sample = |metric: &str, value: f64| {
-            Sample::metric(metric, value).with_label("script", &self.script)
-        };
-        let mut samples = vec![
-            sample(
-                "status",
-                outcome.as_ref().map_or(UNKNOWN, |(exit, _)| status(*exit)),
-            ),
-            sample("duration_seconds", started.elapsed().as_secs_f64()),
-        ];
-        if let Some((_, output)) = outcome {
-            let output = String::from_utf8_lossy(&output);
-            samples.extend(
-                parse_perfdata(&output)
-                    .into_iter()
-                    .map(|(n, v)| sample(&n, v)),
-            );
-        }
-        Ok(samples)
+        Ok(report(&self.script, started, outcome))
     }
 }
 
-#[cfg(test)]
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub use windows::ScriptSensor;
+
+#[cfg(all(test, unix))]
 mod tests;

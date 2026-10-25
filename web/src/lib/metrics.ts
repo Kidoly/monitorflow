@@ -40,15 +40,15 @@ export const DEFAULT_INTERVAL_S = 60;
 /**
  * How a long range summarizes `metric` per step (ADR-0020): the worst value
  * of the step. Headroom and health (`available`, `free`, `_up`, `_active`,
- * `_loaded`) take the minimum, so a dip or an outage shows; usage and
+ * `_loaded`, `_installed`) take the minimum, so a dip or an outage shows; usage and
  * pressure (ratios, used bytes, load, durations, statuses, failures,
  * matches, lag, restarts) take the maximum, so a spike shows. Sizes and
  * custom gauges of unknown meaning take the average.
  */
 export function rollupFor(metric: string): Rollup {
   const short = shortMetric(metric);
-  if (/available|free|_(up|active|loaded)$/.test(short)) return "min";
-  if (/(_ratio|_used_bytes|_seconds|_status|_failed|_matches|_lag_bytes|_restarts)$|^cpu_load/.test(short)) {
+  if (/available|free|_(up|active|loaded|installed)$/.test(short)) return "min";
+  if (/(_ratio|_used_bytes|_seconds|_status|_failed|_matches|_lag_bytes|_lag_events|_restarts)$|^cpu_load/.test(short)) {
     return "max";
   }
   return "avg";

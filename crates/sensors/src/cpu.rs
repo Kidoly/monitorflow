@@ -9,18 +9,25 @@
 //! A core that appears (hotplug) is primed on its first collection, one
 //! that disappears is forgotten. A counter that went backwards (a reset)
 //! skips that core for one round and primes it again.
+//!
+//! On Windows the counters come from Win32 and there is no load average,
+//! see [`windows`](self) and ADR-0048.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use crate::procfs::{self, field};
-use crate::{Sample, Sensor, SensorError};
+#[cfg(any(unix, test))]
+use crate::Sensor;
+use crate::{Sample, SensorError};
 
 const STAT: &str = "/proc/stat";
 const LOADAVG: &str = "/proc/loadavg";
 /// `/proc/stat` grows with cores and interrupts; a few hundred KiB on
 /// large hosts.
+#[cfg(unix)]
 const STAT_CAP: usize = 4 << 20;
+#[cfg(unix)]
 const LOADAVG_CAP: usize = 4 << 10;
 /// Instance of the all-cores usage.
 pub const TOTAL: &str = "total";
@@ -114,6 +121,15 @@ impl CpuSensor {
     /// Samples for one collection given the parsed files; keeps `stat` as
     /// the state for the next one.
     pub fn round(&self, stat: BTreeMap<String, CpuTimes>, load: [f64; 3]) -> Vec<Sample> {
+        let mut samples = self.usage_round(stat);
+        for (name, value) in ["load1", "load5", "load15"].into_iter().zip(load) {
+            samples.push(Sample::metric(name, value));
+        }
+        samples
+    }
+
+    /// The usage samples of [`Self::round`], without load averages.
+    fn usage_round(&self, stat: BTreeMap<String, CpuTimes>) -> Vec<Sample> {
         let mut samples = Vec::with_capacity(stat.len() + 3);
         // A panic while holding the lock cannot leave the map half-updated.
         let mut previous = self.previous.lock().unwrap_or_else(|e| e.into_inner());
@@ -129,13 +145,11 @@ impl CpuSensor {
             }
         }
         *previous = Some(stat);
-        for (name, value) in ["load1", "load5", "load15"].into_iter().zip(load) {
-            samples.push(Sample::metric(name, value));
-        }
         samples
     }
 }
 
+#[cfg(unix)]
 #[async_trait::async_trait]
 impl Sensor for CpuSensor {
     async fn collect(&self, _deadline: tokio::time::Instant) -> Result<Vec<Sample>, SensorError> {
@@ -144,6 +158,9 @@ impl Sensor for CpuSensor {
         Ok(self.round(stat, load))
     }
 }
+
+#[cfg(windows)]
+mod windows;
 
 #[cfg(test)]
 mod tests {

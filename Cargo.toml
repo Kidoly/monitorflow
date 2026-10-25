@@ -79,7 +79,8 @@ regex = "1"
 # of raw libc.
 rustix = { version = "1", features = ["fs", "time"] }
 # Windows agent (ADR-0047): ACLs of private files, the service control
-# manager, and the OS version from the registry.
+# manager, and the OS version from the registry; the Win32 APIs of the
+# Windows sensors (ADR-0048). The windows-sys version tokio uses.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
 windows-service = "0.8"
 windows-registry = "0.6"

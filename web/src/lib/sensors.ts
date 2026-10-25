@@ -12,8 +12,10 @@ const PRIMARY: Record<string, { suffix: string; instance?: string }> = {
   memory: { suffix: "available_ratio" },
   disk: { suffix: "used_ratio" },
   systemd: { suffix: "active" },
+  windows_service: { suffix: "active" },
   port: { suffix: "up" },
   log: { suffix: "matches" },
+  eventlog: { suffix: "matches" },
   script: { suffix: "status" },
 };
 
@@ -49,10 +51,12 @@ export function seriesTitle(sensor: EffectiveSensor | undefined, metric: string,
       case "disk":
         return `Disk used${shown ? ` ${shown}` : ""}`;
       case "systemd":
+      case "windows_service":
         return shown || sensor.name;
       case "port":
         return `Port ${shown || sensor.name}`;
       case "log":
+      case "eventlog":
       case "script":
         return sensor.name;
     }
@@ -67,6 +71,7 @@ export function formatSensorValue(metric: string, value: number | null | undefin
   if (short.endsWith("_active")) return value === 1 ? "active" : "inactive";
   if (short.endsWith("_up")) return value === 1 ? "open" : "closed";
   if (short.endsWith("_loaded")) return value === 1 ? "loaded" : "not loaded";
+  if (short.endsWith("_installed")) return value === 1 ? "installed" : "not installed";
   return formatValue(value, unitOf(metric));
 }
 
