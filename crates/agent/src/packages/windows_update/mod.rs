@@ -12,6 +12,10 @@
 //! `wua` and `pipe`, Windows only.
 
 pub mod client;
+#[cfg(windows)]
+pub mod pipe;
+#[cfg(windows)]
+pub mod wua;
 
 use monitorflow_common::command::valid_windows_update_name;
 use monitorflow_common::proto::v1::{ApplyUpdates, Package};

@@ -50,6 +50,11 @@ enum Command {
     /// control manager starts the agent this way (ADR-0047).
     #[cfg(windows)]
     Service,
+    /// Run as the Windows service `MonitorFlowUpdate` under LocalSystem,
+    /// installing Windows updates for the agent (ADR-0049); only the
+    /// service control manager starts it this way.
+    #[cfg(windows)]
+    UpdateService,
 }
 
 #[cfg(unix)]
@@ -108,8 +113,10 @@ fn main() -> anyhow::Result<()> {
     // The service dispatcher blocks this thread; the runtime starts in
     // the service's own thread.
     #[cfg(windows)]
-    if let Some(Command::Service) = cli.command {
-        return service::run(cli.config);
+    match cli.command {
+        Some(Command::Service) => return service::run(cli.config),
+        Some(Command::UpdateService) => return update_service::run(),
+        _ => {}
     }
     tokio::runtime::Runtime::new()?.block_on(console(cli))
 }
@@ -129,7 +136,9 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
         #[cfg(unix)]
         Some(Command::Packages(PackagesCommand::Update)) => return packages_update().await,
         #[cfg(windows)]
-        Some(Command::Service) => unreachable!("started before the runtime"),
+        Some(Command::Service | Command::UpdateService) => {
+            unreachable!("started before the runtime")
+        }
         None => {}
     }
     let config = load(&cli.config, Logs::Stdout)?;
@@ -261,32 +270,45 @@ fn platform_handlers(
     Some(latest_report)
 }
 
-/// No package reports yet; the package and `shell` commands are refused
-/// as unsupported (ADR-0047).
+/// Windows Update reports and `apply_updates` through the update service
+/// (ADR-0049); the source and `shell` commands are refused as unsupported
+/// (ADR-0047).
 #[cfg(windows)]
 fn platform_handlers(
     config: &AgentConfig,
     _host: &HostInfo,
     handlers: &mut Handlers,
-    _stop: &Shutdown,
+    stop: &Shutdown,
 ) -> Option<tokio::sync::watch::Receiver<Option<monitorflow_common::proto::v1::PackageReport>>> {
     use monitorflow_agent::commands::unsupported::Unsupported;
+    use monitorflow_agent::packages::windows_update::client::{
+        WindowsApplyHandler, WindowsUpdates,
+    };
+    use monitorflow_agent::packages::windows_update::{pipe::PipeClient, PIPE_NAME};
+    use monitorflow_agent::packages::Reports;
     use monitorflow_common::command;
 
+    let service = Arc::new(PipeClient::new(PIPE_NAME));
+    let (reports, latest_report) = Reports::new(Arc::new(WindowsUpdates::new(service.clone())));
+    let report_every = Duration::from_secs(config.packages.report_interval);
+    tokio::spawn(reports.clone().run(report_every, stop.clone()));
+    handlers.register(
+        command::APPLY_UPDATES,
+        Arc::new(WindowsApplyHandler::new(service, reports)),
+    );
     if config.commands.shell {
         tracing::warn!(
             "commands.shell is ignored: shell commands are not supported on Windows yet"
         );
     }
     for (kind, what) in [
-        (command::APPLY_UPDATES, "package updates"),
         (command::CONFIGURE_SOURCES, "package sources"),
         (command::REVERT_SOURCES, "package sources"),
         (command::SHELL, "shell commands"),
     ] {
         handlers.register(kind, Arc::new(Unsupported::new(what, "Windows")));
     }
-    None
+    Some(latest_report)
 }
 
 /// Prints the changed paths and the backup directory, one per line.
@@ -464,21 +486,14 @@ mod service {
         }
     }
 
-    fn serve() -> anyhow::Result<()> {
-        let (trigger, stop) = shutdown::channel();
-        let mut trigger = Some(trigger);
-        let handle = service_control_handler::register(NAME, move |control| match control {
-            ServiceControl::Stop | ServiceControl::Shutdown | ServiceControl::Preshutdown => {
-                if let Some(trigger) = trigger.take() {
-                    tracing::info!(?control, "service stop requested");
-                    trigger.fire();
-                }
-                ServiceControlHandlerResult::NoError
-            }
-            ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-            _ => ServiceControlHandlerResult::NotImplemented,
-        })?;
-        let status = |state, exit_code, wait_hint| ServiceStatus {
+    /// A service's status for the control manager; only a running
+    /// service accepts stop and shutdown.
+    pub fn status(
+        state: ServiceState,
+        exit_code: ServiceExitCode,
+        wait_hint: Duration,
+    ) -> ServiceStatus {
+        ServiceStatus {
             service_type: ServiceType::OWN_PROCESS,
             current_state: state,
             controls_accepted: match state {
@@ -491,7 +506,35 @@ mod service {
             checkpoint: 0,
             wait_hint,
             process_id: None,
-        };
+        }
+    }
+
+    /// Registers the control handler of the service `name`: stop,
+    /// shutdown and preshutdown fire the returned trigger's shutdown.
+    pub fn register(
+        name: &str,
+    ) -> anyhow::Result<(
+        service_control_handler::ServiceStatusHandle,
+        shutdown::Shutdown,
+    )> {
+        let (trigger, stop) = shutdown::channel();
+        let mut trigger = Some(trigger);
+        let handle = service_control_handler::register(name, move |control| match control {
+            ServiceControl::Stop | ServiceControl::Shutdown | ServiceControl::Preshutdown => {
+                if let Some(trigger) = trigger.take() {
+                    tracing::info!(?control, "service stop requested");
+                    trigger.fire();
+                }
+                ServiceControlHandlerResult::NoError
+            }
+            ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+            _ => ServiceControlHandlerResult::NotImplemented,
+        })?;
+        Ok((handle, stop))
+    }
+
+    fn serve() -> anyhow::Result<()> {
+        let (handle, stop) = register(NAME)?;
         let ok = ServiceExitCode::Win32(0);
         handle.set_service_status(status(ServiceState::Running, ok, Duration::ZERO))?;
 
@@ -517,6 +560,76 @@ mod service {
         if let Err(error) = &result {
             tracing::error!(error = format!("{error:#}"), "the agent failed");
         }
+        handle.set_service_status(status(ServiceState::Stopped, exit_code, Duration::ZERO))?;
+        Ok(())
+    }
+}
+
+/// The update service (ADR-0049): `MonitorFlowUpdate`, as LocalSystem,
+/// serves the agent's Windows Update requests on its pipe until stopped.
+/// It reads no configuration and logs to
+/// `%ProgramData%\MonitorFlow\update\update.log`.
+#[cfg(windows)]
+mod update_service {
+    use std::ffi::OsString;
+    use std::time::Duration;
+
+    use monitorflow_agent::packages::windows_update::{
+        pipe, pipe_sddl, service_sid, wua, AGENT_SERVICE, PIPE_NAME, SERVICE_NAME,
+    };
+    use monitorflow_common::config::{self, LogConfig};
+    use monitorflow_common::logging;
+    use windows_service::service::{ServiceExitCode, ServiceState};
+    use windows_service::{define_windows_service, service_dispatcher};
+
+    use super::service::{register, status};
+
+    /// How long a stop may take: an install in progress is not waited for.
+    const STOP_WAIT: Duration = Duration::from_secs(10);
+
+    define_windows_service!(ffi_update_main, update_main);
+
+    /// Blocks until the service stops.
+    pub fn run() -> anyhow::Result<()> {
+        service_dispatcher::start(SERVICE_NAME, ffi_update_main).map_err(|error| {
+            anyhow::anyhow!("{error}: `update-service` only runs under the service control manager")
+        })
+    }
+
+    fn update_main(_arguments: Vec<OsString>) {
+        if let Err(error) = serve() {
+            tracing::error!(error = format!("{error:#}"), "the update service stopped");
+        }
+    }
+
+    fn serve() -> anyhow::Result<()> {
+        let (handle, stop) = register(SERVICE_NAME)?;
+        let ok = ServiceExitCode::Win32(0);
+        handle.set_service_status(status(ServiceState::Running, ok, Duration::ZERO))?;
+        let log = config::windows_base_dir().join("update").join("update.log");
+        let result = logging::init_file(&LogConfig::default(), &log)
+            .map_err(anyhow::Error::from)
+            .and_then(|()| Ok(tokio::runtime::Runtime::new()?))
+            .and_then(|runtime| {
+                runtime.block_on(async {
+                    let mut stopping = stop.clone();
+                    tokio::spawn(async move {
+                        stopping.wait().await;
+                        let pending = status(ServiceState::StopPending, ok, STOP_WAIT);
+                        let _ = handle.set_service_status(pending);
+                    });
+                    let sddl = pipe_sddl(&service_sid(AGENT_SERVICE));
+                    pipe::serve(PIPE_NAME, &sddl, wua::handle, stop).await?;
+                    Ok(())
+                })
+            });
+        let exit_code = match &result {
+            Ok(()) => ok,
+            Err(error) => {
+                tracing::error!(error = format!("{error:#}"), "the update service failed");
+                ServiceExitCode::ServiceSpecific(1)
+            }
+        };
         handle.set_service_status(status(ServiceState::Stopped, exit_code, Duration::ZERO))?;
         Ok(())
     }
