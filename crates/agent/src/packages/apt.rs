@@ -120,7 +120,7 @@ pub fn parse_dpkg(text: &str) -> Vec<Package> {
                 name: name.to_owned(),
                 version: version.to_owned(),
                 arch: arch.to_owned(),
-                upgradable_version: String::new(),
+                ..Package::default()
             })
         })
         .collect()

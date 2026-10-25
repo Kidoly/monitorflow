@@ -744,6 +744,13 @@ export interface Package {
   version: string;
   /** Null when no upgrade is available. */
   upgradable_version: string | null;
+  /** Windows updates only (ADR-0049): null for Linux packages. */
+  title: string | null;
+  classification: string | null;
+  severity: string | null;
+  size_bytes: number | null;
+  /** A Windows update that may need a restart, or waits for one. */
+  reboot_required: boolean;
 }
 
 /** `GET /api/servers/{id}/packages`: the latest report, by name and architecture. */

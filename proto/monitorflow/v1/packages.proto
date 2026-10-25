@@ -1,4 +1,4 @@
-// MonitorFlow package payloads, version 1. See ADR-0031.
+// MonitorFlow package payloads, version 1. See ADR-0031 and ADR-0049.
 //
 // Rules: changes are additive only. Never renumber or reuse a field number.
 
@@ -31,4 +31,16 @@ message Package {
   string arch = 3;
   // Candidate version when an upgrade is available, else empty.
   string upgradable_version = 4;
+  // Windows updates only (ADR-0049); empty or zero on Linux. On Windows,
+  // `name` is the KB number (or the update ID), `version` the installed
+  // revision and `upgradable_version` the pending one.
+  string title = 5;
+  // English name of the update classification, like "Security Updates".
+  string classification = 6;
+  // MSRC severity: Critical, Important, Moderate or Low; empty when none.
+  string severity = 7;
+  // Largest download size in bytes.
+  uint64 size_bytes = 8;
+  // Pending: installing it may need a restart. Installed: it waits for one.
+  bool reboot_required = 9;
 }

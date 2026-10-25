@@ -29,6 +29,32 @@ pub fn valid_package_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"._+:-".contains(&b))
 }
 
+/// Names of Windows updates in an `ApplyUpdates` for a Windows agent
+/// (ADR-0049): `KB` and 1 to 10 digits, or an update ID (a GUID), case
+/// ignored. Both are also valid package names.
+pub fn valid_windows_update_name(name: &str) -> bool {
+    let kb = name.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("kb"))
+        && (3..=12).contains(&name.len())
+        && name.bytes().skip(2).all(|b| b.is_ascii_digit());
+    let guid = name.len() == 36
+        && name.bytes().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => b.is_ascii_hexdigit(),
+        });
+    kb || guid
+}
+
+/// The first of `names` an agent of `os_family` cannot take: Windows
+/// agents only take Windows update names, Linux ones none of them, so one
+/// platform's names never reach the other (ADR-0049).
+pub fn unfit_name<'a>(os_family: &str, names: &'a [String]) -> Option<&'a str> {
+    let windows = os_family == "windows";
+    names
+        .iter()
+        .find(|n| valid_windows_update_name(n) != windows)
+        .map(String::as_str)
+}
+
 /// Starts every signed message. Certificates and CRLs, which the same key
 /// signs, are DER and start with 0x30, so neither can pass for the other.
 const DOMAIN: &[u8] = b"monitorflow-command-v1\0";
@@ -92,6 +118,50 @@ mod tests {
     use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_ASN1_SIGNING};
 
     use super::*;
+
+    #[test]
+    fn windows_update_names() {
+        for good in [
+            "KB5034441",
+            "kb890830",
+            "KB1",
+            "KB1234567890",
+            "4f2fc5ad-8a6b-4b61-a0f7-1a2e0f3b9c01",
+            "4F2FC5AD-8A6B-4B61-A0F7-1A2E0F3B9C01",
+        ] {
+            assert!(valid_windows_update_name(good), "{good}");
+            assert!(valid_package_name(good), "{good}");
+        }
+        for bad in [
+            "KB",
+            "KB12345678901",
+            "KB-1",
+            "KB 1",
+            "5034441",
+            "openssl",
+            "4f2fc5ad8a6b4b61a0f71a2e0f3b9c01",
+            "4f2fc5ad-8a6b-4b61-a0f7-1a2e0f3b9c0g",
+            "ÄB1",
+        ] {
+            assert!(!valid_windows_update_name(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn names_must_fit_the_os_family() {
+        let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            unfit_name("windows", &names(&["KB1", "openssl"])),
+            Some("openssl")
+        );
+        assert_eq!(unfit_name("windows", &names(&["KB1", "kb2"])), None);
+        assert_eq!(
+            unfit_name("debian", &names(&["openssl", "KB1"])),
+            Some("KB1")
+        );
+        assert_eq!(unfit_name("rhel", &names(&["openssl"])), None);
+        assert_eq!(unfit_name("windows", &[]), None);
+    }
 
     fn ca() -> (rcgen::KeyPair, CertificateDer<'static>) {
         let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();

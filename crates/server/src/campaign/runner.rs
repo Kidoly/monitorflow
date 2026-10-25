@@ -326,6 +326,8 @@ async fn queue(
         let next = match row.sources_mode {
             _ if target.revoked => Next::Fail("server revoked".into()),
             None => Next::Update,
+            // Windows servers take no sources (ADR-0049).
+            Some(_) if target.os_family == "windows" => Next::Update,
             Some(_) => target.next(),
         };
         let built = match next {

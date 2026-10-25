@@ -143,6 +143,7 @@ fn package(name: &str, upgradable: &str) -> Package {
         version: "1.0".into(),
         arch: "amd64".into(),
         upgradable_version: upgradable.into(),
+        ..Package::default()
     }
 }
 
@@ -266,5 +267,62 @@ db_tests! {
         assert_eq!(page["next_cursor"], Value::Null);
         assert_eq!(h.send("GET", &format!("{uri}?limit=0"), &viewer, None).await.0, StatusCode::BAD_REQUEST);
         assert_eq!(h.send("GET", &format!("{uri}?upgradeable=true"), &viewer, None).await.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test]
+    async fn windows_servers_take_windows_update_names_and_no_sources(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let admin = h.login("admin", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let windows: Uuid = sqlx::query_scalar(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family)
+             VALUES ('agent-2', $1, 'win-1', 'windows') RETURNING id",
+        )
+        .bind(h.site)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let commands = |id: Uuid| format!("/api/servers/{id}/commands");
+        let named = |names: &[&str]| json!({"kind": "apply_updates", "packages": names});
+
+        let (status, body) = h.send("POST", &commands(windows), &admin, Some(named(&["openssl"]))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "`openssl` is not a KB number or update ID, which windows servers need");
+        let (status, body) = h.send("POST", &commands(h.server), &admin, Some(named(&["KB5034441"]))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "`KB5034441` is a windows update name, which debian servers cannot take");
+        let (status, created) = h.send("POST", &commands(windows), &admin, Some(named(&["KB5034441"]))).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let (status, _) = h.send("POST", &commands(windows), &admin, Some(json!({"kind": "apply_updates", "security_only": true}))).await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        let sources = format!("/api/servers/{windows}/sources");
+        for (method, body) in [("POST", Some(json!({"mirrors": [{"name": "debian-12"}]}))), ("DELETE", None)] {
+            let (status, body) = h.send(method, &sources, &admin, body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{method}");
+            assert_eq!(body["error"], "package sources are not supported on windows servers");
+        }
+
+        let report = PackageReport {
+            packages: vec![Package {
+                name: "KB5034441".into(),
+                upgradable_version: "200".into(),
+                title: "2024-01 Security Update".into(),
+                classification: "Security Updates".into(),
+                severity: "Critical".into(),
+                size_bytes: 4096,
+                reboot_required: true,
+                ..Package::default()
+            }],
+            reboot_required: false,
+            collected_at_unix_ms: 1_800_000_000_000,
+        };
+        assert!(PackageStore::new(pool.clone()).replace("agent-2", &report).await.unwrap());
+        let (_, list) = h.send("GET", &format!("/api/servers/{windows}/packages"), &admin, None).await;
+        assert_eq!(
+            list["packages"],
+            json!([{"name": "KB5034441", "arch": "", "version": "", "upgradable_version": "200",
+                    "title": "2024-01 Security Update", "classification": "Security Updates",
+                    "severity": "Critical", "size_bytes": 4096, "reboot_required": true}])
+        );
     }
 }

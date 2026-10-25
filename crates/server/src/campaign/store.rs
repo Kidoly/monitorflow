@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use monitorflow_common::command;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
@@ -15,6 +16,7 @@ use super::model::{
     SourcesPin, UpdateSpec, WaveSpec, Window, MAX_TARGETS, MAX_WINDOWS,
 };
 use crate::api::audit::{self, Event};
+use crate::api::commands::unfit_message;
 use crate::commands::sources::os_family;
 use crate::mirror::Family;
 
@@ -172,6 +174,7 @@ impl CampaignStore {
         let targets = targets(&mut tx, new).await?;
         let waves =
             plan_waves(&targets, &new.waves).map_err(|e| CampaignError::Invalid(e.to_string()))?;
+        check_names(&mut tx, &new.spec.packages, &targets).await?;
         let pinned = match &new.sources {
             Some(pin) => pinned_snapshots(&mut tx, pin, &targets).await?,
             None => Vec::new(),
@@ -401,8 +404,32 @@ pub(super) async fn cancel_queued(
     Ok(ids)
 }
 
+/// Named updates must fit every OS family among `targets`: KB numbers or
+/// update IDs for Windows, package names for Linux (ADR-0049).
+async fn check_names(
+    conn: &mut PgConnection,
+    packages: &[String],
+    targets: &[Uuid],
+) -> Result<(), CampaignError> {
+    if packages.is_empty() {
+        return Ok(());
+    }
+    let families: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT os_family FROM servers WHERE id = ANY($1)")
+            .bind(targets)
+            .fetch_all(conn)
+            .await?;
+    for family in &families {
+        if let Some(bad) = command::unfit_name(family, packages) {
+            return Err(CampaignError::Invalid(unfit_message(family, bad)));
+        }
+    }
+    Ok(())
+}
+
 /// `(mirror_id, snapshot_id)` of each mirror `pin` names: the snapshot
-/// must be published, and every OS family among `targets` needs a mirror.
+/// must be published, and every Linux family among `targets` needs a
+/// mirror; Windows servers take no sources (ADR-0049).
 async fn pinned_snapshots(
     conn: &mut PgConnection,
     pin: &SourcesPin,
@@ -435,7 +462,9 @@ async fn pinned_snapshots(
         families.push(os_family(family));
     }
     let uncovered: Option<String> = sqlx::query_scalar(
-        "SELECT os_family FROM servers WHERE id = ANY($1) AND NOT (os_family = ANY($2)) LIMIT 1",
+        "SELECT os_family FROM servers
+         WHERE id = ANY($1) AND os_family <> 'windows' AND NOT (os_family = ANY($2))
+         LIMIT 1",
     )
     .bind(targets)
     .bind(&families)
