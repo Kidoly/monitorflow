@@ -81,15 +81,17 @@ gRPC over HTTP/2 with mutual TLS on every link: agent ↔ relay, relay ↔ relay
 
 | Sensor | What it measures | Typical threshold |
 | --- | --- | --- |
-| CPU | Usage per core, load average | Load above N for M minutes |
-| Memory | Used, available, swap | Available below a percentage |
-| Disk | Space and inodes per mount, I/O | Free space below a percentage |
-| Service | systemd unit state | Unit not active |
+| CPU | Usage per core, load average (Linux) | Load above N for M minutes |
+| Memory | Used, available, swap (page files on Windows) | Available below a percentage |
+| Disk | Space and inodes per mount, or per fixed drive on Windows; I/O later | Free space below a percentage |
+| Service | systemd unit state; Windows service state (`windows_service`) | Unit not active |
 | Port | TCP/UDP reachability, local or remote | Closed or timeout |
-| Log | Pattern matches in files under the agent's log directories (journald later) | Match count above N in a window |
-| Custom script | A script installed on the host by its administrator: Nagios exit code and `name=value` perfdata | Status WARNING or CRITICAL |
+| Log | Pattern matches in files under the agent's log directories (journald later); events of allowed Windows Event Log channels (`eventlog`) | Match count above N in a window |
+| Custom script | A script installed on the host by its administrator (PowerShell or a program on Windows): Nagios exit code and `name=value` perfdata | Status WARNING or CRITICAL |
 
-Each sensor has a collection interval and one or more thresholds (warning, critical) with a duration, to avoid alerting on short spikes. Sensors implement one trait in `crates/sensors` and produce `Sample` values; the agent schedules them and ships samples upstream in batches. Sensors configured by the server only touch what the agent's own configuration allows (scripts it installed, log directories), see ADR-0024.
+Each sensor has a collection interval and one or more thresholds (warning, critical) with a duration, to avoid alerting on short spikes. Sensors implement one trait in `crates/sensors` and produce `Sample` values; the agent schedules them and ships samples upstream in batches. Sensors configured by the server only touch what the agent's own configuration allows (scripts it installed, log directories, Event Log channels), see ADR-0024.
+
+The same crate serves Windows agents (ADR-0048): `cpu`, `memory`, `disk`, `port` and `script` keep their kind and metrics with Win32 implementations; `windows_service` and `eventlog` are Windows kinds, `systemd` and `log` Unix kinds. An agent refuses a kind its platform does not run as unsupported, while the server validates every kind's parameters whatever the agent's platform.
 
 ### Threshold engine
 
@@ -260,6 +262,7 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Peer identity | Role and ID in a `monitorflow://<role>/<id>` URI SAN; relays speak only for agents of their site |
 | Web API transport | Plain HTTP on loopback behind a TLS reverse proxy; server-side sessions (ADR-0006) |
 | Sensor scheduling | One task per sensor, jittered first tick, timeout within the interval, missed ticks skipped, full channel drops new samples (ADR-0012) |
+| Windows sensors | Same kinds where the measure is the same; `windows_service` and `eventlog` as Windows kinds; agents refuse other platforms' kinds (ADR-0048) |
 | Sensor configuration | Built-in defaults, then site rows, then server rows in PostgreSQL; pushed after Hello and on revision change, polled every 10 s; agents acknowledge and persist it (ADR-0016) |
 | Threshold engine | Thresholds per metric with site and server layers over built-in defaults; per-severity timers on sample time with hysteresis; one open incident per series by partial unique index; state in `alert_states` reloaded at start (ADR-0017) |
 | Relay forwarding | The relay terminates agent mTLS (CA, CRL fetched from upstream, Hello ID = certificate ID) and opens one upstream stream per agent stream with its own certificate, forwarding payloads unchanged; relay certificates carry admin-chosen server names (ADR-0025) |
