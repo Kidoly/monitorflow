@@ -188,6 +188,15 @@ fn agent_sensor_limits_default_and_validate() {
         let msg = err::<AgentConfig>(AGENT_MIN, &[("MONITORFLOW_SENSORS_LOG_DIRS", bad)]);
         assert!(msg.contains("sensors.log_dirs"), "{msg}");
     }
+    assert_eq!(agent.sensors.event_channels, ["Application", "System"]);
+    let text = format!("{AGENT_MIN}\n[sensors]\nevent_channels = [\"Security\"]\n");
+    assert_eq!(
+        parse::<AgentConfig>(&text).unwrap().sensors.event_channels,
+        ["Security"]
+    );
+    let vars = [("MONITORFLOW_SENSORS_EVENT_CHANNELS", "System, Setup")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert_eq!(agent.sensors.event_channels, ["System", "Setup"]);
     let msg = err::<AgentConfig>(&format!("{AGENT_MIN}\n[sensors]\nscripts = \"/x\""), &[]);
     assert!(msg.contains("scripts"), "{msg}");
 }

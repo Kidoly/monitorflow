@@ -55,6 +55,11 @@ upstream_url = "https://relay.example.com:7443"
 # may see. An empty list disables the log sensor.
 # log_dirs = ["/var/log"]
 
+# Windows: Event Log channels the `eventlog` sensor may read (ADR-0048).
+# Match counts of `Security` reveal logon activity; add it deliberately.
+# An empty list disables the sensor.
+# event_channels = ["Application", "System"]
+
 [packages]
 # Seconds between two reports of the installed packages and the reboot
 # state; one is also sent at start and after every update (ADR-0031).

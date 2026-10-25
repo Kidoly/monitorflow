@@ -525,6 +525,9 @@ pub struct AgentSensorsConfig {
     /// Directories the `log` sensor may read files under; empty disables
     /// it.
     pub log_dirs: Vec<PathBuf>,
+    /// Event Log channels the `eventlog` sensor may read on Windows
+    /// (ADR-0048); empty disables it.
+    pub event_channels: Vec<String>,
 }
 
 impl Default for AgentSensorsConfig {
@@ -532,6 +535,7 @@ impl Default for AgentSensorsConfig {
         Self {
             script_dir: "/etc/monitorflow/scripts.d".into(),
             log_dirs: vec!["/var/log".into()],
+            event_channels: vec!["Application".into(), "System".into()],
         }
     }
 }
@@ -599,6 +603,9 @@ impl LoadConfig for AgentConfig {
         env.set("commands.shell", &mut self.commands.shell)?;
         if let Some(dirs) = env.list("sensors.log_dirs") {
             self.sensors.log_dirs = dirs.into_iter().map(PathBuf::from).collect();
+        }
+        if let Some(channels) = env.list("sensors.event_channels") {
+            self.sensors.event_channels = channels;
         }
         self.tls.apply_env(env)?;
         self.log.apply_env(env)

@@ -4,12 +4,18 @@
 //! `total_bytes`, `available_bytes`, `used_bytes` (total minus available,
 //! like procps `free` 4), `available_ratio`, `swap_total_bytes` and
 //! `swap_free_bytes`. No parameters.
+//!
+//! On Windows the values come from `GlobalMemoryStatusEx`, see
+//! [`windows`](self) and ADR-0048.
 
 use crate::procfs::{self, field};
-use crate::{Sample, Sensor, SensorError};
+#[cfg(any(unix, test))]
+use crate::Sensor;
+use crate::{Sample, SensorError};
 
 const MEMINFO: &str = "/proc/meminfo";
 /// About 1.5 KiB today; generous room for new fields.
+#[cfg(unix)]
 const MEMINFO_CAP: usize = 64 << 10;
 
 /// The `/proc/meminfo` fields the sensor reports, in bytes.
@@ -65,6 +71,7 @@ impl MemInfo {
 #[derive(Debug, Default)]
 pub struct MemorySensor;
 
+#[cfg(unix)]
 #[async_trait::async_trait]
 impl Sensor for MemorySensor {
     async fn collect(&self, _deadline: tokio::time::Instant) -> Result<Vec<Sample>, SensorError> {
@@ -72,6 +79,9 @@ impl Sensor for MemorySensor {
         Ok(info.samples())
     }
 }
+
+#[cfg(windows)]
+mod windows;
 
 #[cfg(test)]
 mod tests {

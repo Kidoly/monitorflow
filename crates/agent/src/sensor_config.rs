@@ -84,6 +84,7 @@ pub fn local(config: &AgentSensorsConfig) -> Local {
     Local {
         script_dir: config.script_dir.clone(),
         log_dirs: config.log_dirs.clone(),
+        event_channels: config.event_channels.clone(),
     }
 }
 
@@ -425,6 +426,7 @@ mod tests {
         let builtin = Builtin::from_config(&AgentSensorsConfig {
             script_dir: scripts.path().into(),
             log_dirs: vec![scripts.path().into()],
+            ..AgentSensorsConfig::default()
         });
         let log = format!("{}/app.log", scripts.path().display());
         let required: [(&str, &[(&str, &str)]); 4] = [
@@ -433,7 +435,9 @@ mod tests {
             ("script", &[("script", "check")]),
             ("systemd", &[("units", "ssh")]),
         ];
-        for kind in sensors::registry::KINDS {
+        // `eventlog` and `windows_service` are refused off Windows.
+        let kinds = sensors::registry::KINDS.iter();
+        for kind in kinds.filter(|k| sensors::registry::supported(k)) {
             let mut config = config.clone();
             let pairs = required.iter().find(|(k, _)| k == kind);
             for (name, value) in pairs.map_or(&[][..], |(_, p)| p) {

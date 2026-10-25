@@ -25,9 +25,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use regex::bytes::{Regex, RegexBuilder};
+use regex::bytes::Regex;
 use tokio::time::{timeout_at, Instant};
 
+pub use crate::pattern::{pattern, MAX_PATTERN};
 use crate::registry::{BuildError, Local, Params};
 use crate::{validate, Sample, Sensor, SensorError};
 
@@ -37,10 +38,6 @@ pub const DEFAULT_DIRS: &[&str] = &["/var/log"];
 pub const MAX_READ: u64 = 1024 * 1024;
 /// Bytes of a line that are matched; the rest of a longer line is skipped.
 pub const MAX_LINE: usize = 4096;
-/// Longest pattern, in bytes.
-pub const MAX_PATTERN: usize = 1024;
-/// Compiled size limit of a pattern, so `(a{1000}){1000}` is refused.
-const REGEX_SIZE_LIMIT: usize = 1024 * 1024;
 const CHUNK: usize = 64 * 1024;
 /// Time kept before the deadline, so a slow read is reported as such.
 const MARGIN: Duration = Duration::from_millis(200);
@@ -61,27 +58,6 @@ pub fn log_path(path: &str) -> Result<PathBuf, String> {
             validate::MAX_VALUE_LEN
         )
     })
-}
-
-/// Compiles a pattern, bounded in length and compiled size.
-pub fn pattern(text: &str) -> Result<Regex, String> {
-    if text.is_empty() || text.len() > MAX_PATTERN {
-        return Err(format!("must be 1 to {MAX_PATTERN} bytes"));
-    }
-    RegexBuilder::new(text)
-        .size_limit(REGEX_SIZE_LIMIT)
-        .dfa_size_limit(REGEX_SIZE_LIMIT)
-        .build()
-        .map_err(|e| format!("is not a valid pattern: {}", first_line(&e.to_string())))
-}
-
-fn first_line(text: &str) -> String {
-    text.lines()
-        .last()
-        .unwrap_or("")
-        .chars()
-        .take(200)
-        .collect()
 }
 
 /// `path` resolved, if it lies under one of `dirs` once both are resolved.

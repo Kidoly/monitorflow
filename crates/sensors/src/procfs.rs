@@ -14,6 +14,7 @@ use crate::SensorError;
 ///
 /// Files under `/proc` are generated in memory, so reading them on the
 /// runtime is fine (see [`crate::Sensor`]).
+#[cfg_attr(not(unix), allow(dead_code))]
 pub fn read_capped(path: impl AsRef<Path>, cap: usize) -> Result<String, SensorError> {
     let path = path.as_ref();
     let io = |e: std::io::Error| {

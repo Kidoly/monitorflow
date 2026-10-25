@@ -35,6 +35,17 @@ jobs:
       - run: cargo test --workspace
         env:
           DATABASE_URL: postgres://monitorflow:monitorflow@localhost:5432/monitorflow
+  # The Windows sensors (ADR-0048); their unit tests read the real Win32
+  # APIs, so they run on Windows.
+  windows-sensors:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p monitorflow-sensors --all-targets -- -D warnings
+      - run: cargo test -p monitorflow-sensors
   web:
     runs-on: ubuntu-latest
     defaults:
