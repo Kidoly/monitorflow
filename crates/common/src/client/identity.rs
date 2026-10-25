@@ -11,9 +11,15 @@
 //! it writes both next to the live files first, `cert.pem.next` last as its
 //! commit marker, then renames them over. [`load`] finishes a renewal that
 //! reached its marker and discards one that did not.
+//!
+//! On Windows the modes become ACLs (ADR-0047): private files and the
+//! directories created for them get a protected DACL from
+//! [`crate::winacl`], public files inherit their directory's. Windows
+//! cannot sync a directory; NTFS journals the rename itself.
 
-use std::fs::{self, DirBuilder, File, OpenOptions, Permissions};
+use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, Write};
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -25,6 +31,7 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 
 const KEY_MODE: u32 = 0o600;
 const PUBLIC_MODE: u32 = 0o644;
+#[cfg(unix)]
 const DIR_MODE: u32 = 0o700;
 
 #[derive(Debug, thiserror::Error)]
@@ -153,10 +160,20 @@ fn validity(der: &[u8]) -> Result<(SystemTime, SystemTime), IdentityError> {
     ))
 }
 
+#[cfg(unix)]
 fn warn_if_key_is_readable(path: &Path) {
     if let Ok(meta) = fs::metadata(path) {
         if meta.permissions().mode() & 0o077 != 0 {
             tracing::warn!(key = %path.display(), "private key is readable by other users; chmod 600 it");
+        }
+    }
+}
+
+#[cfg(windows)]
+fn warn_if_key_is_readable(path: &Path) {
+    if let Ok(dacl) = crate::winacl::dacl(path) {
+        if !crate::winacl::is_private(&dacl) {
+            tracing::warn!(key = %path.display(), %dacl, "private key has another ACL than the agent sets; check who can read it");
         }
     }
 }
@@ -236,11 +253,18 @@ fn parent(path: &Path) -> &Path {
         .unwrap_or(Path::new("."))
 }
 
+#[cfg(unix)]
 fn sync_parent(path: &Path) -> Result<(), IdentityError> {
     let dir = parent(path);
     File::open(dir)
         .and_then(|d| d.sync_all())
         .map_err(fail(dir))
+}
+
+/// Windows has no directory sync; NTFS journals the rename.
+#[cfg(windows)]
+fn sync_parent(_: &Path) -> Result<(), IdentityError> {
+    Ok(())
 }
 
 fn fail(path: &Path) -> impl FnOnce(io::Error) -> IdentityError + '_ {
@@ -249,13 +273,11 @@ fn fail(path: &Path) -> impl FnOnce(io::Error) -> IdentityError + '_ {
 
 /// Replaces `path` with `contents` so that readers see the old file or the
 /// new one, never a partial one, even across a power cut.
+/// `mode` is a Unix mode; on Windows, one without bits for the group and
+/// others makes the file private.
 pub fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<(), IdentityError> {
     let dir = parent(path);
-    DirBuilder::new()
-        .recursive(true)
-        .mode(DIR_MODE)
-        .create(dir)
-        .map_err(fail(dir))?;
+    create_dirs(dir)?;
     let name = path
         .file_name()
         .ok_or_else(|| IdentityError::Invalid(format!("{}: not a file path", path.display())))?;
@@ -265,20 +287,62 @@ pub fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<(), Ident
         Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(fail(&tmp)(e)),
         _ => {}
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(mode)
-        .open(&tmp)
-        .map_err(fail(&tmp))?;
-    // The umask may have narrowed the mode; widen public files back.
-    file.set_permissions(Permissions::from_mode(mode))
-        .map_err(fail(&tmp))?;
+    let mut file = create_new(&tmp, mode).map_err(fail(&tmp))?;
     file.write_all(contents).map_err(fail(&tmp))?;
     file.sync_all().map_err(fail(&tmp))?;
     drop(file);
     fs::rename(&tmp, path).map_err(fail(path))?;
     sync_parent(path)
+}
+
+#[cfg(unix)]
+fn create_dirs(dir: &Path) -> Result<(), IdentityError> {
+    DirBuilder::new()
+        .recursive(true)
+        .mode(DIR_MODE)
+        .create(dir)
+        .map_err(fail(dir))
+}
+
+/// Directories this call creates get the private DACL, like mode 0700.
+#[cfg(windows)]
+fn create_dirs(dir: &Path) -> Result<(), IdentityError> {
+    let mut missing = Vec::new();
+    let mut next = Some(dir);
+    while let Some(d) = next.filter(|d| !d.as_os_str().is_empty() && !d.exists()) {
+        missing.push(d);
+        next = d.parent();
+    }
+    DirBuilder::new()
+        .recursive(true)
+        .create(dir)
+        .map_err(fail(dir))?;
+    for d in missing.into_iter().rev() {
+        crate::winacl::set_dacl(d, crate::winacl::PRIVATE_DIR).map_err(fail(d))?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn create_new(path: &Path, mode: u32) -> io::Result<File> {
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(path)?;
+    // The umask may have narrowed the mode; widen public files back.
+    file.set_permissions(fs::Permissions::from_mode(mode))?;
+    Ok(file)
+}
+
+/// The private DACL is set before anything is written.
+#[cfg(windows)]
+fn create_new(path: &Path, mode: u32) -> io::Result<File> {
+    let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    if mode & 0o077 == 0 {
+        crate::winacl::set_dacl(path, crate::winacl::PRIVATE_FILE)?;
+    }
+    Ok(file)
 }
 
 #[cfg(test)]
@@ -296,8 +360,20 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn mode(path: &Path) -> u32 {
         fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    /// On Windows, 0o600 (0o700 for a directory) for a private DACL and
+    /// 0o644 for any other.
+    #[cfg(windows)]
+    fn mode(path: &Path) -> u32 {
+        match crate::winacl::is_private(&crate::winacl::dacl(path).unwrap()) {
+            true if path.is_dir() => 0o700,
+            true => 0o600,
+            false => 0o644,
+        }
     }
 
     #[test]
@@ -312,7 +388,8 @@ mod tests {
         // A stale temporary file with loose permissions is not reused.
         let tmp = dir.path().join("a/b/.key.pem.tmp");
         fs::write(&tmp, "stale").unwrap();
-        fs::set_permissions(&tmp, Permissions::from_mode(0o666)).unwrap();
+        #[cfg(unix)]
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o666)).unwrap();
         write_atomic(&path, b"two", KEY_MODE).unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"two");
         assert_eq!(mode(&path), 0o600);
@@ -438,12 +515,13 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn unreadable_key_is_permission_denied() {
         let dir = TempDir::new().unwrap();
         let paths = paths(dir.path());
         store(&paths, &enrolled("web-01", PeerRole::Agent).0).unwrap();
-        fs::set_permissions(&paths.key, Permissions::from_mode(0o000)).unwrap();
+        fs::set_permissions(&paths.key, fs::Permissions::from_mode(0o000)).unwrap();
         // Root reads anything; the check only makes sense for other users.
         if fs::read(&paths.key).is_err() {
             let err = load(&paths, PeerRole::Agent).unwrap_err();

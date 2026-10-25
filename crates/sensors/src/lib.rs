@@ -17,15 +17,24 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+// Linux implementations; on Windows `registry` refuses these kinds until
+// they have their own (ADR-0047).
+#[cfg(unix)]
 pub mod cpu;
+#[cfg(unix)]
 pub mod disk;
+#[cfg(unix)]
 pub mod log;
+#[cfg(unix)]
 pub mod memory;
 pub mod port;
+#[cfg(unix)]
 mod procfs;
 pub mod registry;
 pub mod scheduler;
+#[cfg(unix)]
 pub mod script;
+#[cfg(unix)]
 pub mod systemd;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

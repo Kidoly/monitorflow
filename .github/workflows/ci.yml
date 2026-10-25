@@ -35,6 +35,27 @@ jobs:
       - run: cargo test --workspace
         env:
           DATABASE_URL: postgres://monitorflow:monitorflow@localhost:5432/monitorflow
+  # The Windows agent (ADR-0047): the agent and the crates it builds on.
+  # The server and relay are Unix only; tests that need them or
+  # PostgreSQL are compiled out on Windows.
+  windows:
+    runs-on: windows-latest
+    env:
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@v2
+      - run: choco install protoc --no-progress -y
+      - run: cargo clippy -p monitorflow-agent -p monitorflow-sensors -p monitorflow-common --all-targets -- -D warnings
+      - run: cargo test --no-fail-fast -p monitorflow-agent -p monitorflow-sensors -p monitorflow-common
+      - run: cargo build --release -p monitorflow-agent
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monitorflow-agent-windows-x86_64
+          path: target/release/monitorflow-agent.exe
+          if-no-files-found: error
   web:
     runs-on: ubuntu-latest
     defaults:
