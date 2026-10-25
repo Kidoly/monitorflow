@@ -10,6 +10,8 @@ pub mod mirror;
 pub mod redact;
 pub mod tls;
 pub mod via;
+#[cfg(windows)]
+pub mod winacl;
 
 /// Generated Protobuf and gRPC code for the `monitorflow.v1` package.
 pub mod proto {

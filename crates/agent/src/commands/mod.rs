@@ -24,7 +24,9 @@
 //! `FAILED`), the expiry (`EXPIRED`), then the kind (`REJECTED`).
 
 pub mod journal;
+#[cfg(unix)]
 pub mod shell;
+pub mod unsupported;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -444,5 +446,6 @@ fn unix_ms() -> i64 {
         .map_or(0, |d| d.as_millis() as i64)
 }
 
-#[cfg(test)]
+// Uses the server's CA, which only builds on Unix.
+#[cfg(all(test, unix))]
 mod tests;

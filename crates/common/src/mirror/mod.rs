@@ -5,6 +5,7 @@
 //! With the `mirror` feature, `serve` holds the listener and `index` the
 //! index built from the tree.
 
+#[cfg(unix)]
 use std::io;
 use std::path::Path;
 
@@ -85,7 +86,9 @@ pub fn is_snapshot_name(name: &str) -> bool {
 }
 
 /// Points `<dir>/current` at `snapshot`: a new link, then a rename over
-/// the old one, so readers always see one or the other. Blocking.
+/// the old one, so readers always see one or the other. Blocking. Unix
+/// only, like the server and relays that hold mirrors.
+#[cfg(unix)]
 pub fn swap_current(dir: &Path, snapshot: &str) -> io::Result<()> {
     let tmp = dir.join(format!(".{CURRENT}.tmp"));
     match std::fs::remove_file(&tmp) {
@@ -98,7 +101,9 @@ pub fn swap_current(dir: &Path, snapshot: &str) -> io::Result<()> {
 
 /// Writes `path` durably through `<path>.tmp`: the contents are synced
 /// before the rename and the directory after it, so a crash leaves the
-/// old file or the new one, never a truncated one. Blocking.
+/// old file or the new one, never a truncated one. Blocking. Unix only,
+/// like [`swap_current`].
+#[cfg(unix)]
 pub fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
     use std::io::Write;
     let tmp = path.with_extension("tmp");
@@ -142,6 +147,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn current_is_swapped_atomically() {
         let dir = tempfile::tempdir().unwrap();
@@ -159,6 +165,7 @@ mod tests {
         assert_eq!(read_current(dir.path()), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn files_are_replaced_atomically() {
         let dir = tempfile::tempdir().unwrap();

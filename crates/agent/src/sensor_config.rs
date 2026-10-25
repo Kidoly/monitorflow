@@ -412,6 +412,8 @@ mod tests {
         assert!(errors[4].message.contains("twice"), "{errors:?}");
     }
 
+    // The Linux kinds; Windows refuses them until it has its own.
+    #[cfg(unix)]
     #[test]
     fn builtin_builds_the_registry_kinds() {
         let mut config = sensors::SensorConfig::new("cpu", Duration::from_secs(60));

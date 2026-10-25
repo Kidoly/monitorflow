@@ -1,0 +1,60 @@
+# MonitorFlow agent configuration for Windows (ADR-0047).
+# Default path: C:\ProgramData\MonitorFlow\agent.toml (override with --config
+# or MONITORFLOW_CONFIG). Every key can be overridden by an environment
+# variable: MONITORFLOW_ plus the key in upper case, nested keys joined by "_"
+# (log.level -> MONITORFLOW_LOG_LEVEL). Commented-out keys show their default
+# when %ProgramData% is C:\ProgramData. Use single quotes for paths, so
+# backslashes stay as they are.
+
+# gRPC endpoint of a relay or the central server. Required. Must be https:
+# every link is mTLS.
+upstream_url = "https://relay.example.com:7443"
+
+# Enrollment endpoint of the central server, used on the first run only.
+# Defaults to the host of upstream_url on port 7445. Set it when the upstream
+# is a relay.
+# enroll_url = "https://monitorflow.example.com:7445"
+
+# Local state: identity, sensor configuration, command journal, and the
+# service's logs in logs\agent.log. Only the service account, SYSTEM and
+# Administrators may read it; see docs/deploy-agent.md.
+data_dir = 'C:\ProgramData\MonitorFlow\agent'
+
+# One-time enrollment token from the web interface. Only needed on the first
+# run; remove it once the agent is enrolled. This file is readable by the
+# service and administrators only.
+# enrollment_token = ""
+
+# Seconds between heartbeats. Must be greater than zero.
+# heartbeat_interval = 30
+
+[tls]
+# PEM files of the mTLS identity, written by enrollment. Default to files in
+# <data_dir>\tls\.
+# ca_cert = 'C:\ProgramData\MonitorFlow\agent\tls\ca.pem'
+# cert = 'C:\ProgramData\MonitorFlow\agent\tls\cert.pem'
+# key = 'C:\ProgramData\MonitorFlow\agent\tls\key.pem'
+
+[log]
+# trace, debug, info, warn or error.
+# level = "info"
+# text or json. As a service, logs go to <data_dir>\logs\agent.log, which
+# moves to agent.log.1 at 16 MiB.
+# format = "text"
+
+[sensors]
+# Limits on what the sensors configured by the server may touch on this host.
+# The server cannot change them (ADR-0024).
+#
+# Directory of the scripts the `script` sensor may run.
+script_dir = 'C:\ProgramData\MonitorFlow\scripts.d'
+
+# Event Log channels the `eventlog` sensor may read (ADR-0048). Match
+# counts of `Security` reveal logon activity; add it deliberately. An empty
+# list disables the sensor. The `log` sensor does not run on Windows.
+# event_channels = ["Application", "System"]
+
+[commands]
+# Ignored on Windows: `shell` commands are refused, because the server's
+# risk rules assume /bin/sh (ADR-0047).
+# shell = false
