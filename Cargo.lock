@@ -1415,6 +1415,7 @@ dependencies = [
  "uuid",
  "windows-registry",
  "windows-service",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
