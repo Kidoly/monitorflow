@@ -6,9 +6,8 @@
 //! [`exec`]): updates go to the root helper in [`update`] (ADR-0036).
 //! Everything else runs as the agent's user.
 //!
-//! On Windows only the platform-neutral parts build: [`PackageManager`],
-//! [`Reports`] and [`exec`]; apt, dnf and the root helpers are Unix only
-//! (ADR-0047).
+//! On Windows, [`windows_update`] takes the place of apt, dnf and the root
+//! helpers, which are Unix only (ADR-0047, ADR-0049).
 
 #[cfg(unix)]
 pub mod apply;
@@ -23,6 +22,7 @@ pub mod exec;
 pub mod sources;
 #[cfg(unix)]
 pub mod update;
+pub mod windows_update;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
