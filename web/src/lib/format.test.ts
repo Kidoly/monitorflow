@@ -15,6 +15,10 @@ describe("format", () => {
     expect(formatOs("debian", "12")).toBe("Debian 12");
     expect(formatOs("rhel", null)).toBe("RHEL");
     expect(formatOs("arch", "rolling")).toBe("arch rolling");
+    expect(formatOs("windows", "Windows Server 2022 Datacenter 21H2 build 20348.2849")).toBe(
+      "Windows Server 2022 Datacenter 21H2 build 20348.2849",
+    );
+    expect(formatOs("windows", null)).toBe("Windows");
   });
 
   it("formats times relative to now", () => {

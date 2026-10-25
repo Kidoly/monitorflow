@@ -426,6 +426,41 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn windows_servers_are_updated_without_sources(pool: PgPool) {
+        let f = Fleet::new(&pool).await;
+        sqlx::query("UPDATE servers SET os_family = 'windows' WHERE peer_id = 'agent-2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Named updates must fit both platforms; KB numbers do not fit debian.
+        let mut named = f.campaign(Vec::new());
+        named.spec.packages = vec!["KB5034441".into()];
+        let error = f.store.create(&named, USER).await.unwrap_err().to_string();
+        assert!(error.contains("which debian servers cannot take"), "{error}");
+        named.spec.packages = vec!["openssl".into()];
+        let error = f.store.create(&named, USER).await.unwrap_err().to_string();
+        assert!(error.contains("which windows servers need"), "{error}");
+
+        // The debian mirror is enough: the windows server needs none.
+        let runner = f.runner();
+        let now = Utc::now();
+        let id = f.start(&f.campaign(Vec::new())).await;
+        assert_eq!(queued(runner.advance(id, now).await.unwrap()), ["agent-1", "agent-2"]);
+        assert_eq!(f.last(id, 0).await.1, CONFIGURE_SOURCES);
+        assert_eq!(f.last(id, 1).await.1, APPLY_UPDATES);
+        assert_eq!(f.finish_last(id, 1, CommandStatus::Succeeded).await, APPLY_UPDATES);
+        assert_eq!(f.finish_last(id, 0, CommandStatus::Succeeded).await, CONFIGURE_SOURCES);
+        assert_eq!(queued(runner.advance(id, now).await.unwrap()), ["agent-1"]);
+        assert_eq!(f.finish_last(id, 0, CommandStatus::Succeeded).await, APPLY_UPDATES);
+        assert_eq!(runner.advance(id, now).await.unwrap(), Step::Idle);
+        assert_eq!(f.finish_last(id, 0, CommandStatus::Succeeded).await, REVERT_SOURCES);
+        assert_eq!(runner.advance(id, now).await.unwrap(), Step::Completed);
+        // Nothing to restore on the windows server.
+        runner.tick(now).await;
+        assert_eq!(kinds(&f.history(id, 1).await), [(APPLY_UPDATES, State::Succeeded)]);
+    }
+
+    #[sqlx::test]
     async fn pauses_and_failed_configurations_restore_too(pool: PgPool) {
         let f = Fleet::new(&pool).await;
         let runner = f.runner();

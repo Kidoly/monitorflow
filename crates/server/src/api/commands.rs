@@ -196,6 +196,16 @@ fn check(request: &CreateRequest) -> Result<(Vec<u8>, Duration), ApiError> {
     Ok((payload, ttl))
 }
 
+/// Why `name` cannot go to a server of `os_family` (ADR-0049).
+pub(crate) fn unfit_message(os_family: &str, name: &str) -> String {
+    let name = name.escape_debug();
+    if os_family == "windows" {
+        format!("`{name}` is not a KB number or update ID, which windows servers need")
+    } else {
+        format!("`{name}` is a windows update name, which {os_family} servers cannot take")
+    }
+}
+
 /// `ttl_s` checked, [`DEFAULT_TTL_S`] when absent.
 pub(super) fn ttl(ttl_s: Option<u64>) -> Result<Duration, ApiError> {
     let ttl = ttl_s.unwrap_or(DEFAULT_TTL_S);
@@ -217,6 +227,9 @@ pub async fn create(
     let target = Target::find(&state, &user, &id).await?;
     let request = body(request)?;
     let (payload, ttl) = check(&request)?;
+    if let Some(bad) = command::unfit_name(&target.os_family, &request.packages) {
+        return Err(ApiError::Invalid(unfit_message(&target.os_family, bad)));
+    }
     queue(&state, &user, &target, &request.kind, payload, ttl).await
 }
 
@@ -251,6 +264,17 @@ impl Target {
             os_family,
             revoked,
         })
+    }
+
+    /// Source commands need apt or dnf; Windows servers take none
+    /// (ADR-0049).
+    pub(super) fn check_sources(&self) -> Result<(), ApiError> {
+        match self.os_family.as_str() {
+            "windows" => Err(ApiError::Invalid(
+                "package sources are not supported on windows servers".into(),
+            )),
+            _ => Ok(()),
+        }
     }
 }
 

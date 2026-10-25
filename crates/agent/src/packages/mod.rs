@@ -6,9 +6,8 @@
 //! [`exec`]): updates go to the root helper in [`update`] (ADR-0036).
 //! Everything else runs as the agent's user.
 //!
-//! On Windows only the platform-neutral parts build: [`PackageManager`],
-//! [`Reports`] and [`exec`]; apt, dnf and the root helpers are Unix only
-//! (ADR-0047).
+//! On Windows, [`windows_update`] takes the place of apt, dnf and the root
+//! helpers, which are Unix only (ADR-0047, ADR-0049).
 
 #[cfg(unix)]
 pub mod apply;
@@ -23,6 +22,7 @@ pub mod exec;
 pub mod sources;
 #[cfg(unix)]
 pub mod update;
+pub mod windows_update;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -39,6 +39,10 @@ pub use apply::ApplyUpdatesHandler;
 #[cfg(unix)]
 pub use configure::{SourcesAction, SourcesHandler};
 pub use exec::{Run, Tools};
+
+/// Wait before collecting again after a failed collection, when shorter
+/// than the report interval (ADR-0049).
+pub const REPORT_RETRY: Duration = Duration::from_secs(5 * 60);
 
 /// Longest stderr line quoted in an error.
 const STDERR_QUOTED: usize = 200;
@@ -127,14 +131,15 @@ impl Reports {
         (Self { manager, latest }, rx)
     }
 
-    /// Collects a report and publishes it. A failure is logged and
-    /// publishes nothing: an empty inventory would look like a wiped host.
-    pub async fn collect(&self) {
+    /// Collects a report and publishes it; false when it failed. A
+    /// failure is logged and publishes nothing: an empty inventory would
+    /// look like a wiped host.
+    pub async fn collect(&self) -> bool {
         let packages = match self.manager.inventory().await {
             Ok(packages) => packages,
             Err(error) => {
                 tracing::warn!(%error, "cannot list installed packages; no package report");
-                return;
+                return false;
             }
         };
         let reboot_required = self
@@ -160,14 +165,20 @@ impl Reports {
             reboot_required,
             collected_at_unix_ms: unix_ms(),
         }));
+        true
     }
 
-    /// Collects at once, then every `interval`, until `shutdown`.
+    /// Collects at once, then every `interval`, or after [`REPORT_RETRY`]
+    /// when a collection failed, until `shutdown`.
     pub async fn run(self, interval: Duration, mut shutdown: Shutdown) {
         loop {
-            self.collect().await;
+            let wait = if self.collect().await {
+                interval
+            } else {
+                interval.min(REPORT_RETRY)
+            };
             tokio::select! {
-                () = tokio::time::sleep(interval) => {}
+                () = tokio::time::sleep(wait) => {}
                 () = shutdown.wait() => return,
             }
         }

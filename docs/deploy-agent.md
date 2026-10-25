@@ -87,6 +87,8 @@ An invalid URL makes the install fail and roll back; `install.log` has the custo
 
 Installing a newer package upgrades in place: the service restarts with the new binary, and `agent.toml` and the identity are kept. `msiexec /x monitorflow-agent-0.1.0-x64.msi /qn` (or Apps and Features) removes the binary and the service and keeps `%ProgramData%\MonitorFlow`, so a reinstall keeps the same identity. When the service stops on an error, the Application event log has the reason, from the source `MonitorFlowAgent`.
 
+The package does not install the Windows Update service yet (ADR-0050 leaves its place in `AgentHelpers`): add it by hand as in [Windows Update service](#windows-update-service).
+
 ### Install by hand
 
 These steps are what the MSI does. Run them in an elevated PowerShell, in this order: the service account exists only once the service is created, and the ACLs name it. Instead of copying the example, `monitorflow-agent.exe --config "$data\agent.toml" init-config --upstream-url https://… --enrollment-token …` writes a minimal `agent.toml`, as the MSI does.
@@ -126,13 +128,31 @@ As a service, the agent logs to `<data_dir>\logs\agent.log`. At 16 MiB the file 
 
 Enroll and run the agent through the service only. Started from an elevated console, the agent writes its identity as `Administrators`, and the service can then not read it. If that happened, delete `$data\agent\tls` and enroll again with a new token. Without the `service` argument, `monitorflow-agent.exe` runs in the console until Ctrl+C. That is meant for `sensors probe`, for example `monitorflow-agent.exe sensors probe port --param port=3389`.
 
+### Windows Update service
+
+Updates and update reports go through a second service, `MonitorFlowUpdate` (ADR-0049). It is the same binary started as `update-service` under LocalSystem, because the agent's account cannot install updates. It accepts typed requests from the agent only, on the named pipe `\\.\pipe\MonitorFlowUpdate`, whose access list admits `SYSTEM` and `NT SERVICE\MonitorFlowAgent` and nobody else. It reads no configuration file. In the same elevated PowerShell:
+
+```powershell
+sc.exe create MonitorFlowUpdate DisplayName= "MonitorFlow update service" start= auto `
+  obj= LocalSystem binPath= "`"$bin\monitorflow-agent.exe`" update-service"
+sc.exe failure MonitorFlowUpdate reset= 86400 actions= restart/60000/restart/60000/restart/60000
+Start-Service MonitorFlowUpdate
+Get-Content "$data\update\update.log"   # "update service listening"
+```
+
+The service logs to `%ProgramData%\MonitorFlow\update\update.log`, rotated at 16 MiB like the agent's log. Without it the agent runs as before, but it sends no update report, logs a warning every 5 minutes, and fails `apply_updates` with "the update service is not running". The two services can be installed in either order. `sc.exe delete MonitorFlowUpdate` removes it.
+
+Updates come from the source the machine is configured for: Windows Update, Microsoft Update, or the WSUS server set by Group Policy, together with its approvals. MonitorFlow never changes that source, and its mirrors do not apply to Windows. Windows keeps its own automatic updates. On servers patched by campaigns, set them to notify or download only (Group Policy "Configure Automatic Updates", option 2 or 3), so installs happen in campaign windows.
+
 ### What works on Windows
 
 | Feature | State |
 | --- | --- |
 | Enrollment, certificate renewal, stream, inventory | As on Linux; `os_family` is `windows`, the version comes from the registry, like `Windows Server 2022 Datacenter 21H2 build 20348.2849` |
 | Sensors | `cpu`, `memory`, `disk`, `port`, `script` (PowerShell or a program), `windows_service` and `eventlog` (ADR-0048). `systemd` and `log` are refused as "not supported on this platform" in the agent's configuration acknowledgement |
-| `apply_updates`, `configure_sources`, `revert_sources` | Refused with "package updates are not supported on Windows yet" ("package sources …" for the source commands). Leave Windows servers out of update campaigns |
+| Update reports | Pending and installed software updates by KB number, with title, classification, MSRC severity, size and restart state, plus whether Windows waits for a restart. Needs the update service (above) |
+| `apply_updates`, update campaigns | Through the update service. All pending updates except feature upgrades, `security_only` for the Security Updates classification, or named KB numbers or update IDs (`KB5034441`). Restarts only with `allow_reboot`, one minute after the result. Windows servers may join any campaign: pinned mirror snapshots do not apply to them |
+| `configure_sources`, `revert_sources` | Refused by the API for Windows servers, and by the agent with "package sources are not supported on Windows yet" |
 | `shell` (AI remediation) | Refused even with `commands.shell = true`: the server's risk rules assume `/bin/sh` (ADR-0047), so a remediation on a Windows server escalates at its first command |
 
-There are no sudo rules on Windows, because the agent runs nothing privileged.
+There are no sudo rules on Windows. The only privileged part is the update service, which accepts typed requests from the agent alone.

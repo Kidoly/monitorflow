@@ -418,6 +418,7 @@ db_tests! {
             version: "1.0".into(),
             arch: "amd64".into(),
             upgradable_version: upgradable.into(),
+            ..Package::default()
         };
         let report = |at: i64, packages: Vec<Package>| PackageReport {
             packages,
@@ -452,5 +453,75 @@ db_tests! {
         .await
         .unwrap();
         assert_eq!(flags, (Some(false), true));
+    }
+
+    #[sqlx::test]
+    async fn windows_update_reports_keep_their_details(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        server(&pool, "win-01", paris).await;
+        let store = PackageStore::new(pool.clone());
+        let pending = Package {
+            name: "KB5034441".into(),
+            upgradable_version: "200".into(),
+            title: "2024-01 Security Update".into(),
+            classification: "Security Updates".into(),
+            severity: "Important".into(),
+            size_bytes: 1_234_567,
+            reboot_required: true,
+            ..Package::default()
+        };
+        let installed = Package {
+            name: "KB890830".into(),
+            version: "1".into(),
+            title: "Malicious Software Removal Tool".into(),
+            classification: "Update Rollups".into(),
+            ..Package::default()
+        };
+        // Sizes past i64 do not fit the column: dropped.
+        let huge = Package {
+            name: "KB1".into(),
+            size_bytes: u64::MAX,
+            ..Package::default()
+        };
+        let report = PackageReport {
+            packages: vec![pending, installed, huge],
+            reboot_required: true,
+            collected_at_unix_ms: 1_800_000_000_000,
+        };
+        assert!(store.replace("win-01", &report).await.unwrap());
+        type Row = (String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>, bool);
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT name, version, upgradable_version, title, classification, severity,
+                 size_bytes, reboot_required
+             FROM server_packages ORDER BY name",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "KB5034441".into(),
+                    String::new(),
+                    Some("200".into()),
+                    Some("2024-01 Security Update".into()),
+                    Some("Security Updates".into()),
+                    Some("Important".into()),
+                    Some(1_234_567),
+                    true,
+                ),
+                (
+                    "KB890830".into(),
+                    "1".into(),
+                    None,
+                    Some("Malicious Software Removal Tool".into()),
+                    Some("Update Rollups".into()),
+                    None,
+                    None,
+                    false,
+                ),
+            ]
+        );
     }
 }

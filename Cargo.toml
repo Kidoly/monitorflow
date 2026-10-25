@@ -84,6 +84,9 @@ rustix = { version = "1", features = ["fs", "time"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
 windows-service = "0.8"
 windows-registry = "0.6"
+# Windows Update Agent COM API (ADR-0049), on the windows-core of
+# windows-registry.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_UpdateAgent", "Win32_System_Variant", "Win32_System_Ole"] }
 
 [profile.release]
 lto = "thin"

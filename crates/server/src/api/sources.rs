@@ -70,6 +70,7 @@ pub async fn configure(
     request: Result<Json<ConfigureRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<CommandDetail>), ApiError> {
     let target = Target::find(&state, &user, &id).await?;
+    target.check_sources()?;
     let request = body(request)?;
     let ttl = ttl(request.ttl_s)?;
     if request.mirrors.is_empty() || request.mirrors.len() > MAX_MIRRORS {
@@ -127,6 +128,7 @@ pub async fn revert(
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<CommandDetail>), ApiError> {
     let target = Target::find(&state, &user, &id).await?;
+    target.check_sources()?;
     let payload = RevertSources {}.encode_to_vec();
     let (_, command) = queue(
         &state,

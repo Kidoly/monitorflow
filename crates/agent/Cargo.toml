@@ -39,6 +39,8 @@ rustix = { workspace = true, features = ["process"] }
 # fatal error in the Event Log (ADR-0050).
 windows-service.workspace = true
 windows-registry.workspace = true
+# Windows Update calls and the update service's pipe (ADR-0049).
+windows.workspace = true
 windows-sys = { workspace = true, features = ["Win32_System_EventLog"] }
 
 [dev-dependencies]

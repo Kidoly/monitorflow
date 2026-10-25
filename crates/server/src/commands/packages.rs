@@ -1,6 +1,7 @@
 //! Package reports from agents (ADR-0031): the latest one per server in
 //! `server_packages`, with `servers.reboot_required` and
-//! `servers.packages_reported_at`.
+//! `servers.packages_reported_at`. Windows agents report their updates
+//! with a title, classification, severity and size (ADR-0049).
 
 use monitorflow_common::proto::v1::{Package, PackageReport};
 use sqlx::PgPool;
@@ -22,6 +23,10 @@ fn storable(package: &Package) -> bool {
         && fits(&package.arch, 64)
         && fits(&package.version, 256)
         && fits(&package.upgradable_version, 256)
+        && fits(&package.title, 1024)
+        && fits(&package.classification, 128)
+        && fits(&package.severity, 32)
+        && i64::try_from(package.size_bytes).is_ok()
 }
 
 impl PackageStore {
@@ -68,11 +73,17 @@ impl PackageStore {
             .bind(server)
             .execute(&mut *tx)
             .await?;
+        let sizes: Vec<i64> = packages.iter().map(|p| p.size_bytes as i64).collect();
+        let reboots: Vec<bool> = packages.iter().map(|p| p.reboot_required).collect();
         sqlx::query(
-            "INSERT INTO server_packages (server_id, name, arch, version, upgradable_version)
-             SELECT $1, name, arch, version, NULLIF(upgradable, '')
-             FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[])
-                 AS p (name, arch, version, upgradable)
+            "INSERT INTO server_packages (server_id, name, arch, version, upgradable_version,
+                 title, classification, severity, size_bytes, reboot_required)
+             SELECT $1, name, arch, version, NULLIF(upgradable, ''), NULLIF(title, ''),
+                 NULLIF(classification, ''), NULLIF(severity, ''), NULLIF(size, 0), reboot
+             FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
+                         $7::text[], $8::text[], $9::bigint[], $10::boolean[])
+                 AS p (name, arch, version, upgradable, title, classification, severity,
+                       size, reboot)
              ON CONFLICT DO NOTHING",
         )
         .bind(server)
@@ -80,6 +91,11 @@ impl PackageStore {
         .bind(column(|p| &p.arch))
         .bind(column(|p| &p.version))
         .bind(column(|p| &p.upgradable_version))
+        .bind(column(|p| &p.title))
+        .bind(column(|p| &p.classification))
+        .bind(column(|p| &p.severity))
+        .bind(sizes)
+        .bind(reboots)
         .execute(&mut *tx)
         .await?;
         sqlx::query(

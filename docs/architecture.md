@@ -169,6 +169,14 @@ Campaigns belong to one customer and are created and driven by its administrator
 - States `draft`, `scheduled`, `running`, `paused`, `stopped`, `completed`, `failed`; start, pause, resume and stop are explicit, audited actions. All state is in the database, so a restart resumes where it was.
 - A campaign may pin published mirror snapshots (ADR-0038): each server gets `configure_sources` for them, then its update, then its previous sources back (its last configuration made outside campaigns, or a revert), even when the campaign pauses, stops or fails. The mirror index lists the snapshots of unfinished campaigns as `pinned`, so relays copy and keep them.
 
+### Windows Update
+
+Windows servers take part in the same campaigns with Windows Update semantics (ADR-0049). Their source stays whatever the machine is configured for: Windows Update, Microsoft Update or WSUS, with its approvals. Mirrors, pinned snapshots and `configure_sources`/`revert_sources` do not apply to them, so a pinned campaign sends a Windows server its update alone.
+
+- The agent's account cannot install updates. A second service, `monitorflow-agent.exe update-service` running as `MonitorFlowUpdate` under LocalSystem, makes every Windows Update Agent call (search, download, install) and the reboot. It takes typed JSON requests on the named pipe `\\.\pipe\MonitorFlowUpdate`, whose DACL admits only SYSTEM and the agent's service SID.
+- Reports list pending and installed software updates as packages named by KB number, with title, classification, MSRC severity, size and whether a restart is involved.
+- `apply_updates` installs every pending update except feature upgrades (`all`), the `Security Updates` classification (`security`), or the KB numbers or update IDs named. Names must fit every target's platform. A restart is reported and only happens when the command allows it, one minute after the result.
+
 ## 8. AI-driven remediation
 
 When a threshold is crossed, the central server can ask an external AI API to diagnose and propose shell commands. The AI layer is provider-agnostic: one trait, one adapter per provider. The Claude API is the first adapter.
@@ -264,6 +272,7 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Sensor scheduling | One task per sensor, jittered first tick, timeout within the interval, missed ticks skipped, full channel drops new samples (ADR-0012) |
 | Windows packaging | WiX v5 MSI: per-machine, service under its virtual account with restart actions, protected ACLs by SID on `%ProgramData%\MonitorFlow`; `agent.toml` written from `UPSTREAM_URL` and a hidden `ENROLLMENT_TOKEN` by `monitorflow-agent init-config` only when absent; data kept on upgrade and uninstall unless `REMOVE_DATA=1`; an Event Log source for the service's fatal error; `AgentHelpers` component group for ADR-0049 (ADR-0050) |
 | Windows sensors | Same kinds where the measure is the same; `windows_service` and `eventlog` as Windows kinds; agents refuse other platforms' kinds (ADR-0048) |
+| Windows Update | WUA COM API in a LocalSystem service (`update-service` of the agent binary) behind a named pipe for the agent's service SID only; machine's own source (WU or WSUS) respected; updates reported as packages by KB number with classification and severity; `apply_updates` kinds map to all but feature upgrades, the Security Updates classification, or named KBs; reboot only with `allow_reboot`; Windows campaign targets skip pinned sources (ADR-0049) |
 | Sensor configuration | Built-in defaults, then site rows, then server rows in PostgreSQL; pushed after Hello and on revision change, polled every 10 s; agents acknowledge and persist it (ADR-0016) |
 | Threshold engine | Thresholds per metric with site and server layers over built-in defaults; per-severity timers on sample time with hysteresis; one open incident per series by partial unique index; state in `alert_states` reloaded at start (ADR-0017) |
 | Relay forwarding | The relay terminates agent mTLS (CA, CRL fetched from upstream, Hello ID = certificate ID) and opens one upstream stream per agent stream with its own certificate, forwarding payloads unchanged; relay certificates carry admin-chosen server names (ADR-0025) |
