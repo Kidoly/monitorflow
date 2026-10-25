@@ -1,42 +1,33 @@
 //! MonitorFlow agent entry point.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use monitorflow_agent::backoff::Backoff;
-use monitorflow_agent::commands::shell::ShellHandler;
 use monitorflow_agent::commands::{self, Dispatcher, DispatcherSettings, Handlers, Journal};
 use monitorflow_agent::enroll::{self, EnrollError};
-use monitorflow_agent::packages::sources::{self, SystemCheck};
-use monitorflow_agent::packages::update::{self, UpdateSpec};
-use monitorflow_agent::packages::{
-    self, ApplyUpdatesHandler, Reports, SourcesAction, SourcesHandler, Tools,
-};
+use monitorflow_agent::os::HostInfo;
 use monitorflow_agent::renew::{Renewal, RenewalSettings};
 use monitorflow_agent::sensor_config::{self, Builtin, ConfigFile};
 use monitorflow_agent::sensors::Sensors;
+use monitorflow_agent::shutdown::Shutdown;
 use monitorflow_agent::stream::{Agent, StreamSettings};
 use monitorflow_agent::upload::{Uplink, UploadSettings};
 use monitorflow_agent::{os, shutdown};
 use monitorflow_common::config::{self, AgentConfig};
-use monitorflow_common::proto::v1::ConfigureSources;
-use monitorflow_common::{command, logging, tls};
+use monitorflow_common::{logging, tls};
 use monitorflow_sensors::{metric_name, registry, Sample};
-use prost::Message;
 
 #[derive(Parser, Debug)]
 #[command(name = "monitorflow-agent", version, about = "MonitorFlow agent")]
 struct Cli {
     /// Path to the TOML configuration file.
-    #[arg(
-        long,
-        env = "MONITORFLOW_CONFIG",
-        default_value = "/etc/monitorflow/agent.toml"
-    )]
-    config: std::path::PathBuf,
+    #[arg(long, env = "MONITORFLOW_CONFIG", default_value_os_t = default_config())]
+    config: PathBuf,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -48,13 +39,30 @@ enum Command {
     Sensors(SensorsCommand),
     /// Package source configuration, run as root through sudo by the
     /// agent (ADR-0032). Always works on `/`.
+    #[cfg(unix)]
     #[command(subcommand)]
     Sources(SourcesCommand),
     /// Package updates, run as root through sudo by the agent (ADR-0036).
+    #[cfg(unix)]
     #[command(subcommand)]
     Packages(PackagesCommand),
+    /// Run as the Windows service `MonitorFlowAgent`; only the service
+    /// control manager starts the agent this way (ADR-0047).
+    #[cfg(windows)]
+    Service,
 }
 
+#[cfg(unix)]
+fn default_config() -> PathBuf {
+    "/etc/monitorflow/agent.toml".into()
+}
+
+#[cfg(windows)]
+fn default_config() -> PathBuf {
+    config::windows_base_dir().join("agent.toml")
+}
+
+#[cfg(unix)]
 #[derive(Subcommand, Debug, Clone, Copy)]
 enum PackagesCommand {
     /// Read an update spec (JSON, like `{"kind": "named", "packages":
@@ -64,6 +72,7 @@ enum PackagesCommand {
     Update,
 }
 
+#[cfg(unix)]
 #[derive(Subcommand, Debug, Clone, Copy)]
 enum SourcesCommand {
     /// Read a `ConfigureSources` message (binary Protobuf) on stdin, point
@@ -94,31 +103,74 @@ enum SensorsCommand {
     },
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    if let Some(Command::Sensors(SensorsCommand::Probe { kinds, params })) = cli.command {
-        let local = probe_limits(&cli.config)?;
-        return probe(kinds, params.into_iter().collect(), &local).await;
+    // The service dispatcher blocks this thread; the runtime starts in
+    // the service's own thread.
+    #[cfg(windows)]
+    if let Some(Command::Service) = cli.command {
+        return service::run(cli.config);
     }
-    if let Some(Command::Sources(command)) = cli.command {
-        return tokio::task::spawn_blocking(move || sources(command)).await?;
+    tokio::runtime::Runtime::new()?.block_on(console(cli))
+}
+
+/// Started from a shell, or by systemd: a subcommand, or the agent until
+/// a signal.
+async fn console(cli: Cli) -> anyhow::Result<()> {
+    match cli.command {
+        Some(Command::Sensors(SensorsCommand::Probe { kinds, params })) => {
+            let local = probe_limits(&cli.config)?;
+            return probe(kinds, params.into_iter().collect(), &local).await;
+        }
+        #[cfg(unix)]
+        Some(Command::Sources(command)) => {
+            return tokio::task::spawn_blocking(move || sources(command)).await?;
+        }
+        #[cfg(unix)]
+        Some(Command::Packages(PackagesCommand::Update)) => return packages_update().await,
+        #[cfg(windows)]
+        Some(Command::Service) => unreachable!("started before the runtime"),
+        None => {}
     }
-    if let Some(Command::Packages(PackagesCommand::Update)) = cli.command {
-        return packages_update().await;
+    let config = load(&cli.config, Logs::Stdout)?;
+    let (trigger, stop) = shutdown::channel();
+    shutdown::on_signals(trigger).context("cannot install signal handlers")?;
+    run(config, stop).await
+}
+
+/// Where the agent's logs go.
+#[derive(Debug, Clone, Copy)]
+enum Logs {
+    Stdout,
+    /// `<data_dir>/logs/agent.log`, for a Windows service.
+    #[cfg(windows)]
+    File,
+}
+
+/// Loads the configuration and starts logging.
+fn load(path: &Path, logs: Logs) -> anyhow::Result<AgentConfig> {
+    let config: AgentConfig = config::load(path)?;
+    match logs {
+        Logs::Stdout => logging::init(&config.log),
+        #[cfg(windows)]
+        Logs::File => {
+            let file = config.data_dir.join("logs").join("agent.log");
+            logging::init_file(&config.log, &file)
+                .with_context(|| format!("cannot open the log file {}", file.display()))?;
+        }
     }
-    let config: AgentConfig = config::load(&cli.config)?;
-    logging::init(&config.log);
-    tracing::info!(config = %cli.config.display(), protocol = monitorflow_common::PROTOCOL_VERSION, "starting agent");
+    tracing::info!(config = %path.display(), protocol = monitorflow_common::PROTOCOL_VERSION, "starting agent");
     // Secrets are redacted by their Debug impls.
     tracing::info!(effective = ?config, "configuration loaded");
+    Ok(config)
+}
 
+/// The agent, until `stop` fires.
+async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     // Before enrolling, so an unsupported host never spends a token.
     let host = os::detect().context("cannot start on this host")?;
     tracing::info!(hostname = %host.hostname, os_family = %host.os_family, os_version = %host.os_version, "host detected");
 
-    let (trigger, stop) = shutdown::channel();
-    shutdown::on_signals(trigger).context("cannot install signal handlers")?;
     let identity = match enroll::ensure_identity(&config, Backoff::default(), stop.clone()).await {
         Ok(identity) => identity,
         Err(EnrollError::Shutdown) => return Ok(()),
@@ -141,12 +193,56 @@ async fn main() -> anyhow::Result<()> {
         uplink.clone(),
     );
     let sensors = tokio::spawn(sensors.run(sensors_end, stop.clone()));
+    let mut handlers = Handlers::default();
+    let latest_report = platform_handlers(&config, &host, &mut handlers, &stop);
+    let (commands_stream, commands_end) = commands::link();
+    let ca_certs =
+        tls::load_certs(&config.tls_paths().ca_cert).context("loading the CA certificate")?;
+    let dispatcher = Dispatcher::new(
+        identity.peer_id(),
+        ca_certs,
+        handlers,
+        Journal::in_dir(&config.data_dir),
+        DispatcherSettings::default(),
+    );
+    tokio::spawn(dispatcher.run(commands_end, stop.clone()));
+    // The stream only returns on shutdown or a local error.
+    let mut agent = Agent::new(StreamSettings::from_config(&config), identity, host)
+        .follow(updates)
+        .with_sensors(stream_end)
+        .with_upload(uplink)
+        .with_commands(commands_stream);
+    if let Some(reports) = latest_report {
+        agent = agent.with_reports(reports);
+    }
+    let result = agent.run(stop).await.context("cannot connect upstream");
+    if result.is_ok() {
+        let _ = sensors.await;
+    }
+    result
+}
+
+/// Package reports every `packages.report_interval`, and the handlers of
+/// `apply_updates`, the source commands and `shell`; returns the reports
+/// for the stream.
+#[cfg(unix)]
+fn platform_handlers(
+    config: &AgentConfig,
+    host: &HostInfo,
+    handlers: &mut Handlers,
+    stop: &Shutdown,
+) -> Option<tokio::sync::watch::Receiver<Option<monitorflow_common::proto::v1::PackageReport>>> {
+    use monitorflow_agent::commands::shell::ShellHandler;
+    use monitorflow_agent::packages::{
+        self, ApplyUpdatesHandler, Reports, SourcesAction, SourcesHandler, Tools,
+    };
+    use monitorflow_common::command;
+
     let tools = Tools::default();
     let manager = packages::for_family(host.os_family, tools.clone());
     let (reports, latest_report) = Reports::new(manager.clone());
     let report_every = Duration::from_secs(config.packages.report_interval);
     tokio::spawn(reports.clone().run(report_every, stop.clone()));
-    let mut handlers = Handlers::default();
     handlers.register(
         command::APPLY_UPDATES,
         Arc::new(ApplyUpdatesHandler::new(manager, reports, tools.clone())),
@@ -162,35 +258,44 @@ async fn main() -> anyhow::Result<()> {
         command::SHELL,
         Arc::new(ShellHandler::new(config.commands.shell)),
     );
-    let (commands_stream, commands_end) = commands::link();
-    let ca_certs =
-        tls::load_certs(&config.tls_paths().ca_cert).context("loading the CA certificate")?;
-    let dispatcher = Dispatcher::new(
-        identity.peer_id(),
-        ca_certs,
-        handlers,
-        Journal::in_dir(&config.data_dir),
-        DispatcherSettings::default(),
-    );
-    tokio::spawn(dispatcher.run(commands_end, stop.clone()));
-    // The stream only returns on shutdown or a local error.
-    let result = Agent::new(StreamSettings::from_config(&config), identity, host)
-        .follow(updates)
-        .with_sensors(stream_end)
-        .with_upload(uplink)
-        .with_commands(commands_stream)
-        .with_reports(latest_report)
-        .run(stop)
-        .await
-        .context("cannot connect upstream");
-    if result.is_ok() {
-        let _ = sensors.await;
+    Some(latest_report)
+}
+
+/// No package reports yet; the package and `shell` commands are refused
+/// as unsupported (ADR-0047).
+#[cfg(windows)]
+fn platform_handlers(
+    config: &AgentConfig,
+    _host: &HostInfo,
+    handlers: &mut Handlers,
+    _stop: &Shutdown,
+) -> Option<tokio::sync::watch::Receiver<Option<monitorflow_common::proto::v1::PackageReport>>> {
+    use monitorflow_agent::commands::unsupported::Unsupported;
+    use monitorflow_common::command;
+
+    if config.commands.shell {
+        tracing::warn!(
+            "commands.shell is ignored: shell commands are not supported on Windows yet"
+        );
     }
-    result
+    for (kind, what) in [
+        (command::APPLY_UPDATES, "package updates"),
+        (command::CONFIGURE_SOURCES, "package sources"),
+        (command::REVERT_SOURCES, "package sources"),
+        (command::SHELL, "shell commands"),
+    ] {
+        handlers.register(kind, Arc::new(Unsupported::new(what, "Windows")));
+    }
+    None
 }
 
 /// Prints the changed paths and the backup directory, one per line.
+#[cfg(unix)]
 fn sources(command: SourcesCommand) -> anyhow::Result<()> {
+    use monitorflow_agent::packages::sources::{self, SystemCheck};
+    use monitorflow_common::proto::v1::ConfigureSources;
+    use prost::Message;
+
     let root = std::path::Path::new("/");
     let outcome = match command {
         SourcesCommand::Apply => {
@@ -213,8 +318,12 @@ fn sources(command: SourcesCommand) -> anyhow::Result<()> {
 
 /// Checks the spec before anything else, then prints each run's command
 /// line and output, and the error last on stderr.
+#[cfg(unix)]
 async fn packages_update() -> anyhow::Result<()> {
     use std::io::Write;
+
+    use monitorflow_agent::packages::update::{self, UpdateSpec};
+    use monitorflow_agent::packages::Tools;
     use tokio::io::AsyncReadExt;
 
     let mut bytes = Vec::new();
@@ -254,7 +363,7 @@ fn parse_param(arg: &str) -> Result<(String, String), String> {
 
 /// The `[sensors]` limits of the agent's configuration file, or the
 /// defaults when there is no file, so probing works before installing.
-fn probe_limits(path: &std::path::Path) -> anyhow::Result<registry::Local> {
+fn probe_limits(path: &Path) -> anyhow::Result<registry::Local> {
     if !path.exists() {
         eprintln!(
             "{} not found; using the default sensor limits",
@@ -303,4 +412,112 @@ async fn probe(
         }
     }
     Ok(())
+}
+
+/// The Windows service (ADR-0047): reports `Running`, fires the shutdown
+/// on `Stop`, `Shutdown` or `Preshutdown`, and reports `Stopped` with exit
+/// code 1 when the agent ended with an error, which the service control
+/// manager logs to the System event log.
+#[cfg(windows)]
+mod service {
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+    use std::sync::OnceLock;
+    use std::time::Duration;
+
+    use monitorflow_agent::shutdown;
+    use windows_service::service::{
+        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
+        ServiceType,
+    };
+    use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
+    use windows_service::{define_windows_service, service_dispatcher};
+
+    use super::Logs;
+
+    /// Name the service is installed under.
+    pub const NAME: &str = "MonitorFlowAgent";
+    /// How long a stop may take before the manager gives up waiting.
+    const STOP_WAIT: Duration = Duration::from_secs(30);
+
+    /// The `--config` path, for `service_main`, which only gets the
+    /// service's start parameters.
+    static CONFIG: OnceLock<PathBuf> = OnceLock::new();
+
+    define_windows_service!(ffi_service_main, service_main);
+
+    /// Blocks until the service stops.
+    pub fn run(config: PathBuf) -> anyhow::Result<()> {
+        let _ = CONFIG.set(config);
+        service_dispatcher::start(NAME, ffi_service_main).map_err(|error| {
+            anyhow::anyhow!(
+                "{error}: `service` only runs under the service control manager; run without it to start in this console"
+            )
+        })
+    }
+
+    fn service_main(_arguments: Vec<OsString>) {
+        if let Err(error) = serve() {
+            // Logs may not be set up yet; the exit code reaches the
+            // event log.
+            tracing::error!(error = format!("{error:#}"), "the agent service stopped");
+        }
+    }
+
+    fn serve() -> anyhow::Result<()> {
+        let (trigger, stop) = shutdown::channel();
+        let mut trigger = Some(trigger);
+        let handle = service_control_handler::register(NAME, move |control| match control {
+            ServiceControl::Stop | ServiceControl::Shutdown | ServiceControl::Preshutdown => {
+                if let Some(trigger) = trigger.take() {
+                    tracing::info!(?control, "service stop requested");
+                    trigger.fire();
+                }
+                ServiceControlHandlerResult::NoError
+            }
+            ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+            _ => ServiceControlHandlerResult::NotImplemented,
+        })?;
+        let status = |state, exit_code, wait_hint| ServiceStatus {
+            service_type: ServiceType::OWN_PROCESS,
+            current_state: state,
+            controls_accepted: match state {
+                ServiceState::Running => {
+                    ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN
+                }
+                _ => ServiceControlAccept::empty(),
+            },
+            exit_code,
+            checkpoint: 0,
+            wait_hint,
+            process_id: None,
+        };
+        let ok = ServiceExitCode::Win32(0);
+        handle.set_service_status(status(ServiceState::Running, ok, Duration::ZERO))?;
+
+        let config = CONFIG.get().cloned().unwrap_or_else(super::default_config);
+        let result = tokio::runtime::Runtime::new()
+            .map_err(anyhow::Error::from)
+            .and_then(|runtime| {
+                runtime.block_on(async {
+                    let mut stopping = stop.clone();
+                    tokio::spawn(async move {
+                        stopping.wait().await;
+                        let pending = status(ServiceState::StopPending, ok, STOP_WAIT);
+                        let _ = handle.set_service_status(pending);
+                    });
+                    let config = super::load(&config, Logs::File)?;
+                    super::run(config, stop).await
+                })
+            });
+        let exit_code = match &result {
+            Ok(()) => ok,
+            Err(_) => ServiceExitCode::ServiceSpecific(1),
+        };
+        if let Err(error) = &result {
+            tracing::error!(error = format!("{error:#}"), "the agent failed");
+        }
+        handle.set_service_status(status(ServiceState::Stopped, exit_code, Duration::ZERO))?;
+        Ok(())
+    }
 }

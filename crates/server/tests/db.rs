@@ -216,7 +216,7 @@ db_tests! {
         let s = site(&pool, "paris").await;
         let u = user(&pool, "alice").await;
         assert_eq!(
-            sqlstate(sqlx::query("INSERT INTO servers (peer_id, site_id, hostname, os_family) VALUES ('a', $1, 'a', 'windows')").bind(s).execute(&pool).await),
+            sqlstate(sqlx::query("INSERT INTO servers (peer_id, site_id, hostname, os_family) VALUES ('a', $1, 'a', 'macos')").bind(s).execute(&pool).await),
             CHECK_VIOLATION
         );
         assert_eq!(sqlstate(insert_role(&pool, u, "root", None).await), CHECK_VIOLATION);

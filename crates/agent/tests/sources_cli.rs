@@ -1,6 +1,9 @@
 //! The `sources` subcommand the agent runs through sudo (ADR-0032). It
 //! always works on `/`, so only specs refused before any change are run.
 
+// The real server and the Linux helpers only build on Unix (ADR-0047).
+#![cfg(unix)]
+
 use std::io::Write;
 use std::process::{Command, Stdio};
 

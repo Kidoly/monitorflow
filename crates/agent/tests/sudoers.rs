@@ -3,6 +3,9 @@
 //! paths of [`Tools::default`], no wildcard, and parses with `visudo -cf`
 //! where `visudo` is installed.
 
+// The real server and the Linux helpers only build on Unix (ADR-0047).
+#![cfg(unix)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
