@@ -65,3 +65,7 @@ Approach in ADR-0047: the same agent binary built for Windows, run as a service 
 - [x] Windows sensors: CPU, memory, disk, port, services, Event Log, PowerShell scripts (can run alongside the previous task).
 - [x] Windows Update inventory and installs through update campaigns (ADR-0049).
 - [x] MSI package for the agent: binary, service, account, ACLs, event log source (ADR-0050).
+
+## Phase 7 — Packaging
+
+- [x] Production compose for the central server: server and web images, PostgreSQL over TLS, install guide, smoke test in CI (ADR-0051).

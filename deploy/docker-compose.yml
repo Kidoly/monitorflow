@@ -1,0 +1,126 @@
+# MonitorFlow central server for production (ADR-0051, docs/deploy-server.md).
+# Copy .env.example to .env next to this file and fill it in, then:
+#   docker compose -f deploy/docker-compose.yml up -d --build
+name: monitorflow
+
+x-server-build: &server-build
+  context: ..
+  dockerfile: deploy/docker/server.Dockerfile
+
+services:
+  # One-shot: the CA and certificate of the PostgreSQL link, on first start.
+  db-certs:
+    build: *server-build
+    image: monitorflow-server:local
+    entrypoint: ["db-certs"]
+    user: "0"
+    network_mode: none
+    volumes: ["dbcerts:/certs"]
+
+  postgres:
+    image: postgres:17
+    command:
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/certs/server.pem
+      - -c
+      - ssl_key_file=/certs/server-key.pem
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    environment:
+      POSTGRES_USER: monitorflow
+      POSTGRES_DB: monitorflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - dbcerts:/certs:ro
+      - ./docker/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    networks: [storage]
+    depends_on:
+      db-certs: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monitorflow -d monitorflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.154.1
+    command: ["-storageDataPath=/storage", "-retentionPeriod=${METRICS_RETENTION:-90d}"]
+    volumes: ["vmdata:/storage"]
+    networks: [storage]
+    restart: unless-stopped
+
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.53.0
+    command: ["-storageDataPath=/storage", "-retentionPeriod=${LOGS_RETENTION:-30d}"]
+    volumes: ["vldata:/storage"]
+    networks: [storage]
+    restart: unless-stopped
+
+  server:
+    build: *server-build
+    image: monitorflow-server:local
+    environment:
+      MONITORFLOW_DATABASE_URL: "postgres://monitorflow:${POSTGRES_PASSWORD}@postgres:5432/monitorflow?sslmode=verify-full&sslrootcert=/certs/ca.pem"
+      MONITORFLOW_VICTORIAMETRICS_URL: http://victoriametrics:8428
+      MONITORFLOW_VICTORIALOGS_URL: http://victorialogs:9428
+      # Reached by the web service only: the port is not published (ADR-0006).
+      MONITORFLOW_API_LISTEN_ADDR: 0.0.0.0:7444
+      MONITORFLOW_SERVER_NAMES: ${SERVER_NAMES:?set SERVER_NAMES in .env}
+      MONITORFLOW_LOG_FORMAT: json
+    volumes:
+      - serverdata:/var/lib/monitorflow/server
+      - dbcerts:/certs:ro
+    networks: [storage, front]
+    ports:
+      - "${GRPC_PORT:-7443}:7443"
+      - "${ENROLL_PORT:-7445}:7445"
+    depends_on:
+      postgres: { condition: service_healthy }
+      victoriametrics: { condition: service_started }
+      victorialogs: { condition: service_started }
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - exec 3<>/dev/tcp/127.0.0.1/7444 && printf 'GET /api/health/ready HTTP/1.0\r\n\r\n' >&3 && head -n1 <&3 | grep -q ' 200 '
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/docker/web.Dockerfile
+    image: monitorflow-web:local
+    environment:
+      MONITORFLOW_DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      MONITORFLOW_API_UPSTREAM: server:7444
+    volumes: ["caddydata:/data"]
+    networks: [front]
+    ports:
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTP_PORT:-80}:80"
+    depends_on:
+      server: { condition: service_healthy }
+    restart: unless-stopped
+
+networks:
+  # The databases: no published port, no route out (ADR-0051).
+  storage:
+    internal: true
+  front:
+
+volumes:
+  dbcerts:
+  pgdata:
+  vmdata:
+  vldata:
+  # Holds the CA: losing it means enrolling every agent again. Back it up.
+  serverdata:
+  caddydata:

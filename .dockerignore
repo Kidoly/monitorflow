@@ -1,0 +1,8 @@
+# Build context of deploy/docker/*.Dockerfile: sources only.
+.git
+target
+**/node_modules
+web/.next
+web/out
+deploy/.env
+*.zip
