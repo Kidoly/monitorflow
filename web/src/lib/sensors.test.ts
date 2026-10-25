@@ -38,6 +38,11 @@ describe("sensor metrics", () => {
     expect(primaryMetric(diskData)).toEqual({ metric: "monitorflow_disk_data_used_ratio", instance: "data" });
     expect(primaryMetric(nginx)).toEqual({ metric: "monitorflow_systemd_active", instance: "nginx.service" });
     expect(primaryMetric(sensor("custom", "backup"))).toEqual({ metric: "monitorflow_backup" });
+    expect(primaryMetric(sensor("windows_service", "services", "W32Time"))).toEqual({
+      metric: "monitorflow_services_active",
+      instance: "W32Time",
+    });
+    expect(primaryMetric(sensor("eventlog", "app_errors"))).toEqual({ metric: "monitorflow_app_errors_matches" });
   });
 
   it("finds the sensor of a metric by its longest prefix", () => {
@@ -52,6 +57,10 @@ describe("sensor metrics", () => {
     expect(seriesTitle(disk, "monitorflow_disk_used_ratio", "/var")).toBe("Disk used /var");
     expect(seriesTitle(cpu, "monitorflow_cpu_usage_ratio", "total")).toBe("CPU usage");
     expect(seriesTitle(nginx, "monitorflow_systemd_active", "nginx.service")).toBe("nginx.service");
+    const w32time = sensor("windows_service", "services");
+    expect(seriesTitle(w32time, "monitorflow_services_active", "W32Time")).toBe("W32Time");
+    expect(seriesTitle(sensor("eventlog", "app_errors"), "monitorflow_app_errors_matches", "")).toBe("app_errors");
+    expect(formatSensorValue("monitorflow_services_installed", 0)).toBe("not installed");
     expect(seriesTitle(undefined, "monitorflow_cpu_load5", "")).toBe("Load average, 5 min");
     expect(formatSensorValue("monitorflow_systemd_active", 1)).toBe("active");
     expect(formatSensorValue("monitorflow_port_up", 0)).toBe("closed");
