@@ -8,7 +8,10 @@
 
 pub mod commands;
 pub mod enroll;
+#[cfg(windows)]
+pub mod eventlog;
 pub mod identity;
+pub mod init_config;
 pub mod os;
 pub mod packages;
 pub mod renew;

@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSI package of the Windows agent (ADR-0050). Reproduces the manual steps
+  of docs/deploy-agent.md: binary, service under its virtual account,
+  failure actions, data directories and their ACLs. Built by build-msi.ps1.
+
+  Properties for silent installs (msiexec /i ... /qn):
+    UPSTREAM_URL      writes agent.toml when it does not exist yet, and
+                      starts the service
+    ENROLL_URL        optional, enroll_url of agent.toml
+    ENROLLMENT_TOKEN  optional, one-time token; hidden from the MSI log
+    REMOVE_DATA=1     on uninstall, also delete %ProgramData%\MonitorFlow
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <!-- SID of NT SERVICE\MonitorFlowAgent: S-1-5-80- followed by the SHA-1
+       of the upper-case service name in UTF-16LE, as five little-endian
+       32-bit numbers. A SID, unlike the name, resolves before the service
+       exists, when the folders get their ACLs. -->
+  <?define ServiceSid = "S-1-5-80-546755567-1596817566-60379001-3258130523-3598288828" ?>
+  <!-- icacls F, RX and M. -->
+  <?define Full = "FA" ?>
+  <?define ReadExecute = "0x1200a9" ?>
+  <?define Modify = "0x1301bf" ?>
+
+  <Package Name="MonitorFlow agent" Manufacturer="MonitorFlow" Version="$(var.Version)"
+           UpgradeCode="4C1143A4-440D-4F8F-8698-B15B9A3B4727" Scope="perMachine">
+    <!-- Builds of one version have different product codes; without
+         same-version upgrades they would install side by side. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of the MonitorFlow agent is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="UPSTREAM_URL" Secure="yes" />
+    <Property Id="ENROLL_URL" Secure="yes" />
+    <Property Id="ENROLLMENT_TOKEN" Secure="yes" Hidden="yes" />
+    <Property Id="REMOVE_DATA" Secure="yes" />
+
+    <Feature Id="Agent" Title="MonitorFlow agent">
+      <ComponentGroupRef Id="AgentProgram" />
+      <ComponentGroupRef Id="AgentData" />
+      <!-- Extension point for other parts of the agent (Helpers.wxs). -->
+      <ComponentGroupRef Id="AgentHelpers" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="MonitorFlow" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATAFOLDER" Name="MonitorFlow">
+        <Directory Id="AGENTDATAFOLDER" Name="agent" />
+        <Directory Id="SCRIPTSFOLDER" Name="scripts.d" />
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="AgentProgram" Directory="INSTALLFOLDER">
+      <Component Id="AgentExe">
+        <File Id="AgentExe" Source="$(var.AgentExe)" KeyPath="yes" />
+        <ServiceInstall Id="AgentService" Name="MonitorFlowAgent" DisplayName="MonitorFlow agent"
+                        Description="Sends this server's inventory and sensor samples to MonitorFlow."
+                        Type="ownProcess" Start="auto" ErrorControl="normal" Vital="yes"
+                        Account="NT SERVICE\MonitorFlowAgent"
+                        Arguments="--config &quot;[DATAFOLDER]agent.toml&quot; service">
+          <!-- sc.exe failure reset= 86400 actions= restart/60000 x3 -->
+          <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
+                              ThirdFailureActionType="restart" RestartServiceDelayInSeconds="60"
+                              ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <ServiceControl Id="AgentServiceRemove" Name="MonitorFlowAgent" Stop="both"
+                        Remove="uninstall" Wait="yes" />
+      </Component>
+      <!-- Starts the service when it has a configuration: one given now,
+           or the one an upgrade keeps. -->
+      <Component Id="AgentServiceStart" Guid="EB652CBE-BB57-41C6-9E4A-0B191F34F321"
+                 Condition="UPSTREAM_URL OR WIX_UPGRADE_DETECTED">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\MonitorFlow\Agent" Name="StartedByInstaller"
+                       Type="integer" Value="1" KeyPath="yes" />
+        <ServiceControl Id="AgentServiceStart" Name="MonitorFlowAgent" Start="install" Wait="no" />
+      </Component>
+      <Component Id="ExampleConfig">
+        <File Id="ExampleConfig" Source="$(var.ExampleConfig)" Name="agent.windows.example.toml"
+              KeyPath="yes" />
+      </Component>
+      <!-- The source of the service's fatal errors in the Application log.
+           .NET's message file formats every event ID as its one string;
+           .NET Framework 4 ships with every supported Windows Server. -->
+      <Component Id="EventSource" Guid="F8BCBDA7-B87B-430A-B452-842023ACD60D">
+        <RegistryKey Root="HKLM"
+                     Key="SYSTEM\CurrentControlSet\Services\EventLog\Application\MonitorFlowAgent">
+          <RegistryValue Name="EventMessageFile" Type="expandable" KeyPath="yes"
+                         Value="%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll" />
+          <RegistryValue Name="TypesSupported" Type="integer" Value="7" />
+        </RegistryKey>
+      </Component>
+    </ComponentGroup>
+
+    <!-- Same ACLs as docs/deploy-agent.md, protected from inheritance:
+         configuration and scripts read by the service, data_dir modified
+         by it. The folders stay on uninstall unless empty. -->
+    <ComponentGroup Id="AgentData">
+      <Component Id="DataFolder" Directory="DATAFOLDER" Guid="3DDCBAD5-230B-4B5F-9B53-296595D9E792">
+        <CreateFolder>
+          <PermissionEx Sddl="D:PAI(A;OICI;$(var.Full);;;SY)(A;OICI;$(var.Full);;;BA)(A;OICI;$(var.ReadExecute);;;$(var.ServiceSid))" />
+        </CreateFolder>
+      </Component>
+      <Component Id="AgentDataFolder" Directory="AGENTDATAFOLDER" Guid="9ABE4B43-2201-442A-820E-1686BE8601E9">
+        <CreateFolder>
+          <PermissionEx Sddl="D:PAI(A;OICI;$(var.Full);;;SY)(A;OICI;$(var.Full);;;BA)(A;OICI;$(var.Modify);;;$(var.ServiceSid))" />
+        </CreateFolder>
+      </Component>
+      <!-- ADR-0048: nobody else may write where scripts run from. -->
+      <Component Id="ScriptsFolder" Directory="SCRIPTSFOLDER" Guid="19A88E80-75AB-4D5F-B971-47B511F5E6DA">
+        <CreateFolder>
+          <PermissionEx Sddl="D:PAI(A;OICI;$(var.Full);;;SY)(A;OICI;$(var.Full);;;BA)(A;OICI;$(var.ReadExecute);;;$(var.ServiceSid))" />
+        </CreateFolder>
+        <!-- REMOVE_DATA=1 on uninstall, not when an upgrade removes the
+             old version. The property must be set before CostInitialize,
+             when directory properties are not resolved yet. -->
+        <util:RemoveFolderEx On="uninstall" Property="MONITORFLOW_DATA_PATH"
+                             Condition="REMOVE_DATA AND NOT UPGRADINGPRODUCTCODE" />
+      </Component>
+    </ComponentGroup>
+    <SetProperty Id="MONITORFLOW_DATA_PATH" Value="[CommonAppDataFolder]MonitorFlow\"
+                 After="LaunchConditions" Sequence="execute" />
+
+    <!-- agent.toml from the properties, unless it exists. As SYSTEM, after
+         the folders have their ACLs, so the file inherits them. The command
+         line carries the token: HideTarget keeps it out of the log, and
+         only administrators can read a SYSTEM process's command line. -->
+    <CustomAction Id="WriteAgentConfig" FileRef="AgentExe" Execute="deferred" Impersonate="no"
+                  Return="check" HideTarget="yes"
+                  ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; init-config --upstream-url &quot;[UPSTREAM_URL]&quot; --enroll-url &quot;[ENROLL_URL]&quot; --enrollment-token &quot;[ENROLLMENT_TOKEN]&quot;" />
+    <InstallExecuteSequence>
+      <Custom Action="WriteAgentConfig" After="InstallFiles" Condition="UPSTREAM_URL AND NOT REMOVE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

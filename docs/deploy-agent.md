@@ -65,7 +65,33 @@ Behind a relay with mirroring enabled (`[mirror] enabled = true`), set `mirror.p
 
 ## Windows
 
-The Windows agent is the same binary built for `x86_64-pc-windows-msvc` (ADR-0047). CI uploads it as the `monitorflow-agent-windows-x86_64` artifact. It runs as the service `MonitorFlowAgent` under its virtual account `NT SERVICE\MonitorFlowAgent`, which has no administrator rights. These steps are what the MSI package will do. Run them in an elevated PowerShell, in this order: the service account exists only once the service is created, and the ACLs name it.
+The Windows agent is the same binary built for `x86_64-pc-windows-msvc` (ADR-0047). CI uploads it as the `monitorflow-agent-windows-x86_64` artifact, and its MSI package as `monitorflow-agent-windows-x86_64-msi`. It runs as the service `MonitorFlowAgent` under its virtual account `NT SERVICE\MonitorFlowAgent`, which has no administrator rights.
+
+### Install with the MSI
+
+The package (ADR-0050) does every manual step below: binary, service, failure actions, folders and ACLs, and it registers the `MonitorFlowAgent` event source. In an elevated PowerShell, with a token from the web interface:
+
+```powershell
+msiexec /i monitorflow-agent-0.1.0-x64.msi /qn /l*v install.log `
+  UPSTREAM_URL=https://relay.example.com:7443 ENROLLMENT_TOKEN=mfe1.…
+```
+
+| Property | Effect |
+| --- | --- |
+| `UPSTREAM_URL` | Writes `%ProgramData%\MonitorFlow\agent.toml` with it, unless the file exists, and starts the service. Without it, nothing is written and the service is not started: copy `agent.windows.example.toml` from `%ProgramFiles%\MonitorFlow`, then `Start-Service MonitorFlowAgent` |
+| `ENROLL_URL` | Optional `enroll_url`, needed when the upstream is a relay |
+| `ENROLLMENT_TOKEN` | Optional one-time token. The MSI log shows asterisks in its place. Remove it from `agent.toml` once enrolled (below) |
+| `REMOVE_DATA=1` | On uninstall, also deletes `%ProgramData%\MonitorFlow`: configuration, identity and logs |
+
+An invalid URL makes the install fail and roll back; `install.log` has the custom action `WriteAgentConfig` failing. The package is not signed yet, so Windows shows an unknown publisher.
+
+Installing a newer package upgrades in place: the service restarts with the new binary, and `agent.toml` and the identity are kept. `msiexec /x monitorflow-agent-0.1.0-x64.msi /qn` (or Apps and Features) removes the binary and the service and keeps `%ProgramData%\MonitorFlow`, so a reinstall keeps the same identity. When the service stops on an error, the Application event log has the reason, from the source `MonitorFlowAgent`.
+
+The package does not install the Windows Update service yet (ADR-0050 leaves its place in `AgentHelpers`): add it by hand as in [Windows Update service](#windows-update-service).
+
+### Install by hand
+
+These steps are what the MSI does. Run them in an elevated PowerShell, in this order: the service account exists only once the service is created, and the ACLs name it. Instead of copying the example, `monitorflow-agent.exe --config "$data\agent.toml" init-config --upstream-url https://… --enrollment-token …` writes a minimal `agent.toml`, as the MSI does.
 
 ```powershell
 $bin  = "$env:ProgramFiles\MonitorFlow"
@@ -83,13 +109,15 @@ sc.exe failure MonitorFlowAgent reset= 86400 actions= restart/60000/restart/6000
 icacls $data /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "NT SERVICE\MonitorFlowAgent:(OI)(CI)RX"
 # Identity, sensor configuration, command journal and logs: the service writes.
 icacls "$data\agent" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "NT SERVICE\MonitorFlowAgent:(OI)(CI)M"
+# Scripts (ADR-0048): the same as the configuration, protected on its own.
+icacls "$data\scripts.d" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "NT SERVICE\MonitorFlowAgent:(OI)(CI)RX"
 ```
 
 Start from `deploy/config/agent.windows.example.toml`. Its paths assume `%ProgramData%` is `C:\ProgramData`. Use single-quoted TOML strings for paths, so backslashes are not escapes. `%ProgramFiles%` lets only administrators write by default, which keeps the binary as safe as a root-owned `/usr/bin/monitorflow-agent`. The agent also protects what it writes itself: the private key, the command journal and the directories it creates get a DACL for `SYSTEM`, `Administrators` and their owner only, whatever the parent allows. At start, it logs a warning when the key's DACL allows anyone else.
 
 ### Enrolling
 
-A service has no shell to pass `MONITORFLOW_ENROLLMENT_TOKEN` from. Put the token in `agent.toml` for the first start instead: the ACLs above make the file readable only by the service and administrators. Remove the token once the log says `identity loaded`.
+A service has no shell to pass `MONITORFLOW_ENROLLMENT_TOKEN` from. Put the token in `agent.toml` for the first start instead, which the MSI's `ENROLLMENT_TOKEN` does: the ACLs above make the file readable only by the service and administrators. Remove the token once the log says `identity loaded`.
 
 ```powershell
 Start-Service MonitorFlowAgent
