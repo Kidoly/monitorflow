@@ -5,6 +5,7 @@
 //! With the `mirror` feature, `serve` holds the listener and `index` the
 //! index built from the tree.
 
+#[cfg(unix)]
 use std::io;
 use std::path::Path;
 
@@ -100,7 +101,9 @@ pub fn swap_current(dir: &Path, snapshot: &str) -> io::Result<()> {
 
 /// Writes `path` durably through `<path>.tmp`: the contents are synced
 /// before the rename and the directory after it, so a crash leaves the
-/// old file or the new one, never a truncated one. Blocking.
+/// old file or the new one, never a truncated one. Blocking. Unix only,
+/// like [`swap_current`].
+#[cfg(unix)]
 pub fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
     use std::io::Write;
     let tmp = path.with_extension("tmp");
@@ -162,6 +165,7 @@ mod tests {
         assert_eq!(read_current(dir.path()), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn files_are_replaced_atomically() {
         let dir = tempfile::tempdir().unwrap();
