@@ -85,7 +85,9 @@ pub fn is_snapshot_name(name: &str) -> bool {
 }
 
 /// Points `<dir>/current` at `snapshot`: a new link, then a rename over
-/// the old one, so readers always see one or the other. Blocking.
+/// the old one, so readers always see one or the other. Blocking. Unix
+/// only, like the server and relays that hold mirrors.
+#[cfg(unix)]
 pub fn swap_current(dir: &Path, snapshot: &str) -> io::Result<()> {
     let tmp = dir.join(format!(".{CURRENT}.tmp"));
     match std::fs::remove_file(&tmp) {
@@ -142,6 +144,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn current_is_swapped_atomically() {
         let dir = tempfile::tempdir().unwrap();

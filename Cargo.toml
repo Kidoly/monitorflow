@@ -78,6 +78,8 @@ regex = "1"
 # Safe syscall wrappers (statvfs, clock_gettime) for the sensors, instead
 # of raw libc.
 rustix = { version = "1", features = ["fs", "time"] }
+# Windows agent (ADR-0047): ACLs of private files.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
 
 [profile.release]
 lto = "thin"

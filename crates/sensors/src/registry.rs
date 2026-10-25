@@ -15,12 +15,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[cfg(unix)]
 use crate::cpu::CpuSensor;
+#[cfg(unix)]
 use crate::disk::DiskSensor;
+#[cfg(unix)]
 use crate::log::{self, LogSensor};
+#[cfg(unix)]
 use crate::memory::MemorySensor;
 use crate::port::PortSensor;
+#[cfg(unix)]
 use crate::script::{self, ScriptSensor};
+#[cfg(unix)]
 use crate::systemd::SystemdSensor;
 use crate::Sensor;
 
@@ -54,11 +60,23 @@ pub struct Local {
     pub log_dirs: Vec<PathBuf>,
 }
 
+#[cfg(unix)]
 impl Default for Local {
     fn default() -> Self {
         Self {
             script_dir: script::DEFAULT_DIR.into(),
             log_dirs: log::DEFAULT_DIRS.iter().map(PathBuf::from).collect(),
+        }
+    }
+}
+
+/// The Windows agent's defaults (ADR-0047).
+#[cfg(windows)]
+impl Default for Local {
+    fn default() -> Self {
+        Self {
+            script_dir: r"C:\ProgramData\MonitorFlow\scripts.d".into(),
+            log_dirs: Vec::new(),
         }
     }
 }
@@ -86,14 +104,27 @@ fn build_with(
 ) -> Result<Arc<dyn Sensor>, BuildError> {
     let mut params = Params::new(kind, params)?;
     let sensor: Arc<dyn Sensor> = match params.kind {
+        #[cfg(unix)]
         "cpu" => Arc::new(CpuSensor::new(params.bool("per_core", true)?)),
+        #[cfg(unix)]
         "disk" => Arc::new(DiskSensor::from_params(&mut params)?),
+        #[cfg(unix)]
         "log" => Arc::new(LogSensor::from_params(&mut params, local)?),
+        #[cfg(unix)]
         "memory" => Arc::new(MemorySensor),
         "port" => Arc::new(PortSensor::from_params(&mut params)?),
+        #[cfg(unix)]
         "script" => Arc::new(ScriptSensor::from_params(&mut params, local)?),
+        #[cfg(unix)]
         "systemd" => Arc::new(SystemdSensor::from_params(&mut params)?),
+        #[cfg(unix)]
         _ => unreachable!("Params::new only accepts KINDS"),
+        // A kind without an implementation on this platform yet.
+        #[cfg(not(unix))]
+        _ => {
+            let _ = local;
+            return Err(params.refused("not available on this platform"));
+        }
     };
     params.finish()?;
     Ok(sensor)
@@ -141,6 +172,7 @@ impl<'a> Params<'a> {
     }
 
     /// `true` or `false`.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn bool(&mut self, name: &'static str, default: bool) -> Result<bool, BuildError> {
         match self.get(name) {
             None => Ok(default),
@@ -151,6 +183,7 @@ impl<'a> Params<'a> {
     }
 
     /// A comma-separated list without empty items; `None` when absent.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn list(&mut self, name: &'static str) -> Result<Option<Vec<String>>, BuildError> {
         let Some(value) = self.get(name) else {
             return Ok(None);
@@ -184,6 +217,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(unix)]
     #[test]
     fn every_kind_builds_with_defaults_or_asks_for_params() {
         let required: [(&str, &[(&str, &str)]); 4] = [
@@ -204,6 +238,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn unknown_kinds_and_params_are_refused() {
         let error = build("gpu", &BTreeMap::new()).err().unwrap();
@@ -220,6 +255,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn local_limits_refuse_what_the_host_does_not_allow() {
         let dir = tempfile::tempdir().unwrap();
@@ -233,6 +269,19 @@ mod tests {
         assert!(matches!(error, BuildError::Refused { kind: "script", .. }));
         assert!(error.to_string().contains("not installed"), "{error}");
         assert!(build_local("cpu", &BTreeMap::new(), &local).is_ok());
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn kinds_without_an_implementation_are_refused() {
+        let error = build_local("cpu", &BTreeMap::new(), &Local::default()).err();
+        assert!(matches!(
+            error,
+            Some(BuildError::Refused { kind: "cpu", .. })
+        ));
+        assert!(build("port", &params(&[("port", "22")])).is_ok());
+        let error = build("gpu", &BTreeMap::new()).err().unwrap();
+        assert_eq!(error, BuildError::UnknownKind("gpu".into()));
     }
 
     #[test]

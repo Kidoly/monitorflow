@@ -18,8 +18,22 @@ use tonic::codegen::http::Uri;
 use crate::grpc_url::GrpcUrl;
 use crate::redact::{redact_url_password, Secret};
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
+#[cfg(all(test, windows))]
+mod windows_tests;
+
+/// `%ProgramData%\MonitorFlow`, where the Windows agent keeps its
+/// configuration and data (ADR-0047). `C:\ProgramData` when the variable
+/// is not set.
+#[cfg(windows)]
+pub fn windows_base_dir() -> PathBuf {
+    std::env::var_os("ProgramData")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+        .join("MonitorFlow")
+}
 
 /// Prefix of every environment override.
 pub const ENV_PREFIX: &str = "MONITORFLOW_";
@@ -527,11 +541,24 @@ pub struct AgentSensorsConfig {
     pub log_dirs: Vec<PathBuf>,
 }
 
+#[cfg(unix)]
 impl Default for AgentSensorsConfig {
     fn default() -> Self {
         Self {
             script_dir: "/etc/monitorflow/scripts.d".into(),
             log_dirs: vec!["/var/log".into()],
+        }
+    }
+}
+
+/// Windows has no common log directory like `/var/log`: the log sensor is
+/// off until the administrator lists directories.
+#[cfg(windows)]
+impl Default for AgentSensorsConfig {
+    fn default() -> Self {
+        Self {
+            script_dir: windows_base_dir().join("scripts.d"),
+            log_dirs: Vec::new(),
         }
     }
 }
@@ -557,7 +584,7 @@ impl Default for AgentConfig {
         Self {
             upstream_url: String::new(),
             enroll_url: None,
-            data_dir: "/var/lib/monitorflow/agent".into(),
+            data_dir: default_agent_data_dir(),
             enrollment_token: None,
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             tls: AgentTlsPaths::default(),
@@ -567,6 +594,16 @@ impl Default for AgentConfig {
             commands: AgentCommandsConfig::default(),
         }
     }
+}
+
+#[cfg(unix)]
+fn default_agent_data_dir() -> PathBuf {
+    "/var/lib/monitorflow/agent".into()
+}
+
+#[cfg(windows)]
+fn default_agent_data_dir() -> PathBuf {
+    windows_base_dir().join("agent")
 }
 
 impl AgentConfig {
