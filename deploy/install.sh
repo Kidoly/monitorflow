@@ -132,8 +132,19 @@ install_sudoers() {
         return
     fi
     visudo -cqf "$tmp/monitorflow-agent-sudoers" || die "visudo refuses the downloaded sudo rules"
-    install -o root -g root -m 0440 "$tmp/monitorflow-agent-sudoers" "$SUDOERS"
-    visudo -cq || die "sudo's configuration is invalid after adding $SUDOERS; check it with visudo -c"
+    # The whole configuration too, unless it failed before we touched it.
+    if visudo -cq >/dev/null 2>&1; then
+        install -o root -g root -m 0440 "$tmp/monitorflow-agent-sudoers" "$SUDOERS"
+        if ! visudo -c >"$tmp/visudo.log" 2>&1; then
+            rm -f "$SUDOERS"
+            cat "$tmp/visudo.log" >&2
+            die "sudo's configuration fails visudo -c with $SUDOERS, which was removed again"
+        fi
+    else
+        install -o root -g root -m 0440 "$tmp/monitorflow-agent-sudoers" "$SUDOERS"
+        visudo -c >&2 || true
+        say "warning: sudo's configuration already failed visudo -c before $SUDOERS was added; fix it, or the agent's sudo rules may not apply"
+    fi
 }
 
 # Waits for the identity the first start writes. Fails as soon as the agent
