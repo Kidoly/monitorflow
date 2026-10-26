@@ -69,3 +69,4 @@ Approach in ADR-0047: the same agent binary built for Windows, run as a service 
 ## Phase 7 — Packaging
 
 - [x] Production compose for the central server: server and web images, PostgreSQL over TLS, install guide, smoke test in CI (ADR-0051).
+- [ ] Agent releases: static Linux binaries and the Windows MSI on GitHub Releases, one-line Linux installer that can be self-hosted, install command on the token page, end-to-end test in CI (ADR-0052).

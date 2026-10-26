@@ -1,0 +1,35 @@
+# Builds the Linux agent as a static musl binary with cargo-zigbuild
+# (ADR-0052): zig is the C compiler and linker for ring and the libc, so
+# x86_64 and aarch64 build on the same x86_64 runner without Docker.
+name: Build the Linux agent
+description: Static musl build of monitorflow-agent for one target
+inputs:
+  target:
+    description: x86_64-unknown-linux-musl or aarch64-unknown-linux-musl
+    required: true
+outputs:
+  path:
+    description: Path of the built binary
+    value: ${{ steps.build.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - name: Install the toolchain, zig and cargo-zigbuild
+      shell: bash
+      run: |
+        rustup toolchain install && rustup target add ${{ inputs.target }}
+        # A venv first on PATH: cargo-zigbuild finds zig with `python3 -m ziglang`.
+        python3 -m venv "$RUNNER_TEMP/zigbuild"
+        "$RUNNER_TEMP/zigbuild/bin/pip" install -q cargo-zigbuild==0.24.0 ziglang==0.14.1
+        echo "$RUNNER_TEMP/zigbuild/bin" >>"$GITHUB_PATH"
+        sudo apt-get update && sudo apt-get install -y protobuf-compiler
+    - uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ inputs.target }}
+    - id: build
+      shell: bash
+      env:
+        SQLX_OFFLINE: "true"
+      run: |
+        cargo zigbuild --release --locked -p monitorflow-agent --target ${{ inputs.target }}
+        echo "path=target/${{ inputs.target }}/release/monitorflow-agent" >>"$GITHUB_OUTPUT"
