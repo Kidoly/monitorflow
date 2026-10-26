@@ -26,9 +26,11 @@ check() {
 }
 
 # The certificate a TLS listener presents names localhost. No client
-# certificate is sent: the gRPC listener still shows its own first.
+# certificate is sent: the gRPC listener still shows its own first, then
+# ends the handshake with an alert. -prexit prints the session on exit
+# too, as s_client may read that alert before printing it otherwise.
 cert_names_localhost() {
-    openssl s_client -connect "localhost:$1" -alpn h2 </dev/null 2>/dev/null \
+    openssl s_client -connect "localhost:$1" -alpn h2 -prexit </dev/null 2>/dev/null \
         | openssl x509 -noout -ext subjectAltName | grep -q 'DNS:localhost'
 }
 # Every connection of the server's pool, seen by PostgreSQL, is encrypted.
