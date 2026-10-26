@@ -43,7 +43,7 @@ absent() { ! sudo test -e "$1"; }
 mkdir -p "$work/files" "$work/files/tampered"
 install -m 0755 "$agent" "$work/files/monitorflow-agent-linux-x86_64"
 ./release-files.sh "$work/files" >/dev/null
-cp "$work/files"/* "$work/files/tampered/"
+find "$work/files" -maxdepth 1 -type f -exec cp {} "$work/files/tampered/" \;
 awk -v zero="$(printf '%064d' 0)" '$2 == "monitorflow-agent-linux-x86_64" { $1 = zero } 1' \
     "$work/files/SHA256SUMS" >"$work/files/tampered/SHA256SUMS"
 
