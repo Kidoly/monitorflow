@@ -40,7 +40,7 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
   | sudo MF_SERVER=<a name of SERVER_NAMES>:7443 MF_TOKEN=mfe1.… sh
 ```
 
-A token created in the web interface comes with this command filled in. Hosts without access to GitHub install from a copy of the release files on a web server of the site (`MF_DOWNLOAD_URL`).
+A token created in the web interface comes with this command filled in. Hosts without access to GitHub install from a copy of the release files on a web server of the site: set `AGENT_DOWNLOAD_URL` in `deploy/.env` to its https URL, and the commands the web interface shows use it.
 
 ## Browser certificate
 

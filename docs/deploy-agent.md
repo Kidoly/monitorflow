@@ -11,7 +11,7 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
   | sudo MF_SERVER=monitorflow.example.com:7443 MF_TOKEN=mfe1.… sh
 ```
 
-The installer (ADR-0052) downloads the static agent for the host's architecture and `SHA256SUMS` from the same place, checks the checksum before it changes anything, and then does every step of [Binary and user](#binary-and-user) and [Sudo rules](#sudo-rules): binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface shows this command, filled in, once a token is created.
+The installer (ADR-0052) downloads the static agent for the host's architecture and `SHA256SUMS` from the same place, checks the checksum before it changes anything, and then does every step of [Binary and user](#binary-and-user) and [Sudo rules](#sudo-rules): binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface shows this command filled in, and the Windows one, once an agent token is created; give it the relay's address there if the agent connects through one.
 
 | Variable | Meaning |
 | --- | --- |
@@ -47,7 +47,7 @@ curl -fsSL https://files.example.net/monitorflow/0.2.0/install.sh \
   | sudo MF_DOWNLOAD_URL=https://files.example.net/monitorflow/0.2.0 MF_SERVER=… MF_TOKEN=… sh
 ```
 
-Keep one directory per version: `MF_DOWNLOAD_URL` names the version, and `MF_VERSION` applies to GitHub only. The installer accepts only HTTPS; the host must trust the web server's certificate.
+Keep one directory per version: `MF_DOWNLOAD_URL` names the version, and `MF_VERSION` applies to GitHub only. The installer accepts only HTTPS; the host must trust the web server's certificate. Set the server's `agent_download_url` (`AGENT_DOWNLOAD_URL` in the compose `.env`) to the same URL, and the web interface's commands use it.
 
 **Ansible.** One token per host, created on the server host as needed, with a short validity. Here the server runs with the production compose (deploy-server.md) on the inventory host `monitorflow`:
 

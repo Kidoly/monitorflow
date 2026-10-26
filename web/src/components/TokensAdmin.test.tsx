@@ -33,6 +33,7 @@ const created: CreatedToken = {
   token: SECRET,
   upstream_url: "https://mf.example:7443",
   enroll_url: "https://mf.example:7445",
+  agent_download_url: "https://github.com/Kidoly/monitorflow/releases/latest/download",
 };
 
 const sites = {
@@ -104,6 +105,57 @@ describe("TokensAdmin", () => {
     expect(screen.queryByDisplayValue(SECRET)).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain(SECRET);
     expect(await screen.findByRole("row", { name: /relay-1/ })).toBeInTheDocument();
+  });
+
+  it("shows the install commands for an agent token, through a relay if asked", async () => {
+    const user = userEvent.setup();
+    const agentToken: CreatedToken = { ...created, ...token({ id: "t4", peer_id: "web-03" }) };
+    stubFetch({
+      "GET /api/tokens": { status: 200, body: { tokens: [], next_cursor: null } },
+      "GET /api/sites": sites,
+      "POST /api/tokens": { status: 201, body: agentToken },
+    });
+    render(<TokensAdmin me={customerAdmin} />);
+    const form = await screen.findByRole("form", { name: "New token" });
+    await within(within(form).getByLabelText("Site")).findByRole("option");
+    await user.type(within(form).getByLabelText("Peer ID"), "web-03");
+    await user.click(within(form).getByRole("button", { name: "Create token" }));
+
+    const install = await screen.findByRole("group", { name: "Install the agent" });
+    const linux = within(install).getByLabelText(/^Linux/);
+    expect(linux).toHaveTextContent(`| sudo MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`);
+    expect(within(install).getByLabelText(/^Windows/)).toHaveTextContent(
+      `UPSTREAM_URL=https://mf.example:7443 ENROLLMENT_TOKEN=${SECRET}`,
+    );
+    await user.click(within(install).getByRole("button", { name: "Copy the Linux command" }));
+    expect(await navigator.clipboard.readText()).toBe(linux.textContent);
+
+    const relay = within(install).getByLabelText(/Connect through a relay/);
+    await user.type(relay, "relay1.paris.example:7443");
+    expect(linux).toHaveTextContent("MF_SERVER=relay1.paris.example:7443 MF_ENROLL=mf.example:7445");
+    await user.type(relay, "; id");
+    expect(relay).toHaveAttribute("aria-invalid", "true");
+    expect(within(install).getByRole("alert")).toHaveTextContent("Enter a host name or IP address");
+    expect(linux).toHaveTextContent("MF_SERVER=mf.example:7443 MF_TOKEN");
+    expect(linux).not.toHaveTextContent("; id");
+  });
+
+  it("shows no install commands for a relay token", async () => {
+    const user = userEvent.setup();
+    stubFetch({
+      "GET /api/tokens": { status: 200, body: { tokens: [], next_cursor: null } },
+      "GET /api/sites": sites,
+      "POST /api/tokens": { status: 201, body: created },
+    });
+    render(<TokensAdmin me={customerAdmin} />);
+    const form = await screen.findByRole("form", { name: "New token" });
+    await within(within(form).getByLabelText("Site")).findByRole("option");
+    await user.click(within(form).getByRole("radio", { name: "Relay" }));
+    await user.type(within(form).getByLabelText("Peer ID"), "relay-1");
+    await user.type(within(form).getByLabelText(/Server names/), "relay1.example");
+    await user.click(within(form).getByRole("button", { name: "Create token" }));
+    await screen.findByRole("region", { name: /^Token for relay-1/ });
+    expect(screen.queryByRole("group", { name: "Install the agent" })).not.toBeInTheDocument();
   });
 
   it("preselects Relay from the relays page's link", async () => {
