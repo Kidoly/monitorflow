@@ -44,11 +44,13 @@ IPv6 addresses go in brackets, as in URLs; a bare one is refused with that hint.
 
 **Self-hosting.** A site copies the files of a release into any directory served over HTTPS and passes it as `MF_DOWNLOAD_URL`; the installer fetches `install.sh` from there too.
 
+**Install commands in the web interface.** `POST /api/tokens` also returns `agent_download_url`, from the server setting of that name (default `https://github.com/Kidoly/monitorflow/releases/latest/download`, https only). For an agent token, the token page shows the Linux one-liner and the PowerShell lines that download the MSI and run `msiexec /qn` with `UPSTREAM_URL`, `ENROLL_URL` when needed and `ENROLLMENT_TOKEN`. `MF_SERVER` comes from the token's `upstream_url`, `MF_ENROLL` is added when `enroll_url` is not the agent's default for that host, and `MF_DOWNLOAD_URL` when the base is not GitHub's. The server does not know which relay an agent will use, so the page has an optional relay field that replaces `MF_SERVER` and adds the server's enrollment address; it accepts only a host name or bracketed IP with a port, so nothing pasted there can reach the shell. The token stays visible only in that panel, as before.
+
 **CI.** The `compose` job builds the x86_64 agent as the release does, then `deploy/install-test.sh` starts the production compose, serves the release directory over HTTPS with a throwaway CA, creates a token with `monitorflow-server token create`, pipes `install.sh` to `sh` on the runner, which has systemd, and checks the result through the API (the agent online) and on disk (owners, modes, token file gone, token in no file, journal or output). It runs the installer again and checks that the identity and configuration are unchanged, checks that a wrong checksum leaves the binary untouched, then uninstalls with and without `MF_PURGE`. Pull requests that change the release files also run the release workflow without publishing.
 
 ## Consequences
 
-- One command installs, enrolls or upgrades a Linux agent, from GitHub or from a site's own server.
+- One command installs, enrolls or upgrades a Linux agent, from GitHub or from a site's own server, and the token page shows it filled in.
 - Releases are cut by pushing a tag; the workflow refuses a tag that disagrees with `Cargo.toml`. Nothing else publishes.
 - `.deb` and `.rpm` packages (architecture §7) are still to come; they will reuse the unit and the sudo rules, and the installer may then prefer them.
 - Binaries and the installer are not signed yet: their integrity rests on HTTPS to the release host.

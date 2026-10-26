@@ -595,6 +595,8 @@ export interface CreatedToken extends EnrollmentToken {
   token: string;
   upstream_url: string;
   enroll_url: string;
+  /** Base URL of the agent release files, for the install commands (ADR-0052). */
+  agent_download_url: string;
 }
 
 export type CampaignState = "draft" | "scheduled" | "running" | "paused" | "stopped" | "completed" | "failed";

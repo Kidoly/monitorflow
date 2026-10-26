@@ -51,6 +51,12 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # by source configuration commands (ADR-0035); unset refuses those commands.
 # mirror_public_url = "http://mirror.example.net:7480"
 
+# https URL of a directory holding the agent release files (install.sh,
+# SHA256SUMS, the binaries), used in the install commands the web interface
+# shows with a new token (ADR-0052). Set it when the site serves the files
+# itself.
+# agent_download_url = "https://github.com/Kidoly/monitorflow/releases/latest/download"
+
 # Batching of writes to VictoriaMetrics and VictoriaLogs (ADR-0013). Each
 # writer has its own queue; while a queue is full, new items are dropped and
 # counted, so a slow backend never stalls agent streams.

@@ -43,6 +43,9 @@ pub const DEFAULT_HEARTBEAT_INTERVAL: u64 = 30;
 
 /// Port of the server's enrollment listener unless configured otherwise.
 pub const DEFAULT_ENROLL_PORT: u16 = 7445;
+/// Default `agent_download_url`: the files of the latest GitHub release.
+pub const DEFAULT_AGENT_DOWNLOAD_URL: &str =
+    "https://github.com/Kidoly/monitorflow/releases/latest/download";
 
 /// Port of the plain HTTP mirror listeners unless configured otherwise.
 pub const DEFAULT_MIRROR_PORT: u16 = 7480;
@@ -985,6 +988,10 @@ pub struct ServerConfig {
     /// the server sends them (ADR-0035). Unset refuses source
     /// configuration commands.
     pub mirror_public_url: Option<String>,
+    /// https URL of the directory holding the agent release files, put in
+    /// the install commands the web interface shows with a new token
+    /// (ADR-0052). The latest GitHub release by default.
+    pub agent_download_url: String,
     pub mirror: MirrorConfig,
     /// AI provider of the remediation loop (ADR-0039). Off by default.
     pub ai: AiConfig,
@@ -1034,6 +1041,7 @@ impl Default for ServerConfig {
             mirror_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7480)),
             mirror_dir: None,
             mirror_public_url: None,
+            agent_download_url: DEFAULT_AGENT_DOWNLOAD_URL.into(),
             mirror: MirrorConfig::default(),
             ai: AiConfig::default(),
             proxmox: ProxmoxConfig::default(),
@@ -1390,6 +1398,7 @@ impl LoadConfig for ServerConfig {
         env.set("mirror_listen_addr", &mut self.mirror_listen_addr)?;
         env.set_opt("mirror_dir", &mut self.mirror_dir)?;
         env.set_opt("mirror_public_url", &mut self.mirror_public_url)?;
+        env.set("agent_download_url", &mut self.agent_download_url)?;
         self.mirror.apply_env(env)?;
         self.ai.apply_env(env)?;
         self.proxmox.apply_env(env)?;
@@ -1410,6 +1419,14 @@ impl LoadConfig for ServerConfig {
                     "must be an http or https URL without user, query or fragment",
                 ));
             }
+        }
+        if !(self.agent_download_url.starts_with("https://")
+            && valid_mirror_url(&self.agent_download_url))
+        {
+            return Err(check.fail(
+                "agent_download_url",
+                "must be an https URL without user, query or fragment",
+            ));
         }
         if self.server_names.is_empty() || self.server_names.iter().any(String::is_empty) {
             return Err(check.fail(

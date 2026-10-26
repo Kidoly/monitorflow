@@ -377,6 +377,35 @@ fn server_mirror_public_url() {
 }
 
 #[test]
+fn server_agent_download_url() {
+    assert_eq!(
+        parse::<ServerConfig>(SERVER_MIN)
+            .unwrap()
+            .agent_download_url,
+        DEFAULT_AGENT_DOWNLOAD_URL
+    );
+    let vars = env(&[(
+        "MONITORFLOW_AGENT_DOWNLOAD_URL",
+        "https://files.example/monitorflow/0.2.0",
+    )]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert_eq!(
+        server.agent_download_url,
+        "https://files.example/monitorflow/0.2.0"
+    );
+    for bad in [
+        "http://files.example",
+        "https://",
+        "https://user:pw@files.example",
+        "https://files.example/?x=1",
+        "https://files example",
+    ] {
+        let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_AGENT_DOWNLOAD_URL", bad)]);
+        assert!(msg.contains("agent_download_url"), "{bad}: {msg}");
+    }
+}
+
+#[test]
 fn server_tls_paths_follow_data_dir() {
     let tls = parse::<ServerConfig>(SERVER_MIN).unwrap().tls_paths();
     assert_eq!(

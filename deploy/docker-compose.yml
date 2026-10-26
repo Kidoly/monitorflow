@@ -71,6 +71,8 @@ services:
       MONITORFLOW_API_LISTEN_ADDR: 0.0.0.0:7444
       MONITORFLOW_SERVER_NAMES: ${SERVER_NAMES:?set SERVER_NAMES in .env}
       MONITORFLOW_LOG_FORMAT: json
+      # Unset: the latest GitHub release (ADR-0052).
+      MONITORFLOW_AGENT_DOWNLOAD_URL: ${AGENT_DOWNLOAD_URL:-}
     volumes:
       - serverdata:/var/lib/monitorflow/server
       - dbcerts:/certs:ro
