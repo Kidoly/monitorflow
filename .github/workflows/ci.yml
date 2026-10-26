@@ -100,3 +100,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+  # The production compose (ADR-0051): builds both images, starts the stack
+  # and checks it, the TLS database link included.
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: deploy/smoke-test.sh

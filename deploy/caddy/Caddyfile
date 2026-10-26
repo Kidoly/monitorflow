@@ -7,8 +7,16 @@
 # CA instead (run `caddy trust` once to make browsers accept it).
 #
 # Copy the build output (`npm run build` in web/) to the root below.
+# MONITORFLOW_API_UPSTREAM overrides the API address, like server:7444 in
+# deploy/docker-compose.yml, where the web image ships this file.
 #
 # Run: MONITORFLOW_DOMAIN=monitor.example.com caddy run --config deploy/caddy/Caddyfile
+
+{
+	# Clients connecting to an IP address send no SNI: give them the site's
+	# certificate, which Caddy could not pick otherwise.
+	default_sni {$MONITORFLOW_DOMAIN:localhost}
+}
 
 {$MONITORFLOW_DOMAIN:localhost} {
 	encode zstd gzip
@@ -16,7 +24,7 @@
 	# The API sets its own cookies and errors; pass requests through as is.
 	# Keep the server's api_cookie_secure = true: the browser link is HTTPS.
 	handle /api/* {
-		reverse_proxy 127.0.0.1:7444
+		reverse_proxy {$MONITORFLOW_API_UPSTREAM:127.0.0.1:7444}
 	}
 
 	handle {
