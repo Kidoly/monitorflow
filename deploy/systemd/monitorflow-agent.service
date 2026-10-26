@@ -1,0 +1,20 @@
+# MonitorFlow agent (docs/deploy-agent.md). Install as
+# /etc/systemd/system/monitorflow-agent.service; deploy/install.sh does.
+[Unit]
+Description=MonitorFlow agent
+Documentation=https://github.com/Kidoly/monitorflow/blob/main/docs/deploy-agent.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=monitorflow
+ExecStart=/usr/bin/monitorflow-agent --config /etc/monitorflow/agent.toml
+# The enrollment token for the first start only (ADR-0007, ADR-0052):
+# root-only, read by systemd before it drops to the agent's user, and
+# deleted by the installer once the agent has its identity.
+EnvironmentFile=-/etc/monitorflow/agent-enroll.env
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

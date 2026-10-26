@@ -33,7 +33,14 @@ The password is read from the terminal. Then sign in at `https://<DOMAIN>/`. Enr
 docker compose -f deploy/docker-compose.yml exec server monitorflow-server token create --role agent --id web-01 --site main --create-site
 ```
 
-Give the agent `upstream_url = "https://<a name of SERVER_NAMES>:7443"` and the token, as in [Installing the agent](deploy-agent.md).
+On a Linux host, install the agent with that token and a name of `SERVER_NAMES`, as in [Quick install](deploy-agent.md#quick-install):
+
+```
+curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
+  | sudo MF_SERVER=<a name of SERVER_NAMES>:7443 MF_TOKEN=mfe1.… sh
+```
+
+A token created in the web interface comes with this command filled in. Hosts without access to GitHub install from a copy of the release files on a web server of the site: set `AGENT_DOWNLOAD_URL` in `deploy/.env` to its https URL, and the commands the web interface shows use it.
 
 ## Browser certificate
 

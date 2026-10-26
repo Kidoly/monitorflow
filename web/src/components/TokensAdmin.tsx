@@ -20,6 +20,7 @@ import {
   describeError,
 } from "@/lib/api";
 import { formatWhen } from "@/lib/clock";
+import { isServerAddress, linuxInstallCommand, windowsInstallCommand } from "@/lib/install";
 import { administersCustomer } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -290,7 +291,66 @@ function NewToken({ token, onDone, onAnother }: { token: CreatedToken; onDone: (
           )}
         </div>
       </div>
+      {token.role === "agent" && <InstallCommands token={token} />}
     </section>
+  );
+}
+
+/** Ready-to-paste install commands for an agent token (ADR-0052). */
+function InstallCommands({ token }: { token: CreatedToken }) {
+  const titleId = useId();
+  const [relay, setRelay] = useState("");
+  const valid = relay.trim() === "" || isServerAddress(relay);
+  const through = valid ? relay : "";
+  const commands = [
+    { name: "Linux", note: "as root, on a host with systemd", text: linuxInstallCommand(token, through) },
+    { name: "Windows", note: "in an elevated PowerShell", text: windowsInstallCommand(token, through) },
+  ];
+  return (
+    <div className={styles.stack} role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} className={styles.sectionTitle}>
+        Install the agent
+      </h3>
+      <label className={styles.field}>
+        <span>
+          Connect through a relay <span className={styles.fieldNote}>— optional; host:port agents use to reach it</span>
+        </span>
+        <input
+          className={cx(fieldClass, styles.mono)}
+          value={relay}
+          onChange={(e) => setRelay(e.target.value)}
+          placeholder="relay1.paris.example:7443"
+          aria-invalid={!valid}
+          spellCheck={false}
+          autoCapitalize="none"
+        />
+      </label>
+      {!valid && (
+        <p className={styles.formError} role="alert">
+          Enter a host name or IP address, with an optional port; IPv6 addresses in brackets.
+        </p>
+      )}
+      {commands.map(({ name, note, text }) => (
+        <InstallCommand key={name} name={name} note={note} text={text} />
+      ))}
+    </div>
+  );
+}
+
+function InstallCommand({ name, note, text }: { name: string; note: string; text: string }) {
+  const labelId = useId();
+  return (
+    <div className={styles.field}>
+      <span id={labelId}>
+        {name} <span className={styles.fieldNote}>— {note}</span>
+      </span>
+      <div className={styles.snippet}>
+        <pre className={styles.code} aria-labelledby={labelId}>
+          {text}
+        </pre>
+        <CopyButton text={text} name={`Copy the ${name} command`} size="small" className={styles.snippetCopy} />
+      </div>
+    </div>
   );
 }
 

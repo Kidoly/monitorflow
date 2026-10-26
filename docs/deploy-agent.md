@@ -1,6 +1,91 @@
 # Installing the agent
 
-How to install the agent on a Debian-family or RHEL-family server by hand, until there are packages. The packages will do the same steps. Background is in architecture §4 (least privilege) and §7 (packages), and in ADR-0031, ADR-0032, ADR-0035 and ADR-0036. For Windows, see [Windows](#windows) at the end.
+How to install the agent on a Linux server, with the installer or by hand, until there are packages. The installer and the packages do the same steps as the manual sections below. Background is in architecture §4 (least privilege) and §7 (packages), and in ADR-0031, ADR-0032, ADR-0035 and ADR-0036. For Windows, see [Windows](#windows) at the end.
+
+## Quick install
+
+With a token from the web interface (Admin › Enrollment tokens, role Agent), on a host with systemd, x86_64 or aarch64:
+
+```
+curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
+  | sudo MF_SERVER=monitorflow.example.com:7443 MF_TOKEN=mfe1.… sh
+```
+
+The installer (ADR-0052) downloads the static agent for the host's architecture and `SHA256SUMS` from the same place, checks the checksum before it changes anything, and then does every step of [Binary and user](#binary-and-user) and [Sudo rules](#sudo-rules): binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface shows this command filled in, and the Windows one, once an agent token is created; give it the relay's address there if the agent connects through one.
+
+| Variable | Meaning |
+| --- | --- |
+| `MF_SERVER` | `host:port` of the server or relay the agent connects to, port 7443 by default. An https URL works too. IPv6 addresses in brackets: `[2001:db8::1]:7443`. Required on the first install |
+| `MF_TOKEN` | The enrollment token. Required unless the host is enrolled |
+| `MF_ENROLL` | `host:port` of the server's enrollment listener. By default `MF_SERVER`'s host on port 7445, which is right for a direct connection. Set it when `MF_SERVER` is a relay, to the central server's address: relays do not enroll agents (ADR-0025) |
+| `MF_VERSION` | Release to install, like `0.2.0`. The latest by default |
+| `MF_DOWNLOAD_URL` | https URL of a directory holding the release files, instead of GitHub (below) |
+| `MF_TIMEOUT` | Seconds to wait for the enrollment, 120 by default |
+| `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too |
+
+An agent behind a relay:
+
+```
+curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
+  | sudo MF_SERVER=relay1.paris.example:7443 MF_ENROLL=monitorflow.example.com:7445 MF_TOKEN=mfe1.… sh
+```
+
+If the enrollment fails, for example on a used or expired token or an unreachable port 7445, the installer stops the service, removes the token, prints the end of the agent's log and exits with an error: see `journalctl -u monitorflow-agent`, fix the cause and run it again, with a new token if needed. The token is never printed. On a host shared with other users, keep it off the command line, where `ps` shows it while the installer runs:
+
+```
+read -rs MF_TOKEN && export MF_TOKEN
+curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
+  | sudo --preserve-env=MF_TOKEN MF_SERVER=monitorflow.example.com:7443 sh
+```
+
+**Upgrades.** Running the same command again on an enrolled host installs the new binary, unit and sudo rules and restarts the agent; `agent.toml` and the identity are kept, and `MF_SERVER`, `MF_ENROLL` and `MF_TOKEN` are not needed. Edit `/etc/monitorflow/agent.toml` to change the upstream later.
+
+**Serving the files yourself.** For hosts without access to GitHub, copy the assets of a release (`install.sh`, `SHA256SUMS`, `monitorflow-agent-linux-x86_64`, `monitorflow-agent-linux-aarch64`, `monitorflow-agent.service`, `monitorflow-agent-sudoers`, and the Windows files if needed) into one directory of any web server with HTTPS, and pass its URL:
+
+```
+curl -fsSL https://files.example.net/monitorflow/0.2.0/install.sh \
+  | sudo MF_DOWNLOAD_URL=https://files.example.net/monitorflow/0.2.0 MF_SERVER=… MF_TOKEN=… sh
+```
+
+Keep one directory per version: `MF_DOWNLOAD_URL` names the version, and `MF_VERSION` applies to GitHub only. The installer accepts only HTTPS; the host must trust the web server's certificate. Set the server's `agent_download_url` (`AGENT_DOWNLOAD_URL` in the compose `.env`) to the same URL, and the web interface's commands use it.
+
+**Ansible.** One token per host, created on the server host as needed, with a short validity. Here the server runs with the production compose (deploy-server.md) on the inventory host `monitorflow`:
+
+```yaml
+- hosts: monitored
+  become: true
+  vars:
+    mf_server: monitorflow.example.com:7443
+    mf_site: main
+  tasks:
+    - name: Check whether the agent is enrolled
+      ansible.builtin.stat:
+        path: /var/lib/monitorflow/agent/tls/cert.pem
+      register: mf_identity
+
+    - name: Create an enrollment token
+      ansible.builtin.command:
+        argv: [docker, compose, -f, /opt/monitorflow/deploy/docker-compose.yml, exec, -T, server,
+               monitorflow-server, token, create, --role, agent, --id, "{{ inventory_hostname_short }}",
+               --site, "{{ mf_site }}", --ttl, 15m]
+      delegate_to: monitorflow
+      register: mf_token
+      when: not mf_identity.stat.exists
+      no_log: true
+
+    - name: Install, enroll or upgrade the agent
+      ansible.builtin.shell: >
+        set -o pipefail &&
+        curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh | sh
+      args:
+        executable: /bin/bash
+      environment:
+        MF_SERVER: "{{ mf_server }}"
+        MF_TOKEN: "{{ mf_token.stdout | default('') }}"
+      no_log: true
+```
+
+`environment` keeps the token off the command line. Without the first two tasks, the same play upgrades every agent.
 
 ## Binary and user
 

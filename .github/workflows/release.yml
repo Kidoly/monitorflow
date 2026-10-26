@@ -1,0 +1,121 @@
+# Agent release files (ADR-0052): static Linux binaries for x86_64 and
+# aarch64, the Windows executable and MSI, the installer, its systemd unit
+# and sudo rules, and SHA256SUMS. A `v*` tag publishes them as a GitHub
+# Release with stable asset names, so releases/latest/download/<name>
+# works. A manual run, or a pull request that changes these files, builds
+# the same files as the `release-files` artifact and publishes nothing.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/actions/build-agent-linux/**
+      - deploy/install.sh
+      - deploy/release-files.sh
+      - deploy/systemd/**
+      - deploy/sudoers/**
+permissions:
+  contents: read
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      # A tag must name the version in Cargo.toml: v0.2.0 for 0.2.0.
+      - id: version
+        run: |
+          cargo=$(awk -F '"' '/^\[workspace.package\]/ { in_ws = 1 } in_ws && /^version = / { print $2; exit }' Cargo.toml)
+          [ -n "$cargo" ] || { echo "::error::no version in Cargo.toml"; exit 1; }
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            tag=${GITHUB_REF_NAME#v}
+            if [ "$tag" != "$cargo" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match version $cargo in Cargo.toml"
+              exit 1
+            fi
+            echo publish=true >>"$GITHUB_OUTPUT"
+          else
+            echo publish=false >>"$GITHUB_OUTPUT"
+          fi
+          echo "version=$cargo" >>"$GITHUB_OUTPUT"
+          echo "version $cargo"
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - id: build
+        uses: ./.github/actions/build-agent-linux
+        with:
+          target: ${{ matrix.arch }}-unknown-linux-musl
+      # Static, for the right machine; the x86_64 one also runs here.
+      - run: |
+          file "${{ steps.build.outputs.path }}" | tee /dev/stderr | grep -q 'statically linked'
+          mkdir dist && cp "${{ steps.build.outputs.path }}" dist/monitorflow-agent-linux-${{ matrix.arch }}
+      - if: matrix.arch == 'x86_64'
+        run: test "$(dist/monitorflow-agent-linux-x86_64 --version)" = "monitorflow-agent ${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@v2
+      - run: choco install protoc --no-progress -y
+      - run: cargo build --release --locked -p monitorflow-agent
+      - name: Build the MSI
+        shell: pwsh
+        run: |
+          deploy/windows/build-msi.ps1
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target\release\monitorflow-agent.exe dist\monitorflow-agent-windows-x86_64.exe
+          Copy-Item (Get-ChildItem target\msi\*.msi).FullName dist\monitorflow-agent-windows-x86_64.msi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/
+          if-no-files-found: error
+  release:
+    needs: [version, linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: deploy/release-files.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: dist/
+          if-no-files-found: error
+      # A version with a suffix (0.2.0-rc.1) is a pre-release, which
+      # releases/latest never points to.
+      - if: needs.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          flags=()
+          case $VERSION in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes \
+            --title "MonitorFlow $VERSION" "${flags[@]}"

@@ -102,8 +102,22 @@ jobs:
       - run: npm run build
   # The production compose (ADR-0051): builds both images, starts the stack
   # and checks it, the TLS database link included.
+  # Then the agent installer (ADR-0052) against the same stack: the static
+  # agent served from a local HTTPS directory, installed, enrolled,
+  # upgraded and removed on this runner.
   compose:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: deploy/smoke-test.sh
+      - id: agent
+        uses: ./.github/actions/build-agent-linux
+        with:
+          target: x86_64-unknown-linux-musl
+      - run: deploy/install-test.sh "${{ steps.agent.outputs.path }}"
+  # The installer is piped to sh, so it must stay POSIX (ADR-0052).
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck --version && shellcheck deploy/*.sh deploy/docker/*.sh scripts/*.sh

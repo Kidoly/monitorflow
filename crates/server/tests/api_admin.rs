@@ -58,6 +58,7 @@ impl Harness {
                 ca_fingerprint: CA_PIN,
                 upstream_url: "https://mf.example:7443".into(),
                 enroll_url: "https://mf.example:7445".into(),
+                agent_download_url: "https://files.example/mf".into(),
             })
         } else {
             state
@@ -279,6 +280,7 @@ db_tests! {
         assert_eq!(created["created_by_username"], "boss");
         assert_eq!(created["enroll_url"], "https://mf.example:7445");
         assert_eq!(created["upstream_url"], "https://mf.example:7443");
+        assert_eq!(created["agent_download_url"], "https://files.example/mf");
         let ttl = chrono::DateTime::parse_from_rfc3339(created["expires_at"].as_str().unwrap()).unwrap()
             - chrono::DateTime::parse_from_rfc3339(created["created_at"].as_str().unwrap()).unwrap();
         assert!((599..=601).contains(&ttl.num_seconds()), "{ttl}");
