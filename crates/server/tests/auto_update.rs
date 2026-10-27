@@ -261,19 +261,19 @@ db_tests! {
         assert_eq!(tick(&updater).await, ["lyon-1"]);
 
         // Server-wide off; Paris turned on explicitly, Lyon inherits.
-        let (status, body) = call(&pool, &admin, "PUT", "/api/auto-update", json!({ "enabled": false })).await;
+        let (status, body) = call(&pool, &admin, "PUT", "/api/settings/auto-update", json!({ "enabled": false })).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "global administrators only: {body}");
-        let (status, body) = call(&pool, &global, "PUT", "/api/auto-update", json!({ "enabled": false })).await;
+        let (status, body) = call(&pool, &global, "PUT", "/api/settings/auto-update", json!({ "enabled": false })).await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["settings"]["enabled"], false);
+        assert_eq!(body["enabled"], false);
         let (status, _) = call(&pool, &admin, "PUT", &site_uri, json!({ "enabled": true })).await;
         assert_eq!(status, StatusCode::OK);
         // Paused, nothing moves.
-        let (status, body) = call(&pool, &global, "PUT", "/api/auto-update", json!({ "paused": true })).await;
+        let (status, body) = call(&pool, &global, "PUT", "/api/settings/auto-update", json!({ "paused": true })).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["settings"]["paused"], true);
+        assert_eq!(body["paused"], true);
         assert!(tick(&updater).await.is_empty());
-        call(&pool, &global, "PUT", "/api/auto-update", json!({ "paused": false })).await;
+        call(&pool, &global, "PUT", "/api/settings/auto-update", json!({ "paused": false })).await;
         assert_eq!(tick(&updater).await, ["paris-1"]);
         // Back to inheriting, which is off now.
         let (status, body) = call(&pool, &admin, "PUT", &site_uri, json!({ "enabled": null })).await;
@@ -281,20 +281,20 @@ db_tests! {
         assert_eq!(body["agent_auto_update"], Value::Null);
         assert_eq!(body["agent_auto_update_effective"], false);
         assert_eq!(audited(&pool, "site.agent_auto_update").await, 3);
-        assert_eq!(audited(&pool, "auto_update.settings").await, 3);
+        assert_eq!(audited(&pool, "settings.auto_update").await, 3);
 
         // The configuration locks `enabled`.
         let locked = ApiSettings {
             auto_update_enabled: Some(true),
             ..ApiSettings::default()
         };
-        let (status, _) = call_with(&pool, locked.clone(), &global, "PUT", "/api/auto-update", json!({ "enabled": false })).await;
+        let (status, _) = call_with(&pool, locked.clone(), &global, "PUT", "/api/settings/auto-update", json!({ "enabled": false })).await;
         assert_eq!(status, StatusCode::CONFLICT);
         let (status, body) = call_with(&pool, locked, &global, "GET", "/api/auto-update", Value::Null).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["settings"]["enabled"], true);
         assert_eq!(body["settings"]["enabled_locked"], true);
-        let (status, _) = call(&pool, &global, "PUT", "/api/auto-update", json!({ "failure_threshold": 0 })).await;
+        let (status, _) = call(&pool, &global, "PUT", "/api/settings/auto-update", json!({ "failure_threshold": 0 })).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
