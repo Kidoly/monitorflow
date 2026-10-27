@@ -13,6 +13,9 @@ use monitorflow_agent::enroll::{self, EnrollError};
 use monitorflow_agent::init_config;
 use monitorflow_agent::os::HostInfo;
 use monitorflow_agent::renew::{Renewal, RenewalSettings};
+use monitorflow_agent::self_update::Connected;
+#[cfg(unix)]
+use monitorflow_agent::self_update::{self, StatusResumer};
 use monitorflow_agent::sensor_config::{self, Builtin, ConfigFile};
 use monitorflow_agent::sensors::Sensors;
 use monitorflow_agent::shutdown::Shutdown;
@@ -24,7 +27,7 @@ use monitorflow_common::{logging, tls};
 use monitorflow_sensors::{metric_name, registry, Sample};
 
 #[derive(Parser, Debug)]
-#[command(name = "monitorflow-agent", version, about = "MonitorFlow agent")]
+#[command(name = "monitorflow-agent", version = monitorflow_common::VERSION, about = "MonitorFlow agent")]
 struct Cli {
     /// Path to the TOML configuration file.
     #[arg(long, env = "MONITORFLOW_CONFIG", default_value_os_t = default_config())]
@@ -47,6 +50,16 @@ enum Command {
     #[cfg(unix)]
     #[command(subcommand)]
     Packages(PackagesCommand),
+    /// Install a signed agent release, run as root through sudo by the
+    /// agent (ADR-0053): reads a header line and the binary on stdin,
+    /// verifies them, replaces /usr/bin/monitorflow-agent and starts the
+    /// watchdog that restarts the agent and rolls back if it does not
+    /// connect.
+    #[cfg(unix)]
+    SelfUpdate {
+        #[command(subcommand)]
+        step: Option<SelfUpdateStep>,
+    },
     /// Run as the Windows service `MonitorFlowAgent`; only the service
     /// control manager starts the agent this way (ADR-0047).
     #[cfg(windows)]
@@ -87,6 +100,14 @@ enum PackagesCommand {
     /// it, then refresh and upgrade with the host's apt or dnf. Exits with
     /// the package manager's code when it fails.
     Update,
+}
+
+#[cfg(unix)]
+#[derive(Subcommand, Debug, Clone, Copy)]
+enum SelfUpdateStep {
+    /// The watchdog, started by `self-update` in a transient systemd unit.
+    #[command(hide = true)]
+    Watch,
 }
 
 #[cfg(unix)]
@@ -147,6 +168,11 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
         }
         #[cfg(unix)]
         Some(Command::Packages(PackagesCommand::Update)) => return packages_update().await,
+        #[cfg(unix)]
+        Some(Command::SelfUpdate { step }) => {
+            let path = cli.config.clone();
+            return tokio::task::spawn_blocking(move || self_update(&path, step)).await?;
+        }
         #[cfg(windows)]
         Some(Command::Service | Command::UpdateService) => {
             unreachable!("started before the runtime")
@@ -244,9 +270,24 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         Journal::in_dir(&config.data_dir),
         DispatcherSettings::default(),
     );
+    // Answers a self_update the restart interrupted (ADR-0053).
+    #[cfg(unix)]
+    let dispatcher = dispatcher.with_resumer(Arc::new(StatusResumer::new(Path::new(
+        self_update::STATE_DIR,
+    ))));
     tokio::spawn(dispatcher.run(commands_end, stop.clone()));
     // The stream only returns on shutdown or a local error.
+    let data_dir = config.data_dir.clone();
+    let record_connected = Arc::new(move || {
+        let data_dir = data_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(error) = Connected::record(&data_dir) {
+                tracing::warn!(%error, "cannot record the connection for self-updates");
+            }
+        });
+    });
     let mut agent = Agent::new(StreamSettings::from_config(&config), identity, host)
+        .on_open(record_connected)
         .follow(updates)
         .with_sensors(stream_end)
         .with_upload(uplink)
@@ -297,6 +338,10 @@ fn platform_handlers(
         command::SHELL,
         Arc::new(ShellHandler::new(config.commands.shell)),
     );
+    handlers.register(
+        command::SELF_UPDATE,
+        Arc::new(self_update::handler::SelfUpdateHandler::new(tools)),
+    );
     Some(latest_report)
 }
 
@@ -335,6 +380,7 @@ fn platform_handlers(
         (command::CONFIGURE_SOURCES, "package sources"),
         (command::REVERT_SOURCES, "package sources"),
         (command::SHELL, "shell commands"),
+        (command::SELF_UPDATE, "self-updates"),
     ] {
         handlers.register(kind, Arc::new(Unsupported::new(what, "Windows")));
     }
@@ -403,6 +449,46 @@ async fn packages_update() -> anyhow::Result<()> {
         writeln!(stderr, "Error: {error}")?;
         stderr.flush()?;
         std::process::exit(outcome.exit_code());
+    }
+    Ok(())
+}
+
+/// The self-update helper (ADR-0053), as root: installs the release on
+/// stdin, or watches the restart. Reads the configuration for the agent's
+/// data directory, where the new agent proves it connected.
+#[cfg(unix)]
+fn self_update(config: &Path, step: Option<SelfUpdateStep>) -> anyhow::Result<()> {
+    use std::str::FromStr;
+
+    use monitorflow_agent::self_update::helper::{self, Installed, Paths, Systemd, Watched};
+    use monitorflow_common::release::{self, Platform, Version};
+
+    let config: AgentConfig = config::load(config)?;
+    let paths = Paths::system(config.data_dir);
+    match step {
+        None => {
+            let keys = release::trusted_keys()?;
+            let current = Version::from_str(monitorflow_common::VERSION)?;
+            let platform =
+                Platform::current().context("releases are not built for this platform")?;
+            let mut stdin = std::io::stdin().lock();
+            match helper::install(&mut stdin, &paths, keys, &current, platform, &Systemd)? {
+                Installed::Current(version) => println!("already running {version}"),
+                Installed::Restarting { from, to } => {
+                    println!(
+                        "installed {to} over {from}; {} {to}",
+                        self_update::handler::RESTARTING
+                    );
+                }
+            }
+        }
+        Some(SelfUpdateStep::Watch) => {
+            match helper::watch(&paths, &Systemd, Duration::from_secs(2))? {
+                Watched::Succeeded => println!("the new agent connected"),
+                Watched::RolledBack => println!("rolled back to the previous agent"),
+                Watched::Nothing => println!("no update to watch"),
+            }
+        }
     }
     Ok(())
 }

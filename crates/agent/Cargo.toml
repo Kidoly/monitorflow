@@ -30,6 +30,9 @@ monitorflow-sensors.workspace = true
 prost.workspace = true
 ring.workspace = true
 base64.workspace = true
+# Downloads releases for self-update (ADR-0053): the system's roots for
+# self-hosted copies, the bundled ones for GitHub.
+reqwest = { workspace = true, features = ["rustls-tls-native-roots"] }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["process"] }

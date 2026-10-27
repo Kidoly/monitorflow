@@ -14,6 +14,8 @@ pub const CONFIGURE_SOURCES: &str = "configure_sources";
 pub const REVERT_SOURCES: &str = "revert_sources";
 /// Kind of [`crate::proto::v1::ShellCommand`] commands (ADR-0043).
 pub const SHELL: &str = "shell";
+/// Kind of [`crate::proto::v1::SelfUpdate`] commands (ADR-0053).
+pub const SELF_UPDATE: &str = "self_update";
 
 /// Package names in an `ApplyUpdates` reach a command line on the agent:
 /// letters, digits and `.+_:-`, at most 128 bytes, not starting with `-` so

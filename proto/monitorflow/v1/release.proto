@@ -1,0 +1,23 @@
+// MonitorFlow release payloads, version 1. See ADR-0053.
+//
+// Rules: changes are additive only. Never renumber or reuse a field number.
+
+syntax = "proto3";
+
+package monitorflow.v1;
+
+// Payload of a Command of kind "self_update": install this agent release,
+// restart into it, and roll back if it does not connect in time.
+message SelfUpdate {
+  // Target version, like "0.2.0"; VERSION of the release must say the same.
+  string version = 1;
+  // URLs of directories holding the release files, tried in order. Each
+  // may be http or https: files are checked against the release signature,
+  // whatever served them.
+  repeated string base_urls = 2;
+  // Install even when the version is older than the running one.
+  bool allow_downgrade = 3;
+  // How long the new agent has to connect before the old one is put back;
+  // 0 for the default of 300 s, else 30 to 3600.
+  uint32 health_timeout_seconds = 4;
+}

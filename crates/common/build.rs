@@ -12,10 +12,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format!("{proto_root}/monitorflow/v1/certificate.proto"),
                 format!("{proto_root}/monitorflow/v1/packages.proto"),
                 format!("{proto_root}/monitorflow/v1/sources.proto"),
+                format!("{proto_root}/monitorflow/v1/release.proto"),
             ],
             &[proto_root],
         )?;
     println!("cargo:rerun-if-changed={proto_root}");
+    println!("cargo:rerun-if-env-changed=MONITORFLOW_BUILD_VERSION");
     release_keys()
 }
 

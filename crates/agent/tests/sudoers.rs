@@ -1,5 +1,6 @@
 //! `deploy/sudoers/monitorflow-agent` allows exactly the privileged command
-//! lines the agent runs (ADR-0031, ADR-0032, ADR-0035, ADR-0036), with the program
+//! lines the agent runs (ADR-0031, ADR-0032, ADR-0035, ADR-0036,
+//! ADR-0053), with the program
 //! paths of [`Tools::default`], no wildcard, and parses with `visudo -cf`
 //! where `visudo` is installed.
 
@@ -54,6 +55,7 @@ fn the_rules_are_the_agents_exact_command_lines() {
         format!("{} -r +1", tools.shutdown.display()),
         format!("{agent} sources apply"),
         format!("{agent} sources revert"),
+        format!("{agent} self-update"),
     ];
     assert_eq!(allowed(), expected);
     assert_eq!(tools.agent, Path::new("/usr/bin/monitorflow-agent"));

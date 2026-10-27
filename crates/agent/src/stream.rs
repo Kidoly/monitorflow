@@ -26,6 +26,7 @@
 //!
 //! Envelope payloads are never logged.
 
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use monitorflow_common::client::failure::classify_error;
@@ -101,6 +102,7 @@ pub struct Agent {
     uplink: Option<Uplink>,
     commands: Option<commands::StreamEnd>,
     reports: Option<watch::Receiver<Option<PackageReport>>>,
+    on_open: Option<Arc<dyn Fn() + Send + Sync>>,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
     // monotonic across restarts; the server only needs them per stream.
     sequence: u64,
@@ -117,6 +119,7 @@ impl Agent {
             uplink: None,
             commands: None,
             reports: None,
+            on_open: None,
             sequence: 0,
         }
     }
@@ -145,6 +148,13 @@ impl Agent {
     /// once when connected, else on the next connection.
     pub fn with_reports(mut self, reports: watch::Receiver<Option<PackageReport>>) -> Self {
         self.reports = Some(reports);
+        self
+    }
+
+    /// Calls `on_open` each time the upstream accepts `Hello`, like the
+    /// self-update's health record (ADR-0053).
+    pub fn on_open(mut self, on_open: Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.on_open = Some(on_open);
         self
     }
 
@@ -235,6 +245,9 @@ impl Agent {
         };
         *opened = Some(Instant::now());
         tracing::info!(upstream = %self.settings.upstream_url, agent_id = self.identity.peer_id(), "stream opened");
+        if let Some(on_open) = &self.on_open {
+            on_open();
+        }
 
         let every = self.settings.heartbeat_interval;
         let mut heartbeat = interval_at(Instant::now() + every, every);
@@ -344,7 +357,7 @@ impl Agent {
         Hello {
             agent_id: self.identity.peer_id().to_owned(),
             protocol_version: PROTOCOL_VERSION.into(),
-            agent_version: env!("CARGO_PKG_VERSION").into(),
+            agent_version: monitorflow_common::VERSION.into(),
             hostname: self.host.hostname.clone(),
             os_family: self.host.os_family.as_str().into(),
             os_version: self.host.os_version.clone(),

@@ -15,6 +15,7 @@ pub mod init_config;
 pub mod os;
 pub mod packages;
 pub mod renew;
+pub mod self_update;
 pub mod sensor_config;
 pub mod sensors;
 pub mod stream;
