@@ -992,6 +992,13 @@ pub struct ServerConfig {
     /// the install commands the web interface shows with a new token
     /// (ADR-0052). The latest GitHub release by default.
     pub agent_download_url: String,
+    /// http or https URL of the directory holding server releases, for
+    /// server updates (ADR-0056); `agent_download_url` when unset. Plain
+    /// HTTP is allowed: the release signature protects the files.
+    pub release_url: Option<String>,
+    /// The volume shared with the updater container (ADR-0056); unset, the
+    /// server cannot be updated from the web interface.
+    pub server_update_dir: Option<PathBuf>,
     /// Default source of those install commands (ADR-0054). Unset leaves
     /// it to the web interface's setting; `custom` uses
     /// `agent_download_url`, which must then not be GitHub's.
@@ -1046,6 +1053,8 @@ impl Default for ServerConfig {
             mirror_dir: None,
             mirror_public_url: None,
             agent_download_url: DEFAULT_AGENT_DOWNLOAD_URL.into(),
+            release_url: None,
+            server_update_dir: None,
             agent_install_source: None,
             mirror: MirrorConfig::default(),
             ai: AiConfig::default(),
@@ -1448,6 +1457,8 @@ impl LoadConfig for ServerConfig {
         env.set_opt("mirror_dir", &mut self.mirror_dir)?;
         env.set_opt("mirror_public_url", &mut self.mirror_public_url)?;
         env.set("agent_download_url", &mut self.agent_download_url)?;
+        env.set_opt("release_url", &mut self.release_url)?;
+        env.set_opt("server_update_dir", &mut self.server_update_dir)?;
         env.set_opt("agent_install_source", &mut self.agent_install_source)?;
         self.mirror.apply_env(env)?;
         self.ai.apply_env(env)?;
@@ -1477,6 +1488,14 @@ impl LoadConfig for ServerConfig {
                 "agent_download_url",
                 "must be an https URL without user, query or fragment",
             ));
+        }
+        if let Some(url) = &self.release_url {
+            if !valid_mirror_url(url) {
+                return Err(check.fail(
+                    "release_url",
+                    "must be an http or https URL without user, query or fragment",
+                ));
+            }
         }
         if self.agent_install_source == Some(AgentInstallSource::Custom)
             && self.custom_agent_download_url().is_none()
