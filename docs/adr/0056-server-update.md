@@ -85,6 +85,7 @@ Without Internet access the check fails and the page says so. The manual path: o
 - An administrator updates the server in two clicks; a release's images are bound to its signature, and neither the server nor the web container can run anything the release key did not sign.
 - The `updater` container holds the Docker socket, which is root on the host. Its code is small, reads one file, and runs fixed compose commands; it is the part of the deployment to review most carefully.
 - The first release with these images publishes packages to GHCR; the maintainer must make them public once (`docs/releasing.md`).
+- The updater changes images, not the compose file: a release that needs another compose file (a new service, a new volume) must say so in its notes, and operators update that file by hand.
 - The updater edits `deploy/.env`, the image lines only. An operator who manages `.env` with another tool must keep those lines.
 - Rollback after a migration needs the operator, with the backup the update made; data written between the backup and the rollback is in no backup.
 - Builds from a checkout can update to a published release; going back to local builds means removing the pins from `.env`, and is a downgrade if the release was newer.
