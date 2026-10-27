@@ -47,8 +47,6 @@ async fn call(
             ca_fingerprint: [7; 32],
             upstream_url: "https://mf.example:7443".into(),
             enroll_url: "https://mf.example:7445".into(),
-            agent_download_url: "https://github.com/Kidoly/monitorflow/releases/latest/download"
-                .into(),
         },
     );
     let mut request = Request::builder()
@@ -194,6 +192,7 @@ db_tests! {
             json!({ "source": "custom" }),
             json!({ "source": "custom", "custom_url": "http://files.example/mf" }),
             json!({ "source": "custom", "custom_url": "https://user@files.example" }),
+            json!({ "source": "custom", "custom_url": "https://files.example/$(id)" }),
             json!({ "source": "relay" }),
             json!({ "source": "github", "extra": 1 }),
         ] {
