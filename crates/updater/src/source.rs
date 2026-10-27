@@ -9,30 +9,44 @@ use monitorflow_common::release::{self, Platform, PublicKey, Release, Version};
 use monitorflow_common::server_update::{self, error_chain, Candidate, UpdateError};
 use tokio::io::AsyncWriteExt;
 
-/// Largest agent binary downloaded.
-const MAX_BINARY: u64 = 256 * 1024 * 1024;
+/// Largest release file downloaded.
+const MAX_FILE: u64 = 256 * 1024 * 1024;
 
-/// The agent executables of a release, for the server's cache.
-pub fn agent_assets() -> [&'static str; 3] {
+/// The files of `candidate` the server's agent cache takes from the update
+/// volume (ADR-0053, ADR-0054): everything `SHA256SUMS` lists but
+/// `VERSION`, written from the candidate itself, and `images.json`.
+pub fn release_files(candidate: &Candidate) -> Vec<String> {
+    candidate
+        .release
+        .files()
+        .filter(|name| ![release::VERSION_FILE, server_update::IMAGES_FILE].contains(name))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Whether `name` is an agent executable.
+pub fn is_agent(name: &str) -> bool {
     [
         Platform::LinuxX86_64,
         Platform::LinuxAarch64,
         Platform::WindowsX86_64,
     ]
-    .map(Platform::agent_asset)
+    .iter()
+    .any(|p| p.agent_asset() == name)
 }
 
 #[async_trait]
 pub trait Source: Send + Sync {
     /// The verified release files of `version`.
     async fn candidate(&self, version: &Version) -> Result<Candidate, UpdateError>;
-    /// Copies the agent executables of `candidate` that the source has into
-    /// `dest`, each checked against `SHA256SUMS`, and returns their names.
-    async fn agent_files(
+    /// Copies the files of [`release_files`] the source has into `dest`,
+    /// each checked against `SHA256SUMS`, and returns their names: the
+    /// agent executables, the installer and its files, the MSI.
+    async fn release_files(
         &self,
         candidate: &Candidate,
         dest: &Path,
-    ) -> Result<Vec<&'static str>, UpdateError>;
+    ) -> Result<Vec<String>, UpdateError>;
 }
 
 /// The release on `release_url` or `agent_download_url`.
@@ -49,16 +63,13 @@ impl Source for Http {
         server_update::fetch(&self.client, &base, &self.keys, Some(version)).await
     }
 
-    async fn agent_files(
+    async fn release_files(
         &self,
         candidate: &Candidate,
         dest: &Path,
-    ) -> Result<Vec<&'static str>, UpdateError> {
-        let mut copied = Vec::new();
-        for name in agent_assets() {
-            if candidate.release.digest(name).is_err() {
-                continue;
-            }
+    ) -> Result<Vec<String>, UpdateError> {
+        let names = release_files(candidate);
+        for name in &names {
             let url = format!("{}{name}", candidate.base);
             download_checked(
                 &self.client,
@@ -68,9 +79,8 @@ impl Source for Http {
                 &dest.join(name),
             )
             .await?;
-            copied.push(name);
         }
-        Ok(copied)
+        Ok(names)
     }
 }
 
@@ -103,8 +113,8 @@ async fn download_checked(
         let mut size = 0u64;
         while let Some(chunk) = response.chunk().await.map_err(|e| fail(error_chain(&e)))? {
             size += chunk.len() as u64;
-            if size > MAX_BINARY {
-                return Err(fail(format!("larger than {MAX_BINARY} bytes")));
+            if size > MAX_FILE {
+                return Err(fail(format!("larger than {MAX_FILE} bytes")));
             }
             digest.update(&chunk);
             file.write_all(&chunk)
@@ -163,19 +173,20 @@ impl Source for Dir {
         Ok(candidate)
     }
 
-    async fn agent_files(
+    async fn release_files(
         &self,
         candidate: &Candidate,
         dest: &Path,
-    ) -> Result<Vec<&'static str>, UpdateError> {
+    ) -> Result<Vec<String>, UpdateError> {
         let mut copied = Vec::new();
-        for name in agent_assets() {
-            let Ok(bytes) = std::fs::read(self.dir.join(name)) else {
+        for name in release_files(candidate) {
+            // An offline copy may hold only some of them.
+            let Ok(bytes) = std::fs::read(self.dir.join(&name)) else {
                 continue;
             };
-            candidate.release.check(name, &bytes)?;
-            std::fs::write(dest.join(name), bytes).map_err(|e| UpdateError::Download {
-                url: dest.join(name).display().to_string(),
+            candidate.release.check(&name, &bytes)?;
+            std::fs::write(dest.join(&name), bytes).map_err(|e| UpdateError::Download {
+                url: dest.join(&name).display().to_string(),
                 reason: e.to_string(),
             })?;
             copied.push(name);

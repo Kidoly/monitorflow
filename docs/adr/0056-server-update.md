@@ -45,19 +45,19 @@ Rejected:
 
 ### Sources
 
-The updater and the server's check use the same base, computed by the same code (`common::server_update`): the `release_url` setting (`RELEASE_URL` in `deploy/.env`) when set, else `agent_download_url`. With the default `agent_download_url`, GitHub's `…/releases/latest/download/` gives the latest release and `…/releases/download/v<version>/` a given one; a self-hosted directory holds one release, whose `VERSION` must be the one asked for. `release_url` may be plain HTTP: as for agents (ADR-0053), the signature protects the files, not the transport. The updater reads the setting from its own environment, never from the request.
+The updater and the server's check use the same base, computed by the same code (`common::server_update`): the `release_url` setting (`RELEASE_URL` in `deploy/.env`) when set, else `agent_download_url`. With the default `agent_download_url`, GitHub's `…/releases/latest/download/` gives the latest release and `…/releases/download/v<version>/` a given one; a self-hosted directory holds one release, whose `VERSION` must be the one asked for. `release_url` may be plain HTTP: as for agents (ADR-0053), the signature protects the files, not the transport. The updater reads the setting from its own environment, never from the request. The agent install source of ADR-0054, kept in the database, does not change it: the updater cannot read the database, and the server's check must use the source the updater will.
 
 ### The update
 
 When it picks up a request, the updater:
 
 1. **Verifies** the release as above. The running version is what `monitorflow-server --version` prints in the running server container, so a local build counts too; the same version is a no-op and an older one is refused, with no override.
-2. **Downloads** the agent files of the release into the `update` volume, for step 7, and **pulls** the three images by digest.
+2. **Downloads** the other files of the release (agent executables, installer files, MSI) into the `update` volume, each checked against `SHA256SUMS`, for step 7, and **pulls** the three images by digest.
 3. **Backs up** PostgreSQL with `pg_dump -Fc` streamed from the `postgres` container into the `backups` volume (or the host directory `BACKUP_DIR`), as `monitorflow-<from>-to-<to>-<time>.dump`, and records the latest applied migration. The update stops if the dump fails. Dumps are not deleted; the operator prunes them.
 4. **Pins** the new digests in `deploy/.env` (`SERVER_IMAGE`, `WEB_IMAGE`, `UPDATER_IMAGE`), written next to it and renamed, so a later `docker compose up` by hand keeps them. The previous values are kept in the updater's state.
 5. **Recreates** `server` and `web` with `docker compose up -d --no-deps --no-build --pull never --wait`. The server applies migrations when it starts.
 6. **Checks** that the server is healthy (its health check is `/api/health/ready`, which needs the database) and that it now reports the target version.
-7. **Refreshes the agent release cache** with `monitorflow-server agent-release import` in the new server container, so agents can follow (ADR-0053; the rollout is ADR-0055's). A failure here is a warning, not a failed update.
+7. **Refreshes the agent release cache** with `monitorflow-server agent-release import` in the new server container, so agents can follow (ADR-0053; the rollout is ADR-0055's) and hosts can install from the server (ADR-0054). A failure here is a warning, not a failed update.
 8. **Replaces itself** when `UPDATER_IMAGE` changed: a one-off container of the new updater image (`docker compose run`) recreates the `updater` service and exits, since a process cannot recreate the container it runs in.
 
 To run compose against the operator's project, the updater reads the compose labels of its own container (project name, working directory, files and environment file), mounts the project directory (`.`), and links the host's path of that directory to the mount inside its container, so relative paths in the compose file resolve to the same host paths as when the operator runs it. Compose files outside that directory are refused.

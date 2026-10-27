@@ -55,6 +55,8 @@ openssl pkeyutl -verify -pubin -inkey deploy/release-keys.pem -rawin -in SHA256S
 
 If a release changes the systemd unit or the sudo rules, say in its notes that hosts must run the installer again: a self-update replaces the binary only. If it changes `deploy/docker-compose.yml` beyond the images, say that servers must update their copy of the file: the updater changes images, not the compose file.
 
+Sites without Internet access import the assets of the release, all of them, into their central server (`monitorflow-server agent-release import`, ADR-0054). Keep the asset names fixed: the server, the installer and the token page's commands look for them by name.
+
 ## Rotating the key
 
 1. Generate the new key as above and append its public half to `deploy/release-keys.pem`; keep the old one.
