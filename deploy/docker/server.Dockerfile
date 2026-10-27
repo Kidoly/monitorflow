@@ -13,9 +13,17 @@ RUN apt-get update \
 ENV RUSTUP_TOOLCHAIN=1.99.0
 WORKDIR /src
 COPY . .
+# Test builds only: PEM public keys to trust for releases instead of
+# deploy/release-keys.pem (ADR-0053), like a throwaway key that signs the
+# releases deploy/install-test.sh imports.
+ARG RELEASE_KEYS=""
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p monitorflow-server \
+    if [ -n "$RELEASE_KEYS" ]; then \
+        printf '%s\n' "$RELEASE_KEYS" >/tmp/release-keys.pem \
+        && export MONITORFLOW_RELEASE_KEYS=/tmp/release-keys.pem; \
+    fi \
+    && cargo build --release --locked -p monitorflow-server \
     && cp target/release/monitorflow-server /usr/local/bin/
 
 FROM debian:trixie-slim

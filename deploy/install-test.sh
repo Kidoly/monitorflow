@@ -5,7 +5,13 @@
 # token from the server CLI, and checks that it enrolls and shows online in
 # the API. Then re-runs the installer, checks that a tampered checksum, a
 # signature by another key and a missing signature fail closed (ADR-0053),
-# and uninstalls. The release is signed with a throwaway key.
+# and uninstalls. The release is signed with a throwaway key, which the
+# server image is built to trust too.
+#
+# Then the `central` source (ADR-0054): the release is imported into the
+# server's cache offline (a container without network), and the agent is
+# installed again with the command the token page builds, from the
+# stack's own HTTPS address, whose certificate this host does not trust.
 #
 # With a second agent binary, built with the same release keys and a newer
 # version (MONITORFLOW_BUILD_VERSION), it also tests self-update (ADR-0053):
@@ -33,7 +39,12 @@ export AGENT_DOWNLOAD_URL=https://localhost:$FILES_PORT/next
 PEER=ci-install-$RANDOM
 work=$(mktemp -d)
 
-compose() { docker compose -p monitorflow-install --env-file /dev/null -f docker-compose.yml "$@"; }
+# The server image trusts the throwaway release key, so it imports the
+# test release.
+compose() {
+    docker compose -p monitorflow-install --env-file /dev/null -f docker-compose.yml \
+        -f "$work/release-keys.compose.yml" "$@"
+}
 cleanup() {
     [ -z "${files_pid:-}" ] || kill "$files_pid" 2>/dev/null || true
     sudo MF_UNINSTALL=1 MF_PURGE=1 sh install.sh >/dev/null 2>&1 || true
@@ -65,6 +76,17 @@ fi
 openssl genpkey -algorithm ed25519 -out "$work/other.pem"
 { cat release-keys.pem; openssl pkey -in "$work/signing.pem" -pubout; } >"$work/release-keys.pem"
 export MF_RELEASE_KEYS=$work/release-keys.pem
+MF_E2E_RELEASE_KEYS=$(cat "$work/release-keys.pem")
+export MF_E2E_RELEASE_KEYS
+cat >"$work/release-keys.compose.yml" <<'YAML'
+services:
+  db-certs:
+    build:
+      args: { RELEASE_KEYS: "${MF_E2E_RELEASE_KEYS}" }
+  server:
+    build:
+      args: { RELEASE_KEYS: "${MF_E2E_RELEASE_KEYS}" }
+YAML
 mkdir -p "$work/files"
 install -m 0755 "$agent" "$work/files/monitorflow-agent-linux-x86_64"
 MF_SIGNING_KEY=$work/signing.pem ./release-files.sh "$work/files" >/dev/null
@@ -117,10 +139,11 @@ installer() {
 api="https://127.0.0.1:$HTTPS_PORT/api"
 curl -fsSk -c "$work/cookies" -H 'content-type: application/json' -H 'x-monitorflow-csrf: 1' \
     -d "$(jq -n --arg p "$password" '{username: "admin", password: $p}')" "$api/auth/login" >/dev/null
+# Whether the agent $1 ($PEER by default) shows online.
 online() {
     for _ in $(seq 60); do
         if curl -fsSk -b "$work/cookies" "$api/servers" \
-            | jq -e --arg peer "$PEER" '.servers[] | select(.peer_id == $peer and .status == "online")' >/dev/null; then
+            | jq -e --arg peer "${1:-$PEER}" '.servers[] | select(.peer_id == $peer and .status == "online")' >/dev/null; then
             return 0
         fi
         sleep 1
@@ -234,6 +257,61 @@ check "binary, unit and sudo rules removed" bash -c "! ls /usr/bin/monitorflow-a
 check "configuration and identity kept" sudo test -s /var/lib/monitorflow/agent/tls/cert.pem -a -s /etc/monitorflow/agent.toml
 installer MF_UNINSTALL=1 MF_PURGE=1
 check "purge removes data and user" bash -c "! sudo test -e /var/lib/monitorflow/agent && ! id monitorflow"
+
+echo "== central source"
+web="https://127.0.0.1:$HTTPS_PORT"
+# Nothing cached yet: the files route and the API say so.
+empty_cache() {
+    [ "$(curl -sk -o "$work/empty.txt" -w '%{http_code}' "$web/agent/latest/install.sh")" = 404 ] \
+        && grep -q 'agent-release import' "$work/empty.txt"
+}
+check "empty cache answers 404 with a reason" empty_cache
+check "API offers no central release yet" bash -c \
+    "curl -fsSk -b '$work/cookies' '$api/settings/agent-install' | jq -e '.central == null'"
+# The release as downloaded from GitHub, imported without any network.
+mkdir -p "$work/release"
+find "$work/files" -maxdepth 1 -type f -exec cp {} "$work/release/" \;
+chmod 0711 "$work"
+chmod -R a+rX "$work/release"
+docker run --rm --network none -v monitorflow-install_serverdata:/var/lib/monitorflow/server \
+    -v "$work/release:/release:ro" monitorflow-server:local agent-release import --dir /release \
+    | tee "$work/import.log"
+check "offline import kept the release" grep -q '^imported ' "$work/import.log"
+check "latest install.sh served over HTTPS" bash -c \
+    "curl -fsSk '$web/agent/latest/install.sh' | cmp -s - '$work/release/install.sh'"
+curl -fsSk -b "$work/cookies" -X PUT -H 'content-type: application/json' -H 'x-monitorflow-csrf: 1' \
+    -d '{"source": "central"}' "$api/settings/agent-install" >/dev/null
+site_id=$(curl -fsSk -b "$work/cookies" "$api/sites" | jq -r '.sites[] | select(.name == "ci") | .id')
+curl -fsSk -b "$work/cookies" -H 'content-type: application/json' -H 'x-monitorflow-csrf: 1' \
+    -d "$(jq -n --arg site "$site_id" --arg peer "$PEER-central" '{role: "agent", peer_id: $peer, site_id: $site}')" \
+    "$api/tokens" >"$work/central-token.json"
+check "new token defaults to central" jq -e '.install.source == "central"' "$work/central-token.json"
+path=$(jq -r .install.central.path "$work/central-token.json")
+sums=$(jq -r .install.central.sums_sha256 "$work/central-token.json")
+installer_sha=$(jq -r .install.central.installer_sha256 "$work/central-token.json")
+central_token=$(jq -r .token "$work/central-token.json")
+# The token page's command (web/src/lib/install.ts), without CURL_CA_BUNDLE:
+# this host does not trust Caddy's certificate.
+central_install() {
+    local f
+    f=$(mktemp) && curl -fsSLk -o "$f" "$web$path/install.sh" \
+        && echo "$installer_sha  $f" | sha256sum -c \
+        && sudo MF_DOWNLOAD_URL="$web$path" MF_SUMS_SHA256="$1" MF_SERVER="localhost:$GRPC_PORT" \
+            MF_ENROLL="localhost:$ENROLL_PORT" MF_TOKEN="$central_token" sh "$f"
+    local status=$?
+    rm -f "$f"
+    return $status
+}
+check "web certificate is not trusted here" bash -c "! curl -fsS '$web/agent/latest/VERSION'"
+refuses_other_sums() { ! central_install "$(printf '%064d' 0)"; }
+check "central refuses other SHA256SUMS" refuses_other_sums
+check "nothing installed after the refusal" absent /usr/bin/monitorflow-agent
+central_install "$sums" | tee "$work/central.log"
+check "central agent shows online" online "$PEER-central"
+check "central installer verified the signature" grep -q 'release signature verified' "$work/central.log"
+check "central binary root:root 0755" mode_is /usr/bin/monitorflow-agent "root:root 755"
+check "central token file deleted" absent /etc/monitorflow/agent-enroll.env
+installer MF_UNINSTALL=1 MF_PURGE=1
 
 if [ "$failed" -ne 0 ]; then
     sudo journalctl -u monitorflow-agent -n 50 --no-pager || true
