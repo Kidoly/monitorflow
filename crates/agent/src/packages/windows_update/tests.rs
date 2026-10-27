@@ -45,6 +45,40 @@ fn requests_round_trip_as_json() {
 }
 
 #[test]
+fn self_updates_round_trip_and_are_checked() {
+    let json = r#"{"op":"self_update","command_id":"c-1","data_dir":"C:\\ProgramData\\MonitorFlow\\agent","allow_downgrade":false,"health_timeout_ms":300000}"#;
+    let request: Request = serde_json::from_str(json).unwrap();
+    let Request::SelfUpdate(update) = &request else {
+        panic!("{request:?}");
+    };
+    assert_eq!(update.command_id, "c-1");
+    assert_eq!(serde_json::to_string(&request).unwrap(), json);
+    let extra = r#"{"op":"self_update","command_id":"c-1","data_dir":"x","allow_downgrade":false,"health_timeout_ms":0,"exe":"x"}"#;
+    assert!(serde_json::from_str::<Request>(extra).is_err());
+    for (command_id, timeout) in [("../x", 0), ("c-1", 3_600_001)] {
+        let bad = Request::SelfUpdate(crate::self_update::swap::Request {
+            command_id: command_id.into(),
+            data_dir: std::env::temp_dir(),
+            allow_downgrade: false,
+            health_timeout_ms: timeout,
+        });
+        assert!(
+            matches!(bad.validate(), Err(RequestError::SelfUpdate(_))),
+            "{bad:?}"
+        );
+    }
+    let reply = Reply::SelfUpdate(SelfUpdated {
+        restarting: true,
+        message: "installed".into(),
+    });
+    let json = serde_json::to_string(&reply).unwrap();
+    assert_eq!(
+        json,
+        r#"{"self_update":{"restarting":true,"message":"installed"}}"#
+    );
+}
+
+#[test]
 fn requests_are_checked() {
     assert_eq!(install(Kind::All, &[]).validate(), Ok(()));
     assert_eq!(install(Kind::Security, &[]).validate(), Ok(()));

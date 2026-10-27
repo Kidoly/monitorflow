@@ -359,9 +359,9 @@ db_tests! {
         let (status, _) = h.send("POST", &commands(windows), &admin, Some(json!({"kind": "apply_updates", "security_only": true}))).await;
         assert_eq!(status, StatusCode::CREATED);
 
+        // Windows agents update through their update service (ADR-0053).
         let (status, body) = h.send("POST", &commands(windows), &admin, Some(json!({"kind": "self_update", "version": "0.3.0"}))).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(body["error"], "self-update is not supported on windows servers yet");
+        assert_eq!(status, StatusCode::CREATED, "{body}");
 
         let sources = format!("/api/servers/{windows}/sources");
         for (method, body) in [("POST", Some(json!({"mirrors": [{"name": "debian-12"}]}))), ("DELETE", None)] {

@@ -83,6 +83,8 @@ pub fn handle(request: &Request) -> Reply {
         }
         Request::Install { kind, updates } => install(*kind, updates).map(Reply::Installed),
         Request::Reboot => reboot().map(Reply::Rebooting),
+        // The service answers it before calling this (ADR-0053).
+        Request::SelfUpdate(_) => Err("self-updates are not Windows Update calls".into()),
     };
     result.unwrap_or_else(Reply::Error)
 }

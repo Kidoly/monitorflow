@@ -1,7 +1,6 @@
 //! The per-site agent auto-update policy (ADR-0053), off by default. In
 //! sites with `agent_auto_update`, every [`POLL`] the server queues a
-//! `self_update` to the newest release it holds for each unrevoked Linux
-//! server whose agent is older and has no update in flight. A server gets
+//! `self_update` to the newest release it holds for each unrevoked server whose agent is older and has no update in flight. A server gets
 //! at most one automatic update per version (`agent_auto_updates`), so a
 //! release that rolls back is not tried again; an administrator can still
 //! update it by hand.
@@ -19,6 +18,7 @@ use uuid::Uuid;
 use crate::agent_releases::{self, Sources};
 use crate::api::audit::{self, Event};
 use crate::commands::{CommandStore, Commands, NewCommand};
+use crate::mirror::relays;
 
 pub const POLL: Duration = Duration::from_secs(10 * 60);
 /// How long a queued automatic update may wait for its agent.
@@ -46,7 +46,7 @@ pub async fn tick(pool: &PgPool, sources: &Sources) -> Result<Vec<String>, sqlx:
     let candidates: Vec<Candidate> = sqlx::query_as(
         "SELECT s.id, s.peer_id, s.agent_version
          FROM servers s JOIN sites t ON t.id = s.site_id
-         WHERE t.agent_auto_update AND s.revoked_at IS NULL AND s.os_family <> 'windows'
+         WHERE t.agent_auto_update AND s.revoked_at IS NULL
            AND s.agent_version IS NOT NULL
            AND NOT EXISTS (SELECT 1 FROM agent_auto_updates a
                            WHERE a.server_id = s.id AND a.version = $1)
@@ -59,7 +59,6 @@ pub async fn tick(pool: &PgPool, sources: &Sources) -> Result<Vec<String>, sqlx:
     .bind(SELF_UPDATE)
     .fetch_all(pool)
     .await?;
-    let payload = sources.payload(&latest, false, 0);
     let mut queued = Vec::new();
     for server in candidates {
         // Agents that are newer, or report something that is not a version
@@ -81,10 +80,11 @@ pub async fn tick(pool: &PgPool, sources: &Sources) -> Result<Vec<String>, sqlx:
         if claimed == 0 {
             continue;
         }
+        let relay = relays::url_for_server(&mut tx, server.id).await?;
         let new = NewCommand {
             server_id: server.id,
             kind: SELF_UPDATE.into(),
-            payload: payload.clone(),
+            payload: sources.payload(&latest, relay.as_deref(), false, 0),
             ttl: TTL,
             requested_by: None,
             campaign_id: None,

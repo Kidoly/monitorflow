@@ -17,11 +17,12 @@ use monitorflow_common::mirror::{
     write_atomically, write_pinned, Family, Index, IndexMirror, Served,
 };
 use monitorflow_common::proto::v1::RelayMirrors;
+use monitorflow_common::release::{self, ReleaseError};
 use tokio::sync::watch;
 
 use super::fetch::{io, FetchError, Fetcher};
 use super::sync::{Outcome, Syncer};
-use super::{report, retention};
+use super::{agent, report, retention};
 
 /// Largest index and public key accepted.
 const INDEX_LIMIT: u64 = 4 * 1024 * 1024;
@@ -65,6 +66,9 @@ pub struct Report {
     /// Set when the index could not be read; nothing was synced.
     pub index_error: Option<String>,
     pub mirrors: Vec<(IndexMirror, Result<Outcome, String>)>,
+    /// Agent releases copied (ADR-0053), and why the others were not.
+    pub agent_releases: Vec<String>,
+    pub agent_error: Option<String>,
 }
 
 pub struct MirrorTask {
@@ -150,7 +154,31 @@ impl MirrorTask {
             report.mirrors.push((mirror, result));
             self.report().await;
         }
+        match self.sync_agents(&index.agent_releases).await {
+            Ok(copied) => report.agent_releases = copied,
+            Err(error) => report.agent_error = Some(error),
+        }
         report
+    }
+
+    /// Copies the newest agent releases the upstream lists (ADR-0053).
+    async fn sync_agents(&self, listed: &[String]) -> Result<Vec<String>, String> {
+        let keys = match release::trusted_keys() {
+            Ok(keys) => keys,
+            // A build without release keys cannot check releases.
+            Err(ReleaseError::NoKeys) if listed.is_empty() => return Ok(Vec::new()),
+            Err(error) => {
+                tracing::warn!(%error, "not copying agent releases");
+                return Err(error.to_string());
+            }
+        };
+        match agent::sync(&self.fetcher, &self.served.agent, listed, keys).await {
+            Ok(copied) => Ok(copied.iter().map(ToString::to_string).collect()),
+            Err(error) => {
+                tracing::warn!(%error, "cannot copy agent releases; will retry");
+                Err(error)
+            }
+        }
     }
 
     /// Scans the served tree and publishes it if it changed.

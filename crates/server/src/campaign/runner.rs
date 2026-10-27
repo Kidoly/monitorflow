@@ -332,20 +332,14 @@ async fn queue(
         return Ok(Step::Idle);
     };
     // An agent update campaign sends self_update instead (ADR-0053).
-    let update = match row.agent_version.as_deref().map(str::parse::<Version>) {
-        None => Ok((APPLY_UPDATES, row.spec().payload())),
-        Some(Ok(version)) => Ok((SELF_UPDATE, agents.payload(&version, false, 0))),
-        Some(Err(_)) => Err("invalid agent version".to_owned()),
-    };
+    let agent_version = row.agent_version.as_deref().map(str::parse::<Version>);
+    let packages = row.spec().payload();
     let mut configurer = None;
     let mut peers = Vec::new();
     let (mut skipped, mut configured) = (0, 0);
     for target in missing {
         let next = match row.sources_mode {
             _ if target.revoked => Next::Fail("server revoked".into()),
-            _ if row.agent_version.is_some() && target.os_family == "windows" => {
-                Next::Fail("self-update is not supported on windows servers yet".into())
-            }
             None => Next::Update,
             // Windows servers take no sources (ADR-0049).
             Some(_) if target.os_family == "windows" => Next::Update,
@@ -354,7 +348,17 @@ async fn queue(
         let built = match next {
             Next::Wait => continue,
             Next::Fail(error) => Err(error),
-            Next::Update => update.clone(),
+            Next::Update => match &agent_version {
+                None => Ok((APPLY_UPDATES, packages.clone())),
+                Some(Ok(version)) => {
+                    let relay = relays::url_for_server(&mut *conn, target.server_id).await?;
+                    Ok((
+                        SELF_UPDATE,
+                        agents.payload(version, relay.as_deref(), false, 0),
+                    ))
+                }
+                Some(Err(_)) => Err("invalid agent version".to_owned()),
+            },
             Next::Configure | Next::Restart => {
                 let configurer = match configurer {
                     Some(ref c) => c,

@@ -51,6 +51,7 @@ pub(crate) struct ReleaseFiles {
 
 impl ReleaseFiles {
     /// What the agent writes on the helper's stdin.
+    #[cfg(unix)]
     pub(crate) fn input(&self, command_id: &str, health_timeout_ms: u64) -> Vec<u8> {
         use base64::Engine;
         let header = Header {
@@ -69,6 +70,7 @@ impl ReleaseFiles {
 }
 
 /// A minimal x86_64 ELF header, then `tag` so binaries differ.
+#[cfg(unix)]
 pub(crate) fn elf(tag: &str) -> Vec<u8> {
     let mut bytes = b"\x7fELF\x02\x01\x01\0\0\0\0\0\0\0\0\0\x02\0\x3e\0".to_vec();
     bytes.resize(64, 0);
@@ -129,6 +131,7 @@ fn status_and_connected_files_round_trip() {
     assert_eq!(connected.pid, std::process::id());
 }
 
+#[cfg(unix)]
 #[test]
 fn state_files_are_not_read_through_links() {
     let dir = TempDir::new().unwrap();
@@ -169,4 +172,74 @@ async fn the_resumer_claims_only_its_command_and_waits_for_the_outcome() {
         .unwrap()
         .unwrap();
     assert_eq!(output.exit_code, 0);
+}
+
+/// Answers self-updates as the update service would, keeping the request.
+struct FakeService {
+    seen: std::sync::Mutex<Vec<crate::packages::windows_update::Request>>,
+    reply: crate::packages::windows_update::Reply,
+}
+
+#[async_trait::async_trait]
+impl crate::packages::windows_update::client::UpdateService for FakeService {
+    async fn call(
+        &self,
+        request: &crate::packages::windows_update::Request,
+    ) -> Result<crate::packages::windows_update::Reply, crate::packages::PackageError> {
+        self.seen.lock().unwrap().push(request.clone());
+        Ok(self.reply.clone())
+    }
+}
+
+#[tokio::test]
+async fn the_windows_installer_stages_the_release_for_the_update_service() {
+    use crate::packages::windows_update::{Reply, Request, SelfUpdated};
+    use crate::self_update::handler::{Installed, Installer, UpdateServiceInstaller};
+    use base64::Engine;
+
+    let data = TempDir::new().unwrap();
+    let service = Arc::new(FakeService {
+        seen: Default::default(),
+        reply: Reply::SelfUpdate(SelfUpdated {
+            restarting: true,
+            message: "installed 0.3.0 over 0.2.0; restarting into 0.3.0".into(),
+        }),
+    });
+    let installer = UpdateServiceInstaller {
+        service: service.clone(),
+        data_dir: data.path().to_owned(),
+    };
+    let signer = Signer::new();
+    let asset = "monitorflow-agent-windows-x86_64.exe";
+    let files = signer.release("0.3.0", asset, b"MZ binary");
+    let header = Header {
+        command_id: "c-1".into(),
+        sums: files.sums.clone(),
+        signature: base64::engine::general_purpose::STANDARD.encode(&files.signature),
+        version_file: files.version_file.clone(),
+        allow_downgrade: false,
+        health_timeout_ms: 60_000,
+    };
+    let installed = installer.install(&header, &files.binary).await.unwrap();
+    assert!(
+        matches!(installed, Installed::Restarting(text) if text.contains("restarting into 0.3.0"))
+    );
+    let staged = swap::staged_dir(data.path());
+    assert_eq!(std::fs::read(staged.join(asset)).unwrap(), b"MZ binary");
+    assert_eq!(
+        std::fs::read(staged.join("SHA256SUMS.sig")).unwrap(),
+        files.signature
+    );
+    let seen = service.seen.lock().unwrap();
+    let [Request::SelfUpdate(request)] = seen.as_slice() else {
+        panic!("{seen:?}");
+    };
+    assert_eq!(
+        (
+            request.command_id.as_str(),
+            request.health_timeout_ms,
+            request.data_dir.as_path()
+        ),
+        ("c-1", 60_000, data.path())
+    );
 }

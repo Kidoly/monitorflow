@@ -153,6 +153,23 @@ pub async fn record(
     Ok(true)
 }
 
+/// The mirror URL of the relay the server `server_id` connects through, if
+/// that relay is not revoked and reported one; agents behind it download
+/// agent releases there first (ADR-0053).
+pub async fn url_for_server(
+    db: &mut PgConnection,
+    server_id: Uuid,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT r.mirror_url FROM servers s
+         JOIN relays r ON r.id = s.relay_id
+         WHERE s.id = $1 AND r.revoked_at IS NULL AND r.mirror_url IS NOT NULL",
+    )
+    .bind(server_id)
+    .fetch_optional(&mut *db)
+    .await
+}
+
 /// What the relay the server `server_id` connects through serves, if that
 /// relay is not revoked and reported a mirror URL.
 pub async fn for_server(

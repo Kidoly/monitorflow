@@ -7,7 +7,9 @@
 //! from the repository metadata, decompressed by [`compress`]; [`sync`] copies a snapshot with
 //! [`fetch`]; [`task`] runs the sync loop and [`retention`] bounds the
 //! snapshots kept. [`report`] tells the server what the relay serves.
+//! [`agent`] copies the newest agent releases for self-updates (ADR-0053).
 
+pub mod agent;
 pub mod apt;
 pub mod compress;
 pub mod dnf;

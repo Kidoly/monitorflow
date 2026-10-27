@@ -17,6 +17,10 @@ pub const VERSION: u32 = 1;
 pub struct Index {
     pub version: u32,
     pub mirrors: Vec<IndexMirror>,
+    /// Agent releases served under `/agent/<version>/`, newest first
+    /// (ADR-0053). Absent from older servers' indexes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_releases: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +67,8 @@ pub enum IndexError {
     Json(#[from] serde_json::Error),
     #[error("index version {0} is not supported (expected {VERSION})")]
     Version(u32),
+    #[error("index lists an invalid agent release")]
+    AgentRelease,
     #[error("index entry {family}/{name}: {reason}")]
     Entry {
         family: Family,
@@ -78,6 +84,13 @@ impl Index {
         let index: Index = serde_json::from_slice(bytes)?;
         if index.version != VERSION {
             return Err(IndexError::Version(index.version));
+        }
+        if index
+            .agent_releases
+            .iter()
+            .any(|v| v.parse::<crate::release::Version>().is_err())
+        {
+            return Err(IndexError::AgentRelease);
         }
         for m in &index.mirrors {
             let fail = |reason| IndexError::Entry {
@@ -164,9 +177,14 @@ impl Index {
             }
         }
         mirrors.sort_by(|a, b| (a.family, &a.name).cmp(&(b.family, &b.name)));
+        let agent_releases = crate::release::cached_versions(&served.agent)?
+            .iter()
+            .map(ToString::to_string)
+            .collect();
         Ok(Self {
             version: VERSION,
             mirrors,
+            agent_releases,
         })
     }
 }
@@ -291,6 +309,30 @@ mod tests {
             .unwrap()
             .mirrors
             .is_empty());
+    }
+
+    #[test]
+    fn scan_lists_agent_releases_and_parse_checks_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let served = Served::under(dir.path());
+        for (name, version) in [
+            ("0.2.0", "0.2.0\n"),
+            ("0.10.0", "0.10.0\n"),
+            ("0.3.0", "0.4.0\n"),
+        ] {
+            std::fs::create_dir_all(served.agent.join(name)).unwrap();
+            std::fs::write(served.agent.join(name).join("VERSION"), version).unwrap();
+        }
+        std::fs::create_dir_all(served.agent.join(".0.11.0.part")).unwrap();
+        let index = Index::scan(&served).unwrap();
+        assert_eq!(index.agent_releases, ["0.10.0", "0.2.0"]);
+        let json = serde_json::to_vec(&index).unwrap();
+        assert_eq!(Index::parse(&json).unwrap(), index);
+        // Older indexes have none; a name that is not a version is refused.
+        let old = br#"{"version":1,"mirrors":[]}"#;
+        assert!(Index::parse(old).unwrap().agent_releases.is_empty());
+        let bad = br#"{"version":1,"mirrors":[],"agent_releases":["../x"]}"#;
+        assert!(matches!(Index::parse(bad), Err(IndexError::AgentRelease)));
     }
 
     #[test]

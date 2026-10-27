@@ -8,6 +8,7 @@ use axum::http::StatusCode;
 use tempfile::TempDir;
 
 use super::*;
+use crate::packages::Tools;
 use crate::self_update::tests::{elf, ReleaseFiles, Signer};
 
 const ASSET: &str = "monitorflow-agent-linux-x86_64";
@@ -65,7 +66,7 @@ fn fake_sudo(dir: &TempDir, reply: &str, code: i32) -> Tools {
 
 fn handler(tools: Tools, signer: &Signer) -> SelfUpdateHandler {
     SelfUpdateHandler::with(
-        tools,
+        SudoHelper { tools },
         vec![signer.public()],
         "0.2.0".parse().unwrap(),
         Some(Platform::LinuxX86_64),

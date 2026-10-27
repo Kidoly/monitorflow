@@ -152,9 +152,9 @@ The outcome is in `/var/lib/monitorflow/self-update/status.json`, and the watchd
 
 **Many servers at once.** An update campaign can update agents instead of packages: choose "The MonitorFlow agent" and a version in the new campaign form (`agent_version` in `POST /api/campaigns`). Waves, maintenance windows and the failure threshold work as for package updates; a rolled-back server counts as failed.
 
-**Automatic updates per site.** Under Admin › Sites, administrators can turn on agent updates for a site; it is off by default. Every 10 minutes the server then updates the site's Linux agents that run an older version than the newest release it holds, at most once per server and version, so a release that rolled back is not tried again on that server. Each update is audited as `agent.auto_update`, and turning the policy on or off as `site.agent_auto_update`.
+**Automatic updates per site.** Under Admin › Sites, administrators can turn on agent updates for a site; it is off by default. Every 10 minutes the server then updates the site's agents that run an older version than the newest release it holds, at most once per server and version, so a release that rolled back is not tried again on that server. Each update is audited as `agent.auto_update`, and turning the policy on or off as `site.agent_auto_update`.
 
-**Where agents download from.** The command lists, in order: the server's own copy at `<mirror_public_url>/agent/<version>/` when it holds that version, then `agent_download_url` (for GitHub, the release of that version; a self-hosted URL as it is, skipped by the agent if it serves another version). For sites without Internet access, give the server a copy of each release on its mirror listener, from a directory holding the release files:
+**Where agents download from.** The command lists, in order: the mirror listener of the agent's relay, when the relay mirrors and reported its `mirror.public_url` (relays copy the two newest releases the server holds, each cycle of their mirror sync, and check their signature first), the server's own copy at `<mirror_public_url>/agent/<version>/` when it holds that version, then `agent_download_url` (for GitHub, the release of that version; a self-hosted URL as it is, skipped by the agent if it serves another version). For sites without Internet access, give the server a copy of each release on its mirror listener, from a directory holding the release files:
 
 ```
 docker compose cp ./monitorflow-0.3.0 server:/tmp/release
@@ -229,6 +229,8 @@ icacls "$data\agent" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:
 icacls "$data\scripts.d" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "NT SERVICE\MonitorFlowAgent:(OI)(CI)RX"
 ```
 
+**Self-update on Windows.** The agent hands a downloaded, checked release to `MonitorFlowUpdate`, which checks it again, renames the running `monitorflow-agent.exe` to `monitorflow-agent.previous.exe`, puts the new one in place and restarts `MonitorFlowAgent`; if the new agent does not connect in time it renames them back. The MSI installs the update service; by hand, create it as in [Windows Update service](#windows-update-service). Its log, `%ProgramData%\MonitorFlow\update\update.log`, shows each step. The MSI still records the version it installed: a later MSI upgrade works as usual, and repairing the older MSI would put its binary back.
+
 Start from `deploy/config/agent.windows.example.toml`. Its paths assume `%ProgramData%` is `C:\ProgramData`. Use single-quoted TOML strings for paths, so backslashes are not escapes. `%ProgramFiles%` lets only administrators write by default, which keeps the binary as safe as a root-owned `/usr/bin/monitorflow-agent`. The agent also protects what it writes itself: the private key, the command journal and the directories it creates get a DACL for `SYSTEM`, `Administrators` and their owner only, whatever the parent allows. At start, it logs a warning when the key's DACL allows anyone else.
 
 ### Enrolling
@@ -246,7 +248,7 @@ Enroll and run the agent through the service only. Started from an elevated cons
 
 ### Windows Update service
 
-Updates and update reports go through a second service, `MonitorFlowUpdate` (ADR-0049). It is the same binary started as `update-service` under LocalSystem, because the agent's account cannot install updates. It accepts typed requests from the agent only, on the named pipe `\\.\pipe\MonitorFlowUpdate`, whose access list admits `SYSTEM` and `NT SERVICE\MonitorFlowAgent` and nobody else. It reads no configuration file. In the same elevated PowerShell:
+Updates, update reports and self-updates go through a second service, `MonitorFlowUpdate` (ADR-0049, ADR-0053). The MSI installs it; these steps are for a manual install. It is the same binary started as `update-service` under LocalSystem, because the agent's account cannot install updates. It accepts typed requests from the agent only, on the named pipe `\\.\pipe\MonitorFlowUpdate`, whose access list admits `SYSTEM` and `NT SERVICE\MonitorFlowAgent` and nobody else. It reads no configuration file. In the same elevated PowerShell:
 
 ```powershell
 sc.exe create MonitorFlowUpdate DisplayName= "MonitorFlow update service" start= auto `
@@ -256,7 +258,7 @@ Start-Service MonitorFlowUpdate
 Get-Content "$data\update\update.log"   # "update service listening"
 ```
 
-The service logs to `%ProgramData%\MonitorFlow\update\update.log`, rotated at 16 MiB like the agent's log. Without it the agent runs as before, but it sends no update report, logs a warning every 5 minutes, and fails `apply_updates` with "the update service is not running". The two services can be installed in either order. `sc.exe delete MonitorFlowUpdate` removes it.
+The service logs to `%ProgramData%\MonitorFlow\update\update.log`, rotated at 16 MiB like the agent's log. Without it the agent runs as before, but it sends no update report, logs a warning every 5 minutes, and fails `apply_updates` and `self_update` with "the update service is not running". The two services can be installed in either order. `sc.exe delete MonitorFlowUpdate` removes it.
 
 Updates come from the source the machine is configured for: Windows Update, Microsoft Update, or the WSUS server set by Group Policy, together with its approvals. MonitorFlow never changes that source, and its mirrors do not apply to Windows. Windows keeps its own automatic updates. On servers patched by campaigns, set them to notify or download only (Group Policy "Configure Automatic Updates", option 2 or 3), so installs happen in campaign windows.
 

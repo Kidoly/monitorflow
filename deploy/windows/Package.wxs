@@ -4,6 +4,9 @@
   of docs/deploy-agent.md: binary, service under its virtual account,
   failure actions, data directories and their ACLs. Built by build-msi.ps1.
 
+  Two services run the binary: MonitorFlowAgent under its virtual account,
+  and MonitorFlowUpdate as LocalSystem (ADR-0049, ADR-0053).
+
   Properties for silent installs (msiexec /i ... /qn):
     UPSTREAM_URL      writes agent.toml when it does not exist yet, and
                       starts the service
@@ -67,6 +70,24 @@
                               ResetPeriodInDays="1" />
         </ServiceInstall>
         <ServiceControl Id="AgentServiceRemove" Name="MonitorFlowAgent" Stop="both"
+                        Remove="uninstall" Wait="yes" />
+        <!-- The update service (ADR-0049): the same binary as LocalSystem,
+             for Windows Update and the agent's self-updates (ADR-0053).
+             It needs no configuration, so it always starts. Failure
+             actions restart it, which is also how it moves to a new
+             binary after a self-update. -->
+        <ServiceInstall Id="UpdateService" Name="MonitorFlowUpdate" DisplayName="MonitorFlow update service"
+                        Description="Installs Windows updates and MonitorFlow agent updates for the MonitorFlow agent."
+                        Type="ownProcess" Start="auto" ErrorControl="normal" Vital="yes"
+                        Account="LocalSystem" Arguments="update-service">
+          <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
+                              ThirdFailureActionType="restart" RestartServiceDelayInSeconds="60"
+                              ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <!-- Started without waiting, like the agent: a service that does
+             not start must not fail the whole install. -->
+        <ServiceControl Id="UpdateServiceStart" Name="MonitorFlowUpdate" Start="install" Wait="no" />
+        <ServiceControl Id="UpdateServiceRemove" Name="MonitorFlowUpdate" Stop="both"
                         Remove="uninstall" Wait="yes" />
       </Component>
       <!-- Starts the service when it has a configuration: one given now,

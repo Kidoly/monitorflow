@@ -192,6 +192,7 @@ mod tests {
                 })),
                 Request::Install { .. } => self.install.clone(),
                 Request::Reboot => self.reboot.clone(),
+                Request::SelfUpdate(_) => None,
             };
             reply.ok_or_else(|| PackageError::Helper("the update service is not running".into()))
         }

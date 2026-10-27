@@ -217,7 +217,6 @@ function UpdateAgent({
   const pending = "commands" in commands && commands.commands.some((c) => c.kind === "self_update" && isActive(c));
   if (
     server.revoked_at ||
-    server.os_family === "windows" ||
     pending ||
     !latest ||
     !updateAvailable(server.agent_version, latest) ||
