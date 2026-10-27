@@ -1,9 +1,13 @@
 # Agent release files (ADR-0052): static Linux binaries for x86_64 and
 # aarch64, the Windows executable and MSI, the installer, its systemd unit
-# and sudo rules, and SHA256SUMS. A `v*` tag publishes them as a GitHub
-# Release with stable asset names, so releases/latest/download/<name>
-# works. A manual run, or a pull request that changes these files, builds
-# the same files as the `release-files` artifact and publishes nothing.
+# and sudo rules, VERSION, SHA256SUMS and its signature SHA256SUMS.sig
+# (ADR-0053). A `v*` tag publishes them as a GitHub Release with stable
+# asset names, so releases/latest/download/<name> works; it signs with the
+# RELEASE_SIGNING_KEY secret, whose public half must be in
+# deploy/release-keys.pem (docs/releasing.md). A manual run, or a pull
+# request that changes these files, builds the same files as the
+# `release-files` artifact, signed with a throwaway key, and publishes
+# nothing.
 name: Release
 on:
   push:
@@ -15,6 +19,7 @@ on:
       - .github/actions/build-agent-linux/**
       - deploy/install.sh
       - deploy/release-files.sh
+      - deploy/release-keys.pem
       - deploy/systemd/**
       - deploy/sudoers/**
 permissions:
@@ -102,7 +107,30 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - run: deploy/release-files.sh dist
+      # Only the publishing run sees the secret. Other runs sign with a
+      # throwaway key, added to the keys the installer gets, so the files
+      # are complete but trusted by no released agent.
+      - name: Sign the release files
+        env:
+          PUBLISH: ${{ needs.version.outputs.publish }}
+          RELEASE_SIGNING_KEY: ${{ needs.version.outputs.publish == 'true' && secrets.RELEASE_SIGNING_KEY || '' }}
+          MF_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          umask 077
+          key=$RUNNER_TEMP/release-signing.pem
+          if [ "$PUBLISH" = true ]; then
+            if [ -z "$RELEASE_SIGNING_KEY" ]; then
+              echo "::error::the RELEASE_SIGNING_KEY secret is not set; see docs/releasing.md"
+              exit 1
+            fi
+            printf '%s\n' "$RELEASE_SIGNING_KEY" >"$key"
+          else
+            openssl genpkey -algorithm ed25519 -out "$key"
+            { cat deploy/release-keys.pem; openssl pkey -in "$key" -pubout; } >"$RUNNER_TEMP/release-keys.pem"
+            export MF_RELEASE_KEYS=$RUNNER_TEMP/release-keys.pem
+          fi
+          MF_SIGNING_KEY=$key deploy/release-files.sh dist
+          rm -f "$key"
       - uses: actions/upload-artifact@v4
         with:
           name: release-files

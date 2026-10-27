@@ -3,8 +3,9 @@
 # deploy/docker-compose.yml, serves the release files from a local HTTPS
 # directory through MF_DOWNLOAD_URL, installs the agent on this host with a
 # token from the server CLI, and checks that it enrolls and shows online in
-# the API. Then re-runs the installer, checks a tampered checksum fails
-# closed, and uninstalls. Changes this host's /usr/bin, /etc and systemd:
+# the API. Then re-runs the installer, checks that a tampered checksum, a
+# signature by another key and a missing signature fail closed (ADR-0053),
+# and uninstalls. The release is signed with a throwaway key. Changes this host's /usr/bin, /etc and systemd:
 # meant for a throwaway CI runner. Needs root through sudo, systemd,
 # docker with compose, curl, jq, openssl and python3.
 #   deploy/install-test.sh path/to/monitorflow-agent-linux-x86_64
@@ -38,14 +39,28 @@ check() {
 mode_is() { [ "$(sudo stat -c '%U:%G %a' "$1")" = "$2" ]; }
 absent() { ! sudo test -e "$1"; }
 
-# The release directory, as the release workflow builds it, plus a copy
-# whose checksums do not match.
-mkdir -p "$work/files" "$work/files/tampered"
+# The release directory, as the release workflow builds it but signed with
+# a throwaway key, plus copies with a checksum that does not match (signed
+# again, so only the checksum is wrong), a signature by another key, and
+# no signature.
+openssl genpkey -algorithm ed25519 -out "$work/signing.pem"
+openssl genpkey -algorithm ed25519 -out "$work/other.pem"
+{ cat release-keys.pem; openssl pkey -in "$work/signing.pem" -pubout; } >"$work/release-keys.pem"
+export MF_RELEASE_KEYS=$work/release-keys.pem
+mkdir -p "$work/files"
 install -m 0755 "$agent" "$work/files/monitorflow-agent-linux-x86_64"
-./release-files.sh "$work/files" >/dev/null
-find "$work/files" -maxdepth 1 -type f -exec cp {} "$work/files/tampered/" \;
+MF_SIGNING_KEY=$work/signing.pem ./release-files.sh "$work/files" >/dev/null
+for copy in tampered foreign unsigned; do
+    mkdir "$work/files/$copy"
+    find "$work/files" -maxdepth 1 -type f -exec cp {} "$work/files/$copy/" \;
+done
 awk -v zero="$(printf '%064d' 0)" '$2 == "monitorflow-agent-linux-x86_64" { $1 = zero } 1' \
     "$work/files/SHA256SUMS" >"$work/files/tampered/SHA256SUMS"
+openssl pkeyutl -sign -inkey "$work/signing.pem" -rawin -in "$work/files/tampered/SHA256SUMS" \
+    -out "$work/files/tampered/SHA256SUMS.sig"
+openssl pkeyutl -sign -inkey "$work/other.pem" -rawin -in "$work/files/SHA256SUMS" \
+    -out "$work/files/foreign/SHA256SUMS.sig"
+rm "$work/files/unsigned/SHA256SUMS.sig"
 
 # HTTPS with a CA of its own, trusted by the installer's curl through
 # CURL_CA_BUNDLE.
@@ -92,6 +107,7 @@ echo "== first install"
 installer MF_DOWNLOAD_URL="$base" MF_SERVER="localhost:$GRPC_PORT" MF_ENROLL="localhost:$ENROLL_PORT" \
     MF_TOKEN="$token" | tee "$work/install.log"
 check "agent shows online in the API" online
+check "installer verified the release signature" grep -q 'release signature verified' "$work/install.log"
 check "binary root:root 0755" mode_is /usr/bin/monitorflow-agent "root:root 755"
 check "data dir monitorflow 0700" mode_is /var/lib/monitorflow/agent "monitorflow:monitorflow 700"
 check "agent.toml root:monitorflow 0640" mode_is /etc/monitorflow/agent.toml "root:monitorflow 640"
@@ -109,10 +125,17 @@ check "identity and configuration kept" test "$(sudo sha256sum /var/lib/monitorf
 check "service active after upgrade" systemctl is-active --quiet monitorflow-agent
 check "agent online again" online
 
-echo "== tampered checksums"
+echo "== tampered files"
 binary=$(sha256sum /usr/bin/monitorflow-agent)
-check "installer refuses a checksum mismatch" bash -c "! curl -fsSL --cacert '$work/cert.pem' '$base/install.sh' \
-    | sudo env CURL_CA_BUNDLE='$work/cert.pem' MF_DOWNLOAD_URL='$base/tampered' sh"
+# The installer from the good directory, the files from another one, as
+# with a compromised mirror.
+refuses() {
+    ! curl -fsSL --cacert "$work/cert.pem" "$base/install.sh" \
+        | sudo env CURL_CA_BUNDLE="$work/cert.pem" MF_DOWNLOAD_URL="$base/$1" sh
+}
+check "installer refuses a checksum mismatch" refuses tampered
+check "installer refuses another key's signature" refuses foreign
+check "installer refuses a missing signature" refuses unsigned
 check "binary unchanged" test "$(sha256sum /usr/bin/monitorflow-agent)" = "$binary"
 
 echo "== uninstall"
