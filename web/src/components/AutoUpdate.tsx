@@ -198,8 +198,10 @@ function Settings({
         <h2 className={styles.sectionTitle}>Settings</h2>
       </div>
       <p className={styles.sectionNote}>
-        The server moves agents to the newest stable release it holds, never newer than itself and never backwards: one
-        agent per site first, then a quarter of the site at a time. A server is tried once per release.
+        The server moves relays, then agents, to the newest stable release it holds, never newer than itself and never
+        backwards: one per site first, then a quarter of the site at a time. Each is tried once per release. An update
+        restarts the agent or relay for a few seconds, never the host, so it is not held for a maintenance window; for
+        hosts that must only change in a window, turn their site off under Sites and update them with a campaign.
       </p>
       <div className={styles.buttons}>
         <span>

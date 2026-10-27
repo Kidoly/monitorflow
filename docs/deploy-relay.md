@@ -16,6 +16,8 @@ A relay forwards the streams of the agents of a site to the central server, buff
 
 ## Quick install
 
+Create a relay token under Admin › Enrollment tokens (role Relay, with the names agents use to reach it): the panel shows the command below filled in, from the source chosen there (GitHub, this server or a custom URL), with the mirror URL if you give one. By hand:
+
 ```
 curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
   | sudo MF_ROLE=relay MF_SERVER=monitorflow.example.com:7443 MF_TOKEN=mfe1.… sh

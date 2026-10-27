@@ -43,7 +43,8 @@ pub struct EnrollmentSettings {
 
 impl EnrollmentSettings {
     /// URLs on the first of `server_names`, the name the server's
-    /// certificate is issued for first, and the listener ports.
+    /// certificate is issued for first, and the ports peers reach the
+    /// listeners at.
     pub fn from_config(config: &ServerConfig, ca_fingerprint: Fingerprint) -> Self {
         let host = config
             .server_names
@@ -55,8 +56,18 @@ impl EnrollmentSettings {
         };
         Self {
             ca_fingerprint,
-            upstream_url: format!("https://{host}:{}", config.grpc_listen_addr.port()),
-            enroll_url: format!("https://{host}:{}", config.enroll_listen_addr.port()),
+            upstream_url: format!(
+                "https://{host}:{}",
+                config
+                    .grpc_public_port
+                    .unwrap_or(config.grpc_listen_addr.port())
+            ),
+            enroll_url: format!(
+                "https://{host}:{}",
+                config
+                    .enroll_public_port
+                    .unwrap_or(config.enroll_listen_addr.port())
+            ),
         }
     }
 }
@@ -375,6 +386,15 @@ mod tests {
         let settings = EnrollmentSettings::from_config(&config, [0; 32]);
         assert_eq!(settings.upstream_url, "https://localhost:7443");
         assert_eq!(settings.enroll_url, "https://localhost:7445");
+        // Behind published ports, as the compose file sets them.
+        let published = ServerConfig {
+            grpc_public_port: Some(27443),
+            enroll_public_port: Some(27445),
+            ..ServerConfig::default()
+        };
+        let settings = EnrollmentSettings::from_config(&published, settings.ca_fingerprint);
+        assert_eq!(settings.upstream_url, "https://localhost:27443");
+        assert_eq!(settings.enroll_url, "https://localhost:27445");
         config.server_names = vec!["::1".into()];
         let settings = EnrollmentSettings::from_config(&config, [0; 32]);
         assert_eq!(settings.enroll_url, "https://[::1]:7445");
