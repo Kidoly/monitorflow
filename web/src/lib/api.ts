@@ -605,8 +605,35 @@ export interface CreatedToken extends EnrollmentToken {
   token: string;
   upstream_url: string;
   enroll_url: string;
-  /** Base URL of the agent release files, for the install commands (ADR-0052). */
-  agent_download_url: string;
+  /** Where the install commands may download the agent from (ADR-0054). */
+  install: AgentInstall;
+}
+
+/** Where install commands download the agent from (ADR-0054). */
+export type InstallSource = "github" | "central" | "custom";
+
+/** The newest release the server holds, as `central` commands pin it; checksums in hex. */
+export interface CentralRelease {
+  version: string;
+  /** URL path under the web interface, like `/agent/0.3.0`. */
+  path: string;
+  sums_sha256: string;
+  /** `null` when the cached release lacks install.sh, or the MSI. */
+  installer_sha256: string | null;
+  msi_sha256: string | null;
+}
+
+/** `GET /api/settings/agent-install`, and the `install` of a new token. */
+export interface AgentInstall {
+  /** The server-wide default. */
+  source: InstallSource;
+  custom_url: string | null;
+  /** Set by the server's configuration, so not editable here. */
+  source_from_config: boolean;
+  custom_url_from_config: boolean;
+  github_url: string;
+  /** `null` when the server holds no release. */
+  central: CentralRelease | null;
 }
 
 export type CampaignState = "draft" | "scheduled" | "running" | "paused" | "stopped" | "completed" | "failed";
@@ -1061,6 +1088,13 @@ export const api = {
   tokens: (signal?: AbortSignal) => request<TokenList>("/api/tokens", { signal }),
 
   createToken: (body: TokenRequest) => request<CreatedToken>("/api/tokens", { method: "POST", body }),
+
+  /** The default install source; customer administrators (ADR-0054). */
+  agentInstall: (signal?: AbortSignal) => request<AgentInstall>("/api/settings/agent-install", { signal }),
+
+  /** Changes the default install source; global administrators only, audited. */
+  setAgentInstall: (body: { source: InstallSource; custom_url: string | null }) =>
+    request<AgentInstall>("/api/settings/agent-install", { method: "PUT", body }),
 
   /** Revokes an unused token; 409 once used. */
   revokeToken: (id: string) => request<void>(`/api/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),

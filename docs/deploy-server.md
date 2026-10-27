@@ -40,7 +40,21 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
   | sudo MF_SERVER=<a name of SERVER_NAMES>:7443 MF_TOKEN=mfe1.… sh
 ```
 
-A token created in the web interface comes with this command filled in. Hosts without access to GitHub install from a copy of the release files on a web server of the site: set `AGENT_DOWNLOAD_URL` in `deploy/.env` to its https URL, and the commands the web interface shows use it.
+A token created in the web interface comes with this command filled in. Hosts without access to GitHub can install from this server itself, once a release is imported ([below](#agent-releases-on-the-server)), or from a copy of the release files on another web server of the site: see [Install sources](deploy-agent.md#install-sources).
+
+## Agent releases on the server
+
+The server serves agent releases to hosts at `https://<DOMAIN>/agent/<version>/` and `https://<DOMAIN>/agent/latest/` (ADR-0054), and to self-updating agents (ADR-0053). It holds only the releases you import. Download every asset of a release from its GitHub page into a directory, on any machine, and copy it to the server host. The import needs no network: it checks the release signature against the keys built into the server, then every file.
+
+```
+docker compose -f deploy/docker-compose.yml cp ./monitorflow-0.3.0 server:/tmp/release
+docker compose -f deploy/docker-compose.yml exec server monitorflow-server agent-release import --dir /tmp/release
+docker compose -f deploy/docker-compose.yml exec server monitorflow-server agent-release list
+```
+
+Then choose "This server" as the default install source on the tokens page, or set `AGENT_INSTALL_SOURCE=central` in `deploy/.env`. Releases stay in the `serverdata` volume.
+
+The web image's Caddy forwards `/agent/*` to the server like `/api/*`. With a reverse proxy of your own, forward both paths to the API listener.
 
 ## Browser certificate
 
@@ -84,4 +98,5 @@ Every server setting has a `MONITORFLOW_*` variable (see `deploy/config/server.e
 ## Limits
 
 - VictoriaMetrics and VictoriaLogs are reached over plain HTTP on an internal Docker network that is never published (ADR-0051). PostgreSQL is reached over TLS.
+- The server image trusts the release keys of `deploy/release-keys.pem` at build time; imports of releases signed with another key are refused.
 - The server image has no `aptly`, `reposync` or `createrepo_c`, so package mirrors (ADR-0030) are not available with it yet.
