@@ -267,12 +267,11 @@ export interface AutoUpdateKind {
 /** `GET /api/auto-update`. */
 export interface AutoUpdateStatus {
   settings: AutoUpdateSettings;
-  updated_at: string;
   server_version: string;
   agents: AutoUpdateKind;
 }
 
-/** Fields of `PUT /api/auto-update`; absent ones are unchanged. */
+/** Fields of `PUT /api/settings/auto-update`; absent ones are unchanged. */
 export interface AutoUpdateChange {
   enabled?: boolean;
   paused?: boolean;
@@ -1295,7 +1294,7 @@ export const api = {
 
   /** Changes automatic update settings; global administrators only; audited. */
   setAutoUpdate: (change: AutoUpdateChange) =>
-    request<AutoUpdateStatus>("/api/auto-update", { method: "PUT", body: change }),
+    request<AutoUpdateSettings>("/api/settings/auto-update", { method: "PUT", body: change }),
 
   /** Resumes a halted rollout; global administrators only; audited. */
   resumeRollout: (kind: RolloutKind, version: string) =>
