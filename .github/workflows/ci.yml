@@ -129,6 +129,8 @@ jobs:
           MONITORFLOW_BUILD_VERSION: 99.0.0
         with:
           target: x86_64-unknown-linux-musl
+      # Kept aside: the relay builds below link the agent library.
+      - run: cp "${{ steps.newer.outputs.path }}" "$RUNNER_TEMP/agent-new"
       # The relay, installed with MF_ROLE=relay (ADR-0055).
       - id: relay
         uses: ./.github/actions/build-agent-linux
@@ -136,10 +138,21 @@ jobs:
           target: x86_64-unknown-linux-musl
           package: monitorflow-relay
       - run: cp "${{ steps.relay.outputs.path }}" "$RUNNER_TEMP/relay-old"
-      - run: deploy/install-test.sh "$RUNNER_TEMP/agent-old" "${{ steps.newer.outputs.path }}"
+      - id: newer-relay
+        uses: ./.github/actions/build-agent-linux
+        env:
+          MONITORFLOW_BUILD_VERSION: 99.0.0
+        with:
+          target: x86_64-unknown-linux-musl
+          package: monitorflow-relay
+      - run: |
+          ls -l target/x86_64-unknown-linux-musl/release/
+          cp "${{ steps.newer-relay.outputs.path }}" "$RUNNER_TEMP/relay-new"
+      - run: deploy/install-test.sh "$RUNNER_TEMP/agent-old" "$RUNNER_TEMP/agent-new"
         env:
           MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
           MF_TEST_RELAY: ${{ runner.temp }}/relay-old
+          MF_TEST_NEWER_RELAY: ${{ runner.temp }}/relay-new
   # Server updates (ADR-0056): a compose stack updated through the API from
   # a base build to a newer signed release pushed to a local registry,
   # keeping its data and taking a backup, then a release whose server

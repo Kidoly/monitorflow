@@ -66,7 +66,10 @@ fn fake_sudo(dir: &TempDir, reply: &str, code: i32) -> Tools {
 
 fn handler(tools: Tools, signer: &Signer) -> SelfUpdateHandler {
     SelfUpdateHandler::with(
-        SudoHelper { tools },
+        SudoHelper {
+            tools,
+            product: crate::self_update::AGENT,
+        },
         vec![signer.public()],
         "0.2.0".parse().unwrap(),
         Some(Platform::LinuxX86_64),

@@ -916,4 +916,10 @@ fn auto_update_follows_the_database_unless_configured() {
     assert_eq!(server.auto_update.enabled, Some(false));
     let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_AUTO_UPDATE_ENABLED", "maybe")]);
     assert!(msg.contains("AUTO_UPDATE_ENABLED"), "{msg}");
+    assert_eq!(server.auto_update.interval, 300);
+    let vars = [("MONITORFLOW_AUTO_UPDATE_INTERVAL", "10")];
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &env(&vars)).unwrap();
+    assert_eq!(server.auto_update.interval, 10);
+    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_AUTO_UPDATE_INTERVAL", "9")]);
+    assert!(msg.contains("auto_update.interval"), "{msg}");
 }

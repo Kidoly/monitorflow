@@ -669,6 +669,11 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let uri = path.replace("{id}", &id.to_string());
             assert_eq!(ctx.status(method, &uri, Some(json!({}))).await, not_found);
         }
+        ("POST", "/api/relays/{id}/update") => {
+            let uri = path.replace("{id}", &b.relay.to_string());
+            let body = Some(json!({ "version": "0.2.0" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found);
+        }
         ("GET", "/api/servers/{id}/proxmox")
         | ("PUT", "/api/servers/{id}/proxmox")
         | ("DELETE", "/api/servers/{id}/proxmox") => {

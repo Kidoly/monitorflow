@@ -16,4 +16,5 @@ pub mod forward;
 pub mod listener;
 pub mod mirror;
 pub mod renew;
+pub mod self_update;
 mod session;

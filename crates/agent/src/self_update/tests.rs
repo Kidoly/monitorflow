@@ -243,3 +243,31 @@ async fn the_windows_installer_stages_the_release_for_the_update_service() {
         ("c-1", 60_000, data.path())
     );
 }
+
+#[test]
+fn products_name_their_own_files_and_units() {
+    use monitorflow_common::release::Platform;
+
+    use super::{AGENT, RELAY};
+    assert_eq!(
+        AGENT.asset(Platform::LinuxX86_64),
+        Some("monitorflow-agent-linux-x86_64")
+    );
+    assert_eq!(
+        RELAY.asset(Platform::LinuxAarch64),
+        Some("monitorflow-relay-linux-aarch64")
+    );
+    assert_eq!(
+        RELAY.asset(Platform::WindowsX86_64),
+        None,
+        "Linux relays only"
+    );
+    assert_ne!(AGENT.state_dir, RELAY.state_dir);
+    assert_eq!(RELAY.bin, "/usr/bin/monitorflow-relay");
+    assert_eq!(RELAY.watch_unit, "monitorflow-relay-self-update");
+    #[cfg(unix)]
+    {
+        let paths = super::helper::Paths::of(RELAY, "/var/lib/monitorflow/relay".into());
+        assert_eq!(paths.state_dir, std::path::Path::new(RELAY.state_dir));
+    }
+}

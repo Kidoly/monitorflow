@@ -954,6 +954,11 @@ pub struct ServerConfig {
     /// Enrollment listener: TLS without client certificates, serving only
     /// `EnrollService` (ADR-0007).
     pub enroll_listen_addr: SocketAddr,
+    /// Ports peers reach the two listeners at, when they differ from the
+    /// listeners' own, as behind a published container port; written in
+    /// the install commands of new tokens.
+    pub grpc_public_port: Option<u16>,
+    pub enroll_public_port: Option<u16>,
     /// Plain HTTP listener for the REST API, meant to sit behind a TLS
     /// reverse proxy on the same host (ADR-0006). Defaults to loopback.
     pub api_listen_addr: SocketAddr,
@@ -1018,17 +1023,41 @@ pub struct ServerConfig {
 
 /// Automatic updates (ADR-0055). The setting lives in the database and the
 /// web interface; a value here wins over it and locks it there.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AutoUpdateConfig {
     /// The server-wide default of sites that inherit it. Unset, the
     /// administrators' choice in the web interface applies (on by default).
     pub enabled: Option<bool>,
+    /// Seconds between two looks at what to update.
+    pub interval: u64,
+}
+
+const MIN_AUTO_UPDATE_INTERVAL: u64 = 10;
+
+impl Default for AutoUpdateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: None,
+            interval: 5 * 60,
+        }
+    }
 }
 
 impl AutoUpdateConfig {
     fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
-        env.set_opt("auto_update.enabled", &mut self.enabled)
+        env.set_opt("auto_update.enabled", &mut self.enabled)?;
+        env.set("auto_update.interval", &mut self.interval)
+    }
+
+    fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
+        if self.interval < MIN_AUTO_UPDATE_INTERVAL {
+            return Err(check.fail(
+                "auto_update.interval",
+                format!("must be at least {MIN_AUTO_UPDATE_INTERVAL} seconds"),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -1053,6 +1082,8 @@ impl Default for ServerConfig {
         Self {
             grpc_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7443)),
             enroll_listen_addr: SocketAddr::from(([0, 0, 0, 0], DEFAULT_ENROLL_PORT)),
+            grpc_public_port: None,
+            enroll_public_port: None,
             api_listen_addr: SocketAddr::from(([127, 0, 0, 1], 7444)),
             api_cookie_secure: true,
             api_session_lifetime: 12 * 60 * 60,
@@ -1455,6 +1486,8 @@ impl LoadConfig for ServerConfig {
     fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
         env.set("grpc_listen_addr", &mut self.grpc_listen_addr)?;
         env.set("enroll_listen_addr", &mut self.enroll_listen_addr)?;
+        env.set_opt("grpc_public_port", &mut self.grpc_public_port)?;
+        env.set_opt("enroll_public_port", &mut self.enroll_public_port)?;
         env.set("api_listen_addr", &mut self.api_listen_addr)?;
         env.set("api_cookie_secure", &mut self.api_cookie_secure)?;
         env.set("api_session_lifetime", &mut self.api_session_lifetime)?;
@@ -1494,6 +1527,7 @@ impl LoadConfig for ServerConfig {
         self.ai.validate(check)?;
         self.proxmox.validate(check)?;
         self.remediation.validate(check)?;
+        self.auto_update.validate(check)?;
         if let Some(url) = &self.mirror_public_url {
             if !valid_mirror_url(url) {
                 return Err(check.fail(
