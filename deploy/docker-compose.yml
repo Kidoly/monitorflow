@@ -78,9 +78,14 @@ services:
       MONITORFLOW_LOG_FORMAT: json
       # Unset: the latest GitHub release (ADR-0052).
       MONITORFLOW_AGENT_DOWNLOAD_URL: ${AGENT_DOWNLOAD_URL:-}
+      # Server updates through the updater service (ADR-0056).
+      MONITORFLOW_SERVER_UPDATE_DIR: /var/lib/monitorflow/update
+      MONITORFLOW_RELEASE_URL: ${RELEASE_URL:-}
     volumes:
       - serverdata:/var/lib/monitorflow/server
       - dbcerts:/certs:ro
+      # Requests go to its inbox; the rest belongs to the updater.
+      - update:/var/lib/monitorflow/update
     networks: [storage, front]
     ports:
       - "${GRPC_PORT:-7443}:7443"

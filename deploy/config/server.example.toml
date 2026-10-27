@@ -57,6 +57,13 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # itself.
 # agent_download_url = "https://github.com/Kidoly/monitorflow/releases/latest/download"
 
+# Server updates from the web interface (ADR-0056). server_update_dir is
+# the volume shared with the updater container; unset, updates are off.
+# release_url is where releases are checked, http or https, signed either
+# way; agent_download_url when unset.
+# server_update_dir = "/var/lib/monitorflow/update"
+# release_url = "https://files.example.com/monitorflow"
+
 # Batching of writes to VictoriaMetrics and VictoriaLogs (ADR-0013). Each
 # writer has its own queue; while a queue is full, new items are dropped and
 # counted, so a slow backend never stalls agent streams.

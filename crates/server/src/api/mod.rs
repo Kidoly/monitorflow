@@ -66,6 +66,9 @@
 //! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
 //! | GET | `/api/commands/{id}` | read | [`commands::CommandDetail`]: the command and its output |
 //! | GET | `/api/agent-releases` | any role | [`commands::AgentReleases`]: cached agent versions and the latest (ADR-0053) |
+//! | GET | `/api/server-update` | global administrator | [`server_update::UpdateView`]: running version, updater and last update (ADR-0056) |
+//! | POST | `/api/server-update/check` | global administrator | [`server_update::CheckResult`]: the latest release, verified, and what it changes |
+//! | POST | `/api/server-update` | global administrator | body `{"version"}`; 202 `{"id"}`; 400 unless newer, 409 without a running updater or while busy; audited |
 //! | GET | `/api/campaigns` | customer role | [`campaigns::CampaignList`], newest first, paginated |
 //! | POST | `/api/campaigns` | customer administrator | body [`campaigns::CreateRequest`]; 201 [`campaigns::CampaignDetail`] |
 //! | GET | `/api/campaigns/{id}` | customer role | [`campaigns::CampaignDetail`]: the campaign, its waves and servers |
@@ -429,6 +432,7 @@ pub mod remediation_incidents;
 pub mod revoke;
 pub mod roles;
 pub mod sensors;
+pub mod server_update;
 pub mod servers;
 pub mod session;
 pub mod sites;
@@ -481,6 +485,8 @@ pub struct ApiSettings {
     /// Where agents download releases from, and the server's cache of
     /// them (ADR-0053).
     pub agent_releases: agent_releases::Sources,
+    /// Server updates through the updater container (ADR-0056).
+    pub server_update: server_update::ServerUpdateSettings,
 }
 
 impl ApiSettings {
@@ -491,6 +497,7 @@ impl ApiSettings {
             session_idle_timeout: Duration::from_secs(config.api_session_idle_timeout),
             mirror_public_url: config.mirror_public_url.clone(),
             agent_releases: agent_releases::Sources::from_config(config),
+            server_update: server_update::ServerUpdateSettings::from_config(config),
             proxmox_enabled: config.proxmox.enabled,
             proxmox_clusters: config
                 .proxmox
@@ -676,6 +683,11 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/commands/{id}", get(commands::detail))
         .route("/api/agent-releases", get(commands::agent_releases))
+        .route(
+            "/api/server-update",
+            get(server_update::get).post(server_update::start),
+        )
+        .route("/api/server-update/check", post(server_update::check))
         .route(
             "/api/servers/{id}/sources",
             post(sources::configure).delete(sources::revert),
