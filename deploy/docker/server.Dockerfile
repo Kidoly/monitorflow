@@ -11,12 +11,14 @@ RUN apt-get update \
 # Use the image's toolchain rather than installing the editor components
 # rust-toolchain.toml lists.
 ENV RUSTUP_TOOLCHAIN=1.99.0
+# Locked caches: compose builds the server and updater images at once,
+# and two cargo processes must not unpack the same crates together.
 # A test build may claim another version (crates/common/src/lib.rs).
 ARG MONITORFLOW_BUILD_VERSION=
 WORKDIR /src
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/src/target,sharing=locked \
     if [ -z "$MONITORFLOW_BUILD_VERSION" ]; then unset MONITORFLOW_BUILD_VERSION; fi \
     && cargo build --release --locked -p monitorflow-server \
     && cp target/release/monitorflow-server /usr/local/bin/
