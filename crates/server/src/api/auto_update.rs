@@ -2,9 +2,10 @@
 //!
 //! - `GET /api/auto-update`: the settings, the release agents move to, the
 //!   rollout's progress per site, and earlier rollouts.
-//! - `PUT /api/auto-update`: changes `enabled` (unless the configuration
-//!   sets it), `paused` or `failure_threshold`; audited as
-//!   `auto_update.settings`.
+//! - `PUT /api/settings/auto-update`: changes `enabled` (unless the
+//!   configuration sets it), `paused` or `failure_threshold`, stored in
+//!   `server_settings` like the other server-wide settings (ADR-0054);
+//!   audited as `settings.auto_update` with the old and new values.
 //! - `POST /api/auto-update/rollouts/{kind}/{version}/resume`: resumes a
 //!   halted rollout; audited as `auto_update.resume`.
 
@@ -14,7 +15,6 @@ use std::str::FromStr;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::Json;
-use chrono::{DateTime, Utc};
 use monitorflow_common::release::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -26,7 +26,7 @@ use super::mirrors::require_global_admin;
 use super::sensors::body;
 use super::{ApiError, ApiState};
 use crate::auto_update::policy::{self, Settings, SitePhase, Tries};
-use crate::auto_update::store::{self, Kind, Rollout};
+use crate::auto_update::store::{self, Kind, Rollout, Stored};
 use crate::auto_update::{self, server_version};
 
 /// Earlier rollouts listed.
@@ -36,7 +36,6 @@ const HISTORY: i64 = 10;
 #[derive(Debug, Serialize)]
 pub struct StatusView {
     pub settings: Settings,
-    pub updated_at: DateTime<Utc>,
     /// Peers never move past it.
     pub server_version: String,
     pub agents: KindView,
@@ -97,8 +96,7 @@ pub async fn status(
     user: CurrentUser,
 ) -> Result<Json<StatusView>, ApiError> {
     require_global_admin(&user)?;
-    let (settings, updated_at) =
-        store::settings(&state.pool, state.settings.auto_update_enabled).await?;
+    let settings = store::settings(&state.pool, state.settings.auto_update_enabled).await?;
     let held = state.settings.agent_releases.held().await;
     let ceiling = server_version();
     let latest = held.iter().filter(|v| v.pre.is_empty()).max().cloned();
@@ -170,7 +168,6 @@ pub async fn status(
     let history = Rollout::recent(&state.pool, Kind::Agent, HISTORY).await?;
     Ok(Json(StatusView {
         settings,
-        updated_at,
         server_version: ceiling.to_string(),
         agents: KindView {
             latest: latest.map(|v| v.to_string()),
@@ -183,7 +180,7 @@ pub async fn status(
     }))
 }
 
-/// Body of `PUT /api/auto-update`: the fields to change.
+/// Body of `PUT /api/settings/auto-update`: the fields to change.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SettingsRequest {
@@ -192,17 +189,29 @@ pub struct SettingsRequest {
     pub failure_threshold: Option<u32>,
 }
 
-/// `PUT /api/auto-update`.
-pub async fn update(
+/// `GET /api/settings/auto-update`: the settings as they apply.
+pub async fn get_settings(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+) -> Result<Json<Settings>, ApiError> {
+    require_global_admin(&user)?;
+    Ok(Json(
+        store::settings(&state.pool, state.settings.auto_update_enabled).await?,
+    ))
+}
+
+/// `PUT /api/settings/auto-update`.
+pub async fn set_settings(
     State(state): State<ApiState>,
     user: CurrentUser,
     request: Result<Json<SettingsRequest>, JsonRejection>,
-) -> Result<Json<StatusView>, ApiError> {
+) -> Result<Json<Settings>, ApiError> {
     require_global_admin(&user)?;
     let request = body(request)?;
     if request.enabled.is_some() && state.settings.auto_update_enabled.is_some() {
         return Err(ApiError::Conflict(
-            "auto_update.enabled is set in the server's configuration".into(),
+            "automatic updates are turned on or off by the server's configuration (auto_update.enabled)"
+                .into(),
         ));
     }
     if let Some(threshold) = request.failure_threshold {
@@ -214,16 +223,32 @@ pub async fn update(
         }
     }
     let mut tx = state.pool.begin().await?;
-    sqlx::query(
-        "UPDATE auto_update_settings
-         SET enabled = coalesce($1, enabled), paused = coalesce($2, paused),
-             failure_threshold = coalesce($3, failure_threshold),
-             updated_at = now(), updated_by = $4",
+    // Locks the row, so concurrent changes audit the right old values.
+    let old: Stored = sqlx::query_as(
+        "SELECT auto_update_enabled, auto_update_paused, auto_update_failure_threshold
+         FROM server_settings FOR UPDATE",
     )
-    .bind(request.enabled)
-    .bind(request.paused)
-    .bind(request.failure_threshold.map(|t| t as i32))
-    .bind(user.id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .unwrap_or_default();
+    let new = Stored {
+        enabled: request.enabled.or(old.enabled),
+        paused: request.paused.or(old.paused),
+        failure_threshold: request
+            .failure_threshold
+            .map(|t| t as i32)
+            .or(old.failure_threshold),
+    };
+    sqlx::query(
+        "INSERT INTO server_settings (singleton, auto_update_enabled, auto_update_paused,
+                                      auto_update_failure_threshold)
+         VALUES (true, $1, $2, $3)
+         ON CONFLICT (singleton) DO UPDATE
+         SET auto_update_enabled = $1, auto_update_paused = $2, auto_update_failure_threshold = $3",
+    )
+    .bind(new.enabled)
+    .bind(new.paused)
+    .bind(new.failure_threshold)
     .execute(&mut *tx)
     .await?;
     let actor = user.id.to_string();
@@ -232,18 +257,14 @@ pub async fn update(
         Event {
             actor_kind: "user",
             actor_id: &actor,
-            action: "auto_update.settings",
-            target: None,
-            details: json!({
-                "enabled": request.enabled,
-                "paused": request.paused,
-                "failure_threshold": request.failure_threshold,
-            }),
+            action: "settings.auto_update",
+            target: Some(("settings", "auto_update")),
+            details: json!({ "old": old, "new": new }),
         },
     )
     .await?;
     tx.commit().await?;
-    status(State(state), user).await
+    Ok(Json(new.effective(state.settings.auto_update_enabled)))
 }
 
 /// `POST /api/auto-update/rollouts/{kind}/{version}/resume`.

@@ -267,12 +267,11 @@ export interface AutoUpdateKind {
 /** `GET /api/auto-update`. */
 export interface AutoUpdateStatus {
   settings: AutoUpdateSettings;
-  updated_at: string;
   server_version: string;
   agents: AutoUpdateKind;
 }
 
-/** Fields of `PUT /api/auto-update`; absent ones are unchanged. */
+/** Fields of `PUT /api/settings/auto-update`; absent ones are unchanged. */
 export interface AutoUpdateChange {
   enabled?: boolean;
   paused?: boolean;
@@ -466,6 +465,79 @@ export interface AgentReleases {
   versions: string[];
   /** The newest without a pre-release suffix, else the newest; null when none. */
   latest: string | null;
+}
+
+/** Steps of a server update (ADR-0056); the last three are final. */
+export type ServerUpdateState =
+  | "verifying"
+  | "downloading"
+  | "backing_up"
+  | "updating"
+  | "checking"
+  | "caching_agents"
+  | "rolling_back"
+  | "succeeded"
+  | "failed"
+  | "rolled_back";
+
+/** The last server update, as the updater container reports it. */
+export interface ServerUpdateRun {
+  id: string;
+  from: string | null;
+  to: string;
+  requested_by: string;
+  state: ServerUpdateState;
+  /** Oldest first. */
+  steps: { at: string; message: string }[];
+  error: string | null;
+  /** File name of the database dump in the backups volume. */
+  backup: string | null;
+  /** The new version migrated the database: a rollback needs the backup restored. */
+  migrated: boolean;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/** `GET /api/server-update`. */
+export interface ServerUpdateView {
+  running_version: string;
+  /** The server is set up for updates from the web interface. */
+  enabled: boolean;
+  source: string;
+  /** Null until the updater has reported once. */
+  updater: {
+    version: string;
+    heartbeat_at: string;
+    alive: boolean;
+    /** Images pinned in `.env`; null is a local build. */
+    running: {
+      version: string;
+      server_image: string | null;
+      web_image: string | null;
+      updater_image: string | null;
+    } | null;
+  } | null;
+  update: ServerUpdateRun | null;
+  /** A request waits for the updater. */
+  requested: boolean;
+}
+
+/** `POST /api/server-update/check`. */
+export interface ServerUpdateCheck {
+  source: string;
+  running_version: string;
+  /** False when the source could not be reached, as on an offline server. */
+  reachable: boolean;
+  error: string | null;
+  latest: {
+    version: string;
+    newer: boolean;
+    release_notes_url: string | null;
+    images: { server: string; web: string; updater: string };
+    web_changes: boolean;
+    updater_changes: boolean;
+    agent_release_cached: boolean;
+  } | null;
 }
 
 /** One page of a server's commands, newest first. */
@@ -679,8 +751,35 @@ export interface CreatedToken extends EnrollmentToken {
   token: string;
   upstream_url: string;
   enroll_url: string;
-  /** Base URL of the agent release files, for the install commands (ADR-0052). */
-  agent_download_url: string;
+  /** Where the install commands may download the agent from (ADR-0054). */
+  install: AgentInstall;
+}
+
+/** Where install commands download the agent from (ADR-0054). */
+export type InstallSource = "github" | "central" | "custom";
+
+/** The newest release the server holds, as `central` commands pin it; checksums in hex. */
+export interface CentralRelease {
+  version: string;
+  /** URL path under the web interface, like `/agent/0.3.0`. */
+  path: string;
+  sums_sha256: string;
+  /** `null` when the cached release lacks install.sh, or the MSI. */
+  installer_sha256: string | null;
+  msi_sha256: string | null;
+}
+
+/** `GET /api/settings/agent-install`, and the `install` of a new token. */
+export interface AgentInstall {
+  /** The server-wide default. */
+  source: InstallSource;
+  custom_url: string | null;
+  /** Set by the server's configuration, so not editable here. */
+  source_from_config: boolean;
+  custom_url_from_config: boolean;
+  github_url: string;
+  /** `null` when the server holds no release. */
+  central: CentralRelease | null;
 }
 
 export type CampaignState = "draft" | "scheduled" | "running" | "paused" | "stopped" | "completed" | "failed";
@@ -1136,6 +1235,13 @@ export const api = {
 
   createToken: (body: TokenRequest) => request<CreatedToken>("/api/tokens", { method: "POST", body }),
 
+  /** The default install source; customer administrators (ADR-0054). */
+  agentInstall: (signal?: AbortSignal) => request<AgentInstall>("/api/settings/agent-install", { signal }),
+
+  /** Changes the default install source; global administrators only, audited. */
+  setAgentInstall: (body: { source: InstallSource; custom_url: string | null }) =>
+    request<AgentInstall>("/api/settings/agent-install", { method: "PUT", body }),
+
   /** Revokes an unused token; 409 once used. */
   revokeToken: (id: string) => request<void>(`/api/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
@@ -1188,7 +1294,7 @@ export const api = {
 
   /** Changes automatic update settings; global administrators only; audited. */
   setAutoUpdate: (change: AutoUpdateChange) =>
-    request<AutoUpdateStatus>("/api/auto-update", { method: "PUT", body: change }),
+    request<AutoUpdateSettings>("/api/settings/auto-update", { method: "PUT", body: change }),
 
   /** Resumes a halted rollout; global administrators only; audited. */
   resumeRollout: (kind: RolloutKind, version: string) =>
@@ -1218,6 +1324,14 @@ export const api = {
   },
 
   agentReleases: (signal?: AbortSignal) => request<AgentReleases>("/api/agent-releases", { signal }),
+
+  /** Server updates; global administrators only (ADR-0056). */
+  serverUpdate: (signal?: AbortSignal) => request<ServerUpdateView>("/api/server-update", { signal }),
+
+  checkServerUpdate: () => request<ServerUpdateCheck>("/api/server-update/check", { method: "POST" }),
+
+  startServerUpdate: (version: string) =>
+    request<{ id: string }>("/api/server-update", { method: "POST", body: { version } }),
 
   /** Queues a `self_update` to `version`; customer administrators only (ADR-0053). */
   updateAgent: (serverId: string, version: string) =>

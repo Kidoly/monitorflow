@@ -10,7 +10,8 @@ name = "monitorflow-server"
 path = "src/main.rs"
 
 [dependencies]
-monitorflow-common = { workspace = true, features = ["mirror"] }
+# server-update: checks and requests of server updates (ADR-0056).
+monitorflow-common = { workspace = true, features = ["mirror", "server-update"] }
 monitorflow-sensors.workspace = true
 # AI remediation loop (ADR-0039, ADR-0043).
 monitorflow-ai.workspace = true
@@ -27,6 +28,8 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 axum.workspace = true
+# Agent release files behind the web interface (ADR-0054).
+tower-http.workspace = true
 argon2.workspace = true
 rpassword.workspace = true
 sqlx.workspace = true

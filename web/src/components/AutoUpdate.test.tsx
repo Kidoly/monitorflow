@@ -17,7 +17,6 @@ const zero = { up_to_date: 0, waiting: 0, pending: 0, succeeded: 0, failed: 0 };
 function status(overrides: Partial<AutoUpdateStatus> = {}): AutoUpdateStatus {
   return {
     settings: { enabled: true, enabled_locked: false, paused: false, failure_threshold: 2 },
-    updated_at: "2026-10-27T10:00:00Z",
     server_version: "0.3.0",
     agents: {
       latest: "0.3.0",
@@ -90,7 +89,7 @@ describe("AutoUpdatePage", () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({
       "GET /api/auto-update": [{ status: 200, body: halted() }, { status: 200, body: status() }],
-      "PUT /api/auto-update": { status: 200, body: status() },
+      "PUT /api/settings/auto-update": { status: 200, body: status().settings },
       "POST /api/auto-update/rollouts/agent/0.3.0/resume": { status: 200, body: status().agents.rollout },
     });
     render(
@@ -113,7 +112,7 @@ describe("AutoUpdatePage", () => {
     locked.settings.enabled_locked = true;
     const fetchMock = stubFetch({
       "GET /api/auto-update": { status: 200, body: locked },
-      "PUT /api/auto-update": { status: 200, body: locked },
+      "PUT /api/settings/auto-update": { status: 200, body: locked.settings },
     });
     render(
       <As user={globalAdmin}>

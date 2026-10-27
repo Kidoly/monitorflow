@@ -2,20 +2,15 @@
 -- a per-site override, rolled out a canary per site first and stopped
 -- when updates fail.
 
--- The server-wide settings, one row. `enabled` is the default of sites
--- that inherit it; `paused` stops every automatic update at once.
-CREATE TABLE auto_update_settings (
-    id                boolean     PRIMARY KEY DEFAULT true CHECK (id),
-    enabled           boolean     NOT NULL DEFAULT true,
-    paused            boolean     NOT NULL DEFAULT false,
-    -- A rollout stops once this many of its updates failed.
-    failure_threshold integer     NOT NULL DEFAULT 2 CHECK (failure_threshold BETWEEN 1 AND 1000),
-    updated_at        timestamptz NOT NULL DEFAULT now(),
-    updated_by        uuid        REFERENCES users (id) ON DELETE SET NULL
-);
-COMMENT ON TABLE auto_update_settings IS
-    'Server-wide automatic update settings, one row; see ADR-0055.';
-INSERT INTO auto_update_settings DEFAULT VALUES;
+-- The server-wide settings, in the one row of server_settings (ADR-0054);
+-- NULL leaves each to its default. `enabled` (on) is the default of
+-- sites that inherit it; `paused` (off) stops every automatic update at
+-- once; a rollout stops once `failure_threshold` (2) of its updates failed.
+ALTER TABLE server_settings
+    ADD COLUMN auto_update_enabled boolean,
+    ADD COLUMN auto_update_paused boolean,
+    ADD COLUMN auto_update_failure_threshold integer
+        CHECK (auto_update_failure_threshold BETWEEN 1 AND 1000);
 
 -- Sites inherit the server-wide setting unless set: NULL inherits. Every
 -- existing site inherits, so automatic updates are on unless turned off.
@@ -24,7 +19,7 @@ ALTER TABLE sites
     ALTER COLUMN agent_auto_update DROP DEFAULT;
 UPDATE sites SET agent_auto_update = NULL;
 COMMENT ON COLUMN sites.agent_auto_update IS
-    'Automatic agent and relay updates for the site: NULL follows auto_update_settings; see ADR-0055.';
+    'Automatic agent and relay updates for the site: NULL follows server_settings.auto_update_enabled; see ADR-0055.';
 
 -- One automatic rollout per kind of peer and version, started when the
 -- server first queues an update to it; halted when too many failed.
