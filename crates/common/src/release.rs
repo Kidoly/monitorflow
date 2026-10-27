@@ -356,6 +356,34 @@ pub fn check_upgrade(
     }
 }
 
+/// Releases kept in `dir`, one directory per version (ADR-0053), newest
+/// first: directories named as a version whose `VERSION` says the same.
+/// Hidden (dot) names, like a copy in progress, are skipped. A missing
+/// directory holds none.
+pub fn cached_versions(dir: &std::path::Path) -> std::io::Result<Vec<Version>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut versions = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Ok(version) = Version::from_str(&name) else {
+            continue;
+        };
+        let file = entry.path().join(VERSION_FILE);
+        if std::fs::read_to_string(file).is_ok_and(|text| text == format!("{name}\n")) {
+            versions.push(version);
+        }
+    }
+    versions.sort_by(|a, b| b.cmp(a));
+    Ok(versions)
+}
+
 /// Platforms releases build for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {

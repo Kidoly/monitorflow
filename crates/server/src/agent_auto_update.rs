@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::agent_releases::{self, Sources};
 use crate::api::audit::{self, Event};
 use crate::commands::{CommandStore, Commands, NewCommand};
+use crate::mirror::relays;
 
 pub const POLL: Duration = Duration::from_secs(10 * 60);
 /// How long a queued automatic update may wait for its agent.
@@ -59,7 +60,6 @@ pub async fn tick(pool: &PgPool, sources: &Sources) -> Result<Vec<String>, sqlx:
     .bind(SELF_UPDATE)
     .fetch_all(pool)
     .await?;
-    let payload = sources.payload(&latest, false, 0);
     let mut queued = Vec::new();
     for server in candidates {
         // Agents that are newer, or report something that is not a version
@@ -81,10 +81,11 @@ pub async fn tick(pool: &PgPool, sources: &Sources) -> Result<Vec<String>, sqlx:
         if claimed == 0 {
             continue;
         }
+        let relay = relays::url_for_server(&mut tx, server.id).await?;
         let new = NewCommand {
             server_id: server.id,
             kind: SELF_UPDATE.into(),
-            payload: payload.clone(),
+            payload: sources.payload(&latest, relay.as_deref(), false, 0),
             ttl: TTL,
             requested_by: None,
             campaign_id: None,

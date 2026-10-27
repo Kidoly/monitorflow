@@ -253,7 +253,10 @@ pub async fn create(
     match request.kind.as_str() {
         command::APPLY_UPDATES => {}
         command::SELF_UPDATE => {
-            let (payload, ttl) = check_self_update(&state, &target, &request)?;
+            let mut conn = state.pool.acquire().await?;
+            let relay = crate::mirror::relays::url_for_server(&mut conn, target.id).await?;
+            drop(conn);
+            let (payload, ttl) = check_self_update(&state, &target, &request, relay.as_deref())?;
             return queue(&state, &user, &target, &request.kind, payload, ttl).await;
         }
         _ => {}
@@ -266,11 +269,13 @@ pub async fn create(
 }
 
 /// The payload of a valid `self_update` request (ADR-0053): the version
-/// and the sources the agent tries, the server's cache first.
+/// and the sources the agent tries: its relay's mirror listener, the
+/// server's cache, then the download URL.
 fn check_self_update(
     state: &ApiState,
     target: &Target,
     request: &CreateRequest,
+    relay_url: Option<&str>,
 ) -> Result<(Vec<u8>, Duration), ApiError> {
     if !request.packages.is_empty() || request.security_only || request.allow_reboot {
         return Err(ApiError::Invalid(
@@ -295,10 +300,11 @@ fn check_self_update(
         )));
     }
     let ttl = ttl(request.ttl_s)?;
-    let payload = state
-        .settings
-        .agent_releases
-        .payload(&version, request.allow_downgrade, health);
+    let payload =
+        state
+            .settings
+            .agent_releases
+            .payload(&version, relay_url, request.allow_downgrade, health);
     Ok((payload, ttl))
 }
 

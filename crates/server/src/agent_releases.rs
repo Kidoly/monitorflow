@@ -10,7 +10,6 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use monitorflow_common::config::ServerConfig;
 use monitorflow_common::proto::v1::SelfUpdate;
@@ -65,30 +64,9 @@ impl ReleaseCache {
         &self.dir
     }
 
-    /// Cached versions, newest first: directories named as a version
-    /// whose `VERSION` says the same. Missing directory, no versions.
+    /// Cached versions, newest first (see [`release::cached_versions`]).
     pub fn versions(&self) -> io::Result<Vec<Version>> {
-        let entries = match fs::read_dir(&self.dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e),
-        };
-        let mut versions = Vec::new();
-        for entry in entries {
-            let entry = entry?;
-            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-                continue;
-            };
-            let Ok(version) = Version::from_str(&name) else {
-                continue;
-            };
-            let file = entry.path().join(release::VERSION_FILE);
-            if fs::read_to_string(file).is_ok_and(|text| text == format!("{name}\n")) {
-                versions.push(version);
-            }
-        }
-        versions.sort_by(|a, b| b.cmp(a));
-        Ok(versions)
+        release::cached_versions(&self.dir)
     }
 
     pub fn has(&self, version: &Version) -> bool {
@@ -177,21 +155,29 @@ impl Sources {
     }
 
     /// The payload of a `self_update` to `version`; `health_timeout_seconds`
-    /// is checked by the caller (0 for the agent's default).
+    /// is checked by the caller (0 for the agent's default). `relay_url` is
+    /// the mirror listener of the relay the agent connects through, if it
+    /// reported one: tried first, since relays copy the server's releases.
     pub fn payload(
         &self,
         version: &Version,
+        relay_url: Option<&str>,
         allow_downgrade: bool,
         health_timeout_seconds: u32,
     ) -> Vec<u8> {
+        let mut base_urls: Vec<String> = relay_url
+            .map(|url| format!("{}/{DIR}/{version}/", url.trim_end_matches('/')))
+            .into_iter()
+            .collect();
+        base_urls.extend(sources(
+            version,
+            self.cache.has(version),
+            self.mirror_public_url.as_deref(),
+            &self.agent_download_url,
+        ));
         SelfUpdate {
             version: version.to_string(),
-            base_urls: sources(
-                version,
-                self.cache.has(version),
-                self.mirror_public_url.as_deref(),
-                &self.agent_download_url,
-            ),
+            base_urls,
             allow_downgrade,
             health_timeout_seconds,
         }
@@ -343,5 +329,25 @@ mod tests {
             1,
             "no mirror URL, no cache URL"
         );
+    }
+
+    #[test]
+    fn agents_behind_a_relay_try_it_first() {
+        let sources = Sources {
+            cache: ReleaseCache::in_mirror_dir(Path::new("/nonexistent")),
+            mirror_public_url: Some("http://mf.example:7480".into()),
+            agent_download_url: "https://files.example/mf/".into(),
+        };
+        let payload = sources.payload(&v("0.3.0"), Some("http://relay1:7480/"), true, 60);
+        let update = SelfUpdate::decode(payload.as_slice()).unwrap();
+        assert_eq!(
+            update.base_urls,
+            [
+                "http://relay1:7480/agent/0.3.0/",
+                "https://files.example/mf/"
+            ]
+        );
+        assert!(update.allow_downgrade);
+        assert_eq!(update.health_timeout_seconds, 60);
     }
 }

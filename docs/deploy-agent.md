@@ -154,7 +154,7 @@ The outcome is in `/var/lib/monitorflow/self-update/status.json`, and the watchd
 
 **Automatic updates per site.** Under Admin › Sites, administrators can turn on agent updates for a site; it is off by default. Every 10 minutes the server then updates the site's Linux agents that run an older version than the newest release it holds, at most once per server and version, so a release that rolled back is not tried again on that server. Each update is audited as `agent.auto_update`, and turning the policy on or off as `site.agent_auto_update`.
 
-**Where agents download from.** The command lists, in order: the server's own copy at `<mirror_public_url>/agent/<version>/` when it holds that version, then `agent_download_url` (for GitHub, the release of that version; a self-hosted URL as it is, skipped by the agent if it serves another version). For sites without Internet access, give the server a copy of each release on its mirror listener, from a directory holding the release files:
+**Where agents download from.** The command lists, in order: the mirror listener of the agent's relay, when the relay mirrors and reported its `mirror.public_url` (relays copy the two newest releases the server holds, each cycle of their mirror sync, and check their signature first), the server's own copy at `<mirror_public_url>/agent/<version>/` when it holds that version, then `agent_download_url` (for GitHub, the release of that version; a self-hosted URL as it is, skipped by the agent if it serves another version). For sites without Internet access, give the server a copy of each release on its mirror listener, from a directory holding the release files:
 
 ```
 docker compose cp ./monitorflow-0.3.0 server:/tmp/release
