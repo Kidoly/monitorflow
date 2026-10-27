@@ -324,10 +324,21 @@ if [ -n "$newer" ]; then
     check "previous binary kept" sudo test "$(sudo /var/lib/monitorflow/self-update/previous --version)" = "monitorflow-agent $old_version"
     check "binary root:root 0755 after update" mode_is /usr/bin/monitorflow-agent "root:root 755"
     check "identity and configuration kept" test "$(sudo sha256sum /var/lib/monitorflow/agent/tls/cert.pem /etc/monitorflow/agent.toml)" = "$identity"
-    curl -fsSk -b "$work/cookies" "$api/auto-update" >"$work/auto-update.json"
-    # shellcheck disable=SC2016 # $v is jq's
-    check "rollout of $new_version recorded" jq -e --arg v "$new_version" '.agents.rollout.version == $v and .agents.rollout.state == "rolling"' "$work/auto-update.json"
-    check "no agent waiting" jq -e '.agents.totals.waiting == 0 and .agents.totals.up_to_date >= 1' "$work/auto-update.json"
+    # The update's result comes once the new agent answers the command.
+    rollout_done() {
+        for _ in $(seq 60); do
+            curl -fsSk -b "$work/cookies" "$api/auto-update" >"$work/auto-update.json" || true
+            # shellcheck disable=SC2016 # $v is jq's
+            if jq -e --arg v "$new_version" '.agents.rollout.version == $v and .agents.rollout.state == "rolling"
+                    and .agents.totals.succeeded >= 1 and .agents.totals.waiting == 0' "$work/auto-update.json" >/dev/null; then
+                return 0
+            fi
+            sleep 1
+        done
+        cat "$work/auto-update.json" >&2
+        return 1
+    }
+    check "rollout of $new_version recorded, nothing waiting" rollout_done
 
     # A signed release that cannot start: the watchdog puts $new_version back.
     publish /bin/false "" 99.9.9

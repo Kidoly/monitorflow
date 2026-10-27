@@ -108,7 +108,7 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # Automatic agent and relay updates (ADR-0055): the server rolls the newest
 # stable release it holds, and no newer than itself, out to agents and
 # relays, a canary per site first, and stops when updates fail. On by
-# default, set in the web interface (Admin > Updates), where sites can
+# default, set in the web interface (Updates > Automatic updates), where sites can
 # override it. Setting it here wins over the web interface and locks it.
 # enabled = true
 # Seconds between two looks at what to update, at least 10.

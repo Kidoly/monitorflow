@@ -17,7 +17,7 @@ Operators want agents and relays to follow releases on their own, as browsers an
 
 ### Settings
 
-Automatic updates are **on by default** for agents and relays. One row, `auto_update_settings`, holds the server-wide values, changed by global administrators under Admin › Updates (`PUT /api/auto-update`, audited as `auto_update.settings`):
+Automatic updates are **on by default** for agents and relays. One row, `auto_update_settings`, holds the server-wide values, changed by global administrators under Updates › Automatic updates (`PUT /api/auto-update`, audited as `auto_update.settings`):
 
 - `enabled`, the default of every site that does not override it; on.
 - `paused`, which stops every automatic update at once, whatever the sites say, without touching updates already queued; off.
@@ -39,7 +39,7 @@ A site overrides `enabled` with `sites.agent_auto_update`: `null` inherits, `tru
 
 **Canary per site.** In each site the first update to a version goes to one peer alone. Only once it succeeded, that is once the new version connected upstream and the watchdog kept it (ADR-0053), do the others follow, a quarter of the site's peers at a time (at least one). A site whose canary failed stops there for that version.
 
-**Halt.** A rollout, one per kind of peer and version in `auto_rollouts`, halts everywhere once `failure_threshold` of its updates failed (rolled back, refused or failed otherwise). Halting is recorded with its reason, audited as `auto_update.halted`, and logged as an error; Admin › Updates shows it as a banner with the failures. A global administrator who fixed the cause resumes it (`POST /api/auto-update/rollouts/{kind}/{version}/resume`, audited as `auto_update.resume`): failures count again from then, and each blocked site gets a new canary among the peers not tried yet. A newer release starts a new rollout regardless.
+**Halt.** A rollout, one per kind of peer and version in `auto_rollouts`, halts everywhere once `failure_threshold` of its updates failed (rolled back, refused or failed otherwise). Halting is recorded with its reason, audited as `auto_update.halted`, and logged as an error; Updates › Automatic updates shows it as a banner with the failures. A global administrator who fixed the cause resumes it (`POST /api/auto-update/rollouts/{kind}/{version}/resume`, audited as `auto_update.resume`): failures count again from then, and each blocked site gets a new canary among the peers not tried yet. A newer release starts a new rollout regardless.
 
 **Alerting.** The alert engine evaluates metrics (ADR-0017) and has no notifier beyond its log yet, so a halt is an error in the server's log, an audit event and the banner; a notification channel, when one exists, will carry it too.
 
@@ -53,7 +53,7 @@ Three rules, from the protocol up:
 
 1. **Protocol.** The server refuses a stream whose `protocol_version` has another major (unchanged).
 2. **Oldest supported release.** `MIN_PEER_VERSION` in `crates/common` is the oldest agent or relay release the server accepts; it refuses an older one at the handshake with `FAILED_PRECONDITION` and "reinstall it". Builds that report no version, or something that is not a version, are development builds and are accepted. The minimum is raised only by a release whose notes say so, and never past a version automatic updates could have reached since the previous minimum.
-3. **Upstream first: server ≥ relay ≥ agent.** Automatic updates never move a relay past the server's version, nor an agent past the server's version or the version of the relay it connects through. Relays are therefore updated before the agents behind them; an agent behind a relay that runs an older version waits, and Admin › Updates says so. An agent update does not start while its relay's update is in flight, and a relay update does not start while an agent behind it is being updated, so neither restart spoils the other's health check.
+3. **Upstream first: server ≥ relay ≥ agent.** Automatic updates never move a relay past the server's version, nor an agent past the server's version or the version of the relay it connects through. Relays are therefore updated before the agents behind them; an agent behind a relay that runs an older version waits, and Updates › Automatic updates says so. An agent update does not start while its relay's update is in flight, and a relay update does not start while an agent behind it is being updated, so neither restart spoils the other's health check.
 
 An administrator can still update anything by hand, including past these rules; that is a decision, audited as a command.
 
@@ -81,12 +81,12 @@ Agents behind a relay keep working while it restarts: their streams drop and rec
 - New installations and existing ones without an override follow releases on their own once the server holds them. Today an administrator imports each release (`monitorflow-server agent-release import`); the background check ADR-0053 describes is not built yet, and is what will make the whole chain hands-off.
 - Upgrading the server is what lets the fleet move: a server on 0.3.0 holds agents and relays at 0.3.0 even when it caches 0.4.0.
 - A bad release reaches at most one peer per site before it shows, and at most `failure_threshold` failures fleet-wide before it stops.
-- A relay that cannot update (installed before its helper existed) holds its agents back until it is reinstalled; Admin › Updates shows which.
+- A relay that cannot update (installed before its helper existed) holds its agents back until it is reinstalled; Updates › Automatic updates shows which.
 
 ## Stages
 
 1. Settings, site overrides, the policy, rollouts and their halt, the minimum peer version, the API.
-2. Admin › Updates in the web interface.
+2. Updates › Automatic updates in the web interface.
 3. Relay releases, installer and guide.
 4. Relay self-update: the helper and watchdog for the relay's product, signed commands on the relay's stream.
 5. Relay versions, relay updates by hand and automatic, relays before their agents, end-to-end tests.
