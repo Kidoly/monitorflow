@@ -394,6 +394,79 @@ export interface AgentReleases {
   latest: string | null;
 }
 
+/** Steps of a server update (ADR-0056); the last three are final. */
+export type ServerUpdateState =
+  | "verifying"
+  | "downloading"
+  | "backing_up"
+  | "updating"
+  | "checking"
+  | "caching_agents"
+  | "rolling_back"
+  | "succeeded"
+  | "failed"
+  | "rolled_back";
+
+/** The last server update, as the updater container reports it. */
+export interface ServerUpdateRun {
+  id: string;
+  from: string | null;
+  to: string;
+  requested_by: string;
+  state: ServerUpdateState;
+  /** Oldest first. */
+  steps: { at: string; message: string }[];
+  error: string | null;
+  /** File name of the database dump in the backups volume. */
+  backup: string | null;
+  /** The new version migrated the database: a rollback needs the backup restored. */
+  migrated: boolean;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/** `GET /api/server-update`. */
+export interface ServerUpdateView {
+  running_version: string;
+  /** The server is set up for updates from the web interface. */
+  enabled: boolean;
+  source: string;
+  /** Null until the updater has reported once. */
+  updater: {
+    version: string;
+    heartbeat_at: string;
+    alive: boolean;
+    /** Images pinned in `.env`; null is a local build. */
+    running: {
+      version: string;
+      server_image: string | null;
+      web_image: string | null;
+      updater_image: string | null;
+    } | null;
+  } | null;
+  update: ServerUpdateRun | null;
+  /** A request waits for the updater. */
+  requested: boolean;
+}
+
+/** `POST /api/server-update/check`. */
+export interface ServerUpdateCheck {
+  source: string;
+  running_version: string;
+  /** False when the source could not be reached, as on an offline server. */
+  reachable: boolean;
+  error: string | null;
+  latest: {
+    version: string;
+    newer: boolean;
+    release_notes_url: string | null;
+    images: { server: string; web: string; updater: string };
+    web_changes: boolean;
+    updater_changes: boolean;
+    agent_release_cached: boolean;
+  } | null;
+}
+
 /** One page of a server's commands, newest first. */
 export interface CommandList {
   commands: Command[];
@@ -1133,6 +1206,14 @@ export const api = {
   },
 
   agentReleases: (signal?: AbortSignal) => request<AgentReleases>("/api/agent-releases", { signal }),
+
+  /** Server updates; global administrators only (ADR-0056). */
+  serverUpdate: (signal?: AbortSignal) => request<ServerUpdateView>("/api/server-update", { signal }),
+
+  checkServerUpdate: () => request<ServerUpdateCheck>("/api/server-update/check", { method: "POST" }),
+
+  startServerUpdate: (version: string) =>
+    request<{ id: string }>("/api/server-update", { method: "POST", body: { version } }),
 
   /** Queues a `self_update` to `version`; customer administrators only (ADR-0053). */
   updateAgent: (serverId: string, version: string) =>
