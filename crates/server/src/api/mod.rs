@@ -41,7 +41,8 @@
 //! | POST | `/api/customers/{id}/sites` | customer administrator | body `{"name"}`; 201 [`sites::SiteView`] |
 //! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled": true, false or null}`; [`sites::SiteView`]; audited (ADR-0055) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
-//! | PUT | `/api/auto-update` | global administrator | body [`auto_update::SettingsRequest`]; [`auto_update::StatusView`]; audited |
+//! | GET | `/api/settings/auto-update` | global administrator | [`policy::Settings`](crate::auto_update::policy::Settings) as they apply (ADR-0055) |
+//! | PUT | `/api/settings/auto-update` | global administrator | body [`auto_update::SettingsRequest`]; the settings; 409 against the configuration; audited |
 //! | POST | `/api/auto-update/rollouts/{kind}/{version}/resume` | global administrator | resumes a halted rollout; audited |
 //! | GET | `/api/mirrors` | global administrator | [`mirrors::MirrorList`], see below |
 //! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots` and the last `runs` |
@@ -624,9 +625,10 @@ pub fn router(state: ApiState) -> Router {
             "/api/sites/{id}/agent-auto-update",
             put(sites::set_agent_auto_update),
         )
+        .route("/api/auto-update", get(auto_update::status))
         .route(
-            "/api/auto-update",
-            get(auto_update::status).put(auto_update::update),
+            "/api/settings/auto-update",
+            get(auto_update::get_settings).put(auto_update::set_settings),
         )
         .route(
             "/api/auto-update/rollouts/{kind}/{version}/resume",

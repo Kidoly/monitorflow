@@ -723,7 +723,8 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         // Automatic updates are server-wide: global administrators only.
         ("GET", "/api/auto-update")
-        | ("PUT", "/api/auto-update")
+        | ("GET", "/api/settings/auto-update")
+        | ("PUT", "/api/settings/auto-update")
         | ("POST", "/api/auto-update/rollouts/{kind}/{version}/resume") => {
             let uri = path
                 .replace("{kind}", "agent")

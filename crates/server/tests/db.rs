@@ -142,7 +142,6 @@ db_tests! {
                 "alert_states",
                 "audit_log",
                 "auto_rollouts",
-                "auto_update_settings",
                 "campaign_snapshots",
                 "campaign_targets",
                 "campaign_waves",
