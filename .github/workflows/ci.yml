@@ -103,8 +103,8 @@ jobs:
   # The production compose (ADR-0051): builds both images, starts the stack
   # and checks it, the TLS database link included.
   # Then the agent installer (ADR-0052) against the same stack: the static
-  # agent served from a local HTTPS directory, installed, enrolled,
-  # upgraded and removed on this runner.
+  # agent and relay served from a local HTTPS directory, installed,
+  # enrolled, upgraded and removed on this runner.
   compose:
     runs-on: ubuntu-latest
     steps:
@@ -129,9 +129,17 @@ jobs:
           MONITORFLOW_BUILD_VERSION: 99.0.0
         with:
           target: x86_64-unknown-linux-musl
+      # The relay, installed with MF_ROLE=relay (ADR-0055).
+      - id: relay
+        uses: ./.github/actions/build-agent-linux
+        with:
+          target: x86_64-unknown-linux-musl
+          package: monitorflow-relay
+      - run: cp "${{ steps.relay.outputs.path }}" "$RUNNER_TEMP/relay-old"
       - run: deploy/install-test.sh "$RUNNER_TEMP/agent-old" "${{ steps.newer.outputs.path }}"
         env:
           MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
+          MF_TEST_RELAY: ${{ runner.temp }}/relay-old
   # The installer is piped to sh, so it must stay POSIX (ADR-0052).
   shellcheck:
     runs-on: ubuntu-latest

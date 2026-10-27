@@ -14,6 +14,10 @@
 # MF_TEST_SIGNING_KEY must then be the key whose public half both agents
 # were built with (MONITORFLOW_RELEASE_KEYS).
 #
+# With MF_TEST_RELAY, the path of a static relay binary, it also installs a
+# relay with MF_ROLE=relay (ADR-0055), checks that it enrolls and shows
+# online, upgrades it in place and removes it.
+#
 # Changes this host's /usr/bin, /etc and systemd: meant for a throwaway CI
 # runner. Needs root through sudo, systemd, docker with compose, curl, jq,
 # openssl and python3.
@@ -31,12 +35,15 @@ FILES_PORT=28444
 # Self-updates download from here; the directory is filled later.
 export AGENT_DOWNLOAD_URL=https://localhost:$FILES_PORT/next
 PEER=ci-install-$RANDOM
+RELAY=ci-relay-$RANDOM
+relay=${MF_TEST_RELAY:+$(realpath "$MF_TEST_RELAY")}
 work=$(mktemp -d)
 
 compose() { docker compose -p monitorflow-install --env-file /dev/null -f docker-compose.yml "$@"; }
 cleanup() {
     [ -z "${files_pid:-}" ] || kill "$files_pid" 2>/dev/null || true
     sudo MF_UNINSTALL=1 MF_PURGE=1 sh install.sh >/dev/null 2>&1 || true
+    sudo MF_ROLE=relay MF_UNINSTALL=1 MF_PURGE=1 sh install.sh >/dev/null 2>&1 || true
     sudo rm -rf /etc/systemd/system/monitorflow-agent.service.d /etc/monitorflow/e2e-ca.pem
     compose down -v --remove-orphans >/dev/null 2>&1 || true
     rm -rf "$work"
@@ -67,6 +74,7 @@ openssl genpkey -algorithm ed25519 -out "$work/other.pem"
 export MF_RELEASE_KEYS=$work/release-keys.pem
 mkdir -p "$work/files"
 install -m 0755 "$agent" "$work/files/monitorflow-agent-linux-x86_64"
+[ -z "$relay" ] || install -m 0755 "$relay" "$work/files/monitorflow-relay-linux-x86_64"
 MF_SIGNING_KEY=$work/signing.pem ./release-files.sh "$work/files" >/dev/null
 for copy in tampered foreign unsigned; do
     mkdir "$work/files/$copy"
@@ -215,6 +223,38 @@ if [ -n "$newer" ]; then
     sudo journalctl -u monitorflow-agent-self-update --no-pager -n 20 || true
 fi
 
+if [ -n "$relay" ]; then
+    echo "== relay install"
+    relay_token=$(compose exec -T server monitorflow-server token create --role relay --id "$RELAY" \
+        --site ci --server-name localhost)
+    relay_online() {
+        for _ in $(seq 60); do
+            if curl -fsSk -b "$work/cookies" "$api/relays" \
+                | jq -e --arg peer "$RELAY" '.relays[] | select(.peer_id == $peer and .status == "online")' >/dev/null; then
+                return 0
+            fi
+            sleep 1
+        done
+        return 1
+    }
+    installer MF_ROLE=relay MF_DOWNLOAD_URL="$base" MF_SERVER="localhost:$GRPC_PORT" MF_ENROLL="localhost:$ENROLL_PORT" \
+        MF_TOKEN="$relay_token" | tee "$work/relay.log"
+    check "relay shows online in the API" relay_online
+    check "installer verified the release signature" grep -q 'release signature verified' "$work/relay.log"
+    check "relay binary root:root 0755" mode_is /usr/bin/monitorflow-relay "root:root 755"
+    check "relay data dir monitorflow-relay 0700" mode_is /var/lib/monitorflow/relay "monitorflow-relay:monitorflow-relay 700"
+    check "relay.toml root:monitorflow-relay 0640" mode_is /etc/monitorflow/relay.toml "root:monitorflow-relay 640"
+    check "relay sudoers root 0440" mode_is /etc/sudoers.d/monitorflow-relay "root:root 440"
+    check "relay runs as monitorflow-relay" test "$(systemctl show -p User --value monitorflow-relay)" = monitorflow-relay
+    check "relay token file deleted" absent /etc/monitorflow/relay-enroll.env
+    check "relay token not in the journal" bash -c "! sudo journalctl -u monitorflow-relay --no-pager | grep -qF -- '$relay_token'"
+    check "agent untouched by the relay" systemctl is-active --quiet monitorflow-agent
+    relay_identity=$(sudo sha256sum /var/lib/monitorflow/relay/tls/cert.pem /etc/monitorflow/relay.toml)
+    installer MF_ROLE=relay MF_DOWNLOAD_URL="$base"
+    check "relay identity and configuration kept" test "$(sudo sha256sum /var/lib/monitorflow/relay/tls/cert.pem /etc/monitorflow/relay.toml)" = "$relay_identity"
+    check "relay online again" relay_online
+fi
+
 echo "== tampered files"
 binary=$(sha256sum /usr/bin/monitorflow-agent)
 # The installer from the good directory, the files from another one, as
@@ -235,7 +275,16 @@ check "configuration and identity kept" sudo test -s /var/lib/monitorflow/agent/
 installer MF_UNINSTALL=1 MF_PURGE=1
 check "purge removes data and user" bash -c "! sudo test -e /var/lib/monitorflow/agent && ! id monitorflow"
 
+if [ -n "$relay" ]; then
+    installer MF_ROLE=relay MF_UNINSTALL=1
+    check "relay binary, unit and sudo rule removed" bash -c "! ls /usr/bin/monitorflow-relay /etc/systemd/system/monitorflow-relay.service /etc/sudoers.d/monitorflow-relay"
+    check "relay configuration and identity kept" sudo test -s /var/lib/monitorflow/relay/tls/cert.pem -a -s /etc/monitorflow/relay.toml
+    installer MF_ROLE=relay MF_UNINSTALL=1 MF_PURGE=1
+    check "purge removes relay data and user" bash -c "! sudo test -e /var/lib/monitorflow/relay && ! id monitorflow-relay"
+fi
+
 if [ "$failed" -ne 0 ]; then
+    sudo journalctl -u monitorflow-relay -n 50 --no-pager || true
     sudo journalctl -u monitorflow-agent -n 50 --no-pager || true
     sudo journalctl -u monitorflow-agent-self-update -n 50 --no-pager || true
     compose logs --tail 50 server

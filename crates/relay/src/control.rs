@@ -163,7 +163,7 @@ impl Control {
         let hello = self.envelope(Payload::Hello(Hello {
             agent_id: identity.peer_id().to_owned(),
             protocol_version: PROTOCOL_VERSION.into(),
-            agent_version: env!("CARGO_PKG_VERSION").into(),
+            agent_version: monitorflow_common::VERSION.into(),
             ..Hello::default()
         }));
         tx.try_send(hello)

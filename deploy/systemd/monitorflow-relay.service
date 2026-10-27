@@ -1,0 +1,23 @@
+# MonitorFlow relay (docs/deploy-relay.md). Install as
+# /etc/systemd/system/monitorflow-relay.service; deploy/install.sh does
+# with MF_ROLE=relay.
+[Unit]
+Description=MonitorFlow relay
+Documentation=https://github.com/Kidoly/monitorflow/blob/main/docs/deploy-relay.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=monitorflow-relay
+ExecStart=/usr/bin/monitorflow-relay --config /etc/monitorflow/relay.toml
+# The enrollment token for the first start only (ADR-0007): root-only,
+# read by systemd before it drops to the relay's user, and deleted by the
+# installer once the relay has its identity.
+EnvironmentFile=-/etc/monitorflow/relay-enroll.env
+Restart=on-failure
+RestartSec=10
+# Forwarded agent streams get a few seconds to close (ADR-0025).
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

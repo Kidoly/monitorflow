@@ -1,12 +1,16 @@
-# Builds the Linux agent as a static musl binary with cargo-zigbuild
-# (ADR-0052): zig is the C compiler and linker for ring and the libc, so
-# x86_64 and aarch64 build on the same x86_64 runner without Docker.
+# Builds the Linux agent, or the relay, as a static musl binary with
+# cargo-zigbuild (ADR-0052, ADR-0055): zig is the C compiler and linker for
+# ring and the libc, so x86_64 and aarch64 build on the same x86_64 runner
+# without Docker.
 name: Build the Linux agent
-description: Static musl build of monitorflow-agent for one target
+description: Static musl build of monitorflow-agent or monitorflow-relay for one target
 inputs:
   target:
     description: x86_64-unknown-linux-musl or aarch64-unknown-linux-musl
     required: true
+  package:
+    description: monitorflow-agent or monitorflow-relay
+    default: monitorflow-agent
 outputs:
   path:
     description: Path of the built binary
@@ -31,5 +35,5 @@ runs:
       env:
         SQLX_OFFLINE: "true"
       run: |
-        cargo zigbuild --release --locked -p monitorflow-agent --target ${{ inputs.target }}
-        echo "path=target/${{ inputs.target }}/release/monitorflow-agent" >>"$GITHUB_OUTPUT"
+        cargo zigbuild --release --locked -p ${{ inputs.package }} --target ${{ inputs.target }}
+        echo "path=target/${{ inputs.target }}/release/${{ inputs.package }}" >>"$GITHUB_OUTPUT"

@@ -1,6 +1,6 @@
-# Agent release files (ADR-0052): static Linux binaries for x86_64 and
-# aarch64, the Windows executable and MSI, the installer, its systemd unit
-# and sudo rules, VERSION, SHA256SUMS and its signature SHA256SUMS.sig
+# Agent release files (ADR-0052): static Linux binaries of the agent and
+# the relay (ADR-0055) for x86_64 and aarch64, the Windows executable and
+# MSI, the installer, the systemd units and sudo rules, VERSION, SHA256SUMS and its signature SHA256SUMS.sig
 # (ADR-0053). A `v*` tag publishes them as a GitHub Release with stable
 # asset names, so releases/latest/download/<name> works; it signs with the
 # RELEASE_SIGNING_KEY secret, whose public half must be in
@@ -61,12 +61,22 @@ jobs:
         uses: ./.github/actions/build-agent-linux
         with:
           target: ${{ matrix.arch }}-unknown-linux-musl
-      # Static, for the right machine; the x86_64 one also runs here.
+      - id: relay
+        uses: ./.github/actions/build-agent-linux
+        with:
+          target: ${{ matrix.arch }}-unknown-linux-musl
+          package: monitorflow-relay
+      # Static, for the right machine; the x86_64 ones also run here.
       - run: |
-          file "${{ steps.build.outputs.path }}" | tee /dev/stderr | grep -q 'statically linked'
-          mkdir dist && cp "${{ steps.build.outputs.path }}" dist/monitorflow-agent-linux-${{ matrix.arch }}
+          mkdir dist
+          for built in "${{ steps.build.outputs.path }}" "${{ steps.relay.outputs.path }}"; do
+            file "$built" | tee /dev/stderr | grep -q 'statically linked'
+            cp "$built" "dist/$(basename "$built")-linux-${{ matrix.arch }}"
+          done
       - if: matrix.arch == 'x86_64'
-        run: test "$(dist/monitorflow-agent-linux-x86_64 --version)" = "monitorflow-agent ${{ needs.version.outputs.version }}"
+        run: |
+          test "$(dist/monitorflow-agent-linux-x86_64 --version)" = "monitorflow-agent ${{ needs.version.outputs.version }}"
+          test "$(dist/monitorflow-relay-linux-x86_64 --version)" = "monitorflow-relay ${{ needs.version.outputs.version }}"
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}

@@ -1,6 +1,6 @@
 # Releasing
 
-How a maintainer publishes agent releases (ADR-0052) and keeps the release signing key (ADR-0053).
+How a maintainer publishes agent and relay releases (ADR-0052, ADR-0055) and keeps the release signing key (ADR-0053).
 
 ## The signing key, once
 

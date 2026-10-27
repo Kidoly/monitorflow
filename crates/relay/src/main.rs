@@ -26,7 +26,7 @@ use tokio::sync::watch;
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Parser, Debug)]
-#[command(name = "monitorflow-relay", version, about = "MonitorFlow relay")]
+#[command(name = "monitorflow-relay", version = monitorflow_common::VERSION, about = "MonitorFlow relay")]
 struct Cli {
     /// Path to the TOML configuration file.
     #[arg(
