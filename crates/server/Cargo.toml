@@ -27,6 +27,8 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 axum.workspace = true
+# Agent release files behind the web interface (ADR-0054).
+tower-http.workspace = true
 argon2.workspace = true
 rpassword.workspace = true
 sqlx.workspace = true

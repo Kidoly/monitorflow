@@ -69,7 +69,8 @@ enum Command {
     /// Manage package mirrors (ADR-0030).
     #[command(subcommand)]
     Mirror(MirrorCommand),
-    /// Agent releases served for self-updates (ADR-0053).
+    /// Agent releases served for self-updates and installs (ADR-0053,
+    /// ADR-0054).
     #[command(subcommand)]
     AgentRelease(AgentReleaseCommand),
 }
@@ -77,7 +78,8 @@ enum Command {
 #[derive(Subcommand, Debug)]
 enum AgentReleaseCommand {
     /// Copy a release from a directory of release files into the cache,
-    /// once its signature verifies.
+    /// once its signature verifies. Reads only that directory: works
+    /// offline.
     Import {
         #[arg(long)]
         dir: std::path::PathBuf,
@@ -265,17 +267,37 @@ fn agent_release_command(
     config: &ServerConfig,
     command: AgentReleaseCommand,
 ) -> anyhow::Result<()> {
-    use monitorflow_server::agent_releases::ReleaseCache;
+    use monitorflow_server::agent_releases::{self, ReleaseCache};
 
     let cache = ReleaseCache::in_mirror_dir(&config.mirror_dir());
     match command {
         AgentReleaseCommand::Import { dir } => {
             let keys = monitorflow_common::release::trusted_keys()?;
-            let version = cache.import(&dir, keys)?;
-            println!("imported {version} into {}", cache.dir().display());
+            let imported = cache.import(&dir, keys)?;
+            println!(
+                "imported {} into {}",
+                imported.version,
+                cache.dir().display()
+            );
+            for name in &imported.missing {
+                println!("note: {name} was not in {}", dir.display());
+            }
+            if imported.missing.contains(&agent_releases::INSTALLER) {
+                println!(
+                    "note: without install.sh, Linux agents cannot be installed from this server"
+                );
+            }
         }
         AgentReleaseCommand::List => {
-            for version in cache.versions()? {
+            let versions = cache.versions()?;
+            if versions.is_empty() {
+                eprintln!(
+                    "no agent release is cached in {}; import one with \
+                     `monitorflow-server agent-release import --dir DIR` (docs/deploy-agent.md)",
+                    cache.dir().display()
+                );
+            }
+            for version in versions {
                 println!("{version}");
             }
         }
