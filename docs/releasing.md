@@ -1,6 +1,6 @@
 # Releasing
 
-How a maintainer publishes releases: the agent files (ADR-0052), the server, web and updater images (ADR-0056), and keeps the release signing key (ADR-0053).
+How a maintainer publishes releases: the agent and relay files (ADR-0052, ADR-0055), the server, web and updater images (ADR-0056), and keeps the release signing key (ADR-0053).
 
 ## The signing key, once
 

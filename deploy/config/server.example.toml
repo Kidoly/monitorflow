@@ -11,6 +11,12 @@
 # and relays exchange their one-time token for a certificate here.
 # enroll_listen_addr = "0.0.0.0:7445"
 
+# Ports agents and relays reach the two listeners at, when not theirs, as
+# behind published container ports; written in the install commands of new
+# tokens. Default: the listeners' own ports.
+# grpc_public_port = 7443
+# enroll_public_port = 7445
+
 # REST API listener. Plain HTTP: put a TLS reverse proxy on the same host in
 # front of it and keep it on loopback (ADR-0006).
 # api_listen_addr = "127.0.0.1:7444"
@@ -121,9 +127,11 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # Automatic agent and relay updates (ADR-0055): the server rolls the newest
 # stable release it holds, and no newer than itself, out to agents and
 # relays, a canary per site first, and stops when updates fail. On by
-# default, set in the web interface (Admin > Updates), where sites can
+# default, set in the web interface (Updates > Automatic updates), where sites can
 # override it. Setting it here wins over the web interface and locks it.
 # enabled = true
+# Seconds between two looks at what to update, at least 10.
+# interval = 300
 
 [remediation]
 # Limits of each AI remediation incident (ADR-0043), which opens for every

@@ -14,11 +14,22 @@
 # stack's own HTTPS address, whose certificate this host does not trust.
 #
 # With a second agent binary, built with the same release keys and a newer
-# version (MONITORFLOW_BUILD_VERSION), it also tests self-update (ADR-0053):
-# the first agent updates to the second through the API, keeping its
-# identity, then a broken release (/bin/false, signed) is rolled back.
-# MF_TEST_SIGNING_KEY must then be the key whose public half both agents
-# were built with (MONITORFLOW_RELEASE_KEYS).
+# version (MONITORFLOW_BUILD_VERSION), it also tests automatic updates and
+# self-update (ADR-0053, ADR-0055): once the server caches the newer
+# release, it updates the agent on its own, without any request, keeping
+# its identity; then a broken release (/bin/false, signed) sent through
+# the API is rolled back. The server is built with the newer version, as
+# automatic updates never move a peer past the server.
+# MF_TEST_SIGNING_KEY must then be the key whose public half the agents
+# were built with (MONITORFLOW_RELEASE_KEYS); the server image gets it as
+# a build argument.
+#
+# With MF_TEST_RELAY, the path of a static relay binary, it first installs
+# a relay with MF_ROLE=relay (ADR-0055), checks that it enrolls and shows
+# online and upgrades it in place, and the agent connects through it. With
+# a newer agent, MF_TEST_NEWER_RELAY must be a relay of the same newer
+# version: the relay updates to it through the API while its agent stays
+# connected, then a broken relay release is rolled back.
 #
 # Changes this host's /usr/bin, /etc and systemd: meant for a throwaway CI
 # runner. Needs root through sudo, systemd, docker with compose, curl, jq,
@@ -37,18 +48,30 @@ FILES_PORT=28444
 # Self-updates download from here; the directory is filled later.
 export AGENT_DOWNLOAD_URL=https://localhost:$FILES_PORT/next
 PEER=ci-install-$RANDOM
+RELAY=ci-relay-$RANDOM
+relay=${MF_TEST_RELAY:+$(realpath "$MF_TEST_RELAY")}
+newer_relay=${MF_TEST_NEWER_RELAY:+$(realpath "$MF_TEST_NEWER_RELAY")}
+if [ -n "$relay" ] && [ -n "$newer" ] && [ -z "$newer_relay" ]; then
+    echo "MF_TEST_NEWER_RELAY is needed with a relay and a newer agent" >&2
+    exit 1
+fi
+new_version=
+[ -z "$newer" ] || new_version=$("$newer" --version | cut -d ' ' -f 2)
+export MF_TEST_SERVER_VERSION=$new_version
 work=$(mktemp -d)
 
 # The server image trusts the throwaway release key, so it imports the
-# test release.
+# test release; install-test.compose.yml sets its version and polling.
 compose() {
     docker compose -p monitorflow-install --env-file /dev/null -f docker-compose.yml \
-        -f "$work/release-keys.compose.yml" "$@"
+        -f install-test.compose.yml -f "$work/release-keys.compose.yml" "$@"
 }
 cleanup() {
     [ -z "${files_pid:-}" ] || kill "$files_pid" 2>/dev/null || true
     sudo MF_UNINSTALL=1 MF_PURGE=1 sh install.sh >/dev/null 2>&1 || true
-    sudo rm -rf /etc/systemd/system/monitorflow-agent.service.d /etc/monitorflow/e2e-ca.pem
+    sudo MF_ROLE=relay MF_UNINSTALL=1 MF_PURGE=1 sh install.sh >/dev/null 2>&1 || true
+    sudo rm -rf /etc/systemd/system/monitorflow-agent.service.d /etc/systemd/system/monitorflow-relay.service.d \
+        /etc/monitorflow/e2e-ca.pem
     compose down -v --remove-orphans >/dev/null 2>&1 || true
     rm -rf "$work"
 }
@@ -89,6 +112,7 @@ services:
 YAML
 mkdir -p "$work/files"
 install -m 0755 "$agent" "$work/files/monitorflow-agent-linux-x86_64"
+[ -z "$relay" ] || install -m 0755 "$relay" "$work/files/monitorflow-relay-linux-x86_64"
 MF_SIGNING_KEY=$work/signing.pem ./release-files.sh "$work/files" >/dev/null
 for copy in tampered foreign unsigned; do
     mkdir "$work/files/$copy"
@@ -150,9 +174,44 @@ online() {
     done
     return 1
 }
+relay_online() {
+    for _ in $(seq 60); do
+        if curl -fsSk -b "$work/cookies" "$api/relays" \
+            | jq -e --arg peer "$RELAY" '.relays[] | select(.peer_id == $peer and .status == "online")' >/dev/null; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+# The agent's upstream: the relay when there is one (ADR-0025).
+upstream=localhost:$GRPC_PORT
+if [ -n "$relay" ]; then
+    echo "== relay install"
+    upstream=localhost:7443
+    relay_token=$(compose exec -T server monitorflow-server token create --role relay --id "$RELAY" \
+        --site ci --server-name localhost)
+    installer MF_ROLE=relay MF_DOWNLOAD_URL="$base" MF_SERVER="localhost:$GRPC_PORT" MF_ENROLL="localhost:$ENROLL_PORT" \
+        MF_TOKEN="$relay_token" | tee "$work/relay.log"
+    check "relay shows online in the API" relay_online
+    check "installer verified the release signature" grep -q 'release signature verified' "$work/relay.log"
+    check "relay binary root:root 0755" mode_is /usr/bin/monitorflow-relay "root:root 755"
+    check "relay data dir monitorflow-relay 0700" mode_is /var/lib/monitorflow/relay "monitorflow-relay:monitorflow-relay 700"
+    check "relay.toml root:monitorflow-relay 0640" mode_is /etc/monitorflow/relay.toml "root:monitorflow-relay 640"
+    check "relay sudoers root 0440" mode_is /etc/sudoers.d/monitorflow-relay "root:root 440"
+    check "relay runs as monitorflow-relay" test "$(systemctl show -p User --value monitorflow-relay)" = monitorflow-relay
+    check "relay token file deleted" absent /etc/monitorflow/relay-enroll.env
+    check "relay token not in the journal" bash -c "! sudo journalctl -u monitorflow-relay --no-pager | grep -qF -- '$relay_token'"
+    relay_identity=$(sudo sha256sum /var/lib/monitorflow/relay/tls/cert.pem /etc/monitorflow/relay.toml)
+    installer MF_ROLE=relay MF_DOWNLOAD_URL="$base"
+    check "relay identity and configuration kept" test "$(sudo sha256sum /var/lib/monitorflow/relay/tls/cert.pem /etc/monitorflow/relay.toml)" = "$relay_identity"
+    check "relay online again" relay_online
+    relay_id=$(curl -fsSk -b "$work/cookies" "$api/relays" | jq -r --arg peer "$RELAY" '.relays[] | select(.peer_id == $peer) | .id')
+fi
 
 echo "== first install"
-installer MF_DOWNLOAD_URL="$base" MF_SERVER="localhost:$GRPC_PORT" MF_ENROLL="localhost:$ENROLL_PORT" \
+installer MF_DOWNLOAD_URL="$base" MF_SERVER="$upstream" MF_ENROLL="localhost:$ENROLL_PORT" \
     MF_TOKEN="$token" | tee "$work/install.log"
 check "agent shows online in the API" online "$PEER"
 check "installer verified the release signature" grep -q 'release signature verified' "$work/install.log"
@@ -175,41 +234,63 @@ check "agent online again" online "$PEER"
 
 if [ -n "$newer" ]; then
     echo "== self-update"
-    # The agent trusts the file server's throwaway CA for its downloads.
+    # The agent and relay trust the file server's throwaway CA for their
+    # downloads.
     sudo install -m 0644 "$work/ca.pem" /etc/monitorflow/e2e-ca.pem
-    sudo mkdir -p /etc/systemd/system/monitorflow-agent.service.d
-    printf '[Service]\nEnvironment=SSL_CERT_FILE=/etc/monitorflow/e2e-ca.pem\n' \
-        | sudo tee /etc/systemd/system/monitorflow-agent.service.d/e2e.conf >/dev/null
-    sudo systemctl daemon-reload
-    sudo systemctl restart monitorflow-agent
+    trust_files() {
+        sudo mkdir -p "/etc/systemd/system/$1.service.d"
+        printf '[Service]\nEnvironment=SSL_CERT_FILE=/etc/monitorflow/e2e-ca.pem\n' \
+            | sudo tee "/etc/systemd/system/$1.service.d/e2e.conf" >/dev/null
+        sudo systemctl daemon-reload
+        sudo systemctl restart "$1"
+    }
+    [ -z "$relay" ] || { trust_files monitorflow-relay; relay_online; }
+    trust_files monitorflow-agent
     online "$PEER"
     old_version=$(/usr/bin/monitorflow-agent --version | cut -d ' ' -f 2)
-    new_version=$("$newer" --version | cut -d ' ' -f 2)
-    # Fills $work/files/next with a signed release of $1 as version $2.
+    # Fills $work/files/next with a signed release of version $3 holding
+    # the agent $1 and the relay $2, either of them empty.
     publish() {
         rm -rf "$work/files/next"
         mkdir "$work/files/next"
-        install -m 0755 "$1" "$work/files/next/monitorflow-agent-linux-x86_64"
-        MF_SIGNING_KEY=$work/signing.pem MF_RELEASE_VERSION=$2 ./release-files.sh "$work/files/next" >/dev/null
+        [ -z "$1" ] || install -m 0755 "$1" "$work/files/next/monitorflow-agent-linux-x86_64"
+        [ -z "$2" ] || install -m 0755 "$2" "$work/files/next/monitorflow-relay-linux-x86_64"
+        MF_SIGNING_KEY=$work/signing.pem MF_RELEASE_VERSION=$3 ./release-files.sh "$work/files/next" >/dev/null
     }
     server_id=$(curl -fsSk -b "$work/cookies" "$api/servers" | jq -r --arg peer "$PEER" '.servers[] | select(.peer_id == $peer) | .id')
-    # Queues a self_update to $1 and prints the command's final JSON.
-    update_to() {
-        local id state
-        id=$(curl -fsSk -b "$work/cookies" -H 'content-type: application/json' -H 'x-monitorflow-csrf: 1' \
-            -d "$(jq -n --arg v "$1" '{kind: "self_update", version: $v, health_timeout_s: 30}')" \
-            "$api/servers/$server_id/commands" | jq -r .id)
+    # Polls $1 until its state is final and prints its JSON.
+    final() {
+        local state
         for _ in $(seq 180); do
-            curl -fsSk -b "$work/cookies" "$api/commands/$id" >"$work/command.json" || true
+            curl -fsSk -b "$work/cookies" "$1" >"$work/command.json" || true
             state=$(jq -r .state "$work/command.json" 2>/dev/null || true)
             case $state in succeeded | failed | expired | cancelled) break ;; esac
             sleep 1
         done
         cat "$work/command.json"
     }
-    state_is() { [ "$(jq -r .state "$work/update.json")" = "$1" ]; }
+    post() {
+        curl -fsSk -b "$work/cookies" -H 'content-type: application/json' -H 'x-monitorflow-csrf: 1' -d "$2" "$api/$1"
+    }
+    # Queues a self_update of the agent to $1 and prints its final JSON.
+    update_to() {
+        local id
+        id=$(post "servers/$server_id/commands" "$(jq -n --arg v "$1" '{kind: "self_update", version: $v, health_timeout_s: 30}')" | jq -r .id)
+        final "$api/commands/$id"
+    }
+    # The relay's last self-update once final, from its page.
+    relay_update_to() {
+        post "relays/$relay_id/update" "$(jq -n --arg v "$1" '{version: $v, health_timeout_s: 30}')" >/dev/null
+        for _ in $(seq 180); do
+            curl -fsSk -b "$work/cookies" "$api/relays/$relay_id" | jq .last_update >"$work/relay-update.json" || true
+            case $(jq -r .state "$work/relay-update.json" 2>/dev/null) in succeeded | failed | expired | cancelled) break ;; esac
+            sleep 1
+        done
+        cat "$work/relay-update.json"
+    }
+    state_is() { [ "$(jq -r .state "$1")" = "$2" ]; }
     reports_version() {
-        for _ in $(seq 60); do
+        for _ in $(seq "${2:-60}"); do
             if curl -fsSk -b "$work/cookies" "$api/servers/$server_id" \
                 | jq -e --arg v "$1" '.agent_version == $v and .status == "online"' >/dev/null; then
                 return 0
@@ -218,20 +299,71 @@ if [ -n "$newer" ]; then
         done
         return 1
     }
+    relay_reports() {
+        for _ in $(seq 60); do
+            if curl -fsSk -b "$work/cookies" "$api/relays/$relay_id" \
+                | jq -e --arg v "$1" '.relay_version == $v and .status == "online"' >/dev/null; then
+                return 0
+            fi
+            sleep 1
+        done
+        return 1
+    }
 
-    publish "$newer" "$new_version"
-    update_to "$new_version" | tee "$work/update.json"
-    check "self-update to $new_version succeeded" state_is succeeded
+    if [ -n "$relay" ]; then
+        echo "== relay self-update"
+        old_relay=$(/usr/bin/monitorflow-relay --version | cut -d ' ' -f 2)
+        publish "" "$newer_relay" "$new_version"
+        relay_update_to "$new_version" | tee "$work/relay-update.json"
+        check "relay self-update to $new_version succeeded" state_is "$work/relay-update.json" succeeded
+        check "relay binary is $new_version" test "$(/usr/bin/monitorflow-relay --version)" = "monitorflow-relay $new_version"
+        check "previous relay binary kept" sudo test "$(sudo /var/lib/monitorflow/relay-self-update/previous --version)" = "monitorflow-relay $old_relay"
+        check "relay binary root:root 0755 after update" mode_is /usr/bin/monitorflow-relay "root:root 755"
+        check "relay identity and configuration kept" test "$(sudo sha256sum /var/lib/monitorflow/relay/tls/cert.pem /etc/monitorflow/relay.toml)" = "$relay_identity"
+        check "API reports relay $new_version online" relay_reports "$new_version"
+        check "agent back online through the relay" online
+
+        # A signed relay release that cannot start: rolled back.
+        publish "" /bin/false 99.9.9
+        relay_update_to 99.9.9 | tee "$work/relay-update.json"
+        check "broken relay update failed" state_is "$work/relay-update.json" failed
+        check "relay error says rolled back" bash -c "jq -r .error '$work/relay-update.json' | grep -q '^rolled back to $new_version'"
+        check "relay binary is $new_version again" test "$(/usr/bin/monitorflow-relay --version)" = "monitorflow-relay $new_version"
+        check "API reports relay $new_version online again" relay_reports "$new_version"
+        check "agent online through the relay again" online
+        sudo journalctl -u monitorflow-relay-self-update --no-pager -n 20 || true
+    fi
+
+    echo "== automatic update"
+    # The server caches the newer release; nothing else asks for it.
+    publish "$newer" "$newer_relay" "$new_version"
+    compose cp "$work/files/next" server:/tmp/release
+    check "server caches $new_version" compose exec -T server monitorflow-server agent-release import --dir /tmp/release
+    check "agent updated itself to $new_version" reports_version "$new_version" 240
     check "binary is $new_version" test "$(/usr/bin/monitorflow-agent --version)" = "monitorflow-agent $new_version"
     check "previous binary kept" sudo test "$(sudo /var/lib/monitorflow/self-update/previous --version)" = "monitorflow-agent $old_version"
     check "binary root:root 0755 after update" mode_is /usr/bin/monitorflow-agent "root:root 755"
     check "identity and configuration kept" test "$(sudo sha256sum /var/lib/monitorflow/agent/tls/cert.pem /etc/monitorflow/agent.toml)" = "$identity"
-    check "API reports $new_version online" reports_version "$new_version"
+    # The update's result comes once the new agent answers the command.
+    rollout_done() {
+        for _ in $(seq 60); do
+            curl -fsSk -b "$work/cookies" "$api/auto-update" >"$work/auto-update.json" || true
+            # shellcheck disable=SC2016 # $v is jq's
+            if jq -e --arg v "$new_version" '.agents.rollout.version == $v and .agents.rollout.state == "rolling"
+                    and .agents.totals.succeeded >= 1 and .agents.totals.waiting == 0' "$work/auto-update.json" >/dev/null; then
+                return 0
+            fi
+            sleep 1
+        done
+        cat "$work/auto-update.json" >&2
+        return 1
+    }
+    check "rollout of $new_version recorded, nothing waiting" rollout_done
 
     # A signed release that cannot start: the watchdog puts $new_version back.
-    publish /bin/false 99.9.9
+    publish /bin/false "" 99.9.9
     update_to 99.9.9 | tee "$work/update.json"
-    check "broken update failed" state_is failed
+    check "broken update failed" state_is "$work/update.json" failed
     check "error says rolled back" bash -c "jq -r .error '$work/update.json' | grep -q '^rolled back to $new_version'"
     check "binary is $new_version again" test "$(/usr/bin/monitorflow-agent --version)" = "monitorflow-agent $new_version"
     check "API reports $new_version online again" reports_version "$new_version"
@@ -260,14 +392,17 @@ check "purge removes data and user" bash -c "! sudo test -e /var/lib/monitorflow
 
 echo "== central source"
 web="https://127.0.0.1:$HTTPS_PORT"
-# Nothing cached yet: the files route and the API say so.
+# Nothing cached yet, unless the automatic update above imported a
+# release: the files route and the API say so.
 empty_cache() {
     [ "$(curl -sk -o "$work/empty.txt" -w '%{http_code}' "$web/agent/latest/install.sh")" = 404 ] \
         && grep -q 'agent-release import' "$work/empty.txt"
 }
-check "empty cache answers 404 with a reason" empty_cache
-check "API offers no central release yet" bash -c \
-    "curl -fsSk -b '$work/cookies' '$api/settings/agent-install' | jq -e '.central == null'"
+if [ -z "$newer" ]; then
+    check "empty cache answers 404 with a reason" empty_cache
+    check "API offers no central release yet" bash -c \
+        "curl -fsSk -b '$work/cookies' '$api/settings/agent-install' | jq -e '.central == null'"
+fi
 # The release as downloaded from GitHub, imported without any network.
 mkdir -p "$work/release"
 find "$work/files" -maxdepth 1 -type f -exec cp {} "$work/release/" \;
@@ -313,7 +448,17 @@ check "central binary root:root 0755" mode_is /usr/bin/monitorflow-agent "root:r
 check "central token file deleted" absent /etc/monitorflow/agent-enroll.env
 installer MF_UNINSTALL=1 MF_PURGE=1
 
+if [ -n "$relay" ]; then
+    installer MF_ROLE=relay MF_UNINSTALL=1
+    check "relay binary, unit and sudo rule removed" bash -c "! ls /usr/bin/monitorflow-relay /etc/systemd/system/monitorflow-relay.service /etc/sudoers.d/monitorflow-relay"
+    check "relay configuration and identity kept" sudo test -s /var/lib/monitorflow/relay/tls/cert.pem -a -s /etc/monitorflow/relay.toml
+    installer MF_ROLE=relay MF_UNINSTALL=1 MF_PURGE=1
+    check "purge removes relay data and user" bash -c "! sudo test -e /var/lib/monitorflow/relay && ! id monitorflow-relay"
+fi
+
 if [ "$failed" -ne 0 ]; then
+    sudo journalctl -u monitorflow-relay -n 50 --no-pager || true
+    sudo journalctl -u monitorflow-relay-self-update -n 50 --no-pager || true
     sudo journalctl -u monitorflow-agent -n 50 --no-pager || true
     sudo journalctl -u monitorflow-agent-self-update -n 50 --no-pager || true
     compose logs --tail 50 server

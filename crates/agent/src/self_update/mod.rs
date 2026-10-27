@@ -15,6 +15,9 @@
 //! The old agent is stopped while the command runs, so its journal entry
 //! stays unfinished. When the server sends the command again, the
 //! dispatcher asks [`StatusResumer`], which answers from the status file.
+//!
+//! The relay updates itself the same way (ADR-0055): the steps take a
+//! [`Product`], [`AGENT`] or [`RELAY`], for the binary, unit and files.
 
 pub mod handler;
 #[cfg(unix)]
@@ -28,6 +31,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use monitorflow_common::client::identity::write_atomic;
+use monitorflow_common::release::Platform;
 use serde::{Deserialize, Serialize};
 
 use crate::commands::{Output, Resumer};
@@ -39,6 +43,50 @@ pub const PREVIOUS_FILE: &str = "previous";
 /// Under the agent's `data_dir`.
 pub const AGENT_DIR: &str = "self-update";
 pub const CONNECTED_FILE: &str = "connected";
+
+/// What updates itself: its binary, service, watchdog unit and root's
+/// state directory, and its file in a release.
+#[derive(Debug, Clone, Copy)]
+pub struct Product {
+    /// `agent` or `relay`, in messages.
+    pub name: &'static str,
+    /// The installed binary, as the sudo rule names it.
+    pub bin: &'static str,
+    pub service: &'static str,
+    /// The transient unit running the watchdog.
+    pub watch_unit: &'static str,
+    /// Where the watchdog's log is.
+    pub watch_log: &'static str,
+    pub state_dir: &'static str,
+    asset: fn(Platform) -> Option<&'static str>,
+}
+
+impl Product {
+    /// Its file in a release for `platform`, if released there.
+    pub fn asset(&self, platform: Platform) -> Option<&'static str> {
+        (self.asset)(platform)
+    }
+}
+
+pub const AGENT: Product = Product {
+    name: "agent",
+    bin: "/usr/bin/monitorflow-agent",
+    service: "monitorflow-agent",
+    watch_unit: "monitorflow-agent-self-update",
+    watch_log: "journalctl -u monitorflow-agent-self-update",
+    state_dir: STATE_DIR,
+    asset: |platform| Some(platform.agent_asset()),
+};
+
+pub const RELAY: Product = Product {
+    name: "relay",
+    bin: "/usr/bin/monitorflow-relay",
+    service: "monitorflow-relay",
+    watch_unit: "monitorflow-relay-self-update",
+    watch_log: "journalctl -u monitorflow-relay-self-update",
+    state_dir: "/var/lib/monitorflow/relay-self-update",
+    asset: Platform::relay_asset,
+};
 
 /// Where the privileged side keeps the status: [`STATE_DIR`] on Linux,
 /// the update service's own directory on Windows.

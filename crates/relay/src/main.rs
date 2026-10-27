@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use monitorflow_common::client::backoff::Backoff;
 use monitorflow_common::client::enroll::{self, EnrollError, EnrollSettings};
 use monitorflow_common::client::renew::{Renewal, RenewalSettings};
@@ -19,6 +19,7 @@ use monitorflow_relay::listener::{self, CrlCache, CrlSettings, Services, TlsPubl
 use monitorflow_relay::mirror;
 use monitorflow_relay::mirror::task::{MirrorSettings, MirrorTask};
 use monitorflow_relay::renew::{RenewProxy, RenewSettings};
+use monitorflow_relay::self_update;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
@@ -26,7 +27,7 @@ use tokio::sync::watch;
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Parser, Debug)]
-#[command(name = "monitorflow-relay", version, about = "MonitorFlow relay")]
+#[command(name = "monitorflow-relay", version = monitorflow_common::VERSION, about = "MonitorFlow relay")]
 struct Cli {
     /// Path to the TOML configuration file.
     #[arg(
@@ -35,11 +36,36 @@ struct Cli {
         default_value = "/etc/monitorflow/relay.toml"
     )]
     config: std::path::PathBuf,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Install a signed relay release, run as root through sudo by the
+    /// relay (ADR-0055): reads a header line and the binary on stdin,
+    /// verifies them, replaces /usr/bin/monitorflow-relay and starts the
+    /// watchdog that restarts the relay and rolls back if it does not
+    /// connect upstream.
+    SelfUpdate {
+        #[command(subcommand)]
+        step: Option<SelfUpdateStep>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone, Copy)]
+enum SelfUpdateStep {
+    /// The watchdog, started by `self-update` in a transient systemd unit.
+    #[command(hide = true)]
+    Watch,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if let Some(Command::SelfUpdate { step }) = cli.command {
+        return self_update(&cli.config, step);
+    }
     let config: RelayConfig = config::load(&cli.config)?;
     logging::init(&config.log);
     tracing::info!(config = %cli.config.display(), protocol = monitorflow_common::PROTOCOL_VERSION, "starting relay");
@@ -60,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
         "the relay certificate names no DNS name or IP address, so agents cannot verify this relay; create a relay token with --server-name, remove the identity files and enroll again"
     );
     tracing::info!(peer = %identity.id, ?names, not_after = ?identity.not_after, "identity loaded");
+    let relay_id = identity.peer_id().to_owned();
 
     let (renewal, identities) = Renewal::new(
         RenewalSettings::for_upstream(&config.upstream_url),
@@ -67,8 +94,14 @@ async fn main() -> anyhow::Result<()> {
         identity,
     );
     tokio::spawn(renewal.run(stop.clone()));
+    let ca_certs = monitorflow_common::tls::load_certs(&config.tls_paths().ca_cert)
+        .context("loading the CA certificate")?;
+    let commands = self_update::start(&relay_id, ca_certs, &config.data_dir, stop.clone());
     let (control, upstream_up) =
         Control::new(ControlSettings::from_config(&config), identities.clone());
+    let control = control
+        .with_commands(commands)
+        .with_connected_record(config.data_dir.clone());
     // Stays empty, so the server forgets earlier reports, unless the
     // mirrors start with a public URL (ADR-0037).
     let (mirror_reports, served_mirrors) = watch::channel(RelayMirrors::default());
@@ -140,6 +173,51 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     tracing::info!("relay stopped");
+    Ok(())
+}
+
+/// The self-update helper (ADR-0055), as root: installs the release on
+/// stdin, or watches the restart. Reads the configuration for the relay's
+/// data directory, where the new relay proves it connected.
+fn self_update(config: &std::path::Path, step: Option<SelfUpdateStep>) -> anyhow::Result<()> {
+    use std::str::FromStr;
+
+    use monitorflow_agent::self_update::handler::RESTARTING;
+    use monitorflow_agent::self_update::helper::{self, Installed, Paths, Systemd, Watched};
+    use monitorflow_agent::self_update::RELAY;
+    use monitorflow_common::release::{self, Platform, Version};
+
+    let config: RelayConfig = config::load(config)?;
+    let paths = Paths::of(RELAY, config.data_dir);
+    match step {
+        None => {
+            let keys = release::trusted_keys()?;
+            let current = Version::from_str(monitorflow_common::VERSION)?;
+            let platform =
+                Platform::current().context("releases are not built for this platform")?;
+            let mut stdin = std::io::stdin().lock();
+            match helper::install(
+                &mut stdin,
+                &paths,
+                keys,
+                &current,
+                platform,
+                &Systemd(RELAY),
+            )? {
+                Installed::Current(version) => println!("already running {version}"),
+                Installed::Restarting { from, to } => {
+                    println!("installed {to} over {from}; {RESTARTING} {to}");
+                }
+            }
+        }
+        Some(SelfUpdateStep::Watch) => {
+            match helper::watch(&paths, &Systemd(RELAY), Duration::from_secs(2))? {
+                Watched::Succeeded => println!("the new relay connected"),
+                Watched::RolledBack => println!("rolled back to the previous relay"),
+                Watched::Nothing => println!("no update to watch"),
+            }
+        }
+    }
     Ok(())
 }
 

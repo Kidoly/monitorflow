@@ -10,9 +10,17 @@
 //! After `Hello` and whenever it changes, the stream carries the report of
 //! the mirrors the relay serves (ADR-0037); a relay without mirrors sends
 //! an empty one, so the server forgets an earlier report.
+//!
+//! Commands addressed to the relay itself, only `self_update` (ADR-0055),
+//! go to its dispatcher ([`crate::self_update`]); their results go up on
+//! this stream, waiting for the next connection while it is down. Each
+//! time the upstream accepts the stream, the relay records it for the
+//! self-update watchdog.
 
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use monitorflow_agent::commands::StreamEnd;
 use monitorflow_common::client::backoff::Backoff;
 use monitorflow_common::client::failure::{classify_error, classify_status, Failure};
 use monitorflow_common::client::identity::StoredIdentity;
@@ -20,7 +28,7 @@ use monitorflow_common::client::shutdown::Shutdown;
 use monitorflow_common::config::RelayConfig;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Envelope, Heartbeat, Hello, RelayMirrors};
+use monitorflow_common::proto::v1::{CommandResult, Envelope, Heartbeat, Hello, RelayMirrors};
 use monitorflow_common::tls::{self, error_chain};
 use monitorflow_common::PROTOCOL_VERSION;
 use tokio::sync::{mpsc, watch};
@@ -63,6 +71,9 @@ pub struct Control {
     identity: watch::Receiver<StoredIdentity>,
     up: watch::Sender<bool>,
     mirrors: watch::Receiver<RelayMirrors>,
+    commands: Option<StreamEnd>,
+    /// Where the self-update watchdog looks for the connection.
+    connected_dir: Option<PathBuf>,
     sequence: u64,
 }
 
@@ -80,6 +91,8 @@ impl Control {
             up,
             // No mirrors until `with_mirrors`.
             mirrors: watch::channel(RelayMirrors::default()).1,
+            commands: None,
+            connected_dir: None,
             sequence: 0,
         };
         (control, rx)
@@ -91,12 +104,28 @@ impl Control {
         self
     }
 
+    /// The relay's own commands and their results (ADR-0055).
+    pub fn with_commands(mut self, commands: StreamEnd) -> Self {
+        self.commands = Some(commands);
+        self
+    }
+
+    /// Records each accepted stream in `data_dir` for the self-update
+    /// watchdog.
+    pub fn with_connected_record(mut self, data_dir: PathBuf) -> Self {
+        self.connected_dir = Some(data_dir);
+        self
+    }
+
     /// Keeps the stream open until `shutdown`.
     pub async fn run(mut self, mut shutdown: Shutdown) {
         let mut backoff = self.settings.backoff.clone();
+        let mut commands = self.commands.take();
         loop {
             let mut opened = None;
-            let result = self.session(&mut shutdown, &mut opened).await;
+            let result = self
+                .session(&mut shutdown, &mut opened, &mut commands)
+                .await;
             self.up.send_replace(false);
             let Err(failure) = result else { return };
             if opened.is_some_and(|at: Instant| at.elapsed() >= self.settings.healthy_after) {
@@ -139,6 +168,7 @@ impl Control {
         &mut self,
         shutdown: &mut Shutdown,
         opened: &mut Option<Instant>,
+        commands: &mut Option<StreamEnd>,
     ) -> Result<(), Failure> {
         let identity = self.identity.borrow_and_update().clone();
         let url = self.settings.upstream_url.clone();
@@ -163,7 +193,7 @@ impl Control {
         let hello = self.envelope(Payload::Hello(Hello {
             agent_id: identity.peer_id().to_owned(),
             protocol_version: PROTOCOL_VERSION.into(),
-            agent_version: env!("CARGO_PKG_VERSION").into(),
+            agent_version: monitorflow_common::VERSION.into(),
             ..Hello::default()
         }));
         tx.try_send(hello)
@@ -183,6 +213,9 @@ impl Control {
         };
         *opened = Some(Instant::now());
         self.up.send_replace(true);
+        if let Some(dir) = &self.connected_dir {
+            crate::self_update::record_connected(dir.clone());
+        }
         tracing::info!(upstream = %url, relay_id = identity.peer_id(), "upstream stream opened; forwarding agents");
 
         let every = self.settings.heartbeat_interval;
@@ -221,8 +254,25 @@ impl Control {
                     }
                     Err(_) => mirrors_fixed = true,
                 },
+                result = next_result(commands) => {
+                    let envelope = self.envelope(Payload::CommandResult(result));
+                    // Lost on a full queue: the server sends the command
+                    // again and the journal answers it.
+                    if tx.try_send(envelope).is_err() {
+                        tracing::warn!("upstream is not reading; command result dropped");
+                    }
+                }
                 message = inbound.message() => match message {
-                    // Nothing is sent to a relay for itself yet.
+                    Ok(Some(Envelope { payload: Some(Payload::Command(command)), .. })) => {
+                        match commands {
+                            Some(end) => {
+                                if end.commands.try_send(command).is_err() {
+                                    tracing::warn!("command queue full; the server will send it again");
+                                }
+                            }
+                            None => tracing::debug!("ignoring a command: this relay runs none"),
+                        }
+                    }
                     Ok(Some(envelope)) => tracing::debug!(sequence = envelope.sequence, "ignoring envelope for the relay"),
                     Ok(None) => return Err(Failure::Transient("the upstream closed the stream".into())),
                     Err(status) => return Err(classify_status(&status)),
@@ -243,6 +293,17 @@ impl Control {
             sequence: self.sequence,
             payload: Some(payload),
         }
+    }
+}
+
+/// The next result of the relay's commands; never, without them.
+async fn next_result(commands: &mut Option<StreamEnd>) -> CommandResult {
+    match commands {
+        Some(end) => match end.results.recv().await {
+            Some(result) => result,
+            None => std::future::pending().await,
+        },
+        None => std::future::pending().await,
     }
 }
 

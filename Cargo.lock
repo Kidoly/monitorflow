@@ -1499,11 +1499,13 @@ name = "monitorflow-relay"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bzip2",
  "clap",
  "crc",
  "flate2",
  "lzma-rust2",
+ "monitorflow-agent",
  "monitorflow-common",
  "monitorflow-server",
  "pem",

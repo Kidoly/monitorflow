@@ -64,7 +64,9 @@ export function RelayList({ me }: { me: Me }) {
         <PrimaryCell
           title={relay.peer_id}
           href={relayHref(relay.id)}
-          sub={`${relay.site_name} · ${relay.customer_name}`}
+          sub={[relay.site_name, relay.customer_name, relay.relay_version && `relay ${relay.relay_version}`]
+            .filter(Boolean)
+            .join(" · ")}
         />
       ),
     },

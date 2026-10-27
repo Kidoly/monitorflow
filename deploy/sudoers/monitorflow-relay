@@ -1,0 +1,10 @@
+# MonitorFlow relay: the one privileged command it runs through `sudo -n`
+# (ADR-0055). Install as /etc/sudoers.d/monitorflow-relay, owner root,
+# mode 0440, and check with `visudo -cf`. See docs/deploy-relay.md.
+#
+# Self-update: the helper reads a signed release on stdin and installs it
+# only if the release key built into it verifies it (ADR-0053, ADR-0055).
+# An exact command line: sudo refuses any other argument.
+Cmnd_Alias MONITORFLOW_RELAY_SELF_UPDATE = /usr/bin/monitorflow-relay self-update
+
+monitorflow-relay ALL=(root) NOPASSWD: MONITORFLOW_RELAY_SELF_UPDATE

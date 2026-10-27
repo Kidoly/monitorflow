@@ -154,5 +154,6 @@ describe("SitesAdmin", () => {
     expect(call?.[1]?.body).toBe(JSON.stringify({ enabled: true }));
     expect(await within(acme).findByRole("combobox", { name: "Automatic updates for paris" })).toHaveValue("on");
     expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent("Automatic");
+    expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent("set for this site");
   });
 });
