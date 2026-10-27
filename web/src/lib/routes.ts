@@ -32,6 +32,9 @@ export const USERS_PATH = "/admin/users/";
 
 export const MIRRORS_PATH = "/admin/mirrors/";
 
+/** Updating the central server (ADR-0056). */
+export const SERVER_UPDATE_PATH = "/admin/server-update/";
+
 /** Link to the page of the mirror `id`. */
 export function mirrorHref(id: string): string {
   return `/admin/mirrors/view/?id=${encodeURIComponent(id)}`;
