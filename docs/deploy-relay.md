@@ -94,6 +94,8 @@ The server updates relays like agents (ADR-0053, ADR-0055): a signed `self_updat
 2. It starts the watchdog in a transient unit, `monitorflow-relay-self-update`, from the previous binary. The watchdog restarts `monitorflow-relay` and waits for the new relay's stream to be accepted upstream (5 minutes by default).
 3. If it is not in time, the watchdog puts the previous binary back and restarts the relay; the command fails with "rolled back to …".
 
+On a relay's page under Admin › Relays, administrators of its customer see its version, its last self-update and "Update relay to …" when the server holds a newer release; the API takes `POST /api/relays/{id}/update` with `{"version": "0.3.0"}`. With automatic updates on (ADR-0055, Admin › Automatic updates), the server updates relays on its own, before the agents behind them: an agent waits while its relay runs an older version.
+
 The outcome is in `/var/lib/monitorflow/relay-self-update/status.json`, the watchdog's log in `journalctl -u monitorflow-relay-self-update`. Agents behind the relay reconnect on their own after the restart, a few seconds later. Relays installed by hand before this guide lack the sudo rule: run the installer once with `MF_ROLE=relay`.
 
 ## Checking it

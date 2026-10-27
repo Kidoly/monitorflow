@@ -138,10 +138,21 @@ jobs:
           target: x86_64-unknown-linux-musl
           package: monitorflow-relay
       - run: cp "${{ steps.relay.outputs.path }}" "$RUNNER_TEMP/relay-old"
+      - id: newer-relay
+        uses: ./.github/actions/build-agent-linux
+        env:
+          MONITORFLOW_BUILD_VERSION: 99.0.0
+        with:
+          target: x86_64-unknown-linux-musl
+          package: monitorflow-relay
+      # The server image the test builds caches releases signed with the
+      # throwaway key, so it must trust it too.
+      - run: openssl pkey -in "$RUNNER_TEMP/e2e-signing.pem" -pubout >>deploy/release-keys.pem
       - run: deploy/install-test.sh "$RUNNER_TEMP/agent-old" "$RUNNER_TEMP/agent-new"
         env:
           MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
           MF_TEST_RELAY: ${{ runner.temp }}/relay-old
+          MF_TEST_NEWER_RELAY: ${{ steps.newer-relay.outputs.path }}
   # The installer is piped to sh, so it must stay POSIX (ADR-0052).
   shellcheck:
     runs-on: ubuntu-latest

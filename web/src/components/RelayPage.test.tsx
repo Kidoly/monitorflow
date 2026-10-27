@@ -159,6 +159,42 @@ describe("RelayPage", () => {
     expect(screen.queryByRole("button", { name: /Revoke/ })).not.toBeInTheDocument();
   });
 
+  it("updates an older relay to the newest release, after confirmation", async () => {
+    const queued = {
+      id: "rc1",
+      relay_id: ID,
+      version: "0.3.0",
+      state: "queued" as const,
+      requested_by: "u1",
+      issued_at: "2026-10-27T10:00:00Z",
+      expires_at: "2026-10-28T10:00:00Z",
+      finished_at: null,
+      stdout: null,
+      error: null,
+    };
+    const fetchMock = stubFetch({
+      [`GET /api/relays/${ID}`]: [
+        { status: 200, body: detail({ relay_version: "0.2.0" }) },
+        { status: 200, body: detail({ relay_version: "0.2.0", last_update: queued, updates: [queued] }) },
+      ],
+      "GET /api/agent-releases": { status: 200, body: { latest: "0.3.0", versions: ["0.3.0", "0.2.0"] } },
+      [`POST /api/relays/${ID}/update`]: { status: 202, body: queued },
+      ...lists,
+    });
+    render(
+      <As user={customerAdmin}>
+        <RelayPage id={ID} me={customerAdmin} />
+      </As>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Update relay to 0.3.0…" }));
+    expect(screen.getByRole("form", { name: "Update relay-1 to 0.3.0?" })).toHaveTextContent("agents reconnect");
+    await userEvent.click(screen.getByRole("button", { name: "Update relay-1" }));
+    expect(await screen.findByText("Update to 0.3.0 queued")).toBeInTheDocument();
+    const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/update"));
+    expect(call?.[1]?.body).toBe(JSON.stringify({ version: "0.3.0" }));
+    expect(screen.queryByRole("button", { name: /Update relay/ })).not.toBeInTheDocument();
+  });
+
   it("says when the relay is not found", async () => {
     stubFetch({ [`GET /api/relays/${ID}`]: { status: 404, body: { error: "not found" } } });
     render(<RelayPage id={ID} me={customerAdmin} />);

@@ -235,6 +235,8 @@ export interface AutoUpdateTotals {
   up_to_date: number;
   /** Older and not tried yet. */
   waiting: number;
+  /** Of `waiting`, agents whose relay is older or being updated. */
+  waiting_for_relay: number;
   pending: number;
   succeeded: number;
   failed: number;
@@ -270,6 +272,8 @@ export interface AutoUpdateStatus {
   updated_at: string;
   server_version: string;
   agents: AutoUpdateKind;
+  /** Updated before the agents behind them. */
+  relays: AutoUpdateKind;
 }
 
 /** Fields of `PUT /api/auto-update`; absent ones are unchanged. */
@@ -315,6 +319,25 @@ export interface Relay {
   server_count: number;
   /** Agent streams it forwards right now. */
   connected_agents: number;
+  /** Version of its last Hello; null before it reported one (ADR-0055). */
+  relay_version?: string | null;
+  /** Its latest self-update. */
+  last_update?: RelayCommand | null;
+}
+
+/** A relay self-update (ADR-0055). */
+export interface RelayCommand {
+  id: string;
+  relay_id: string;
+  version: string;
+  state: "queued" | "sent" | "running" | "succeeded" | "failed" | "expired" | "cancelled";
+  /** Null when queued by automatic updates. */
+  requested_by: string | null;
+  issued_at: string;
+  expires_at: string;
+  finished_at: string | null;
+  stdout: string | null;
+  error: string | null;
 }
 
 /** A server attached to a relay. */
@@ -330,6 +353,8 @@ export interface AttachedServer {
 export interface RelayDetail extends Relay {
   certificate: Certificate | null;
   servers: AttachedServer[];
+  /** Its latest self-updates, newest first. */
+  updates?: RelayCommand[];
 }
 
 export interface RelayList {
@@ -1220,6 +1245,13 @@ export const api = {
   agentReleases: (signal?: AbortSignal) => request<AgentReleases>("/api/agent-releases", { signal }),
 
   /** Queues a `self_update` to `version`; customer administrators only (ADR-0053). */
+  /** Queues a relay self-update; administrators of its customer (ADR-0055). */
+  updateRelay: (relayId: string, version: string) =>
+    request<RelayCommand>(`/api/relays/${encodeURIComponent(relayId)}/update`, {
+      method: "POST",
+      body: { version },
+    }),
+
   updateAgent: (serverId: string, version: string) =>
     request<CommandDetail>(`/api/servers/${encodeURIComponent(serverId)}/commands`, {
       method: "POST",

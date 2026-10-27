@@ -40,6 +40,8 @@ pub struct StatusView {
     /// Peers never move past it.
     pub server_version: String,
     pub agents: KindView,
+    /// Updated before the agents behind them.
+    pub relays: KindView,
 }
 
 /// Automatic updates of one kind of peer.
@@ -63,14 +65,30 @@ pub struct Totals {
     pub up_to_date: usize,
     /// Older and not tried yet.
     pub waiting: usize,
+    /// Of `waiting`, agents whose relay runs an older version or is being
+    /// updated.
+    pub waiting_for_relay: usize,
     pub pending: usize,
     pub succeeded: usize,
     /// Since the rollout started or was resumed.
     pub failed: usize,
 }
 
+impl Totals {
+    fn add(self, other: Self) -> Self {
+        Self {
+            up_to_date: self.up_to_date + other.up_to_date,
+            waiting: self.waiting + other.waiting,
+            waiting_for_relay: self.waiting_for_relay + other.waiting_for_relay,
+            pending: self.pending + other.pending,
+            succeeded: self.succeeded + other.succeeded,
+            failed: self.failed + other.failed,
+        }
+    }
+}
+
 /// One site.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SiteView {
     pub id: Uuid,
     pub name: String,
@@ -110,7 +128,7 @@ pub async fn status(
     )
     .fetch_all(&state.pool)
     .await?;
-    let mut sites: Vec<SiteView> = rows
+    let sites: Vec<SiteView> = rows
         .into_iter()
         .map(|row| SiteView {
             enabled: settings.site_enabled(row.auto_update),
@@ -122,15 +140,42 @@ pub async fn status(
             totals: Totals::default(),
         })
         .collect();
-    let mut rollout = None;
-    if let Some(target) = &target {
-        rollout = Rollout::load(&state.pool, Kind::Agent, target).await?;
-        let peers = store::peers(
-            &state.pool,
-            target,
-            rollout.as_ref().map(|r| r.counted_from),
+    let mut views = Vec::new();
+    for kind in [Kind::Agent, Kind::Relay] {
+        let view = kind_view(
+            &state,
+            kind,
+            latest.as_ref(),
+            target.as_ref(),
+            sites.clone(),
         )
         .await?;
+        views.push(view);
+    }
+    let relays = views.pop().expect("two kinds");
+    let agents = views.pop().expect("two kinds");
+    Ok(Json(StatusView {
+        settings,
+        updated_at,
+        server_version: ceiling.to_string(),
+        agents,
+        relays,
+    }))
+}
+
+/// The progress of `kind` towards `target`, per site.
+async fn kind_view(
+    state: &ApiState,
+    kind: Kind,
+    latest: Option<&Version>,
+    target: Option<&Version>,
+    mut sites: Vec<SiteView>,
+) -> Result<KindView, ApiError> {
+    let mut rollout = None;
+    if let Some(target) = target {
+        rollout = Rollout::load(&state.pool, kind, target).await?;
+        let counted_from = rollout.as_ref().map(|r| r.counted_from);
+        let peers = store::peers(&state.pool, kind, target, counted_from).await?;
         let tries = auto_update::tries(&peers);
         let mut totals: BTreeMap<Uuid, Totals> = BTreeMap::new();
         for peer in &peers {
@@ -138,8 +183,11 @@ pub async fn status(
             if peer.tried.is_none() {
                 if peer.needs(target) {
                     site.waiting += 1;
+                    if peer.held_by_relay(target) {
+                        site.waiting_for_relay += 1;
+                    }
                 } else if peer
-                    .agent_version
+                    .version
                     .as_deref()
                     .and_then(|v| Version::from_str(v).ok())
                     .is_some_and(|v| v >= *target)
@@ -160,27 +208,16 @@ pub async fn status(
             }
         }
     }
-    let totals = sites.iter().fold(Totals::default(), |a, s| Totals {
-        up_to_date: a.up_to_date + s.totals.up_to_date,
-        waiting: a.waiting + s.totals.waiting,
-        pending: a.pending + s.totals.pending,
-        succeeded: a.succeeded + s.totals.succeeded,
-        failed: a.failed + s.totals.failed,
-    });
-    let history = Rollout::recent(&state.pool, Kind::Agent, HISTORY).await?;
-    Ok(Json(StatusView {
-        settings,
-        updated_at,
-        server_version: ceiling.to_string(),
-        agents: KindView {
-            latest: latest.map(|v| v.to_string()),
-            target: target.map(|v| v.to_string()),
-            rollout,
-            totals,
-            sites,
-            history,
-        },
-    }))
+    let totals = sites.iter().fold(Totals::default(), |a, s| a.add(s.totals));
+    let history = Rollout::recent(&state.pool, kind, HISTORY).await?;
+    Ok(KindView {
+        latest: latest.map(ToString::to_string),
+        target: target.map(ToString::to_string),
+        rollout,
+        totals,
+        sites,
+        history,
+    })
 }
 
 /// Body of `PUT /api/auto-update`: the fields to change.

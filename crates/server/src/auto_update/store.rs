@@ -33,45 +33,82 @@ pub async fn settings(
     Ok((settings, updated_at))
 }
 
-/// Forgets automatic updates whose command expired before any agent ran
+/// Forgets automatic updates whose command expired before any peer ran
 /// it, so they are tried again.
 pub async fn release_expired(pool: &PgPool) -> Result<u64, sqlx::Error> {
-    sqlx::query(
+    let agents = sqlx::query(
         "DELETE FROM agent_auto_updates a USING commands c
          WHERE c.id = a.command_id AND c.state = 'expired'",
     )
     .execute(pool)
-    .await
-    .map(|r| r.rows_affected())
+    .await?
+    .rows_affected();
+    let relays = sqlx::query(
+        "DELETE FROM relay_auto_updates a USING relay_commands c
+         WHERE c.id = a.command_id AND c.state = 'expired'",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(agents + relays)
 }
 
-/// Every unrevoked server, sorted by host name, with its automatic update
-/// to `version`. Failures count from `counted_from`, else all of them.
+/// Every unrevoked agent or relay, sorted by name, with its automatic
+/// update to `version`. Failures count from `counted_from`, else all of
+/// them.
 pub(crate) async fn peers(
     pool: &PgPool,
+    kind: Kind,
     version: &Version,
     counted_from: Option<DateTime<Utc>>,
 ) -> Result<Vec<Peer>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT s.id, s.peer_id, s.site_id, t.agent_auto_update AS site_override,
-                s.agent_version,
-                CASE WHEN a.server_id IS NOT NULL THEN coalesce(c.state, 'unknown') END AS tried,
-                a.queued_at >= coalesce($2, '-infinity'::timestamptz) AS counted,
-                EXISTS (SELECT 1 FROM commands b
-                        WHERE b.server_id = s.id AND b.kind = $3
-                          AND b.state IN ('queued', 'sent', 'running')) AS busy
-         FROM servers s
-         JOIN sites t ON t.id = s.site_id
-         LEFT JOIN agent_auto_updates a ON a.server_id = s.id AND a.version = $1
-         LEFT JOIN commands c ON c.id = a.command_id
-         WHERE s.revoked_at IS NULL
-         ORDER BY s.hostname, s.id",
-    )
-    .bind(version.to_string())
-    .bind(counted_from)
-    .bind(SELF_UPDATE)
-    .fetch_all(pool)
-    .await
+    let sql = match kind {
+        Kind::Agent => {
+            "SELECT s.id, s.peer_id, s.site_id, t.agent_auto_update AS site_override,
+                    s.agent_version AS version,
+                    CASE WHEN a.server_id IS NOT NULL THEN coalesce(c.state, 'unknown') END AS tried,
+                    a.queued_at >= coalesce($2, '-infinity'::timestamptz) AS counted,
+                    EXISTS (SELECT 1 FROM commands b
+                            WHERE b.server_id = s.id AND b.kind = $3
+                              AND b.state IN ('queued', 'sent', 'running')) AS busy,
+                    r.relay_version,
+                    EXISTS (SELECT 1 FROM relay_commands rc
+                            WHERE rc.relay_id = s.relay_id
+                              AND rc.state IN ('queued', 'sent', 'running')) AS relay_busy
+             FROM servers s
+             JOIN sites t ON t.id = s.site_id
+             LEFT JOIN relays r ON r.id = s.relay_id
+             LEFT JOIN agent_auto_updates a ON a.server_id = s.id AND a.version = $1
+             LEFT JOIN commands c ON c.id = a.command_id
+             WHERE s.revoked_at IS NULL
+             ORDER BY s.hostname, s.id"
+        }
+        Kind::Relay => {
+            "SELECT r.id, r.peer_id, r.site_id, t.agent_auto_update AS site_override,
+                    r.relay_version AS version,
+                    CASE WHEN a.relay_id IS NOT NULL THEN coalesce(c.state, 'unknown') END AS tried,
+                    a.queued_at >= coalesce($2, '-infinity'::timestamptz) AS counted,
+                    EXISTS (SELECT 1 FROM relay_commands b
+                            WHERE b.relay_id = r.id AND b.state IN ('queued', 'sent', 'running'))
+                    OR EXISTS (SELECT 1 FROM commands b JOIN servers s ON s.id = b.server_id
+                               WHERE s.relay_id = r.id AND b.kind = $3
+                                 AND b.state IN ('queued', 'sent', 'running')) AS busy,
+                    NULL::text AS relay_version,
+                    false AS relay_busy
+             FROM relays r
+             JOIN sites t ON t.id = r.site_id
+             LEFT JOIN relay_auto_updates a ON a.relay_id = r.id AND a.version = $1
+             LEFT JOIN relay_commands c ON c.id = a.command_id
+             WHERE r.revoked_at IS NULL
+             ORDER BY r.peer_id, r.id"
+        }
+    };
+    sqlx::query_as(sql)
+        .bind(version.to_string())
+        .bind(counted_from)
+        .bind(SELF_UPDATE)
+        .fetch_all(pool)
+        .await
 }
 
 /// What a rollout updates.

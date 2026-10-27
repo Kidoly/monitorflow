@@ -13,6 +13,8 @@ RUN apt-get update \
 ENV RUSTUP_TOOLCHAIN=1.99.0
 WORKDIR /src
 COPY . .
+# Empty for the workspace version; the install test sets one (ADR-0055).
+ARG MONITORFLOW_BUILD_VERSION=
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --release --locked -p monitorflow-server \

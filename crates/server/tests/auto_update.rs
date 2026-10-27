@@ -344,4 +344,104 @@ db_tests! {
         // Each site gets a new canary; the failed servers are not retried.
         assert_eq!(tick(&updater).await, ["lyon-2", "paris-2"]);
     }
+
+    #[sqlx::test]
+    async fn relays_update_first_and_their_agents_follow(pool: PgPool) {
+        let (customer, paris, _) = sites(&pool).await;
+        let relay = insert(
+            &pool,
+            "INSERT INTO relays (peer_id, site_id, name, relay_version)
+             VALUES ('relay-1', $1::uuid, 'relay-1', '0.0.1') RETURNING id",
+            &[&paris.to_string()],
+        )
+        .await;
+        let behind = server(&pool, "behind", paris, "debian", "0.0.1").await;
+        sqlx::query("UPDATE servers SET relay_id = $1 WHERE id = $2")
+            .bind(relay)
+            .bind(behind)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let dir = TempDir::new().unwrap();
+        let sources = cache(&dir, &["0.0.2"]);
+        let updater = updater(&pool, &sources);
+
+        // The agent waits for its relay, which is older than the target.
+        assert!(tick(&updater).await.is_empty());
+        let mut relays = updater.tick_relays().await.unwrap();
+        relays.sort();
+        assert_eq!(relays, ["relay-1"]);
+        let (version, payload): (String, Vec<u8>) =
+            sqlx::query_as("SELECT version, payload FROM relay_commands WHERE relay_id = $1")
+                .bind(relay)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(version, "0.0.2");
+        assert_eq!(SelfUpdate::decode(payload.as_slice()).unwrap().version, "0.0.2");
+        assert!(updater.tick_relays().await.unwrap().is_empty(), "once per version");
+        assert_eq!(audited(&pool, "relay.auto_update").await, 1);
+
+        // Updated and reconnected with the new version: the agent follows.
+        sqlx::query("UPDATE relay_commands SET state = 'succeeded', finished_at = now()")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(tick(&updater).await.is_empty(), "the relay still reports 0.0.1");
+        sqlx::query("UPDATE relays SET relay_version = '0.0.2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tick(&updater).await, ["behind"]);
+
+        // The API shows both kinds.
+        let global = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let settings = ApiSettings {
+            agent_releases: sources.clone(),
+            ..ApiSettings::default()
+        };
+        let (status, body) = call_with(&pool, settings, &global, "GET", "/api/auto-update", Value::Null).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["relays"]["totals"]["up_to_date"], 1);
+        assert_eq!(body["relays"]["rollout"]["kind"], "relay");
+        assert_eq!(body["agents"]["totals"]["pending"], 1);
+
+        // A relay waits while an agent behind it is being updated.
+        sqlx::query("UPDATE relays SET relay_version = '0.0.1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM relay_auto_updates").execute(&pool).await.unwrap();
+        assert!(updater.tick_relays().await.unwrap().is_empty());
+        let _ = customer;
+    }
+
+    #[sqlx::test]
+    async fn administrators_update_a_relay_by_hand(pool: PgPool) {
+        let (customer, paris, _) = sites(&pool).await;
+        let relay = insert(
+            &pool,
+            "INSERT INTO relays (peer_id, site_id, name) VALUES ('relay-1', $1::uuid, 'relay-1') RETURNING id",
+            &[&paris.to_string()],
+        )
+        .await;
+        let admin = login(&pool, "admin", Role::Administrator, GrantScope::Customer(customer)).await;
+        let viewer = login(&pool, "viewer", Role::Viewer, GrantScope::Customer(customer)).await;
+        let uri = format!("/api/relays/{relay}/update");
+        let body = json!({ "version": "0.3.0" });
+        assert_eq!(call(&pool, &viewer, "POST", &uri, body.clone()).await.0, StatusCode::FORBIDDEN);
+        let (status, command) = call(&pool, &admin, "POST", &uri, body.clone()).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{command}");
+        assert_eq!(command["state"], "queued");
+        assert_eq!(command["version"], "0.3.0");
+        assert_eq!(call(&pool, &admin, "POST", &uri, body).await.0, StatusCode::CONFLICT);
+        let (status, _) = call(&pool, &admin, "POST", &uri, json!({ "version": "nope" })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(audited(&pool, "relay.update").await, 1);
+        let (status, detail) = call(&pool, &admin, "GET", &format!("/api/relays/{relay}"), Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(detail["last_update"]["version"], "0.3.0");
+        assert_eq!(detail["updates"].as_array().unwrap().len(), 1);
+        assert_eq!(detail["relay_version"], Value::Null);
+    }
 }

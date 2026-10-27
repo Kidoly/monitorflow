@@ -111,6 +111,8 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # default, set in the web interface (Admin > Updates), where sites can
 # override it. Setting it here wins over the web interface and locks it.
 # enabled = true
+# Seconds between two looks at what to update, at least 10.
+# interval = 300
 
 [remediation]
 # Limits of each AI remediation incident (ADR-0043), which opens for every

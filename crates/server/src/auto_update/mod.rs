@@ -1,15 +1,19 @@
-//! Automatic agent updates (ADR-0055, after ADR-0053's per-site policy).
+//! Automatic agent and relay updates (ADR-0055, after ADR-0053's per-site
+//! policy).
 //!
-//! Every [`POLL`], unless paused, the server picks the release peers move
+//! Every `auto_update.interval` (5 minutes), unless paused, the server picks the release peers move
 //! to ([`policy::target`]) and queues a `self_update` to it for online
-//! agents of the sites where automatic updates apply: the server-wide
-//! setting, or the site's override. [`policy`] decides how many per site:
-//! a canary, then batches. A server is updated automatically at most once
-//! per version (`agent_auto_updates`), so a release that rolls back is not
-//! retried in a loop; one whose command expired unsent never ran and is
-//! tried again. Once [`policy::Settings::failure_threshold`] updates to a
-//! version failed, its rollout halts (`auto_rollouts`), is audited and
-//! logged as an error, and waits for an administrator.
+//! relays, then agents, of the sites where automatic updates apply: the
+//! server-wide setting, or the site's override. [`policy`] decides how
+//! many per site: a canary, then batches. Upstream first: an agent waits
+//! while its relay runs an older version or is being updated, and a relay
+//! waits while an agent behind it is being updated. A peer is updated
+//! automatically at most once per version (`agent_auto_updates`,
+//! `relay_auto_updates`), so a release that rolls back is not retried in a
+//! loop; one whose command expired unsent never ran and is tried again.
+//! Once [`policy::Settings::failure_threshold`] updates to a version failed,
+//! its rollout for that kind of peer halts (`auto_rollouts`), is audited
+//! and logged as an error, and waits for an administrator.
 
 pub mod policy;
 pub mod store;
@@ -31,11 +35,11 @@ use crate::api::audit::{self, Event};
 use crate::commands::{CommandStore, Commands, NewCommand};
 use crate::grpc::Registry;
 use crate::mirror::relays;
+use crate::relay_commands::{self, RelayCommands};
 use policy::Tries;
 use store::{Kind, Rollout, RolloutState};
 
-pub const POLL: Duration = Duration::from_secs(5 * 60);
-/// How long a queued automatic update may wait for its agent.
+/// How long a queued automatic update may wait for its peer.
 pub const TTL: Duration = Duration::from_secs(24 * 60 * 60);
 pub(crate) const ACTOR: (&str, &str) = ("system", "auto-update");
 
@@ -48,32 +52,50 @@ pub struct AutoUpdate {
     enabled_override: Option<bool>,
     /// Peers never move past the server's own version.
     server_version: Version,
-    /// Only connected agents are picked; `None` takes every agent.
+    /// Only connected peers are picked; `None` takes every peer.
     registry: Option<Registry>,
+    relay_commands: Option<RelayCommands>,
 }
 
-/// One unrevoked server and its automatic update to the target, if any.
+/// One unrevoked agent or relay and its automatic update to the target,
+/// if any.
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct Peer {
     pub id: Uuid,
     pub peer_id: String,
     pub site_id: Uuid,
     pub site_override: Option<bool>,
-    pub agent_version: Option<String>,
+    pub version: Option<String>,
     /// State of the command of this version's automatic update: `None`
     /// when not tried, `unknown` when the command is gone.
     pub tried: Option<String>,
     /// Whether that update counts towards the rollout's failures.
     pub counted: Option<bool>,
-    /// Another `self_update` is in flight.
+    /// Another `self_update` is in flight: its own, or for a relay, one
+    /// of an agent behind it.
     pub busy: bool,
+    /// For an agent, the version of the relay it connects through.
+    pub relay_version: Option<String>,
+    /// For an agent, its relay is being updated.
+    pub relay_busy: bool,
 }
 
 impl Peer {
     pub fn needs(&self, target: &Version) -> bool {
-        self.agent_version
+        self.version
             .as_deref()
             .is_some_and(|v| policy::needs_update(v, target))
+    }
+
+    /// Upstream first: the relay in front runs an older version than
+    /// `target`, or is being updated.
+    pub fn held_by_relay(&self, target: &Version) -> bool {
+        self.relay_busy
+            || self
+                .relay_version
+                .as_deref()
+                .and_then(|v| Version::from_str(v).ok())
+                .is_some_and(|v| v < *target)
     }
 }
 
@@ -100,6 +122,7 @@ impl AutoUpdate {
             enabled_override: None,
             server_version: server_version(),
             registry: None,
+            relay_commands: None,
         }
     }
 
@@ -118,16 +141,33 @@ impl AutoUpdate {
         self
     }
 
-    fn online(&self, peer_id: &str) -> bool {
-        self.registry.as_ref().is_none_or(|registry| {
-            registry
-                .get(peer_id)
-                .is_some_and(|p| p.role == PeerRole::Agent)
-        })
+    /// Wakes the relay command sender for the relays that got an update.
+    pub fn with_relay_commands(mut self, commands: RelayCommands) -> Self {
+        self.relay_commands = Some(commands);
+        self
     }
 
-    /// Queues the agent updates due now; returns the peers that got one.
+    fn online(&self, kind: Kind, peer_id: &str) -> bool {
+        let role = match kind {
+            Kind::Agent => PeerRole::Agent,
+            Kind::Relay => PeerRole::Relay,
+        };
+        self.registry
+            .as_ref()
+            .is_none_or(|registry| registry.get(peer_id).is_some_and(|p| p.role == role))
+    }
+
+    /// Queues the agent updates due now; returns the agents that got one.
     pub async fn tick(&self) -> Result<Vec<String>, sqlx::Error> {
+        self.tick_kind(Kind::Agent).await
+    }
+
+    /// Queues the relay updates due now; returns the relays that got one.
+    pub async fn tick_relays(&self) -> Result<Vec<String>, sqlx::Error> {
+        self.tick_kind(Kind::Relay).await
+    }
+
+    async fn tick_kind(&self, kind: Kind) -> Result<Vec<String>, sqlx::Error> {
         let settings = store::settings(&self.pool, self.enabled_override).await?.0;
         if settings.paused {
             return Ok(Vec::new());
@@ -137,7 +177,7 @@ impl AutoUpdate {
         let Some(target) = policy::target(&held, &self.server_version).cloned() else {
             return Ok(Vec::new());
         };
-        let rollout = Rollout::load(&self.pool, Kind::Agent, &target).await?;
+        let rollout = Rollout::load(&self.pool, kind, &target).await?;
         if rollout
             .as_ref()
             .is_some_and(|r| r.state == RolloutState::Halted)
@@ -145,16 +185,17 @@ impl AutoUpdate {
             return Ok(Vec::new());
         }
         let counted_from = rollout.as_ref().map(|r| r.counted_from);
-        let peers = store::peers(&self.pool, &target, counted_from).await?;
+        let peers = store::peers(&self.pool, kind, &target, counted_from).await?;
         let sites = tries(&peers);
         let failed: usize = sites.values().map(|t| t.failed).sum();
         if policy::halts(failed, settings.failure_threshold) {
             let reason = format!(
-                "{failed} automatic updates to {target} failed (threshold {})",
+                "{failed} automatic {} updates to {target} failed (threshold {})",
+                kind.as_str(),
                 settings.failure_threshold
             );
-            if Rollout::halt(&self.pool, Kind::Agent, &target, &reason).await? {
-                tracing::error!(version = %target, failed, "automatic agent rollout halted; resume it in the web interface once the cause is fixed");
+            if Rollout::halt(&self.pool, kind, &target, &reason).await? {
+                tracing::error!(kind = kind.as_str(), version = %target, failed, "automatic rollout halted; resume it in the web interface once the cause is fixed");
             }
             return Ok(Vec::new());
         }
@@ -176,10 +217,15 @@ impl AutoUpdate {
             let due = members
                 .into_iter()
                 .filter(|p| p.tried.is_none() && !p.busy && p.needs(&target))
-                .filter(|p| self.online(&p.peer_id))
+                .filter(|p| !p.held_by_relay(&target))
+                .filter(|p| self.online(kind, &p.peer_id))
                 .take(allowance);
             for peer in due {
-                if self.queue(peer, &target).await? {
+                let queued_one = match kind {
+                    Kind::Agent => self.queue_agent(peer, &target).await?,
+                    Kind::Relay => self.queue_relay(peer, &target).await?,
+                };
+                if queued_one {
                     queued.push(peer.peer_id.clone());
                 }
             }
@@ -187,9 +233,9 @@ impl AutoUpdate {
         Ok(queued)
     }
 
-    /// Queues one update, claiming the server and version first; `false`
-    /// when another tick claimed it.
-    async fn queue(&self, peer: &Peer, target: &Version) -> Result<bool, sqlx::Error> {
+    /// Queues one agent update, claiming the server and version first;
+    /// `false` when another tick claimed it.
+    async fn queue_agent(&self, peer: &Peer, target: &Version) -> Result<bool, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
         Rollout::start(&mut tx, Kind::Agent, target).await?;
         let claimed = sqlx::query(
@@ -232,7 +278,7 @@ impl AutoUpdate {
                 details: json!({
                     "server_id": peer.id,
                     "peer_id": peer.peer_id,
-                    "from": peer.agent_version,
+                    "from": peer.version,
                     "to": target.to_string(),
                 }),
             },
@@ -242,8 +288,61 @@ impl AutoUpdate {
         Ok(true)
     }
 
-    /// Runs [`Self::tick`] every `poll` until `shutdown`, waking the
-    /// dispatcher for the agents that got an update.
+    /// Queues one relay update, claiming the relay and version first;
+    /// `false` when another tick claimed it or the relay has an update in
+    /// flight.
+    async fn queue_relay(&self, peer: &Peer, target: &Version) -> Result<bool, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        Rollout::start(&mut tx, Kind::Relay, target).await?;
+        let claimed = sqlx::query(
+            "INSERT INTO relay_auto_updates (relay_id, version) VALUES ($1, $2)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(peer.id)
+        .bind(target.to_string())
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if claimed == 0 {
+            return Ok(false);
+        }
+        let payload = self.sources.payload(target, None, false, 0);
+        let Some(command) =
+            relay_commands::enqueue_in(&mut tx, peer.id, &target.to_string(), &payload, TTL, None)
+                .await?
+        else {
+            return Ok(false);
+        };
+        sqlx::query(
+            "UPDATE relay_auto_updates SET command_id = $3 WHERE relay_id = $1 AND version = $2",
+        )
+        .bind(peer.id)
+        .bind(target.to_string())
+        .bind(command.id)
+        .execute(&mut *tx)
+        .await?;
+        audit::record(
+            &mut *tx,
+            Event {
+                actor_kind: ACTOR.0,
+                actor_id: ACTOR.1,
+                action: "relay.auto_update",
+                target: Some(("relay", &peer.id.to_string())),
+                details: json!({
+                    "command_id": command.id,
+                    "peer_id": peer.peer_id,
+                    "from": peer.version,
+                    "to": target.to_string(),
+                }),
+            },
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Runs [`Self::tick_relays`] then [`Self::tick`] every `poll` until
+    /// `shutdown`, waking the senders for the peers that got an update.
     pub async fn run(self, commands: Commands, poll: Duration, shutdown: impl Future<Output = ()>) {
         let mut interval = tokio::time::interval(poll);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -252,6 +351,18 @@ impl AutoUpdate {
             tokio::select! {
                 _ = &mut shutdown => break,
                 _ = interval.tick() => {}
+            }
+            match self.tick_relays().await {
+                Ok(peers) if peers.is_empty() => {}
+                Ok(peers) => {
+                    tracing::info!(relays = peers.len(), "automatic relay updates queued");
+                    if let Some(relay_commands) = &self.relay_commands {
+                        peers.iter().for_each(|peer| relay_commands.dispatch(peer));
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "cannot queue automatic relay updates; will retry")
+                }
             }
             match self.tick().await {
                 Ok(peers) if peers.is_empty() => {}
@@ -282,10 +393,12 @@ mod tests {
             peer_id: "p".into(),
             site_id: Uuid::from_u128(site),
             site_override: None,
-            agent_version: Some("0.1.0".into()),
+            version: Some("0.1.0".into()),
             tried: tried.map(str::to_owned),
             counted: Some(counted),
             busy: false,
+            relay_version: None,
+            relay_busy: false,
         }
     }
 
@@ -317,10 +430,29 @@ mod tests {
         let target: Version = "0.2.0".parse().unwrap();
         let mut p = peer(1, None, true);
         assert!(p.needs(&target));
-        p.agent_version = Some("0.2.0".into());
+        p.version = Some("0.2.0".into());
         assert!(!p.needs(&target));
-        p.agent_version = None;
+        p.version = None;
         assert!(!p.needs(&target));
+    }
+
+    #[test]
+    fn agents_wait_for_their_relay() {
+        let target: Version = "0.3.0".parse().unwrap();
+        let mut p = peer(1, None, true);
+        assert!(
+            !p.held_by_relay(&target),
+            "direct, or a relay of unknown version"
+        );
+        p.relay_version = Some("0.2.0".into());
+        assert!(p.held_by_relay(&target), "the relay is older");
+        p.relay_version = Some("0.3.0".into());
+        assert!(!p.held_by_relay(&target));
+        p.relay_busy = true;
+        assert!(p.held_by_relay(&target), "the relay is being updated");
+        p.relay_busy = false;
+        p.relay_version = Some("dev".into());
+        assert!(!p.held_by_relay(&target), "a development build");
     }
 
     #[test]

@@ -1,0 +1,15 @@
+# Overrides of docker-compose.yml for deploy/install-test.sh only: a server
+# built with the version the test releases (automatic updates never move a
+# peer past the server's version, ADR-0055), looking for updates every 10
+# seconds.
+services:
+  db-certs:
+    build:
+      args:
+        MONITORFLOW_BUILD_VERSION: ${MF_TEST_SERVER_VERSION:-}
+  server:
+    build:
+      args:
+        MONITORFLOW_BUILD_VERSION: ${MF_TEST_SERVER_VERSION:-}
+    environment:
+      MONITORFLOW_AUTO_UPDATE_INTERVAL: "10"

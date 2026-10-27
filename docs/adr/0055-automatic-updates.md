@@ -45,7 +45,7 @@ A site overrides `enabled` with `sites.agent_auto_update`: `null` inherits, `tru
 
 **Maintenance windows.** Sites and servers have none today, only campaigns (ADR-0033). An automatic update restarts the agent or relay, not the host, and is checked within minutes, so it is queued at any time. Hosts that need a window turn automatic updates off for their site and use a campaign with windows.
 
-**Pace.** The server looks every 5 minutes. A fleet of one site of 40 agents takes a canary then four batches, about 25 minutes when all goes well; ten such sites move in parallel.
+**Pace.** The server looks every 5 minutes (`auto_update.interval`, at least 10 seconds). A fleet of one site of 40 agents takes a canary then four batches, about 25 minutes when all goes well; ten such sites move in parallel.
 
 ### Version compatibility
 
@@ -64,7 +64,7 @@ Relays get what agents have (ADR-0052, ADR-0053):
 - **Releases.** The release workflow builds `monitorflow-relay-linux-x86_64` and `-aarch64` statically like the agent, listed in the same `SHA256SUMS`, signed by the same key. The server's cache and the relays' copies keep the relay binaries too.
 - **Installer.** `install.sh` installs a relay with `MF_ROLE=relay`, doing exactly the steps of the relay guide (`docs/deploy-relay.md`): the binary, a system user `monitorflow-relay`, its directories, `relay.toml`, the sudo rule of its helper and the unit `monitorflow-relay`.
 - **Self-update.** The relay accepts, on its own stream, a signed `self_update` command addressed to itself and runs it through the agent's command dispatcher (ADR-0031's signature, target, expiry and journal checks), which downloads and checks the release with `common::release` and hands it to `sudo -n /usr/bin/monitorflow-relay self-update`. The relay links the agent's library for this: the dispatcher, the download, the root helper, the swap and the watchdog take a *product* (the agent or the relay: binary, unit, watchdog unit, root's state directory `/var/lib/monitorflow/relay-self-update`, release file), so there is one implementation of each step. The watchdog's proof is the relay's own stream being accepted upstream again, which the relay records in `<data_dir>/self-update/connected`; without it within the timeout the previous binary is put back. Results go up on the relay's stream; a result the restart interrupted is answered from the status file when the server sends the command again, as for agents.
-- **Server side.** The server records each relay's version from its `Hello`, shows it with the relays, queues relay updates by hand or automatically with the policy above, and receives their results on the relay's stream.
+- **Server side.** The server records each relay's version from its `Hello` (`relays.relay_version`), shows it with the relays, and keeps relay updates in `relay_commands`, one in flight per relay, signed when sent like agents' commands. Administrators of the relay's customer queue one with `POST /api/relays/{id}/update` (audited as `relay.update`); automatic updates queue them with the policy above (`relay_auto_updates`, audited as `relay.auto_update`), relays before agents in each pass. The relay downloads from the server's cache and then `agent_download_url`, which carry the relay binaries of the release.
 
 Agents behind a relay keep working while it restarts: their streams drop and reconnect with the usual backoff (ADR-0009), and they keep their samples in memory until then, as for any upstream outage.
 

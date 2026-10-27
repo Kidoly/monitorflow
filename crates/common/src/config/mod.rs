@@ -1007,17 +1007,41 @@ pub struct ServerConfig {
 
 /// Automatic updates (ADR-0055). The setting lives in the database and the
 /// web interface; a value here wins over it and locks it there.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AutoUpdateConfig {
     /// The server-wide default of sites that inherit it. Unset, the
     /// administrators' choice in the web interface applies (on by default).
     pub enabled: Option<bool>,
+    /// Seconds between two looks at what to update.
+    pub interval: u64,
+}
+
+const MIN_AUTO_UPDATE_INTERVAL: u64 = 10;
+
+impl Default for AutoUpdateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: None,
+            interval: 5 * 60,
+        }
+    }
 }
 
 impl AutoUpdateConfig {
     fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
-        env.set_opt("auto_update.enabled", &mut self.enabled)
+        env.set_opt("auto_update.enabled", &mut self.enabled)?;
+        env.set("auto_update.interval", &mut self.interval)
+    }
+
+    fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
+        if self.interval < MIN_AUTO_UPDATE_INTERVAL {
+            return Err(check.fail(
+                "auto_update.interval",
+                format!("must be at least {MIN_AUTO_UPDATE_INTERVAL} seconds"),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -1433,6 +1457,7 @@ impl LoadConfig for ServerConfig {
         self.ai.validate(check)?;
         self.proxmox.validate(check)?;
         self.remediation.validate(check)?;
+        self.auto_update.validate(check)?;
         if let Some(url) = &self.mirror_public_url {
             if !valid_mirror_url(url) {
                 return Err(check.fail(

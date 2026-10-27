@@ -95,7 +95,9 @@ impl Inventory for DbInventory {
     async fn hello(&self, hello: AcceptedHello<'_>) -> Result<String, InventoryError> {
         let mut tx = self.pool.begin().await?;
         let site = match hello.role() {
-            PeerRole::Relay => relay_hello(&mut tx, &hello.hello.agent_id).await?,
+            PeerRole::Relay => {
+                relay_hello(&mut tx, &hello.hello.agent_id, &hello.hello.agent_version).await?
+            }
             _ => agent_hello(&mut tx, hello).await?,
         };
         tx.commit().await?;
@@ -148,17 +150,21 @@ async fn site_name(
         .await?)
 }
 
-/// A relay's own Hello: its row was created at enrollment.
+/// A relay's own Hello: its row was created at enrollment. Records the
+/// version it reports (ADR-0055).
 async fn relay_hello(
     tx: &mut Transaction<'_, Postgres>,
     id: &str,
+    version: &str,
 ) -> Result<String, InventoryError> {
     let row: Option<(bool, Uuid)> = sqlx::query_as(
-        "UPDATE relays SET last_seen_at = CASE WHEN revoked_at IS NULL THEN now() ELSE last_seen_at END
+        "UPDATE relays SET last_seen_at = CASE WHEN revoked_at IS NULL THEN now() ELSE last_seen_at END,
+                           relay_version = coalesce($2, relay_version)
          WHERE peer_id = $1
          RETURNING revoked_at IS NOT NULL, site_id",
     )
     .bind(id)
+    .bind(Some(version).filter(|v| !v.is_empty()))
     .fetch_optional(&mut **tx)
     .await?;
     let (role, id) = (PeerRole::Relay, id.to_owned());

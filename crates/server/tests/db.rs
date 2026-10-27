@@ -158,6 +158,8 @@ db_tests! {
                 "mirror_snapshots",
                 "mirrors",
                 "proxmox_snapshots",
+                "relay_auto_updates",
+                "relay_commands",
                 "relay_mirrors",
                 "relays",
                 "remediation_incident_events",
