@@ -14,11 +14,18 @@ ENV RUSTUP_TOOLCHAIN=1.99.0
 # and two cargo processes must not unpack the same crates together.
 # A test build may claim another version (crates/common/src/lib.rs).
 ARG MONITORFLOW_BUILD_VERSION=
+# Test builds only: keys to trust instead of deploy/release-keys.pem, as
+# in server.Dockerfile.
+ARG RELEASE_KEYS=""
 WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/src/target,sharing=locked \
     if [ -z "$MONITORFLOW_BUILD_VERSION" ]; then unset MONITORFLOW_BUILD_VERSION; fi \
+    && if [ -n "$RELEASE_KEYS" ]; then \
+        printf '%s\n' "$RELEASE_KEYS" >/tmp/release-keys.pem \
+        && export MONITORFLOW_RELEASE_KEYS=/tmp/release-keys.pem; \
+    fi \
     && cargo build --release --locked -p monitorflow-updater \
     && cp target/release/monitorflow-updater /usr/local/bin/
 
