@@ -1,5 +1,5 @@
 # MonitorFlow agent: the privileged commands it runs through `sudo -n`
-# (ADR-0031, ADR-0032, ADR-0035, ADR-0036). Install as
+# (ADR-0031, ADR-0032, ADR-0035, ADR-0036, ADR-0053). Install as
 # /etc/sudoers.d/monitorflow-agent, owner root, mode 0440, and check with
 # `visudo -cf`. See docs/deploy-agent.md.
 #
@@ -13,5 +13,8 @@ Cmnd_Alias MONITORFLOW_REBOOT = /usr/sbin/shutdown -r +1
 Cmnd_Alias MONITORFLOW_SOURCES = \
     /usr/bin/monitorflow-agent sources apply, \
     /usr/bin/monitorflow-agent sources revert
+# Self-update: the helper reads a signed release on stdin and installs it
+# only if the release key built into it verifies it (ADR-0053).
+Cmnd_Alias MONITORFLOW_SELF_UPDATE = /usr/bin/monitorflow-agent self-update
 
-monitorflow ALL=(root) NOPASSWD: MONITORFLOW_PACKAGES, MONITORFLOW_REBOOT, MONITORFLOW_SOURCES
+monitorflow ALL=(root) NOPASSWD: MONITORFLOW_PACKAGES, MONITORFLOW_REBOOT, MONITORFLOW_SOURCES, MONITORFLOW_SELF_UPDATE

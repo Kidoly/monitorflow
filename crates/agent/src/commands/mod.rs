@@ -22,6 +22,13 @@
 //! the target agent (`REJECTED`), the journal (a command already finished
 //! is answered with its stored result, one interrupted by a restart with
 //! `FAILED`), the expiry (`EXPIRED`), then the kind (`REJECTED`).
+//!
+//! # Resuming
+//!
+//! A command that ends by restarting the agent, like `self_update`
+//! (ADR-0053), is left unfinished in the journal. A [`Resumer`] may claim
+//! such an entry when the command arrives again: its future then runs in
+//! place of a handler, reported `RUNNING`, and its output is the result.
 
 pub mod journal;
 #[cfg(unix)]
@@ -29,6 +36,8 @@ pub mod shell;
 pub mod unsupported;
 
 use std::collections::{HashMap, VecDeque};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -92,6 +101,24 @@ impl Output {
 #[async_trait::async_trait]
 pub trait Handler: Send + Sync + 'static {
     async fn run(&self, payload: &[u8]) -> Output;
+
+    /// [`Self::run`], for handlers that also need the command's ID.
+    async fn run_command(&self, command_id: &str, payload: &[u8]) -> Output {
+        let _ = command_id;
+        self.run(payload).await
+    }
+}
+
+/// Finishes commands a restart interrupted on purpose.
+#[async_trait::async_trait]
+pub trait Resumer: Send + Sync + 'static {
+    /// The result of `command_id`, unfinished in the journal, to wait for;
+    /// `None` when it is not this resumer's, and it then counts as
+    /// interrupted.
+    async fn resume(
+        &self,
+        command_id: &str,
+    ) -> Option<Pin<Box<dyn Future<Output = Output> + Send>>>;
 }
 
 /// Handlers by kind.
@@ -155,9 +182,10 @@ impl Default for DispatcherSettings {
 }
 
 /// What to do with a command that arrived.
-#[derive(Debug, PartialEq)]
 enum Verdict {
     Run,
+    /// Unfinished in the journal and claimed by the resumer.
+    Resume(Pin<Box<dyn Future<Output = Output> + Send>>),
     Answer(CommandResult),
     /// A copy of a command already waiting.
     Ignore,
@@ -178,6 +206,7 @@ pub struct Dispatcher {
     handlers: Handlers,
     journal: Journal,
     settings: DispatcherSettings,
+    resumer: Option<Arc<dyn Resumer>>,
 }
 
 impl Dispatcher {
@@ -196,7 +225,14 @@ impl Dispatcher {
             handlers,
             journal,
             settings,
+            resumer: None,
         }
+    }
+
+    /// Lets `resumer` finish commands left unfinished by a restart.
+    pub fn with_resumer(mut self, resumer: Arc<dyn Resumer>) -> Self {
+        self.resumer = Some(resumer);
+        self
     }
 
     /// Runs until `shutdown`. A command still running then is abandoned;
@@ -216,7 +252,10 @@ impl Dispatcher {
                         Verdict::Run if running.is_none() => {
                             running = self.start(command, &end.results).await;
                         }
-                        Verdict::Run => waiting.push_back(command),
+                        Verdict::Resume(future) if running.is_none() => {
+                            running = Some(self.resume(command, future, &end.results).await);
+                        }
+                        Verdict::Run | Verdict::Resume(_) => waiting.push_back(command),
                     }
                 }
                 output = join(&mut running) => {
@@ -229,6 +268,9 @@ impl Dispatcher {
                             Verdict::Answer(result) => send(&end.results, result),
                             Verdict::Ignore => {}
                             Verdict::Run => running = self.start(next, &end.results).await,
+                            Verdict::Resume(future) => {
+                                running = Some(self.resume(next, future, &end.results).await);
+                            }
                         }
                     }
                 }
@@ -282,6 +324,12 @@ impl Dispatcher {
                 return Answer(result);
             }
             Ok(Some(entry)) => {
+                if let Some(resumer) = &self.resumer {
+                    if let Some(future) = resumer.resume(id).await {
+                        tracing::info!(command_id = %id, "resuming a command a restart interrupted");
+                        return Verdict::Resume(future);
+                    }
+                }
                 tracing::warn!(command_id = %id, "command interrupted by an agent restart");
                 let mut result =
                     not_run(id, CommandStatus::Failed, "interrupted by an agent restart");
@@ -354,7 +402,8 @@ impl Dispatcher {
         let handler = self.handlers.by_kind[&command.kind].clone();
         let run_timeout = self.settings.run_timeout;
         let task = tokio::spawn(async move {
-            match tokio::time::timeout(run_timeout, handler.run(&command.payload)).await {
+            let run = handler.run_command(&command.command_id, &command.payload);
+            match tokio::time::timeout(run_timeout, run).await {
                 Ok(output) => output,
                 Err(_) => Output {
                     exit_code: -1,
@@ -369,6 +418,32 @@ impl Dispatcher {
             started_at_unix_ms,
             task,
         })
+    }
+
+    /// Reports `command` running again and waits for `future` in place of
+    /// a handler; its journal entry is already there.
+    async fn resume(
+        &self,
+        command: Command,
+        future: Pin<Box<dyn Future<Output = Output> + Send>>,
+        results: &mpsc::Sender<CommandResult>,
+    ) -> Running {
+        let started_at_unix_ms = unix_ms();
+        send(
+            results,
+            CommandResult {
+                command_id: command.command_id.clone(),
+                status: CommandStatus::Running as i32,
+                started_at_unix_ms,
+                ..CommandResult::default()
+            },
+        );
+        Running {
+            command_id: command.command_id,
+            expires_at_unix_ms: command.expires_at_unix_ms,
+            started_at_unix_ms,
+            task: tokio::spawn(future),
+        }
     }
 
     async fn finish(&self, done: Running, output: Output, results: &mpsc::Sender<CommandResult>) {

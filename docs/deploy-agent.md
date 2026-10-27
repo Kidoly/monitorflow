@@ -132,10 +132,23 @@ What the rules allow:
 | `monitorflow-agent packages update` | `apply_updates`: every kind, all packages, security only or named packages |
 | `shutdown -r +1` | `apply_updates` with `allow_reboot` |
 | `monitorflow-agent sources apply`, `… sources revert` | `configure_sources`, `revert_sources` |
+| `monitorflow-agent self-update` | `self_update`: installs a signed agent release (below) |
 
 There are no wildcards. The agent never runs `apt-get` or `dnf` through sudo: the `packages update` helper reads the kind of update and the package names on stdin, refuses names that are not package names (options, paths, shell characters), and runs `apt-get update` and the upgrade, or `dnf upgrade`, itself (ADR-0036). Security-only updates use `dnf upgrade --security` on dnf, and on apt the packages whose candidate comes from a `-security` suite.
 
 Hosts set up with an earlier version of this file, which allowed `apt-get` and `dnf` lines and no `packages update`, need the new file: until then every update fails with "a password is required". Remove any wildcard rule added for named updates at the same time; it is no longer used.
+
+## Self-update
+
+An administrator can update agents from MonitorFlow instead of running the installer again (ADR-0053). The `self_update` command names a version and where to download it. The agent downloads the release, checks its signature against the release keys built into it and refuses anything else, whatever served it; it refuses older versions unless the command allows a downgrade. Then:
+
+1. `sudo -n /usr/bin/monitorflow-agent self-update` checks the release again as root, writes the new binary next to `/usr/bin/monitorflow-agent`, keeps the running one as `/var/lib/monitorflow/self-update/previous` and renames the new one into place.
+2. It starts the watchdog in a transient unit, `monitorflow-agent-self-update`, from the previous binary. The watchdog restarts `monitorflow-agent` and waits for the new agent to connect upstream (5 minutes by default).
+3. If the new agent does not connect in time, the watchdog puts the previous binary back and restarts the service. The command then fails with "rolled back to …".
+
+The outcome is in `/var/lib/monitorflow/self-update/status.json`, and the watchdog's log is in `journalctl -u monitorflow-agent-self-update`. `/var/lib/monitorflow/self-update` belongs to root; the helper refuses it otherwise.
+
+**Hosts installed before self-update** lack the sudo line above: run the installer once more, which installs the new rules with the new binary. Until then `self_update` fails with "a password is required" and nothing changes. A self-update replaces the binary only; when a release changes the unit or the sudo rules, its notes say to run the installer.
 
 ## Pointing a server at the mirrors
 

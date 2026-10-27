@@ -23,6 +23,15 @@ pub mod proto {
     }
 }
 
+/// Version of this build: the workspace version, or
+/// `MONITORFLOW_BUILD_VERSION` when set at build time, which the
+/// self-update test uses to build an older and a newer agent from the same
+/// sources (ADR-0053).
+pub const VERSION: &str = match option_env!("MONITORFLOW_BUILD_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 /// Protocol version spoken by this build. Bump the minor on additive changes.
 pub const PROTOCOL_VERSION: &str = "1.1";
 
