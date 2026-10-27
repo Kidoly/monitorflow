@@ -694,6 +694,16 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = method.eq("POST").then(|| json!({}));
             assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
+        // Automatic updates are server-wide: global administrators only.
+        ("GET", "/api/auto-update")
+        | ("PUT", "/api/auto-update")
+        | ("POST", "/api/auto-update/rollouts/{kind}/{version}/resume") => {
+            let uri = path
+                .replace("{kind}", "agent")
+                .replace("{version}", "0.1.0");
+            let body = method.ne("GET").then(|| json!({}));
+            assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
+        }
         // Creation: a customer admin cannot create customers, nor sites of B.
         ("POST", "/api/customers") => {
             assert_eq!(

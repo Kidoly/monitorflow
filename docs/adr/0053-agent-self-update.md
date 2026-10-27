@@ -1,7 +1,7 @@
 # ADR-0053: Signed releases and agent self-update
 
 Date: 2026-10-27
-Status: accepted; implemented in stages (see the end)
+Status: accepted; implemented in stages (see the end); the per-site policy amended by ADR-0055 (automatic updates)
 
 ## Context
 

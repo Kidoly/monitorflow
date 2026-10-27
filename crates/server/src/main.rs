@@ -14,6 +14,7 @@ use monitorflow_server::api::users::GrantScope;
 use monitorflow_server::api::{
     self, customers, users, ApiSettings, ApiState, EnrollmentSettings, Role,
 };
+use monitorflow_server::auto_update::{self, AutoUpdate};
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
 use monitorflow_server::campaign::{self, Runner};
 use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings};
@@ -394,6 +395,12 @@ async fn main() -> anyhow::Result<()> {
         metrics: Some(metrics.queue()),
         events: Some(events.queue()),
     });
+    let auto_update = AutoUpdate::new(
+        pool.clone(),
+        monitorflow_server::agent_releases::Sources::from_config(&config),
+    )
+    .with_enabled_override(config.auto_update.enabled)
+    .with_registry(registry.clone());
     let api_state = ApiState::new(pool.clone(), registry, ApiSettings::from_config(&config))
         .with_metrics(
             VmQuery::new(&config.victoriametrics_url).context("VictoriaMetrics query client")?,
@@ -407,7 +414,6 @@ async fn main() -> anyhow::Result<()> {
         .with_mirrors(mirrors.clone())
         .with_campaigns(campaigns.clone());
     let remediation = remediation_loop(&config, pool.clone(), commands.clone()).await?;
-    let auto_update_pool = pool.clone();
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
@@ -479,14 +485,10 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         },
         async {
-            monitorflow_server::agent_auto_update::run(
-                auto_update_pool.clone(),
-                monitorflow_server::agent_releases::Sources::from_config(&config),
-                commands.clone(),
-                monitorflow_server::agent_auto_update::POLL,
-                until_stopped(),
-            )
-            .await;
+            auto_update
+                .clone()
+                .run(commands.clone(), auto_update::POLL, until_stopped())
+                .await;
             Ok(())
         },
         async {

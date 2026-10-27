@@ -154,6 +154,16 @@ impl Sources {
         }
     }
 
+    /// The versions the cache holds; none when it cannot be read.
+    pub async fn held(&self) -> Vec<Version> {
+        let cache = self.cache.clone();
+        tokio::task::spawn_blocking(move || cache.versions())
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default()
+    }
+
     /// The payload of a `self_update` to `version`; `health_timeout_seconds`
     /// is checked by the caller (0 for the agent's default). `relay_url` is
     /// the mirror listener of the relay the agent connects through, if it

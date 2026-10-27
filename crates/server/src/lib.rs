@@ -1,10 +1,10 @@
 //! MonitorFlow central server library. The binary in `main.rs` wires these
 //! modules together; keeping them in a library makes them testable.
 
-pub mod agent_auto_update;
 pub mod agent_releases;
 pub mod alerting;
 pub mod api;
+pub mod auto_update;
 pub mod ca;
 pub mod campaign;
 pub mod commands;

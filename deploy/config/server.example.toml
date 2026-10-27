@@ -104,6 +104,14 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # Seconds one request to the API may take; answers can take minutes.
 # request_timeout = 300
 
+[auto_update]
+# Automatic agent and relay updates (ADR-0055): the server rolls the newest
+# stable release it holds, and no newer than itself, out to agents and
+# relays, a canary per site first, and stops when updates fail. On by
+# default, set in the web interface (Admin > Updates), where sites can
+# override it. Setting it here wins over the web interface and locks it.
+# enabled = true
+
 [remediation]
 # Limits of each AI remediation incident (ADR-0043), which opens for every
 # new threshold incident while [ai] is enabled. Hitting one hands the

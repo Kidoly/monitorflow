@@ -8,6 +8,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -16,9 +17,10 @@ use chrono::Utc;
 use monitorflow_common::proto::v1::agent_service_server::AgentService;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{Envelope, Hello, SampleBatch, SensorConfigAck};
+use monitorflow_common::release::Version;
 use monitorflow_common::tls::{self, PeerIdentity, PeerRole};
 use monitorflow_common::via::Via;
-use monitorflow_common::PROTOCOL_VERSION;
+use monitorflow_common::{MIN_PEER_VERSION, PROTOCOL_VERSION};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{sleep, timeout, Instant};
 use tokio_stream::Stream;
@@ -56,6 +58,10 @@ pub enum HandshakeError {
     BadVersion(String),
     #[error("protocol version {peer} is not compatible with server version {server}")]
     VersionMismatch { peer: String, server: &'static str },
+    #[error(
+        "version {peer} is older than {minimum}, the oldest this server supports; reinstall it"
+    )]
+    TooOld { peer: String, minimum: &'static str },
     #[error("invalid agent_id: {0}")]
     BadAgentId(String),
     #[error("{peer} may not speak for agent {agent_id}")]
@@ -79,7 +85,9 @@ impl From<HandshakeError> for Status {
                 Status::permission_denied(message)
             }
             HandshakeError::HelloTimeout(_) => Status::deadline_exceeded(message),
-            HandshakeError::VersionMismatch { .. } => Status::failed_precondition(message),
+            HandshakeError::VersionMismatch { .. } | HandshakeError::TooOld { .. } => {
+                Status::failed_precondition(message)
+            }
             HandshakeError::Transport(status) => *status,
             HandshakeError::ClosedBeforeHello
             | HandshakeError::NotHello
@@ -115,6 +123,21 @@ fn check_version(peer: &str) -> Result<(), HandshakeError> {
             server: PROTOCOL_VERSION,
         }),
         Some(_) => Ok(()),
+    }
+}
+
+/// Refuses releases older than [`MIN_PEER_VERSION`] (ADR-0055). Builds that
+/// report no version, or something else, are accepted: development builds.
+fn check_release(peer: &str) -> Result<(), HandshakeError> {
+    let minimum: Version = MIN_PEER_VERSION
+        .parse()
+        .expect("MIN_PEER_VERSION is a version");
+    match Version::from_str(peer) {
+        Ok(version) if version < minimum => Err(HandshakeError::TooOld {
+            peer: peer.to_owned(),
+            minimum: MIN_PEER_VERSION,
+        }),
+        _ => Ok(()),
     }
 }
 
@@ -235,6 +258,7 @@ impl AgentStreamService {
             return Err(HandshakeError::NotHello);
         };
         check_version(&hello.protocol_version)?;
+        check_release(&hello.agent_version)?;
         tls::validate_id(&hello.agent_id).map_err(HandshakeError::BadAgentId)?;
         let not_allowed = || HandshakeError::NotAllowed {
             peer: peer.clone(),
@@ -754,6 +778,20 @@ mod tests {
                 matches!(check_version(bad), Err(HandshakeError::BadVersion(_))),
                 "{bad}"
             );
+        }
+    }
+
+    #[test]
+    fn releases_older_than_the_minimum_are_refused() {
+        let minimum: Version = MIN_PEER_VERSION.parse().unwrap();
+        assert!(check_release(MIN_PEER_VERSION).is_ok());
+        assert!(check_release("99.0.0").is_ok());
+        assert!(check_release("").is_ok(), "no version: a development build");
+        assert!(check_release("dev").is_ok());
+        if minimum > "0.0.0".parse().unwrap() {
+            let error = check_release("0.0.0").unwrap_err();
+            assert!(matches!(error, HandshakeError::TooOld { .. }));
+            assert_eq!(Status::from(error).code(), tonic::Code::FailedPrecondition);
         }
     }
 

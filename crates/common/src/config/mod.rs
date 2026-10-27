@@ -1001,6 +1001,24 @@ pub struct ServerConfig {
     /// Limits of the remediation loop (ADR-0043), which runs when `ai` is
     /// enabled.
     pub remediation: RemediationConfig,
+    /// Automatic agent and relay updates (ADR-0055).
+    pub auto_update: AutoUpdateConfig,
+}
+
+/// Automatic updates (ADR-0055). The setting lives in the database and the
+/// web interface; a value here wins over it and locks it there.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AutoUpdateConfig {
+    /// The server-wide default of sites that inherit it. Unset, the
+    /// administrators' choice in the web interface applies (on by default).
+    pub enabled: Option<bool>,
+}
+
+impl AutoUpdateConfig {
+    fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
+        env.set_opt("auto_update.enabled", &mut self.enabled)
+    }
 }
 
 /// Whether `url` can be written into agents' package sources: http or
@@ -1046,6 +1064,7 @@ impl Default for ServerConfig {
             ai: AiConfig::default(),
             proxmox: ProxmoxConfig::default(),
             remediation: RemediationConfig::default(),
+            auto_update: AutoUpdateConfig::default(),
         }
     }
 }
@@ -1402,7 +1421,9 @@ impl LoadConfig for ServerConfig {
         self.mirror.apply_env(env)?;
         self.ai.apply_env(env)?;
         self.proxmox.apply_env(env)?;
+        self.proxmox.apply_env(env)?;
         self.remediation.apply_env(env)?;
+        self.auto_update.apply_env(env)?;
         self.log.apply_env(env)
     }
 

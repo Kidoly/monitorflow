@@ -38,7 +38,10 @@
 //! | GET | `/api/customers` | any role | [`customers::CustomerList`]: `{"customers": [{"id", "name", "site_count"}]}`, see below |
 //! | POST | `/api/customers` | global administrator | body `{"name"}`; 201 [`customers::CustomerView`] |
 //! | POST | `/api/customers/{id}/sites` | customer administrator | body `{"name"}`; 201 [`sites::SiteView`] |
-//! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled"}`; [`sites::SiteView`]; audited (ADR-0053) |
+//! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled": true, false or null}`; [`sites::SiteView`]; audited (ADR-0055) |
+//! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
+//! | PUT | `/api/auto-update` | global administrator | body [`auto_update::SettingsRequest`]; [`auto_update::StatusView`]; audited |
+//! | POST | `/api/auto-update/rollouts/{kind}/{version}/resume` | global administrator | resumes a halted rollout; audited |
 //! | GET | `/api/mirrors` | global administrator | [`mirrors::MirrorList`], see below |
 //! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots` and the last `runs` |
 //! | POST | `/api/mirrors/{id}/sync` | global administrator | 202 [`mirrors::RunSummary`] of the started sync; 409 while busy |
@@ -411,6 +414,7 @@ pub mod access;
 pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
+pub mod auto_update;
 pub mod campaigns;
 pub mod commands;
 pub mod customers;
@@ -481,6 +485,9 @@ pub struct ApiSettings {
     /// Where agents download releases from, and the server's cache of
     /// them (ADR-0053).
     pub agent_releases: agent_releases::Sources,
+    /// `auto_update.enabled` from the configuration, which locks the
+    /// setting in the web interface (ADR-0055).
+    pub auto_update_enabled: Option<bool>,
 }
 
 impl ApiSettings {
@@ -491,6 +498,7 @@ impl ApiSettings {
             session_idle_timeout: Duration::from_secs(config.api_session_idle_timeout),
             mirror_public_url: config.mirror_public_url.clone(),
             agent_releases: agent_releases::Sources::from_config(config),
+            auto_update_enabled: config.auto_update.enabled,
             proxmox_enabled: config.proxmox.enabled,
             proxmox_clusters: config
                 .proxmox
@@ -598,6 +606,14 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/sites/{id}/agent-auto-update",
             put(sites::set_agent_auto_update),
+        )
+        .route(
+            "/api/auto-update",
+            get(auto_update::status).put(auto_update::update),
+        )
+        .route(
+            "/api/auto-update/rollouts/{kind}/{version}/resume",
+            post(auto_update::resume),
         )
         .route("/api/relays", get(relays::list))
         .route("/api/relays/{id}", get(relays::detail))

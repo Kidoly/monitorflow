@@ -1,6 +1,7 @@
 //! `GET /api/sites`: the sites a user may read, for site-level
 //! configuration in the web interface; `PUT
-//! /api/sites/{id}/agent-auto-update` sets the site's policy (ADR-0053).
+//! /api/sites/{id}/agent-auto-update` sets the site's automatic update
+//! override (ADR-0053, ADR-0055).
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -14,6 +15,7 @@ use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
+use crate::auto_update::store;
 
 /// One site.
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -25,9 +27,25 @@ pub struct SiteView {
     pub relay_count: i64,
     pub customer_id: Uuid,
     pub customer_name: String,
-    /// Agents of the site are updated to the newest release the server
-    /// holds (ADR-0053).
-    pub agent_auto_update: bool,
+    /// The site's automatic update override: `null` follows the
+    /// server-wide setting (ADR-0055).
+    pub agent_auto_update: Option<bool>,
+    /// Whether automatic updates apply to the site, override or not.
+    #[sqlx(skip)]
+    pub agent_auto_update_effective: bool,
+}
+
+impl SiteView {
+    fn with_default(mut self, enabled: bool) -> Self {
+        self.agent_auto_update_effective = self.agent_auto_update.unwrap_or(enabled);
+        self
+    }
+}
+
+/// The server-wide default of sites that inherit it.
+async fn auto_update_default(state: &ApiState) -> Result<bool, sqlx::Error> {
+    let (settings, _) = store::settings(&state.pool, state.settings.auto_update_enabled).await?;
+    Ok(settings.enabled)
 }
 
 /// Columns of [`SiteView`]; callers add `WHERE` before the grouping.
@@ -41,13 +59,17 @@ const SELECT_SITES: &str = "SELECT si.id, si.name, count(s.id) AS server_count,
                             LEFT JOIN servers s ON s.site_id = si.id";
 
 /// The site `id`, without access checks.
-pub(super) async fn fetch(pool: &sqlx::PgPool, id: Uuid) -> Result<Option<SiteView>, sqlx::Error> {
-    sqlx::query_as(&format!(
+pub(super) async fn fetch(state: &ApiState, id: Uuid) -> Result<Option<SiteView>, sqlx::Error> {
+    let site: Option<SiteView> = sqlx::query_as(&format!(
         "{SELECT_SITES} WHERE si.id = $1 GROUP BY si.id, c.name"
     ))
     .bind(id)
-    .fetch_optional(pool)
-    .await
+    .fetch_optional(&state.pool)
+    .await?;
+    match site {
+        Some(site) => Ok(Some(site.with_default(auto_update_default(state).await?))),
+        None => Ok(None),
+    }
 }
 
 /// Body of `GET /api/sites`, sorted by name.
@@ -66,7 +88,7 @@ pub async fn list(
         return Err(ApiError::Forbidden);
     }
     let (all_sites, sites) = user.readable_sites().bind();
-    let sites = sqlx::query_as(&format!(
+    let sites: Vec<SiteView> = sqlx::query_as(&format!(
         "{SELECT_SITES}
          WHERE $1 OR si.id = ANY($2)
          GROUP BY si.id, c.name
@@ -76,18 +98,22 @@ pub async fn list(
     .bind(&sites)
     .fetch_all(&state.pool)
     .await?;
+    let enabled = auto_update_default(&state).await?;
+    let sites = sites.into_iter().map(|s| s.with_default(enabled)).collect();
     Ok(Json(SiteList { sites }))
 }
 
-/// Body of `PUT /api/sites/{id}/agent-auto-update`.
+/// Body of `PUT /api/sites/{id}/agent-auto-update`: `true` or `false`
+/// overrides the server-wide setting, `null` inherits it.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AutoUpdateRequest {
-    pub enabled: bool,
+    pub enabled: Option<bool>,
 }
 
 /// `PUT /api/sites/{id}/agent-auto-update`: administrators of the site's
-/// customer turn automatic agent updates on or off; audited.
+/// customer turn automatic updates on or off for it, or make it inherit
+/// the server-wide setting; audited.
 pub async fn set_agent_auto_update(
     State(state): State<ApiState>,
     user: CurrentUser,
@@ -121,8 +147,5 @@ pub async fn set_agent_auto_update(
     )
     .await?;
     tx.commit().await?;
-    fetch(&state.pool, id)
-        .await?
-        .map(Json)
-        .ok_or(ApiError::NotFound)
+    fetch(&state, id).await?.map(Json).ok_or(ApiError::NotFound)
 }

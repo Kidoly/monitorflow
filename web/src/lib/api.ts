@@ -201,8 +201,10 @@ export interface Site {
   relay_count: number;
   customer_id: string;
   customer_name: string;
-  /** Agents are updated to the newest release the server holds (ADR-0053). */
-  agent_auto_update: boolean;
+  /** The site's automatic update override; `null` follows the server-wide setting (ADR-0055). */
+  agent_auto_update: boolean | null;
+  /** Whether automatic updates apply to the site's agents and relays. */
+  agent_auto_update_effective: boolean;
 }
 
 /** One entry of `GET /api/customers`. */
@@ -1027,8 +1029,8 @@ export const api = {
 
   customers: (signal?: AbortSignal) => request<CustomerList>("/api/customers", { signal }),
 
-  /** Turns automatic agent updates of the site on or off; customer administrators only (ADR-0053). */
-  setAgentAutoUpdate: (siteId: string, enabled: boolean) =>
+  /** Overrides automatic updates of the site, or `null` to follow the server-wide setting; customer administrators only (ADR-0055). */
+  setAgentAutoUpdate: (siteId: string, enabled: boolean | null) =>
     request<Site>(`/api/sites/${encodeURIComponent(siteId)}/agent-auto-update`, {
       method: "PUT",
       body: { enabled },

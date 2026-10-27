@@ -848,3 +848,17 @@ fn remediation_limits_default_and_validate() {
         assert!(msg.contains("remediation."), "{msg}");
     }
 }
+
+#[test]
+fn auto_update_follows_the_database_unless_configured() {
+    let server: ServerConfig = parse(SERVER_MIN).unwrap();
+    assert_eq!(server.auto_update.enabled, None);
+    let text = format!("{SERVER_MIN}\n[auto_update]\nenabled = true\n");
+    let server: ServerConfig = parse(&text).unwrap();
+    assert_eq!(server.auto_update.enabled, Some(true));
+    let vars = [("MONITORFLOW_AUTO_UPDATE_ENABLED", "false")];
+    let server: ServerConfig = parse_with_env(&text, path(), &env(&vars)).unwrap();
+    assert_eq!(server.auto_update.enabled, Some(false));
+    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_AUTO_UPDATE_ENABLED", "maybe")]);
+    assert!(msg.contains("AUTO_UPDATE_ENABLED"), "{msg}");
+}
