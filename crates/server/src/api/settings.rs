@@ -173,9 +173,15 @@ pub async fn set_agent_install(
         .map(|url| url.trim().trim_end_matches('/').to_owned())
         .filter(|url| !url.is_empty());
     if let Some(url) = &custom_url {
-        if !(url.starts_with("https://") && valid_mirror_url(url)) {
+        // It goes into shell and PowerShell commands as it is.
+        let plain = url
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-._~:/[]%+".contains(c));
+        if !(url.starts_with("https://") && valid_mirror_url(url) && plain) {
             return Err(ApiError::Invalid(
-                "custom_url must be an https URL without user, query or fragment".into(),
+                "custom_url must be an https URL without user, query or fragment, \
+                 of letters, digits and -._~:/[]%+"
+                    .into(),
             ));
         }
     }

@@ -39,9 +39,6 @@ pub struct EnrollmentSettings {
     pub upstream_url: String,
     /// `enroll_url` of this server's enrollment listener.
     pub enroll_url: String,
-    /// Base URL of the agent release files (ADR-0052), without a trailing
-    /// slash.
-    pub agent_download_url: String,
 }
 
 impl EnrollmentSettings {
@@ -60,7 +57,6 @@ impl EnrollmentSettings {
             ca_fingerprint,
             upstream_url: format!("https://{host}:{}", config.grpc_listen_addr.port()),
             enroll_url: format!("https://{host}:{}", config.enroll_listen_addr.port()),
-            agent_download_url: config.agent_download_url.trim_end_matches('/').to_owned(),
         }
     }
 }
@@ -155,8 +151,6 @@ pub struct CreatedToken {
     pub token: String,
     pub upstream_url: String,
     pub enroll_url: String,
-    /// Where the install commands download the agent from (ADR-0052).
-    pub agent_download_url: String,
     /// The install sources and the default one (ADR-0054).
     pub install: super::settings::AgentInstall,
 }
@@ -259,7 +253,6 @@ pub async fn create(
             token: created.token.to_secret_string().expose().to_owned(),
             upstream_url: settings.upstream_url.clone(),
             enroll_url: settings.enroll_url.clone(),
-            agent_download_url: settings.agent_download_url.clone(),
             install,
         }),
     ))
@@ -385,22 +378,6 @@ mod tests {
         config.server_names = vec!["::1".into()];
         let settings = EnrollmentSettings::from_config(&config, [0; 32]);
         assert_eq!(settings.enroll_url, "https://[::1]:7445");
-    }
-
-    #[test]
-    fn download_url_comes_from_the_config_without_trailing_slash() {
-        let mut config = ServerConfig::default();
-        let settings = EnrollmentSettings::from_config(&config, [0; 32]);
-        assert_eq!(
-            settings.agent_download_url,
-            monitorflow_common::config::DEFAULT_AGENT_DOWNLOAD_URL
-        );
-        config.agent_download_url = "https://files.example/mf/0.2.0/".into();
-        let settings = EnrollmentSettings::from_config(&config, [0; 32]);
-        assert_eq!(
-            settings.agent_download_url,
-            "https://files.example/mf/0.2.0"
-        );
     }
 
     #[test]
