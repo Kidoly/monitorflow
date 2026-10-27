@@ -1584,6 +1584,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "monitorflow-updater"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "chrono",
+ "clap",
+ "monitorflow-common",
+ "reqwest",
+ "ring",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "multimap"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
