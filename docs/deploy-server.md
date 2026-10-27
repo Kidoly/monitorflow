@@ -1,12 +1,14 @@
 # Installing the server
 
-How to run the central server with Docker Compose: the server, the web interface behind Caddy, PostgreSQL, VictoriaMetrics and VictoriaLogs on one host (ADR-0051). For agents, see [Installing the agent](deploy-agent.md).
+How to run the central server with Docker Compose: the server, the web interface behind Caddy, PostgreSQL, VictoriaMetrics and VictoriaLogs on one host (ADR-0051), and the updater that installs new releases from the web interface (ADR-0056). For agents, see [Installing the agent](deploy-agent.md).
 
 ## Requirements
 
 - Docker Engine 23 or later with the compose and buildx plugins (`docker-compose-plugin` and `docker-buildx-plugin` in Docker's packages). The images use BuildKit features.
 - 2 vCPU and 4 GB of RAM for a few dozen agents, and disk for metrics and logs, kept 90 and 30 days by default.
 - Inbound ports: 443 and 80 for browsers, 7443 (gRPC, mTLS) and 7445 (enrollment) for agents and relays.
+- For updates from the web interface: outbound HTTPS to `github.com` and `ghcr.io`, or to your own copy of the releases (see [Offline servers](#offline-servers)), and disk for the database dumps taken before each update.
+- The `updater` service mounts the Docker socket, `/var/run/docker.sock`, which gives it root on the host. It has no listener and only installs releases signed by the project's key. With rootless Docker, set `DOCKER_SOCKET` in `deploy/.env` to your socket.
 
 ## First start
 
@@ -52,6 +54,8 @@ docker compose -f deploy/docker-compose.yml exec server monitorflow-server agent
 docker compose -f deploy/docker-compose.yml exec server monitorflow-server agent-release list
 ```
 
+An update of the server from the web interface imports its release this way by itself ([Updating](#updating)).
+
 Then choose "This server" as the default install source on the tokens page, or set `AGENT_INSTALL_SOURCE=central` in `deploy/.env`. Releases stay in the `serverdata` volume.
 
 The web image's Caddy forwards `/agent/*` to the server like `/api/*`. With a reverse proxy of your own, forward both paths to the API listener.
@@ -75,6 +79,8 @@ Volumes are prefixed with the project name, like `monitorflow_serverdata`.
 | `vmdata`, `vldata` | Metrics and logs |
 | `dbcerts` | Certificates of the database link, created again when the volume is empty |
 | `caddydata` | Caddy's certificates and CA |
+| `backups` | Database dumps taken before each update; `BACKUP_DIR` in `deploy/.env` puts them in a host directory instead |
+| `update`, `updater` | Update requests and status, and the updater's own state |
 
 Back up `serverdata` and a dump of the database:
 
@@ -82,14 +88,78 @@ Back up `serverdata` and a dump of the database:
 docker compose -f deploy/docker-compose.yml exec -T postgres pg_dump -U monitorflow monitorflow | gzip > monitorflow-db.sql.gz
 ```
 
-## Upgrading
+## Updating
+
+### From the web interface
+
+In **Administration, Server update** (global administrators):
+
+1. **Check for updates.** The server fetches the latest release from GitHub, or from `RELEASE_URL` when set (else `AGENT_DOWNLOAD_URL`), checks its signature and shows the version, the release notes and what changes: the server, the web interface, the updater and the agent release.
+2. **Update to …**, then confirm. The updater:
+   - verifies the release again with the keys built into it, and refuses anything that is not newer than the running server;
+   - pulls the release's images by digest;
+   - dumps the database into the `backups` volume (`monitorflow-<from>-to-<to>-<time>.dump`);
+   - pins the images in `deploy/.env` (`SERVER_IMAGE`, `WEB_IMAGE`, `UPDATER_IMAGE`);
+   - recreates `server` and `web` and waits until the server is healthy and reports the new version;
+   - adds the release's agents to the server's cache, so agents can follow (ADR-0053);
+   - replaces itself last.
+
+The update is audited (`server.update`). The page follows it, keeps the last status while the server and the web interface restart, and shows the result; reload the page afterwards to get the new web interface. Agents and relays reconnect by themselves.
+
+A deployment built from a checkout updates the same way: the first update switches it to the published images.
+
+The updater changes images only. When a release changes `docker-compose.yml` itself, its notes say so; update the file by hand (`git pull`) and run `docker compose -f deploy/docker-compose.yml up -d --wait`.
+
+### When an update fails
+
+If the new version does not become healthy, the updater puts the previous images back in `deploy/.env` and restarts them. Nothing else is needed when no migration ran: the page says that the previous version runs again with the same data.
+
+Migrations are forward-only: a server refuses a database migrated by a newer version. If the new version had already migrated the database when it failed, the previous version cannot start on it, and the page says so and names the backup. Restore it as below. Data written between the backup and the failure is lost.
+
+### Restoring after a failed update
+
+On the server host, with the dump named on the page:
+
+```
+docker compose -f deploy/docker-compose.yml stop server
+docker compose -f deploy/docker-compose.yml exec -T postgres dropdb -U monitorflow --force monitorflow
+docker compose -f deploy/docker-compose.yml exec -T postgres createdb -U monitorflow monitorflow
+docker compose -f deploy/docker-compose.yml exec -T postgres pg_restore -U monitorflow -d monitorflow --no-owner /backups/<dump>
+docker compose -f deploy/docker-compose.yml up -d --wait server
+```
+
+PostgreSQL mounts the `backups` volume read-only at `/backups` for this. The updater does not delete dumps: remove old ones from the volume, or from `BACKUP_DIR`, yourself.
+
+### Offline servers
+
+Without Internet access, Check for updates says that no update can be checked. Update by hand with the same updater, which still verifies the release, backs up the database and rolls back:
+
+1. On a machine with access, download the release files into a directory: at least `SHA256SUMS`, `SHA256SUMS.sig`, `VERSION` and `images.json`, and the agent files for the agent cache (`https://github.com/Kidoly/monitorflow/releases/download/v<version>/<name>`).
+2. Pull each image of `images.json` for the server's platform and save them:
+   ```
+   for ref in $(jq -r '.images[]' images.json); do docker pull --platform linux/amd64 "$ref"; done
+   docker save --platform linux/amd64 -o monitorflow-images.tar $(jq -r '.images[]' images.json)
+   ```
+3. Copy the directory and the archive to the server, load the images, and run the update:
+   ```
+   docker load -i monitorflow-images.tar
+   docker compose -f deploy/docker-compose.yml run --rm -v "$PWD/release:/release:ro" updater update --dir /release
+   ```
+
+Loaded images keep their digests only with Docker's containerd image store, the default of new installations since Docker Engine 29 (`docker info -f '{{.DriverStatus}}'` lists `io.containerd.snapshotter.v1`). With the older store the updater cannot find them by digest and tries to pull them, which fails offline; the update then stops before changing anything.
+
+To serve releases to several offline servers, copy the release files to a web server of the site and set `RELEASE_URL` in `deploy/.env` (http or https: the signature protects the files). The images still come from the archive.
+
+### From a checkout
+
+Without the updater, or to run your own builds:
 
 ```
 git pull
 docker compose -f deploy/docker-compose.yml up -d --build --wait
 ```
 
-The server applies database migrations when it starts.
+The server applies database migrations when it starts. Remove the `*_IMAGE` lines from `deploy/.env` first if an update had pinned published images; going back to a build older than the release you ran is a downgrade, which the database refuses.
 
 ## Other settings
 
