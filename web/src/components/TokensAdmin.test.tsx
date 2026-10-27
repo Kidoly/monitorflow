@@ -103,11 +103,21 @@ describe("TokensAdmin", () => {
     // The warning comes before the secret.
     const alert = within(panel).getByRole("alert");
     expect(alert).toHaveTextContent("This token will not be shown again.");
-    expect(alert.compareDocumentPosition(within(panel).getByRole("textbox"))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(alert.compareDocumentPosition(within(panel).getByRole("textbox", { name: "Token" }))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
     expect(within(panel).getByLabelText(/Configuration snippet/)).toHaveTextContent(
       `upstream_url = "https://mf.example:7443" enroll_url = "https://mf.example:7445" enrollment_token = "${SECRET}"`,
     );
     expect(panel).toHaveTextContent("/etc/monitorflow/relay.toml");
+    // The relay's one-liner, from the default source.
+    const install = within(panel).getByRole("group", { name: "Install the relay" });
+    expect(within(install).getByLabelText(/^Linux/)).toHaveTextContent(
+      `| sudo MF_ROLE=relay MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
+    );
+    await user.type(within(install).getByLabelText(/Serve mirrors at/), "http://relay1.example:7480");
+    expect(within(install).getByLabelText(/^Linux/)).toHaveTextContent("MF_MIRROR_URL=http://relay1.example:7480");
+    expect(within(panel).queryByRole("group", { name: "Install the agent" })).not.toBeInTheDocument();
     const post = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "POST");
     expect(requestHeaders(fetchMock, post)[CSRF_HEADER]).toBe("1");
     expect(JSON.parse(String(fetchMock.mock.calls[post]?.[1]?.body))).toEqual({

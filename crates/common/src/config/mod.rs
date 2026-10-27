@@ -954,6 +954,11 @@ pub struct ServerConfig {
     /// Enrollment listener: TLS without client certificates, serving only
     /// `EnrollService` (ADR-0007).
     pub enroll_listen_addr: SocketAddr,
+    /// Ports peers reach the two listeners at, when they differ from the
+    /// listeners' own, as behind a published container port; written in
+    /// the install commands of new tokens.
+    pub grpc_public_port: Option<u16>,
+    pub enroll_public_port: Option<u16>,
     /// Plain HTTP listener for the REST API, meant to sit behind a TLS
     /// reverse proxy on the same host (ADR-0006). Defaults to loopback.
     pub api_listen_addr: SocketAddr,
@@ -1077,6 +1082,8 @@ impl Default for ServerConfig {
         Self {
             grpc_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7443)),
             enroll_listen_addr: SocketAddr::from(([0, 0, 0, 0], DEFAULT_ENROLL_PORT)),
+            grpc_public_port: None,
+            enroll_public_port: None,
             api_listen_addr: SocketAddr::from(([127, 0, 0, 1], 7444)),
             api_cookie_secure: true,
             api_session_lifetime: 12 * 60 * 60,
@@ -1479,6 +1486,8 @@ impl LoadConfig for ServerConfig {
     fn apply_env(&mut self, env: &Overrides<'_>) -> Result<(), ConfigError> {
         env.set("grpc_listen_addr", &mut self.grpc_listen_addr)?;
         env.set("enroll_listen_addr", &mut self.enroll_listen_addr)?;
+        env.set_opt("grpc_public_port", &mut self.grpc_public_port)?;
+        env.set_opt("enroll_public_port", &mut self.enroll_public_port)?;
         env.set("api_listen_addr", &mut self.api_listen_addr)?;
         env.set("api_cookie_secure", &mut self.api_cookie_secure)?;
         env.set("api_session_lifetime", &mut self.api_session_lifetime)?;
