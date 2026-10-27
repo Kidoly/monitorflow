@@ -4,6 +4,8 @@
 /web/out
 .env
 *.pem
+# Public release keys only (ADR-0053); never a private key.
+!deploy/release-keys.pem
 *.key
 /deploy/data
 /deploy/dev-certs
