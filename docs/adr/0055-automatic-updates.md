@@ -63,12 +63,14 @@ Relays get what agents have (ADR-0052, ADR-0053):
 
 - **Releases.** The release workflow builds `monitorflow-relay-linux-x86_64` and `-aarch64` statically like the agent, listed in the same `SHA256SUMS`, signed by the same key. The server's cache and the relays' copies keep the relay binaries too.
 - **Installer.** `install.sh` installs a relay with `MF_ROLE=relay`, doing exactly the steps of the relay guide (`docs/deploy-relay.md`): the binary, a system user `monitorflow-relay`, its directories, `relay.toml`, the sudo rule of its helper and the unit `monitorflow-relay`.
-- **Self-update.** The relay accepts, on its own stream, a signed `self_update` command addressed to itself (ADR-0031's signature and checks), downloads and checks the release with `common::release` like the agent, and hands it to `sudo -n /usr/bin/monitorflow-relay self-update`: the same helper, swap and watchdog as the agent's, moved to `crates/common`, with the relay's paths and unit. The watchdog's proof is the relay's stream to its upstream being accepted again; without it within the timeout the previous binary is put back.
+- **Self-update.** The relay accepts, on its own stream, a signed `self_update` command addressed to itself and runs it through the agent's command dispatcher (ADR-0031's signature, target, expiry and journal checks), which downloads and checks the release with `common::release` and hands it to `sudo -n /usr/bin/monitorflow-relay self-update`. The relay links the agent's library for this: the dispatcher, the download, the root helper, the swap and the watchdog take a *product* (the agent or the relay: binary, unit, watchdog unit, root's state directory `/var/lib/monitorflow/relay-self-update`, release file), so there is one implementation of each step. The watchdog's proof is the relay's own stream being accepted upstream again, which the relay records in `<data_dir>/self-update/connected`; without it within the timeout the previous binary is put back. Results go up on the relay's stream; a result the restart interrupted is answered from the status file when the server sends the command again, as for agents.
 - **Server side.** The server records each relay's version from its `Hello`, shows it with the relays, queues relay updates by hand or automatically with the policy above, and receives their results on the relay's stream.
 
 Agents behind a relay keep working while it restarts: their streams drop and reconnect with the usual backoff (ADR-0009), and they keep their samples in memory until then, as for any upstream outage.
 
 ### Rejected
+
+- **Moving the self-update code to `crates/common`.** It depends on the agent's dispatcher, journal and sudo runner; moving them all would touch most of the agent for no change in behaviour. The relay depends on the agent's library instead, which costs build time, not binary size.
 
 - **Campaigns as the automatic engine.** Campaigns belong to one customer and freeze their targets at creation, so automatic updates would need one campaign per site and release and new ones for every server enrolled later, filling the campaigns page. The policy above shares their ideas (waves, a failure threshold, pause) without their bookkeeping; campaigns remain for scheduled, windowed rollouts.
 - **Fleet-wide canary.** A few canaries for the whole fleet would leave sites with distinct distributions or networks untested until their whole fleet moves; one per site costs a few minutes per site and isolates them.
@@ -86,5 +88,5 @@ Agents behind a relay keep working while it restarts: their streams drop and rec
 1. Settings, site overrides, the policy, rollouts and their halt, the minimum peer version, the API.
 2. Admin › Updates in the web interface.
 3. Relay releases, installer and guide.
-4. Relay self-update: the shared helper and watchdog, signed commands on the relay's stream.
+4. Relay self-update: the helper and watchdog for the relay's product, signed commands on the relay's stream.
 5. Relay versions, relay updates by hand and automatic, relays before their agents, end-to-end tests.

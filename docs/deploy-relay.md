@@ -86,6 +86,16 @@ The relay runs as `monitorflow-relay` and needs root for one thing only: replaci
 
 With `MF_MIRROR_URL` (or `[mirror] enabled = true` and `public_url`), the relay copies the server's package mirrors and agent releases and serves them on port 7480 (ADR-0034, ADR-0037): agents of the site then download from it. A copy of every mirror can take tens of gigabytes under `/var/lib/monitorflow/relay/mirrors`; `mirror.mirrors` limits it to some.
 
+## Self-update
+
+The server updates relays like agents (ADR-0053, ADR-0055): a signed `self_update` command, sent on the relay's own stream, makes the relay download the release, check its signature against the release keys built into it, and hand it to its root helper:
+
+1. `sudo -n /usr/bin/monitorflow-relay self-update` checks the release again as root, writes the new binary next to `/usr/bin/monitorflow-relay`, keeps the running one as `/var/lib/monitorflow/relay-self-update/previous` and renames the new one into place.
+2. It starts the watchdog in a transient unit, `monitorflow-relay-self-update`, from the previous binary. The watchdog restarts `monitorflow-relay` and waits for the new relay's stream to be accepted upstream (5 minutes by default).
+3. If it is not in time, the watchdog puts the previous binary back and restarts the relay; the command fails with "rolled back to …".
+
+The outcome is in `/var/lib/monitorflow/relay-self-update/status.json`, the watchdog's log in `journalctl -u monitorflow-relay-self-update`. Agents behind the relay reconnect on their own after the restart, a few seconds later. Relays installed by hand before this guide lack the sudo rule: run the installer once with `MF_ROLE=relay`.
+
 ## Checking it
 
 ```
