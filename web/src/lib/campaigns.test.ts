@@ -176,3 +176,16 @@ describe("campaign states and labels", () => {
     expect(once(new Date(2026, 9, 23, 22, 0), new Date(2026, 9, 24, 4, 0))).toBe("23 Oct 22:00–24 Oct 04:00");
   });
 });
+
+describe("agent update campaigns", () => {
+  it("send the version only, and say so", () => {
+    const request = toRequest({ ...emptyDraft("c1"), name: "a", update: "agent", agentVersion: "0.3.0", allowReboot: true });
+    expect(request).toMatchObject({ packages: [], security_only: false, allow_reboot: false, agent_version: "0.3.0" });
+    expect(toRequest(emptyDraft("c1")).agent_version).toBeUndefined();
+    expect(validateCampaign({ ...request, agent_version: "" }, ["s1"])).toContain("Choose the agent version to update to.");
+    expect(describeUpdate({ packages: [], security_only: false, allow_reboot: false }, "0.3.0")).toBe("Agent update to 0.3.0");
+    expect(
+      campaignSubline({ wave_count: 2, sources: null, spec: { packages: [], security_only: false, allow_reboot: false }, agent_version: "0.3.0" }),
+    ).toBe("2 waves · agent 0.3.0");
+  });
+});

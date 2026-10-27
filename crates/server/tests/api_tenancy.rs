@@ -812,6 +812,11 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 "{last}"
             );
         }
+        ("PUT", "/api/sites/{id}/agent-auto-update") => {
+            let uri = path.replace("{id}", &b.site.to_string());
+            let body = Some(json!({ "enabled": true }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
         ("GET", "/api/sites/{id}/sensor_configs") | ("GET", "/api/sites/{id}/thresholds") => {
             let uri = path.replace("{id}", &b.site.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");

@@ -177,6 +177,7 @@ impl Fleet {
                     snapshot: "s1".into(),
                 }],
             }),
+            agent_version: None,
             created_by: None,
         }
     }

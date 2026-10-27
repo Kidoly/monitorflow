@@ -86,6 +86,7 @@ export function SitesAdmin({ me }: { me: Me }) {
             }))}
           canCreate={administersCustomer(me, customer.id)}
           onCreated={refresh}
+          onChanged={refresh}
         />
       ))}
     </div>
@@ -97,11 +98,13 @@ function CustomerSites({
   rows,
   canCreate,
   onCreated,
+  onChanged,
 }: {
   customer: Customer;
   rows: Row[];
   canCreate: boolean;
   onCreated: () => void;
+  onChanged: () => void;
 }) {
   const titleId = useId();
   const servers = rows.reduce((n, row) => n + row.server_count, 0);
@@ -133,6 +136,11 @@ function CustomerSites({
         </>
       ),
     },
+    {
+      key: "auto-update",
+      header: "Agent updates",
+      cell: (site) => <AutoUpdate site={site} canChange={canCreate} onChanged={onChanged} />,
+    },
   ];
   return (
     <section className={styles.section} aria-labelledby={titleId}>
@@ -151,6 +159,38 @@ function CustomerSites({
       )}
       {canCreate && <CreateSite customer={customer} onCreated={onCreated} />}
     </section>
+  );
+}
+
+/**
+ * Whether the server updates the site's agents to the newest release it
+ * holds (ADR-0053), with a button for its customer's administrators.
+ */
+function AutoUpdate({ site, canChange, onChanged }: { site: Row; canChange: boolean; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const state = site.agent_auto_update ? "Automatic" : "Manual";
+  if (!canChange) return <span className={styles.dim}>{state}</span>;
+  async function toggle() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.setAgentAutoUpdate(site.id, !site.agent_auto_update);
+      onChanged();
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <span className={styles.dim}>{state}</span>{" "}
+      <Button size="small" disabled={busy} onClick={() => void toggle()} aria-label={`${site.agent_auto_update ? "Stop" : "Start"} automatic agent updates for ${site.name}`}>
+        {site.agent_auto_update ? "Turn off" : "Turn on"}
+      </Button>
+      {error && <span role="alert"> {error}</span>}
+    </>
   );
 }
 

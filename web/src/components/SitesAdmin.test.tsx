@@ -17,6 +17,7 @@ const site = (id: string, name: string, customer_id: string, customer_name: stri
   relay_count: 1,
   customer_id,
   customer_name,
+  agent_auto_update: false,
 });
 
 const servers = {
@@ -117,5 +118,36 @@ describe("SitesAdmin", () => {
     await userEvent.type(await screen.findByLabelText("New site name"), "paris");
     await userEvent.click(screen.getByRole("button", { name: "Create site" }));
     expect(await screen.findByRole("alert")).toHaveTextContent('A site named "paris" already exists.');
+  });
+
+  it("turns automatic agent updates on for administrators only", async () => {
+    const paris = site("s1", "paris", "c1", "acme");
+    const fetchMock = stubFetch({
+      "GET /api/customers": {
+        status: 200,
+        body: {
+          customers: [
+            { id: "c1", name: "acme", site_count: 1 },
+            { id: "c2", name: "globex", site_count: 1 },
+          ],
+        },
+      },
+      "GET /api/sites": [
+        { status: 200, body: { sites: [paris, site("s2", "lyon", "c2", "globex")] } },
+        { status: 200, body: { sites: [{ ...paris, agent_auto_update: true }, site("s2", "lyon", "c2", "globex")] } },
+      ],
+      "GET /api/servers": servers,
+      "GET /api/relays": relays,
+      "PUT /api/sites/s1/agent-auto-update": { status: 200, body: { ...paris, agent_auto_update: true } },
+    });
+    render(<SitesAdmin me={customerAdmin} />);
+    const acme = await screen.findByRole("region", { name: "acme" });
+    expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent("Manual");
+    expect(within(screen.getByRole("region", { name: "globex" })).queryByRole("button", { name: /automatic agent updates/ })).not.toBeInTheDocument();
+    await userEvent.click(within(acme).getByRole("button", { name: "Start automatic agent updates for paris" }));
+    const call = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(call?.[1]?.body).toBe(JSON.stringify({ enabled: true }));
+    expect(await within(acme).findByRole("button", { name: "Stop automatic agent updates for paris" })).toBeInTheDocument();
+    expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent("Automatic");
   });
 });

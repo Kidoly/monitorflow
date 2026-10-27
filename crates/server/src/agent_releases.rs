@@ -12,7 +12,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use monitorflow_common::config::ServerConfig;
+use monitorflow_common::proto::v1::SelfUpdate;
 use monitorflow_common::release::{self, Platform, PublicKey, ReleaseError, Version};
+use prost::Message;
 
 /// Directory under `mirror_dir`, and the URL path of the mirror listener.
 pub const DIR: &str = monitorflow_common::mirror::serve::AGENT_DIR;
@@ -154,6 +157,46 @@ pub fn latest(versions: &[Version]) -> Option<&Version> {
         .filter(|v| v.pre.is_empty())
         .max()
         .or_else(|| versions.iter().max())
+}
+
+/// What a `self_update` command needs to say where releases are.
+#[derive(Debug, Clone)]
+pub struct Sources {
+    pub cache: ReleaseCache,
+    pub mirror_public_url: Option<String>,
+    pub agent_download_url: String,
+}
+
+impl Sources {
+    pub fn from_config(config: &ServerConfig) -> Self {
+        Self {
+            cache: ReleaseCache::in_mirror_dir(&config.mirror_dir()),
+            mirror_public_url: config.mirror_public_url.clone(),
+            agent_download_url: config.agent_download_url.clone(),
+        }
+    }
+
+    /// The payload of a `self_update` to `version`; `health_timeout_seconds`
+    /// is checked by the caller (0 for the agent's default).
+    pub fn payload(
+        &self,
+        version: &Version,
+        allow_downgrade: bool,
+        health_timeout_seconds: u32,
+    ) -> Vec<u8> {
+        SelfUpdate {
+            version: version.to_string(),
+            base_urls: sources(
+                version,
+                self.cache.has(version),
+                self.mirror_public_url.as_deref(),
+                &self.agent_download_url,
+            ),
+            allow_downgrade,
+            health_timeout_seconds,
+        }
+        .encode_to_vec()
+    }
 }
 
 /// Where the default `agent_download_url` points: the latest release.

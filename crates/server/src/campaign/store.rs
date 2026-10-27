@@ -19,11 +19,12 @@ use crate::api::audit::{self, Event};
 use crate::api::commands::unfit_message;
 use crate::commands::sources::os_family;
 use crate::mirror::Family;
+use monitorflow_common::release::Version;
 
 pub(super) const COLUMNS: &str =
     "id, customer_id, name, site_id, packages, security_only, allow_reboot,
      command_ttl_s, failure_threshold, failure_threshold_unit, state, current_wave, error,
-     created_by, created_at, started_at, finished_at, sources_mode";
+     created_by, created_at, started_at, finished_at, sources_mode, agent_version";
 
 /// Who acts, as `(actor_kind, actor_id)` of the audit log.
 pub type Actor<'a> = (&'a str, &'a str);
@@ -43,6 +44,8 @@ pub struct NewCampaign {
     pub windows: Vec<Window>,
     /// Snapshots to pin the servers to during their update (ADR-0038).
     pub sources: Option<SourcesPin>,
+    /// Update the agents to this version instead of packages (ADR-0053).
+    pub agent_version: Option<Version>,
     pub created_by: Option<Uuid>,
 }
 
@@ -84,6 +87,8 @@ pub struct CampaignRow {
     pub finished_at: Option<DateTime<Utc>>,
     /// Set when the campaign pins snapshots (ADR-0038).
     pub sources_mode: Option<SourcesMode>,
+    /// Set for an agent update campaign (ADR-0053).
+    pub agent_version: Option<String>,
 }
 
 impl CampaignRow {
@@ -169,12 +174,26 @@ impl CampaignStore {
         if let Some(pin) = &new.sources {
             pin.validate().map_err(CampaignError::Invalid)?;
         }
+        let spec = &new.spec;
+        let package_options = !spec.packages.is_empty()
+            || spec.security_only
+            || spec.allow_reboot
+            || new.sources.is_some();
+        if new.agent_version.is_some() && package_options {
+            return Err(CampaignError::Invalid(
+                "an agent update campaign takes no packages, security_only, allow_reboot or sources"
+                    .into(),
+            ));
+        }
         let mut tx = self.pool.begin().await?;
         check_timezones(&mut tx, &windows).await?;
         let targets = targets(&mut tx, new).await?;
         let waves =
             plan_waves(&targets, &new.waves).map_err(|e| CampaignError::Invalid(e.to_string()))?;
         check_names(&mut tx, &new.spec.packages, &targets).await?;
+        if new.agent_version.is_some() {
+            check_self_update_targets(&mut tx, &targets).await?;
+        }
         let pinned = match &new.sources {
             Some(pin) => pinned_snapshots(&mut tx, pin, &targets).await?,
             None => Vec::new(),
@@ -183,8 +202,8 @@ impl CampaignStore {
         let row: CampaignRow = sqlx::query_as(&format!(
             "INSERT INTO campaigns (customer_id, name, site_id, packages, security_only,
                  allow_reboot, command_ttl_s, failure_threshold, failure_threshold_unit, created_by,
-                 sources_mode)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                 sources_mode, agent_version)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              RETURNING {COLUMNS}"
         ))
         .bind(new.customer_id)
@@ -198,6 +217,7 @@ impl CampaignStore {
         .bind(new.failure_threshold.unit)
         .bind(new.created_by)
         .bind(new.sources.as_ref().map(|p| p.mode))
+        .bind(new.agent_version.as_ref().map(ToString::to_string))
         .fetch_one(&mut *tx)
         .await?;
         let (mirror_ids, snapshot_ids): (Vec<Uuid>, Vec<Uuid>) = pinned.into_iter().unzip();
@@ -425,6 +445,26 @@ async fn check_names(
         }
     }
     Ok(())
+}
+
+/// Agent update campaigns cannot target Windows servers yet (ADR-0053).
+async fn check_self_update_targets(
+    conn: &mut PgConnection,
+    targets: &[Uuid],
+) -> Result<(), CampaignError> {
+    let windows: Option<String> = sqlx::query_scalar(
+        "SELECT hostname FROM servers WHERE id = ANY($1) AND os_family = 'windows'
+         ORDER BY hostname LIMIT 1",
+    )
+    .bind(targets)
+    .fetch_optional(conn)
+    .await?;
+    match windows {
+        Some(host) => Err(CampaignError::Invalid(format!(
+            "{host} is a windows server: self-update is not supported on windows servers yet"
+        ))),
+        None => Ok(()),
+    }
 }
 
 /// `(mirror_id, snapshot_id)` of each mirror `pin` names: the snapshot

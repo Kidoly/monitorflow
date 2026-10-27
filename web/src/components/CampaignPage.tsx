@@ -92,7 +92,7 @@ export function CampaignPage({ id, me }: { id: string | null; me: Me }) {
   const { progress } = campaign;
   const facts = [
     { label: "Customer", value: campaign.customer_name },
-    { label: "Update", value: describeUpdate(campaign.spec) },
+    { label: "Update", value: describeUpdate(campaign.spec, campaign.agent_version) },
     { label: "Stops at", value: describeThreshold(campaign.failure_threshold) },
     {
       label: "Windows",

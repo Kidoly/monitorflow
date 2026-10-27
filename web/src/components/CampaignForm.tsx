@@ -56,6 +56,8 @@ interface Inventory {
 export function CampaignForm({ me }: { me: Me }) {
   const router = useRouter();
   const [inventory, setInventory] = useState<Inventory | null>(null);
+  // Agent versions the server holds (ADR-0053); none when unreadable.
+  const [agentVersions, setAgentVersions] = useState<string[]>([]);
   const [draft, setDraft] = useState<CampaignDraft>(emptyDraft());
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -64,6 +66,13 @@ export function CampaignForm({ me }: { me: Me }) {
   useEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
+    api.agentReleases(signal).then(
+      (releases) => {
+        setAgentVersions(releases.versions);
+        setDraft((d) => (d.agentVersion ? d : { ...d, agentVersion: releases.latest ?? "" }));
+      },
+      () => setAgentVersions([]),
+    );
     Promise.all([api.customers(signal), api.sites(signal), api.servers(signal)]).then(
       ([customers, sites, servers]) => {
         const administered = customers.customers.filter((c) => administersCustomer(me, c.id));
@@ -204,14 +213,29 @@ export function CampaignForm({ me }: { me: Me }) {
                 ["all", "All upgrades"],
                 ["security", "Security updates only"],
                 ["packages", "These packages"],
+                ["agent", "The MonitorFlow agent"],
               ] as [UpdateKind, string][]
-            ).map(([kind, label]) => (
-              <label key={kind} className={own.inline}>
-                <input type="radio" name="update" checked={draft.update === kind} onChange={() => set({ update: kind })} />
-                {label}
-              </label>
-            ))}
+            )
+              .filter(([kind]) => kind !== "agent" || agentVersions.length > 0)
+              .map(([kind, label]) => (
+                <label key={kind} className={own.inline}>
+                  <input type="radio" name="update" checked={draft.update === kind} onChange={() => set({ update: kind })} />
+                  {label}
+                </label>
+              ))}
           </div>
+          {draft.update === "agent" && (
+            <label className={own.fld}>
+              Agent version
+              <select className={fieldClass} value={draft.agentVersion} onChange={(e) => set({ agentVersion: e.target.value })}>
+                {agentVersions.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {draft.update === "packages" && (
             <label className={own.fld}>
               Packages, or KB numbers for Windows servers
@@ -225,14 +249,16 @@ export function CampaignForm({ me }: { me: Me }) {
             </label>
           )}
           <div className={own.row}>
-            <label className={own.inline}>
-              <input
-                type="checkbox"
-                checked={draft.allowReboot}
-                onChange={(e) => set({ allowReboot: e.target.checked })}
-              />
-              Allow reboot
-            </label>
+            {draft.update !== "agent" && (
+              <label className={own.inline}>
+                <input
+                  type="checkbox"
+                  checked={draft.allowReboot}
+                  onChange={(e) => set({ allowReboot: e.target.checked })}
+                />
+                Allow reboot
+              </label>
+            )}
             <label className={own.fld}>
               Each command may start within
               <select className={fieldClass} value={draft.ttl} onChange={(e) => set({ ttl: Number(e.target.value) })}>

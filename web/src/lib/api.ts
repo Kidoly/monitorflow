@@ -201,6 +201,8 @@ export interface Site {
   relay_count: number;
   customer_id: string;
   customer_name: string;
+  /** Agents are updated to the newest release the server holds (ADR-0053). */
+  agent_auto_update: boolean;
 }
 
 /** One entry of `GET /api/customers`. */
@@ -674,6 +676,8 @@ export interface Campaign {
   windows: CampaignWindow[];
   /** The pinned snapshots, if any. */
   sources: SourcesPin | null;
+  /** Set for an agent update campaign: the version agents update to (ADR-0053). */
+  agent_version: string | null;
   wave_count: number;
   /** Index from 0; null until the first wave is queued. */
   current_wave: number | null;
@@ -745,6 +749,8 @@ export interface CampaignRequest {
   command_ttl_s: number;
   failure_threshold: FailureThreshold;
   windows: CampaignWindow[];
+  /** An agent update campaign instead of packages (ADR-0053). */
+  agent_version?: string;
 }
 
 /** A package of a server's latest report (ADR-0031). */
@@ -874,7 +880,7 @@ export function setUnauthorizedHandler(handler: () => void): () => void {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   signal?: AbortSignal;
   /** Call the unauthorized handler on 401. Off for login, where 401 means bad credentials. */
@@ -1020,6 +1026,13 @@ export const api = {
   sites: (signal?: AbortSignal) => request<SiteList>("/api/sites", { signal }),
 
   customers: (signal?: AbortSignal) => request<CustomerList>("/api/customers", { signal }),
+
+  /** Turns automatic agent updates of the site on or off; customer administrators only (ADR-0053). */
+  setAgentAutoUpdate: (siteId: string, enabled: boolean) =>
+    request<Site>(`/api/sites/${encodeURIComponent(siteId)}/agent-auto-update`, {
+      method: "PUT",
+      body: { enabled },
+    }),
 
   /** Creates the site `name` under `customerId`; customer administrators only. */
   createSite: (customerId: string, name: string) =>
