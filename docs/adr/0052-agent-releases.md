@@ -1,7 +1,7 @@
 # ADR-0052: Agent releases and the Linux installer
 
 Date: 2026-10-26
-Status: accepted
+Status: accepted; integrity amended by ADR-0053 (signed releases)
 
 ## Context
 

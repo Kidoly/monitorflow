@@ -18,6 +18,10 @@
 #   MF_DOWNLOAD_URL  https URL of a directory holding the release files,
 #                    for sites that serve them themselves.
 #   MF_TIMEOUT       seconds to wait for the enrollment; 120 by default.
+#   MF_REQUIRE_SIGNATURE=1  fail when OpenSSL 3 is missing and the
+#                    release signature cannot be checked.
+#   MF_ALLOW_UNSIGNED=1  install a release without SHA256SUMS.sig, like
+#                    0.1.0, checking its checksums only.
 #   MF_UNINSTALL=1   remove the binary, service and sudo rules; keep the
 #                    configuration and identity. With MF_PURGE=1, remove
 #                    those and the monitorflow user too.
@@ -42,6 +46,14 @@ MF_DOWNLOAD_URL=${MF_DOWNLOAD_URL:-}
 MF_TIMEOUT=${MF_TIMEOUT:-120}
 MF_UNINSTALL=${MF_UNINSTALL:-}
 MF_PURGE=${MF_PURGE:-}
+MF_REQUIRE_SIGNATURE=${MF_REQUIRE_SIGNATURE:-}
+MF_ALLOW_UNSIGNED=${MF_ALLOW_UNSIGNED:-}
+
+# Public keys that sign releases (ADR-0053), filled in from
+# deploy/release-keys.pem by deploy/release-files.sh.
+RELEASE_KEYS='
+@RELEASE_KEYS@
+'
 
 say() { printf 'monitorflow: %s\n' "$*"; }
 die() {
@@ -70,14 +82,52 @@ to_url() {
     esac
 }
 
-fetch() {
+try_fetch() {
     if command -v curl >/dev/null 2>&1; then
         curl -fsSL --proto '=https' --tlsv1.2 -o "$2" "$1"
     elif command -v wget >/dev/null 2>&1; then
         wget -q --https-only -O "$2" "$1"
     else
         die "curl or wget is needed to download the agent"
-    fi || die "cannot download $1"
+    fi
+}
+
+fetch() { try_fetch "$1" "$2" || die "cannot download $1"; }
+
+# Checks SHA256SUMS.sig against the release keys with OpenSSL 3, whatever
+# served the files. Without a key (an installer run from the repository)
+# or OpenSSL 3, only the checksums are checked, as before.
+verify_signature() {
+    case $RELEASE_KEYS in
+        *'BEGIN PUBLIC KEY'*) ;;
+        *)
+            say "warning: this installer carries no release key; checking checksums only"
+            return
+            ;;
+    esac
+    if ! command -v openssl >/dev/null 2>&1 || ! openssl pkeyutl -help 2>&1 | grep -q -- -rawin; then
+        [ "$MF_REQUIRE_SIGNATURE" != 1 ] || die "OpenSSL 3 is needed to check the release signature (MF_REQUIRE_SIGNATURE=1)"
+        say "warning: OpenSSL 3 is not installed, so the release signature is not checked; checking checksums only"
+        return
+    fi
+    if ! try_fetch "$base/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig"; then
+        [ "$MF_ALLOW_UNSIGNED" = 1 ] || die "cannot download $base/SHA256SUMS.sig: releases before 0.2.0 are not signed; MF_ALLOW_UNSIGNED=1 installs one with its checksums checked only"
+        say "warning: unsigned release; checking checksums only (MF_ALLOW_UNSIGNED=1)"
+        return
+    fi
+    # One file per key; any of them may have signed (key rotation).
+    printf '%s\n' "$RELEASE_KEYS" | awk -v dir="$tmp" '
+        /BEGIN PUBLIC KEY/ { n++; inside = 1 }
+        inside { print > (dir "/release-key-" n ".pem") }
+        /END PUBLIC KEY/ { inside = 0; close(dir "/release-key-" n ".pem") }'
+    for key in "$tmp"/release-key-*.pem; do
+        if openssl pkeyutl -verify -pubin -inkey "$key" -rawin -in "$tmp/SHA256SUMS" \
+            -sigfile "$tmp/SHA256SUMS.sig" >/dev/null 2>&1; then
+            say "release signature verified"
+            return
+        fi
+    done
+    die "SHA256SUMS.sig does not verify against the release keys: the files were tampered with or are not a MonitorFlow release; nothing was installed"
 }
 
 # Fails unless $tmp/$1 has the checksum SHA256SUMS lists for it.
@@ -232,6 +282,7 @@ say "downloading $asset from $base"
 for file in SHA256SUMS "$asset" monitorflow-agent.service monitorflow-agent-sudoers; do
     fetch "$base/$file" "$tmp/$file"
 done
+verify_signature
 for file in "$asset" monitorflow-agent.service monitorflow-agent-sudoers; do
     verify "$file"
 done
