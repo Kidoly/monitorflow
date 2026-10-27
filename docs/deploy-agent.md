@@ -11,7 +11,7 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
   | sudo MF_SERVER=monitorflow.example.com:7443 MF_TOKEN=mfe1.… sh
 ```
 
-The installer (ADR-0052) downloads the static agent for the host's architecture and `SHA256SUMS` from the same place, verifies the release signature `SHA256SUMS.sig` against the release keys it carries (ADR-0053, with OpenSSL 3; without it, it warns and checks checksums only), checks the checksum before it changes anything, and then does every step of [Binary and user](#binary-and-user) and [Sudo rules](#sudo-rules): binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface shows this command filled in, and the Windows one, once an agent token is created; give it the relay's address there if the agent connects through one.
+The installer (ADR-0052) downloads the static agent for the host's architecture and `SHA256SUMS` from the same place, verifies the release signature `SHA256SUMS.sig` against the release keys it carries (ADR-0053, with OpenSSL 3; without it, it warns and checks checksums only), checks the checksum before it changes anything, and then does every step of [Binary and user](#binary-and-user) and [Sudo rules](#sudo-rules): binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface shows this command filled in, and the Windows one, once an agent token is created, from the source you pick there ([Install sources](#install-sources)); give it the relay's address there if the agent connects through one.
 
 | Variable | Meaning |
 | --- | --- |
@@ -19,7 +19,8 @@ The installer (ADR-0052) downloads the static agent for the host's architecture 
 | `MF_TOKEN` | The enrollment token. Required unless the host is enrolled |
 | `MF_ENROLL` | `host:port` of the server's enrollment listener. By default `MF_SERVER`'s host on port 7445, which is right for a direct connection. Set it when `MF_SERVER` is a relay, to the central server's address: relays do not enroll agents (ADR-0025) |
 | `MF_VERSION` | Release to install, like `0.2.0`. The latest by default |
-| `MF_DOWNLOAD_URL` | https URL of a directory holding the release files, instead of GitHub (below) |
+| `MF_DOWNLOAD_URL` | https URL of a directory holding the release files, instead of GitHub ([Install sources](#install-sources)) |
+| `MF_SUMS_SHA256` | SHA-256 of the release's `SHA256SUMS`, as the central server's commands give it. Every file is checked against it, so downloads do not check the certificate (HTTPS still) |
 | `MF_TIMEOUT` | Seconds to wait for the enrollment, 120 by default |
 | `MF_REQUIRE_SIGNATURE=1` | Fail instead of warning when OpenSSL 3 is missing and the signature cannot be checked |
 | `MF_ALLOW_UNSIGNED=1` | Install a release without `SHA256SUMS.sig`, like 0.1.0, with its checksums checked only |
@@ -41,15 +42,6 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
 ```
 
 **Upgrades.** Running the same command again on an enrolled host installs the new binary, unit and sudo rules and restarts the agent; `agent.toml` and the identity are kept, and `MF_SERVER`, `MF_ENROLL` and `MF_TOKEN` are not needed. Edit `/etc/monitorflow/agent.toml` to change the upstream later.
-
-**Serving the files yourself.** For hosts without access to GitHub, copy the assets of a release (`install.sh`, `SHA256SUMS`, `SHA256SUMS.sig`, `VERSION`, `monitorflow-agent-linux-x86_64`, `monitorflow-agent-linux-aarch64`, `monitorflow-agent.service`, `monitorflow-agent-sudoers`, and the Windows files if needed) into one directory of any web server with HTTPS, and pass its URL:
-
-```
-curl -fsSL https://files.example.net/monitorflow/0.2.0/install.sh \
-  | sudo MF_DOWNLOAD_URL=https://files.example.net/monitorflow/0.2.0 MF_SERVER=… MF_TOKEN=… sh
-```
-
-Keep one directory per version: `MF_DOWNLOAD_URL` names the version, and `MF_VERSION` applies to GitHub only. The installer accepts only HTTPS; the host must trust the web server's certificate. The signature makes the copy safe to serve from anywhere: an installer fetched from GitHub refuses files that the project did not sign. Set the server's `agent_download_url` (`AGENT_DOWNLOAD_URL` in the compose `.env`) to the same URL, and the web interface's commands use it.
 
 **Ansible.** One token per host, created on the server host as needed, with a short validity. Here the server runs with the production compose (deploy-server.md) on the inventory host `monitorflow`:
 
@@ -88,6 +80,44 @@ Keep one directory per version: `MF_DOWNLOAD_URL` names the version, and `MF_VER
 ```
 
 `environment` keeps the token off the command line. Without the first two tasks, the same play upgrades every agent.
+
+## Install sources
+
+The token page offers the commands from three sources (ADR-0054). A global administrator picks the default under Admin › Enrollment tokens › Default install source; any command can use another. The configuration can fix the default instead: `agent_install_source` (`AGENT_INSTALL_SOURCE` in the compose `.env`), and `agent_download_url` (`AGENT_DOWNLOAD_URL`) for the custom URL.
+
+| Source | Hosts download from | Hosts need |
+| --- | --- | --- |
+| GitHub (default) | `https://github.com/Kidoly/monitorflow/releases/latest/download` | Access to GitHub |
+| This server | `https://<web interface>/agent/<version>/`, the server's own copy of a release | Access to the web interface's address, on port 443; not trusting its certificate |
+| Custom URL | Any https directory holding the release files | Access to it, and trust in its certificate |
+
+Every source serves the same signed files, and the installer checks the release signature whatever the source (with OpenSSL 3).
+
+**This server.** For sites without Internet access. The server keeps whole releases in its cache, the one self-updates use (ADR-0053), and serves them behind the web interface. Once per release, on a machine with Internet access, download every asset of the release from its GitHub page into one directory: `install.sh`, `SHA256SUMS`, `SHA256SUMS.sig`, `VERSION`, `monitorflow-agent-linux-x86_64`, `monitorflow-agent-linux-aarch64`, `monitorflow-agent.service`, `monitorflow-agent-sudoers`, `monitorflow-agent-windows-x86_64.exe` and `monitorflow-agent-windows-x86_64.msi`. Copy the directory to the server host, then import it ([deploy-server.md](deploy-server.md#agent-releases-on-the-server) for the compose variant):
+
+```
+monitorflow-server agent-release import --dir ./monitorflow-0.3.0
+monitorflow-server agent-release list
+```
+
+The import reads only that directory and checks the signature, then every file, before it keeps anything; a release that fails is refused whole. Until a release is imported, the token page says so instead of showing a command, and `https://<web interface>/agent/latest/…` answers 404 with the same advice. The command names the newest imported release and carries the checksums of its `install.sh`, `SHA256SUMS` and MSI:
+
+```
+f=$(mktemp) && curl -fsSLk -o "$f" https://monitorflow.example.com/agent/0.3.0/install.sh \
+  && echo "<sha256 of install.sh>  $f" | sha256sum -c \
+  && sudo MF_DOWNLOAD_URL=https://monitorflow.example.com/agent/0.3.0 MF_SUMS_SHA256=<sha256 of SHA256SUMS> MF_SERVER=… MF_TOKEN=… sh "$f"; rm -f "$f"
+```
+
+Hosts need not trust the web certificate, which is often issued by Caddy's own CA or a company CA: the checksums come from the page you copied the command from, so `curl -k` cannot let a different file through. The Windows lines download the MSI with `curl.exe -k` (Windows 10 1803, Windows Server 2019 and later) and run `msiexec` only if its checksum matches. On older Windows, copy the MSI to the host and compare `Get-FileHash` with its line in `SHA256SUMS`. The address in the command is the one your browser uses for the web interface; if hosts reach it by another name, change it in the command. Hosts that do trust the certificate can also use the moving `latest` directory, like a custom URL: `MF_DOWNLOAD_URL=https://<web interface>/agent/latest`.
+
+**Custom URL.** Copy the files of a release into one directory of any web server with HTTPS, and pass its URL:
+
+```
+curl -fsSL https://files.example.net/monitorflow/0.2.0/install.sh \
+  | sudo MF_DOWNLOAD_URL=https://files.example.net/monitorflow/0.2.0 MF_SERVER=… MF_TOKEN=… sh
+```
+
+Keep one directory per version: `MF_DOWNLOAD_URL` names the version, and `MF_VERSION` applies to GitHub only. The installer accepts only HTTPS; the host must trust the web server's certificate. The signature makes the copy safe to serve from anywhere: an installer fetched from GitHub refuses files that the project did not sign. Set this URL as the custom URL of the token page, or as the server's `agent_download_url`, and the web interface's commands use it.
 
 ## Binary and user
 

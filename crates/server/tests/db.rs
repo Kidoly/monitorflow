@@ -169,6 +169,7 @@ db_tests! {
                 "sensor_configs",
                 "server_packages",
                 "server_proxmox_vms",
+                "server_settings",
                 "servers",
                 "sessions",
                 "sites",

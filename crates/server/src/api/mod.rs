@@ -1,7 +1,8 @@
 //! REST API consumed by the web interface (architecture §9).
 //!
 //! The listener speaks plain HTTP and sits behind a TLS reverse proxy
-//! (ADR-0006). Every route lives under `/api`.
+//! (ADR-0006). Every route lives under `/api`, except the agent release
+//! files under `/agent` (ADR-0054).
 //!
 //! # JSON conventions
 //!
@@ -68,7 +69,13 @@
 //! | GET | `/api/servers/{id}/commands` | read | [`commands::CommandList`], newest first, paginated |
 //! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
 //! | GET | `/api/commands/{id}` | read | [`commands::CommandDetail`]: the command and its output |
+//! | GET | `/agent/{version}/{file}`, `/agent/latest/{file}` | none | A file of a cached agent release, for installs (ADR-0054); 404 with a plain-text reason |
+//! | GET | `/api/settings/agent-install` | customer administrator | [`settings::AgentInstall`]: default install source, custom URL, what the configuration sets, the release `central` installs (ADR-0054) |
+//! | PUT | `/api/settings/agent-install` | global administrator | body [`settings::AgentInstallRequest`]; 200 [`settings::AgentInstall`]; 409 against the configuration; audited |
 //! | GET | `/api/agent-releases` | any role | [`commands::AgentReleases`]: cached agent versions and the latest (ADR-0053) |
+//! | GET | `/api/server-update` | global administrator | [`server_update::UpdateView`]: running version, updater and last update (ADR-0056) |
+//! | POST | `/api/server-update/check` | global administrator | [`server_update::CheckResult`]: the latest release, verified, and what it changes |
+//! | POST | `/api/server-update` | global administrator | body `{"version"}`; 202 `{"id"}`; 400 unless newer, 409 without a running updater or while busy; audited |
 //! | GET | `/api/campaigns` | customer role | [`campaigns::CampaignList`], newest first, paginated |
 //! | POST | `/api/campaigns` | customer administrator | body [`campaigns::CreateRequest`]; 201 [`campaigns::CampaignDetail`] |
 //! | GET | `/api/campaigns/{id}` | customer role | [`campaigns::CampaignDetail`]: the campaign, its waves and servers |
@@ -411,6 +418,7 @@
 //! A server outside the user's sites, or an ID that is not a UUID, is 404.
 
 pub mod access;
+pub mod agent_files;
 pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
@@ -433,8 +441,10 @@ pub mod remediation_incidents;
 pub mod revoke;
 pub mod roles;
 pub mod sensors;
+pub mod server_update;
 pub mod servers;
 pub mod session;
+pub mod settings;
 pub mod sites;
 pub mod sources;
 pub mod thresholds;
@@ -485,6 +495,10 @@ pub struct ApiSettings {
     /// Where agents download releases from, and the server's cache of
     /// them (ADR-0053).
     pub agent_releases: agent_releases::Sources,
+    /// Server updates through the updater container (ADR-0056).
+    pub server_update: server_update::ServerUpdateSettings,
+    /// What the configuration sets about install sources (ADR-0054).
+    pub agent_install: settings::InstallConfig,
     /// `auto_update.enabled` from the configuration, which locks the
     /// setting in the web interface (ADR-0055).
     pub auto_update_enabled: Option<bool>,
@@ -498,6 +512,8 @@ impl ApiSettings {
             session_idle_timeout: Duration::from_secs(config.api_session_idle_timeout),
             mirror_public_url: config.mirror_public_url.clone(),
             agent_releases: agent_releases::Sources::from_config(config),
+            server_update: server_update::ServerUpdateSettings::from_config(config),
+            agent_install: settings::InstallConfig::from_config(config),
             auto_update_enabled: config.auto_update.enabled,
             proxmox_enabled: config.proxmox.enabled,
             proxmox_clusters: config
@@ -597,6 +613,7 @@ pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/api/health", get(health::live))
         .route("/api/health/ready", get(health::ready))
+        .route("/agent/{version}/{file}", get(agent_files::file))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
@@ -693,6 +710,11 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/commands/{id}", get(commands::detail))
         .route("/api/agent-releases", get(commands::agent_releases))
         .route(
+            "/api/server-update",
+            get(server_update::get).post(server_update::start),
+        )
+        .route("/api/server-update/check", post(server_update::check))
+        .route(
             "/api/servers/{id}/sources",
             post(sources::configure).delete(sources::revert),
         )
@@ -713,6 +735,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/remediation/policies",
             get(remediation::list_policies).put(remediation::set_policy),
+        )
+        .route(
+            "/api/settings/agent-install",
+            get(settings::get_agent_install).put(settings::set_agent_install),
         )
         .route("/api/remediation/classify", post(remediation::classify))
         .route(

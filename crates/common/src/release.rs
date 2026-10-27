@@ -252,6 +252,11 @@ impl Release {
             .ok_or_else(|| ReleaseError::NotListed(name.to_owned()))
     }
 
+    /// The names `SHA256SUMS` lists, in order.
+    pub fn files(&self) -> impl Iterator<Item = &str> {
+        self.sums.keys().map(String::as_str)
+    }
+
     /// Fails unless `actual` is the checksum listed for `name`.
     pub fn check_digest(&self, name: &str, actual: &[u8; 32]) -> Result<(), ReleaseError> {
         if &self.digest(name)? != actual {

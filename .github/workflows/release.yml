@@ -8,6 +8,10 @@
 # request that changes these files, builds the same files as the
 # `release-files` artifact, signed with a throwaway key, and publishes
 # nothing.
+# It also builds the server, web and updater images for amd64 and arm64
+# (ADR-0056); a tag pushes them to GHCR and lists their digests in
+# images.json, a release file covered by the signature. Other runs build
+# them without pushing.
 name: Release
 on:
   push:
@@ -22,6 +26,8 @@ on:
       - deploy/release-keys.pem
       - deploy/systemd/**
       - deploy/sudoers/**
+      - deploy/docker/**
+      - deploy/caddy/**
 permissions:
   contents: read
 jobs:
@@ -30,6 +36,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       publish: ${{ steps.version.outputs.publish }}
+      registry: ${{ steps.version.outputs.registry }}
     steps:
       - uses: actions/checkout@v4
       # A tag must name the version in Cargo.toml: v0.2.0 for 0.2.0.
@@ -48,6 +55,8 @@ jobs:
             echo publish=false >>"$GITHUB_OUTPUT"
           fi
           echo "version=$cargo" >>"$GITHUB_OUTPUT"
+          # Image names must be lower case.
+          echo "registry=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" >>"$GITHUB_OUTPUT"
           echo "version $cargo"
   linux:
     needs: version
@@ -96,17 +105,123 @@ jobs:
           name: windows-x86_64
           path: dist/
           if-no-files-found: error
+  # One image for one platform per job, on a native runner: building Rust
+  # under emulation would take hours. Pushed by digest only; the manifests
+  # job joins the platforms.
+  images:
+    needs: version
+    runs-on: ${{ matrix.platform == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [server, web, updater]
+        platform: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - if: needs.version.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/${{ matrix.image }}.Dockerfile
+          platforms: linux/${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.title=monitorflow-${{ matrix.image }}
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          outputs: type=image,name=${{ needs.version.outputs.registry }}/monitorflow-${{ matrix.image }},push-by-digest=true,name-canonical=true,push=${{ needs.version.outputs.publish }}
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
+      - run: |
+          mkdir digests
+          echo "${{ steps.build.outputs.digest }}" >"digests/${{ matrix.image }}-${{ matrix.platform }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.image }}-${{ matrix.platform }}
+          path: digests/
+          if-no-files-found: error
+  # The multi-platform index of each image, tagged with the version, and
+  # images.json naming the indexes by digest. Without publishing there is
+  # no index: images.json names the amd64 images, so its format is still
+  # tested.
+  manifests:
+    needs: [version, images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - if: needs.version.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: digests
+          pattern: digest-*
+          merge-multiple: true
+      - env:
+          PUBLISH: ${{ needs.version.outputs.publish }}
+          REGISTRY: ${{ needs.version.outputs.registry }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          images='{}'
+          for image in server web updater; do
+            repo=$REGISTRY/monitorflow-$image
+            amd64=$(cat "digests/$image-amd64") arm64=$(cat "digests/$image-arm64")
+            if [ "$PUBLISH" = true ]; then
+              docker buildx imagetools create -t "$repo:$VERSION" "$repo@$amd64" "$repo@$arm64"
+              digest=$(docker buildx imagetools inspect "$repo:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)
+            else
+              digest=$amd64
+            fi
+            [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::bad digest for $image: $digest"; exit 1; }
+            images=$(jq --arg k "$image" --arg v "$repo@$digest" '. + {($k): $v}' <<<"$images")
+          done
+          mkdir dist
+          jq -n --arg version "$VERSION" --argjson images "$images" \
+            '{version: $version, images: $images}' >dist/images.json
+          cat dist/images.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: images-json
+          path: dist/
+          if-no-files-found: error
   release:
-    needs: [version, linux, windows]
+    needs: [version, linux, windows, manifests]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      # The release files only, not the image digests.
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: linux-*
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: windows-*
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          name: images-json
       # Only the publishing run sees the secret. Other runs sign with a
       # throwaway key, added to the keys the installer gets, so the files
       # are complete but trusted by no released agent.
