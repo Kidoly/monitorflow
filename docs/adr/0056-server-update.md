@@ -30,11 +30,11 @@ The compose file reads each service's image from a variable, `SERVER_IMAGE`, `WE
 
 A new binary, `monitorflow-updater` (`crates/updater`), runs as the `updater` service of the compose file, in an image with the Docker CLI and its compose plugin. It is the only container with the Docker socket. It has no listener and no other input than one file:
 
-- The server and the updater share a volume, `update`. To ask for an update, the server writes `request.json` there: a request ID, the target version and who asked. Nothing else in the request is used: not a URL, not an image.
+- The server and the updater share a volume, `update`. Its root belongs to root and only its `inbox/` subdirectory to the server's user. To ask for an update, the server writes `inbox/request.json`: a request ID, the target version and who asked. Unknown fields are refused, and nothing else decides what runs: not a URL, not an image.
 - The updater downloads the release files of that version from its own setting (below), verifies `SHA256SUMS.sig` with the keys compiled into itself (ADR-0053), then `VERSION` and `images.json` against their lines, and refuses any version that is not newer than the running server's. Then it pulls the images by digest.
 - It reports through `status.json` in the same volume: a heartbeat, the running version and images, and the steps, state and result of the last update.
 
-A compromised server or web process can therefore ask for an update to a newer, genuine release, and nothing more: it cannot name an image, a source, an older release or a command, and the updater writes its files with exclusive temporary names and renames them, so a link planted in the volume cannot redirect a write. Forging `status.json` only misleads the interface. The updater's own state, including what to roll back to, lives in a second volume, `updater`, that the server does not mount.
+A compromised server or web process can therefore ask for an update to a newer, genuine release, and nothing more: it cannot name an image, a source, an older release or a command. It can write only in `inbox/`, which the updater reads without following links, so it cannot plant a link where the updater writes, nor forge `status.json`. The updater's own state, including what to roll back to, lives in a second volume, `updater`, that the server does not mount, and so do the backups.
 
 Rejected:
 
@@ -45,19 +45,19 @@ Rejected:
 
 ### Sources
 
-The updater and the server's check use the same base, computed by the same code (`common::server_update`): the `release_url` setting (`RELEASE_URL` in `deploy/.env`) when set, else `agent_download_url`. With the default `agent_download_url`, GitHub's `…/releases/latest/download/` gives the latest release and `…/releases/download/v<version>/` a given one; a self-hosted directory holds one release, whose `VERSION` must be the one asked for. `release_url` may be plain HTTP: as for agents (ADR-0053), the signature protects the files, not the transport. The updater reads the setting from its own environment, never from the request.
+The updater and the server's check use the same base, computed by the same code (`common::server_update`): the `release_url` setting (`RELEASE_URL` in `deploy/.env`) when set, else `agent_download_url`. With the default `agent_download_url`, GitHub's `…/releases/latest/download/` gives the latest release and `…/releases/download/v<version>/` a given one; a self-hosted directory holds one release, whose `VERSION` must be the one asked for. `release_url` may be plain HTTP: as for agents (ADR-0053), the signature protects the files, not the transport. The updater reads the setting from its own environment, never from the request. The agent install source of ADR-0054, kept in the database, does not change it: the updater cannot read the database, and the server's check must use the source the updater will.
 
 ### The update
 
 When it picks up a request, the updater:
 
 1. **Verifies** the release as above. The running version is what `monitorflow-server --version` prints in the running server container, so a local build counts too; the same version is a no-op and an older one is refused, with no override.
-2. **Downloads** the agent files of the release into the `update` volume, for step 7, and **pulls** the three images by digest.
+2. **Downloads** the other files of the release (agent executables, installer files, MSI) into the `update` volume, each checked against `SHA256SUMS`, for step 7, and **pulls** the three images by digest.
 3. **Backs up** PostgreSQL with `pg_dump -Fc` streamed from the `postgres` container into the `backups` volume (or the host directory `BACKUP_DIR`), as `monitorflow-<from>-to-<to>-<time>.dump`, and records the latest applied migration. The update stops if the dump fails. Dumps are not deleted; the operator prunes them.
 4. **Pins** the new digests in `deploy/.env` (`SERVER_IMAGE`, `WEB_IMAGE`, `UPDATER_IMAGE`), written next to it and renamed, so a later `docker compose up` by hand keeps them. The previous values are kept in the updater's state.
 5. **Recreates** `server` and `web` with `docker compose up -d --no-deps --no-build --pull never --wait`. The server applies migrations when it starts.
 6. **Checks** that the server is healthy (its health check is `/api/health/ready`, which needs the database) and that it now reports the target version.
-7. **Refreshes the agent release cache** with `monitorflow-server agent-release import` in the new server container, so agents can follow (ADR-0053; the rollout is ADR-0055's). A failure here is a warning, not a failed update.
+7. **Refreshes the agent release cache** with `monitorflow-server agent-release import` in the new server container, so agents can follow (ADR-0053; the rollout is ADR-0055's) and hosts can install from the server (ADR-0054). A failure here is a warning, not a failed update.
 8. **Replaces itself** when `UPDATER_IMAGE` changed: a one-off container of the new updater image (`docker compose run`) recreates the `updater` service and exits, since a process cannot recreate the container it runs in.
 
 To run compose against the operator's project, the updater reads the compose labels of its own container (project name, working directory, files and environment file), mounts the project directory (`.`), and links the host's path of that directory to the mount inside its container, so relative paths in the compose file resolve to the same host paths as when the operator runs it. Compose files outside that directory are refused.
@@ -72,7 +72,7 @@ Every route is for global administrators: the server is shared by every customer
 
 - `GET /api/server-update`: the running version, whether the updater is there (a heartbeat in the last two minutes), its running images, and the status of the last update.
 - `POST /api/server-update/check`: fetches `VERSION`, `SHA256SUMS`, its signature and `images.json` from the source and verifies them as the updater will. Returns the latest version, whether it is newer, the release notes link (the GitHub release page when the source is GitHub), and what changes: the server version, whether the web and updater images differ from the running ones, and whether the agent release of that version is already cached. When the source cannot be reached, the answer says so, and the page explains the offline path.
-- `POST /api/server-update`: body `{"version"}`, after a confirmation in the interface. Refused with 409 when the updater is missing or busy, 400 when the version is not newer than the running one. Writes `request.json` and audits `server.update` with the versions.
+- `POST /api/server-update`: body `{"version"}`, after a confirmation in the interface. Refused with 409 when the updater is missing or busy, 400 when the version is not newer than the running one. Writes `inbox/request.json` and audits `server.update` with the versions.
 
 The page polls the status. While the server and the web container restart, requests fail for a while; the page keeps the last status, says it is reconnecting, and resumes. The status survives the restart because the updater, which does not restart, keeps it in its volume.
 
@@ -85,6 +85,7 @@ Without Internet access the check fails and the page says so. The manual path: o
 - An administrator updates the server in two clicks; a release's images are bound to its signature, and neither the server nor the web container can run anything the release key did not sign.
 - The `updater` container holds the Docker socket, which is root on the host. Its code is small, reads one file, and runs fixed compose commands; it is the part of the deployment to review most carefully.
 - The first release with these images publishes packages to GHCR; the maintainer must make them public once (`docs/releasing.md`).
+- The updater changes images, not the compose file: a release that needs another compose file (a new service, a new volume) must say so in its notes, and operators update that file by hand.
 - The updater edits `deploy/.env`, the image lines only. An operator who manages `.env` with another tool must keep those lines.
 - Rollback after a migration needs the operator, with the backup the update made; data written between the backup and the rollback is in no backup.
 - Builds from a checkout can update to a published release; going back to local builds means removing the pins from `.env`, and is a downgrade if the release was newer.

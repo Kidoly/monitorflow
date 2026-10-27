@@ -1,0 +1,85 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* As FactsBox's box. */
+.box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.boxHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.note {
+  margin: 0;
+  color: var(--muted);
+}
+
+.note code,
+.page code {
+  font-family: var(--mono);
+}
+
+.dim {
+  color: var(--muted);
+}
+
+.release {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.release p {
+  margin: 0;
+}
+
+.changes,
+.steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.steps {
+  overflow-wrap: anywhere;
+}
+
+/* Restore commands: long lines scroll inside the banner. */
+.commands {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
