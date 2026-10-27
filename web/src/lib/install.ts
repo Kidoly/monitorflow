@@ -1,7 +1,8 @@
 /**
  * Install commands for a new agent token (ADR-0052): the Linux one-liner of
  * `deploy/install.sh` and the Windows MSI line (ADR-0050), from one of three
- * sources (ADR-0054).
+ * sources (ADR-0054); and the relay's one-liner, the same installer with
+ * `MF_ROLE=relay` (ADR-0055).
  */
 
 import type { AgentInstall, InstallSource } from "./api";
@@ -114,11 +115,41 @@ export function linuxInstallCommand(
   origin: string,
   relay = "",
 ): Command {
+  return installerCommand(target, source, origin, relay, []);
+}
+
+/**
+ * The relay's command, as in docs/deploy-relay.md: the same installer with
+ * `MF_ROLE=relay`, connecting to the server; `mirrorUrl` turns on its copy
+ * of the mirrors.
+ */
+export function relayInstallCommand(
+  target: InstallTarget,
+  source: InstallSource,
+  origin: string,
+  mirrorUrl = "",
+): Command {
+  const mirror = mirrorUrl.trim() ? [`MF_MIRROR_URL=${mirrorUrl.trim()}`] : [];
+  return installerCommand(target, source, origin, "", ["MF_ROLE=relay", ...mirror]);
+}
+
+/** Whether `url` can be a relay's mirror URL in a shell command, as the installer accepts it. */
+export function isMirrorUrl(url: string): boolean {
+  return /^https?:\/\/[A-Za-z0-9.:_/[\]-]+$/.test(url.trim());
+}
+
+function installerCommand(
+  target: InstallTarget,
+  source: InstallSource,
+  origin: string,
+  relay: string,
+  role: string[],
+): Command {
   const files = base(target.install, source, origin);
   if ("unavailable" in files) return files;
   const { server, enroll } = endpoints(target, relay);
   const env = (download: string[]) =>
-    [...download, `MF_SERVER=${server}`, enroll && `MF_ENROLL=${enroll}`, `MF_TOKEN=${target.token}`]
+    [...role, ...download, `MF_SERVER=${server}`, enroll && `MF_ENROLL=${enroll}`, `MF_TOKEN=${target.token}`]
       .filter(Boolean)
       .join(" ");
   const central = target.install.central;

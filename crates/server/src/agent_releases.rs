@@ -36,8 +36,13 @@ pub fn kept_files() -> Vec<&'static str> {
         "monitorflow-agent-sudoers",
         MSI,
     ]);
+    // Relays install and update from the server too (ADR-0055).
+    files.extend(RELAY_BINARIES.map(|p| p.relay_asset().expect("Linux relays")));
+    files.extend(["monitorflow-relay.service", "monitorflow-relay-sudoers"]);
     files
 }
+
+const RELAY_BINARIES: [Platform; 2] = [Platform::LinuxX86_64, Platform::LinuxAarch64];
 
 const BINARIES: [Platform; 3] = [
     Platform::LinuxX86_64,

@@ -16,6 +16,8 @@ A relay forwards the streams of the agents of a site to the central server, buff
 
 ## Quick install
 
+Create a relay token under Admin › Enrollment tokens (role Relay, with the names agents use to reach it): the panel shows the command below filled in, from the source chosen there (GitHub, this server or a custom URL), with the mirror URL if you give one. By hand:
+
 ```
 curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
   | sudo MF_ROLE=relay MF_SERVER=monitorflow.example.com:7443 MF_TOKEN=mfe1.… sh
@@ -93,6 +95,8 @@ The server updates relays like agents (ADR-0053, ADR-0055): a signed `self_updat
 1. `sudo -n /usr/bin/monitorflow-relay self-update` checks the release again as root, writes the new binary next to `/usr/bin/monitorflow-relay`, keeps the running one as `/var/lib/monitorflow/relay-self-update/previous` and renames the new one into place.
 2. It starts the watchdog in a transient unit, `monitorflow-relay-self-update`, from the previous binary. The watchdog restarts `monitorflow-relay` and waits for the new relay's stream to be accepted upstream (5 minutes by default).
 3. If it is not in time, the watchdog puts the previous binary back and restarts the relay; the command fails with "rolled back to …".
+
+On a relay's page under Admin › Relays, administrators of its customer see its version, its last self-update and "Update relay to …" when the server holds a newer release; the API takes `POST /api/relays/{id}/update` with `{"version": "0.3.0"}`. With automatic updates on (ADR-0055, Updates › Automatic updates), the server updates relays on its own, before the agents behind them: an agent waits while its relay runs an older version.
 
 The outcome is in `/var/lib/monitorflow/relay-self-update/status.json`, the watchdog's log in `journalctl -u monitorflow-relay-self-update`. Agents behind the relay reconnect on their own after the restart, a few seconds later. Relays installed by hand before this guide lack the sudo rule: run the installer once with `MF_ROLE=relay`.
 

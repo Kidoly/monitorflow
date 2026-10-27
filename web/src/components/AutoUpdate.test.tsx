@@ -12,7 +12,8 @@ import { AutoUpdatePage, summary } from "./AutoUpdate";
 vi.mock("next/navigation", () => import("@/test/navigation"));
 
 const globalAdmin = me({ role: "administrator", customer_id: null, site_id: null });
-const zero = { up_to_date: 0, waiting: 0, pending: 0, succeeded: 0, failed: 0 };
+const zero = { up_to_date: 0, waiting: 0, waiting_for_relay: 0, pending: 0, succeeded: 0, failed: 0 };
+const noRelays = { latest: "0.3.0", target: "0.3.0", rollout: null, totals: zero, sites: [], history: [] };
 
 function status(overrides: Partial<AutoUpdateStatus> = {}): AutoUpdateStatus {
   return {
@@ -45,6 +46,7 @@ function status(overrides: Partial<AutoUpdateStatus> = {}): AutoUpdateStatus {
       ],
       history: [],
     },
+    relays: noRelays,
     ...overrides,
   };
 }
@@ -77,7 +79,7 @@ describe("AutoUpdatePage", () => {
       </As>,
     );
     expect(await screen.findByText("Rolling out 0.3.0: 1 in progress, 4 waiting.")).toBeInTheDocument();
-    const sites = screen.getByRole("table", { name: "Sites" });
+    const sites = screen.getByRole("table", { name: "Agents by site" });
     const paris = within(sites).getByRole("row", { name: /paris/ });
     expect(paris).toHaveTextContent("server default");
     expect(paris).toHaveTextContent("Rolling out");
@@ -98,7 +100,7 @@ describe("AutoUpdatePage", () => {
       </As>,
     );
     expect(await screen.findByRole("alert")).toHaveTextContent("Halted: 2 automatic updates to 0.3.0 failed (threshold 2).");
-    expect(within(screen.getByRole("table", { name: "Sites" })).getByText("Canary failed")).toBeInTheDocument();
+    expect(within(screen.getByRole("table", { name: "Agents by site" })).getByText("Canary failed")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Resume 0.3.0" }));
     expect(fetchMock.mock.calls.some(([url, init]) => String(url).endsWith("/resume") && init?.method === "POST")).toBe(true);
     await user.click(await screen.findByRole("button", { name: "Pause automatic updates" }));
@@ -130,6 +132,29 @@ describe("AutoUpdatePage", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
     expect(put?.[1]?.body).toBe(JSON.stringify({ failure_threshold: 5 }));
+  });
+});
+
+describe("relays", () => {
+  beforeEach(() => setUrl("/admin/updates/"));
+
+  it("come first, and agents behind an older relay wait", async () => {
+    const s = status();
+    s.agents.totals = { ...s.agents.totals, waiting_for_relay: 2 };
+    s.relays = {
+      ...s.relays,
+      totals: { ...zero, pending: 1 },
+      sites: [{ ...s.agents.sites[0]!, phase: "canary", totals: { ...zero, pending: 1 } }],
+    };
+    stubFetch({ "GET /api/auto-update": { status: 200, body: s } });
+    render(
+      <As user={globalAdmin}>
+        <AutoUpdatePage />
+      </As>,
+    );
+    expect(await screen.findByText("2 waiting for their relay to be updated first.")).toBeInTheDocument();
+    const relays = screen.getByRole("table", { name: "Relays by site" });
+    expect(within(relays).getByRole("row", { name: /paris/ })).toHaveTextContent("Canary");
   });
 });
 

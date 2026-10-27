@@ -114,7 +114,7 @@ function AutoUpdate() {
 
   const agents = data.agents;
   const [text, tone] = summary(data, agents);
-  const halted = agents.rollout?.state === "halted" ? agents.rollout : null;
+  const halted = [data.relays.rollout, agents.rollout].find((r) => r?.state === "halted") ?? null;
   return (
     <div className={styles.page}>
       {header}
@@ -136,27 +136,45 @@ function AutoUpdate() {
         )}
       </Banner>
       <Settings status={data} busy={busy} onChange={change} />
-      <section className={styles.section} aria-label="Agents">
-        <div className={styles.sectionHead}>
-          <h2 className={styles.sectionTitle}>Agents</h2>
-          <span className={styles.dim}>
-            Target {agents.target ?? "none"} · newest release held {agents.latest ?? "none"} · server {data.server_version}
-          </span>
-        </div>
-        <StatTiles
-          dense
-          label="Agents"
-          tiles={[
-            { label: "Up to date", value: agents.totals.up_to_date, tone: "ok" },
-            { label: "Waiting", value: agents.totals.waiting, tone: "neutral" },
-            { label: "In progress", value: agents.totals.pending, tone: "info" },
-            { label: "Failed", value: agents.totals.failed, tone: agents.totals.failed > 0 ? "bad" : "neutral" },
-          ]}
-        />
-        <Sites sites={agents.sites} />
-        <History rollouts={agents.history} now={updatedAt} />
-      </section>
+      <Kind title="Relays" kind={data.relays} status={data} now={updatedAt} />
+      <Kind title="Agents" kind={agents} status={data} now={updatedAt} />
     </div>
+  );
+}
+
+/** Progress of one kind of peer: totals, sites and rollouts. */
+function Kind({ title, kind, status, now }: { title: string; kind: AutoUpdateKind; status: AutoUpdateStatus; now: Date }) {
+  const relays = title === "Relays";
+  return (
+    <section className={styles.section} aria-label={title}>
+      <div className={styles.sectionHead}>
+        <h2 className={styles.sectionTitle}>{title}</h2>
+        <span className={styles.dim}>
+          Target {kind.target ?? "none"} · newest release held {kind.latest ?? "none"} · server {status.server_version}
+        </span>
+      </div>
+      {relays ? (
+        <p className={styles.sectionNote}>Relays update first; their agents follow once they run the target.</p>
+      ) : (
+        kind.totals.waiting_for_relay > 0 && (
+          <p className={styles.sectionNote}>
+            {kind.totals.waiting_for_relay} waiting for their relay to be updated first.
+          </p>
+        )
+      )}
+      <StatTiles
+        dense
+        label={title}
+        tiles={[
+          { label: "Up to date", value: kind.totals.up_to_date, tone: "ok" },
+          { label: "Waiting", value: kind.totals.waiting, tone: "neutral" },
+          { label: "In progress", value: kind.totals.pending, tone: "info" },
+          { label: "Failed", value: kind.totals.failed, tone: kind.totals.failed > 0 ? "bad" : "neutral" },
+        ]}
+      />
+      <Sites sites={kind.sites} label={`${title} by site`} what={relays ? "relays" : "agents"} />
+      <History rollouts={kind.history} now={now} label={`${title} rollouts`} />
+    </section>
   );
 }
 
@@ -180,8 +198,10 @@ function Settings({
         <h2 className={styles.sectionTitle}>Settings</h2>
       </div>
       <p className={styles.sectionNote}>
-        The server moves agents to the newest stable release it holds, never newer than itself and never backwards: one
-        agent per site first, then a quarter of the site at a time. A server is tried once per release.
+        The server moves relays, then agents, to the newest stable release it holds, never newer than itself and never
+        backwards: one per site first, then a quarter of the site at a time. Each is tried once per release. An update
+        restarts the agent or relay for a few seconds, never the host, so it is not held for a maintenance window; for
+        hosts that must only change in a window, turn their site off under Sites and update them with a campaign.
       </p>
       <div className={styles.buttons}>
         <span>
@@ -241,7 +261,7 @@ function Settings({
   );
 }
 
-function Sites({ sites }: { sites: AutoUpdateSite[] }) {
+function Sites({ sites, label, what }: { sites: AutoUpdateSite[]; label: string; what: string }) {
   const columns: Column<AutoUpdateSite>[] = [
     {
       key: "site",
@@ -273,7 +293,7 @@ function Sites({ sites }: { sites: AutoUpdateSite[] }) {
     },
     {
       key: "progress",
-      header: "Agents",
+      header: what === "relays" ? "Relays" : "Agents",
       cell: (s) => (
         <span className={styles.dim}>
           {s.totals.up_to_date} up to date · {s.totals.pending} in progress · {s.totals.waiting} waiting
@@ -282,10 +302,10 @@ function Sites({ sites }: { sites: AutoUpdateSite[] }) {
       ),
     },
   ];
-  return <DataTable bare label="Sites" columns={columns} rows={sites} rowKey={(s) => s.id} />;
+  return <DataTable bare label={label} columns={columns} rows={sites} rowKey={(s) => s.id} />;
 }
 
-function History({ rollouts, now }: { rollouts: Rollout[]; now: Date }) {
+function History({ rollouts, now, label }: { rollouts: Rollout[]; now: Date; label: string }) {
   if (rollouts.length === 0) return null;
   const columns: Column<Rollout>[] = [
     { key: "version", header: "Release", cell: (r) => <strong>{r.version}</strong> },
@@ -297,5 +317,5 @@ function History({ rollouts, now }: { rollouts: Rollout[]; now: Date }) {
     { key: "started", header: "Started", cell: (r) => <RelativeTime value={r.started_at} now={now} /> },
     { key: "reason", header: "Reason", className: styles.wrap, cell: (r) => r.reason ?? <span className={styles.dim}>—</span> },
   ];
-  return <DataTable bare label="Rollouts" columns={columns} rows={rollouts} rowKey={(r) => `${r.kind}-${r.version}`} />;
+  return <DataTable bare label={label} columns={columns} rows={rollouts} rowKey={(r) => `${r.kind}-${r.version}`} />;
 }

@@ -5,6 +5,7 @@ import { type FormEvent, useId, useState } from "react";
 import { Button, fieldClass } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
+import { Label } from "@/components/ui/StatusLabel";
 import { Banner, ErrorState, LoadingBlock, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { ApiError, type Customer, type Me, type Relay, type Server, type Site, api, describeError } from "@/lib/api";
 import { administersCustomer } from "@/lib/me";
@@ -67,6 +68,11 @@ export function SitesAdmin({ me }: { me: Me }) {
       <Banner tone="info">
         Sites cannot be renamed or moved to another customer, because the site name labels every stored metric.
         Choose names that will still make sense in two years.
+      </Banner>
+      <Banner tone="info">
+        Agents and relays update themselves to each new release, a canary per site first. A site whose
+        hosts must not change on their own sets &quot;Automatic updates&quot; to Off; &quot;Server default&quot;
+        follows the server-wide setting under Updates › Automatic updates.
       </Banner>
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
@@ -175,16 +181,17 @@ const overrideOf = (value: boolean | null): Override => (value === null ? "inher
 function AutoUpdate({ site, canChange, onChanged }: { site: Row; canChange: boolean; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const effective = site.agent_auto_update_effective ? "Automatic" : "Manual";
   const current = overrideOf(site.agent_auto_update);
-  if (!canChange) {
-    return (
-      <span className={styles.dim}>
-        {effective}
-        {current === "inherit" && " · server default"}
-      </span>
-    );
-  }
+  // What applies now, first, then where it comes from.
+  const state = (
+    <>
+      <Label tone={site.agent_auto_update_effective ? "ok" : "neutral"}>
+        {site.agent_auto_update_effective ? "Automatic" : "Manual"}
+      </Label>{" "}
+      <span className={styles.dim}>{current === "inherit" ? "server default" : "set for this site"}</span>
+    </>
+  );
+  if (!canChange) return state;
   async function change(next: Override) {
     setBusy(true);
     setError(null);
@@ -212,7 +219,7 @@ function AutoUpdate({ site, canChange, onChanged }: { site: Row; canChange: bool
         <option value="on">On</option>
         <option value="off">Off</option>
       </select>{" "}
-      <span className={styles.dim}>{effective}</span>
+      {state}
       {error && <span role="alert"> {error}</span>}
     </>
   );
