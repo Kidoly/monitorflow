@@ -129,6 +129,8 @@ jobs:
           MONITORFLOW_BUILD_VERSION: 99.0.0
         with:
           target: x86_64-unknown-linux-musl
+      # Kept aside: the relay builds below link the agent library.
+      - run: cp "${{ steps.newer.outputs.path }}" "$RUNNER_TEMP/agent-new"
       # The relay, installed with MF_ROLE=relay (ADR-0055).
       - id: relay
         uses: ./.github/actions/build-agent-linux
@@ -136,7 +138,7 @@ jobs:
           target: x86_64-unknown-linux-musl
           package: monitorflow-relay
       - run: cp "${{ steps.relay.outputs.path }}" "$RUNNER_TEMP/relay-old"
-      - run: deploy/install-test.sh "$RUNNER_TEMP/agent-old" "${{ steps.newer.outputs.path }}"
+      - run: deploy/install-test.sh "$RUNNER_TEMP/agent-old" "$RUNNER_TEMP/agent-new"
         env:
           MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
           MF_TEST_RELAY: ${{ runner.temp }}/relay-old
