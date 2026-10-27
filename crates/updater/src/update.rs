@@ -260,9 +260,10 @@ impl Updater<'_> {
         self.complete(&pending, staged).await
     }
 
-    /// Writes the release files and agent executables into the update
-    /// volume, for the server's cache. Not fatal: the server can still
-    /// fetch them later.
+    /// Writes the whole release into the update volume, for the server's
+    /// agent cache: the agent executables for self-updates, the installer
+    /// files and the MSI for installs from the server (ADR-0054). Not
+    /// fatal: the release can still be imported by hand.
     async fn stage_agent_release(&mut self, candidate: &Candidate) -> bool {
         let dir = self.release_dir(&candidate.release.version);
         let _ = std::fs::remove_dir_all(&dir);
@@ -275,12 +276,12 @@ impl Updater<'_> {
             Err(e) => Err(e.to_string()),
             Ok(()) => self
                 .source
-                .agent_files(candidate, &dir)
+                .release_files(candidate, &dir)
                 .await
                 .map_err(|e| e.to_string()),
         };
         match result {
-            Ok(names) if !names.is_empty() => {
+            Ok(names) if names.iter().any(|n| crate::source::is_agent(n)) => {
                 self.reporter
                     .step(format!("agent release downloaded: {}", names.join(", ")));
                 true

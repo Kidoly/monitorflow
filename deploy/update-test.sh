@@ -178,6 +178,8 @@ check "a backup was taken before the update" grep -q "^monitorflow-.*-to-$NEXT-.
 check "the backup is a dump pg_restore reads" \
     sh -c "docker compose -p $project -f '$work/deploy/docker-compose.yml' -f '$work/deploy/docker-compose.test.yml' exec -T postgres pg_restore --list '/backups/$backup' | grep -q 'TABLE public sites'"
 check "the agent release is cached" sh -c "docker compose -p $project -f '$work/deploy/docker-compose.yml' -f '$work/deploy/docker-compose.test.yml' exec -T server monitorflow-server agent-release list | grep -qx $NEXT"
+check "the release's installer is served for installs" \
+    curl -fsSk -o /dev/null "https://127.0.0.1:$HTTPS_PORT/agent/$NEXT/install.sh"
 updater_replaced() { [ "$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q updater)")" = "$next_updater" ]; }
 check "the updater replaced itself" until_true 120 updater_replaced
 check "the new updater reports $NEXT" until_true 120 sh -c "curl -fsSk -b '$work/cookies' '$api/server-update' | jq -e '.updater.alive and .updater.version == \"$NEXT\"'"
