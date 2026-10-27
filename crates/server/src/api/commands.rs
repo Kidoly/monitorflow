@@ -256,7 +256,7 @@ pub async fn create(
             let mut conn = state.pool.acquire().await?;
             let relay = crate::mirror::relays::url_for_server(&mut conn, target.id).await?;
             drop(conn);
-            let (payload, ttl) = check_self_update(&state, &target, &request, relay.as_deref())?;
+            let (payload, ttl) = check_self_update(&state, &request, relay.as_deref())?;
             return queue(&state, &user, &target, &request.kind, payload, ttl).await;
         }
         _ => {}
@@ -273,18 +273,12 @@ pub async fn create(
 /// server's cache, then the download URL.
 fn check_self_update(
     state: &ApiState,
-    target: &Target,
     request: &CreateRequest,
     relay_url: Option<&str>,
 ) -> Result<(Vec<u8>, Duration), ApiError> {
     if !request.packages.is_empty() || request.security_only || request.allow_reboot {
         return Err(ApiError::Invalid(
             "packages, security_only and allow_reboot are for apply_updates".into(),
-        ));
-    }
-    if target.os_family == "windows" {
-        return Err(ApiError::Invalid(
-            "self-update is not supported on windows servers yet".into(),
         ));
     }
     let version: Version = request

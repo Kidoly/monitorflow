@@ -16,10 +16,10 @@
 //! stays unfinished. When the server sends the command again, the
 //! dispatcher asks [`StatusResumer`], which answers from the status file.
 
-#[cfg(unix)]
 pub mod handler;
 #[cfg(unix)]
 pub mod helper;
+pub mod swap;
 
 use std::future::Future;
 use std::io;
@@ -39,6 +39,17 @@ pub const PREVIOUS_FILE: &str = "previous";
 /// Under the agent's `data_dir`.
 pub const AGENT_DIR: &str = "self-update";
 pub const CONNECTED_FILE: &str = "connected";
+
+/// Where the privileged side keeps the status: [`STATE_DIR`] on Linux,
+/// the update service's own directory on Windows.
+pub fn state_dir() -> PathBuf {
+    #[cfg(unix)]
+    return PathBuf::from(STATE_DIR);
+    #[cfg(windows)]
+    return monitorflow_common::config::windows_base_dir()
+        .join("update")
+        .join("self-update");
+}
 
 pub const DEFAULT_HEALTH_TIMEOUT_S: u32 = 300;
 pub const MIN_HEALTH_TIMEOUT_S: u32 = 30;
@@ -291,5 +302,5 @@ pub(crate) fn unix_ms() -> i64 {
         .map_or(0, |d| d.as_millis() as i64)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests;
