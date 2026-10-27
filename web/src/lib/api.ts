@@ -207,6 +207,78 @@ export interface Site {
   agent_auto_update_effective: boolean;
 }
 
+/** Server-wide automatic update settings (ADR-0055). */
+export interface AutoUpdateSettings {
+  /** Default of the sites that inherit it. */
+  enabled: boolean;
+  /** Set by the server's configuration: the web interface cannot change `enabled`. */
+  enabled_locked: boolean;
+  paused: boolean;
+  failure_threshold: number;
+}
+
+export type RolloutKind = "agent" | "relay";
+
+/** The automatic rollout of one release. */
+export interface Rollout {
+  kind: RolloutKind;
+  version: string;
+  state: "rolling" | "halted";
+  started_at: string;
+  halted_at: string | null;
+  reason: string | null;
+  /** Failures count from here: the start or the last resume. */
+  counted_from: string;
+}
+
+export interface AutoUpdateTotals {
+  up_to_date: number;
+  /** Older and not tried yet. */
+  waiting: number;
+  pending: number;
+  succeeded: number;
+  failed: number;
+}
+
+export type SitePhase = "canary" | "rolling" | "blocked";
+
+export interface AutoUpdateSite {
+  id: string;
+  name: string;
+  customer_name: string;
+  auto_update: boolean | null;
+  enabled: boolean;
+  phase: SitePhase | null;
+  totals: AutoUpdateTotals;
+}
+
+/** Automatic updates of one kind of peer. */
+export interface AutoUpdateKind {
+  /** Newest stable release the server holds. */
+  latest: string | null;
+  /** What peers move to: `latest` unless the server is older. */
+  target: string | null;
+  rollout: Rollout | null;
+  totals: AutoUpdateTotals;
+  sites: AutoUpdateSite[];
+  history: Rollout[];
+}
+
+/** `GET /api/auto-update`. */
+export interface AutoUpdateStatus {
+  settings: AutoUpdateSettings;
+  updated_at: string;
+  server_version: string;
+  agents: AutoUpdateKind;
+}
+
+/** Fields of `PUT /api/auto-update`; absent ones are unchanged. */
+export interface AutoUpdateChange {
+  enabled?: boolean;
+  paused?: boolean;
+  failure_threshold?: number;
+}
+
 /** One entry of `GET /api/customers`. */
 export interface Customer {
   id: string;
@@ -1110,6 +1182,17 @@ export const api = {
 
   /** Every mirror, by name; global administrators only. */
   mirrors: (signal?: AbortSignal) => request<MirrorList>("/api/mirrors", { signal }),
+
+  /** Automatic updates: settings and rollouts; global administrators only (ADR-0055). */
+  autoUpdate: (signal?: AbortSignal) => request<AutoUpdateStatus>("/api/auto-update", { signal }),
+
+  /** Changes automatic update settings; global administrators only; audited. */
+  setAutoUpdate: (change: AutoUpdateChange) =>
+    request<AutoUpdateStatus>("/api/auto-update", { method: "PUT", body: change }),
+
+  /** Resumes a halted rollout; global administrators only; audited. */
+  resumeRollout: (kind: RolloutKind, version: string) =>
+    request<Rollout>(`/api/auto-update/rollouts/${kind}/${encodeURIComponent(version)}/resume`, { method: "POST" }),
 
   mirror: (id: string, signal?: AbortSignal) =>
     request<MirrorDetail>(`/api/mirrors/${encodeURIComponent(id)}`, { signal }),
