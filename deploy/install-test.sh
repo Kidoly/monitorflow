@@ -246,7 +246,7 @@ if [ -n "$newer" ]; then
     }
     [ -z "$relay" ] || { trust_files monitorflow-relay; relay_online; }
     trust_files monitorflow-agent
-    online
+    online "$PEER"
     old_version=$(/usr/bin/monitorflow-agent --version | cut -d ' ' -f 2)
     # Fills $work/files/next with a signed release of version $3 holding
     # the agent $1 and the relay $2, either of them empty.
