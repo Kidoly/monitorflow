@@ -70,4 +70,4 @@ Approach in ADR-0047: the same agent binary built for Windows, run as a service 
 
 - [x] Production compose for the central server: server and web images, PostgreSQL over TLS, install guide, smoke test in CI (ADR-0051).
 - [x] Agent releases: static Linux binaries and the Windows MSI on GitHub Releases, one-line Linux installer that can be self-hosted, install command on the token page, end-to-end test in CI (ADR-0052).
-- [ ] Agent self-update: signed releases, Linux helper with health check and rollback, Windows through the update service, release cache on the server and relays, update action, rollouts and per-site policy in the web interface (ADR-0053).
+- [x] Agent self-update: signed releases, Linux helper with health check and rollback, Windows through the update service, release cache on the server and relays, update action, rollouts and per-site policy in the web interface (ADR-0053).
