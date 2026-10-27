@@ -1,7 +1,7 @@
 # ADR-0050: Windows agent MSI
 
 Date: 2026-10-29
-Status: accepted
+Status: accepted; the update service is installed by the MSI since ADR-0053
 
 ## Context
 

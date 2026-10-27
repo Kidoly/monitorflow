@@ -410,7 +410,7 @@ db_tests! {
     }
 
     #[sqlx::test]
-    async fn agent_campaigns_send_self_updates_and_skip_windows_servers(pool: PgPool) {
+    async fn agent_campaigns_send_self_updates_to_linux_and_windows(pool: PgPool) {
         let f = Fleet::new(&pool, 2).await;
         let runner = Runner::new(pool.clone());
         let now = Utc::now();
@@ -418,12 +418,14 @@ db_tests! {
         new.spec = UpdateSpec::default();
         new.agent_version = Some("0.3.0".parse().unwrap());
         let id = f.start(&new).await;
-        // A windows server since creation is skipped with a reason.
+        // Windows agents update through their update service.
         sqlx::query("UPDATE servers SET os_family = 'windows' WHERE hostname = 'web-2'")
             .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(queued(runner.advance(id, now).await.unwrap()), ["agent-1"]);
+        let mut peers = queued(runner.advance(id, now).await.unwrap());
+        peers.sort();
+        assert_eq!(peers, ["agent-1", "agent-2"]);
         let command = f.commands.get(f.command_of(id, 0).await).await.unwrap().unwrap();
         assert_eq!(command.kind, "self_update");
         let payload = SelfUpdate::decode(command.payload.as_slice()).unwrap();
@@ -432,25 +434,12 @@ db_tests! {
             payload.base_urls,
             ["https://github.com/Kidoly/monitorflow/releases/download/v0.3.0/"]
         );
-        let error: Option<String> = sqlx::query_scalar(
-            "SELECT error FROM campaign_targets WHERE campaign_id = $1 AND server_id = $2",
-        )
-        .bind(id)
-        .bind(f.servers[1].0)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(error.as_deref(), Some("self-update is not supported on windows servers yet"));
+        let windows = f.commands.get(f.command_of(id, 1).await).await.unwrap().unwrap();
+        assert_eq!(windows.kind, "self_update");
 
-        // Package options do not mix with an agent version, and windows
-        // targets are refused at creation.
+        // Package options do not mix with an agent version.
         let mut mixed = f.campaign(vec![]);
         mixed.agent_version = Some("0.3.0".parse().unwrap());
         assert!(f.store.create(&mixed, USER).await.is_err());
-        let mut windows = f.campaign(vec![]);
-        windows.spec = UpdateSpec::default();
-        windows.agent_version = Some("0.3.0".parse().unwrap());
-        let error = f.store.create(&windows, USER).await.unwrap_err().to_string();
-        assert!(error.contains("web-2 is a windows server"), "{error}");
     }
 }

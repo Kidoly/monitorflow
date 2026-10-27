@@ -191,9 +191,6 @@ impl CampaignStore {
         let waves =
             plan_waves(&targets, &new.waves).map_err(|e| CampaignError::Invalid(e.to_string()))?;
         check_names(&mut tx, &new.spec.packages, &targets).await?;
-        if new.agent_version.is_some() {
-            check_self_update_targets(&mut tx, &targets).await?;
-        }
         let pinned = match &new.sources {
             Some(pin) => pinned_snapshots(&mut tx, pin, &targets).await?,
             None => Vec::new(),
@@ -445,26 +442,6 @@ async fn check_names(
         }
     }
     Ok(())
-}
-
-/// Agent update campaigns cannot target Windows servers yet (ADR-0053).
-async fn check_self_update_targets(
-    conn: &mut PgConnection,
-    targets: &[Uuid],
-) -> Result<(), CampaignError> {
-    let windows: Option<String> = sqlx::query_scalar(
-        "SELECT hostname FROM servers WHERE id = ANY($1) AND os_family = 'windows'
-         ORDER BY hostname LIMIT 1",
-    )
-    .bind(targets)
-    .fetch_optional(conn)
-    .await?;
-    match windows {
-        Some(host) => Err(CampaignError::Invalid(format!(
-            "{host} is a windows server: self-update is not supported on windows servers yet"
-        ))),
-        None => Ok(()),
-    }
 }
 
 /// `(mirror_id, snapshot_id)` of each mirror `pin` names: the snapshot

@@ -93,6 +93,9 @@ pub enum Request {
     },
     /// Restart in one minute.
     Reboot,
+    /// Install the agent release staged in the agent's data directory and
+    /// restart the agent into it (ADR-0053).
+    SelfUpdate(crate::self_update::swap::Request),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -105,6 +108,8 @@ pub enum RequestError {
     TooManyNames,
     #[error("`{0}` is not a KB number or update ID")]
     InvalidName(String),
+    #[error("{0}")]
+    SelfUpdate(String),
 }
 
 impl Request {
@@ -127,6 +132,9 @@ impl Request {
     /// Names are KB numbers or update IDs, and only `named` and
     /// `security` take them.
     pub fn validate(&self) -> Result<(), RequestError> {
+        if let Self::SelfUpdate(request) = self {
+            return request.validate().map_err(RequestError::SelfUpdate);
+        }
         let Self::Install { kind, updates } = self else {
             return Ok(());
         };
@@ -243,7 +251,18 @@ pub enum Reply {
     Status(Status),
     Installed(Installed),
     Rebooting(()),
+    /// What the self-update did, for the command's output.
+    SelfUpdate(SelfUpdated),
     Error(String),
+}
+
+/// The reply to [`Request::SelfUpdate`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelfUpdated {
+    /// The agent is about to be restarted into the new version.
+    pub restarting: bool,
+    pub message: String,
 }
 
 #[derive(Debug, thiserror::Error)]

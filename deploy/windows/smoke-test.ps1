@@ -1,6 +1,7 @@
 # Smoke test of the MSI package (ADR-0050), run by CI on a throwaway
-# Windows runner as an administrator: silent install, service and ACLs,
-# upgrade, the Event Log source, uninstall and cleanup. It changes the
+# Windows runner as an administrator: silent install, the agent and update
+# services (ADR-0049, ADR-0053) and ACLs, upgrade, the Event Log source,
+# uninstall and cleanup. It changes the
 # machine; do not run it on a server you care about.
 #
 #   deploy/windows/smoke-test.ps1 -Msi <package> -UpgradeMsi <newer package>
@@ -36,8 +37,16 @@ function Msiexec([string]$step, [string[]]$arguments) {
     $log
 }
 
-function Service-Info {
-    Get-CimInstance Win32_Service -Filter "Name='$service'"
+function Service-Info([string]$name = $service) {
+    Get-CimInstance Win32_Service -Filter "Name='$name'"
+}
+
+function Wait-Running([string]$name) {
+    for ($i = 0; $i -lt 30; $i++) {
+        if ((Get-Service $name -ErrorAction SilentlyContinue).Status -eq "Running") { return $true }
+        Start-Sleep -Seconds 1
+    }
+    $false
 }
 
 function Wait-Status([string]$status) {
@@ -88,6 +97,16 @@ $failure = (sc.exe qfailure $service) -join "`n"
 Check ($failure -match 'RESET_PERIOD \(in seconds\)\s*:\s*86400') "failure count resets after a day"
 Check (([regex]::Matches($failure, 'RESTART -- Delay = 60000')).Count -eq 3) "three restarts after 60 s"
 
+$update = Service-Info "MonitorFlowUpdate"
+Check ($null -ne $update) "service MonitorFlowUpdate exists"
+Check ($update.StartName -eq "LocalSystem") "it runs as LocalSystem (got $($update.StartName))"
+Check ($update.StartMode -eq "Auto") "it starts automatically (got $($update.StartMode))"
+$expected = "`"$bin\monitorflow-agent.exe`" update-service"
+Check ($update.PathName -eq $expected) "its command line is $expected (got $($update.PathName))"
+$failure = (sc.exe qfailure MonitorFlowUpdate) -join "`n"
+Check (([regex]::Matches($failure, 'RESTART -- Delay = 60000')).Count -eq 3) "the update service restarts after 60 s"
+Check (Wait-Running "MonitorFlowUpdate") "the update service is running"
+
 Expect-Dacl $data "0x1200a9"
 Expect-Dacl "$data\agent" "0x1301bf"
 Expect-Dacl "$data\scripts.d" "0x1200a9"
@@ -118,6 +137,7 @@ Check ((Get-FileHash "$data\agent.toml").Hash -eq $configHash) "agent.toml is un
 Check (Test-Path "$data\agent\marker") "the agent's data is kept"
 Check ((Service-Info).StartName -eq $account) "the service still runs as $account"
 Check (Wait-Status "Running") "the service is running again"
+Check (Wait-Running "MonitorFlowUpdate") "the update service is running again"
 
 Write-Host "== event log"
 Stop-Service $service
@@ -133,6 +153,7 @@ Check ($events.Count -ge 1 -and $events[0].Message -match "upstream_url") "the A
 Write-Host "== uninstall, keeping data"
 Msiexec "uninstall" @("/x", "`"$UpgradeMsi`"") | Out-Null
 Check ($null -eq (Service-Info)) "the service is removed"
+Check ($null -eq (Service-Info "MonitorFlowUpdate")) "the update service is removed"
 Check (-not (Test-Path $bin)) "$bin is removed"
 Check (-not (Test-Path $source)) "the Event Log source is removed"
 Check (Test-Path "$data\agent.toml") "agent.toml is kept"

@@ -1,9 +1,10 @@
-//! The `self_update` command on Linux (ADR-0053), as the agent's user:
-//! downloads the release from the first URL that serves the version asked
-//! for and checks it, then hands it to the root helper. When the helper
-//! has started the watchdog, the agent is about to be restarted: the
-//! handler waits, and the command's result comes from the status file
-//! (see [`super::StatusResumer`]).
+//! The `self_update` command (ADR-0053), as the agent's user: downloads
+//! the release from the first URL that serves the version asked for and
+//! checks it, then hands it to an [`Installer`]: the root helper through
+//! sudo on Linux, the update service on Windows. Once the restart is
+//! scheduled the agent is about to be stopped: the handler waits, and the
+//! command's result comes from the status file (see
+//! [`super::StatusResumer`]).
 
 use std::str::FromStr;
 use std::time::Duration;
@@ -19,7 +20,6 @@ use reqwest::Url;
 
 use super::{health_timeout, Header, RESTART_ALLOWANCE};
 use crate::commands::{Handler, Output};
-use crate::packages::Tools;
 
 /// Most URLs in one command.
 pub const MAX_URLS: usize = 8;
@@ -37,8 +37,26 @@ struct Downloaded {
     binary: Vec<u8>,
 }
 
+/// What the privileged side did with a release.
+#[derive(Debug)]
+pub enum Installed {
+    /// Installed; the restart is scheduled. The text goes to the output.
+    Restarting(String),
+    /// Nothing to do, as the privileged side found.
+    Current(String),
+}
+
+/// Hands a checked release to the side that may replace the binary.
+#[async_trait::async_trait]
+pub trait Installer: Send + Sync + 'static {
+    /// `Err` is the command's failed output.
+    async fn install(&self, header: &Header, binary: &[u8]) -> Result<Installed, Output>;
+    /// Where to look when the restart never comes.
+    fn log_hint(&self) -> &'static str;
+}
+
 pub struct SelfUpdateHandler {
-    tools: Tools,
+    installer: Box<dyn Installer>,
     keys: Vec<PublicKey>,
     current: Version,
     platform: Option<Platform>,
@@ -47,17 +65,17 @@ pub struct SelfUpdateHandler {
 
 impl SelfUpdateHandler {
     /// With the keys and version of this build.
-    pub fn new(tools: Tools) -> Self {
+    pub fn new(installer: impl Installer) -> Self {
         let keys = release::trusted_keys()
             .map(<[_]>::to_vec)
             .unwrap_or_default();
         let current = Version::from_str(monitorflow_common::VERSION)
             .unwrap_or_else(|_| Version::from_str("0.0.0").expect("valid"));
-        Self::with(tools, keys, current, Platform::current())
+        Self::with(installer, keys, current, Platform::current())
     }
 
     pub fn with(
-        tools: Tools,
+        installer: impl Installer,
         keys: Vec<PublicKey>,
         current: Version,
         platform: Option<Platform>,
@@ -69,7 +87,7 @@ impl SelfUpdateHandler {
             .build()
             .expect("a client with default TLS settings builds");
         Self {
-            tools,
+            installer: Box::new(installer),
             keys,
             current,
             platform,
@@ -122,7 +140,7 @@ impl SelfUpdateHandler {
         let asset = platform.agent_asset();
         // The size is bounded by the helper's limit; checked once whole.
         let binary = self
-            .get(&file(asset)?, super::helper::MAX_BINARY as usize)
+            .get(&file(asset)?, super::swap::MAX_BINARY as usize)
             .await?;
         verified
             .check(asset, &binary)
@@ -257,20 +275,120 @@ impl Handler for SelfUpdateHandler {
             allow_downgrade: spec.allow_downgrade,
             health_timeout_ms: health.as_millis() as u64,
         };
-        let mut input = serde_json::to_vec(&header).expect("a header serializes");
-        input.push(b'\n');
-        input.extend_from_slice(&files.binary);
-        drop(files);
+        let binary = files.binary;
+        match self.installer.install(&header, &binary).await {
+            Err(output) => Output {
+                stdout: [log.into_bytes(), output.stdout].concat(),
+                ..output
+            },
+            Ok(Installed::Current(text)) => {
+                log.push_str(&text);
+                Output {
+                    stdout: log.into_bytes(),
+                    ..Output::default()
+                }
+            }
+            Ok(Installed::Restarting(text)) => {
+                log.push_str(&text);
+                drop(binary);
+                // The restart stops this process; the result then comes
+                // from the status file. Still here much later, it failed.
+                tracing::info!(version = %target, "installed; waiting for the restart");
+                tokio::time::sleep(health + 2 * RESTART_ALLOWANCE).await;
+                Output {
+                    stdout: log.into_bytes(),
+                    ..failed(format!(
+                        "installed, but the agent was not restarted; see {}",
+                        self.installer.log_hint()
+                    ))
+                }
+            }
+        }
+    }
+}
 
-        let run = match self
-            .tools
-            .privileged_with_input(&[], &self.tools.agent, &["self-update"], Some(&input))
-            .await
-        {
-            Ok(run) => run,
-            Err(error) => return failed(error.to_string()),
+/// The update service on its pipe (Windows, ADR-0049): the release is
+/// staged in `<data_dir>\self-update\staged\`, which the service reads,
+/// checks again and installs.
+pub struct UpdateServiceInstaller {
+    pub service: std::sync::Arc<dyn crate::packages::windows_update::client::UpdateService>,
+    pub data_dir: std::path::PathBuf,
+}
+
+#[async_trait::async_trait]
+impl Installer for UpdateServiceInstaller {
+    async fn install(&self, header: &Header, binary: &[u8]) -> Result<Installed, Output> {
+        use crate::packages::windows_update::{Reply, Request};
+        use base64::Engine;
+
+        let staged = super::swap::staged_dir(&self.data_dir);
+        let signature = base64::engine::general_purpose::STANDARD
+            .decode(header.signature.as_bytes())
+            .map_err(|_| failed("the signature is not base64".into()))?;
+        let files: [(&str, &[u8]); 4] = [
+            (SUMS, header.sums.as_bytes()),
+            (SIGNATURE, &signature),
+            (VERSION_FILE, header.version_file.as_bytes()),
+            (Platform::WindowsX86_64.agent_asset(), binary),
+        ];
+        let stage = async {
+            let _ = tokio::fs::remove_dir_all(&staged).await;
+            tokio::fs::create_dir_all(&staged).await?;
+            for (name, bytes) in files {
+                tokio::fs::write(staged.join(name), bytes).await?;
+            }
+            std::io::Result::Ok(())
         };
-        log.push_str(&String::from_utf8_lossy(&run.stdout));
+        stage.await.map_err(|e| {
+            failed(format!(
+                "cannot stage the release in {}: {e}",
+                staged.display()
+            ))
+        })?;
+        let request = Request::SelfUpdate(super::swap::Request {
+            command_id: header.command_id.clone(),
+            data_dir: self.data_dir.clone(),
+            allow_downgrade: header.allow_downgrade,
+            health_timeout_ms: header.health_timeout_ms,
+        });
+        match self.service.call(&request).await {
+            Ok(Reply::SelfUpdate(done)) if done.restarting => {
+                Ok(Installed::Restarting(done.message + "\n"))
+            }
+            Ok(Reply::SelfUpdate(done)) => Ok(Installed::Current(done.message + "\n")),
+            Ok(Reply::Error(error)) => Err(failed(format!("update service: {error}"))),
+            Ok(other) => Err(failed(format!(
+                "update service: unexpected reply {other:?}"
+            ))),
+            Err(error) => Err(failed(error.to_string())),
+        }
+    }
+
+    fn log_hint(&self) -> &'static str {
+        r"%ProgramData%\MonitorFlow\update\update.log"
+    }
+}
+
+/// The root helper, `sudo -n /usr/bin/monitorflow-agent self-update`,
+/// with the header line and the binary on its stdin.
+#[cfg(unix)]
+pub struct SudoHelper {
+    pub tools: crate::packages::Tools,
+}
+
+#[cfg(unix)]
+#[async_trait::async_trait]
+impl Installer for SudoHelper {
+    async fn install(&self, header: &Header, binary: &[u8]) -> Result<Installed, Output> {
+        let mut input = serde_json::to_vec(header).expect("a header serializes");
+        input.push(b'\n');
+        input.extend_from_slice(binary);
+        let tools = &self.tools;
+        let run = tools
+            .privileged_with_input(&[], &tools.agent, &["self-update"], Some(&input))
+            .await
+            .map_err(|error| failed(error.to_string()))?;
+        let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
         if !run.success() {
             let stderr = String::from_utf8_lossy(&run.stderr);
             let error = stderr
@@ -281,30 +399,26 @@ impl Handler for SelfUpdateHandler {
                     || format!("the helper exited with {}", run.code),
                     str::to_owned,
                 );
-            return Output {
+            return Err(Output {
                 exit_code: run.code,
-                stdout: log.into_bytes(),
+                stdout: stdout.into_bytes(),
                 stderr: run.stderr,
                 error: Some(error),
                 rejected: false,
-            };
+            });
         }
-        if !log.contains(RESTARTING) {
-            return Output {
-                stdout: log.into_bytes(),
-                ..Output::default()
-            };
-        }
-        // The watchdog restarts this process; the result then comes from
-        // the status file. Still here much later, something went wrong.
-        tracing::info!(version = %target, "installed; waiting for the restart");
-        tokio::time::sleep(health + 2 * RESTART_ALLOWANCE).await;
-        Output {
-            stdout: log.into_bytes(),
-            ..failed("installed, but the agent was not restarted; see journalctl -u monitorflow-agent-self-update".into())
-        }
+        Ok(if stdout.contains(RESTARTING) {
+            Installed::Restarting(stdout)
+        } else {
+            Installed::Current(stdout)
+        })
+    }
+
+    fn log_hint(&self) -> &'static str {
+        "journalctl -u monitorflow-agent-self-update"
     }
 }
 
-#[cfg(test)]
+// Fakes sudo with a shell script.
+#[cfg(all(test, unix))]
 mod tests;

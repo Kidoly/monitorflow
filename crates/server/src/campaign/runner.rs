@@ -340,9 +340,6 @@ async fn queue(
     for target in missing {
         let next = match row.sources_mode {
             _ if target.revoked => Next::Fail("server revoked".into()),
-            _ if row.agent_version.is_some() && target.os_family == "windows" => {
-                Next::Fail("self-update is not supported on windows servers yet".into())
-            }
             None => Next::Update,
             // Windows servers take no sources (ADR-0049).
             Some(_) if target.os_family == "windows" => Next::Update,

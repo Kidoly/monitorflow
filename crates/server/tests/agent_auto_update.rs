@@ -132,7 +132,9 @@ db_tests! {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["agent_auto_update"], true);
 
-        assert_eq!(agent_auto_update::tick(&pool, &sources).await.unwrap(), ["old"]);
+        let mut first = agent_auto_update::tick(&pool, &sources).await.unwrap();
+        first.sort();
+        assert_eq!(first, ["old", "windows"]);
         let (kind, payload): (String, Vec<u8>) =
             sqlx::query_as("SELECT kind, payload FROM commands WHERE server_id = $1")
                 .bind(old)
@@ -143,8 +145,7 @@ db_tests! {
         assert_eq!(SelfUpdate::decode(payload.as_slice()).unwrap().version, "0.3.0");
         // In flight, then failed: never queued twice for that version.
         assert!(agent_auto_update::tick(&pool, &sources).await.unwrap().is_empty());
-        sqlx::query("UPDATE commands SET state = 'failed', finished_at = now() WHERE server_id = $1")
-            .bind(old)
+        sqlx::query("UPDATE commands SET state = 'failed', finished_at = now()")
             .execute(&pool)
             .await
             .unwrap();
@@ -154,14 +155,14 @@ db_tests! {
         std::fs::write(mirrors.path().join("agent/0.4.0/VERSION"), "0.4.0\n").unwrap();
         let mut peers = agent_auto_update::tick(&pool, &sources).await.unwrap();
         peers.sort();
-        assert_eq!(peers, ["current", "old"]);
+        assert_eq!(peers, ["current", "old", "windows"]);
 
         let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = $1")
             .bind("agent.auto_update")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(audited, 3);
+        assert_eq!(audited, 5);
         let toggled: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = $1")
             .bind("site.agent_auto_update")
             .fetch_one(&pool)

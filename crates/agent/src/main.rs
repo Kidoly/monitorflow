@@ -13,9 +13,9 @@ use monitorflow_agent::enroll::{self, EnrollError};
 use monitorflow_agent::init_config;
 use monitorflow_agent::os::HostInfo;
 use monitorflow_agent::renew::{Renewal, RenewalSettings};
-use monitorflow_agent::self_update::Connected;
 #[cfg(unix)]
-use monitorflow_agent::self_update::{self, StatusResumer};
+use monitorflow_agent::self_update;
+use monitorflow_agent::self_update::{Connected, StatusResumer};
 use monitorflow_agent::sensor_config::{self, Builtin, ConfigFile};
 use monitorflow_agent::sensors::Sensors;
 use monitorflow_agent::shutdown::Shutdown;
@@ -271,10 +271,9 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         DispatcherSettings::default(),
     );
     // Answers a self_update the restart interrupted (ADR-0053).
-    #[cfg(unix)]
-    let dispatcher = dispatcher.with_resumer(Arc::new(StatusResumer::new(Path::new(
-        self_update::STATE_DIR,
-    ))));
+    let dispatcher = dispatcher.with_resumer(Arc::new(StatusResumer::new(
+        &monitorflow_agent::self_update::state_dir(),
+    )));
     tokio::spawn(dispatcher.run(commands_end, stop.clone()));
     // The stream only returns on shutdown or a local error.
     let data_dir = config.data_dir.clone();
@@ -340,7 +339,9 @@ fn platform_handlers(
     );
     handlers.register(
         command::SELF_UPDATE,
-        Arc::new(self_update::handler::SelfUpdateHandler::new(tools)),
+        Arc::new(self_update::handler::SelfUpdateHandler::new(
+            self_update::handler::SudoHelper { tools },
+        )),
     );
     Some(latest_report)
 }
@@ -361,6 +362,7 @@ fn platform_handlers(
     };
     use monitorflow_agent::packages::windows_update::{pipe::PipeClient, PIPE_NAME};
     use monitorflow_agent::packages::Reports;
+    use monitorflow_agent::self_update::handler::{SelfUpdateHandler, UpdateServiceInstaller};
     use monitorflow_common::command;
 
     let service = Arc::new(PipeClient::new(PIPE_NAME));
@@ -369,7 +371,14 @@ fn platform_handlers(
     tokio::spawn(reports.clone().run(report_every, stop.clone()));
     handlers.register(
         command::APPLY_UPDATES,
-        Arc::new(WindowsApplyHandler::new(service, reports)),
+        Arc::new(WindowsApplyHandler::new(service.clone(), reports)),
+    );
+    handlers.register(
+        command::SELF_UPDATE,
+        Arc::new(SelfUpdateHandler::new(UpdateServiceInstaller {
+            service,
+            data_dir: config.data_dir.clone(),
+        })),
     );
     if config.commands.shell {
         tracing::warn!(
@@ -380,7 +389,6 @@ fn platform_handlers(
         (command::CONFIGURE_SOURCES, "package sources"),
         (command::REVERT_SOURCES, "package sources"),
         (command::SHELL, "shell commands"),
-        (command::SELF_UPDATE, "self-updates"),
     ] {
         handlers.register(kind, Arc::new(Unsupported::new(what, "Windows")));
     }
@@ -695,8 +703,10 @@ mod update_service {
     use std::time::Duration;
 
     use monitorflow_agent::packages::windows_update::{
-        pipe, pipe_sddl, service_sid, wua, AGENT_SERVICE, PIPE_NAME, SERVICE_NAME,
+        pipe, pipe_sddl, service_sid, wua, Reply, Request, SelfUpdated, AGENT_SERVICE, PIPE_NAME,
+        SERVICE_NAME,
     };
+    use monitorflow_agent::self_update::swap::{self, Scm, Swapped, Watched};
     use monitorflow_common::config::{self, LogConfig};
     use monitorflow_common::logging;
     use windows_service::service::{ServiceExitCode, ServiceState};
@@ -722,6 +732,55 @@ mod update_service {
         }
     }
 
+    /// Installs the staged agent release (ADR-0053), then restarts the
+    /// agent and watches it in a thread of its own, so the reply goes back
+    /// first. Once the new agent is kept, this service exits with an error
+    /// so the service control manager restarts it on the new binary.
+    fn self_update(request: &swap::Request) -> Reply {
+        let installed = (|| -> anyhow::Result<(Swapped, swap::Paths)> {
+            let keys = monitorflow_common::release::trusted_keys()?;
+            let current: monitorflow_common::release::Version =
+                monitorflow_common::VERSION.parse()?;
+            let paths = swap::Paths {
+                exe: std::env::current_exe()?.with_file_name("monitorflow-agent.exe"),
+                state_dir: monitorflow_agent::self_update::state_dir(),
+            };
+            let platform = monitorflow_common::release::Platform::WindowsX86_64;
+            Ok((
+                swap::install(request, &paths, keys, &current, platform)?,
+                paths,
+            ))
+        })();
+        match installed {
+            Err(error) => Reply::Error(format!("{error:#}")),
+            Ok((Swapped::Current(version), _)) => Reply::SelfUpdate(SelfUpdated {
+                restarting: false,
+                message: format!("already running {version}"),
+            }),
+            Ok((Swapped::Restarting { from, to }, paths)) => {
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(2));
+                    match swap::watch(&paths, &Scm, Duration::from_secs(2)) {
+                        Ok(Watched::Succeeded) => {
+                            tracing::info!(
+                                "the new agent connected; restarting the update service on it"
+                            );
+                            std::process::exit(1);
+                        }
+                        Ok(watched) => {
+                            tracing::warn!(?watched, "the self-update did not keep the new agent")
+                        }
+                        Err(error) => tracing::error!(%error, "the self-update watch failed"),
+                    }
+                });
+                Reply::SelfUpdate(SelfUpdated {
+                    restarting: true,
+                    message: format!("installed {to} over {from}; restarting into {to}"),
+                })
+            }
+        }
+    }
+
     fn serve() -> anyhow::Result<()> {
         let (handle, stop) = register(SERVICE_NAME)?;
         let ok = ServiceExitCode::Win32(0);
@@ -739,7 +798,11 @@ mod update_service {
                         let _ = handle.set_service_status(pending);
                     });
                     let sddl = pipe_sddl(&service_sid(AGENT_SERVICE));
-                    pipe::serve(PIPE_NAME, &sddl, wua::handle, stop).await?;
+                    let handle = |request: &Request| match request {
+                        Request::SelfUpdate(request) => self_update(request),
+                        other => wua::handle(other),
+                    };
+                    pipe::serve(PIPE_NAME, &sddl, handle, stop).await?;
                     Ok(())
                 })
             });
