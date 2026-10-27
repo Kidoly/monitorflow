@@ -19,6 +19,7 @@ pub fn served(layout: &Layout) -> Served {
         apt: layout.served(Family::Apt),
         dnf: layout.served(Family::Dnf),
         public_key: layout.public_key(),
+        agent: layout.root().join(crate::agent_releases::DIR),
     }
 }
 

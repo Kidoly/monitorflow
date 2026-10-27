@@ -110,11 +110,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: deploy/smoke-test.sh
+      # Both agents trust a throwaway release key, so the test can sign
+      # releases they accept (ADR-0053).
+      - name: Throwaway release key
+        run: |
+          openssl genpkey -algorithm ed25519 -out "$RUNNER_TEMP/e2e-signing.pem"
+          { cat deploy/release-keys.pem; openssl pkey -in "$RUNNER_TEMP/e2e-signing.pem" -pubout; } >"$RUNNER_TEMP/e2e-release-keys.pem"
+          echo "MONITORFLOW_RELEASE_KEYS=$RUNNER_TEMP/e2e-release-keys.pem" >>"$GITHUB_ENV"
       - id: agent
         uses: ./.github/actions/build-agent-linux
         with:
           target: x86_64-unknown-linux-musl
-      - run: deploy/install-test.sh "${{ steps.agent.outputs.path }}"
+      - run: cp "${{ steps.agent.outputs.path }}" "$RUNNER_TEMP/agent-old"
+      # A newer version to self-update to.
+      - id: newer
+        uses: ./.github/actions/build-agent-linux
+        env:
+          MONITORFLOW_BUILD_VERSION: 99.0.0
+        with:
+          target: x86_64-unknown-linux-musl
+      - run: deploy/install-test.sh "$RUNNER_TEMP/agent-old" "${{ steps.newer.outputs.path }}"
+        env:
+          MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
   # The installer is piped to sh, so it must stay POSIX (ADR-0052).
   shellcheck:
     runs-on: ubuntu-latest

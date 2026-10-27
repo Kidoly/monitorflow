@@ -4,6 +4,7 @@
 //! - `/apt/<mirror>/<snapshot>/` and `/apt/<mirror>/current/`
 //! - `/dnf/<mirror>/<snapshot>/` and `/dnf/<mirror>/current/`
 //! - `/keys/monitorflow-archive.asc`
+//! - `/agent/<version>/`: signed agent releases for self-updates (ADR-0053)
 //! - `/index.json`, see [`Index`]
 //!
 //! GET and HEAD only, no directory listings, and any path segment
@@ -24,12 +25,17 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use super::{Family, Index, INDEX_PATH, PUBLIC_KEY};
 
+/// Directory and URL path of the agent releases.
+pub const AGENT_DIR: &str = "agent";
+
 /// The served directories: one per family, and the public key file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Served {
     pub apt: PathBuf,
     pub dnf: PathBuf,
     pub public_key: PathBuf,
+    /// Agent releases, one directory per version (ADR-0053).
+    pub agent: PathBuf,
 }
 
 impl Served {
@@ -39,6 +45,7 @@ impl Served {
             apt: root.join(Family::Apt.as_str()),
             dnf: root.join(Family::Dnf.as_str()),
             public_key: root.join("keys").join(PUBLIC_KEY),
+            agent: root.join(AGENT_DIR),
         }
     }
 
@@ -56,6 +63,10 @@ pub fn router(served: &Served) -> Router {
     Router::new()
         .nest_service("/apt", dir(Family::Apt))
         .nest_service("/dnf", dir(Family::Dnf))
+        .nest_service(
+            &format!("/{AGENT_DIR}"),
+            ServeDir::new(&served.agent).append_index_html_on_directories(false),
+        )
         .route_service(
             &format!("/keys/{PUBLIC_KEY}"),
             ServeFile::new(&served.public_key),

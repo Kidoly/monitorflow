@@ -37,6 +37,14 @@ export function describeCommand(command: Command): { title: string; sub: string 
     }
     case "revert_sources":
       return { title: "Revert package sources", sub: "back to the distribution's own" };
+    case "self_update": {
+      const version = typeof p.version === "string" ? p.version : "?";
+      const timeout = typeof p.health_timeout_seconds === "number" && p.health_timeout_seconds > 0 ? p.health_timeout_seconds : 300;
+      return {
+        title: `Update agent to ${version}`,
+        sub: `${p.allow_downgrade === true ? "downgrade allowed · " : ""}rolls back unless it connects within ${timeout} s`,
+      };
+    }
     default:
       return { title: command.kind, sub: "" };
   }

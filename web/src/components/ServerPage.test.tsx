@@ -107,6 +107,7 @@ function routes(overrides: Record<string, unknown> = {}) {
       next_cursor: null,
     }),
     [`GET /api/servers/${ID}/commands?limit=${COMMANDS_PAGE}`]: ok({ commands: [command({}), failed], next_cursor: null }),
+    "GET /api/agent-releases": ok({ versions: ["0.2.0"], latest: "0.2.0" }),
     ...overrides,
   } as Parameters<typeof stubFetch>[0];
 }
@@ -323,5 +324,53 @@ describe("ServerPage", () => {
     const paths = fetchMock.mock.calls.map(([input]) => String(input));
     expect(paths).toContain(`/api/servers/${ID}`);
     expect(paths).not.toContain("/api/servers");
+  });
+
+  it("offers administrators an agent update when the server holds a newer release", async () => {
+    const queued = command({ id: "c9", kind: "self_update", parameters: { version: "0.3.0" }, state: "queued" });
+    const fetchMock = stubFetch(
+      routes({
+        "GET /api/agent-releases": ok({ versions: ["0.3.0", "0.2.0"], latest: "0.3.0" }),
+        [`POST /api/servers/${ID}/commands`]: { status: 201, body: { ...queued, stdout: null, stderr: null } },
+      }),
+    );
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <As user={customerAdmin}>
+        <ServerPage id={ID} />
+      </As>,
+    );
+    await heading();
+    expect(document.querySelector("dl")).toHaveTextContent(/Agent\s*0\.2\.0 · 0\.3\.0 available · via relay-paris-1/);
+    await user.click(screen.getByRole("button", { name: "Update agent to 0.3.0…" }));
+    await user.click(screen.getByRole("button", { name: "Update web-1" }));
+    await vi.waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/servers/${ID}/commands`,
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ kind: "self_update", version: "0.3.0" }) }),
+      ),
+    );
+  });
+
+  it("offers no agent update to viewers or up-to-date agents", async () => {
+    stubFetch(routes({ "GET /api/agent-releases": ok({ versions: ["0.3.0"], latest: "0.3.0" }) }));
+    const { unmount } = render(
+      <As user={me({ role: "viewer", customer_id: null, site_id: null })}>
+        <ServerPage id={ID} />
+      </As>,
+    );
+    await heading();
+    expect(screen.queryByRole("button", { name: /Update agent/ })).not.toBeInTheDocument();
+    unmount();
+
+    stubFetch(routes());
+    render(
+      <As user={customerAdmin}>
+        <ServerPage id={ID} />
+      </As>,
+    );
+    await heading();
+    expect(screen.queryByRole("button", { name: /Update agent/ })).not.toBeInTheDocument();
+    expect(document.querySelector("dl")).toHaveTextContent(/Agent\s*0\.2\.0 · via relay-paris-1/);
   });
 });

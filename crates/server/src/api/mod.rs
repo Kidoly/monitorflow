@@ -64,6 +64,7 @@
 //! | GET | `/api/servers/{id}/commands` | read | [`commands::CommandList`], newest first, paginated |
 //! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
 //! | GET | `/api/commands/{id}` | read | [`commands::CommandDetail`]: the command and its output |
+//! | GET | `/api/agent-releases` | any role | [`commands::AgentReleases`]: cached agent versions and the latest (ADR-0053) |
 //! | GET | `/api/campaigns` | customer role | [`campaigns::CampaignList`], newest first, paginated |
 //! | POST | `/api/campaigns` | customer administrator | body [`campaigns::CreateRequest`]; 201 [`campaigns::CampaignDetail`] |
 //! | GET | `/api/campaigns/{id}` | customer role | [`campaigns::CampaignDetail`]: the campaign, its waves and servers |
@@ -447,6 +448,7 @@ use monitorflow_common::config::ServerConfig;
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 
+use crate::agent_releases::ReleaseCache;
 use crate::campaign::Runner;
 use crate::commands::Commands;
 use crate::crl::CrlPublisher;
@@ -475,6 +477,10 @@ pub struct ApiSettings {
     /// Whether `[proxmox]` is on, and its cluster names (ADR-0044).
     pub proxmox_enabled: bool,
     pub proxmox_clusters: Vec<String>,
+    /// Where agents download releases from, and the server's cache of
+    /// them (ADR-0053).
+    pub agent_download_url: String,
+    pub agent_releases: ReleaseCache,
 }
 
 impl ApiSettings {
@@ -484,6 +490,8 @@ impl ApiSettings {
             session_lifetime: Duration::from_secs(config.api_session_lifetime),
             session_idle_timeout: Duration::from_secs(config.api_session_idle_timeout),
             mirror_public_url: config.mirror_public_url.clone(),
+            agent_download_url: config.agent_download_url.clone(),
+            agent_releases: ReleaseCache::in_mirror_dir(&config.mirror_dir()),
             proxmox_enabled: config.proxmox.enabled,
             proxmox_clusters: config
                 .proxmox
@@ -664,6 +672,7 @@ pub fn router(state: ApiState) -> Router {
             get(commands::list).post(commands::create),
         )
         .route("/api/commands/{id}", get(commands::detail))
+        .route("/api/agent-releases", get(commands::agent_releases))
         .route(
             "/api/servers/{id}/sources",
             post(sources::configure).delete(sources::revert),

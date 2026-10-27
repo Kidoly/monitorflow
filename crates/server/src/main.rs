@@ -69,6 +69,21 @@ enum Command {
     /// Manage package mirrors (ADR-0030).
     #[command(subcommand)]
     Mirror(MirrorCommand),
+    /// Agent releases served for self-updates (ADR-0053).
+    #[command(subcommand)]
+    AgentRelease(AgentReleaseCommand),
+}
+
+#[derive(Subcommand, Debug)]
+enum AgentReleaseCommand {
+    /// Copy a release from a directory of release files into the cache,
+    /// once its signature verifies.
+    Import {
+        #[arg(long)]
+        dir: std::path::PathBuf,
+    },
+    /// List the cached versions, newest first.
+    List,
 }
 
 #[derive(Subcommand, Debug)]
@@ -245,6 +260,29 @@ enum UserCommand {
     },
 }
 
+/// Needs no database: the cache is a directory of the mirror listener.
+fn agent_release_command(
+    config: &ServerConfig,
+    command: AgentReleaseCommand,
+) -> anyhow::Result<()> {
+    use monitorflow_server::agent_releases::ReleaseCache;
+
+    let cache = ReleaseCache::in_mirror_dir(&config.mirror_dir());
+    match command {
+        AgentReleaseCommand::Import { dir } => {
+            let keys = monitorflow_common::release::trusted_keys()?;
+            let version = cache.import(&dir, keys)?;
+            println!("imported {version} into {}", cache.dir().display());
+        }
+        AgentReleaseCommand::List => {
+            for version in cache.versions()? {
+                println!("{version}");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn parse_role(s: &str) -> Result<Role, String> {
     match s {
         "admin" => Ok(Role::Administrator),
@@ -260,6 +298,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Token(TokenCommand::Create(args))) => {
             return create_token(&config, args).await
         }
+        Some(Command::AgentRelease(command)) => return agent_release_command(&config, command),
         Some(Command::User { .. } | Command::Customer(_) | Command::Mirror(_)) | None => {}
     }
     logging::init(&config.log);
@@ -274,7 +313,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::User { command }) => return user_command(&pool, command).await,
         Some(Command::Customer(command)) => return customer_command(&pool, command).await,
         Some(Command::Mirror(command)) => return mirror_command(&config, pool, command).await,
-        Some(Command::Token(_)) | None => {}
+        Some(Command::Token(_) | Command::AgentRelease(_)) | None => {}
     }
 
     let ca = Arc::new(open_ca(&config).await?);

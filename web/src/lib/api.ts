@@ -361,7 +361,7 @@ export type CommandState = "queued" | "sent" | "running" | "succeeded" | "failed
 export interface Command {
   id: string;
   server_id: string;
-  /** `apply_updates`, `configure_sources` or `revert_sources`. */
+  /** `apply_updates`, `configure_sources`, `revert_sources`, `shell` or `self_update`. */
   kind: string;
   /** The payload as JSON for kinds the API knows, else null. */
   parameters: Record<string, unknown> | null;
@@ -382,6 +382,14 @@ export interface Command {
 export interface CommandDetail extends Command {
   stdout: string | null;
   stderr: string | null;
+}
+
+/** `GET /api/agent-releases`: agent versions the server holds for self-updates (ADR-0053). */
+export interface AgentReleases {
+  /** Newest first. */
+  versions: string[];
+  /** The newest without a pre-release suffix, else the newest; null when none. */
+  latest: string | null;
 }
 
 /** One page of a server's commands, newest first. */
@@ -1110,6 +1118,15 @@ export const api = {
       { signal },
     );
   },
+
+  agentReleases: (signal?: AbortSignal) => request<AgentReleases>("/api/agent-releases", { signal }),
+
+  /** Queues a `self_update` to `version`; customer administrators only (ADR-0053). */
+  updateAgent: (serverId: string, version: string) =>
+    request<CommandDetail>(`/api/servers/${encodeURIComponent(serverId)}/commands`, {
+      method: "POST",
+      body: { kind: "self_update", version },
+    }),
 
   command: (id: string, signal?: AbortSignal) =>
     request<CommandDetail>(`/api/commands/${encodeURIComponent(id)}`, { signal }),
