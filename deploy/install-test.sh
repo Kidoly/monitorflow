@@ -82,9 +82,16 @@ rm "$work/files/unsigned/SHA256SUMS.sig"
 
 # HTTPS with a CA of its own, trusted by the installer's curl through
 # CURL_CA_BUNDLE.
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=localhost \
-    -addext subjectAltName=DNS:localhost -keyout "$work/key.pem" -out "$work/cert.pem" 2>/dev/null
-python3 - "$work/files" "$FILES_PORT" "$work/cert.pem" "$work/key.pem" <<'EOF' &
+# A CA and a server certificate it signs: rustls, in the agent, refuses a
+# CA certificate as the server's own.
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 \
+    -subj "/CN=MonitorFlow install test CA" -keyout "$work/ca-key.pem" -out "$work/ca.pem" 2>/dev/null
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=localhost \
+    -keyout "$work/key.pem" -out "$work/server.csr" 2>/dev/null
+printf 'subjectAltName=DNS:localhost\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n' >"$work/server.ext"
+openssl x509 -req -in "$work/server.csr" -CA "$work/ca.pem" -CAkey "$work/ca-key.pem" -CAcreateserial \
+    -days 1 -extfile "$work/server.ext" -out "$work/server.pem" 2>/dev/null
+python3 - "$work/files" "$FILES_PORT" "$work/server.pem" "$work/key.pem" <<'EOF' &
 import functools, http.server, ssl, sys
 directory, port, cert, key = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
 handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=directory)
@@ -104,8 +111,8 @@ token=$(compose exec -T server monitorflow-server token create --role agent --id
 
 # Runs the installer as the one-liner does, piped from the file server.
 installer() {
-    curl -fsSL --cacert "$work/cert.pem" "$base/install.sh" \
-        | sudo env CURL_CA_BUNDLE="$work/cert.pem" "$@" sh
+    curl -fsSL --cacert "$work/ca.pem" "$base/install.sh" \
+        | sudo env CURL_CA_BUNDLE="$work/ca.pem" "$@" sh
 }
 api="https://127.0.0.1:$HTTPS_PORT/api"
 curl -fsSk -c "$work/cookies" -H 'content-type: application/json' -H 'x-monitorflow-csrf: 1' \
@@ -146,7 +153,7 @@ check "agent online again" online
 if [ -n "$newer" ]; then
     echo "== self-update"
     # The agent trusts the file server's throwaway CA for its downloads.
-    sudo install -m 0644 "$work/cert.pem" /etc/monitorflow/e2e-ca.pem
+    sudo install -m 0644 "$work/ca.pem" /etc/monitorflow/e2e-ca.pem
     sudo mkdir -p /etc/systemd/system/monitorflow-agent.service.d
     printf '[Service]\nEnvironment=SSL_CERT_FILE=/etc/monitorflow/e2e-ca.pem\n' \
         | sudo tee /etc/systemd/system/monitorflow-agent.service.d/e2e.conf >/dev/null
@@ -213,8 +220,8 @@ binary=$(sha256sum /usr/bin/monitorflow-agent)
 # The installer from the good directory, the files from another one, as
 # with a compromised mirror.
 refuses() {
-    ! curl -fsSL --cacert "$work/cert.pem" "$base/install.sh" \
-        | sudo env CURL_CA_BUNDLE="$work/cert.pem" MF_DOWNLOAD_URL="$base/$1" sh
+    ! curl -fsSL --cacert "$work/ca.pem" "$base/install.sh" \
+        | sudo env CURL_CA_BUNDLE="$work/ca.pem" MF_DOWNLOAD_URL="$base/$1" sh
 }
 check "installer refuses a checksum mismatch" refuses tampered
 check "installer refuses another key's signature" refuses foreign
