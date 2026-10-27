@@ -78,6 +78,8 @@ services:
       MONITORFLOW_LOG_FORMAT: json
       # Unset: the latest GitHub release (ADR-0052).
       MONITORFLOW_AGENT_DOWNLOAD_URL: ${AGENT_DOWNLOAD_URL:-}
+      # Unset: chosen in the web interface, github by default (ADR-0054).
+      MONITORFLOW_AGENT_INSTALL_SOURCE: ${AGENT_INSTALL_SOURCE:-}
     volumes:
       - serverdata:/var/lib/monitorflow/server
       - dbcerts:/certs:ro
