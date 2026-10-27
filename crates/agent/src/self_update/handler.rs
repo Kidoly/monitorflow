@@ -84,12 +84,16 @@ impl SelfUpdateHandler {
             .send()
             .await
             .and_then(reqwest::Response::error_for_status)
-            .map_err(|e| format!("{url}: {e}"))?;
+            .map_err(|e| format!("{url}: {}", chain(&e)))?;
         if response.content_length().is_some_and(|n| n > limit as u64) {
             return Err(format!("{url}: larger than {limit} bytes"));
         }
         let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|e| format!("{url}: {e}"))? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| format!("{url}: {}", chain(&e)))?
+        {
             if body.len() + chunk.len() > limit {
                 return Err(format!("{url}: larger than {limit} bytes"));
             }
@@ -131,6 +135,19 @@ impl SelfUpdateHandler {
             binary,
         })
     }
+}
+
+/// `error` and its causes, so a TLS or DNS failure says which: reqwest's
+/// own text is only "error sending request".
+fn chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
 }
 
 /// The base URLs of `spec`, checked: http or https, without credentials,
