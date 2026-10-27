@@ -154,7 +154,7 @@ online() {
 echo "== first install"
 installer MF_DOWNLOAD_URL="$base" MF_SERVER="localhost:$GRPC_PORT" MF_ENROLL="localhost:$ENROLL_PORT" \
     MF_TOKEN="$token" | tee "$work/install.log"
-check "agent shows online in the API" online
+check "agent shows online in the API" online "$PEER"
 check "installer verified the release signature" grep -q 'release signature verified' "$work/install.log"
 check "binary root:root 0755" mode_is /usr/bin/monitorflow-agent "root:root 755"
 check "data dir monitorflow 0700" mode_is /var/lib/monitorflow/agent "monitorflow:monitorflow 700"
@@ -171,7 +171,7 @@ echo "== second run: upgrade in place"
 installer MF_DOWNLOAD_URL="$base" MF_TOKEN="$token"
 check "identity and configuration kept" test "$(sudo sha256sum /var/lib/monitorflow/agent/tls/cert.pem /etc/monitorflow/agent.toml)" = "$identity"
 check "service active after upgrade" systemctl is-active --quiet monitorflow-agent
-check "agent online again" online
+check "agent online again" online "$PEER"
 
 if [ -n "$newer" ]; then
     echo "== self-update"
@@ -182,7 +182,7 @@ if [ -n "$newer" ]; then
         | sudo tee /etc/systemd/system/monitorflow-agent.service.d/e2e.conf >/dev/null
     sudo systemctl daemon-reload
     sudo systemctl restart monitorflow-agent
-    online
+    online "$PEER"
     old_version=$(/usr/bin/monitorflow-agent --version | cut -d ' ' -f 2)
     new_version=$("$newer" --version | cut -d ' ' -f 2)
     # Fills $work/files/next with a signed release of $1 as version $2.
