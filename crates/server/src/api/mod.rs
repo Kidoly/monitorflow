@@ -1,7 +1,8 @@
 //! REST API consumed by the web interface (architecture §9).
 //!
 //! The listener speaks plain HTTP and sits behind a TLS reverse proxy
-//! (ADR-0006). Every route lives under `/api`.
+//! (ADR-0006). Every route lives under `/api`, except the agent release
+//! files under `/agent` (ADR-0054).
 //!
 //! # JSON conventions
 //!
@@ -65,6 +66,7 @@
 //! | GET | `/api/servers/{id}/commands` | read | [`commands::CommandList`], newest first, paginated |
 //! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
 //! | GET | `/api/commands/{id}` | read | [`commands::CommandDetail`]: the command and its output |
+//! | GET | `/agent/{version}/{file}`, `/agent/latest/{file}` | none | A file of a cached agent release, for installs (ADR-0054); 404 with a plain-text reason |
 //! | GET | `/api/agent-releases` | any role | [`commands::AgentReleases`]: cached agent versions and the latest (ADR-0053) |
 //! | GET | `/api/campaigns` | customer role | [`campaigns::CampaignList`], newest first, paginated |
 //! | POST | `/api/campaigns` | customer administrator | body [`campaigns::CreateRequest`]; 201 [`campaigns::CampaignDetail`] |
@@ -408,6 +410,7 @@
 //! A server outside the user's sites, or an ID that is not a UUID, is 404.
 
 pub mod access;
+pub mod agent_files;
 pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
@@ -589,6 +592,7 @@ pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/api/health", get(health::live))
         .route("/api/health/ready", get(health::ready))
+        .route("/agent/{version}/{file}", get(agent_files::file))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))

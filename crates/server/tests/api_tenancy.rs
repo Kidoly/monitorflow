@@ -425,6 +425,12 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(status, StatusCode::OK);
             assert!(!Ctx::mentions(&body, b.customer));
         }
+        // Global and public: agent release files (ADR-0054), none cached
+        // here.
+        ("GET", "/agent/{version}/{file}") => {
+            let (status, _) = ctx.call(method, "/agent/latest/install.sh", None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+        }
         // Listings: B never shows.
         ("GET", "/api/servers") => {
             let (status, body) = ctx.call(method, path, None).await;

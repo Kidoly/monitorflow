@@ -1,11 +1,12 @@
-//! Agent releases the server keeps for self-updates (ADR-0053): one
-//! directory per version under `<mirror_dir>/agent/`, served by the mirror
-//! listener at `/agent/<version>/`, and the URLs a `self_update` command
-//! lists.
+//! Agent releases the server keeps (ADR-0053, ADR-0054): one directory per
+//! version under `<mirror_dir>/agent/` with every file of the release,
+//! served by the mirror listener at `/agent/<version>/` for self-updates
+//! and by the API listener, behind the web interface's HTTPS, for
+//! installs; and the URLs a `self_update` command lists.
 //!
 //! Imports check the release signature with the keys built into the
-//! server; agents check it again, so the cache only saves them from
-//! downloading junk. Listing reads `VERSION` files only.
+//! server; agents and the installer check it again, so the cache only
+//! saves them from downloading junk. Listing reads `VERSION` files only.
 
 use std::fs;
 use std::io;
@@ -19,18 +20,41 @@ use prost::Message;
 /// Directory under `mirror_dir`, and the URL path of the mirror listener.
 pub const DIR: &str = monitorflow_common::mirror::serve::AGENT_DIR;
 
-/// The files a cached release keeps: what agents download.
+/// The Linux installer of a release (ADR-0052).
+pub const INSTALLER: &str = "install.sh";
+/// The Windows package of a release (ADR-0050).
+pub const MSI: &str = "monitorflow-agent-windows-x86_64.msi";
+
+/// The files a cached release keeps: all of a release's (ADR-0052), so
+/// the server can serve installs as well as self-updates (ADR-0054).
 pub fn kept_files() -> Vec<&'static str> {
     let mut files = vec![release::SUMS, release::SIGNATURE, release::VERSION_FILE];
-    files.extend(
-        [
-            Platform::LinuxX86_64,
-            Platform::LinuxAarch64,
-            Platform::WindowsX86_64,
-        ]
-        .map(Platform::agent_asset),
-    );
+    files.extend(BINARIES.map(Platform::agent_asset));
+    files.extend([
+        INSTALLER,
+        "monitorflow-agent.service",
+        "monitorflow-agent-sudoers",
+        MSI,
+    ]);
     files
+}
+
+const BINARIES: [Platform; 3] = [
+    Platform::LinuxX86_64,
+    Platform::LinuxAarch64,
+    Platform::WindowsX86_64,
+];
+
+fn is_binary(name: &str) -> bool {
+    BINARIES.iter().any(|p| p.agent_asset() == name)
+}
+
+/// A release [`ReleaseCache::import`] kept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Imported {
+    pub version: Version,
+    /// Files of [`kept_files`] the source did not have.
+    pub missing: Vec<&'static str>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -75,8 +99,10 @@ impl ReleaseCache {
 
     /// Copies the release in `source` into the cache once its signature
     /// verifies against `keys` and every file kept matches its checksum.
-    /// Replaces a cached copy of the same version.
-    pub fn import(&self, source: &Path, keys: &[PublicKey]) -> Result<Version, CacheError> {
+    /// Reads nothing but `source`, so it works offline. Files of the
+    /// release may be missing, except the signed ones and at least one
+    /// binary. Replaces a cached copy of the same version.
+    pub fn import(&self, source: &Path, keys: &[PublicKey]) -> Result<Imported, CacheError> {
         let read = |name: &str| {
             let path = source.join(name);
             fs::read(&path).map_err(io_error(&path))
@@ -93,17 +119,38 @@ impl ReleaseCache {
         let staging = self.dir.join(format!(".{version}.import"));
         let _ = fs::remove_dir_all(&staging);
         fs::create_dir(&staging).map_err(io_error(&staging))?;
-        let mut binaries = 0;
+        let result = self.copy(source, &staging, &verified);
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&staging);
+        }
+        let missing = result?;
+        let target = self.dir.join(&version);
+        let _ = fs::remove_dir_all(&target);
+        fs::rename(&staging, &target).map_err(io_error(&target))?;
+        Ok(Imported {
+            version: verified.version,
+            missing,
+        })
+    }
+
+    /// Copies and checks the files of `verified` into `staging`; returns
+    /// the ones `source` lacks.
+    fn copy(
+        &self,
+        source: &Path,
+        staging: &Path,
+        verified: &release::Release,
+    ) -> Result<Vec<&'static str>, CacheError> {
+        let signed = [release::SUMS, release::SIGNATURE, release::VERSION_FILE];
+        let mut missing = Vec::new();
         for name in kept_files() {
             let path = source.join(name);
             let bytes = match fs::read(&path) {
                 Ok(bytes) => bytes,
-                // Binaries are optional, the release files are not.
-                Err(e)
-                    if e.kind() == io::ErrorKind::NotFound
-                        && name.starts_with("monitorflow-agent-") =>
-                {
-                    continue
+                // Only the signed files are required.
+                Err(e) if e.kind() == io::ErrorKind::NotFound && !signed.contains(&name) => {
+                    missing.push(name);
+                    continue;
                 }
                 Err(e) => return Err(io_error(&path)(e)),
             };
@@ -111,20 +158,13 @@ impl ReleaseCache {
             if name != release::SUMS && name != release::SIGNATURE {
                 verified.check(name, &bytes)?;
             }
-            if name.starts_with("monitorflow-agent-") {
-                binaries += 1;
-            }
             let target = staging.join(name);
             fs::write(&target, bytes).map_err(io_error(&target))?;
         }
-        if binaries == 0 {
-            let _ = fs::remove_dir_all(&staging);
+        if missing.iter().filter(|name| is_binary(name)).count() == BINARIES.len() {
             return Err(CacheError::NoBinary);
         }
-        let target = self.dir.join(&version);
-        let _ = fs::remove_dir_all(&target);
-        fs::rename(&staging, &target).map_err(io_error(&target))?;
-        Ok(verified.version)
+        Ok(missing)
     }
 }
 
@@ -230,7 +270,8 @@ mod tests {
             .collect()
     }
 
-    /// A signed release of `version` in a directory, and its key.
+    /// A signed release of `version` in a directory, with every file, and
+    /// its key.
     fn release_dir(version: &str) -> (TempDir, PublicKey) {
         let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).unwrap();
         let pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
@@ -239,15 +280,15 @@ mod tests {
         ];
         der.extend_from_slice(pair.public_key().as_ref());
         let dir = TempDir::new().unwrap();
-        let files: [(&str, Vec<u8>); 3] = [
-            ("VERSION", format!("{version}\n").into_bytes()),
-            ("monitorflow-agent-linux-x86_64", b"agent".to_vec()),
-            ("install.sh", b"#!/bin/sh\n".to_vec()),
-        ];
         let mut sums = String::new();
-        for (name, bytes) in &files {
-            fs::write(dir.path().join(name), bytes).unwrap();
-            sums.push_str(&format!("{}  {name}\n", hex(bytes)));
+        for name in kept_files() {
+            let bytes = match name {
+                release::SUMS | release::SIGNATURE => continue,
+                release::VERSION_FILE => format!("{version}\n").into_bytes(),
+                name => format!("{name} {version}").into_bytes(),
+            };
+            fs::write(dir.path().join(name), &bytes).unwrap();
+            sums.push_str(&format!("{}  {name}\n", hex(&bytes)));
         }
         fs::write(dir.path().join("SHA256SUMS"), &sums).unwrap();
         fs::write(
@@ -258,6 +299,15 @@ mod tests {
         (dir, PublicKey::from_spki(&der).unwrap())
     }
 
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
     #[test]
     fn imports_verified_releases_and_lists_them_newest_first() {
         let mirror = TempDir::new().unwrap();
@@ -265,7 +315,9 @@ mod tests {
         assert!(cache.versions().unwrap().is_empty());
         for version in ["0.2.0", "0.10.0", "0.11.0-rc.1"] {
             let (dir, key) = release_dir(version);
-            assert_eq!(cache.import(dir.path(), &[key]).unwrap(), v(version));
+            let imported = cache.import(dir.path(), &[key]).unwrap();
+            assert_eq!(imported.version, v(version));
+            assert!(imported.missing.is_empty());
         }
         assert_eq!(
             cache.versions().unwrap(),
@@ -273,13 +325,50 @@ mod tests {
         );
         assert_eq!(latest(&cache.versions().unwrap()), Some(&v("0.10.0")));
         assert!(cache.has(&v("0.2.0")));
-        // Only what agents need is kept.
-        let kept: Vec<_> = fs::read_dir(mirror.path().join("agent/0.2.0"))
-            .unwrap()
-            .map(|e| e.unwrap().file_name().into_string().unwrap())
-            .collect();
-        assert_eq!(kept.len(), 4, "{kept:?}");
-        assert!(!kept.contains(&"install.sh".to_owned()));
+    }
+
+    #[test]
+    fn keeps_every_file_of_the_release_and_nothing_else() {
+        let mirror = TempDir::new().unwrap();
+        let cache = ReleaseCache::in_mirror_dir(mirror.path());
+        let (dir, key) = release_dir("0.2.0");
+        fs::write(dir.path().join("notes.txt"), "not in the release").unwrap();
+        cache.import(dir.path(), &[key]).unwrap();
+        let kept = mirror.path().join("agent/0.2.0");
+        let mut expected: Vec<_> = kept_files().iter().map(|n| n.to_string()).collect();
+        expected.sort();
+        assert_eq!(names_in(&kept), expected);
+        for name in [INSTALLER, MSI, "monitorflow-agent-sudoers"] {
+            assert_eq!(
+                fs::read(kept.join(name)).unwrap(),
+                fs::read(dir.path().join(name)).unwrap()
+            );
+        }
+        // No staging directory is left behind.
+        assert_eq!(names_in(&mirror.path().join("agent")), ["0.2.0"]);
+    }
+
+    #[test]
+    fn partial_releases_say_what_they_lack() {
+        let mirror = TempDir::new().unwrap();
+        let cache = ReleaseCache::in_mirror_dir(mirror.path());
+        let (dir, key) = release_dir("0.2.0");
+        for name in [MSI, INSTALLER] {
+            fs::remove_file(dir.path().join(name)).unwrap();
+        }
+        let imported = cache.import(dir.path(), &[key]).unwrap();
+        assert_eq!(imported.missing, [INSTALLER, MSI]);
+        // Without any binary there is nothing to serve.
+        let (dir, key) = release_dir("0.3.0");
+        for platform in BINARIES {
+            fs::remove_file(dir.path().join(platform.agent_asset())).unwrap();
+        }
+        assert!(matches!(
+            cache.import(dir.path(), &[key]),
+            Err(CacheError::NoBinary)
+        ));
+        assert_eq!(cache.versions().unwrap(), [v("0.2.0")]);
+        assert_eq!(names_in(&mirror.path().join("agent")), ["0.2.0"]);
     }
 
     #[test]
@@ -292,13 +381,27 @@ mod tests {
             cache.import(dir.path(), &[other]),
             Err(CacheError::Release(ReleaseError::BadSignature))
         ));
+        // Unsigned.
         let (dir, key) = release_dir("0.2.0");
-        fs::write(dir.path().join("monitorflow-agent-linux-x86_64"), b"evil").unwrap();
+        fs::remove_file(dir.path().join("SHA256SUMS.sig")).unwrap();
         assert!(matches!(
             cache.import(dir.path(), &[key]),
-            Err(CacheError::Release(ReleaseError::Mismatch(_)))
+            Err(CacheError::Io(_, e)) if e.kind() == io::ErrorKind::NotFound
         ));
+        // Any tampered file, the installer included.
+        for name in ["monitorflow-agent-linux-x86_64", INSTALLER, MSI] {
+            let (dir, key) = release_dir("0.2.0");
+            fs::write(dir.path().join(name), b"evil").unwrap();
+            assert!(
+                matches!(
+                    cache.import(dir.path(), &[key]),
+                    Err(CacheError::Release(ReleaseError::Mismatch(n))) if n == name
+                ),
+                "{name}"
+            );
+        }
         assert!(cache.versions().unwrap().is_empty());
+        assert!(names_in(&mirror.path().join("agent")).is_empty());
         // A directory whose VERSION disagrees with its name is not listed.
         fs::create_dir_all(mirror.path().join("agent/0.3.0")).unwrap();
         fs::write(mirror.path().join("agent/0.3.0/VERSION"), "0.4.0\n").unwrap();
