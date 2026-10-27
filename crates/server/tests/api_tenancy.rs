@@ -714,6 +714,13 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = method.eq("POST").then(|| json!({}));
             assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
+        // The server is shared: updating it is for global administrators.
+        ("GET", "/api/server-update")
+        | ("POST", "/api/server-update")
+        | ("POST", "/api/server-update/check") => {
+            let body = method.eq("POST").then(|| json!({ "version": "99.0.0" }));
+            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+        }
         // Creation: a customer admin cannot create customers, nor sites of B.
         ("POST", "/api/customers") => {
             assert_eq!(

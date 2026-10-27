@@ -38,7 +38,8 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch;
 
 #[derive(Parser, Debug)]
-#[command(name = "monitorflow-server", version, about = "MonitorFlow server")]
+// The version is the build's, which the updater reads (ADR-0056).
+#[command(name = "monitorflow-server", version = monitorflow_common::VERSION, about = "MonitorFlow server")]
 struct Cli {
     /// Path to the TOML configuration file.
     #[arg(
