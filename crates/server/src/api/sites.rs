@@ -44,7 +44,7 @@ impl SiteView {
 
 /// The server-wide default of sites that inherit it.
 async fn auto_update_default(state: &ApiState) -> Result<bool, sqlx::Error> {
-    let (settings, _) = store::settings(&state.pool, state.settings.auto_update_enabled).await?;
+    let settings = store::settings(&state.pool, state.settings.auto_update_enabled).await?;
     Ok(settings.enabled)
 }
 

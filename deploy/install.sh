@@ -22,6 +22,10 @@
 #                    default.
 #   MF_DOWNLOAD_URL  https URL of a directory holding the release files,
 #                    for sites that serve them themselves.
+#   MF_SUMS_SHA256   SHA-256 of the release's SHA256SUMS, as in the commands
+#                    of the central server (ADR-0054). Every file is then
+#                    checked against it, so downloads do not check the
+#                    certificate (still HTTPS only).
 #   MF_TIMEOUT       seconds to wait for the enrollment; 120 by default.
 #   MF_REQUIRE_SIGNATURE=1  fail when OpenSSL 3 is missing and the
 #                    release signature cannot be checked.
@@ -63,6 +67,7 @@ MF_TOKEN=${MF_TOKEN:-}
 MF_ENROLL=${MF_ENROLL:-}
 MF_VERSION=${MF_VERSION:-}
 MF_DOWNLOAD_URL=${MF_DOWNLOAD_URL:-}
+MF_SUMS_SHA256=${MF_SUMS_SHA256:-}
 MF_TIMEOUT=${MF_TIMEOUT:-120}
 MF_UNINSTALL=${MF_UNINSTALL:-}
 MF_PURGE=${MF_PURGE:-}
@@ -103,11 +108,21 @@ to_url() {
     esac
 }
 
+# With MF_SUMS_SHA256 the content is pinned, not the certificate: hosts
+# need not trust the central server's web certificate (ADR-0054).
 try_fetch() {
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --proto '=https' --tlsv1.2 -o "$2" "$1"
+        if [ -n "$MF_SUMS_SHA256" ]; then
+            curl -fsSL --proto '=https' --tlsv1.2 --insecure -o "$2" "$1"
+        else
+            curl -fsSL --proto '=https' --tlsv1.2 -o "$2" "$1"
+        fi
     elif command -v wget >/dev/null 2>&1; then
-        wget -q --https-only -O "$2" "$1"
+        if [ -n "$MF_SUMS_SHA256" ]; then
+            wget -q --https-only --no-check-certificate -O "$2" "$1"
+        else
+            wget -q --https-only -O "$2" "$1"
+        fi
     else
         die "curl or wget is needed to download the $MF_ROLE"
     fi
@@ -128,7 +143,11 @@ verify_signature() {
     esac
     if ! command -v openssl >/dev/null 2>&1 || ! openssl pkeyutl -help 2>&1 | grep -q -- -rawin; then
         [ "$MF_REQUIRE_SIGNATURE" != 1 ] || die "OpenSSL 3 is needed to check the release signature (MF_REQUIRE_SIGNATURE=1)"
-        say "warning: OpenSSL 3 is not installed, so the release signature is not checked; checking checksums only"
+        if [ -n "$MF_SUMS_SHA256" ]; then
+            say "OpenSSL 3 is not installed, so the release signature is not checked; SHA256SUMS matches MF_SUMS_SHA256"
+        else
+            say "warning: OpenSSL 3 is not installed, so the release signature is not checked; checking checksums only"
+        fi
         return
     fi
     if ! try_fetch "$base/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig"; then
@@ -275,6 +294,14 @@ esac
 case $MF_TIMEOUT in
     '' | *[!0-9]*) die "MF_TIMEOUT must be a number of seconds" ;;
 esac
+case $MF_SUMS_SHA256 in
+    '') ;;
+    *[!0-9A-Fa-f]*) die "MF_SUMS_SHA256 must be a SHA-256 in hex" ;;
+    *)
+        [ ${#MF_SUMS_SHA256} -eq 64 ] || die "MF_SUMS_SHA256 must be a SHA-256 in hex"
+        MF_SUMS_SHA256=$(printf '%s' "$MF_SUMS_SHA256" | tr 'A-F' 'a-f')
+        ;;
+esac
 if [ -n "$MF_MIRROR_URL" ]; then
     [ "$MF_ROLE" = relay ] || die "MF_MIRROR_URL is for relays (MF_ROLE=relay)"
     case $MF_MIRROR_URL in
@@ -327,6 +354,10 @@ say "downloading $asset from $base"
 for file in SHA256SUMS "$asset" "$SERVICE.service" "$SERVICE-sudoers"; do
     fetch "$base/$file" "$tmp/$file"
 done
+if [ -n "$MF_SUMS_SHA256" ]; then
+    [ "$(sha256sum "$tmp/SHA256SUMS" | cut -d ' ' -f 1)" = "$MF_SUMS_SHA256" ] \
+        || die "SHA256SUMS from $base does not match MF_SUMS_SHA256: another release, or tampered with; nothing was installed"
+fi
 verify_signature
 for file in "$asset" "$SERVICE.service" "$SERVICE-sudoers"; do
     verify "$file"

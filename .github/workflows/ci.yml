@@ -140,6 +140,21 @@ jobs:
         env:
           MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
           MF_TEST_RELAY: ${{ runner.temp }}/relay-old
+  # Server updates (ADR-0056): a compose stack updated through the API from
+  # a base build to a newer signed release pushed to a local registry,
+  # keeping its data and taking a backup, then a release whose server
+  # cannot start rolled back. The images trust a throwaway release key.
+  server-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Throwaway release key
+        run: |
+          openssl genpkey -algorithm ed25519 -out "$RUNNER_TEMP/e2e-signing.pem"
+          openssl pkey -in "$RUNNER_TEMP/e2e-signing.pem" -pubout >>deploy/release-keys.pem
+      - run: deploy/update-test.sh
+        env:
+          MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
   # The installer is piped to sh, so it must stay POSIX (ADR-0052).
   shellcheck:
     runs-on: ubuntu-latest

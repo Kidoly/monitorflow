@@ -128,7 +128,7 @@ impl AutoUpdate {
 
     /// Queues the agent updates due now; returns the peers that got one.
     pub async fn tick(&self) -> Result<Vec<String>, sqlx::Error> {
-        let settings = store::settings(&self.pool, self.enabled_override).await?.0;
+        let settings = store::settings(&self.pool, self.enabled_override).await?;
         if settings.paused {
             return Ok(Vec::new());
         }

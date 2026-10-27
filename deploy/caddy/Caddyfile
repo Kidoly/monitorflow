@@ -6,6 +6,9 @@
 # with ACME. With the default, localhost, Caddy issues one from its own local
 # CA instead (run `caddy trust` once to make browsers accept it).
 #
+# /agent/* goes to the API listener too: the agent release files the server
+# holds, which hosts install from (ADR-0054).
+#
 # Copy the build output (`npm run build` in web/) to the root below.
 # MONITORFLOW_API_UPSTREAM overrides the API address, like server:7444 in
 # deploy/docker-compose.yml, where the web image ships this file.
@@ -24,6 +27,11 @@
 	# The API sets its own cookies and errors; pass requests through as is.
 	# Keep the server's api_cookie_secure = true: the browser link is HTTPS.
 	handle /api/* {
+		reverse_proxy {$MONITORFLOW_API_UPSTREAM:127.0.0.1:7444}
+	}
+
+	# Agent release files from the server's cache (ADR-0054).
+	handle /agent/* {
 		reverse_proxy {$MONITORFLOW_API_UPSTREAM:127.0.0.1:7444}
 	}
 

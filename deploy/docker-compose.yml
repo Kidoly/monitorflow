@@ -1,6 +1,9 @@
 # MonitorFlow central server for production (ADR-0051, docs/deploy-server.md).
 # Copy .env.example to .env next to this file and fill it in, then:
 #   docker compose -f deploy/docker-compose.yml up -d --build
+# SERVER_IMAGE, WEB_IMAGE and UPDATER_IMAGE in .env run the images of a
+# release by digest instead of local builds; the updater sets them when it
+# installs a release (ADR-0056).
 name: monitorflow
 
 x-server-build: &server-build
@@ -11,7 +14,7 @@ services:
   # One-shot: the CA and certificate of the PostgreSQL link, on first start.
   db-certs:
     build: *server-build
-    image: monitorflow-server:local
+    image: ${SERVER_IMAGE:-monitorflow-server:local}
     entrypoint: ["db-certs"]
     user: "0"
     network_mode: none
@@ -36,6 +39,8 @@ services:
       - pgdata:/var/lib/postgresql/data
       - dbcerts:/certs:ro
       - ./docker/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      # Dumps the updater takes, readable for pg_restore (ADR-0056).
+      - ${BACKUP_DIR:-backups}:/backups:ro
     networks: [storage]
     depends_on:
       db-certs: { condition: service_completed_successfully }
@@ -62,7 +67,7 @@ services:
 
   server:
     build: *server-build
-    image: monitorflow-server:local
+    image: ${SERVER_IMAGE:-monitorflow-server:local}
     environment:
       MONITORFLOW_DATABASE_URL: "postgres://monitorflow:${POSTGRES_PASSWORD}@postgres:5432/monitorflow?sslmode=verify-full&sslrootcert=/certs/ca.pem"
       MONITORFLOW_VICTORIAMETRICS_URL: http://victoriametrics:8428
@@ -73,9 +78,16 @@ services:
       MONITORFLOW_LOG_FORMAT: json
       # Unset: the latest GitHub release (ADR-0052).
       MONITORFLOW_AGENT_DOWNLOAD_URL: ${AGENT_DOWNLOAD_URL:-}
+      # Server updates through the updater service (ADR-0056).
+      MONITORFLOW_SERVER_UPDATE_DIR: /var/lib/monitorflow/update
+      MONITORFLOW_RELEASE_URL: ${RELEASE_URL:-}
+      # Unset: chosen in the web interface, github by default (ADR-0054).
+      MONITORFLOW_AGENT_INSTALL_SOURCE: ${AGENT_INSTALL_SOURCE:-}
     volumes:
       - serverdata:/var/lib/monitorflow/server
       - dbcerts:/certs:ro
+      # Requests go to its inbox; the rest belongs to the updater.
+      - update:/var/lib/monitorflow/update
     networks: [storage, front]
     ports:
       - "${GRPC_PORT:-7443}:7443"
@@ -99,7 +111,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/docker/web.Dockerfile
-    image: monitorflow-web:local
+    image: ${WEB_IMAGE:-monitorflow-web:local}
     environment:
       MONITORFLOW_DOMAIN: ${DOMAIN:?set DOMAIN in .env}
       MONITORFLOW_API_UPSTREAM: server:7444
@@ -110,6 +122,26 @@ services:
       - "${HTTP_PORT:-80}:80"
     depends_on:
       server: { condition: service_healthy }
+    restart: unless-stopped
+
+  # Installs releases when the server asks (ADR-0056). The only service
+  # with the Docker socket; it has no listener.
+  updater:
+    build:
+      context: ..
+      dockerfile: deploy/docker/updater.Dockerfile
+    image: ${UPDATER_IMAGE:-monitorflow-updater:local}
+    environment:
+      # Unset: agent_download_url's release, GitHub's by default.
+      MONITORFLOW_RELEASE_URL: ${RELEASE_URL:-}
+      MONITORFLOW_AGENT_DOWNLOAD_URL: ${AGENT_DOWNLOAD_URL:-}
+    volumes:
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      # This directory: the compose files and .env, where it pins images.
+      - .:/deploy
+      - update:/var/lib/monitorflow/update
+      - updater:/var/lib/monitorflow/updater
+      - ${BACKUP_DIR:-backups}:/backups
     restart: unless-stopped
 
 networks:
@@ -126,3 +158,9 @@ volumes:
   # Holds the CA: losing it means enrolling every agent again. Back it up.
   serverdata:
   caddydata:
+  # Requests and status of server updates, shared by server and updater.
+  update:
+  # The updater's own state: what to roll back to.
+  updater:
+  # Database dumps taken before each update, unless BACKUP_DIR is set.
+  backups:
