@@ -431,6 +431,20 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let (status, _) = ctx.call(method, "/agent/latest/install.sh", None).await;
             assert_eq!(status, StatusCode::NOT_FOUND);
         }
+        // Server-wide install source (ADR-0054): read by customer
+        // administrators, changed by global ones only.
+        ("GET", "/api/settings/agent-install") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer));
+        }
+        ("PUT", "/api/settings/agent-install") => {
+            let body = json!({ "source": "central" });
+            assert_eq!(
+                ctx.status(method, path, Some(body)).await,
+                StatusCode::FORBIDDEN
+            );
+        }
         // Listings: B never shows.
         ("GET", "/api/servers") => {
             let (status, body) = ctx.call(method, path, None).await;

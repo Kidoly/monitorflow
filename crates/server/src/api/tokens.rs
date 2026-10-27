@@ -157,6 +157,8 @@ pub struct CreatedToken {
     pub enroll_url: String,
     /// Where the install commands download the agent from (ADR-0052).
     pub agent_download_url: String,
+    /// The install sources and the default one (ADR-0054).
+    pub install: super::settings::AgentInstall,
 }
 
 /// Query string of `GET /api/tokens`.
@@ -230,6 +232,8 @@ pub async fn create(
         .enrollment
         .as_deref()
         .ok_or_else(|| ApiError::Internal("enrollment is not configured".into()))?;
+    // Before the token exists, so a failure here does not lose one.
+    let install = super::settings::agent_install(&state).await?;
     let ttl = request
         .ttl_s
         .map_or(token::DEFAULT_TTL, Duration::from_secs);
@@ -256,6 +260,7 @@ pub async fn create(
             upstream_url: settings.upstream_url.clone(),
             enroll_url: settings.enroll_url.clone(),
             agent_download_url: settings.agent_download_url.clone(),
+            install,
         }),
     ))
 }

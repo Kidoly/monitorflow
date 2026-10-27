@@ -168,6 +168,62 @@ impl ReleaseCache {
     }
 }
 
+/// The newest cached release as `central` install commands pin it
+/// (ADR-0054): its version and the SHA-256 of `SHA256SUMS`, of the
+/// installer and of the MSI, as hex. A file is only named when the cache
+/// holds it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct CentralRelease {
+    pub version: String,
+    /// URL path of its files behind the web interface, without a
+    /// trailing slash: `/agent/<version>`.
+    pub path: String,
+    pub sums_sha256: String,
+    pub installer_sha256: Option<String>,
+    pub msi_sha256: Option<String>,
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+impl ReleaseCache {
+    /// The newest release ([`latest`]) with its checksums, from its
+    /// `SHA256SUMS` verified again against `keys`; `None` with nothing
+    /// cached.
+    pub fn central(&self, keys: &[PublicKey]) -> Result<Option<CentralRelease>, CacheError> {
+        let versions = self.versions().map_err(io_error(&self.dir))?;
+        let Some(version) = latest(&versions) else {
+            return Ok(None);
+        };
+        let dir = self.dir.join(version.to_string());
+        let read = |name: &str| {
+            let path = dir.join(name);
+            fs::read(&path).map_err(io_error(&path))
+        };
+        let sums = read(release::SUMS)?;
+        let verified = release::verify(
+            &sums,
+            &read(release::SIGNATURE)?,
+            &read(release::VERSION_FILE)?,
+            keys,
+        )?;
+        let digest = |name: &str| {
+            dir.join(name)
+                .is_file()
+                .then(|| verified.digest(name).ok().map(|d| hex(&d)))
+                .flatten()
+        };
+        Ok(Some(CentralRelease {
+            version: verified.version.to_string(),
+            path: format!("/{DIR}/{}", verified.version),
+            sums_sha256: hex(&release::sha256(&sums)),
+            installer_sha256: digest(INSTALLER),
+            msi_sha256: digest(MSI),
+        }))
+    }
+}
+
 /// The newest of `versions` without a pre-release suffix, else the newest.
 pub fn latest(versions: &[Version]) -> Option<&Version> {
     versions
@@ -183,6 +239,9 @@ pub struct Sources {
     pub cache: ReleaseCache,
     pub mirror_public_url: Option<String>,
     pub agent_download_url: String,
+    /// The keys built into the server, which [`ReleaseCache::central`]
+    /// checks the cache with; empty in a build without any.
+    pub keys: Vec<PublicKey>,
 }
 
 impl Sources {
@@ -191,6 +250,7 @@ impl Sources {
             cache: ReleaseCache::in_mirror_dir(&config.mirror_dir()),
             mirror_public_url: config.mirror_public_url.clone(),
             agent_download_url: config.agent_download_url.clone(),
+            keys: release::trusted_keys().unwrap_or_default().to_vec(),
         }
     }
 
@@ -349,6 +409,39 @@ mod tests {
     }
 
     #[test]
+    fn central_installs_pin_the_newest_release() {
+        let mirror = TempDir::new().unwrap();
+        let cache = ReleaseCache::in_mirror_dir(mirror.path());
+        let (dir, key) = release_dir("0.2.0");
+        assert_eq!(cache.central(std::slice::from_ref(&key)).unwrap(), None);
+        cache
+            .import(dir.path(), std::slice::from_ref(&key))
+            .unwrap();
+        let central = cache.central(std::slice::from_ref(&key)).unwrap().unwrap();
+        let sums = fs::read(dir.path().join("SHA256SUMS")).unwrap();
+        assert_eq!(
+            central,
+            CentralRelease {
+                version: "0.2.0".into(),
+                path: "/agent/0.2.0".into(),
+                sums_sha256: hex(&sums),
+                installer_sha256: Some(hex(&fs::read(dir.path().join(INSTALLER)).unwrap())),
+                msi_sha256: Some(hex(&fs::read(dir.path().join(MSI)).unwrap())),
+            }
+        );
+        // A file the cache lost is not offered; a key that does not sign
+        // the release offers nothing.
+        fs::remove_file(mirror.path().join("agent/0.2.0").join(MSI)).unwrap();
+        assert_eq!(cache.central(&[key]).unwrap().unwrap().msi_sha256, None);
+        let (_, other) = release_dir("0.2.0");
+        assert!(cache.central(&[other]).is_err());
+        assert!(matches!(
+            cache.central(&[]),
+            Err(CacheError::Release(ReleaseError::NoKeys))
+        ));
+    }
+
+    #[test]
     fn partial_releases_say_what_they_lack() {
         let mirror = TempDir::new().unwrap();
         let cache = ReleaseCache::in_mirror_dir(mirror.path());
@@ -440,6 +533,7 @@ mod tests {
             cache: ReleaseCache::in_mirror_dir(Path::new("/nonexistent")),
             mirror_public_url: Some("http://mf.example:7480".into()),
             agent_download_url: "https://files.example/mf/".into(),
+            keys: Vec::new(),
         };
         let payload = sources.payload(&v("0.3.0"), Some("http://relay1:7480/"), true, 60);
         let update = SelfUpdate::decode(payload.as_slice()).unwrap();

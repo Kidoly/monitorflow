@@ -54,8 +54,15 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # https URL of a directory holding the agent release files (install.sh,
 # SHA256SUMS, the binaries), used in the install commands the web interface
 # shows with a new token (ADR-0052). Set it when the site serves the files
-# itself.
+# itself: it is then the `custom` install source (ADR-0054), and the
+# fallback of self-updates.
 # agent_download_url = "https://github.com/Kidoly/monitorflow/releases/latest/download"
+
+# Default source of those install commands: github, central (this server's
+# release cache, at https://<web interface>/agent/) or custom
+# (agent_download_url). Unset, administrators choose it in the web
+# interface; github unless agent_download_url is set.
+# agent_install_source = "github"
 
 # Batching of writes to VictoriaMetrics and VictoriaLogs (ADR-0013). Each
 # writer has its own queue; while a queue is full, new items are dropped and
