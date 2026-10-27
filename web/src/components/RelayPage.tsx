@@ -16,12 +16,14 @@ import {
   type AttachedServer,
   type Incident,
   type Me,
+  type RelayCommand,
   type RelayDetail,
   type RevocationReason,
   type Server,
   api,
   describeError,
 } from "@/lib/api";
+import { updateAvailable } from "@/lib/agentVersion";
 import { certificateState } from "@/lib/certificates";
 import { formatDay, formatMinute, formatWhen } from "@/lib/clock";
 import { formatOs, formatValue, unitOf } from "@/lib/format";
@@ -63,6 +65,8 @@ interface Row extends AttachedServer {
 interface Data {
   relay: RelayDetail;
   rows: Row[];
+  /** The newest release the server holds. */
+  latest: string | null;
 }
 
 const severityRank = (incident: Incident) => (incident.severity === "critical" ? 0 : 1);
@@ -75,7 +79,11 @@ async function load(id: string, signal: AbortSignal): Promise<Data | null> {
     if (e instanceof ApiError && e.status === 404) return null;
     throw e;
   }
-  if (relay.servers.length === 0) return { relay, rows: [] };
+  const latest = await api.agentReleases(signal).then(
+    (r) => r.latest,
+    () => null,
+  );
+  if (relay.servers.length === 0) return { relay, rows: [], latest };
   const [{ servers }, { incidents }] = await Promise.all([
     api.servers(signal),
     api.incidents({ state: "open", limit: INCIDENT_LIMIT }, signal),
@@ -85,7 +93,58 @@ async function load(id: string, signal: AbortSignal): Promise<Data | null> {
     server: servers.find((s) => s.id === attached.id),
     incidents: incidents.filter((i) => i.server_id === attached.id).sort((a, b) => severityRank(a) - severityRank(b)),
   }));
-  return { relay, rows };
+  return { relay, rows, latest };
+}
+
+const ACTIVE: RelayCommand["state"][] = ["queued", "sent", "running"];
+
+/** The state of the relay's latest self-update, in a few words. */
+export function updateText(update: RelayCommand): string {
+  switch (update.state) {
+    case "queued":
+    case "sent":
+      return `Update to ${update.version} queued`;
+    case "running":
+      return `Updating to ${update.version}`;
+    case "succeeded":
+      return `Updated to ${update.version}`;
+    case "failed":
+      return `Update to ${update.version} failed${update.error ? `: ${update.error}` : ""}`;
+    default:
+      return `Update to ${update.version} ${update.state}`;
+  }
+}
+
+/**
+ * "Update relay to 0.3.0…", for administrators of the relay's customer
+ * when the server holds a newer release than the relay runs (ADR-0055).
+ */
+function UpdateRelay({ relay, latest, me, onQueued }: { relay: RelayDetail; latest: string | null; me: Me; onQueued: () => void }) {
+  const busy = relay.last_update && ACTIVE.includes(relay.last_update.state);
+  if (
+    relay.revoked_at ||
+    busy ||
+    !latest ||
+    !updateAvailable(relay.relay_version ?? null, latest) ||
+    !administersCustomer(me, relay.customer_id)
+  ) {
+    return null;
+  }
+  return (
+    <InlineConfirm
+      trigger={`Update relay to ${latest}…`}
+      triggerVariant="default"
+      title={`Update ${relay.peer_id} to ${latest}?`}
+      consequence={`The relay downloads ${latest}, checks its signature and restarts into it; its agents reconnect a few seconds later. If the new relay does not connect within 5 minutes, ${relay.relay_version ?? "the current version"} comes back.`}
+      confirmLabel={`Update ${relay.peer_id}`}
+      pendingLabel="Queuing…"
+      onConfirm={async () => {
+        await api.updateRelay(relay.id, latest);
+        onQueued();
+      }}
+      describeError={(e) => `The update was not queued. ${describeError(e)}`}
+    />
+  );
 }
 
 /** The worst open incident, else why an offline server is quiet. */
@@ -136,7 +195,7 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
     );
   }
 
-  const { relay, rows } = data;
+  const { relay, rows, latest } = data;
   const now = updatedAt ?? new Date();
   const { certificate } = relay;
   const facts: Fact[] = [
@@ -161,6 +220,8 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
         <CertificateCell notAfter={relay.cert_not_after} now={now} />
       ),
     },
+    { label: "Version", value: relay.relay_version ?? "—" },
+    ...(relay.last_update ? [{ label: "Self-update", value: updateText(relay.last_update) }] : []),
     { label: "Server names", value: relay.server_names.join(", ") || "—" },
     ...(certificate ? [{ label: "Certificate serial", value: certificate.serial, mono: true }] : []),
     { label: "Enrolled", value: formatMinute(new Date(relay.created_at)) },
@@ -218,6 +279,8 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
         actions={
           !relay.revoked_at &&
           administersCustomer(me, relay.customer_id) && (
+            <>
+            <UpdateRelay relay={relay} latest={latest} me={me} onQueued={refresh} />
             <InlineConfirm
               trigger={`Revoke ${relay.peer_id}…`}
               title={`Revoke ${relay.peer_id}?`}
@@ -231,6 +294,7 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
               }}
               describeError={(e) => `Revocation failed. ${describeError(e)}`}
             />
+            </>
           )
         }
       />

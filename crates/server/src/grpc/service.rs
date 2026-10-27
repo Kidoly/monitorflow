@@ -33,6 +33,7 @@ use super::StreamSettings;
 use crate::alerting::Alerts;
 use crate::commands::Commands;
 use crate::ingest::{self, Identity, Ingest, LogRecord};
+use crate::relay_commands::RelayCommands;
 use crate::renew::PresentedCert;
 use crate::sensor_config::{Resolved, SensorConfigs};
 
@@ -178,6 +179,7 @@ pub struct AgentStreamService {
     sensor_configs: Option<SensorConfigs>,
     alerts: Option<Alerts>,
     commands: Option<Commands>,
+    relay_commands: Option<RelayCommands>,
     settings: StreamSettings,
 }
 
@@ -193,8 +195,15 @@ impl AgentStreamService {
             sensor_configs: None,
             alerts: None,
             commands: None,
+            relay_commands: None,
             settings,
         }
+    }
+
+    /// Sends relays their own commands and records results (ADR-0055).
+    pub fn with_relay_commands(mut self, commands: RelayCommands) -> Self {
+        self.relay_commands = Some(commands);
+        self
     }
 
     /// Sends agents their commands and records results (ADR-0031);
@@ -416,6 +425,9 @@ impl AgentService for AgentStreamService {
         if let (Some(commands), PeerRole::Agent) = (&self.commands, role) {
             commands.dispatch(&id);
         }
+        if let (Some(commands), PeerRole::Relay) = (&self.relay_commands, role) {
+            commands.dispatch(&id);
+        }
         let event = StreamEvent {
             peer: id.clone(),
             site: site.clone(),
@@ -446,6 +458,7 @@ impl AgentService for AgentStreamService {
             sensor_configs: self.sensor_configs.clone(),
             alerts: self.alerts.clone(),
             commands: self.commands.clone(),
+            relay_commands: self.relay_commands.clone(),
             event,
             invalid_logged: None,
         };
@@ -501,6 +514,7 @@ struct Connection {
     sensor_configs: Option<SensorConfigs>,
     alerts: Option<Alerts>,
     commands: Option<Commands>,
+    relay_commands: Option<RelayCommands>,
     event: StreamEvent,
     /// When invalid samples were last logged.
     invalid_logged: Option<Instant>,
@@ -715,9 +729,13 @@ impl Connection {
             Some(Payload::CommandResult(result)) => {
                 self.counters.command_results += 1;
                 tracing::debug!(agent_id = %id, sequence, command_id = %result.command_id.escape_debug(), "command result");
-                // A relay runs no commands; its agents' results come on
-                // their own streams.
+                // A relay's own results are of its self-updates (ADR-0055);
+                // its agents' results come on their own streams.
                 if let (Some(commands), PeerRole::Agent) = (&self.commands, self.role) {
+                    let (commands, id) = (commands.clone(), id.clone());
+                    tokio::spawn(async move { commands.record(&id, result).await });
+                } else if let (Some(commands), PeerRole::Relay) = (&self.relay_commands, self.role)
+                {
                     let (commands, id) = (commands.clone(), id.clone());
                     tokio::spawn(async move { commands.record(&id, result).await });
                 }

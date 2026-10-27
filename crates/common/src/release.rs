@@ -419,6 +419,16 @@ impl Platform {
             Self::WindowsX86_64 => "monitorflow-agent-windows-x86_64.exe",
         }
     }
+
+    /// The relay's file name in a release (ADR-0055); relays are built for
+    /// Linux only.
+    pub fn relay_asset(self) -> Option<&'static str> {
+        match self {
+            Self::LinuxX86_64 => Some("monitorflow-relay-linux-x86_64"),
+            Self::LinuxAarch64 => Some("monitorflow-relay-linux-aarch64"),
+            Self::WindowsX86_64 => None,
+        }
+    }
 }
 
 /// Bytes [`check_executable`] needs from the start of a binary.

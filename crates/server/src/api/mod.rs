@@ -40,6 +40,7 @@
 //! | POST | `/api/customers` | global administrator | body `{"name"}`; 201 [`customers::CustomerView`] |
 //! | POST | `/api/customers/{id}/sites` | customer administrator | body `{"name"}`; 201 [`sites::SiteView`] |
 //! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled": true, false or null}`; [`sites::SiteView`]; audited (ADR-0055) |
+//! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
 //! | GET | `/api/settings/auto-update` | global administrator | [`policy::Settings`](crate::auto_update::policy::Settings) as they apply (ADR-0055) |
 //! | PUT | `/api/settings/auto-update` | global administrator | body [`auto_update::SettingsRequest`]; the settings; 409 against the configuration; audited |
@@ -470,6 +471,7 @@ use crate::commands::Commands;
 use crate::crl::CrlPublisher;
 use crate::grpc::Registry;
 use crate::mirror::Mirrors;
+use crate::relay_commands::RelayCommands;
 use crate::vm_query::VmQuery;
 
 pub use auth::{CurrentUser, Me};
@@ -550,6 +552,9 @@ pub struct ApiState {
     /// Sends newly queued commands at once; `None` leaves them to the
     /// dispatcher's next poll.
     pub commands: Option<Commands>,
+    /// Sends relays their self-updates at once; `None` leaves them to the
+    /// sender's next poll.
+    pub relay_commands: Option<RelayCommands>,
     /// Runs mirror jobs; `None` refuses to start them.
     pub mirrors: Option<Mirrors>,
     /// Woken when a campaign starts or resumes; `None` leaves it to the
@@ -567,9 +572,15 @@ impl ApiState {
             enrollment: None,
             crl: None,
             commands: None,
+            relay_commands: None,
             mirrors: None,
             campaigns: None,
         }
+    }
+
+    pub fn with_relay_commands(mut self, commands: RelayCommands) -> Self {
+        self.relay_commands = Some(commands);
+        self
     }
 
     /// Wakes `runner` when a campaign starts or resumes.
@@ -637,6 +648,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/relays", get(relays::list))
         .route("/api/relays/{id}", get(relays::detail))
         .route("/api/relays/{id}/revoke", post(revoke::relay))
+        .route("/api/relays/{id}/update", post(relays::update))
         .route("/api/servers/{id}/revoke", post(revoke::server))
         .route("/api/tokens", get(tokens::list).post(tokens::create))
         .route("/api/tokens/{id}", delete(tokens::delete))

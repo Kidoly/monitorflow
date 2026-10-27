@@ -17,6 +17,8 @@ describe("visibleNavigation", () => {
     expect(labels(as(null))).toContain("Mirrors");
     const customerAdmin = labels(as("c1"));
     expect(customerAdmin).not.toContain("Mirrors");
+    expect(labels(as(null))).toContain("Automatic updates");
+    expect(customerAdmin).not.toContain("Automatic updates");
     expect(customerAdmin).toContain("Campaigns");
   });
 });

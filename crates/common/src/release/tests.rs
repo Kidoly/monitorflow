@@ -308,5 +308,8 @@ fn the_built_in_keys_file_parses() {
 fn the_current_platform_has_an_asset_when_released() {
     if let Some(platform) = Platform::current() {
         assert!(platform.agent_asset().starts_with("monitorflow-agent-"));
+        if let Some(relay) = platform.relay_asset() {
+            assert!(relay.starts_with("monitorflow-relay-linux-"));
+        }
     }
 }

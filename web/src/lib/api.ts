@@ -207,6 +207,81 @@ export interface Site {
   agent_auto_update_effective: boolean;
 }
 
+/** Server-wide automatic update settings (ADR-0055). */
+export interface AutoUpdateSettings {
+  /** Default of the sites that inherit it. */
+  enabled: boolean;
+  /** Set by the server's configuration: the web interface cannot change `enabled`. */
+  enabled_locked: boolean;
+  paused: boolean;
+  failure_threshold: number;
+}
+
+export type RolloutKind = "agent" | "relay";
+
+/** The automatic rollout of one release. */
+export interface Rollout {
+  kind: RolloutKind;
+  version: string;
+  state: "rolling" | "halted";
+  started_at: string;
+  halted_at: string | null;
+  reason: string | null;
+  /** Failures count from here: the start or the last resume. */
+  counted_from: string;
+}
+
+export interface AutoUpdateTotals {
+  up_to_date: number;
+  /** Older and not tried yet. */
+  waiting: number;
+  /** Of `waiting`, agents whose relay is older or being updated. */
+  waiting_for_relay: number;
+  pending: number;
+  succeeded: number;
+  failed: number;
+}
+
+export type SitePhase = "canary" | "rolling" | "blocked";
+
+export interface AutoUpdateSite {
+  id: string;
+  name: string;
+  customer_name: string;
+  auto_update: boolean | null;
+  enabled: boolean;
+  phase: SitePhase | null;
+  totals: AutoUpdateTotals;
+}
+
+/** Automatic updates of one kind of peer. */
+export interface AutoUpdateKind {
+  /** Newest stable release the server holds. */
+  latest: string | null;
+  /** What peers move to: `latest` unless the server is older. */
+  target: string | null;
+  rollout: Rollout | null;
+  totals: AutoUpdateTotals;
+  sites: AutoUpdateSite[];
+  history: Rollout[];
+}
+
+/** `GET /api/auto-update`. */
+export interface AutoUpdateStatus {
+  settings: AutoUpdateSettings;
+  server_version: string;
+  agents: AutoUpdateKind;
+  /** Updated before the agents behind them. */
+  relays: AutoUpdateKind;
+}
+
+/** Fields of `PUT /api/settings/auto-update`; absent ones are unchanged. */
+export interface AutoUpdateChange {
+  enabled?: boolean;
+  paused?: boolean;
+  failure_threshold?: number;
+}
+
 /** One entry of `GET /api/customers`. */
 export interface Customer {
   id: string;
@@ -243,6 +318,25 @@ export interface Relay {
   server_count: number;
   /** Agent streams it forwards right now. */
   connected_agents: number;
+  /** Version of its last Hello; null before it reported one (ADR-0055). */
+  relay_version?: string | null;
+  /** Its latest self-update. */
+  last_update?: RelayCommand | null;
+}
+
+/** A relay self-update (ADR-0055). */
+export interface RelayCommand {
+  id: string;
+  relay_id: string;
+  version: string;
+  state: "queued" | "sent" | "running" | "succeeded" | "failed" | "expired" | "cancelled";
+  /** Null when queued by automatic updates. */
+  requested_by: string | null;
+  issued_at: string;
+  expires_at: string;
+  finished_at: string | null;
+  stdout: string | null;
+  error: string | null;
 }
 
 /** A server attached to a relay. */
@@ -258,6 +352,8 @@ export interface AttachedServer {
 export interface RelayDetail extends Relay {
   certificate: Certificate | null;
   servers: AttachedServer[];
+  /** Its latest self-updates, newest first. */
+  updates?: RelayCommand[];
 }
 
 export interface RelayList {
@@ -1218,6 +1314,17 @@ export const api = {
   /** Every mirror, by name; global administrators only. */
   mirrors: (signal?: AbortSignal) => request<MirrorList>("/api/mirrors", { signal }),
 
+  /** Automatic updates: settings and rollouts; global administrators only (ADR-0055). */
+  autoUpdate: (signal?: AbortSignal) => request<AutoUpdateStatus>("/api/auto-update", { signal }),
+
+  /** Changes automatic update settings; global administrators only; audited. */
+  setAutoUpdate: (change: AutoUpdateChange) =>
+    request<AutoUpdateSettings>("/api/settings/auto-update", { method: "PUT", body: change }),
+
+  /** Resumes a halted rollout; global administrators only; audited. */
+  resumeRollout: (kind: RolloutKind, version: string) =>
+    request<Rollout>(`/api/auto-update/rollouts/${kind}/${encodeURIComponent(version)}/resume`, { method: "POST" }),
+
   mirror: (id: string, signal?: AbortSignal) =>
     request<MirrorDetail>(`/api/mirrors/${encodeURIComponent(id)}`, { signal }),
 
@@ -1252,6 +1359,13 @@ export const api = {
     request<{ id: string }>("/api/server-update", { method: "POST", body: { version } }),
 
   /** Queues a `self_update` to `version`; customer administrators only (ADR-0053). */
+  /** Queues a relay self-update; administrators of its customer (ADR-0055). */
+  updateRelay: (relayId: string, version: string) =>
+    request<RelayCommand>(`/api/relays/${encodeURIComponent(relayId)}/update`, {
+      method: "POST",
+      body: { version },
+    }),
+
   updateAgent: (serverId: string, version: string) =>
     request<CommandDetail>(`/api/servers/${encodeURIComponent(serverId)}/commands`, {
       method: "POST",
