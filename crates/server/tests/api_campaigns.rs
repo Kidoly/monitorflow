@@ -175,7 +175,7 @@ db_tests! {
         assert_eq!(
             keys(&created),
             [
-                "command_ttl_s", "created_at", "created_by", "current_wave", "customer_id",
+                "agent_version", "command_ttl_s", "created_at", "created_by", "current_wave", "customer_id",
                 "customer_name", "error", "failure_threshold", "finished_at", "id", "name",
                 "progress", "site_id", "sources", "spec", "started_at", "state", "wave_count",
                 "waves", "windows"

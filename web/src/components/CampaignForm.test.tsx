@@ -97,4 +97,35 @@ describe("CampaignForm", () => {
     const call = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
     expect(JSON.parse(call?.[1]?.body as string)).toMatchObject({ server_ids: [WEB1] });
   });
+
+  it("creates an agent update campaign when the server holds releases", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      ...inventory,
+      "GET /api/agent-releases": { status: 200, body: { versions: ["0.3.0", "0.2.0"], latest: "0.3.0" } },
+      "POST /api/campaigns": { status: 201, body: detail() },
+    });
+    render(<CampaignForm me={customerAdmin} />);
+    const form = await screen.findByRole("form", { name: "New campaign" });
+    await user.type(within(form).getByLabelText("Name"), "Agents 0.3.0");
+    await user.selectOptions(within(form).getByLabelText("Every server of the site"), "site-1");
+    await user.click(await screen.findByRole("radio", { name: "The MonitorFlow agent" }));
+    expect(screen.getByLabelText("Agent version")).toHaveValue("0.3.0");
+    expect(screen.queryByRole("checkbox", { name: "Allow reboot" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Create campaign" }));
+    const call = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(JSON.parse(call?.[1]?.body as string)).toMatchObject({
+      packages: [],
+      security_only: false,
+      allow_reboot: false,
+      agent_version: "0.3.0",
+    });
+  });
+
+  it("offers no agent update without releases", async () => {
+    stubFetch({ ...inventory, "GET /api/agent-releases": { status: 200, body: { versions: [], latest: null } } });
+    render(<CampaignForm me={customerAdmin} />);
+    await screen.findByRole("form", { name: "New campaign" });
+    expect(screen.queryByRole("radio", { name: "The MonitorFlow agent" })).not.toBeInTheDocument();
+  });
 });

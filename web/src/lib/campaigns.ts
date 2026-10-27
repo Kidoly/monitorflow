@@ -2,6 +2,7 @@
 // the checks the API makes, so most mistakes show before a request; the
 // state machine for the action buttons; and display strings.
 
+import { compareVersions } from "./agentVersion";
 import type { Tone } from "@/components/ui/tone";
 
 import type {
@@ -49,7 +50,8 @@ export interface WindowDraft {
   endsAt: string;
 }
 
-export type UpdateKind = "all" | "security" | "packages";
+/** `agent` updates the agents themselves (ADR-0053). */
+export type UpdateKind = "all" | "security" | "packages" | "agent";
 
 /** What the creation form edits. */
 export interface CampaignDraft {
@@ -62,6 +64,8 @@ export interface CampaignDraft {
   update: UpdateKind;
   /** Package names separated by spaces, commas or lines. */
   packages: string;
+  /** For `agent`: the version to update to. */
+  agentVersion: string;
   allowReboot: boolean;
   ttl: number;
   thresholdValue: string;
@@ -86,6 +90,7 @@ export function emptyDraft(customerId = ""): CampaignDraft {
     waves: [],
     update: "all",
     packages: "",
+    agentVersion: "",
     allowReboot: false,
     ttl: 3600,
     thresholdValue: "0",
@@ -120,7 +125,8 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
     waves,
     packages: draft.update === "packages" ? draft.packages.split(/[\s,]+/).filter(Boolean) : [],
     security_only: draft.update === "security",
-    allow_reboot: draft.allowReboot,
+    allow_reboot: draft.update !== "agent" && draft.allowReboot,
+    ...(draft.update === "agent" && { agent_version: draft.agentVersion }),
     command_ttl_s: draft.ttl,
     failure_threshold: { value: Number(draft.thresholdValue), unit: draft.thresholdUnit },
     windows,
@@ -201,6 +207,9 @@ export function validateCampaign(request: CampaignRequest, targets: string[]): s
   if (!(request.command_ttl_s >= MIN_TTL_S && request.command_ttl_s <= MAX_TTL_S)) {
     errors.push(`Commands must stay valid between ${MIN_TTL_S} and ${MAX_TTL_S} seconds.`);
   }
+  if (request.agent_version !== undefined && compareVersions(request.agent_version, request.agent_version) === null) {
+    errors.push("Choose the agent version to update to.");
+  }
   if (request.packages.length > MAX_PACKAGES) errors.push(`At most ${MAX_PACKAGES} packages.`);
   const badPackage = request.packages.find((p) => p.length > 128 || !PACKAGE.test(p));
   if (badPackage !== undefined) errors.push(`Invalid package name "${badPackage}".`);
@@ -266,7 +275,8 @@ export function isFinal(state: CampaignState): boolean {
   return state === "stopped" || state === "completed" || state === "failed";
 }
 
-export function describeUpdate(spec: UpdateSpec): string {
+export function describeUpdate(spec: UpdateSpec, agentVersion: string | null = null): string {
+  if (agentVersion) return `Agent update to ${agentVersion}`;
   const what =
     spec.packages.length > 0
       ? `Packages: ${spec.packages.join(", ")}`
@@ -319,8 +329,11 @@ export function describeSources(pin: SourcesPin): string {
 }
 
 /** The grey line under a campaign's name: "2 waves · snapshot debian-12/s1 · security only · reboot allowed". */
-export function campaignSubline(campaign: Pick<Campaign, "wave_count" | "sources" | "spec">): string {
+export function campaignSubline(campaign: Pick<Campaign, "wave_count" | "sources" | "spec" | "agent_version">): string {
   const { spec } = campaign;
+  if (campaign.agent_version) {
+    return `${campaign.wave_count} wave${campaign.wave_count === 1 ? "" : "s"} · agent ${campaign.agent_version}`;
+  }
   return [
     `${campaign.wave_count} wave${campaign.wave_count === 1 ? "" : "s"}`,
     campaign.sources && `snapshot${campaign.sources.mirrors.length === 1 ? "" : "s"} ${describeSources(campaign.sources)}`,

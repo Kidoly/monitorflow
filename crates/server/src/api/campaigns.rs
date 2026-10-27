@@ -7,6 +7,7 @@
 //! JSON is documented in ADR-0033, with pinned snapshots in ADR-0038, and
 //! kept stable for the web interface.
 
+use monitorflow_common::release::Version;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -56,6 +57,8 @@ pub struct CreateRequest {
     pub windows: Vec<Window>,
     /// Snapshots to pin every server to during its update (ADR-0038).
     pub sources: Option<SourcesPin>,
+    /// Update the agents to this version instead of packages (ADR-0053).
+    pub agent_version: Option<String>,
 }
 
 /// Servers by status; `failed` includes expired commands and skipped
@@ -97,6 +100,8 @@ pub struct CampaignView {
     pub windows: Vec<Window>,
     /// The pinned snapshots, if any (ADR-0038).
     pub sources: Option<SourcesPin>,
+    /// Set for an agent update campaign (ADR-0053).
+    pub agent_version: Option<String>,
     pub wave_count: usize,
     pub current_wave: Option<i32>,
     pub progress: Progress,
@@ -221,6 +226,7 @@ async fn views(state: &ApiState, rows: Vec<Listed>) -> Result<Vec<CampaignView>,
                         mode,
                         mirrors: pins.remove(&c.id).unwrap_or_default(),
                     }),
+                    agent_version: c.agent_version,
                     wave_count,
                     progress,
                     id: c.id,
@@ -349,6 +355,12 @@ pub async fn create(
     if request.sources.is_some() {
         check_sources(&state).await?;
     }
+    let agent_version = request
+        .agent_version
+        .as_deref()
+        .map(str::parse::<Version>)
+        .transpose()
+        .map_err(|_| ApiError::Invalid("agent_version must be like 0.2.0".into()))?;
     let new = NewCampaign {
         customer_id: request.customer_id,
         name: request.name,
@@ -364,6 +376,7 @@ pub async fn create(
         failure_threshold: request.failure_threshold,
         windows: request.windows,
         sources: request.sources,
+        agent_version,
         created_by: Some(user.id),
     };
     let actor = user.id.to_string();

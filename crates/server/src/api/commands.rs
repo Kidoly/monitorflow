@@ -27,7 +27,6 @@ use super::auth::CurrentUser;
 use super::sensors::{body, parse_id};
 use super::servers::{decode_cursor, encode_cursor, page_limit};
 use super::{ApiError, ApiState};
-use crate::agent_releases;
 use crate::commands::{CommandRow, CommandStore, NewCommand, State as CommandState};
 
 pub const DEFAULT_TTL_S: u64 = 3600;
@@ -296,20 +295,10 @@ fn check_self_update(
         )));
     }
     let ttl = ttl(request.ttl_s)?;
-    let settings = &state.settings;
-    let base_urls = agent_releases::sources(
-        &version,
-        settings.agent_releases.has(&version),
-        settings.mirror_public_url.as_deref(),
-        &settings.agent_download_url,
-    );
-    let payload = SelfUpdate {
-        version: version.to_string(),
-        base_urls,
-        allow_downgrade: request.allow_downgrade,
-        health_timeout_seconds: health,
-    }
-    .encode_to_vec();
+    let payload = state
+        .settings
+        .agent_releases
+        .payload(&version, request.allow_downgrade, health);
     Ok((payload, ttl))
 }
 
@@ -331,13 +320,13 @@ pub async fn agent_releases(
     State(state): State<ApiState>,
     _user: CurrentUser,
 ) -> Result<Json<AgentReleases>, ApiError> {
-    let cache = state.settings.agent_releases.clone();
+    let cache = state.settings.agent_releases.cache.clone();
     let versions = tokio::task::spawn_blocking(move || cache.versions())
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(AgentReleases {
-        latest: agent_releases::latest(&versions).map(ToString::to_string),
+        latest: crate::agent_releases::latest(&versions).map(ToString::to_string),
         versions: versions.iter().map(ToString::to_string).collect(),
     }))
 }

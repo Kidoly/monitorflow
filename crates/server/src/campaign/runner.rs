@@ -20,7 +20,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use monitorflow_common::command::{APPLY_UPDATES, CONFIGURE_SOURCES};
+use monitorflow_common::command::{APPLY_UPDATES, CONFIGURE_SOURCES, SELF_UPDATE};
+use monitorflow_common::config::ServerConfig;
+use monitorflow_common::release::Version;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use tokio::sync::Notify;
@@ -29,6 +31,7 @@ use uuid::Uuid;
 use super::model::SourcesMode;
 use super::pin::{self, Configurer, Next, Pending, PinSources};
 use super::store::{cancel_queued, close_waves, Actor, CampaignRow, COLUMNS};
+use crate::agent_releases;
 use crate::api::audit::{self, Event};
 use crate::commands::{CommandStore, Commands, NewCommand};
 use crate::mirror::{relays, Mirrors};
@@ -58,6 +61,7 @@ pub struct Runner {
     pool: PgPool,
     commands: Option<Commands>,
     sources: Option<PinSources>,
+    agents: agent_releases::Sources,
     wake: Arc<Notify>,
 }
 
@@ -67,8 +71,15 @@ impl Runner {
             pool,
             commands: None,
             sources: None,
+            agents: agent_releases::Sources::from_config(&ServerConfig::default()),
             wake: Arc::new(Notify::new()),
         }
+    }
+
+    /// Where agent update campaigns tell agents to download (ADR-0053).
+    pub fn with_agent_releases(mut self, agents: agent_releases::Sources) -> Self {
+        self.agents = agents;
+        self
     }
 
     /// Wakes `commands`' dispatcher for agents that got a command.
@@ -147,7 +158,7 @@ impl Runner {
             restored = pin::restore(&mut tx, &row, open).await?;
         }
         let step = if row.state.is_active() {
-            step(&mut tx, &row, now, self.sources.as_ref()).await?
+            step(&mut tx, &row, now, self.sources.as_ref(), &self.agents).await?
         } else {
             Step::Idle
         };
@@ -202,6 +213,7 @@ async fn step(
     row: &CampaignRow,
     now: DateTime<Utc>,
     sources: Option<&PinSources>,
+    agents: &agent_releases::Sources,
 ) -> Result<Step, sqlx::Error> {
     let next = match row.current_wave {
         None => 0,
@@ -237,7 +249,7 @@ async fn step(
                 return Ok(Step::Failed);
             }
             if tally.done < tally.size {
-                return queue(conn, row, wave, now, sources).await;
+                return queue(conn, row, wave, now, sources, agents).await;
             }
             finish_wave(conn, row.id, wave, &tally).await?;
             wave + 1
@@ -252,7 +264,7 @@ async fn step(
         complete(conn, row.id).await?;
         return Ok(Step::Completed);
     }
-    let step = queue(conn, row, next, now, sources).await?;
+    let step = queue(conn, row, next, now, sources, agents).await?;
     if matches!(step, Step::Queued(_)) {
         sqlx::query("UPDATE campaigns SET state = 'running', current_wave = $2 WHERE id = $1")
             .bind(row.id)
@@ -297,6 +309,7 @@ async fn queue(
     wave: i32,
     now: DateTime<Utc>,
     sources: Option<&PinSources>,
+    agents: &agent_releases::Sources,
 ) -> Result<Step, sqlx::Error> {
     let missing: Vec<Pending> = sqlx::query_as(
         "SELECT t.server_id, s.peer_id, s.revoked_at IS NOT NULL AS revoked,
@@ -318,13 +331,21 @@ async fn queue(
     let Some(ttl) = window_ttl(conn, row, now).await? else {
         return Ok(Step::Idle);
     };
-    let payload = row.spec().payload();
+    // An agent update campaign sends self_update instead (ADR-0053).
+    let update = match row.agent_version.as_deref().map(str::parse::<Version>) {
+        None => Ok((APPLY_UPDATES, row.spec().payload())),
+        Some(Ok(version)) => Ok((SELF_UPDATE, agents.payload(&version, false, 0))),
+        Some(Err(_)) => Err("invalid agent version".to_owned()),
+    };
     let mut configurer = None;
     let mut peers = Vec::new();
     let (mut skipped, mut configured) = (0, 0);
     for target in missing {
         let next = match row.sources_mode {
             _ if target.revoked => Next::Fail("server revoked".into()),
+            _ if row.agent_version.is_some() && target.os_family == "windows" => {
+                Next::Fail("self-update is not supported on windows servers yet".into())
+            }
             None => Next::Update,
             // Windows servers take no sources (ADR-0049).
             Some(_) if target.os_family == "windows" => Next::Update,
@@ -333,7 +354,7 @@ async fn queue(
         let built = match next {
             Next::Wait => continue,
             Next::Fail(error) => Err(error),
-            Next::Update => Ok((APPLY_UPDATES, payload.clone())),
+            Next::Update => update.clone(),
             Next::Configure | Next::Restart => {
                 let configurer = match configurer {
                     Some(ref c) => c,

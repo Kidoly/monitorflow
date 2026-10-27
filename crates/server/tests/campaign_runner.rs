@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use monitorflow_common::proto::v1::{ApplyUpdates, CommandResult, CommandStatus};
+use monitorflow_common::proto::v1::{ApplyUpdates, CommandResult, CommandStatus, SelfUpdate};
 use monitorflow_server::campaign::{
     Action, CampaignState, CampaignStore, FailureThreshold, FailureUnit, NewCampaign, Runner, Step,
     UpdateSpec, WaveSpec, Window,
@@ -96,6 +96,7 @@ impl Fleet {
             failure_threshold: FailureThreshold::default(),
             windows: Vec::new(),
             sources: None,
+            agent_version: None,
             created_by: None,
         }
     }
@@ -406,5 +407,50 @@ db_tests! {
         assert_eq!(error.as_deref(), Some("server revoked"));
         f.report(id, 1, CommandStatus::Succeeded).await;
         assert_eq!(runner.advance(id, now).await.unwrap(), Step::Completed);
+    }
+
+    #[sqlx::test]
+    async fn agent_campaigns_send_self_updates_and_skip_windows_servers(pool: PgPool) {
+        let f = Fleet::new(&pool, 2).await;
+        let runner = Runner::new(pool.clone());
+        let now = Utc::now();
+        let mut new = f.campaign(vec![WaveSpec::Size(2)]);
+        new.spec = UpdateSpec::default();
+        new.agent_version = Some("0.3.0".parse().unwrap());
+        let id = f.start(&new).await;
+        // A windows server since creation is skipped with a reason.
+        sqlx::query("UPDATE servers SET os_family = 'windows' WHERE hostname = 'web-2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(queued(runner.advance(id, now).await.unwrap()), ["agent-1"]);
+        let command = f.commands.get(f.command_of(id, 0).await).await.unwrap().unwrap();
+        assert_eq!(command.kind, "self_update");
+        let payload = SelfUpdate::decode(command.payload.as_slice()).unwrap();
+        assert_eq!(payload.version, "0.3.0");
+        assert_eq!(
+            payload.base_urls,
+            ["https://github.com/Kidoly/monitorflow/releases/download/v0.3.0/"]
+        );
+        let error: Option<String> = sqlx::query_scalar(
+            "SELECT error FROM campaign_targets WHERE campaign_id = $1 AND server_id = $2",
+        )
+        .bind(id)
+        .bind(f.servers[1].0)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(error.as_deref(), Some("self-update is not supported on windows servers yet"));
+
+        // Package options do not mix with an agent version, and windows
+        // targets are refused at creation.
+        let mut mixed = f.campaign(vec![]);
+        mixed.agent_version = Some("0.3.0".parse().unwrap());
+        assert!(f.store.create(&mixed, USER).await.is_err());
+        let mut windows = f.campaign(vec![]);
+        windows.spec = UpdateSpec::default();
+        windows.agent_version = Some("0.3.0".parse().unwrap());
+        let error = f.store.create(&windows, USER).await.unwrap_err().to_string();
+        assert!(error.contains("web-2 is a windows server"), "{error}");
     }
 }

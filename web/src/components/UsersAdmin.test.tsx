@@ -9,7 +9,7 @@ import { UsersAdminPage, describeGrant } from "./UsersAdmin";
 const names = {
   customers: [{ id: "c1", name: "Acme Hosting", site_count: 2 }],
   sites: [
-    { id: "s2", name: "lyon-office", server_count: 0, relay_count: 0, customer_id: "c1", customer_name: "Acme" },
+    { id: "s2", name: "lyon-office", server_count: 0, relay_count: 0, customer_id: "c1", customer_name: "Acme", agent_auto_update: false },
   ],
 };
 

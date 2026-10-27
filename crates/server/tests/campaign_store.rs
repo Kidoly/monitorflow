@@ -86,6 +86,7 @@ fn campaign(t: &Tenant) -> NewCampaign {
         failure_threshold: FailureThreshold::default(),
         windows: Vec::new(),
         sources: None,
+        agent_version: None,
         created_by: None,
     }
 }

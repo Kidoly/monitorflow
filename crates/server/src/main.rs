@@ -377,7 +377,10 @@ async fn main() -> anyhow::Result<()> {
     // pin snapshots with the mirrors' key and public URL (ADR-0038).
     let campaigns = Runner::new(pool.clone())
         .with_commands(commands.clone())
-        .with_sources(config.mirror_public_url.clone(), mirrors.clone());
+        .with_sources(config.mirror_public_url.clone(), mirrors.clone())
+        .with_agent_releases(monitorflow_server::agent_releases::Sources::from_config(
+            &config,
+        ));
     let service = AgentStreamService::new(
         registry.clone(),
         Arc::new(DbRelayPolicy::new(pool.clone())),
@@ -404,6 +407,7 @@ async fn main() -> anyhow::Result<()> {
         .with_mirrors(mirrors.clone())
         .with_campaigns(campaigns.clone());
     let remediation = remediation_loop(&config, pool.clone(), commands.clone()).await?;
+    let auto_update_pool = pool.clone();
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
@@ -472,6 +476,17 @@ async fn main() -> anyhow::Result<()> {
         },
         async {
             campaigns.clone().run(campaign::POLL, until_stopped()).await;
+            Ok(())
+        },
+        async {
+            monitorflow_server::agent_auto_update::run(
+                auto_update_pool.clone(),
+                monitorflow_server::agent_releases::Sources::from_config(&config),
+                commands.clone(),
+                monitorflow_server::agent_auto_update::POLL,
+                until_stopped(),
+            )
+            .await;
             Ok(())
         },
         async {

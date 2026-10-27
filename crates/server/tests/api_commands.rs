@@ -287,10 +287,11 @@ db_tests! {
         let mirrors = tempfile::TempDir::new().unwrap();
         std::fs::create_dir_all(mirrors.path().join("agent/0.3.0")).unwrap();
         std::fs::write(mirrors.path().join("agent/0.3.0/VERSION"), "0.3.0\n").unwrap();
-        let settings = || ApiSettings {
-            mirror_public_url: Some("http://mf.example:7480".into()),
-            agent_releases: ReleaseCache::in_mirror_dir(mirrors.path()),
-            ..ApiSettings::default()
+        let settings = || {
+            let mut settings = ApiSettings::default();
+            settings.agent_releases.cache = ReleaseCache::in_mirror_dir(mirrors.path());
+            settings.agent_releases.mirror_public_url = Some("http://mf.example:7480".into());
+            settings
         };
 
         let update = json!({"kind": "self_update", "version": "0.3.0", "health_timeout_s": 60});

@@ -18,6 +18,7 @@ const site = (id: string, name: string, customer: Customer): Site => ({
   relay_count: 0,
   customer_id: customer.id,
   customer_name: customer.name,
+  agent_auto_update: false,
 });
 
 export const sites: Site[] = [

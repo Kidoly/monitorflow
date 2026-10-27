@@ -138,6 +138,7 @@ db_tests! {
         assert_eq!(
             tables,
             [
+                "agent_auto_updates",
                 "alert_states",
                 "audit_log",
                 "campaign_snapshots",

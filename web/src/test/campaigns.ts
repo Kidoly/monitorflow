@@ -21,6 +21,7 @@ export function campaign(overrides: Partial<Campaign> = {}): Campaign {
     failure_threshold: { value: 0, unit: "count" },
     windows: [{ kind: "weekly", weekdays: [6, 7], start: "22:00", end: "04:00", timezone: "Europe/Paris" }],
     sources: null,
+    agent_version: null,
     wave_count: 2,
     current_wave: 0,
     progress,

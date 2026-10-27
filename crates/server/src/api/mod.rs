@@ -38,6 +38,7 @@
 //! | GET | `/api/customers` | any role | [`customers::CustomerList`]: `{"customers": [{"id", "name", "site_count"}]}`, see below |
 //! | POST | `/api/customers` | global administrator | body `{"name"}`; 201 [`customers::CustomerView`] |
 //! | POST | `/api/customers/{id}/sites` | customer administrator | body `{"name"}`; 201 [`sites::SiteView`] |
+//! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled"}`; [`sites::SiteView`]; audited (ADR-0053) |
 //! | GET | `/api/mirrors` | global administrator | [`mirrors::MirrorList`], see below |
 //! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots` and the last `runs` |
 //! | POST | `/api/mirrors/{id}/sync` | global administrator | 202 [`mirrors::RunSummary`] of the started sync; 409 while busy |
@@ -448,7 +449,7 @@ use monitorflow_common::config::ServerConfig;
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 
-use crate::agent_releases::ReleaseCache;
+use crate::agent_releases;
 use crate::campaign::Runner;
 use crate::commands::Commands;
 use crate::crl::CrlPublisher;
@@ -479,8 +480,7 @@ pub struct ApiSettings {
     pub proxmox_clusters: Vec<String>,
     /// Where agents download releases from, and the server's cache of
     /// them (ADR-0053).
-    pub agent_download_url: String,
-    pub agent_releases: ReleaseCache,
+    pub agent_releases: agent_releases::Sources,
 }
 
 impl ApiSettings {
@@ -490,8 +490,7 @@ impl ApiSettings {
             session_lifetime: Duration::from_secs(config.api_session_lifetime),
             session_idle_timeout: Duration::from_secs(config.api_session_idle_timeout),
             mirror_public_url: config.mirror_public_url.clone(),
-            agent_download_url: config.agent_download_url.clone(),
-            agent_releases: ReleaseCache::in_mirror_dir(&config.mirror_dir()),
+            agent_releases: agent_releases::Sources::from_config(config),
             proxmox_enabled: config.proxmox.enabled,
             proxmox_clusters: config
                 .proxmox
@@ -596,6 +595,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/servers", get(servers::list))
         .route("/api/servers/{id}", get(servers::detail))
         .route("/api/sites", get(sites::list))
+        .route(
+            "/api/sites/{id}/agent-auto-update",
+            put(sites::set_agent_auto_update),
+        )
         .route("/api/relays", get(relays::list))
         .route("/api/relays/{id}", get(relays::detail))
         .route("/api/relays/{id}/revoke", post(revoke::relay))
