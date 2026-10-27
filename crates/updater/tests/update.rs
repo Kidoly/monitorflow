@@ -313,6 +313,9 @@ async fn updates_to_a_signed_release_after_a_backup() {
         .steps
         .iter()
         .any(|s| s.message.contains("agent release 0.2.0 cached")));
+    // The whole release was staged, the installer included (ADR-0054).
+    assert!(run.steps.iter().any(|s| s.message.contains("install.sh")
+        && s.message.contains("monitorflow-agent-linux-x86_64")));
 }
 
 #[tokio::test]
@@ -518,8 +521,13 @@ async fn http_sources_serve_the_release_and_its_agents() {
     let candidate = http.candidate(&v("0.2.0")).await.unwrap();
     assert_eq!(candidate.base, format!("http://{addr}/mf/"));
     let dest = TempDir::new().unwrap();
-    let names = http.agent_files(&candidate, dest.path()).await.unwrap();
-    assert_eq!(names, ["monitorflow-agent-linux-x86_64"]);
-    assert_eq!(std::fs::read(dest.path().join(names[0])).unwrap(), b"agent");
+    // The whole release, for the agent cache, but not what the update
+    // itself reads.
+    let names = http.release_files(&candidate, dest.path()).await.unwrap();
+    assert_eq!(names, ["install.sh", "monitorflow-agent-linux-x86_64"]);
+    assert_eq!(
+        std::fs::read(dest.path().join("monitorflow-agent-linux-x86_64")).unwrap(),
+        b"agent"
+    );
     assert!(http.candidate(&v("0.3.0")).await.is_err());
 }
