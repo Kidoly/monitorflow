@@ -81,6 +81,8 @@ services:
       # Server updates through the updater service (ADR-0056).
       MONITORFLOW_SERVER_UPDATE_DIR: /var/lib/monitorflow/update
       MONITORFLOW_RELEASE_URL: ${RELEASE_URL:-}
+      # Unset: chosen in the web interface, github by default (ADR-0054).
+      MONITORFLOW_AGENT_INSTALL_SOURCE: ${AGENT_INSTALL_SOURCE:-}
     volumes:
       - serverdata:/var/lib/monitorflow/server
       - dbcerts:/certs:ro

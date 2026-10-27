@@ -429,6 +429,38 @@ fn server_update_settings() {
 }
 
 #[test]
+fn server_agent_install_source() {
+    let server = parse::<ServerConfig>(SERVER_MIN).unwrap();
+    assert_eq!(server.agent_install_source, None);
+    assert_eq!(server.custom_agent_download_url(), None);
+    let vars = env(&[("MONITORFLOW_AGENT_INSTALL_SOURCE", "Central")]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert_eq!(
+        server.agent_install_source,
+        Some(AgentInstallSource::Central)
+    );
+    let vars = env(&[
+        ("MONITORFLOW_AGENT_INSTALL_SOURCE", "custom"),
+        (
+            "MONITORFLOW_AGENT_DOWNLOAD_URL",
+            "https://files.example/mf/",
+        ),
+    ]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert_eq!(
+        server.custom_agent_download_url().as_deref(),
+        Some("https://files.example/mf")
+    );
+    let msg = err::<ServerConfig>(
+        SERVER_MIN,
+        &[("MONITORFLOW_AGENT_INSTALL_SOURCE", "custom")],
+    );
+    assert!(msg.contains("agent_install_source"), "{msg}");
+    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_AGENT_INSTALL_SOURCE", "relay")]);
+    assert!(msg.contains("unknown install source"), "{msg}");
+}
+
+#[test]
 fn server_tls_paths_follow_data_dir() {
     let tls = parse::<ServerConfig>(SERVER_MIN).unwrap().tls_paths();
     assert_eq!(

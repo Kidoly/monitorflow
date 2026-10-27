@@ -1578,6 +1578,7 @@ dependencies = [
  "toml",
  "tonic",
  "tower",
+ "tower-http",
  "tracing",
  "uuid",
  "x509-parser 0.18.1",
