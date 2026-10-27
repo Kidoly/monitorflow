@@ -72,3 +72,26 @@ Approach in ADR-0047: the same agent binary built for Windows, run as a service 
 - [x] Agent releases: static Linux binaries and the Windows MSI on GitHub Releases, one-line Linux installer that can be self-hosted, install command on the token page, end-to-end test in CI (ADR-0052).
 - [x] Agent self-update: signed releases, Linux helper with health check and rollback, Windows through the update service, release cache on the server and relays, update action, rollouts and per-site policy in the web interface (ADR-0053).
 - [ ] Agent install sources: one-line install from GitHub (default), from the central server's release cache over the web interface's HTTPS with checksums pinned in the command, or from a custom URL; server-wide default and per-command switch on the tokens page, offline `agent-release import`, end-to-end test in `central` mode (ADR-0054).
+
+## Phase 8 — Simplicity
+
+Everything installable in one line, updatable in two clicks, and usable without reading documentation. Findings, journeys and the reasoning behind each task are in `docs/design/simplicity-audit.md`; tasks are in order of impact, and those without a dependency can run in parallel.
+
+- [ ] First-run setup in the browser: one-time setup link while no user exists, `/setup/` creates the first administrator, a login page that says so, a default site.
+- [ ] One-line server installer (`curl … | sudo sh`): installs Docker if missing, no git clone, generates secrets, guesses and confirms the public name, pulls published images, prints the URL and setup link; `--uninstall` (ADR; after the ADR-0056 stack).
+- [ ] Server and relay offline incidents: a built-in rule on missed heartbeats, counted in the fleet tiles, can be muted per site or server.
+- [ ] Notifications: email and webhook channels configured in the interface with a test button, for incidents, approvals and failed updates (ADR revising the product non-goal).
+- [ ] Reusable install command per site: an install key valid for N hosts or days, hostname as the ID, optional approval of new hosts; single-use tokens under Advanced (ADR).
+- [ ] Correct addresses in install commands: public gRPC and enrollment addresses defaulted from the published ports, editable on the tokens page.
+- [ ] Relay one-liner in the interface: Relays › Add relay with the `MF_ROLE=relay` command, guessed server names, mirroring as a checkbox; "Add servers behind this relay" (after the ADR-0055 stack).
+- [ ] Edit thresholds and add checks in the interface, per server or per site, in plain words.
+- [ ] Users, customers and roles in the interface: create customers, invite users by one-time link, grant and revoke roles.
+- [ ] One-click backups: daily backup of the database and `serverdata` with retention, back up now and download in Settings, `--restore` in the server installer (after the ADR-0056 stack).
+- [ ] Update available everywhere: daily background release check with a banner and a notification; release import from the interface for servers without Internet.
+- [ ] AI setup in the interface: API key, model, test and enable in Settings; `MF_ALLOW_COMMANDS=1` in the agent installer for the shell opt-in; approvals say when AI is off.
+- [ ] Mirrors that work in the production compose: mirror tools sidecar image, add a mirror from a list of distributions with a size estimate.
+- [ ] Plain-language pass: rename jargon on screen, certificate expiry warning only when renewal is late or failed, quiet CLI output, an action button in every empty state.
+- [ ] Remove a server end to end: revoke, hide from lists, show the uninstall command, re-enroll the same host later.
+- [ ] Agent on any Linux: start and monitor on unknown distributions with package features reported as unavailable.
+- [ ] Browser certificate without a terminal: ACME when the name is public, otherwise a trust page for the internal CA (ADR, as it is a plaintext listener).
+- [ ] Settings page for runtime server settings, and a one-screen "Getting started" at the top of the install guides.
