@@ -168,7 +168,7 @@ impl AutoUpdate {
     }
 
     async fn tick_kind(&self, kind: Kind) -> Result<Vec<String>, sqlx::Error> {
-        let settings = store::settings(&self.pool, self.enabled_override).await?.0;
+        let settings = store::settings(&self.pool, self.enabled_override).await?;
         if settings.paused {
             return Ok(Vec::new());
         }

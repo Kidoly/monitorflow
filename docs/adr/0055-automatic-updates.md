@@ -17,7 +17,7 @@ Operators want agents and relays to follow releases on their own, as browsers an
 
 ### Settings
 
-Automatic updates are **on by default** for agents and relays. One row, `auto_update_settings`, holds the server-wide values, changed by global administrators under Updates › Automatic updates (`PUT /api/auto-update`, audited as `auto_update.settings`):
+Automatic updates are **on by default** for agents and relays. The server-wide values live with the other server settings, in the one row of `server_settings` (ADR-0054), as `auto_update_*` columns that are `NULL` for their default. Global administrators change them under Updates › Automatic updates (`PUT /api/settings/auto-update`, audited as `settings.auto_update` with the old and new values):
 
 - `enabled`, the default of every site that does not override it; on.
 - `paused`, which stops every automatic update at once, whatever the sites say, without touching updates already queued; off.

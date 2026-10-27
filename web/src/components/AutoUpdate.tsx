@@ -196,9 +196,6 @@ function Settings({
     <section className={styles.section} aria-label="Settings">
       <div className={styles.sectionHead}>
         <h2 className={styles.sectionTitle}>Settings</h2>
-        <span className={styles.dim}>
-          Changed <RelativeTime value={status.updated_at} now={new Date()} />
-        </span>
       </div>
       <p className={styles.sectionNote}>
         The server moves agents to the newest stable release it holds, never newer than itself and never backwards: one

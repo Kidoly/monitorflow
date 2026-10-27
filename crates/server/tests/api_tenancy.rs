@@ -425,6 +425,26 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(status, StatusCode::OK);
             assert!(!Ctx::mentions(&body, b.customer));
         }
+        // Global and public: agent release files (ADR-0054), none cached
+        // here.
+        ("GET", "/agent/{version}/{file}") => {
+            let (status, _) = ctx.call(method, "/agent/latest/install.sh", None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+        }
+        // Server-wide install source (ADR-0054): read by customer
+        // administrators, changed by global ones only.
+        ("GET", "/api/settings/agent-install") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer));
+        }
+        ("PUT", "/api/settings/agent-install") => {
+            let body = json!({ "source": "central" });
+            assert_eq!(
+                ctx.status(method, path, Some(body)).await,
+                StatusCode::FORBIDDEN
+            );
+        }
         // Listings: B never shows.
         ("GET", "/api/servers") => {
             let (status, body) = ctx.call(method, path, None).await;
@@ -699,9 +719,17 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = method.eq("POST").then(|| json!({}));
             assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
+        // The server is shared: updating it is for global administrators.
+        ("GET", "/api/server-update")
+        | ("POST", "/api/server-update")
+        | ("POST", "/api/server-update/check") => {
+            let body = method.eq("POST").then(|| json!({ "version": "99.0.0" }));
+            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+        }
         // Automatic updates are server-wide: global administrators only.
         ("GET", "/api/auto-update")
-        | ("PUT", "/api/auto-update")
+        | ("GET", "/api/settings/auto-update")
+        | ("PUT", "/api/settings/auto-update")
         | ("POST", "/api/auto-update/rollouts/{kind}/{version}/resume") => {
             let uri = path
                 .replace("{kind}", "agent")

@@ -992,6 +992,17 @@ pub struct ServerConfig {
     /// the install commands the web interface shows with a new token
     /// (ADR-0052). The latest GitHub release by default.
     pub agent_download_url: String,
+    /// http or https URL of the directory holding server releases, for
+    /// server updates (ADR-0056); `agent_download_url` when unset. Plain
+    /// HTTP is allowed: the release signature protects the files.
+    pub release_url: Option<String>,
+    /// The volume shared with the updater container (ADR-0056); unset, the
+    /// server cannot be updated from the web interface.
+    pub server_update_dir: Option<PathBuf>,
+    /// Default source of those install commands (ADR-0054). Unset leaves
+    /// it to the web interface's setting; `custom` uses
+    /// `agent_download_url`, which must then not be GitHub's.
+    pub agent_install_source: Option<AgentInstallSource>,
     pub mirror: MirrorConfig,
     /// AI provider of the remediation loop (ADR-0039). Off by default.
     pub ai: AiConfig,
@@ -1084,6 +1095,9 @@ impl Default for ServerConfig {
             mirror_dir: None,
             mirror_public_url: None,
             agent_download_url: DEFAULT_AGENT_DOWNLOAD_URL.into(),
+            release_url: None,
+            server_update_dir: None,
+            agent_install_source: None,
             mirror: MirrorConfig::default(),
             ai: AiConfig::default(),
             proxmox: ProxmoxConfig::default(),
@@ -1094,6 +1108,13 @@ impl Default for ServerConfig {
 }
 
 impl ServerConfig {
+    /// `agent_download_url` without a trailing slash, unless it is the
+    /// default: a custom install source (ADR-0054).
+    pub fn custom_agent_download_url(&self) -> Option<String> {
+        let url = self.agent_download_url.trim_end_matches('/');
+        (url != DEFAULT_AGENT_DOWNLOAD_URL).then(|| url.to_owned())
+    }
+
     /// Identity file paths, with defaults under `<data_dir>/tls/`.
     pub fn tls_paths(&self) -> TlsPaths {
         self.tls.resolve(&self.data_dir)
@@ -1275,6 +1296,43 @@ impl RemediationConfig {
     }
 }
 
+/// Where install commands download the agent from (ADR-0054).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentInstallSource {
+    /// The latest GitHub release.
+    Github,
+    /// The central server's release cache, behind the web interface.
+    Central,
+    /// An https directory the operator gives.
+    Custom,
+}
+
+impl AgentInstallSource {
+    pub const ALL: [Self; 3] = [Self::Github, Self::Central, Self::Custom];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Github => "github",
+            Self::Central => "central",
+            Self::Custom => "custom",
+        }
+    }
+}
+
+impl FromStr for AgentInstallSource {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|source| source.as_str() == s.to_ascii_lowercase())
+            .ok_or_else(|| {
+                format!("unknown install source `{s}`, expected github, central or custom")
+            })
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AiProviderKind {
@@ -1442,6 +1500,9 @@ impl LoadConfig for ServerConfig {
         env.set_opt("mirror_dir", &mut self.mirror_dir)?;
         env.set_opt("mirror_public_url", &mut self.mirror_public_url)?;
         env.set("agent_download_url", &mut self.agent_download_url)?;
+        env.set_opt("release_url", &mut self.release_url)?;
+        env.set_opt("server_update_dir", &mut self.server_update_dir)?;
+        env.set_opt("agent_install_source", &mut self.agent_install_source)?;
         self.mirror.apply_env(env)?;
         self.ai.apply_env(env)?;
         self.proxmox.apply_env(env)?;
@@ -1472,6 +1533,22 @@ impl LoadConfig for ServerConfig {
             return Err(check.fail(
                 "agent_download_url",
                 "must be an https URL without user, query or fragment",
+            ));
+        }
+        if let Some(url) = &self.release_url {
+            if !valid_mirror_url(url) {
+                return Err(check.fail(
+                    "release_url",
+                    "must be an http or https URL without user, query or fragment",
+                ));
+            }
+        }
+        if self.agent_install_source == Some(AgentInstallSource::Custom)
+            && self.custom_agent_download_url().is_none()
+        {
+            return Err(check.fail(
+                "agent_install_source",
+                "`custom` needs agent_download_url set to the files' https URL",
             ));
         }
         if self.server_names.is_empty() || self.server_names.iter().any(String::is_empty) {

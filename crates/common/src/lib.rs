@@ -9,6 +9,8 @@ pub mod logging;
 pub mod mirror;
 pub mod redact;
 pub mod release;
+#[cfg(all(unix, feature = "server-update"))]
+pub mod server_update;
 pub mod tls;
 pub mod via;
 #[cfg(windows)]

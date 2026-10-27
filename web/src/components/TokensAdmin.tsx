@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, type RefObject, useId, useRef, useState } from "react";
+import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 
 import { Button, fieldClass } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
@@ -11,8 +11,10 @@ import { CopyButton, SecretField } from "@/components/ui/SecretField";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatAgo } from "@/components/ui/time";
 import {
+  type AgentInstall,
   type CreatedToken,
   type EnrollmentToken,
+  type InstallSource,
   type Me,
   type Site,
   type TokenRole,
@@ -20,8 +22,16 @@ import {
   describeError,
 } from "@/lib/api";
 import { formatWhen } from "@/lib/clock";
-import { isServerAddress, linuxInstallCommand, windowsInstallCommand } from "@/lib/install";
-import { administersCustomer } from "@/lib/me";
+import {
+  type Command,
+  IMPORT_COMMAND,
+  SOURCE_WORDS,
+  isSafeUrl,
+  isServerAddress,
+  linuxInstallCommand,
+  windowsInstallCommand,
+} from "@/lib/install";
+import { administersCustomer, administersEverything } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
 
 import { AdminLayout } from "./AdminLayout";
@@ -105,6 +115,7 @@ export function TokensAdmin({ me }: { me: Me }) {
             />
           )}
           <TokenTable tokens={data?.tokens} more={data?.more ?? false} now={updatedAt ?? new Date()} onChange={refresh} />
+          <DefaultInstallSource editable={administersEverything(me)} />
         </>
       )}
     </div>
@@ -296,21 +307,80 @@ function NewToken({ token, onDone, onAnother }: { token: CreatedToken; onDone: (
   );
 }
 
-/** Ready-to-paste install commands for an agent token (ADR-0052). */
+/** This page's origin, where the server's own release files are (ADR-0054). */
+function pageOrigin(): string {
+  return typeof window === "undefined" ? "" : window.location.origin;
+}
+
+function SourceRadios({
+  name,
+  value,
+  onChange,
+  disabled = false,
+}: {
+  name: string;
+  value: InstallSource;
+  onChange: (source: InstallSource) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className={styles.radios}>
+      {(Object.keys(SOURCE_WORDS) as InstallSource[]).map((source) => (
+        <label key={source}>
+          <input
+            type="radio"
+            name={name}
+            checked={value === source}
+            disabled={disabled}
+            onChange={() => onChange(source)}
+          />{" "}
+          {SOURCE_WORDS[source]}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/** Ready-to-paste install commands for an agent token (ADR-0052), from a chosen source (ADR-0054). */
 function InstallCommands({ token }: { token: CreatedToken }) {
   const titleId = useId();
+  const sourceName = useId();
+  const [source, setSource] = useState<InstallSource>(token.install.source);
   const [relay, setRelay] = useState("");
   const valid = relay.trim() === "" || isServerAddress(relay);
   const through = valid ? relay : "";
-  const commands = [
-    { name: "Linux", note: "as root, on a host with systemd", text: linuxInstallCommand(token, through) },
-    { name: "Windows", note: "in an elevated PowerShell", text: windowsInstallCommand(token, through) },
+  const origin = pageOrigin();
+  const commands: { name: string; note: string; command: Command }[] = [
+    {
+      name: "Linux",
+      note: "as root, on a host with systemd",
+      command: linuxInstallCommand(token, source, origin, through),
+    },
+    {
+      name: "Windows",
+      note: "in an elevated PowerShell",
+      command: windowsInstallCommand(token, source, origin, through),
+    },
   ];
+  // One note when both commands are missing for the same reason.
+  const reasons = commands.flatMap(({ command }) => ("unavailable" in command ? [command.unavailable] : []));
+  const shared = reasons.length === 2 && reasons[0] === reasons[1] ? reasons[0] : null;
+  const central = token.install.central;
   return (
     <div className={styles.stack} role="group" aria-labelledby={titleId}>
       <h3 id={titleId} className={styles.sectionTitle}>
         Install the agent
       </h3>
+      <fieldset className={styles.fieldset}>
+        <legend className={styles.legend}>Download from</legend>
+        <SourceRadios name={sourceName} value={source} onChange={setSource} />
+      </fieldset>
+      {source === "central" && central && !shared && (
+        <p className={styles.fieldNote}>
+          Release {central.version} from this server. The commands check its checksums, so hosts need not trust this
+          site&apos;s certificate.
+        </p>
+      )}
       <label className={styles.field}>
         <span>
           Connect through a relay <span className={styles.fieldNote}>— optional; host:port agents use to reach it</span>
@@ -330,10 +400,135 @@ function InstallCommands({ token }: { token: CreatedToken }) {
           Enter a host name or IP address, with an optional port; IPv6 addresses in brackets.
         </p>
       )}
-      {commands.map(({ name, note, text }) => (
-        <InstallCommand key={name} name={name} note={note} text={text} />
-      ))}
+      {shared ? (
+        <Banner tone="warn">{shared}</Banner>
+      ) : (
+        commands.map(({ name, note, command }) =>
+          "text" in command ? (
+            <InstallCommand key={name} name={name} note={note} text={command.text} />
+          ) : (
+            <Banner key={name} tone="warn">
+              {name}: {command.unavailable}
+            </Banner>
+          ),
+        )
+      )}
     </div>
+  );
+}
+
+/** The server-wide default source (ADR-0054); global administrators change it. */
+function DefaultInstallSource({ editable }: { editable: boolean }) {
+  const titleId = useId();
+  const sourceName = useId();
+  const [current, setCurrent] = useState<AgentInstall | null>(null);
+  const [source, setSource] = useState<InstallSource>("github");
+  const [customUrl, setCustomUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  function show(install: AgentInstall) {
+    setCurrent(install);
+    setSource(install.source);
+    setCustomUrl(install.custom_url ?? "");
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    api
+      .agentInstall(controller.signal)
+      .then(show)
+      .catch((e: unknown) => {
+        if (!controller.signal.aborted) setError(`Loading the install source failed. ${describeError(e)}`);
+      });
+    return () => controller.abort();
+  }, []);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      show(await api.setAgentInstall({ source, custom_url: customUrl.trim() || null }));
+      setSaved(true);
+    } catch (e) {
+      setError(`Saving the install source failed. ${describeError(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const url = customUrl.trim();
+  const urlValid = url === "" || isSafeUrl(url);
+  return (
+    <form className={styles.section} onSubmit={submit} aria-labelledby={titleId}>
+      <div className={styles.sectionHead}>
+        <h2 id={titleId} className={styles.sectionTitle}>
+          Default install source
+        </h2>
+      </div>
+      <p className={styles.sectionNote}>
+        Where the install commands of new agent tokens download the agent from; each command can use another.
+        {!editable && " A global administrator changes it."}
+      </p>
+      {current && (
+        <>
+          <fieldset className={styles.fieldset} disabled={!editable || current.source_from_config}>
+            <legend className={styles.legend}>
+              Source{" "}
+              {current.source_from_config && (
+                <span className={styles.fieldNote}>— set in the server configuration (agent_install_source)</span>
+              )}
+            </legend>
+            <SourceRadios name={sourceName} value={source} onChange={setSource} />
+          </fieldset>
+          <p className={styles.fieldNote}>
+            {current.central
+              ? `This server holds release ${current.central.version}.`
+              : `This server holds no agent release yet: import one with ${IMPORT_COMMAND}.`}
+          </p>
+          <label className={styles.field}>
+            <span>
+              Custom URL{" "}
+              <span className={styles.fieldNote}>
+                {current.custom_url_from_config
+                  ? "— set in the server configuration (agent_download_url)"
+                  : "— https directory holding the release files"}
+              </span>
+            </span>
+            <input
+              className={cx(fieldClass, styles.mono)}
+              value={customUrl}
+              onChange={(e) => setCustomUrl(e.target.value)}
+              placeholder="https://files.example.com/monitorflow/0.3.0"
+              disabled={!editable || current.custom_url_from_config}
+              aria-invalid={!urlValid}
+              spellCheck={false}
+              autoCapitalize="none"
+            />
+          </label>
+          {editable && (
+            <div className={styles.formFoot}>
+              <Button
+                variant="k"
+                type="submit"
+                disabled={busy || !urlValid || (source === "custom" && url === "")}
+              >
+                Save
+              </Button>
+              {saved && <span className={styles.footnote}>Saved.</span>}
+            </div>
+          )}
+        </>
+      )}
+      {error && (
+        <p className={styles.formError} role="alert">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }
 
