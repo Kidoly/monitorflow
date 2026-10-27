@@ -419,6 +419,12 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 json!([{ "role": "administrator", "customer_id": a.customer, "site_id": null }])
             );
         }
+        // Global: the agent releases the server holds (ADR-0053).
+        ("GET", "/api/agent-releases") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer));
+        }
         // Listings: B never shows.
         ("GET", "/api/servers") => {
             let (status, body) = ctx.call(method, path, None).await;

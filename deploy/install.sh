@@ -145,6 +145,8 @@ uninstall() {
         systemctl daemon-reload
     fi
     rm -f "$BIN" "$SUDOERS" "$ENV_FILE"
+    # The previous binary and status of the last self-update (ADR-0053).
+    rm -rf /var/lib/monitorflow/self-update
     if [ "$MF_PURGE" = 1 ]; then
         rm -rf "$CONF" "$DATA_DIR"
         rmdir "$CONF_DIR" /var/lib/monitorflow 2>/dev/null || true

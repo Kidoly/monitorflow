@@ -47,6 +47,17 @@ describe("describeCommand", () => {
     expect(describeCommand(command({ kind: "revert_sources", parameters: {} })).title).toBe("Revert package sources");
     expect(describeCommand(command({ kind: "reboot", parameters: null })).title).toBe("reboot");
   });
+
+  it("names agent self-updates by version", () => {
+    const update = (parameters: Record<string, unknown>) => describeCommand(command({ kind: "self_update", parameters }));
+    expect(update({ version: "0.3.0", allow_downgrade: false, health_timeout_seconds: 0 })).toEqual({
+      title: "Update agent to 0.3.0",
+      sub: "rolls back unless it connects within 300 s",
+    });
+    expect(update({ version: "0.1.0", allow_downgrade: true, health_timeout_seconds: 60 }).sub).toBe(
+      "downgrade allowed · rolls back unless it connects within 60 s",
+    );
+  });
 });
 
 describe("command steps", () => {

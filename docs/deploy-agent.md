@@ -148,6 +148,18 @@ An administrator can update agents from MonitorFlow instead of running the insta
 
 The outcome is in `/var/lib/monitorflow/self-update/status.json`, and the watchdog's log is in `journalctl -u monitorflow-agent-self-update`. `/var/lib/monitorflow/self-update` belongs to root; the helper refuses it otherwise.
 
+**Starting an update.** On a server's page, administrators of its customer see "Update agent to …" when the server holds a newer release than the agent runs; the Commands tab follows the update and shows "rolled back to …" if it came back. The API takes the same command: `POST /api/servers/{id}/commands` with `{"kind": "self_update", "version": "0.3.0"}`, and optionally `"allow_downgrade": true` and `"health_timeout_s"` (30 to 3600).
+
+**Where agents download from.** The command lists, in order: the server's own copy at `<mirror_public_url>/agent/<version>/` when it holds that version, then `agent_download_url` (for GitHub, the release of that version; a self-hosted URL as it is, skipped by the agent if it serves another version). For sites without Internet access, give the server a copy of each release on its mirror listener, from a directory holding the release files:
+
+```
+docker compose cp ./monitorflow-0.3.0 server:/tmp/release
+docker compose exec server monitorflow-server agent-release import --dir /tmp/release
+docker compose exec server monitorflow-server agent-release list
+```
+
+The import checks the signature first. The web interface offers the newest version the server holds.
+
 **Hosts installed before self-update** lack the sudo line above: run the installer once more, which installs the new rules with the new binary. Until then `self_update` fails with "a password is required" and nothing changes. A self-update replaces the binary only; when a release changes the unit or the sudo rules, its notes say to run the installer.
 
 ## Pointing a server at the mirrors

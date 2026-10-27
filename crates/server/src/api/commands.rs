@@ -1,7 +1,7 @@
 //! Commands for agents (ADR-0031): queue one for a server, list a server's
 //! commands, read one with its output.
 //!
-//! Only `apply_updates` can be queued here, by administrators of the
+//! Only `apply_updates` and `self_update` (ADR-0053) can be queued here, by administrators of the
 //! server's customer, the rule of ADR-0029 for decisions that change a
 //! host; source configuration has its own routes in [`super::sources`]
 //! under the same rule. Every role that reads the site reads its commands.
@@ -14,7 +14,8 @@ use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
 use monitorflow_common::command::{self, valid_package_name};
-use monitorflow_common::proto::v1::{ApplyUpdates, ConfigureSources, ShellCommand};
+use monitorflow_common::proto::v1::{ApplyUpdates, ConfigureSources, SelfUpdate, ShellCommand};
+use monitorflow_common::release::Version;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -26,6 +27,7 @@ use super::auth::CurrentUser;
 use super::sensors::{body, parse_id};
 use super::servers::{decode_cursor, encode_cursor, page_limit};
 use super::{ApiError, ApiState};
+use crate::agent_releases;
 use crate::commands::{CommandRow, CommandStore, NewCommand, State as CommandState};
 
 pub const DEFAULT_TTL_S: u64 = 3600;
@@ -40,8 +42,16 @@ pub const MAX_LIMIT: u32 = 500;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRequest {
-    /// `apply_updates`.
+    /// `apply_updates` or `self_update`.
     pub kind: String,
+    /// `self_update`: the agent version to install.
+    pub version: Option<String>,
+    /// `self_update`: install even an older version.
+    #[serde(default)]
+    pub allow_downgrade: bool,
+    /// `self_update`: seconds the new agent has to connect before the
+    /// old one comes back; 30 to 3600, 300 by default.
+    pub health_timeout_s: Option<u32>,
     /// Packages to upgrade; empty or absent for all.
     #[serde(default)]
     pub packages: Vec<String>,
@@ -132,6 +142,15 @@ pub(crate) fn parameters(kind: &str, payload: &[u8]) -> Value {
             Err(_) => Value::Null,
         },
         command::REVERT_SOURCES => json!({}),
+        command::SELF_UPDATE => match SelfUpdate::decode(payload) {
+            Ok(p) => json!({
+                "version": p.version,
+                "base_urls": p.base_urls,
+                "allow_downgrade": p.allow_downgrade,
+                "health_timeout_seconds": p.health_timeout_seconds,
+            }),
+            Err(_) => Value::Null,
+        },
         // Queued by the remediation loop only (ADR-0043).
         command::SHELL => match ShellCommand::decode(payload) {
             Ok(p) => json!({"command": p.command, "timeout_seconds": p.timeout_seconds}),
@@ -167,13 +186,19 @@ impl From<CommandRow> for CommandDetail {
     }
 }
 
-/// The payload of a valid request, and its time to live.
+/// The payload of a valid `apply_updates` request, and its time to live.
 fn check(request: &CreateRequest) -> Result<(Vec<u8>, Duration), ApiError> {
     if request.kind != command::APPLY_UPDATES {
         return Err(ApiError::Invalid(format!(
-            "kind must be `{}`",
-            command::APPLY_UPDATES
+            "kind must be `{}` or `{}`",
+            command::APPLY_UPDATES,
+            command::SELF_UPDATE
         )));
+    }
+    if request.version.is_some() || request.allow_downgrade || request.health_timeout_s.is_some() {
+        return Err(ApiError::Invalid(
+            "version, allow_downgrade and health_timeout_s are for self_update".into(),
+        ));
     }
     if request.packages.len() > MAX_PACKAGES {
         return Err(ApiError::Invalid(format!(
@@ -226,11 +251,95 @@ pub async fn create(
 ) -> Result<(StatusCode, Json<CommandDetail>), ApiError> {
     let target = Target::find(&state, &user, &id).await?;
     let request = body(request)?;
+    match request.kind.as_str() {
+        command::APPLY_UPDATES => {}
+        command::SELF_UPDATE => {
+            let (payload, ttl) = check_self_update(&state, &target, &request)?;
+            return queue(&state, &user, &target, &request.kind, payload, ttl).await;
+        }
+        _ => {}
+    }
     let (payload, ttl) = check(&request)?;
     if let Some(bad) = command::unfit_name(&target.os_family, &request.packages) {
         return Err(ApiError::Invalid(unfit_message(&target.os_family, bad)));
     }
     queue(&state, &user, &target, &request.kind, payload, ttl).await
+}
+
+/// The payload of a valid `self_update` request (ADR-0053): the version
+/// and the sources the agent tries, the server's cache first.
+fn check_self_update(
+    state: &ApiState,
+    target: &Target,
+    request: &CreateRequest,
+) -> Result<(Vec<u8>, Duration), ApiError> {
+    if !request.packages.is_empty() || request.security_only || request.allow_reboot {
+        return Err(ApiError::Invalid(
+            "packages, security_only and allow_reboot are for apply_updates".into(),
+        ));
+    }
+    if target.os_family == "windows" {
+        return Err(ApiError::Invalid(
+            "self-update is not supported on windows servers yet".into(),
+        ));
+    }
+    let version: Version = request
+        .version
+        .as_deref()
+        .ok_or_else(|| ApiError::Invalid("version is required".into()))?
+        .parse()
+        .map_err(|_| ApiError::Invalid("version must be like 0.2.0".into()))?;
+    let health = request.health_timeout_s.unwrap_or(0);
+    if health != 0 && !(MIN_HEALTH_TIMEOUT_S..=MAX_HEALTH_TIMEOUT_S).contains(&health) {
+        return Err(ApiError::Invalid(format!(
+            "health_timeout_s must be between {MIN_HEALTH_TIMEOUT_S} and {MAX_HEALTH_TIMEOUT_S}"
+        )));
+    }
+    let ttl = ttl(request.ttl_s)?;
+    let settings = &state.settings;
+    let base_urls = agent_releases::sources(
+        &version,
+        settings.agent_releases.has(&version),
+        settings.mirror_public_url.as_deref(),
+        &settings.agent_download_url,
+    );
+    let payload = SelfUpdate {
+        version: version.to_string(),
+        base_urls,
+        allow_downgrade: request.allow_downgrade,
+        health_timeout_seconds: health,
+    }
+    .encode_to_vec();
+    Ok((payload, ttl))
+}
+
+/// The bounds of `health_timeout_s`, as the agent applies them.
+pub const MIN_HEALTH_TIMEOUT_S: u32 = 30;
+pub const MAX_HEALTH_TIMEOUT_S: u32 = 3600;
+
+/// `GET /api/agent-releases`.
+#[derive(Debug, Serialize)]
+pub struct AgentReleases {
+    /// Cached versions, newest first.
+    pub versions: Vec<String>,
+    /// The newest version without a pre-release suffix, else the newest.
+    pub latest: Option<String>,
+}
+
+/// `GET /api/agent-releases`: what the server can serve to agents.
+pub async fn agent_releases(
+    State(state): State<ApiState>,
+    _user: CurrentUser,
+) -> Result<Json<AgentReleases>, ApiError> {
+    let cache = state.settings.agent_releases.clone();
+    let versions = tokio::task::spawn_blocking(move || cache.versions())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(AgentReleases {
+        latest: agent_releases::latest(&versions).map(ToString::to_string),
+        versions: versions.iter().map(ToString::to_string).collect(),
+    }))
 }
 
 /// A server a user may queue commands for.

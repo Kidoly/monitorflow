@@ -5,12 +5,22 @@
 # token from the server CLI, and checks that it enrolls and shows online in
 # the API. Then re-runs the installer, checks that a tampered checksum, a
 # signature by another key and a missing signature fail closed (ADR-0053),
-# and uninstalls. The release is signed with a throwaway key. Changes this host's /usr/bin, /etc and systemd:
-# meant for a throwaway CI runner. Needs root through sudo, systemd,
-# docker with compose, curl, jq, openssl and python3.
-#   deploy/install-test.sh path/to/monitorflow-agent-linux-x86_64
+# and uninstalls. The release is signed with a throwaway key.
+#
+# With a second agent binary, built with the same release keys and a newer
+# version (MONITORFLOW_BUILD_VERSION), it also tests self-update (ADR-0053):
+# the first agent updates to the second through the API, keeping its
+# identity, then a broken release (/bin/false, signed) is rolled back.
+# MF_TEST_SIGNING_KEY must then be the key whose public half both agents
+# were built with (MONITORFLOW_RELEASE_KEYS).
+#
+# Changes this host's /usr/bin, /etc and systemd: meant for a throwaway CI
+# runner. Needs root through sudo, systemd, docker with compose, curl, jq,
+# openssl and python3.
+#   deploy/install-test.sh AGENT_BINARY [NEWER_AGENT_BINARY]
 set -euo pipefail
-agent=$(realpath "${1:?usage: deploy/install-test.sh AGENT_BINARY}")
+agent=$(realpath "${1:?usage: deploy/install-test.sh AGENT_BINARY [NEWER_AGENT_BINARY]}")
+newer=${2:+$(realpath "$2")}
 cd "$(dirname "$0")"
 
 export DOMAIN=127.0.0.1 SERVER_NAMES=localhost
@@ -18,6 +28,8 @@ POSTGRES_PASSWORD=$(openssl rand -hex 16)
 export POSTGRES_PASSWORD
 export HTTPS_PORT=28443 HTTP_PORT=28080 GRPC_PORT=27443 ENROLL_PORT=27445
 FILES_PORT=28444
+# Self-updates download from here; the directory is filled later.
+export AGENT_DOWNLOAD_URL=https://localhost:$FILES_PORT/next
 PEER=ci-install-$RANDOM
 work=$(mktemp -d)
 
@@ -25,6 +37,7 @@ compose() { docker compose -p monitorflow-install --env-file /dev/null -f docker
 cleanup() {
     [ -z "${files_pid:-}" ] || kill "$files_pid" 2>/dev/null || true
     sudo MF_UNINSTALL=1 MF_PURGE=1 sh install.sh >/dev/null 2>&1 || true
+    sudo rm -rf /etc/systemd/system/monitorflow-agent.service.d /etc/monitorflow/e2e-ca.pem
     compose down -v --remove-orphans >/dev/null 2>&1 || true
     rm -rf "$work"
 }
@@ -43,7 +56,12 @@ absent() { ! sudo test -e "$1"; }
 # a throwaway key, plus copies with a checksum that does not match (signed
 # again, so only the checksum is wrong), a signature by another key, and
 # no signature.
-openssl genpkey -algorithm ed25519 -out "$work/signing.pem"
+if [ -n "${MF_TEST_SIGNING_KEY:-}" ]; then
+    cp "$MF_TEST_SIGNING_KEY" "$work/signing.pem"
+else
+    [ -z "$newer" ] || { echo "MF_TEST_SIGNING_KEY is needed with a newer agent" >&2; exit 1; }
+    openssl genpkey -algorithm ed25519 -out "$work/signing.pem"
+fi
 openssl genpkey -algorithm ed25519 -out "$work/other.pem"
 { cat release-keys.pem; openssl pkey -in "$work/signing.pem" -pubout; } >"$work/release-keys.pem"
 export MF_RELEASE_KEYS=$work/release-keys.pem
@@ -64,9 +82,16 @@ rm "$work/files/unsigned/SHA256SUMS.sig"
 
 # HTTPS with a CA of its own, trusted by the installer's curl through
 # CURL_CA_BUNDLE.
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=localhost \
-    -addext subjectAltName=DNS:localhost -keyout "$work/key.pem" -out "$work/cert.pem" 2>/dev/null
-python3 - "$work/files" "$FILES_PORT" "$work/cert.pem" "$work/key.pem" <<'EOF' &
+# A CA and a server certificate it signs: rustls, in the agent, refuses a
+# CA certificate as the server's own.
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 \
+    -subj "/CN=MonitorFlow install test CA" -keyout "$work/ca-key.pem" -out "$work/ca.pem" 2>/dev/null
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=localhost \
+    -keyout "$work/key.pem" -out "$work/server.csr" 2>/dev/null
+printf 'subjectAltName=DNS:localhost\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n' >"$work/server.ext"
+openssl x509 -req -in "$work/server.csr" -CA "$work/ca.pem" -CAkey "$work/ca-key.pem" -CAcreateserial \
+    -days 1 -extfile "$work/server.ext" -out "$work/server.pem" 2>/dev/null
+python3 - "$work/files" "$FILES_PORT" "$work/server.pem" "$work/key.pem" <<'EOF' &
 import functools, http.server, ssl, sys
 directory, port, cert, key = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
 handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=directory)
@@ -86,8 +111,8 @@ token=$(compose exec -T server monitorflow-server token create --role agent --id
 
 # Runs the installer as the one-liner does, piped from the file server.
 installer() {
-    curl -fsSL --cacert "$work/cert.pem" "$base/install.sh" \
-        | sudo env CURL_CA_BUNDLE="$work/cert.pem" "$@" sh
+    curl -fsSL --cacert "$work/ca.pem" "$base/install.sh" \
+        | sudo env CURL_CA_BUNDLE="$work/ca.pem" "$@" sh
 }
 api="https://127.0.0.1:$HTTPS_PORT/api"
 curl -fsSk -c "$work/cookies" -H 'content-type: application/json' -H 'x-monitorflow-csrf: 1' \
@@ -125,13 +150,78 @@ check "identity and configuration kept" test "$(sudo sha256sum /var/lib/monitorf
 check "service active after upgrade" systemctl is-active --quiet monitorflow-agent
 check "agent online again" online
 
+if [ -n "$newer" ]; then
+    echo "== self-update"
+    # The agent trusts the file server's throwaway CA for its downloads.
+    sudo install -m 0644 "$work/ca.pem" /etc/monitorflow/e2e-ca.pem
+    sudo mkdir -p /etc/systemd/system/monitorflow-agent.service.d
+    printf '[Service]\nEnvironment=SSL_CERT_FILE=/etc/monitorflow/e2e-ca.pem\n' \
+        | sudo tee /etc/systemd/system/monitorflow-agent.service.d/e2e.conf >/dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl restart monitorflow-agent
+    online
+    old_version=$(/usr/bin/monitorflow-agent --version | cut -d ' ' -f 2)
+    new_version=$("$newer" --version | cut -d ' ' -f 2)
+    # Fills $work/files/next with a signed release of $1 as version $2.
+    publish() {
+        rm -rf "$work/files/next"
+        mkdir "$work/files/next"
+        install -m 0755 "$1" "$work/files/next/monitorflow-agent-linux-x86_64"
+        MF_SIGNING_KEY=$work/signing.pem MF_RELEASE_VERSION=$2 ./release-files.sh "$work/files/next" >/dev/null
+    }
+    server_id=$(curl -fsSk -b "$work/cookies" "$api/servers" | jq -r --arg peer "$PEER" '.servers[] | select(.peer_id == $peer) | .id')
+    # Queues a self_update to $1 and prints the command's final JSON.
+    update_to() {
+        local id state
+        id=$(curl -fsSk -b "$work/cookies" -H 'content-type: application/json' -H 'x-monitorflow-csrf: 1' \
+            -d "$(jq -n --arg v "$1" '{kind: "self_update", version: $v, health_timeout_s: 30}')" \
+            "$api/servers/$server_id/commands" | jq -r .id)
+        for _ in $(seq 180); do
+            curl -fsSk -b "$work/cookies" "$api/commands/$id" >"$work/command.json" || true
+            state=$(jq -r .state "$work/command.json" 2>/dev/null || true)
+            case $state in succeeded | failed | expired | cancelled) break ;; esac
+            sleep 1
+        done
+        cat "$work/command.json"
+    }
+    state_is() { [ "$(jq -r .state "$work/update.json")" = "$1" ]; }
+    reports_version() {
+        for _ in $(seq 60); do
+            if curl -fsSk -b "$work/cookies" "$api/servers/$server_id" \
+                | jq -e --arg v "$1" '.agent_version == $v and .status == "online"' >/dev/null; then
+                return 0
+            fi
+            sleep 1
+        done
+        return 1
+    }
+
+    publish "$newer" "$new_version"
+    update_to "$new_version" | tee "$work/update.json"
+    check "self-update to $new_version succeeded" state_is succeeded
+    check "binary is $new_version" test "$(/usr/bin/monitorflow-agent --version)" = "monitorflow-agent $new_version"
+    check "previous binary kept" sudo test "$(sudo /var/lib/monitorflow/self-update/previous --version)" = "monitorflow-agent $old_version"
+    check "binary root:root 0755 after update" mode_is /usr/bin/monitorflow-agent "root:root 755"
+    check "identity and configuration kept" test "$(sudo sha256sum /var/lib/monitorflow/agent/tls/cert.pem /etc/monitorflow/agent.toml)" = "$identity"
+    check "API reports $new_version online" reports_version "$new_version"
+
+    # A signed release that cannot start: the watchdog puts $new_version back.
+    publish /bin/false 99.9.9
+    update_to 99.9.9 | tee "$work/update.json"
+    check "broken update failed" state_is failed
+    check "error says rolled back" bash -c "jq -r .error '$work/update.json' | grep -q '^rolled back to $new_version'"
+    check "binary is $new_version again" test "$(/usr/bin/monitorflow-agent --version)" = "monitorflow-agent $new_version"
+    check "API reports $new_version online again" reports_version "$new_version"
+    sudo journalctl -u monitorflow-agent-self-update --no-pager -n 20 || true
+fi
+
 echo "== tampered files"
 binary=$(sha256sum /usr/bin/monitorflow-agent)
 # The installer from the good directory, the files from another one, as
 # with a compromised mirror.
 refuses() {
-    ! curl -fsSL --cacert "$work/cert.pem" "$base/install.sh" \
-        | sudo env CURL_CA_BUNDLE="$work/cert.pem" MF_DOWNLOAD_URL="$base/$1" sh
+    ! curl -fsSL --cacert "$work/ca.pem" "$base/install.sh" \
+        | sudo env CURL_CA_BUNDLE="$work/ca.pem" MF_DOWNLOAD_URL="$base/$1" sh
 }
 check "installer refuses a checksum mismatch" refuses tampered
 check "installer refuses another key's signature" refuses foreign
@@ -147,6 +237,7 @@ check "purge removes data and user" bash -c "! sudo test -e /var/lib/monitorflow
 
 if [ "$failed" -ne 0 ]; then
     sudo journalctl -u monitorflow-agent -n 50 --no-pager || true
+    sudo journalctl -u monitorflow-agent-self-update -n 50 --no-pager || true
     compose logs --tail 50 server
     exit 1
 fi

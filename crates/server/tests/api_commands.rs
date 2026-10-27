@@ -6,6 +6,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use monitorflow_common::proto::v1::{ApplyUpdates, Package, PackageReport};
 use monitorflow_common::redact::Secret;
+use monitorflow_server::agent_releases::ReleaseCache;
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
@@ -71,11 +72,19 @@ impl Harness {
         cookie: &str,
         body: Option<Value>,
     ) -> (StatusCode, Value) {
-        let state = ApiState::new(
-            self.pool.clone(),
-            Registry::default(),
-            ApiSettings::default(),
-        );
+        self.send_with(ApiSettings::default(), method, uri, cookie, body)
+            .await
+    }
+
+    async fn send_with(
+        &self,
+        settings: ApiSettings,
+        method: &str,
+        uri: &str,
+        cookie: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let state = ApiState::new(self.pool.clone(), Registry::default(), settings);
         let request = Request::builder()
             .method(method)
             .uri(uri)
@@ -270,6 +279,60 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn administrators_queue_self_updates_with_the_cache_first(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let admin = h.login("admin", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let viewer = h.login("viewer", Role::Viewer, GrantScope::Site(h.site)).await;
+        let uri = format!("/api/servers/{}/commands", h.server);
+        let mirrors = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(mirrors.path().join("agent/0.3.0")).unwrap();
+        std::fs::write(mirrors.path().join("agent/0.3.0/VERSION"), "0.3.0\n").unwrap();
+        let settings = || ApiSettings {
+            mirror_public_url: Some("http://mf.example:7480".into()),
+            agent_releases: ReleaseCache::in_mirror_dir(mirrors.path()),
+            ..ApiSettings::default()
+        };
+
+        let update = json!({"kind": "self_update", "version": "0.3.0", "health_timeout_s": 60});
+        assert_eq!(h.send_with(settings(), "POST", &uri, &viewer, Some(update.clone())).await.0, StatusCode::FORBIDDEN);
+        for bad in [
+            json!({"kind": "self_update"}),
+            json!({"kind": "self_update", "version": "latest"}),
+            json!({"kind": "self_update", "version": "0.3.0", "packages": ["x"]}),
+            json!({"kind": "self_update", "version": "0.3.0", "health_timeout_s": 5}),
+            json!({"kind": "apply_updates", "version": "0.3.0"}),
+        ] {
+            let (status, body) = h.send_with(settings(), "POST", &uri, &admin, Some(bad.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+        }
+        let (status, created) = h.send_with(settings(), "POST", &uri, &admin, Some(update)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        assert_eq!(
+            created["parameters"],
+            json!({
+                "version": "0.3.0",
+                "base_urls": [
+                    "http://mf.example:7480/agent/0.3.0/",
+                    "https://github.com/Kidoly/monitorflow/releases/download/v0.3.0/"
+                ],
+                "allow_downgrade": false,
+                "health_timeout_seconds": 60
+            })
+        );
+        assert_eq!(h.audit_count("command.create").await, 1);
+        // A version the server does not hold: GitHub only.
+        let (_, other) = h
+            .send_with(settings(), "POST", &uri, &admin, Some(json!({"kind": "self_update", "version": "0.4.0", "allow_downgrade": true})))
+            .await;
+        assert_eq!(other["parameters"]["base_urls"].as_array().unwrap().len(), 1);
+        assert_eq!(other["parameters"]["allow_downgrade"], true);
+
+        let (status, releases) = h.send_with(settings(), "GET", "/api/agent-releases", &viewer, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(releases, json!({"versions": ["0.3.0"], "latest": "0.3.0"}));
+    }
+
+    #[sqlx::test]
     async fn windows_servers_take_windows_update_names_and_no_sources(pool: PgPool) {
         let h = Harness::new(&pool).await;
         let admin = h.login("admin", Role::Administrator, GrantScope::Customer(h.customer)).await;
@@ -294,6 +357,10 @@ db_tests! {
         assert_eq!(status, StatusCode::CREATED, "{created}");
         let (status, _) = h.send("POST", &commands(windows), &admin, Some(json!({"kind": "apply_updates", "security_only": true}))).await;
         assert_eq!(status, StatusCode::CREATED);
+
+        let (status, body) = h.send("POST", &commands(windows), &admin, Some(json!({"kind": "self_update", "version": "0.3.0"}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "self-update is not supported on windows servers yet");
 
         let sources = format!("/api/servers/{windows}/sources");
         for (method, body) in [("POST", Some(json!({"mirrors": [{"name": "debian-12"}]}))), ("DELETE", None)] {
