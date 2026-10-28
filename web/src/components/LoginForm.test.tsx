@@ -12,7 +12,10 @@ const replace = vi.fn();
 const router = { replace };
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
-const HEALTHY = { "GET /api/health": { status: 200, body: { status: "ok" } } };
+const HEALTHY = {
+  "GET /api/health": { status: 200, body: { status: "ok" } },
+  "GET /api/setup": { status: 200, body: { pending: false } },
+};
 
 async function signIn(password = "correct horse", user = userEvent.setup()) {
   render(<LoginForm />);
@@ -78,5 +81,14 @@ describe("LoginForm", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Server unreachable.");
     expect(alert).not.toHaveTextContent("not sent");
+  });
+
+  it("says no account exists yet and how to get the setup link, instead of a form", async () => {
+    stubFetch({ ...HEALTHY, "GET /api/setup": { status: 200, body: { pending: true } } });
+    render(<LoginForm />);
+    expect(await screen.findByRole("heading", { name: "Finish setting up" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("No account yet.");
+    expect(screen.getByText(/monitorflow-server setup-link/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
   });
 });

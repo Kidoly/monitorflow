@@ -405,6 +405,19 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(status, StatusCode::OK);
             assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
         }
+        // First-run setup (ADR-0057): users exist, so it is done and says
+        // nothing else.
+        ("GET", "/api/setup") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body, json!({ "pending": false }));
+        }
+        ("POST", "/api/setup") => {
+            let body = json!({ "token": "0".repeat(64), "username": "eve", "password": PASSWORD });
+            let (status, body) = ctx.send(method, path, None, Some(body)).await;
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
+        }
         ("POST", "/api/auth/logout") => {
             // On a throwaway session, so the shared one stays valid.
             let (_, cookie) = login(&ctx.app(), "admin-a").await;

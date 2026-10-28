@@ -12,7 +12,7 @@ use monitorflow_common::tls::{Identity, PeerRole};
 use monitorflow_server::alerting::{AlertStore, Alerts, EngineSettings, LogNotifier};
 use monitorflow_server::api::users::GrantScope;
 use monitorflow_server::api::{
-    self, customers, users, ApiSettings, ApiState, EnrollmentSettings, Role,
+    self, customers, setup, users, ApiSettings, ApiState, EnrollmentSettings, Role,
 };
 use monitorflow_server::auto_update::AutoUpdate;
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
@@ -76,6 +76,10 @@ enum Command {
     /// ADR-0054).
     #[command(subcommand)]
     AgentRelease(AgentReleaseCommand),
+    /// Print a new one-time link that creates the first administrator in
+    /// the browser, replacing the previous one (ADR-0057). Works only
+    /// while no user exists.
+    SetupLink,
 }
 
 #[derive(Subcommand, Debug)]
@@ -324,7 +328,10 @@ async fn main() -> anyhow::Result<()> {
             return create_token(&config, args).await
         }
         Some(Command::AgentRelease(command)) => return agent_release_command(&config, command),
-        Some(Command::User { .. } | Command::Customer(_) | Command::Mirror(_)) | None => {}
+        Some(
+            Command::User { .. } | Command::Customer(_) | Command::Mirror(_) | Command::SetupLink,
+        )
+        | None => {}
     }
     logging::init(&config.log);
     tracing::info!(config = %cli.config.display(), protocol = monitorflow_common::PROTOCOL_VERSION, "starting server");
@@ -338,8 +345,10 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::User { command }) => return user_command(&pool, command).await,
         Some(Command::Customer(command)) => return customer_command(&pool, command).await,
         Some(Command::Mirror(command)) => return mirror_command(&config, pool, command).await,
+        Some(Command::SetupLink) => return setup_link_command(&config, &pool).await,
         Some(Command::Token(_) | Command::AgentRelease(_)) | None => {}
     }
+    announce_setup(&config, &pool).await?;
 
     let ca = Arc::new(open_ca(&config).await?);
     let names = server_cert::parse_names(&config.server_names);
@@ -600,6 +609,18 @@ async fn user_command(pool: &sqlx::PgPool, command: UserCommand) -> anyhow::Resu
             let id = users::create_user_with(pool, &username, &password, grant.role, scope, "cli")
                 .await?;
             println!("created user {username} ({id}) with role {}", grant.role);
+            // Like the setup page, so the first administrator can add
+            // servers at once (ADR-0057).
+            if grant.role == Role::Administrator && scope == GrantScope::Global {
+                let mut tx = pool.begin().await?;
+                if setup::ensure_default_site(&mut tx, ("system", "cli"))
+                    .await?
+                    .is_some()
+                {
+                    println!("created site {}", setup::DEFAULT_SITE);
+                }
+                tx.commit().await?;
+            }
         }
         UserCommand::Grant { username, grant } => {
             let id = users::user_id(pool, &username)
@@ -612,6 +633,37 @@ async fn user_command(pool: &sqlx::PgPool, command: UserCommand) -> anyhow::Resu
                 println!("{username} already has this grant");
             }
         }
+    }
+    Ok(())
+}
+
+/// While no user exists, logs a fresh setup link at startup (ADR-0057).
+async fn announce_setup(config: &ServerConfig, pool: &sqlx::PgPool) -> anyhow::Result<()> {
+    if let Some(token) = setup::issue(pool).await.context("issuing the setup link")? {
+        // The one secret the server logs: single use, short-lived, and it
+        // grants nothing once an account exists (ADR-0057).
+        tracing::warn!(
+            setup_url = %token.url(&config.web_base_url()),
+            valid_hours = setup::TTL.as_secs() / 3600,
+            "no user yet: open the setup link to create the administrator"
+        );
+    }
+    Ok(())
+}
+
+async fn setup_link_command(config: &ServerConfig, pool: &sqlx::PgPool) -> anyhow::Result<()> {
+    match setup::issue(pool).await? {
+        Some(token) => {
+            println!(
+                "Open this link to create the administrator (valid {} hours, once):",
+                setup::TTL.as_secs() / 3600
+            );
+            println!("{}", token.url(&config.web_base_url()));
+        }
+        None => println!(
+            "Setup is done: a user exists. Sign in at {}/",
+            config.web_base_url()
+        ),
     }
     Ok(())
 }
