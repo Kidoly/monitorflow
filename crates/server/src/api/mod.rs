@@ -44,6 +44,8 @@
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
 //! | GET | `/api/settings/auto-update` | global administrator | [`policy::Settings`](crate::auto_update::policy::Settings) as they apply (ADR-0055) |
 //! | PUT | `/api/settings/auto-update` | global administrator | body [`auto_update::SettingsRequest`]; the settings; 409 against the configuration; audited |
+//! | GET | `/api/settings/public-address` | customer administrator | [`public_address::PublicAddress`]: the address in install commands, the default, the certificate's names and whether it covers the address |
+//! | PUT | `/api/settings/public-address` | global administrator | body [`public_address::SetRequest`]; 200 [`public_address::PublicAddress`]; audited |
 //! | POST | `/api/auto-update/rollouts/{kind}/{version}/resume` | global administrator | resumes a halted rollout; audited |
 //! | GET | `/api/mirrors` | global administrator | [`mirrors::MirrorList`], see below |
 //! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots` and the last `runs` |
@@ -148,8 +150,8 @@
 //! (ADR-0029). `POST /api/tokens` takes `{"role": "agent" | "relay",
 //! "peer_id", "site_id", "ttl_s"?, "server_names"?}` (TTL 60 s to 7 days,
 //! default one hour; names for relays only) and answers the stored token
-//! plus `token`, `upstream_url` and `enroll_url`. The token string is never
-//! returned again. `GET /api/tokens` takes optional `state` (`pending`,
+//! plus `token`, `upstream_url` and `enroll_url` (at the public address),
+//! `install` and `address`. The token string is never returned again. `GET /api/tokens` takes optional `state` (`pending`,
 //! `used`, `expired`), `limit` (1 to 500, default 100) and `cursor`, and
 //! lists newest first with `{"id", "role", "peer_id", "site_id",
 //! "site_name", "customer_id", "customer_name", "server_names",
@@ -436,6 +438,7 @@ pub mod mirrors;
 pub mod packages;
 pub mod password;
 pub mod proxmox;
+pub mod public_address;
 pub mod relays;
 pub mod remediation;
 pub mod remediation_events;
@@ -753,6 +756,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/settings/agent-install",
             get(settings::get_agent_install).put(settings::set_agent_install),
+        )
+        .route(
+            "/api/settings/public-address",
+            get(public_address::get).put(public_address::set),
         )
         .route("/api/remediation/classify", post(remediation::classify))
         .route(

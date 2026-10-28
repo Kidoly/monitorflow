@@ -42,7 +42,7 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
   | sudo MF_SERVER=<a name of SERVER_NAMES>:7443 MF_TOKEN=mfe1.… sh
 ```
 
-A token created in the web interface comes with this command filled in. Hosts without access to GitHub can install from this server itself, once a release is imported ([below](#agent-releases-on-the-server)), or from a copy of the release files on another web server of the site: see [Install sources](deploy-agent.md#install-sources).
+A token created in the web interface comes with this command filled in, connecting to the first name of `SERVER_NAMES`; a global administrator picks another name or types an address above the commands, and the page warns when the server's certificate does not cover it. Hosts without access to GitHub can install from this server itself, once a release is imported ([below](#agent-releases-on-the-server)), or from a copy of the release files on another web server of the site: see [Install sources](deploy-agent.md#install-sources).
 
 ## Agent releases on the server
 

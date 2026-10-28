@@ -3,7 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { type AgentInstall, CSRF_HEADER, type CreatedToken, type EnrollmentToken } from "@/lib/api";
+import { type AgentInstall, CSRF_HEADER, type CreatedToken, type EnrollmentToken, type PublicAddress } from "@/lib/api";
 import { customerAdmin, me, siteAdmin } from "@/test/admin";
 import { requestHeaders, stubFetch } from "@/test/fetch";
 
@@ -48,12 +48,23 @@ const install = (overrides: Partial<AgentInstall> = {}): AgentInstall => ({
   ...overrides,
 });
 
+const address = (overrides: Partial<PublicAddress> = {}): PublicAddress => ({
+  address: "mf.example",
+  default: "mf.example",
+  names: ["mf.example", "10.0.0.2"],
+  certified: true,
+  upstream_url: "https://mf.example:7443",
+  enroll_url: "https://mf.example:7445",
+  ...overrides,
+});
+
 const created: CreatedToken = {
   ...token({ id: "t2", role: "relay", peer_id: "relay-1", server_names: ["relay1.example"] }),
   token: SECRET,
   upstream_url: "https://mf.example:7443",
   enroll_url: "https://mf.example:7445",
   install: install(),
+  address: address(),
 };
 
 const settings = { status: 200, body: install() };
@@ -173,6 +184,95 @@ describe("TokensAdmin", () => {
     expect(within(install).getByRole("alert")).toHaveTextContent("Enter a host name or IP address");
     expect(linux).toHaveTextContent("MF_SERVER=mf.example:7443 MF_TOKEN");
     expect(linux).not.toHaveTextContent("; id");
+  });
+
+  it("lets global administrators change the address of every command in one step", async () => {
+    const user = userEvent.setup();
+    const agentToken: CreatedToken = { ...created, ...token({ id: "t7", peer_id: "web-06" }) };
+    const fetchMock = stubFetch({
+      "GET /api/tokens": { status: 200, body: { tokens: [], next_cursor: null } },
+      "GET /api/sites": sites,
+      "GET /api/settings/agent-install": settings,
+      "POST /api/tokens": { status: 201, body: agentToken },
+      "PUT /api/settings/public-address": [
+        {
+          status: 200,
+          body: address({
+            address: "10.0.0.2",
+            upstream_url: "https://10.0.0.2:7443",
+            enroll_url: "https://10.0.0.2:7445",
+          }),
+        },
+        {
+          status: 200,
+          body: address({
+            address: "monitor.lan",
+            certified: false,
+            upstream_url: "https://monitor.lan:7443",
+            enroll_url: "https://monitor.lan:7445",
+          }),
+        },
+      ],
+    });
+    render(<TokensAdmin me={globalAdmin} />);
+    const form = await screen.findByRole("form", { name: "New token" });
+    await within(within(form).getByLabelText("Site")).findAllByRole("option");
+    await user.type(within(form).getByLabelText("Peer ID"), "web-06");
+    await user.click(within(form).getByRole("button", { name: "Create token" }));
+
+    const panel = await screen.findByRole("region", { name: /^Token for web-06/ });
+    const picker = within(panel).getByRole("combobox", { name: /Hosts reach this server at/ });
+    // The certificate's names; this page's host, mf.example, is one of them.
+    expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "mf.example (default)",
+      "10.0.0.2",
+      "Other address…",
+    ]);
+    await user.selectOptions(picker, "10.0.0.2");
+    const linux = within(panel).getByLabelText(/^Linux/);
+    expect(await within(panel).findByText(/MF_SERVER=10\.0\.0\.2:7443/)).toBeInTheDocument();
+    expect(within(panel).getByLabelText(/^Windows/)).toHaveTextContent("UPSTREAM_URL=https://10.0.0.2:7443");
+    expect(within(panel).getByLabelText(/Configuration snippet/)).toHaveTextContent(
+      'upstream_url = "https://10.0.0.2:7443" enroll_url = "https://10.0.0.2:7445"',
+    );
+    const put = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(String(fetchMock.mock.calls[put]?.[1]?.body))).toEqual({ address: "10.0.0.2" });
+    expect(requestHeaders(fetchMock, put)[CSRF_HEADER]).toBe("1");
+    expect(within(panel).queryByText(/will refuse to connect/)).not.toBeInTheDocument();
+
+    // A typed address applies too, with a plain warning when the certificate lacks it.
+    await user.selectOptions(picker, "Other address…");
+    await user.type(within(panel).getByRole("textbox", { name: "Other address" }), "monitor.lan");
+    await user.click(within(panel).getByRole("button", { name: "Use this address" }));
+    expect(await within(panel).findByText(/Hosts will refuse to connect to monitor\.lan/)).toBeInTheDocument();
+    expect(panel).toHaveTextContent("its names: mf.example, 10.0.0.2");
+    expect(linux).toHaveTextContent("MF_SERVER=monitor.lan:7443");
+    expect(picker).toHaveValue("monitor.lan");
+    expect(within(panel).queryByRole("textbox", { name: "Other address" })).not.toBeInTheDocument();
+  });
+
+  it("shows the address read-only to customer administrators", async () => {
+    const user = userEvent.setup();
+    const agentToken: CreatedToken = {
+      ...created,
+      ...token({ id: "t8", peer_id: "web-07" }),
+      address: address({ address: "monitor.lan", certified: false }),
+    };
+    stubFetch({
+      "GET /api/tokens": { status: 200, body: { tokens: [], next_cursor: null } },
+      "GET /api/sites": sites,
+      "GET /api/settings/agent-install": settings,
+      "POST /api/tokens": { status: 201, body: agentToken },
+    });
+    render(<TokensAdmin me={customerAdmin} />);
+    const form = await screen.findByRole("form", { name: "New token" });
+    await within(within(form).getByLabelText("Site")).findByRole("option");
+    await user.type(within(form).getByLabelText("Peer ID"), "web-07");
+    await user.click(within(form).getByRole("button", { name: "Create token" }));
+    const panel = await screen.findByRole("region", { name: /^Token for web-07/ });
+    expect(within(panel).queryByRole("combobox", { name: /Hosts reach/ })).not.toBeInTheDocument();
+    expect(panel).toHaveTextContent("monitor.lan. A global administrator changes it.");
+    expect(panel).toHaveTextContent("Hosts will refuse to connect to monitor.lan");
   });
 
   it("follows the chosen source, preselected with the default", async () => {

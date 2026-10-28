@@ -35,40 +35,52 @@ pub const MAX_LIMIT: u32 = 500;
 pub struct EnrollmentSettings {
     /// SHA-256 of the CA certificate, pinned in every token (ADR-0007).
     pub ca_fingerprint: Fingerprint,
-    /// `upstream_url` for a peer that connects to this server directly.
-    pub upstream_url: String,
-    /// `enroll_url` of this server's enrollment listener.
-    pub enroll_url: String,
+    /// Names the server's certificate is issued for, the first one being
+    /// the default public address.
+    pub server_names: Vec<String>,
+    /// Ports peers reach the gRPC and enrollment listeners at.
+    pub grpc_port: u16,
+    pub enroll_port: u16,
 }
 
 impl EnrollmentSettings {
-    /// URLs on the first of `server_names`, the name the server's
-    /// certificate is issued for first, and the ports peers reach the
-    /// listeners at.
+    /// The configured names, and the published ports of the listeners.
     pub fn from_config(config: &ServerConfig, ca_fingerprint: Fingerprint) -> Self {
-        let host = config
-            .server_names
-            .first()
-            .map_or("localhost", String::as_str);
-        let host = match host.parse::<std::net::IpAddr>() {
-            Ok(std::net::IpAddr::V6(ip)) => format!("[{ip}]"),
-            _ => host.to_owned(),
-        };
         Self {
             ca_fingerprint,
-            upstream_url: format!(
-                "https://{host}:{}",
-                config
-                    .grpc_public_port
-                    .unwrap_or(config.grpc_listen_addr.port())
-            ),
-            enroll_url: format!(
-                "https://{host}:{}",
-                config
-                    .enroll_public_port
-                    .unwrap_or(config.enroll_listen_addr.port())
-            ),
+            server_names: config.server_names.clone(),
+            grpc_port: config
+                .grpc_public_port
+                .unwrap_or(config.grpc_listen_addr.port()),
+            enroll_port: config
+                .enroll_public_port
+                .unwrap_or(config.enroll_listen_addr.port()),
         }
+    }
+
+    /// The first server name, the one the certificate is issued for
+    /// first; `localhost` without any.
+    pub fn default_address(&self) -> &str {
+        self.server_names
+            .first()
+            .map_or("localhost", String::as_str)
+    }
+
+    /// `upstream_url` of a peer that connects to this server at `address`.
+    pub fn upstream_url(&self, address: &str) -> String {
+        url(address, self.grpc_port)
+    }
+
+    /// `enroll_url` of this server's enrollment listener at `address`.
+    pub fn enroll_url(&self, address: &str) -> String {
+        url(address, self.enroll_port)
+    }
+}
+
+fn url(host: &str, port: u16) -> String {
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V6(ip)) => format!("https://[{ip}]:{port}"),
+        _ => format!("https://{host}:{port}"),
     }
 }
 
@@ -164,6 +176,9 @@ pub struct CreatedToken {
     pub enroll_url: String,
     /// The install sources and the default one (ADR-0054).
     pub install: super::settings::AgentInstall,
+    /// The address in `upstream_url` and `enroll_url`, which the tokens
+    /// page lets administrators change.
+    pub address: super::public_address::PublicAddress,
 }
 
 /// Query string of `GET /api/tokens`.
@@ -239,6 +254,7 @@ pub async fn create(
         .ok_or_else(|| ApiError::Internal("enrollment is not configured".into()))?;
     // Before the token exists, so a failure here does not lose one.
     let install = super::settings::agent_install(&state).await?;
+    let address = super::public_address::current(&state.pool, settings).await?;
     let ttl = request
         .ttl_s
         .map_or(token::DEFAULT_TTL, Duration::from_secs);
@@ -262,9 +278,10 @@ pub async fn create(
         Json(CreatedToken {
             view,
             token: created.token.to_secret_string().expose().to_owned(),
-            upstream_url: settings.upstream_url.clone(),
-            enroll_url: settings.enroll_url.clone(),
+            upstream_url: address.upstream_url.clone(),
+            enroll_url: address.enroll_url.clone(),
             install,
+            address,
         }),
     ))
 }
@@ -381,23 +398,32 @@ mod tests {
     }
 
     #[test]
-    fn urls_come_from_the_first_server_name() {
+    fn urls_default_to_the_first_server_name() {
         let mut config = ServerConfig::default();
         let settings = EnrollmentSettings::from_config(&config, [0; 32]);
-        assert_eq!(settings.upstream_url, "https://localhost:7443");
-        assert_eq!(settings.enroll_url, "https://localhost:7445");
+        assert_eq!(settings.default_address(), "localhost");
+        assert_eq!(settings.upstream_url("localhost"), "https://localhost:7443");
+        assert_eq!(settings.enroll_url("localhost"), "https://localhost:7445");
         // Behind published ports, as the compose file sets them.
         let published = ServerConfig {
             grpc_public_port: Some(27443),
             enroll_public_port: Some(27445),
+            server_names: vec!["mf.example".into(), "10.0.0.2".into()],
             ..ServerConfig::default()
         };
-        let settings = EnrollmentSettings::from_config(&published, settings.ca_fingerprint);
-        assert_eq!(settings.upstream_url, "https://localhost:27443");
-        assert_eq!(settings.enroll_url, "https://localhost:27445");
+        let settings = EnrollmentSettings::from_config(&published, [0; 32]);
+        assert_eq!(settings.default_address(), "mf.example");
+        assert_eq!(settings.upstream_url("10.0.0.2"), "https://10.0.0.2:27443");
+        assert_eq!(
+            settings.enroll_url("mf.example"),
+            "https://mf.example:27445"
+        );
         config.server_names = vec!["::1".into()];
         let settings = EnrollmentSettings::from_config(&config, [0; 32]);
-        assert_eq!(settings.enroll_url, "https://[::1]:7445");
+        assert_eq!(
+            settings.enroll_url(settings.default_address()),
+            "https://[::1]:7445"
+        );
     }
 
     #[test]
