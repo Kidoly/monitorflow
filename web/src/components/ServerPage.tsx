@@ -1,7 +1,8 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   ApiError,
@@ -21,7 +22,8 @@ import { certificateState } from "@/lib/certificates";
 import { metricsError } from "@/lib/charts";
 import { isActive } from "@/lib/commands";
 import { formatOs } from "@/lib/format";
-import { administersCustomer, useMe } from "@/lib/me";
+import { administersCustomer, modifiesSite, useMe } from "@/lib/me";
+import { siteHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { type SensorValues, primaryMetric, sensorRows } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
@@ -38,6 +40,7 @@ import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { TabPanel, Tabs } from "@/components/ui/Tabs";
 import { formatExact } from "@/components/ui/time";
 
+import { MonitoringSettings } from "./MonitoringSettings";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { REVOCATION_REASONS } from "./RevokeControl";
 import { ServerCommandsTab } from "./ServerCommandsTab";
@@ -49,7 +52,7 @@ export const COMMANDS_PAGE = 50;
 /** The API's largest page, which caps what a refresh reloads. */
 const MAX_LIMIT = 500;
 
-const TABS = ["sensors", "updates", "commands"] as const;
+const TABS = ["sensors", "alerts", "updates", "commands"] as const;
 export type ServerTab = (typeof TABS)[number];
 
 /** The server page for the `id` query parameter. */
@@ -171,6 +174,7 @@ export function ServerPage({ id }: { id: string | null }) {
         onSelect={(next) => setParams({ tab: next === "sensors" ? null : next })}
         tabs={[
           { id: "sensors", label: "Sensors", extra: "sensors" in sensors ? `· ${rows.length}` : undefined },
+          { id: "alerts", label: "Alerts and checks" },
           { id: "updates", label: "Updates" },
           { id: "commands", label: "Commands", extra: active > 0 ? `· ${active} running` : undefined },
         ]}
@@ -179,6 +183,7 @@ export function ServerPage({ id }: { id: string | null }) {
         {tab === "sensors" && (
           <ServerSensorsTab server={server} sensors={sensors} rows={rows} incidentsFailed={incidents === null} now={updatedAt} />
         )}
+        {tab === "alerts" && <ServerAlertsTab server={server} />}
         {tab === "updates" && <ServerUpdatesTab server={server} />}
         {tab === "commands" && (
           <ServerCommandsTab
@@ -191,6 +196,14 @@ export function ServerPage({ id }: { id: string | null }) {
       </TabPanel>
     </Page>
   );
+}
+
+/** The server's alerts and checks, editable by operators of its site. */
+function ServerAlertsTab({ server }: { server: ServerDetail }) {
+  const me = useMe();
+  const { id, site_id: siteId, site_name: siteName, os_family: osFamily } = server;
+  const target = useMemo(() => ({ kind: "server" as const, id, siteId, siteName, osFamily }), [id, siteId, siteName, osFamily]);
+  return <MonitoringSettings target={target} canEdit={!server.revoked_at && modifiesSite(me, server.customer_id, siteId)} />;
 }
 
 function ServerHeading({ server }: { server: ServerDetail }) {
@@ -284,7 +297,14 @@ function ServerFacts({
     <FactsBox
       columns={2}
       facts={[
-        { label: "Site", value: `${server.site_name} · ${server.customer_name}` },
+        {
+          label: "Site",
+          value: (
+            <>
+              <Link href={siteHref(server.site_id)}>{server.site_name}</Link> · {server.customer_name}
+            </>
+          ),
+        },
         {
           label: "Last seen",
           value: server.last_heartbeat ? <RelativeTime value={server.last_heartbeat} now={now} stale={stale} /> : "never",

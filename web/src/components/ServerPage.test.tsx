@@ -231,6 +231,24 @@ describe("ServerPage", () => {
     expect(window.location.search).toBe(`?id=${ID}`);
   });
 
+  it("shows the alerts and checks tab, editable by operators of the site", async () => {
+    setUrl(`/servers/view/?id=${ID}&tab=alerts`);
+    stubFetch(
+      routes({
+        [`GET /api/servers/${ID}/thresholds/effective`]: ok({ server_id: ID, site_id: "site-1", revision: 1, thresholds: [] }),
+        [`GET /api/servers/${ID}/sensor_configs`]: ok({ entries: [] }),
+      }),
+    );
+    render(
+      <As user={me({ role: "operator", site_id: "site-1" })}>
+        <ServerPage id={ID} />
+      </As>,
+    );
+    expect(await screen.findByRole("region", { name: "What is checked" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "paris" })).toHaveAttribute("href", expect.stringMatching(/^\/sites\/view\/?\?id=site-1$/));
+    expect(screen.getByRole("button", { name: "Add a check" })).toBeInTheDocument();
+  });
+
   it("lets administrators of the customer revoke the server after confirmation", async () => {
     // Other customers' administrators and viewers get no button.
     stubFetch(routes());

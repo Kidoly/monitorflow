@@ -1,5 +1,6 @@
-//! The default agent install source (ADR-0054): who reads and changes it,
-//! the audit, the configuration's precedence, and the `install` object of
+//! The default agent install source (ADR-0054) and the public address of
+//! install commands: who reads and changes them, the audit, the
+//! configuration's precedence, and the `install` and `address` objects of
 //! a new token. Ignored without `DATABASE_URL`.
 
 use axum::body::Body;
@@ -21,6 +22,7 @@ use uuid::Uuid;
 
 const PASSWORD: &str = "correct horse battery";
 const SETTING: &str = "/api/settings/agent-install";
+const ADDRESS: &str = "/api/settings/public-address";
 
 macro_rules! db_tests {
     ($($item:item)*) => {
@@ -45,8 +47,9 @@ async fn call(
     let state = ApiState::new(pool.clone(), Registry::default(), settings).with_enrollment(
         EnrollmentSettings {
             ca_fingerprint: [7; 32],
-            upstream_url: "https://mf.example:7443".into(),
-            enroll_url: "https://mf.example:7445".into(),
+            server_names: vec!["mf.example".into()],
+            grpc_port: 7443,
+            enroll_port: 7445,
         },
     );
     let mut request = Request::builder()
@@ -272,5 +275,76 @@ db_tests! {
         settings.agent_releases.keys = Vec::new();
         let (_, view, _) = call(&pool, settings, "GET", SETTING, Some(&admin), None).await;
         assert_eq!(view["central"], Value::Null);
+    }
+
+    #[sqlx::test]
+    async fn global_administrators_change_the_public_address(pool: PgPool) {
+        let (customer, site) = customer_site(&pool).await;
+        let global = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let admin = login(&pool, "boss", Role::Administrator, GrantScope::Customer(customer)).await;
+        let site_admin = login(&pool, "local", Role::Administrator, GrantScope::Site(site)).await;
+        let call = |method: &'static str, uri: &'static str, cookie: String, body: Option<Value>| {
+            let pool = pool.clone();
+            async move { call(&pool, ApiSettings::default(), method, uri, Some(&cookie), body).await }
+        };
+        let audit = || async {
+            sqlx::query_scalar::<_, Value>(
+                "SELECT details FROM audit_log WHERE action = 'settings.public_address' ORDER BY id",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+
+        // The first server name by default, readable by whoever creates tokens.
+        let (status, view, _) = call("GET", ADDRESS, admin.clone(), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            view,
+            json!({
+                "address": "mf.example",
+                "default": "mf.example",
+                "names": ["mf.example"],
+                "certified": true,
+                "upstream_url": "https://mf.example:7443",
+                "enroll_url": "https://mf.example:7445"
+            })
+        );
+        assert_eq!(call("GET", ADDRESS, site_admin, None).await.0, StatusCode::FORBIDDEN);
+
+        // Changed by global administrators only, to a host without a port.
+        let body = json!({ "address": "10.0.0.2" });
+        assert_eq!(call("PUT", ADDRESS, admin.clone(), Some(body.clone())).await.0, StatusCode::FORBIDDEN);
+        for bad in [json!({ "address": "mf.example:7443" }), json!({ "address": "a b" }), json!({ "host": "x" })] {
+            let (status, body, _) = call("PUT", ADDRESS, global.clone(), Some(bad.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+        }
+        let (status, view, _) = call("PUT", ADDRESS, global.clone(), Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        // Accepted, but the certificate does not cover it.
+        assert_eq!(view["address"], "10.0.0.2");
+        assert_eq!(view["certified"], false);
+        assert_eq!(view["upstream_url"], "https://10.0.0.2:7443");
+
+        // New tokens use it.
+        let request = json!({ "role": "agent", "peer_id": "web-01", "site_id": site });
+        let (status, created, _) = call("POST", "/api/tokens", admin.clone(), Some(request)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        assert_eq!(created["upstream_url"], "https://10.0.0.2:7443");
+        assert_eq!(created["enroll_url"], "https://10.0.0.2:7445");
+        assert_eq!(created["address"], view);
+
+        // Back to the default, stored as nothing.
+        let (_, view, _) = call("PUT", ADDRESS, global, Some(json!({ "address": "MF.example" }))).await;
+        assert_eq!((view["address"].as_str(), &view["certified"]), (Some("mf.example"), &json!(true)));
+        let stored: Option<String> = sqlx::query_scalar("SELECT public_address FROM server_settings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stored, None);
+        assert_eq!(
+            audit().await,
+            [json!({ "old": null, "new": "10.0.0.2" }), json!({ "old": "10.0.0.2", "new": null })]
+        );
     }
 }

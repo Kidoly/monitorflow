@@ -19,12 +19,15 @@
 //! | GET | `/api/health/ready` | none | `{"status": "ready"}`, or 503 `{"status": "unavailable"}` when PostgreSQL is unreachable |
 //! | POST | `/api/auth/login` | none | body `{"username", "password"}`; 200 [`Me`] and the session cookie, or 401 |
 //! | POST | `/api/auth/logout` | session | 204, clears the cookie |
+//! | GET | `/api/setup` | none | [`setup::Status`]: `{"pending"}`, true while no user exists (ADR-0057) |
+//! | POST | `/api/setup` | setup link | body `{"token", "username", "password"}`; 200 [`Me`] and the session cookie; 400 for a bad username or password, 410 for a used, replaced or expired link, 409 once a user exists |
 //! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}]}` |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
 //! | GET | `/api/servers/{id}` | read | [`ServerDetail`]: one listing row plus `certificate`, see below |
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
 //! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
+//! | GET | `/api/sites/{id}/sensors` | read | [`sensors::SiteEffective`]: built-in defaults overlaid with the site's rows |
 //! | GET | `/api/sites/{id}/sensor_configs` | read | [`sensors::EntryList`] of the site's rows |
 //! | POST | `/api/sites/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
 //! | PUT | `/api/sensor_configs/{id}` | modify | body [`sensors::EntryRequest`], replaces the row; 200 [`sensors::Entry`] |
@@ -45,6 +48,8 @@
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
 //! | GET | `/api/settings/auto-update` | global administrator | [`policy::Settings`](crate::auto_update::policy::Settings) as they apply (ADR-0055) |
 //! | PUT | `/api/settings/auto-update` | global administrator | body [`auto_update::SettingsRequest`]; the settings; 409 against the configuration; audited |
+//! | GET | `/api/settings/public-address` | customer administrator | [`public_address::PublicAddress`]: the address in install commands, the default, the certificate's names and whether it covers the address |
+//! | PUT | `/api/settings/public-address` | global administrator | body [`public_address::SetRequest`]; 200 [`public_address::PublicAddress`]; audited |
 //! | POST | `/api/auto-update/rollouts/{kind}/{version}/resume` | global administrator | resumes a halted rollout; audited |
 //! | GET | `/api/mirrors` | global administrator | [`mirrors::MirrorList`], see below |
 //! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots` and the last `runs` |
@@ -61,6 +66,7 @@
 //! | GET | `/api/servers/{id}/thresholds/effective` | read | [`thresholds::Effective`]: thresholds in force, muted ones and origins |
 //! | GET | `/api/servers/{id}/thresholds` | read | [`thresholds::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
+//! | GET | `/api/sites/{id}/thresholds/effective` | read | [`thresholds::SiteEffective`]: built-in defaults overlaid with the site's rows |
 //! | GET | `/api/sites/{id}/thresholds` | read | [`thresholds::EntryList`] of the site's rows |
 //! | POST | `/api/sites/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
 //! | PUT | `/api/thresholds/{id}` | modify | body [`thresholds::EntryRequest`], replaces the row; 200 [`thresholds::Entry`] |
@@ -149,8 +155,8 @@
 //! (ADR-0029). `POST /api/tokens` takes `{"role": "agent" | "relay",
 //! "peer_id", "site_id", "ttl_s"?, "server_names"?}` (TTL 60 s to 7 days,
 //! default one hour; names for relays only) and answers the stored token
-//! plus `token`, `upstream_url` and `enroll_url`. The token string is never
-//! returned again. `GET /api/tokens` takes optional `state` (`pending`,
+//! plus `token`, `upstream_url` and `enroll_url` (at the public address),
+//! `install` and `address`. The token string is never returned again. `GET /api/tokens` takes optional `state` (`pending`,
 //! `used`, `expired`), `limit` (1 to 500, default 100) and `cursor`, and
 //! lists newest first with `{"id", "role", "peer_id", "site_id",
 //! "site_name", "customer_id", "customer_name", "server_names",
@@ -440,6 +446,7 @@ pub mod offline_alerts;
 pub mod packages;
 pub mod password;
 pub mod proxmox;
+pub mod public_address;
 pub mod relays;
 pub mod remediation;
 pub mod remediation_events;
@@ -451,6 +458,7 @@ pub mod server_update;
 pub mod servers;
 pub mod session;
 pub mod settings;
+pub mod setup;
 pub mod sites;
 pub mod sources;
 pub mod thresholds;
@@ -633,6 +641,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
+        .route("/api/setup", get(setup::status).post(setup::complete))
         .route("/api/servers", get(servers::list))
         .route("/api/servers/{id}", get(servers::detail))
         .route("/api/sites", get(sites::list))
@@ -698,6 +707,7 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/remediation/events", get(remediation_events::list))
         .route("/api/servers/{id}/sensors", get(sensors::effective))
+        .route("/api/sites/{id}/sensors", get(sensors::effective_site))
         .route("/api/servers/{id}/metrics", get(metrics::discover))
         .route("/api/metrics/query", get(metrics::query))
         .route("/api/metrics/query_range", get(metrics::query_range))
@@ -716,6 +726,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/servers/{id}/thresholds/effective",
             get(thresholds::effective),
+        )
+        .route(
+            "/api/sites/{id}/thresholds/effective",
+            get(thresholds::effective_site),
         )
         .route(
             "/api/servers/{id}/thresholds",
@@ -766,6 +780,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/settings/agent-install",
             get(settings::get_agent_install).put(settings::set_agent_install),
+        )
+        .route(
+            "/api/settings/public-address",
+            get(public_address::get).put(public_address::set),
         )
         .route("/api/remediation/classify", post(remediation::classify))
         .route(

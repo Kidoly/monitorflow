@@ -923,3 +923,28 @@ fn auto_update_follows_the_database_unless_configured() {
     let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_AUTO_UPDATE_INTERVAL", "9")]);
     assert!(msg.contains("auto_update.interval"), "{msg}");
 }
+
+#[test]
+fn server_web_url() {
+    let server = parse::<ServerConfig>(SERVER_MIN).unwrap();
+    assert_eq!(server.web_base_url(), "https://localhost");
+    let vars = env(&[("MONITORFLOW_SERVER_NAMES", "::1,localhost")]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert_eq!(server.web_base_url(), "https://[::1]");
+    for (url, base) in [
+        ("https://mon.example.net:443", "https://mon.example.net"),
+        (
+            "https://mon.example.net:8443/",
+            "https://mon.example.net:8443",
+        ),
+        ("https://mon.example.net/mf/", "https://mon.example.net/mf"),
+    ] {
+        let vars = env(&[("MONITORFLOW_WEB_URL", url)]);
+        let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+        assert_eq!(server.web_base_url(), base, "{url}");
+    }
+    for bad in ["http://mon", "https://u:p@mon", "https://mon/#x"] {
+        let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_WEB_URL", bad)]);
+        assert!(msg.contains("web_url"), "{bad}: {msg}");
+    }
+}

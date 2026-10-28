@@ -6,7 +6,7 @@ import { useState } from "react";
 import { api, describeError } from "@/lib/api";
 import { formatSeconds } from "@/lib/format";
 import { OFFLINE_AFTER_S } from "@/lib/incidents";
-import { operatesSite, useMe } from "@/lib/me";
+import { modifiesSite, useMe } from "@/lib/me";
 import { SITES_PATH } from "@/lib/routes";
 import { Button } from "@/components/ui/Button";
 import { Label } from "@/components/ui/StatusLabel";
@@ -63,7 +63,7 @@ export function OfflineAlerts({ kind, target, onChanged }: { kind: Kind; target:
       <span className={styles.muted}>
         {on ? `critical incident when ${who} sends nothing for ${formatSeconds(OFFLINE_AFTER_S)}` : "no incident when offline"}
       </span>{" "}
-      {operatesSite(me, target.customer_id, target.site_id) && (
+      {modifiesSite(me, target.customer_id, target.site_id) && (
         <Button size="small" disabled={busy} onClick={() => void change()}>
           {on ? "Mute" : "Turn on"}
         </Button>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Me, RoleGrant } from "./api";
-import { administersCustomer, isAdministrator, operatesSite, readsCustomers } from "./me";
+import { administersCustomer, isAdministrator, modifiesSite, readsCustomers } from "./me";
 
 const me = (...roles: RoleGrant[]): Me => ({ id: "u1", username: "alice", roles });
 
@@ -31,13 +31,13 @@ describe("administration rights", () => {
     expect(readsCustomers(me({ role: "viewer", customer_id: "c1", site_id: null }))).toBe(true);
   });
 
-  it("needs an operator role on the site, its customer or everything to change a site", () => {
-    expect(operatesSite(null, "c1", "s1")).toBe(false);
-    expect(operatesSite(me({ role: "viewer", site_id: null }), "c1", "s1")).toBe(false);
-    expect(operatesSite(me({ role: "operator", site_id: null }), "c1", "s1")).toBe(true);
-    expect(operatesSite(me({ role: "approver", customer_id: "c1", site_id: null }), "c1", "s1")).toBe(true);
-    expect(operatesSite(me({ role: "operator", customer_id: "c2", site_id: null }), "c1", "s1")).toBe(false);
-    expect(operatesSite(me({ role: "operator", site_id: "s1" }), "c1", "s1")).toBe(true);
-    expect(operatesSite(me({ role: "administrator", site_id: "s2" }), "c1", "s1")).toBe(false);
+  it("needs an operator role or above covering the site to change its settings", () => {
+    expect(modifiesSite(null, "c1", "s1")).toBe(false);
+    expect(modifiesSite(me({ role: "viewer", site_id: null }), "c1", "s1")).toBe(false);
+    expect(modifiesSite(me({ role: "operator", site_id: null }), "c1", "s1")).toBe(true);
+    expect(modifiesSite(me({ role: "operator", customer_id: "c1", site_id: null }), "c1", "s1")).toBe(true);
+    expect(modifiesSite(me({ role: "approver", customer_id: "c2", site_id: null }), "c1", "s1")).toBe(false);
+    expect(modifiesSite(me({ role: "administrator", site_id: "s1" }), "c1", "s1")).toBe(true);
+    expect(modifiesSite(me({ role: "operator", site_id: "s2" }), "c1", "s1")).toBe(false);
   });
 });

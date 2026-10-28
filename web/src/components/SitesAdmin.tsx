@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type FormEvent, useId, useState } from "react";
 
 import { Button, fieldClass } from "@/components/ui/Button";
@@ -9,6 +10,7 @@ import { Label } from "@/components/ui/StatusLabel";
 import { Banner, ErrorState, LoadingBlock, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { ApiError, type Customer, type Me, type Relay, type Server, type Site, api, describeError } from "@/lib/api";
 import { administersCustomer } from "@/lib/me";
+import { siteHref } from "@/lib/routes";
 import { scopedHref } from "@/lib/scope";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -121,7 +123,11 @@ function CustomerSites({
       key: "site",
       header: "Site",
       cell: (site) => (
-        <PrimaryCell title={site.name} href={scopedHref("/", { customerId: site.customer_id, siteId: site.id })} />
+        <PrimaryCell
+          title={site.name}
+          href={scopedHref("/", { customerId: site.customer_id, siteId: site.id })}
+          sub={<Link href={siteHref(site.id)}>Alerts and checks</Link>}
+        />
       ),
     },
     {

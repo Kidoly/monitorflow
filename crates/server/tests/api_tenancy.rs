@@ -19,7 +19,7 @@ use axum::Router;
 use monitorflow_common::redact::Secret;
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
-use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
+use monitorflow_server::api::{self, ApiSettings, ApiState, EnrollmentSettings, Role};
 use monitorflow_server::grpc::Registry;
 use monitorflow_server::vm_query::VmQuery;
 use serde_json::{json, Value};
@@ -328,7 +328,13 @@ impl Ctx {
                 Registry::default(),
                 ApiSettings::default(),
             )
-            .with_metrics(vm),
+            .with_metrics(vm)
+            .with_enrollment(EnrollmentSettings {
+                ca_fingerprint: [7; 32],
+                server_names: vec!["mf.example".into()],
+                grpc_port: 7443,
+                enroll_port: 7445,
+            }),
         )
     }
 
@@ -405,6 +411,19 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(status, StatusCode::OK);
             assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
         }
+        // First-run setup (ADR-0057): users exist, so it is done and says
+        // nothing else.
+        ("GET", "/api/setup") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body, json!({ "pending": false }));
+        }
+        ("POST", "/api/setup") => {
+            let body = json!({ "token": "0".repeat(64), "username": "eve", "password": PASSWORD });
+            let (status, body) = ctx.send(method, path, None, Some(body)).await;
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
+        }
         ("POST", "/api/auth/logout") => {
             // On a throwaway session, so the shared one stays valid.
             let (_, cookie) = login(&ctx.app(), "admin-a").await;
@@ -440,6 +459,19 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         ("PUT", "/api/settings/agent-install") => {
             let body = json!({ "source": "central" });
+            assert_eq!(
+                ctx.status(method, path, Some(body)).await,
+                StatusCode::FORBIDDEN
+            );
+        }
+        // Server-wide public address: the same rule.
+        ("GET", "/api/settings/public-address") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer));
+        }
+        ("PUT", "/api/settings/public-address") => {
+            let body = json!({ "address": "evil.example" });
             assert_eq!(
                 ctx.status(method, path, Some(body)).await,
                 StatusCode::FORBIDDEN
@@ -872,7 +904,10 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = Some(json!({ "enabled": false }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
-        ("GET", "/api/sites/{id}/sensor_configs") | ("GET", "/api/sites/{id}/thresholds") => {
+        ("GET", "/api/sites/{id}/sensor_configs")
+        | ("GET", "/api/sites/{id}/thresholds")
+        | ("GET", "/api/sites/{id}/sensors")
+        | ("GET", "/api/sites/{id}/thresholds/effective") => {
             let uri = path.replace("{id}", &b.site.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
         }

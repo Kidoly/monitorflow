@@ -195,6 +195,59 @@ export interface EffectiveThresholds {
   thresholds: EffectiveThreshold[];
 }
 
+/** `GET /api/sites/{id}/sensors`: the built-in defaults overlaid with the site's rows. */
+export interface SiteSensors {
+  site_id: string;
+  sensors: EffectiveSensor[];
+}
+
+/** `GET /api/sites/{id}/thresholds/effective`: the built-in defaults overlaid with the site's rows. */
+export interface SiteThresholds {
+  site_id: string;
+  thresholds: EffectiveThreshold[];
+}
+
+/** Where a sensor or threshold row applies: every server of a site, or one server. */
+export type ConfigOwner = { kind: "sites" | "servers"; id: string };
+
+/** Body of a sensor row create or update (ADR-0016); an update replaces every field. */
+export interface SensorConfigRequest {
+  kind: string;
+  name: string;
+  instance?: string;
+  interval_ms: number;
+  timeout_ms?: number | null;
+  params?: Record<string, string | number | boolean>;
+  enabled?: boolean;
+}
+
+/** One stored row of `sensor_configs`; exactly one of `site_id` and `server_id` is set. */
+export interface SensorConfigEntry extends Required<Omit<SensorConfigRequest, "timeout_ms">> {
+  id: string;
+  site_id: string | null;
+  server_id: string | null;
+  timeout_ms: number | null;
+}
+
+/** Body of a threshold create or update (ADR-0019); an update replaces every field. */
+export interface ThresholdRequest {
+  metric: string;
+  instance: string | null;
+  comparison: Comparison;
+  warning: number | null;
+  critical: number | null;
+  duration_s: number;
+  hysteresis: number;
+  enabled: boolean;
+}
+
+/** One stored row of `thresholds`; exactly one of `site_id` and `server_id` is set. */
+export interface ThresholdEntry extends ThresholdRequest {
+  id: string;
+  site_id: string | null;
+  server_id: string | null;
+}
+
 /** One entry of `GET /api/sites`. */
 export interface Site {
   id: string;
@@ -792,6 +845,23 @@ export interface CreatedToken extends EnrollmentToken {
   enroll_url: string;
   /** Where the install commands may download the agent from (ADR-0054). */
   install: AgentInstall;
+  /** The address in `upstream_url` and `enroll_url`. */
+  address: PublicAddress;
+}
+
+/** `GET /api/settings/public-address`, and the `address` of a new token. */
+export interface PublicAddress {
+  /** The host the install commands connect to, without a port. */
+  address: string;
+  /** The first server name, used when none is chosen. */
+  default: string;
+  /** The names the server's certificate is issued for. */
+  names: string[];
+  /** Whether the certificate covers `address`; agents refuse to connect otherwise. */
+  certified: boolean;
+  /** At `address`, with the published ports. */
+  upstream_url: string;
+  enroll_url: string;
 }
 
 /** Where install commands download the agent from (ADR-0054). */
@@ -1058,6 +1128,15 @@ export interface Health {
   status: "ok";
 }
 
+/** `GET /api/setup` (ADR-0057). */
+export interface SetupStatus {
+  /** No account exists yet: sign-in cannot work until the setup link is used. */
+  pending: boolean;
+}
+
+/** Shortest password the server accepts. */
+export const MIN_PASSWORD_LENGTH = 12;
+
 /**
  * A failed request. `status` is the HTTP status, or 0 when the server could
  * not be reached. `message` is the API's generic `{"error"}` text.
@@ -1191,6 +1270,16 @@ export const api = {
 
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
 
+  setupStatus: (signal?: AbortSignal) => request<SetupStatus>("/api/setup", { signal, redirectOn401: false }),
+
+  /** Creates the first administrator with the setup link's `token`, and signs it in. */
+  setup: (token: string, username: string, password: string) =>
+    request<Me>("/api/setup", {
+      method: "POST",
+      body: { token, username, password },
+      redirectOn401: false,
+    }),
+
   me: (signal?: AbortSignal) => request<Me>("/api/auth/me", { signal }),
 
   /** One page of servers, from `cursor` when given. */
@@ -1288,6 +1377,10 @@ export const api = {
   setAgentInstall: (body: { source: InstallSource; custom_url: string | null }) =>
     request<AgentInstall>("/api/settings/agent-install", { method: "PUT", body }),
 
+  /** Changes the address in install commands; global administrators only, audited. `null` is the default. */
+  setPublicAddress: (body: { address: string | null }) =>
+    request<PublicAddress>("/api/settings/public-address", { method: "PUT", body }),
+
   /** Revokes an unused token; 409 once used. */
   revokeToken: (id: string) => request<void>(`/api/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
@@ -1314,6 +1407,38 @@ export const api = {
     request<EffectiveThresholds>(`/api/servers/${encodeURIComponent(serverId)}/thresholds/effective`, {
       signal,
     }),
+
+  siteThresholds: (siteId: string, signal?: AbortSignal) =>
+    request<SiteThresholds>(`/api/sites/${encodeURIComponent(siteId)}/thresholds/effective`, { signal }),
+
+  siteSensors: (siteId: string, signal?: AbortSignal) =>
+    request<SiteSensors>(`/api/sites/${encodeURIComponent(siteId)}/sensors`, { signal }),
+
+  /** The threshold rows of one site or server, not what it inherits. */
+  thresholdRows: (owner: ConfigOwner, signal?: AbortSignal) =>
+    request<{ entries: ThresholdEntry[] }>(`/api/${owner.kind}/${encodeURIComponent(owner.id)}/thresholds`, { signal }),
+
+  createThreshold: (owner: ConfigOwner, body: ThresholdRequest) =>
+    request<ThresholdEntry>(`/api/${owner.kind}/${encodeURIComponent(owner.id)}/thresholds`, { method: "POST", body }),
+
+  updateThreshold: (id: string, body: ThresholdRequest) =>
+    request<ThresholdEntry>(`/api/thresholds/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteThreshold: (id: string) => request<void>(`/api/thresholds/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** The sensor rows of one site or server, disabled ones included. */
+  sensorRows: (owner: ConfigOwner, signal?: AbortSignal) =>
+    request<{ entries: SensorConfigEntry[] }>(`/api/${owner.kind}/${encodeURIComponent(owner.id)}/sensor_configs`, {
+      signal,
+    }),
+
+  createSensor: (owner: ConfigOwner, body: SensorConfigRequest) =>
+    request<SensorConfigEntry>(`/api/${owner.kind}/${encodeURIComponent(owner.id)}/sensor_configs`, {
+      method: "POST",
+      body,
+    }),
+
+  deleteSensor: (id: string) => request<void>(`/api/sensor_configs/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   serverMetrics: (serverId: string, signal?: AbortSignal) =>
     request<MetricList>(`/api/servers/${encodeURIComponent(serverId)}/metrics`, { signal }),

@@ -21,6 +21,10 @@ pub enum ApiError {
     /// The request conflicts with existing data; the message says how.
     #[error("{0}")]
     Conflict(String),
+    /// A one-time link that was used, replaced or expired; the message
+    /// says how to get a new one.
+    #[error("{0}")]
+    Gone(String),
     /// No valid session.
     #[error("authentication required")]
     Unauthorized,
@@ -53,6 +57,7 @@ impl ApiError {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::BadRequest | Self::Invalid(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::Gone(_) => StatusCode::GONE,
             Self::Unauthorized | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::Forbidden | Self::CrossSite => StatusCode::FORBIDDEN,
             Self::MetricsUnavailable(_) => StatusCode::BAD_GATEWAY,

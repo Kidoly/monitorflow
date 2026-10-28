@@ -1,9 +1,10 @@
 //! User accounts and role grants, managed from the server CLI (`user add`,
-//! `user grant`).
+//! `user grant`) and, for the first administrator, the setup link
+//! ([`super::setup`]).
 
 use monitorflow_common::redact::Secret;
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use super::audit::{self, Event};
@@ -108,14 +109,38 @@ pub async fn create_user_with(
     scope: GrantScope,
     actor: &str,
 ) -> Result<Uuid, CreateUserError> {
+    let hash = hash_new_password(username, password).await?;
+    let mut tx = pool.begin().await?;
+    let id = insert_user(&mut tx, username, &hash, role, scope, ("system", actor)).await?;
+    tx.commit().await?;
+    Ok(id)
+}
+
+/// Validates a new account's username and password, then hashes the
+/// password off the runtime.
+pub(super) async fn hash_new_password(
+    username: &str,
+    password: &Secret,
+) -> Result<String, CreateUserError> {
     validate_username(username)?;
     if password.expose().chars().count() < MIN_PASSWORD_LEN {
         return Err(CreateUserError::PasswordTooShort);
     }
     let password = password.clone();
-    let hash = tokio::task::spawn_blocking(move || password::hash(password.expose())).await??;
+    Ok(tokio::task::spawn_blocking(move || password::hash(password.expose())).await??)
+}
 
-    let mut tx = pool.begin().await?;
+/// Inserts a user with the argon2 `hash` and its first role, audited as
+/// done by `actor` (`(actor_kind, actor_id)`), in the caller's transaction.
+/// The setup link dies with it (ADR-0057).
+pub(super) async fn insert_user(
+    tx: &mut PgConnection,
+    username: &str,
+    hash: &str,
+    role: Role,
+    scope: GrantScope,
+    actor: (&str, &str),
+) -> Result<Uuid, CreateUserError> {
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id",
     )
@@ -133,21 +158,23 @@ pub async fn create_user_with(
     .bind(site_id)
     .execute(&mut *tx)
     .await?;
+    sqlx::query("DELETE FROM setup_tokens")
+        .execute(&mut *tx)
+        .await?;
     let mut details = scope.details(role);
     details["username"] = json!(username);
     let target = id.to_string();
     audit::record(
         &mut *tx,
         Event {
-            actor_kind: "system",
-            actor_id: actor,
+            actor_kind: actor.0,
+            actor_id: actor.1,
             action: "user.create",
             target: Some(("user", &target)),
             details,
         },
     )
     .await?;
-    tx.commit().await?;
     Ok(id)
 }
 

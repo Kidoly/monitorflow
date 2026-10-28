@@ -75,6 +75,8 @@ services:
       # Reached by the web service only: the port is not published (ADR-0006).
       MONITORFLOW_API_LISTEN_ADDR: 0.0.0.0:7444
       MONITORFLOW_SERVER_NAMES: ${SERVER_NAMES:?set SERVER_NAMES in .env}
+      # Where the setup link points (ADR-0057).
+      MONITORFLOW_WEB_URL: https://${DOMAIN:?set DOMAIN in .env}:${HTTPS_PORT:-443}
       MONITORFLOW_LOG_FORMAT: json
       # Unset: the latest GitHub release (ADR-0052).
       MONITORFLOW_AGENT_DOWNLOAD_URL: ${AGENT_DOWNLOAD_URL:-}

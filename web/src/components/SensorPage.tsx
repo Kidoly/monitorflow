@@ -246,6 +246,10 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
               value: effective ? (effective.timeout_ms === null ? "agent default" : formatSeconds(effective.timeout_ms / 1000)) : "—",
             },
             ...thresholdFacts(rule, format, thresholds === null),
+            {
+              label: "Alerts",
+              value: <Link href={scopedHref(serverHref(server.id, "alerts"), scope)}>Change when to alert</Link>,
+            },
             ...(effective && Object.keys(effective.params).length > 0
               ? [{ label: "Parameters", value: Object.entries(effective.params).map(([k, v]) => `${k}=${v}`).join(" "), mono: true }]
               : []),

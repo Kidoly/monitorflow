@@ -25,11 +25,19 @@ On the first start the server creates its CA and its own certificate for `SERVER
 
 ## Administrator and first agent
 
+While no user exists, the server prints a one-time setup link in its log (ADR-0057). Open it to choose the administrator's name and password; you are then signed in, with a site `main` to add servers to. The link works once and for 24 hours. To print a new one:
+
+```
+docker compose -f deploy/docker-compose.yml exec server monitorflow-server setup-link
+```
+
+The command line still creates users, before or after setup; the password is read from the terminal:
+
 ```
 docker compose -f deploy/docker-compose.yml exec server monitorflow-server user add --username admin --role admin
 ```
 
-The password is read from the terminal. Then sign in at `https://<DOMAIN>/`. Enrollment tokens come from the web interface, or from the same command line:
+Enrollment tokens come from the web interface, or from the same command line:
 
 ```
 docker compose -f deploy/docker-compose.yml exec server monitorflow-server token create --role agent --id web-01 --site main --create-site
@@ -42,7 +50,7 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
   | sudo MF_SERVER=<a name of SERVER_NAMES>:7443 MF_TOKEN=mfe1.… sh
 ```
 
-A token created in the web interface comes with this command filled in. Hosts without access to GitHub can install from this server itself, once a release is imported ([below](#agent-releases-on-the-server)), or from a copy of the release files on another web server of the site: see [Install sources](deploy-agent.md#install-sources).
+A token created in the web interface comes with this command filled in, connecting to the first name of `SERVER_NAMES`; a global administrator picks another name or types an address above the commands, and the page warns when the server's certificate does not cover it. Hosts without access to GitHub can install from this server itself, once a release is imported ([below](#agent-releases-on-the-server)), or from a copy of the release files on another web server of the site: see [Install sources](deploy-agent.md#install-sources).
 
 ## Agent releases on the server
 

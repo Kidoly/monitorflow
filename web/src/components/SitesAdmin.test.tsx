@@ -60,7 +60,7 @@ describe("SitesAdmin", () => {
     render(<SitesAdmin me={customerAdmin} />);
     const acme = await screen.findByRole("region", { name: "acme" });
     expect(acme).toHaveTextContent("1 site · 3 servers · 1 relay");
-    expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent(/paris\s*3 · 1 online\s*1 · relay-paris-1/);
+    expect(within(acme).getByRole("row", { name: /paris/ })).toHaveTextContent(/paris\s*Alerts and checks\s*3 · 1 online\s*1 · relay-paris-1/);
     const globex = screen.getByRole("region", { name: "globex" });
     expect(within(globex).queryByRole("form")).not.toBeInTheDocument();
     expect(screen.getByText(/2 customers, 2 sites/)).toBeInTheDocument();
