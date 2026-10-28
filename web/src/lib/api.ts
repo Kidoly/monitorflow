@@ -192,6 +192,59 @@ export interface EffectiveThresholds {
   thresholds: EffectiveThreshold[];
 }
 
+/** `GET /api/sites/{id}/sensors`: the built-in defaults overlaid with the site's rows. */
+export interface SiteSensors {
+  site_id: string;
+  sensors: EffectiveSensor[];
+}
+
+/** `GET /api/sites/{id}/thresholds/effective`: the built-in defaults overlaid with the site's rows. */
+export interface SiteThresholds {
+  site_id: string;
+  thresholds: EffectiveThreshold[];
+}
+
+/** Where a sensor or threshold row applies: every server of a site, or one server. */
+export type ConfigOwner = { kind: "sites" | "servers"; id: string };
+
+/** Body of a sensor row create or update (ADR-0016); an update replaces every field. */
+export interface SensorConfigRequest {
+  kind: string;
+  name: string;
+  instance?: string;
+  interval_ms: number;
+  timeout_ms?: number | null;
+  params?: Record<string, string | number | boolean>;
+  enabled?: boolean;
+}
+
+/** One stored row of `sensor_configs`; exactly one of `site_id` and `server_id` is set. */
+export interface SensorConfigEntry extends Required<Omit<SensorConfigRequest, "timeout_ms">> {
+  id: string;
+  site_id: string | null;
+  server_id: string | null;
+  timeout_ms: number | null;
+}
+
+/** Body of a threshold create or update (ADR-0019); an update replaces every field. */
+export interface ThresholdRequest {
+  metric: string;
+  instance: string | null;
+  comparison: Comparison;
+  warning: number | null;
+  critical: number | null;
+  duration_s: number;
+  hysteresis: number;
+  enabled: boolean;
+}
+
+/** One stored row of `thresholds`; exactly one of `site_id` and `server_id` is set. */
+export interface ThresholdEntry extends ThresholdRequest {
+  id: string;
+  site_id: string | null;
+  server_id: string | null;
+}
+
 /** One entry of `GET /api/sites`. */
 export interface Site {
   id: string;
@@ -1314,6 +1367,38 @@ export const api = {
     request<EffectiveThresholds>(`/api/servers/${encodeURIComponent(serverId)}/thresholds/effective`, {
       signal,
     }),
+
+  siteThresholds: (siteId: string, signal?: AbortSignal) =>
+    request<SiteThresholds>(`/api/sites/${encodeURIComponent(siteId)}/thresholds/effective`, { signal }),
+
+  siteSensors: (siteId: string, signal?: AbortSignal) =>
+    request<SiteSensors>(`/api/sites/${encodeURIComponent(siteId)}/sensors`, { signal }),
+
+  /** The threshold rows of one site or server, not what it inherits. */
+  thresholdRows: (owner: ConfigOwner, signal?: AbortSignal) =>
+    request<{ entries: ThresholdEntry[] }>(`/api/${owner.kind}/${encodeURIComponent(owner.id)}/thresholds`, { signal }),
+
+  createThreshold: (owner: ConfigOwner, body: ThresholdRequest) =>
+    request<ThresholdEntry>(`/api/${owner.kind}/${encodeURIComponent(owner.id)}/thresholds`, { method: "POST", body }),
+
+  updateThreshold: (id: string, body: ThresholdRequest) =>
+    request<ThresholdEntry>(`/api/thresholds/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteThreshold: (id: string) => request<void>(`/api/thresholds/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** The sensor rows of one site or server, disabled ones included. */
+  sensorRows: (owner: ConfigOwner, signal?: AbortSignal) =>
+    request<{ entries: SensorConfigEntry[] }>(`/api/${owner.kind}/${encodeURIComponent(owner.id)}/sensor_configs`, {
+      signal,
+    }),
+
+  createSensor: (owner: ConfigOwner, body: SensorConfigRequest) =>
+    request<SensorConfigEntry>(`/api/${owner.kind}/${encodeURIComponent(owner.id)}/sensor_configs`, {
+      method: "POST",
+      body,
+    }),
+
+  deleteSensor: (id: string) => request<void>(`/api/sensor_configs/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   serverMetrics: (serverId: string, signal?: AbortSignal) =>
     request<MetricList>(`/api/servers/${encodeURIComponent(serverId)}/metrics`, { signal }),

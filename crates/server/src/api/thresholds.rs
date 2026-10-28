@@ -179,6 +179,14 @@ pub struct Effective {
     pub thresholds: Vec<EffectiveThreshold>,
 }
 
+/// Body of `GET /api/sites/{id}/thresholds/effective`: what the site's
+/// servers get unless they override it.
+#[derive(Debug, Serialize)]
+pub struct SiteEffective {
+    pub site_id: Uuid,
+    pub thresholds: Vec<EffectiveThreshold>,
+}
+
 const ENTRY_COLUMNS: &str = "id, site_id, server_id, metric, instance, comparison, warning, \
                              critical, duration_s, hysteresis, enabled, created_at, updated_at";
 
@@ -471,6 +479,28 @@ pub async fn effective(
         server_id,
         site_id,
         revision,
+        thresholds: effective_thresholds(&entries),
+    }))
+}
+
+/// `GET /api/sites/{id}/thresholds/effective`: the built-in defaults
+/// overlaid with the site's rows, as a server of the site without rows of
+/// its own gets them.
+pub async fn effective_site(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<SiteEffective>, ApiError> {
+    let owner = Owner::Site(parse_id(&id)?);
+    let site_id = authorize(&user, owner.site(&state.pool).await?, false)?;
+    let entries: Vec<Entry> = sqlx::query_as(&format!(
+        "SELECT {ENTRY_COLUMNS} FROM thresholds WHERE site_id = $1"
+    ))
+    .bind(site_id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(SiteEffective {
+        site_id,
         thresholds: effective_thresholds(&entries),
     }))
 }

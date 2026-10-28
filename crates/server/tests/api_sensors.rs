@@ -370,4 +370,43 @@ db_tests! {
         assert_eq!(revision(&pool, f.paris_server).await, 0);
         assert!(audit(&pool).await.is_empty());
     }
+
+    #[sqlx::test]
+    async fn site_view_overlays_site_rows_on_defaults(pool: PgPool) {
+        let f = fleet(&pool).await;
+        let operator = session(&pool, "paris-op", Role::Operator, Some(f.paris)).await;
+        for (owner, row) in [
+            (format!("/api/sites/{}/sensor_configs", f.paris),
+             json!({ "kind": "port", "name": "port_443", "interval_ms": 60_000, "params": { "port": 443 } })),
+            (format!("/api/sites/{}/sensor_configs", f.paris),
+             json!({ "kind": "disk", "interval_ms": 60_000, "enabled": false })),
+            // A server row does not show in the site's view.
+            (format!("/api/servers/{}/sensor_configs", f.paris_server),
+             json!({ "kind": "systemd", "name": "service_nginx", "interval_ms": 60_000, "params": { "units": "nginx" } })),
+        ] {
+            let (status, body) = call(&pool, &operator, "POST", &owner, Some(row)).await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+        }
+        let (status, body) =
+            call(&pool, &operator, "GET", &format!("/api/sites/{}/sensors", f.paris), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["site_id"], json!(f.paris));
+        let sensors: Vec<_> = body["sensors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| (s["name"].as_str().unwrap(), s["origin"].as_str().unwrap()))
+            .collect();
+        assert_eq!(sensors, [("cpu", "default"), ("memory", "default"), ("port_443", "site")]);
+        assert_eq!(body["sensors"][2]["params"], json!({ "port": "443" }));
+
+        for uri in [
+            format!("/api/sites/{}/sensors", f.lyon),
+            format!("/api/sites/{}/sensors", Uuid::new_v4()),
+            "/api/sites/not-a-uuid/sensors".to_owned(),
+        ] {
+            let (status, _) = call(&pool, &operator, "GET", &uri, None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+        }
+    }
 }
