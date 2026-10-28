@@ -83,7 +83,7 @@ pub struct SnapshotRequest {
     pub name: Option<String>,
 }
 
-fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
+pub(super) fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
     if user.administered_customers() != Scope::All {
         return Err(ApiError::Forbidden);
     }

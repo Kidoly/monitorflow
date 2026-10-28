@@ -9,7 +9,9 @@ import {
   isHttpsOrigin,
   isSafeUrl,
   isServerAddress,
+  isMirrorUrl,
   linuxInstallCommand,
+  relayInstallCommand,
   windowsInstallCommand,
 } from "./install";
 
@@ -150,5 +152,28 @@ describe("install commands", () => {
     for (const bad of ["http://files.example", "https://files.example/`id`", "https://f.example/a b", "https://f/'"]) {
       expect(isSafeUrl(bad), bad).toBe(false);
     }
+  });
+
+  it("gives the relay's one-liner from each source, with the mirrors when asked", () => {
+    expect(text(relayInstallCommand(target(), "github", ORIGIN))).toBe(
+      `curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_ROLE=relay MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
+    );
+    expect(text(relayInstallCommand(target(), "custom", ORIGIN, "http://relay1.example:7480"))).toBe(
+      `curl -fsSL https://files.example/mf/0.2.0/install.sh \\\n  | sudo MF_ROLE=relay MF_MIRROR_URL=http://relay1.example:7480 MF_DOWNLOAD_URL=https://files.example/mf/0.2.0 MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
+    );
+    const central = text(relayInstallCommand(target(), "central", ORIGIN));
+    expect(central).toContain(`echo "${INSTALLER}  $f" | sha256sum -c`);
+    expect(central).toContain(`sudo MF_ROLE=relay MF_DOWNLOAD_URL=${ORIGIN}/agent/0.3.0 MF_SUMS_SHA256=${SUMS} MF_SERVER=`);
+    // Published ports, as the server reports them, and a separate enrollment host.
+    const published = target({ upstream_url: "https://mf.example:27443", enroll_url: "https://mf.example:27445" });
+    expect(text(relayInstallCommand(published, "github", ORIGIN))).toContain(
+      "MF_SERVER=mf.example:27443 MF_ENROLL=mf.example:27445",
+    );
+    expect(unavailable(relayInstallCommand(target({ install: install({ central: null }) }), "central", ORIGIN))).toContain(
+      "agent-release import",
+    );
+    expect(isMirrorUrl("http://relay1.example:7480")).toBe(true);
+    expect(isMirrorUrl("https://[2001:db8::1]:7480/")).toBe(true);
+    for (const bad of ["ftp://x", "http://a b", "http://x?y", "http://x;rm"]) expect(isMirrorUrl(bad)).toBe(false);
   });
 });

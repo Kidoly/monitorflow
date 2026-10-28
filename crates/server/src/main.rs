@@ -14,6 +14,7 @@ use monitorflow_server::api::users::GrantScope;
 use monitorflow_server::api::{
     self, customers, users, ApiSettings, ApiState, EnrollmentSettings, Role,
 };
+use monitorflow_server::auto_update::AutoUpdate;
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
 use monitorflow_server::campaign::{self, Runner};
 use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings};
@@ -27,6 +28,7 @@ use monitorflow_server::ingest::{Ingest, JsonLines, RemoteWrite, Writer, WriterS
 use monitorflow_server::mirror::{
     self, CommandRunner, JobKind, Layout, MirrorSpec, Mirrors, Trigger,
 };
+use monitorflow_server::relay_commands::RelayCommands;
 use monitorflow_server::remediation::context::Backends;
 use monitorflow_server::remediation::runner::{self, Remediation};
 use monitorflow_server::remediation::snapshot::{ProxmoxSnapshotter, SnapshotHook};
@@ -396,6 +398,8 @@ async fn main() -> anyhow::Result<()> {
         ca.clone(),
         DispatcherSettings::default(),
     );
+    // Relays' own self-updates (ADR-0055).
+    let relay_commands = RelayCommands::spawn(pool.clone(), registry.clone(), ca.clone());
     // Update campaigns (ADR-0033) queue through the same dispatcher, and
     // pin snapshots with the mirrors' key and public URL (ADR-0038).
     let campaigns = Runner::new(pool.clone())
@@ -412,11 +416,19 @@ async fn main() -> anyhow::Result<()> {
     .with_inventory(Arc::new(DbInventory::new(pool.clone())))
     .with_sensor_configs(sensor_configs)
     .with_commands(commands.clone())
+    .with_relay_commands(relay_commands.clone())
     .with_alerts(alerts)
     .with_ingest(Ingest {
         metrics: Some(metrics.queue()),
         events: Some(events.queue()),
     });
+    let auto_update = AutoUpdate::new(
+        pool.clone(),
+        monitorflow_server::agent_releases::Sources::from_config(&config),
+    )
+    .with_enabled_override(config.auto_update.enabled)
+    .with_registry(registry.clone())
+    .with_relay_commands(relay_commands.clone());
     let api_state = ApiState::new(pool.clone(), registry, ApiSettings::from_config(&config))
         .with_metrics(
             VmQuery::new(&config.victoriametrics_url).context("VictoriaMetrics query client")?,
@@ -427,10 +439,10 @@ async fn main() -> anyhow::Result<()> {
         ))
         .with_crl(crl.clone())
         .with_commands(commands.clone())
+        .with_relay_commands(relay_commands.clone())
         .with_mirrors(mirrors.clone())
         .with_campaigns(campaigns.clone());
     let remediation = remediation_loop(&config, pool.clone(), commands.clone()).await?;
-    let auto_update_pool = pool.clone();
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
@@ -502,14 +514,14 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         },
         async {
-            monitorflow_server::agent_auto_update::run(
-                auto_update_pool.clone(),
-                monitorflow_server::agent_releases::Sources::from_config(&config),
-                commands.clone(),
-                monitorflow_server::agent_auto_update::POLL,
-                until_stopped(),
-            )
-            .await;
+            auto_update
+                .clone()
+                .run(
+                    commands.clone(),
+                    Duration::from_secs(config.auto_update.interval),
+                    until_stopped(),
+                )
+                .await;
             Ok(())
         },
         async {

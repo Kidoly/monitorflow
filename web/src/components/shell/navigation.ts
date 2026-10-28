@@ -3,6 +3,7 @@ import { administersEverything, isAdministrator, readsCustomers } from "@/lib/me
 import {
   APPROVALS_PATH,
   AUDIT_PATH,
+  AUTO_UPDATE_PATH,
   CAMPAIGNS_PATH,
   MIRRORS_PATH,
   RELAYS_PATH,
@@ -52,6 +53,7 @@ export const NAVIGATION: NavSection[] = [
     heading: "Updates",
     items: [
       { label: "Mirrors", href: MIRRORS_PATH, icon: "mirrors", visible: administersEverything },
+      { label: "Automatic updates", href: AUTO_UPDATE_PATH, icon: "campaigns", visible: administersEverything },
       // The handoff moves it to /updates/campaigns/ with its redesign.
       { label: "Campaigns", href: CAMPAIGNS_PATH, icon: "campaigns" },
     ],

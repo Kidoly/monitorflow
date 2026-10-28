@@ -18,7 +18,7 @@ use monitorflow_common::release::{
 use prost::Message;
 use reqwest::Url;
 
-use super::{health_timeout, Header, RESTART_ALLOWANCE};
+use super::{health_timeout, Header, Product, AGENT, RESTART_ALLOWANCE};
 use crate::commands::{Handler, Output};
 
 /// Most URLs in one command.
@@ -60,6 +60,7 @@ pub struct SelfUpdateHandler {
     keys: Vec<PublicKey>,
     current: Version,
     platform: Option<Platform>,
+    product: Product,
     client: reqwest::Client,
 }
 
@@ -91,8 +92,15 @@ impl SelfUpdateHandler {
             keys,
             current,
             platform,
+            product: AGENT,
             client,
         }
+    }
+
+    /// Updates `product` instead of the agent: the relay (ADR-0055).
+    pub fn for_product(mut self, product: Product) -> Self {
+        self.product = product;
+        self
     }
 
     async fn get(&self, url: &Url, limit: usize) -> Result<Vec<u8>, String> {
@@ -137,7 +145,10 @@ impl SelfUpdateHandler {
         if &verified.version != target {
             return Err(format!("{base}: serves {}, not {target}", verified.version));
         }
-        let asset = platform.agent_asset();
+        let asset = self
+            .product
+            .asset(platform)
+            .ok_or_else(|| format!("no {} is released for this platform", self.product.name))?;
         // The size is bounded by the helper's limit; checked once whole.
         let binary = self
             .get(&file(asset)?, super::swap::MAX_BINARY as usize)
@@ -298,7 +309,8 @@ impl Handler for SelfUpdateHandler {
                 Output {
                     stdout: log.into_bytes(),
                     ..failed(format!(
-                        "installed, but the agent was not restarted; see {}",
+                        "installed, but the {} was not restarted; see {}",
+                        self.product.name,
                         self.installer.log_hint()
                     ))
                 }
@@ -369,11 +381,27 @@ impl Installer for UpdateServiceInstaller {
     }
 }
 
-/// The root helper, `sudo -n /usr/bin/monitorflow-agent self-update`,
-/// with the header line and the binary on its stdin.
+/// The root helper, `sudo -n /usr/bin/monitorflow-agent self-update`
+/// (or the relay's), with the header line and the binary on its stdin.
 #[cfg(unix)]
 pub struct SudoHelper {
+    /// `tools.agent` is the binary whose helper runs.
     pub tools: crate::packages::Tools,
+    pub product: Product,
+}
+
+#[cfg(unix)]
+impl SudoHelper {
+    /// The helper of `product` on the real system.
+    pub fn of(product: Product) -> Self {
+        Self {
+            tools: crate::packages::Tools {
+                agent: product.bin.into(),
+                ..crate::packages::Tools::default()
+            },
+            product,
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -415,7 +443,7 @@ impl Installer for SudoHelper {
     }
 
     fn log_hint(&self) -> &'static str {
-        "journalctl -u monitorflow-agent-self-update"
+        self.product.watch_log
     }
 }
 

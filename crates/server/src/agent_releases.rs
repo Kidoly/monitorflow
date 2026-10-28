@@ -36,8 +36,13 @@ pub fn kept_files() -> Vec<&'static str> {
         "monitorflow-agent-sudoers",
         MSI,
     ]);
+    // Relays install and update from the server too (ADR-0055).
+    files.extend(RELAY_BINARIES.map(|p| p.relay_asset().expect("Linux relays")));
+    files.extend(["monitorflow-relay.service", "monitorflow-relay-sudoers"]);
     files
 }
+
+const RELAY_BINARIES: [Platform; 2] = [Platform::LinuxX86_64, Platform::LinuxAarch64];
 
 const BINARIES: [Platform; 3] = [
     Platform::LinuxX86_64,
@@ -252,6 +257,16 @@ impl Sources {
             agent_download_url: config.agent_download_url.clone(),
             keys: release::trusted_keys().unwrap_or_default().to_vec(),
         }
+    }
+
+    /// The versions the cache holds; none when it cannot be read.
+    pub async fn held(&self) -> Vec<Version> {
+        let cache = self.cache.clone();
+        tokio::task::spawn_blocking(move || cache.versions())
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default()
     }
 
     /// The payload of a `self_update` to `version`; `health_timeout_seconds`

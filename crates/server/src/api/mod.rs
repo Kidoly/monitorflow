@@ -39,7 +39,12 @@
 //! | GET | `/api/customers` | any role | [`customers::CustomerList`]: `{"customers": [{"id", "name", "site_count"}]}`, see below |
 //! | POST | `/api/customers` | global administrator | body `{"name"}`; 201 [`customers::CustomerView`] |
 //! | POST | `/api/customers/{id}/sites` | customer administrator | body `{"name"}`; 201 [`sites::SiteView`] |
-//! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled"}`; [`sites::SiteView`]; audited (ADR-0053) |
+//! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled": true, false or null}`; [`sites::SiteView`]; audited (ADR-0055) |
+//! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
+//! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
+//! | GET | `/api/settings/auto-update` | global administrator | [`policy::Settings`](crate::auto_update::policy::Settings) as they apply (ADR-0055) |
+//! | PUT | `/api/settings/auto-update` | global administrator | body [`auto_update::SettingsRequest`]; the settings; 409 against the configuration; audited |
+//! | POST | `/api/auto-update/rollouts/{kind}/{version}/resume` | global administrator | resumes a halted rollout; audited |
 //! | GET | `/api/mirrors` | global administrator | [`mirrors::MirrorList`], see below |
 //! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots` and the last `runs` |
 //! | POST | `/api/mirrors/{id}/sync` | global administrator | 202 [`mirrors::RunSummary`] of the started sync; 409 while busy |
@@ -419,6 +424,7 @@ pub mod agent_files;
 pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
+pub mod auto_update;
 pub mod campaigns;
 pub mod commands;
 pub mod customers;
@@ -465,6 +471,7 @@ use crate::commands::Commands;
 use crate::crl::CrlPublisher;
 use crate::grpc::Registry;
 use crate::mirror::Mirrors;
+use crate::relay_commands::RelayCommands;
 use crate::vm_query::VmQuery;
 
 pub use auth::{CurrentUser, Me};
@@ -495,6 +502,9 @@ pub struct ApiSettings {
     pub server_update: server_update::ServerUpdateSettings,
     /// What the configuration sets about install sources (ADR-0054).
     pub agent_install: settings::InstallConfig,
+    /// `auto_update.enabled` from the configuration, which locks the
+    /// setting in the web interface (ADR-0055).
+    pub auto_update_enabled: Option<bool>,
 }
 
 impl ApiSettings {
@@ -507,6 +517,7 @@ impl ApiSettings {
             agent_releases: agent_releases::Sources::from_config(config),
             server_update: server_update::ServerUpdateSettings::from_config(config),
             agent_install: settings::InstallConfig::from_config(config),
+            auto_update_enabled: config.auto_update.enabled,
             proxmox_enabled: config.proxmox.enabled,
             proxmox_clusters: config
                 .proxmox
@@ -541,6 +552,9 @@ pub struct ApiState {
     /// Sends newly queued commands at once; `None` leaves them to the
     /// dispatcher's next poll.
     pub commands: Option<Commands>,
+    /// Sends relays their self-updates at once; `None` leaves them to the
+    /// sender's next poll.
+    pub relay_commands: Option<RelayCommands>,
     /// Runs mirror jobs; `None` refuses to start them.
     pub mirrors: Option<Mirrors>,
     /// Woken when a campaign starts or resumes; `None` leaves it to the
@@ -558,9 +572,15 @@ impl ApiState {
             enrollment: None,
             crl: None,
             commands: None,
+            relay_commands: None,
             mirrors: None,
             campaigns: None,
         }
+    }
+
+    pub fn with_relay_commands(mut self, commands: RelayCommands) -> Self {
+        self.relay_commands = Some(commands);
+        self
     }
 
     /// Wakes `runner` when a campaign starts or resumes.
@@ -616,9 +636,19 @@ pub fn router(state: ApiState) -> Router {
             "/api/sites/{id}/agent-auto-update",
             put(sites::set_agent_auto_update),
         )
+        .route("/api/auto-update", get(auto_update::status))
+        .route(
+            "/api/settings/auto-update",
+            get(auto_update::get_settings).put(auto_update::set_settings),
+        )
+        .route(
+            "/api/auto-update/rollouts/{kind}/{version}/resume",
+            post(auto_update::resume),
+        )
         .route("/api/relays", get(relays::list))
         .route("/api/relays/{id}", get(relays::detail))
         .route("/api/relays/{id}/revoke", post(revoke::relay))
+        .route("/api/relays/{id}/update", post(relays::update))
         .route("/api/servers/{id}/revoke", post(revoke::server))
         .route("/api/tokens", get(tokens::list).post(tokens::create))
         .route("/api/tokens/{id}", delete(tokens::delete))

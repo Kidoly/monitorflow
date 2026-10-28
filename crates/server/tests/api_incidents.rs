@@ -262,7 +262,7 @@ db_tests! {
         let (status, body) = call(&pool, &viewer, "GET", "/api/sites", None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, json!({ "sites": [{ "id": f.paris, "name": "paris", "server_count": 2, "relay_count": 0,
-            "customer_id": "00000000-0000-0000-0000-000000000001", "customer_name": "default", "agent_auto_update": false }] }));
+            "customer_id": "00000000-0000-0000-0000-000000000001", "customer_name": "default", "agent_auto_update": null, "agent_auto_update_effective": true }] }));
         let admin = session(&pool, "admin", Role::Administrator, None).await;
         let (_, body) = call(&pool, &admin, "GET", "/api/sites", None).await;
         let names: Vec<_> = body["sites"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();

@@ -31,6 +31,8 @@ export const TOKENS_PATH = "/admin/tokens/";
 export const USERS_PATH = "/admin/users/";
 
 export const MIRRORS_PATH = "/admin/mirrors/";
+/** Automatic agent and relay updates (ADR-0055). */
+export const AUTO_UPDATE_PATH = "/admin/updates/";
 
 /** Updating the central server (ADR-0056). */
 export const SERVER_UPDATE_PATH = "/admin/server-update/";

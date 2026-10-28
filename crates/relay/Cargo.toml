@@ -14,6 +14,9 @@ path = "src/main.rs"
 
 [dependencies]
 monitorflow-common = { workspace = true, features = ["mirror"] }
+# Self-update (ADR-0055): the agent's command dispatcher, download, root
+# helper and watchdog, run for the relay's own binary and unit.
+monitorflow-agent = { path = "../agent" }
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
@@ -38,6 +41,7 @@ quick-xml.workspace = true
 
 [dev-dependencies]
 monitorflow-server = { path = "../server" }
+async-trait.workspace = true
 rcgen.workspace = true
 tempfile.workspace = true
 sqlx.workspace = true

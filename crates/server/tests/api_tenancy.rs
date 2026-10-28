@@ -669,6 +669,11 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let uri = path.replace("{id}", &id.to_string());
             assert_eq!(ctx.status(method, &uri, Some(json!({}))).await, not_found);
         }
+        ("POST", "/api/relays/{id}/update") => {
+            let uri = path.replace("{id}", &b.relay.to_string());
+            let body = Some(json!({ "version": "0.2.0" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found);
+        }
         ("GET", "/api/servers/{id}/proxmox")
         | ("PUT", "/api/servers/{id}/proxmox")
         | ("DELETE", "/api/servers/{id}/proxmox") => {
@@ -720,6 +725,17 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         | ("POST", "/api/server-update/check") => {
             let body = method.eq("POST").then(|| json!({ "version": "99.0.0" }));
             assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+        }
+        // Automatic updates are server-wide: global administrators only.
+        ("GET", "/api/auto-update")
+        | ("GET", "/api/settings/auto-update")
+        | ("PUT", "/api/settings/auto-update")
+        | ("POST", "/api/auto-update/rollouts/{kind}/{version}/resume") => {
+            let uri = path
+                .replace("{kind}", "agent")
+                .replace("{version}", "0.1.0");
+            let body = method.ne("GET").then(|| json!({}));
+            assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
         // Creation: a customer admin cannot create customers, nor sites of B.
         ("POST", "/api/customers") => {

@@ -83,6 +83,9 @@ services:
       MONITORFLOW_RELEASE_URL: ${RELEASE_URL:-}
       # Unset: chosen in the web interface, github by default (ADR-0054).
       MONITORFLOW_AGENT_INSTALL_SOURCE: ${AGENT_INSTALL_SOURCE:-}
+      # The ports published below, for the install commands of new tokens.
+      MONITORFLOW_GRPC_PUBLIC_PORT: ${GRPC_PORT:-7443}
+      MONITORFLOW_ENROLL_PUBLIC_PORT: ${ENROLL_PORT:-7445}
     volumes:
       - serverdata:/var/lib/monitorflow/server
       - dbcerts:/certs:ro
