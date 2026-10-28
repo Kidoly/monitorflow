@@ -51,3 +51,18 @@ export function administersEverything(me: Me | null): boolean {
 export function readsCustomers(me: Me | null): boolean {
   return me?.roles.some((grant) => grant.site_id === null) ?? false;
 }
+
+/**
+ * Whether `me` may change the monitoring settings of the site `siteId` of
+ * `customerId`: an operator role or above on it, its customer or
+ * everything. UX only: the API decides.
+ */
+export function modifiesSite(me: Me | null, customerId: string, siteId: string): boolean {
+  return (
+    me?.roles.some(
+      (grant) =>
+        grant.role !== "viewer" &&
+        (grant.site_id ? grant.site_id === siteId : !grant.customer_id || grant.customer_id === customerId),
+    ) ?? false
+  );
+}

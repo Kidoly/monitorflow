@@ -2,8 +2,13 @@ import { type IncidentFilters, NO_FILTERS, filtersToQuery } from "./incidents";
 import { shortMetric } from "./metrics";
 
 /** Link to the page of the server `id` (a query parameter, ADR-0020), on `tab` when given. */
-export function serverHref(id: string, tab?: "sensors" | "updates" | "commands"): string {
+export function serverHref(id: string, tab?: "sensors" | "alerts" | "updates" | "commands"): string {
   return `/servers/view/?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ""}`;
+}
+
+/** Link to the page of the site `id`: its alerts and checks. */
+export function siteHref(id: string): string {
+  return `/sites/view/?id=${encodeURIComponent(id)}`;
 }
 
 /** Link to the page of one sensor's metric on the server `id`; `instance` "" is none. */

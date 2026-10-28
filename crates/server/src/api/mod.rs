@@ -25,6 +25,7 @@
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
 //! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
+//! | GET | `/api/sites/{id}/sensors` | read | [`sensors::SiteEffective`]: built-in defaults overlaid with the site's rows |
 //! | GET | `/api/sites/{id}/sensor_configs` | read | [`sensors::EntryList`] of the site's rows |
 //! | POST | `/api/sites/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
 //! | PUT | `/api/sensor_configs/{id}` | modify | body [`sensors::EntryRequest`], replaces the row; 200 [`sensors::Entry`] |
@@ -60,6 +61,7 @@
 //! | GET | `/api/servers/{id}/thresholds/effective` | read | [`thresholds::Effective`]: thresholds in force, muted ones and origins |
 //! | GET | `/api/servers/{id}/thresholds` | read | [`thresholds::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
+//! | GET | `/api/sites/{id}/thresholds/effective` | read | [`thresholds::SiteEffective`]: built-in defaults overlaid with the site's rows |
 //! | GET | `/api/sites/{id}/thresholds` | read | [`thresholds::EntryList`] of the site's rows |
 //! | POST | `/api/sites/{id}/thresholds` | modify | body [`thresholds::EntryRequest`]; 201 [`thresholds::Entry`] |
 //! | PUT | `/api/thresholds/{id}` | modify | body [`thresholds::EntryRequest`], replaces the row; 200 [`thresholds::Entry`] |
@@ -685,6 +687,7 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/remediation/events", get(remediation_events::list))
         .route("/api/servers/{id}/sensors", get(sensors::effective))
+        .route("/api/sites/{id}/sensors", get(sensors::effective_site))
         .route("/api/servers/{id}/metrics", get(metrics::discover))
         .route("/api/metrics/query", get(metrics::query))
         .route("/api/metrics/query_range", get(metrics::query_range))
@@ -703,6 +706,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/servers/{id}/thresholds/effective",
             get(thresholds::effective),
+        )
+        .route(
+            "/api/sites/{id}/thresholds/effective",
+            get(thresholds::effective_site),
         )
         .route(
             "/api/servers/{id}/thresholds",

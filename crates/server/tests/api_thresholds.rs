@@ -429,4 +429,47 @@ db_tests! {
         assert_eq!(revision(&pool, f.paris_server).await, 0);
         assert!(audit(&pool).await.is_empty());
     }
+
+    #[sqlx::test]
+    async fn site_view_overlays_site_rows_on_defaults(pool: PgPool) {
+        let f = fleet(&pool).await;
+        let viewer = session(&pool, "paris-viewer", Role::Viewer, Some(f.paris)).await;
+        let operator = session(&pool, "paris-op", Role::Operator, Some(f.paris)).await;
+        let site_row = json!({ "metric": DISK, "comparison": ">", "warning": 0.7, "critical": 0.9 });
+        let (status, created) = call(
+            &pool, &operator, "POST", &format!("/api/sites/{}/thresholds", f.paris), Some(site_row),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        // A server row does not show in the site's view.
+        let (status, _) = call(
+            &pool, &operator, "POST", &format!("/api/servers/{}/thresholds", f.paris_server),
+            Some(json!({ "metric": MEMORY, "comparison": "<", "enabled": false })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        let uri = format!("/api/sites/{}/thresholds/effective", f.paris);
+        let (status, body) = call(&pool, &viewer, "GET", &uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["site_id"], json!(f.paris));
+        assert_eq!(
+            origins(&body),
+            [
+                ("monitorflow_cpu_usage_ratio".to_owned(), json!("total"), "default".to_owned(), true),
+                (DISK.to_owned(), Value::Null, "site".to_owned(), true),
+                (MEMORY.to_owned(), Value::Null, "default".to_owned(), true),
+            ]
+        );
+        assert_eq!(body["thresholds"][1]["threshold_id"], created["id"]);
+        assert_eq!(body["thresholds"][1]["warning"], 0.7);
+
+        for uri in [
+            format!("/api/sites/{}/thresholds/effective", f.lyon),
+            format!("/api/sites/{}/thresholds/effective", Uuid::new_v4()),
+        ] {
+            let (status, _) = call(&pool, &viewer, "GET", &uri, None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+        }
+    }
 }

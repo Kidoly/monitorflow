@@ -192,6 +192,14 @@ pub struct Effective {
     pub sensors: Vec<EffectiveSensor>,
 }
 
+/// Body of `GET /api/sites/{id}/sensors`: what the site's servers run
+/// unless they override it.
+#[derive(Debug, Serialize)]
+pub struct SiteEffective {
+    pub site_id: Uuid,
+    pub sensors: Vec<EffectiveSensor>,
+}
+
 const ENTRY_COLUMNS: &str = "id, site_id, server_id, kind, name, instance, interval_ms, \
                              timeout_ms, params, enabled, created_at, updated_at";
 
@@ -536,6 +544,27 @@ pub async fn effective(
         applied_revision,
         applied_at,
         in_sync: applied_revision == Some(revision),
+        sensors: effective_sensors(&entries),
+    }))
+}
+
+/// `GET /api/sites/{id}/sensors`: the built-in defaults overlaid with the
+/// site's rows, as a server of the site without rows of its own runs them.
+pub async fn effective_site(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<SiteEffective>, ApiError> {
+    let owner = Owner::Site(parse_id(&id)?);
+    let site_id = authorize(&user, owner.site(&state.pool).await?, false)?;
+    let entries: Vec<Entry> = sqlx::query_as(&format!(
+        "SELECT {ENTRY_COLUMNS} FROM sensor_configs WHERE site_id = $1"
+    ))
+    .bind(site_id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(SiteEffective {
+        site_id,
         sensors: effective_sensors(&entries),
     }))
 }

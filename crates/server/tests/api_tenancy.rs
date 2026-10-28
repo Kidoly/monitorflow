@@ -860,7 +860,10 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = Some(json!({ "enabled": true }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
-        ("GET", "/api/sites/{id}/sensor_configs") | ("GET", "/api/sites/{id}/thresholds") => {
+        ("GET", "/api/sites/{id}/sensor_configs")
+        | ("GET", "/api/sites/{id}/thresholds")
+        | ("GET", "/api/sites/{id}/sensors")
+        | ("GET", "/api/sites/{id}/thresholds/effective") => {
             let uri = path.replace("{id}", &b.site.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
         }

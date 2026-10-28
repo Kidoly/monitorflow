@@ -1,6 +1,8 @@
+import Link from "next/link";
+
 import type { EffectiveSensors, ServerDetail } from "@/lib/api";
 import { metricTitle } from "@/lib/metrics";
-import { sensorHref } from "@/lib/routes";
+import { sensorHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { type SensorRow, formatSensorValue, primaryMetric, sensorFacts } from "@/lib/sensors";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
@@ -55,11 +57,17 @@ export function ServerSensorsTab({
         <Banner tone="warn">Open incidents could not be read: statuses show OK or Unknown until they load.</Banner>
       )}
       {rows.length === 0 ? (
-        <EmptyState>No sensors: every default is turned off for this server.</EmptyState>
+        <EmptyState>
+          No sensors: every default is turned off for this server.{" "}
+          <Link href={scopedHref(serverHref(server.id, "alerts"), scope)}>Add a check</Link>.
+        </EmptyState>
       ) : (
         <DataTable label="Sensors" columns={columns} rows={rows} rowKey={(row) => row.key} dense />
       )}
-      <p className={styles.note}>Sorted by status, then name. Open a sensor for its chart and history.</p>
+      <p className={styles.note}>
+        Sorted by status, then name. Open a sensor for its chart and history, or{" "}
+        <Link href={scopedHref(serverHref(server.id, "alerts"), scope)}>add a check or change when to alert</Link>.
+      </p>
     </div>
   );
 }
