@@ -406,6 +406,29 @@ fn server_agent_download_url() {
 }
 
 #[test]
+fn server_update_settings() {
+    let server = parse::<ServerConfig>(SERVER_MIN).unwrap();
+    assert_eq!((server.release_url, server.server_update_dir), (None, None));
+    let vars = env(&[
+        ("MONITORFLOW_RELEASE_URL", "http://files:8080/mf/"),
+        (
+            "MONITORFLOW_SERVER_UPDATE_DIR",
+            "/var/lib/monitorflow/update",
+        ),
+    ]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert_eq!(server.release_url.as_deref(), Some("http://files:8080/mf/"));
+    assert_eq!(
+        server.server_update_dir.as_deref(),
+        Some(Path::new("/var/lib/monitorflow/update"))
+    );
+    for bad in ["ftp://files", "https://u:p@files", "https://files/?x"] {
+        let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_RELEASE_URL", bad)]);
+        assert!(msg.contains("release_url"), "{bad}: {msg}");
+    }
+}
+
+#[test]
 fn server_agent_install_source() {
     let server = parse::<ServerConfig>(SERVER_MIN).unwrap();
     assert_eq!(server.agent_install_source, None);
@@ -879,4 +902,24 @@ fn remediation_limits_default_and_validate() {
         let msg = err::<ServerConfig>(SERVER_MIN, &[(key, value)]);
         assert!(msg.contains("remediation."), "{msg}");
     }
+}
+
+#[test]
+fn auto_update_follows_the_database_unless_configured() {
+    let server: ServerConfig = parse(SERVER_MIN).unwrap();
+    assert_eq!(server.auto_update.enabled, None);
+    let text = format!("{SERVER_MIN}\n[auto_update]\nenabled = true\n");
+    let server: ServerConfig = parse(&text).unwrap();
+    assert_eq!(server.auto_update.enabled, Some(true));
+    let vars = [("MONITORFLOW_AUTO_UPDATE_ENABLED", "false")];
+    let server: ServerConfig = parse_with_env(&text, path(), &env(&vars)).unwrap();
+    assert_eq!(server.auto_update.enabled, Some(false));
+    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_AUTO_UPDATE_ENABLED", "maybe")]);
+    assert!(msg.contains("AUTO_UPDATE_ENABLED"), "{msg}");
+    assert_eq!(server.auto_update.interval, 300);
+    let vars = [("MONITORFLOW_AUTO_UPDATE_INTERVAL", "10")];
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &env(&vars)).unwrap();
+    assert_eq!(server.auto_update.interval, 10);
+    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_AUTO_UPDATE_INTERVAL", "9")]);
+    assert!(msg.contains("auto_update.interval"), "{msg}");
 }

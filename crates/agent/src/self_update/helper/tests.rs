@@ -60,6 +60,7 @@ impl Host {
         let bin_dir = dir.path().join("usr/bin");
         fs::create_dir_all(&bin_dir).unwrap();
         let paths = Paths {
+            product: crate::self_update::AGENT,
             bin: bin_dir.join("monitorflow-agent"),
             state_dir: dir.path().join("state"),
             data_dir: dir.path().join("data"),

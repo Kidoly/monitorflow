@@ -11,6 +11,12 @@
 # and relays exchange their one-time token for a certificate here.
 # enroll_listen_addr = "0.0.0.0:7445"
 
+# Ports agents and relays reach the two listeners at, when not theirs, as
+# behind published container ports; written in the install commands of new
+# tokens. Default: the listeners' own ports.
+# grpc_public_port = 7443
+# enroll_public_port = 7445
+
 # REST API listener. Plain HTTP: put a TLS reverse proxy on the same host in
 # front of it and keep it on loopback (ADR-0006).
 # api_listen_addr = "127.0.0.1:7444"
@@ -57,12 +63,18 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # itself: it is then the `custom` install source (ADR-0054), and the
 # fallback of self-updates.
 # agent_download_url = "https://github.com/Kidoly/monitorflow/releases/latest/download"
-
 # Default source of those install commands: github, central (this server's
 # release cache, at https://<web interface>/agent/) or custom
 # (agent_download_url). Unset, administrators choose it in the web
 # interface; github unless agent_download_url is set.
 # agent_install_source = "github"
+
+# Server updates from the web interface (ADR-0056). server_update_dir is
+# the volume shared with the updater container; unset, updates are off.
+# release_url is where releases are checked, http or https, signed either
+# way; agent_download_url when unset.
+# server_update_dir = "/var/lib/monitorflow/update"
+# release_url = "https://files.example.com/monitorflow"
 
 # Batching of writes to VictoriaMetrics and VictoriaLogs (ADR-0013). Each
 # writer has its own queue; while a queue is full, new items are dropped and
@@ -110,6 +122,16 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # max_tokens = 16000
 # Seconds one request to the API may take; answers can take minutes.
 # request_timeout = 300
+
+[auto_update]
+# Automatic agent and relay updates (ADR-0055): the server rolls the newest
+# stable release it holds, and no newer than itself, out to agents and
+# relays, a canary per site first, and stops when updates fail. On by
+# default, set in the web interface (Updates > Automatic updates), where sites can
+# override it. Setting it here wins over the web interface and locks it.
+# enabled = true
+# Seconds between two looks at what to update, at least 10.
+# interval = 300
 
 [remediation]
 # Limits of each AI remediation incident (ADR-0043), which opens for every

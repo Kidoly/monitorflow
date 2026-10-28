@@ -1453,6 +1453,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "chrono",
  "hyper-util",
  "pem",
  "percent-encoding",
@@ -1461,6 +1462,7 @@ dependencies = [
  "rcgen",
  "reqwest",
  "ring",
+ "rustix",
  "rustls",
  "rustls-pemfile",
  "serde",
@@ -1497,11 +1499,13 @@ name = "monitorflow-relay"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bzip2",
  "clap",
  "crc",
  "flate2",
  "lzma-rust2",
+ "monitorflow-agent",
  "monitorflow-common",
  "monitorflow-server",
  "pem",
@@ -1580,6 +1584,27 @@ dependencies = [
  "tracing",
  "uuid",
  "x509-parser 0.18.1",
+]
+
+[[package]]
+name = "monitorflow-updater"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "chrono",
+ "clap",
+ "monitorflow-common",
+ "reqwest",
+ "ring",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

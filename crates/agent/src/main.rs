@@ -340,7 +340,10 @@ fn platform_handlers(
     handlers.register(
         command::SELF_UPDATE,
         Arc::new(self_update::handler::SelfUpdateHandler::new(
-            self_update::handler::SudoHelper { tools },
+            self_update::handler::SudoHelper {
+                tools,
+                product: self_update::AGENT,
+            },
         )),
     );
     Some(latest_report)
@@ -469,6 +472,7 @@ fn self_update(config: &Path, step: Option<SelfUpdateStep>) -> anyhow::Result<()
     use std::str::FromStr;
 
     use monitorflow_agent::self_update::helper::{self, Installed, Paths, Systemd, Watched};
+    use monitorflow_agent::self_update::AGENT;
     use monitorflow_common::release::{self, Platform, Version};
 
     let config: AgentConfig = config::load(config)?;
@@ -480,7 +484,14 @@ fn self_update(config: &Path, step: Option<SelfUpdateStep>) -> anyhow::Result<()
             let platform =
                 Platform::current().context("releases are not built for this platform")?;
             let mut stdin = std::io::stdin().lock();
-            match helper::install(&mut stdin, &paths, keys, &current, platform, &Systemd)? {
+            match helper::install(
+                &mut stdin,
+                &paths,
+                keys,
+                &current,
+                platform,
+                &Systemd(AGENT),
+            )? {
                 Installed::Current(version) => println!("already running {version}"),
                 Installed::Restarting { from, to } => {
                     println!(
@@ -491,7 +502,7 @@ fn self_update(config: &Path, step: Option<SelfUpdateStep>) -> anyhow::Result<()
             }
         }
         Some(SelfUpdateStep::Watch) => {
-            match helper::watch(&paths, &Systemd, Duration::from_secs(2))? {
+            match helper::watch(&paths, &Systemd(AGENT), Duration::from_secs(2))? {
                 Watched::Succeeded => println!("the new agent connected"),
                 Watched::RolledBack => println!("rolled back to the previous agent"),
                 Watched::Nothing => println!("no update to watch"),

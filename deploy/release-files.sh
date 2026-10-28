@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Completes a directory of release files (ADR-0052, ADR-0053): adds the
-# installer with the release keys filled in, the systemd unit, the sudo
-# rules and VERSION next to the agent binaries already in it, writes
+# Completes a directory of release files (ADR-0052, ADR-0053, ADR-0055):
+# adds the installer with the release keys filled in, the systemd units,
+# the sudo rules and VERSION next to the agent and relay binaries already
+# in it, writes
 # SHA256SUMS over everything and signs it into SHA256SUMS.sig. The release
 # workflow publishes the result; deploy/install-test.sh serves it to the
 # installer.
@@ -36,6 +37,8 @@ awk -v keys="$keys" '
 chmod 0755 "$dir/install.sh"
 install -m 0644 "$deploy/systemd/monitorflow-agent.service" "$dir/monitorflow-agent.service"
 install -m 0644 "$deploy/sudoers/monitorflow-agent" "$dir/monitorflow-agent-sudoers"
+install -m 0644 "$deploy/systemd/monitorflow-relay.service" "$dir/monitorflow-relay.service"
+install -m 0644 "$deploy/sudoers/monitorflow-relay" "$dir/monitorflow-relay-sudoers"
 printf '%s\n' "$version" >"$dir/VERSION"
 rm -f "$dir/SHA256SUMS" "$dir/SHA256SUMS.sig"
 sums=$(cd "$dir" && find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | xargs sha256sum)

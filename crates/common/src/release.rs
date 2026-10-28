@@ -252,6 +252,11 @@ impl Release {
             .ok_or_else(|| ReleaseError::NotListed(name.to_owned()))
     }
 
+    /// The names `SHA256SUMS` lists, in order.
+    pub fn files(&self) -> impl Iterator<Item = &str> {
+        self.sums.keys().map(String::as_str)
+    }
+
     /// Fails unless `actual` is the checksum listed for `name`.
     pub fn check_digest(&self, name: &str, actual: &[u8; 32]) -> Result<(), ReleaseError> {
         if &self.digest(name)? != actual {
@@ -412,6 +417,16 @@ impl Platform {
             Self::LinuxX86_64 => "monitorflow-agent-linux-x86_64",
             Self::LinuxAarch64 => "monitorflow-agent-linux-aarch64",
             Self::WindowsX86_64 => "monitorflow-agent-windows-x86_64.exe",
+        }
+    }
+
+    /// The relay's file name in a release (ADR-0055); relays are built for
+    /// Linux only.
+    pub fn relay_asset(self) -> Option<&'static str> {
+        match self {
+            Self::LinuxX86_64 => Some("monitorflow-relay-linux-x86_64"),
+            Self::LinuxAarch64 => Some("monitorflow-relay-linux-aarch64"),
+            Self::WindowsX86_64 => None,
         }
     }
 }

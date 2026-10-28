@@ -5,6 +5,7 @@ import { type FormEvent, useId, useState } from "react";
 import { Button, fieldClass } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
+import { Label } from "@/components/ui/StatusLabel";
 import { Banner, ErrorState, LoadingBlock, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { ApiError, type Customer, type Me, type Relay, type Server, type Site, api, describeError } from "@/lib/api";
 import { administersCustomer } from "@/lib/me";
@@ -67,6 +68,11 @@ export function SitesAdmin({ me }: { me: Me }) {
       <Banner tone="info">
         Sites cannot be renamed or moved to another customer, because the site name labels every stored metric.
         Choose names that will still make sense in two years.
+      </Banner>
+      <Banner tone="info">
+        Agents and relays update themselves to each new release, a canary per site first. A site whose
+        hosts must not change on their own sets &quot;Automatic updates&quot; to Off; &quot;Server default&quot;
+        follows the server-wide setting under Updates › Automatic updates.
       </Banner>
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
@@ -138,7 +144,7 @@ function CustomerSites({
     },
     {
       key: "auto-update",
-      header: "Agent updates",
+      header: "Automatic updates",
       cell: (site) => <AutoUpdate site={site} canChange={canCreate} onChanged={onChanged} />,
     },
   ];
@@ -162,20 +168,35 @@ function CustomerSites({
   );
 }
 
+/** The site's override, as the select names it. */
+type Override = "inherit" | "on" | "off";
+
+const overrideOf = (value: boolean | null): Override => (value === null ? "inherit" : value ? "on" : "off");
+
 /**
- * Whether the server updates the site's agents to the newest release it
- * holds (ADR-0053), with a button for its customer's administrators.
+ * Whether the server updates the site's agents and relays automatically
+ * (ADR-0055): the server-wide setting unless the site overrides it, with a
+ * select for its customer's administrators.
  */
 function AutoUpdate({ site, canChange, onChanged }: { site: Row; canChange: boolean; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const state = site.agent_auto_update ? "Automatic" : "Manual";
-  if (!canChange) return <span className={styles.dim}>{state}</span>;
-  async function toggle() {
+  const current = overrideOf(site.agent_auto_update);
+  // What applies now, first, then where it comes from.
+  const state = (
+    <>
+      <Label tone={site.agent_auto_update_effective ? "ok" : "neutral"}>
+        {site.agent_auto_update_effective ? "Automatic" : "Manual"}
+      </Label>{" "}
+      <span className={styles.dim}>{current === "inherit" ? "server default" : "set for this site"}</span>
+    </>
+  );
+  if (!canChange) return state;
+  async function change(next: Override) {
     setBusy(true);
     setError(null);
     try {
-      await api.setAgentAutoUpdate(site.id, !site.agent_auto_update);
+      await api.setAgentAutoUpdate(site.id, next === "inherit" ? null : next === "on");
       onChanged();
     } catch (e) {
       setError(describeError(e));
@@ -185,10 +206,20 @@ function AutoUpdate({ site, canChange, onChanged }: { site: Row; canChange: bool
   }
   return (
     <>
-      <span className={styles.dim}>{state}</span>{" "}
-      <Button size="small" disabled={busy} onClick={() => void toggle()} aria-label={`${site.agent_auto_update ? "Stop" : "Start"} automatic agent updates for ${site.name}`}>
-        {site.agent_auto_update ? "Turn off" : "Turn on"}
-      </Button>
+      <select
+        className={fieldClass}
+        value={current}
+        disabled={busy}
+        onChange={(e) => void change(e.target.value as Override)}
+        aria-label={`Automatic updates for ${site.name}`}
+      >
+        <option value="inherit">
+          {current === "inherit" ? `Server default (${site.agent_auto_update_effective ? "on" : "off"})` : "Server default"}
+        </option>
+        <option value="on">On</option>
+        <option value="off">Off</option>
+      </select>{" "}
+      {state}
       {error && <span role="alert"> {error}</span>}
     </>
   );

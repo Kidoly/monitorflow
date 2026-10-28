@@ -1,6 +1,7 @@
 //! The root side of a self-update (ADR-0053): `monitorflow-agent
 //! self-update`, run by the agent through an exact sudo rule, and
-//! `self-update watch`, run by systemd from the previous binary.
+//! `self-update watch`, run by systemd from the previous binary. The relay
+//! runs the same steps for its own [`Product`] (ADR-0055).
 //!
 //! The helper trusts nothing on its stdin: it verifies the release with
 //! the keys built into itself and refuses older versions unless the header
@@ -20,15 +21,14 @@ use monitorflow_common::release::{
 };
 use ring::digest::{Context, SHA256};
 
-use super::{unix_ms, Connected, Header, Phase, Status, PREVIOUS_FILE, STATUS_FILE};
+use super::{
+    unix_ms, Connected, Header, Phase, Product, Status, AGENT, PREVIOUS_FILE, STATUS_FILE,
+};
 
 /// Longest header line.
 pub const MAX_HEADER: usize = 256 * 1024;
 /// Largest binary accepted.
 pub const MAX_BINARY: u64 = 512 * 1024 * 1024;
-/// The transient unit running the watchdog.
-pub const WATCH_UNIT: &str = "monitorflow-agent-self-update";
-pub const AGENT_SERVICE: &str = "monitorflow-agent";
 
 #[derive(Debug, thiserror::Error)]
 pub enum HelperError {
@@ -51,22 +51,30 @@ fn io_error(what: impl AsRef<Path>) -> impl FnOnce(io::Error) -> HelperError {
     move |error| HelperError::Io(what, error)
 }
 
-/// Where the helper works. [`Default`] is the real system.
+/// Where the helper works.
 #[derive(Debug, Clone)]
 pub struct Paths {
-    /// The installed agent, as sudoers names it.
+    pub product: Product,
+    /// The installed binary, as sudoers names it.
     pub bin: PathBuf,
     /// Root-owned: the previous binary, the status and the lock.
     pub state_dir: PathBuf,
-    /// The agent's data directory, where it writes [`Connected`].
+    /// The service's data directory, where it writes [`Connected`].
     pub data_dir: PathBuf,
 }
 
 impl Paths {
+    /// The agent's on the real system.
     pub fn system(data_dir: PathBuf) -> Self {
+        Self::of(AGENT, data_dir)
+    }
+
+    /// `product`'s on the real system.
+    pub fn of(product: Product, data_dir: PathBuf) -> Self {
         Self {
-            bin: "/usr/bin/monitorflow-agent".into(),
-            state_dir: super::STATE_DIR.into(),
+            product,
+            bin: product.bin.into(),
+            state_dir: product.state_dir.into(),
             data_dir,
         }
     }
@@ -93,8 +101,8 @@ pub trait Services {
     fn restart_agent(&self) -> io::Result<()>;
 }
 
-/// `systemd-run` and `systemctl`.
-pub struct Systemd;
+/// `systemd-run` and `systemctl`, for one product's units.
+pub struct Systemd(pub Product);
 
 fn status_ok(what: &str, status: io::Result<std::process::ExitStatus>) -> io::Result<()> {
     match status {
@@ -108,11 +116,11 @@ impl Services for Systemd {
     fn start_watch(&self, program: &Path) -> io::Result<()> {
         // A failed unit of an earlier watch would keep the name.
         let _ = Command::new("systemctl")
-            .args(["reset-failed", WATCH_UNIT])
+            .args(["reset-failed", self.0.watch_unit])
             .stderr(std::process::Stdio::null())
             .status();
         let status = Command::new("systemd-run")
-            .args(["--unit", WATCH_UNIT, "--collect", "--quiet", "--"])
+            .args(["--unit", self.0.watch_unit, "--collect", "--quiet", "--"])
             .arg(program)
             .args(["self-update", "watch"])
             .status();
@@ -123,7 +131,7 @@ impl Services for Systemd {
         status_ok(
             "systemctl restart",
             Command::new("systemctl")
-                .args(["restart", AGENT_SERVICE])
+                .args(["restart", self.0.service])
                 .status(),
         )
     }
@@ -169,7 +177,7 @@ pub fn install(
     if !check_upgrade(current, &release.version, header.allow_downgrade)? {
         return Ok(Installed::Current(current.clone()));
     }
-    let asset = platform.agent_asset();
+    let asset = paths.product.asset(platform).ok_or(HelperError::Platform)?;
     let expected = release.digest(asset)?;
 
     prepare_state_dir(&paths.state_dir)?;

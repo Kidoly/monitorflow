@@ -201,8 +201,85 @@ export interface Site {
   relay_count: number;
   customer_id: string;
   customer_name: string;
-  /** Agents are updated to the newest release the server holds (ADR-0053). */
-  agent_auto_update: boolean;
+  /** The site's automatic update override; `null` follows the server-wide setting (ADR-0055). */
+  agent_auto_update: boolean | null;
+  /** Whether automatic updates apply to the site's agents and relays. */
+  agent_auto_update_effective: boolean;
+}
+
+/** Server-wide automatic update settings (ADR-0055). */
+export interface AutoUpdateSettings {
+  /** Default of the sites that inherit it. */
+  enabled: boolean;
+  /** Set by the server's configuration: the web interface cannot change `enabled`. */
+  enabled_locked: boolean;
+  paused: boolean;
+  failure_threshold: number;
+}
+
+export type RolloutKind = "agent" | "relay";
+
+/** The automatic rollout of one release. */
+export interface Rollout {
+  kind: RolloutKind;
+  version: string;
+  state: "rolling" | "halted";
+  started_at: string;
+  halted_at: string | null;
+  reason: string | null;
+  /** Failures count from here: the start or the last resume. */
+  counted_from: string;
+}
+
+export interface AutoUpdateTotals {
+  up_to_date: number;
+  /** Older and not tried yet. */
+  waiting: number;
+  /** Of `waiting`, agents whose relay is older or being updated. */
+  waiting_for_relay: number;
+  pending: number;
+  succeeded: number;
+  failed: number;
+}
+
+export type SitePhase = "canary" | "rolling" | "blocked";
+
+export interface AutoUpdateSite {
+  id: string;
+  name: string;
+  customer_name: string;
+  auto_update: boolean | null;
+  enabled: boolean;
+  phase: SitePhase | null;
+  totals: AutoUpdateTotals;
+}
+
+/** Automatic updates of one kind of peer. */
+export interface AutoUpdateKind {
+  /** Newest stable release the server holds. */
+  latest: string | null;
+  /** What peers move to: `latest` unless the server is older. */
+  target: string | null;
+  rollout: Rollout | null;
+  totals: AutoUpdateTotals;
+  sites: AutoUpdateSite[];
+  history: Rollout[];
+}
+
+/** `GET /api/auto-update`. */
+export interface AutoUpdateStatus {
+  settings: AutoUpdateSettings;
+  server_version: string;
+  agents: AutoUpdateKind;
+  /** Updated before the agents behind them. */
+  relays: AutoUpdateKind;
+}
+
+/** Fields of `PUT /api/settings/auto-update`; absent ones are unchanged. */
+export interface AutoUpdateChange {
+  enabled?: boolean;
+  paused?: boolean;
+  failure_threshold?: number;
 }
 
 /** One entry of `GET /api/customers`. */
@@ -241,6 +318,25 @@ export interface Relay {
   server_count: number;
   /** Agent streams it forwards right now. */
   connected_agents: number;
+  /** Version of its last Hello; null before it reported one (ADR-0055). */
+  relay_version?: string | null;
+  /** Its latest self-update. */
+  last_update?: RelayCommand | null;
+}
+
+/** A relay self-update (ADR-0055). */
+export interface RelayCommand {
+  id: string;
+  relay_id: string;
+  version: string;
+  state: "queued" | "sent" | "running" | "succeeded" | "failed" | "expired" | "cancelled";
+  /** Null when queued by automatic updates. */
+  requested_by: string | null;
+  issued_at: string;
+  expires_at: string;
+  finished_at: string | null;
+  stdout: string | null;
+  error: string | null;
 }
 
 /** A server attached to a relay. */
@@ -256,6 +352,8 @@ export interface AttachedServer {
 export interface RelayDetail extends Relay {
   certificate: Certificate | null;
   servers: AttachedServer[];
+  /** Its latest self-updates, newest first. */
+  updates?: RelayCommand[];
 }
 
 export interface RelayList {
@@ -392,6 +490,79 @@ export interface AgentReleases {
   versions: string[];
   /** The newest without a pre-release suffix, else the newest; null when none. */
   latest: string | null;
+}
+
+/** Steps of a server update (ADR-0056); the last three are final. */
+export type ServerUpdateState =
+  | "verifying"
+  | "downloading"
+  | "backing_up"
+  | "updating"
+  | "checking"
+  | "caching_agents"
+  | "rolling_back"
+  | "succeeded"
+  | "failed"
+  | "rolled_back";
+
+/** The last server update, as the updater container reports it. */
+export interface ServerUpdateRun {
+  id: string;
+  from: string | null;
+  to: string;
+  requested_by: string;
+  state: ServerUpdateState;
+  /** Oldest first. */
+  steps: { at: string; message: string }[];
+  error: string | null;
+  /** File name of the database dump in the backups volume. */
+  backup: string | null;
+  /** The new version migrated the database: a rollback needs the backup restored. */
+  migrated: boolean;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/** `GET /api/server-update`. */
+export interface ServerUpdateView {
+  running_version: string;
+  /** The server is set up for updates from the web interface. */
+  enabled: boolean;
+  source: string;
+  /** Null until the updater has reported once. */
+  updater: {
+    version: string;
+    heartbeat_at: string;
+    alive: boolean;
+    /** Images pinned in `.env`; null is a local build. */
+    running: {
+      version: string;
+      server_image: string | null;
+      web_image: string | null;
+      updater_image: string | null;
+    } | null;
+  } | null;
+  update: ServerUpdateRun | null;
+  /** A request waits for the updater. */
+  requested: boolean;
+}
+
+/** `POST /api/server-update/check`. */
+export interface ServerUpdateCheck {
+  source: string;
+  running_version: string;
+  /** False when the source could not be reached, as on an offline server. */
+  reachable: boolean;
+  error: string | null;
+  latest: {
+    version: string;
+    newer: boolean;
+    release_notes_url: string | null;
+    images: { server: string; web: string; updater: string };
+    web_changes: boolean;
+    updater_changes: boolean;
+    agent_release_cached: boolean;
+  } | null;
 }
 
 /** One page of a server's commands, newest first. */
@@ -1054,8 +1225,8 @@ export const api = {
 
   customers: (signal?: AbortSignal) => request<CustomerList>("/api/customers", { signal }),
 
-  /** Turns automatic agent updates of the site on or off; customer administrators only (ADR-0053). */
-  setAgentAutoUpdate: (siteId: string, enabled: boolean) =>
+  /** Overrides automatic updates of the site, or `null` to follow the server-wide setting; customer administrators only (ADR-0055). */
+  setAgentAutoUpdate: (siteId: string, enabled: boolean | null) =>
     request<Site>(`/api/sites/${encodeURIComponent(siteId)}/agent-auto-update`, {
       method: "PUT",
       body: { enabled },
@@ -1143,6 +1314,17 @@ export const api = {
   /** Every mirror, by name; global administrators only. */
   mirrors: (signal?: AbortSignal) => request<MirrorList>("/api/mirrors", { signal }),
 
+  /** Automatic updates: settings and rollouts; global administrators only (ADR-0055). */
+  autoUpdate: (signal?: AbortSignal) => request<AutoUpdateStatus>("/api/auto-update", { signal }),
+
+  /** Changes automatic update settings; global administrators only; audited. */
+  setAutoUpdate: (change: AutoUpdateChange) =>
+    request<AutoUpdateSettings>("/api/settings/auto-update", { method: "PUT", body: change }),
+
+  /** Resumes a halted rollout; global administrators only; audited. */
+  resumeRollout: (kind: RolloutKind, version: string) =>
+    request<Rollout>(`/api/auto-update/rollouts/${kind}/${encodeURIComponent(version)}/resume`, { method: "POST" }),
+
   mirror: (id: string, signal?: AbortSignal) =>
     request<MirrorDetail>(`/api/mirrors/${encodeURIComponent(id)}`, { signal }),
 
@@ -1168,7 +1350,22 @@ export const api = {
 
   agentReleases: (signal?: AbortSignal) => request<AgentReleases>("/api/agent-releases", { signal }),
 
+  /** Server updates; global administrators only (ADR-0056). */
+  serverUpdate: (signal?: AbortSignal) => request<ServerUpdateView>("/api/server-update", { signal }),
+
+  checkServerUpdate: () => request<ServerUpdateCheck>("/api/server-update/check", { method: "POST" }),
+
+  startServerUpdate: (version: string) =>
+    request<{ id: string }>("/api/server-update", { method: "POST", body: { version } }),
+
   /** Queues a `self_update` to `version`; customer administrators only (ADR-0053). */
+  /** Queues a relay self-update; administrators of its customer (ADR-0055). */
+  updateRelay: (relayId: string, version: string) =>
+    request<RelayCommand>(`/api/relays/${encodeURIComponent(relayId)}/update`, {
+      method: "POST",
+      body: { version },
+    }),
+
   updateAgent: (serverId: string, version: string) =>
     request<CommandDetail>(`/api/servers/${encodeURIComponent(serverId)}/commands`, {
       method: "POST",

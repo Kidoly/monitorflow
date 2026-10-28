@@ -288,7 +288,7 @@ pub async fn create_customer_site(
     let actor = user.id.to_string();
     let site = create_site(&state.pool, customer, &name, ("user", &actor)).await?;
     tracing::info!(user = %user.id, %customer, %site, "site created");
-    let view = sites::fetch(&state.pool, site)
+    let view = sites::fetch(&state, site)
         .await?
         .ok_or(ApiError::NotFound)?;
     Ok((StatusCode::CREATED, Json(view)))

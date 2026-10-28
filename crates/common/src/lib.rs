@@ -9,6 +9,8 @@ pub mod logging;
 pub mod mirror;
 pub mod redact;
 pub mod release;
+#[cfg(all(unix, feature = "server-update"))]
+pub mod server_update;
 pub mod tls;
 pub mod via;
 #[cfg(windows)]
@@ -27,13 +29,19 @@ pub mod proto {
 /// `MONITORFLOW_BUILD_VERSION` when set at build time, which the
 /// self-update test uses to build an older and a newer agent from the same
 /// sources (ADR-0053).
+/// An empty value counts as unset, as a Docker build argument left empty.
 pub const VERSION: &str = match option_env!("MONITORFLOW_BUILD_VERSION") {
-    Some(version) => version,
-    None => env!("CARGO_PKG_VERSION"),
+    Some(version) if !version.is_empty() => version,
+    _ => env!("CARGO_PKG_VERSION"),
 };
 
 /// Protocol version spoken by this build. Bump the minor on additive changes.
 pub const PROTOCOL_VERSION: &str = "1.1";
+
+/// Oldest agent or relay release the server accepts on its streams
+/// (ADR-0055). Raised only by a release whose notes say so, and never past
+/// a version automatic updates could not reach.
+pub const MIN_PEER_VERSION: &str = "0.1.0";
 
 #[cfg(test)]
 mod tests {

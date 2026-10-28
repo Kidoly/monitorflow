@@ -28,7 +28,9 @@ import {
   SOURCE_WORDS,
   isSafeUrl,
   isServerAddress,
+  isMirrorUrl,
   linuxInstallCommand,
+  relayInstallCommand,
   windowsInstallCommand,
 } from "@/lib/install";
 import { administersCustomer, administersEverything } from "@/lib/me";
@@ -302,7 +304,7 @@ function NewToken({ token, onDone, onAnother }: { token: CreatedToken; onDone: (
           )}
         </div>
       </div>
-      {token.role === "agent" && <InstallCommands token={token} />}
+      {token.role === "agent" ? <InstallCommands token={token} /> : <RelayInstallCommand token={token} />}
     </section>
   );
 }
@@ -417,6 +419,68 @@ function InstallCommands({ token }: { token: CreatedToken }) {
   );
 }
 
+/**
+ * The relay's ready-to-paste install command (ADR-0055), from the chosen
+ * source like the agent's, with the optional mirror URL.
+ */
+function RelayInstallCommand({ token }: { token: CreatedToken }) {
+  const titleId = useId();
+  const sourceName = useId();
+  const [source, setSource] = useState<InstallSource>(token.install.source);
+  const [mirror, setMirror] = useState("");
+  const valid = mirror.trim() === "" || isMirrorUrl(mirror);
+  const command = relayInstallCommand(token, source, pageOrigin(), valid ? mirror : "");
+  const central = token.install.central;
+  return (
+    <div className={styles.stack} role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} className={styles.sectionTitle}>
+        Install the relay
+      </h3>
+      <fieldset className={styles.fieldset}>
+        <legend className={styles.legend}>Download from</legend>
+        <SourceRadios name={sourceName} value={source} onChange={setSource} />
+      </fieldset>
+      {source === "central" && central && "text" in command && (
+        <p className={styles.fieldNote}>
+          Release {central.version} from this server. The command checks its checksums, so the host need not trust this
+          site&apos;s certificate.
+        </p>
+      )}
+      <label className={styles.field}>
+        <span>
+          Serve mirrors at{" "}
+          <span className={styles.fieldNote}>
+            — optional; the URL this site&apos;s hosts reach the relay&apos;s mirror listener at
+          </span>
+        </span>
+        <input
+          className={cx(fieldClass, styles.mono)}
+          value={mirror}
+          onChange={(e) => setMirror(e.target.value)}
+          placeholder="http://relay1.paris.example:7480"
+          aria-invalid={!valid}
+          spellCheck={false}
+          autoCapitalize="none"
+        />
+      </label>
+      {!valid && (
+        <p className={styles.formError} role="alert">
+          Enter an http or https URL, like http://relay1.paris.example:7480.
+        </p>
+      )}
+      {"text" in command ? (
+        <InstallCommand name="Linux" note="as root, on a host with systemd" text={command.text} />
+      ) : (
+        <Banner tone="warn">{command.unavailable}</Banner>
+      )}
+      <p className={styles.fieldNote}>
+        Then install the site&apos;s agents with a token each, giving this relay&apos;s address in &quot;Connect through
+        a relay&quot;. The relay updates itself with the agents (Updates › Automatic updates).
+      </p>
+    </div>
+  );
+}
+
 /** The server-wide default source (ADR-0054); global administrators change it. */
 function DefaultInstallSource({ editable }: { editable: boolean }) {
   const titleId = useId();
@@ -470,7 +534,7 @@ function DefaultInstallSource({ editable }: { editable: boolean }) {
         </h2>
       </div>
       <p className={styles.sectionNote}>
-        Where the install commands of new agent tokens download the agent from; each command can use another.
+        Where the install commands of new tokens download the agent or relay from; each command can use another.
         {!editable && " A global administrator changes it."}
       </p>
       {current && (

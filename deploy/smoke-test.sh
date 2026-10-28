@@ -14,7 +14,8 @@ export HTTPS_PORT=18443 HTTP_PORT=18080 GRPC_PORT=17443 ENROLL_PORT=17445
 
 # --env-file /dev/null: a real deploy/.env must not leak into the test.
 compose() { docker compose -p monitorflow-smoke --env-file /dev/null -f docker-compose.yml "$@"; }
-trap 'compose down -v --remove-orphans >/dev/null 2>&1 || true' EXIT
+work=$(mktemp -d)
+trap 'compose down -v --remove-orphans >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 
 compose up -d --build --wait --wait-timeout 600
 
@@ -28,10 +29,16 @@ check() {
 # The certificate a TLS listener presents names localhost. No client
 # certificate is sent: the gRPC listener still shows its own first, then
 # ends the handshake with an alert. -prexit prints the session on exit
-# too, as s_client may read that alert before printing it otherwise.
+# too, as s_client may read that alert before printing it otherwise. That
+# race still loses now and then on CI runners, so three tries; the last
+# output is kept for the log.
 cert_names_localhost() {
-    openssl s_client -connect "localhost:$1" -alpn h2 -prexit </dev/null 2>/dev/null \
-        | openssl x509 -noout -ext subjectAltName | grep -q 'DNS:localhost'
+    for _ in 1 2 3; do
+        openssl s_client -connect "localhost:$1" -alpn h2 -prexit </dev/null >"$work/s_client.$1" 2>&1 || true
+        openssl x509 -noout -ext subjectAltName <"$work/s_client.$1" 2>/dev/null | grep -q 'DNS:localhost' && return 0
+        sleep 1
+    done
+    return 1
 }
 # Every connection of the server's pool, seen by PostgreSQL, is encrypted.
 db_link_uses_tls() {
@@ -56,6 +63,9 @@ check "VictoriaMetrics not published" not_published victoriametrics
 check "VictoriaLogs not published" not_published victorialogs
 
 if [ "$failed" -ne 0 ]; then
+    for out in "$work"/s_client.*; do
+        [ -e "$out" ] && { echo "== $out"; head -40 "$out"; }
+    done
     compose logs --tail 50 server web postgres
     exit 1
 fi
