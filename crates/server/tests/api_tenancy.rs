@@ -19,7 +19,7 @@ use axum::Router;
 use monitorflow_common::redact::Secret;
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
-use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
+use monitorflow_server::api::{self, ApiSettings, ApiState, EnrollmentSettings, Role};
 use monitorflow_server::grpc::Registry;
 use monitorflow_server::vm_query::VmQuery;
 use serde_json::{json, Value};
@@ -328,7 +328,13 @@ impl Ctx {
                 Registry::default(),
                 ApiSettings::default(),
             )
-            .with_metrics(vm),
+            .with_metrics(vm)
+            .with_enrollment(EnrollmentSettings {
+                ca_fingerprint: [7; 32],
+                server_names: vec!["mf.example".into()],
+                grpc_port: 7443,
+                enroll_port: 7445,
+            }),
         )
     }
 
@@ -440,6 +446,19 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         ("PUT", "/api/settings/agent-install") => {
             let body = json!({ "source": "central" });
+            assert_eq!(
+                ctx.status(method, path, Some(body)).await,
+                StatusCode::FORBIDDEN
+            );
+        }
+        // Server-wide public address: the same rule.
+        ("GET", "/api/settings/public-address") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, b.customer));
+        }
+        ("PUT", "/api/settings/public-address") => {
+            let body = json!({ "address": "evil.example" });
             assert_eq!(
                 ctx.status(method, path, Some(body)).await,
                 StatusCode::FORBIDDEN

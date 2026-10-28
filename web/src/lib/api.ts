@@ -778,6 +778,23 @@ export interface CreatedToken extends EnrollmentToken {
   enroll_url: string;
   /** Where the install commands may download the agent from (ADR-0054). */
   install: AgentInstall;
+  /** The address in `upstream_url` and `enroll_url`. */
+  address: PublicAddress;
+}
+
+/** `GET /api/settings/public-address`, and the `address` of a new token. */
+export interface PublicAddress {
+  /** The host the install commands connect to, without a port. */
+  address: string;
+  /** The first server name, used when none is chosen. */
+  default: string;
+  /** The names the server's certificate is issued for. */
+  names: string[];
+  /** Whether the certificate covers `address`; agents refuse to connect otherwise. */
+  certified: boolean;
+  /** At `address`, with the published ports. */
+  upstream_url: string;
+  enroll_url: string;
 }
 
 /** Where install commands download the agent from (ADR-0054). */
@@ -1266,6 +1283,10 @@ export const api = {
   /** Changes the default install source; global administrators only, audited. */
   setAgentInstall: (body: { source: InstallSource; custom_url: string | null }) =>
     request<AgentInstall>("/api/settings/agent-install", { method: "PUT", body }),
+
+  /** Changes the address in install commands; global administrators only, audited. `null` is the default. */
+  setPublicAddress: (body: { address: string | null }) =>
+    request<PublicAddress>("/api/settings/public-address", { method: "PUT", body }),
 
   /** Revokes an unused token; 409 once used. */
   revokeToken: (id: string) => request<void>(`/api/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),

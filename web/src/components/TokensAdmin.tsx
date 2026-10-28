@@ -16,6 +16,7 @@ import {
   type EnrollmentToken,
   type InstallSource,
   type Me,
+  type PublicAddress,
   type Site,
   type TokenRole,
   api,
@@ -109,6 +110,7 @@ export function TokensAdmin({ me }: { me: Me }) {
           {created && (
             <NewToken
               token={created}
+              editable={administersEverything(me)}
               onDone={() => setCreated(null)}
               onAnother={() => {
                 setCreated(null);
@@ -259,9 +261,22 @@ export function configSnippet(token: CreatedToken): string {
   ].join("\n");
 }
 
-function NewToken({ token, onDone, onAnother }: { token: CreatedToken; onDone: () => void; onAnother: () => void }) {
+function NewToken({
+  token: created,
+  editable,
+  onDone,
+  onAnother,
+}: {
+  token: CreatedToken;
+  editable: boolean;
+  onDone: () => void;
+  onAnother: () => void;
+}) {
   const titleId = useId();
   const snippetId = useId();
+  // Changing the address rewrites the snippet and every command at once.
+  const [address, setAddress] = useState(created.address);
+  const token = { ...created, upstream_url: address.upstream_url, enroll_url: address.enroll_url };
   const snippet = configSnippet(token);
   const file = token.role === "relay" ? "/etc/monitorflow/relay.toml" : "/etc/monitorflow/agent.toml";
   return (
@@ -276,6 +291,7 @@ function NewToken({ token, onDone, onAnother }: { token: CreatedToken; onDone: (
         <strong>This token will not be shown again.</strong> Copy it now and paste it into the {token.role}&apos;s
         configuration. If you lose it, revoke it and create a new one.
       </Banner>
+      <ServerAddress value={address} editable={editable} onChange={setAddress} />
       <div className={styles.createdGrid}>
         <div className={styles.stack}>
           <SecretField label="Token" value={token.token} copyName="Copy token" />
@@ -306,6 +322,125 @@ function NewToken({ token, onDone, onAnother }: { token: CreatedToken; onDone: (
       </div>
       {token.role === "agent" ? <InstallCommands token={token} /> : <RelayInstallCommand token={token} />}
     </section>
+  );
+}
+
+const OTHER_ADDRESS = "other";
+
+/** This page's host name, which hosts often reach the server at too; loopback names are left out. */
+function pageHost(): string | null {
+  if (typeof window === "undefined") return null;
+  const host = window.location.hostname.replace(/^\[(.*)\]$/, "$1");
+  return host && !/^(localhost|127\.[\d.]+|::1)$/i.test(host) ? host : null;
+}
+
+/**
+ * The address the snippet and commands connect to: one of the certificate's
+ * names, this page's host or a typed one. Choosing a name applies it at once.
+ */
+function ServerAddress({
+  value,
+  editable,
+  onChange,
+}: {
+  value: PublicAddress;
+  editable: boolean;
+  onChange: (address: PublicAddress) => void;
+}) {
+  const labelId = useId();
+  const [typing, setTyping] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const certified = (name: string) => value.names.some((n) => n.toLowerCase() === name.toLowerCase());
+  const choices = [value.address, ...value.names.filter((n) => !n.startsWith("*.")), pageHost() ?? ""].filter(
+    (name, i, all) => name && all.findIndex((n) => n.toLowerCase() === name.toLowerCase()) === i,
+  );
+
+  async function save(address: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      onChange(await api.setPublicAddress({ address }));
+      setTyping(false);
+      setDraft("");
+    } catch (e) {
+      setError(`Changing the address failed. ${describeError(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className={styles.field}>
+      <span id={labelId}>
+        Hosts reach this server at{" "}
+        <span className={styles.fieldNote}>— used by the configuration snippet and every command below</span>
+      </span>
+      {editable ? (
+        <div className={styles.buttons}>
+          <select
+            className={cx(fieldClass, styles.mono)}
+            aria-labelledby={labelId}
+            value={typing ? OTHER_ADDRESS : value.address}
+            disabled={busy}
+            onChange={(e) => {
+              if (e.target.value === OTHER_ADDRESS) setTyping(true);
+              else void save(e.target.value);
+            }}
+          >
+            {choices.map((name) => (
+              <option key={name} value={name}>
+                {name}
+                {name === value.default ? " (default)" : certified(name) ? "" : " (not in the certificate)"}
+              </option>
+            ))}
+            <option value={OTHER_ADDRESS}>Other address…</option>
+          </select>
+          {typing && (
+            <form
+              className={styles.buttons}
+              onSubmit={(e) => {
+                e.preventDefault();
+                void save(draft);
+              }}
+            >
+              <input
+                className={cx(fieldClass, styles.mono)}
+                aria-label="Other address"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="monitor.example.com or 10.0.0.2"
+                spellCheck={false}
+                autoCapitalize="none"
+                autoFocus
+              />
+              <Button variant="k" type="submit" disabled={busy || draft.trim() === ""}>
+                Use this address
+              </Button>
+            </form>
+          )}
+        </div>
+      ) : (
+        <span className={styles.fieldNote}>
+          <code>{value.address}</code>. A global administrator changes it.
+        </span>
+      )}
+      {error && (
+        <p className={styles.formError} role="alert">
+          {error}
+        </p>
+      )}
+      {!value.certified && (
+        <Banner tone="warn">
+          <strong>Hosts will refuse to connect to {value.address}:</strong> the server&apos;s certificate is not issued
+          for it{value.names.length > 0 && <> (its names: {value.names.join(", ")})</>}. Pick one of its names, or add{" "}
+          {value.address} to <code>SERVER_NAMES</code> in the server&apos;s <code>.env</code> (
+          <code>server_names</code> in <code>server.toml</code>) and restart the server, which then issues itself a new
+          certificate.
+        </Banner>
+      )}
+    </div>
   );
 }
 

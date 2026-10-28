@@ -56,8 +56,9 @@ impl Harness {
         let state = if self.enrollment {
             state.with_enrollment(EnrollmentSettings {
                 ca_fingerprint: CA_PIN,
-                upstream_url: "https://mf.example:7443".into(),
-                enroll_url: "https://mf.example:7445".into(),
+                server_names: vec!["mf.example".into()],
+                grpc_port: 7443,
+                enroll_port: 7445,
             })
         } else {
             state
