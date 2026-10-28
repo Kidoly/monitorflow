@@ -34,6 +34,20 @@ export function administersCustomer(me: Me | null, customerId?: string): boolean
 }
 
 /**
+ * Whether `me` may change the site `siteId` of `customerId`: an operator
+ * role or above, global, on the customer or on the site. UX only.
+ */
+export function operatesSite(me: Me | null, customerId: string, siteId: string): boolean {
+  return (
+    me?.roles.some(
+      (grant) =>
+        grant.role !== "viewer" &&
+        (grant.site_id === null ? !grant.customer_id || grant.customer_id === customerId : grant.site_id === siteId),
+    ) ?? false
+  );
+}
+
+/**
  * Whether `me` is a global administrator, which mirrors need as they are
  * shared by every customer (ADR-0030). UX only.
  */

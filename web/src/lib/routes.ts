@@ -13,6 +13,11 @@ export function sensorHref(id: string, metric: string, instance = ""): string {
   return `/servers/sensor/?${params}`;
 }
 
+/** Link to the server or relay of an incident. */
+export function incidentPeerHref(incident: { server_id: string | null; relay_id?: string | null }): string {
+  return incident.server_id ? serverHref(incident.server_id) : relayHref(incident.relay_id ?? "");
+}
+
 /** Link to the incidents list with `filters` (see `lib/incidents.ts`). */
 export function incidentsHref(filters: Partial<IncidentFilters> = {}): string {
   const query = filtersToQuery({ ...NO_FILTERS, ...filters });

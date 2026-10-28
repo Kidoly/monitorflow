@@ -1,8 +1,10 @@
 //! The threshold engine (ADR-0017): thresholds per site and server, the
 //! state machine of each series, and incidents in PostgreSQL. Streams
-//! hand their validated series to [`Alerts::submit`].
+//! hand their validated series to [`Alerts::submit`]. Offline incidents
+//! of servers and relays come from [`offline`] (ADR-0057).
 
 pub mod engine;
+pub mod offline;
 pub mod rules;
 pub mod state;
 pub mod store;

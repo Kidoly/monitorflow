@@ -860,6 +860,18 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = Some(json!({ "enabled": true }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
+        ("PUT", "/api/sites/{id}/offline-alerts")
+        | ("PUT", "/api/servers/{id}/offline-alerts")
+        | ("PUT", "/api/relays/{id}/offline-alerts") => {
+            let id = match path.split('/').nth(2) {
+                Some("sites") => b.site,
+                Some("servers") => b.server,
+                _ => b.relay,
+            };
+            let uri = path.replace("{id}", &id.to_string());
+            let body = Some(json!({ "enabled": false }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
         ("GET", "/api/sites/{id}/sensor_configs") | ("GET", "/api/sites/{id}/thresholds") => {
             let uri = path.replace("{id}", &b.site.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");

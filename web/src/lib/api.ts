@@ -59,6 +59,9 @@ export interface Server {
   open_incidents: number;
   /** Latest expiry among the agent's unrevoked certificates; null when it has none. */
   cert_not_after: string | null;
+  /** Offline incidents of this one (ADR-0057); absent is on. Muted when this or `site_offline_alerts` is false. */
+  offline_alerts?: boolean;
+  site_offline_alerts?: boolean;
 }
 
 /** The certificate the CA issued last to an agent, revoked or not. */
@@ -205,6 +208,8 @@ export interface Site {
   agent_auto_update: boolean | null;
   /** Whether automatic updates apply to the site's agents and relays. */
   agent_auto_update_effective: boolean;
+  /** Whether its servers and relays open incidents when offline (ADR-0057); absent is on. */
+  offline_alerts?: boolean;
 }
 
 /** Server-wide automatic update settings (ADR-0055). */
@@ -322,6 +327,9 @@ export interface Relay {
   relay_version?: string | null;
   /** Its latest self-update. */
   last_update?: RelayCommand | null;
+  /** Offline incidents of this one (ADR-0057); absent is on. Muted when this or `site_offline_alerts` is false. */
+  offline_alerts?: boolean;
+  site_offline_alerts?: boolean;
 }
 
 /** A relay self-update (ADR-0055). */
@@ -398,10 +406,16 @@ export interface ThresholdSnapshot {
 /** One incident of `GET /api/incidents`. Times are sample times. */
 export interface Incident {
   id: string;
-  server_id: string;
+  /** Null for a relay's offline incident. */
+  server_id: string | null;
+  /** Set for a relay's offline incident (ADR-0057). */
+  relay_id?: string | null;
+  /** The server's hostname, or the relay's name. */
   hostname: string;
   site_id: string;
   site_name: string;
+  customer_id?: string;
+  /** `offline` when the server or relay stopped reporting (ADR-0057). */
   metric: string;
   /** `""` for a series without an instance. */
   instance: string;
@@ -1228,6 +1242,13 @@ export const api = {
   /** Overrides automatic updates of the site, or `null` to follow the server-wide setting; customer administrators only (ADR-0055). */
   setAgentAutoUpdate: (siteId: string, enabled: boolean | null) =>
     request<Site>(`/api/sites/${encodeURIComponent(siteId)}/agent-auto-update`, {
+      method: "PUT",
+      body: { enabled },
+    }),
+
+  /** Turns offline incidents on or off for a site, server or relay; operators of the site (ADR-0057). */
+  setOfflineAlerts: (kind: "sites" | "servers" | "relays", id: string, enabled: boolean) =>
+    request<{ enabled: boolean }>(`/api/${kind}/${encodeURIComponent(id)}/offline-alerts`, {
       method: "PUT",
       body: { enabled },
     }),

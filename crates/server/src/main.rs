@@ -9,6 +9,7 @@ use monitorflow_common::config::{self, ServerConfig};
 use monitorflow_common::logging;
 use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::{Identity, PeerRole};
+use monitorflow_server::alerting::offline::{self, OfflineSettings};
 use monitorflow_server::alerting::{AlertStore, Alerts, EngineSettings, LogNotifier};
 use monitorflow_server::api::users::GrantScope;
 use monitorflow_server::api::{
@@ -398,6 +399,8 @@ async fn main() -> anyhow::Result<()> {
         ca.clone(),
         DispatcherSettings::default(),
     );
+    // Servers and relays that stop reporting open incidents (ADR-0057).
+    offline::spawn(pool.clone(), registry.clone(), OfflineSettings::default());
     // Relays' own self-updates (ADR-0055).
     let relay_commands = RelayCommands::spawn(pool.clone(), registry.clone(), ca.clone());
     // Update campaigns (ADR-0033) queue through the same dispatcher, and

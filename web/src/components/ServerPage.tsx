@@ -38,6 +38,7 @@ import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { TabPanel, Tabs } from "@/components/ui/Tabs";
 import { formatExact } from "@/components/ui/time";
 
+import { OfflineAlerts } from "./OfflineAlerts";
 import { REVOCATION_REASONS } from "./RevokeControl";
 import { ServerCommandsTab } from "./ServerCommandsTab";
 import { ServerSensorsTab } from "./ServerSensorsTab";
@@ -162,7 +163,7 @@ export function ServerPage({ id }: { id: string | null }) {
         }
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
-      <ServerFacts server={server} latestAgent={latestAgent} now={updatedAt} stale={stale} />
+      <ServerFacts server={server} latestAgent={latestAgent} now={updatedAt} stale={stale} onChanged={refresh} />
       <Tabs
         label="Server sections"
         idBase="server"
@@ -270,11 +271,13 @@ function ServerFacts({
   latestAgent,
   now,
   stale,
+  onChanged,
 }: {
   server: ServerDetail;
   latestAgent: string | null;
   now: Date;
   stale: boolean;
+  onChanged: () => void;
 }) {
   const { certificate } = server;
   return (
@@ -304,6 +307,9 @@ function ServerFacts({
         { label: "Certificate", value: certificate ? <CertificateFact certificate={certificate} now={now} /> : "none issued" },
         { label: "Enrolled", value: minutes(server.created_at) },
         { label: "Certificate ID", value: server.peer_id, mono: true },
+        ...(server.revoked_at
+          ? []
+          : [{ label: "Offline alerts", value: <OfflineAlerts kind="servers" target={server} onChanged={onChanged} /> }]),
         ...(server.revoked_at ? [{ label: "Revoked", value: minutes(server.revoked_at) }] : []),
       ]}
     />

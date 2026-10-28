@@ -40,6 +40,7 @@
 //! | POST | `/api/customers` | global administrator | body `{"name"}`; 201 [`customers::CustomerView`] |
 //! | POST | `/api/customers/{id}/sites` | customer administrator | body `{"name"}`; 201 [`sites::SiteView`] |
 //! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled": true, false or null}`; [`sites::SiteView`]; audited (ADR-0055) |
+//! | PUT | `/api/sites/{id}/offline-alerts`, `/api/servers/{id}/offline-alerts`, `/api/relays/{id}/offline-alerts` | modify | body and answer `{"enabled": bool}`: offline incidents on or muted; audited (ADR-0057) |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
 //! | GET | `/api/settings/auto-update` | global administrator | [`policy::Settings`](crate::auto_update::policy::Settings) as they apply (ADR-0055) |
@@ -215,7 +216,9 @@
 //! # Incidents
 //!
 //! Read-only: the threshold engine owns incidents and their events
-//! (ADR-0019). `GET /api/incidents` takes optional `state` (`open`,
+//! (ADR-0019), and the offline rule those with `metric` `offline`, where a
+//! relay's has `relay_id` set, `server_id` null and the relay's name as
+//! `hostname` (ADR-0057). `GET /api/incidents` takes optional `state` (`open`,
 //! `resolved`), `severity` (`warning`, `critical`), `server_id`,
 //! `site_id`, `from` and `to` (RFC 3339; incidents active at some point of
 //! the range), `limit` (1 to 500, default 100) and `cursor`. Open incidents
@@ -433,6 +436,7 @@ mod health;
 pub mod incidents;
 pub mod metrics;
 pub mod mirrors;
+pub mod offline_alerts;
 pub mod packages;
 pub mod password;
 pub mod proxmox;
@@ -635,6 +639,15 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/sites/{id}/agent-auto-update",
             put(sites::set_agent_auto_update),
+        )
+        .route("/api/sites/{id}/offline-alerts", put(offline_alerts::site))
+        .route(
+            "/api/servers/{id}/offline-alerts",
+            put(offline_alerts::server),
+        )
+        .route(
+            "/api/relays/{id}/offline-alerts",
+            put(offline_alerts::relay),
         )
         .route("/api/auto-update", get(auto_update::status))
         .route(

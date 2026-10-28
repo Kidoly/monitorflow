@@ -1,5 +1,19 @@
-import type { IncidentQuery, IncidentSeverity, IncidentState, ThresholdSnapshot } from "./api";
+import type { Incident, IncidentQuery, IncidentSeverity, IncidentState, ThresholdSnapshot } from "./api";
+import { seriesTitle } from "./sensors";
 import { UUID } from "./uuid";
+
+/** Silence before a server or relay opens an offline incident, the server's built-in rule (ADR-0057). */
+export const OFFLINE_AFTER_S = 300;
+
+/** Whether the server or relay stopped reporting, rather than a threshold firing. */
+export function isOffline(incident: Pick<Incident, "metric">): boolean {
+  return incident.metric === "offline";
+}
+
+/** "Offline", or the series' title for a threshold incident. */
+export function incidentTitle(incident: Pick<Incident, "metric" | "instance">): string {
+  return isOffline(incident) ? "Offline" : seriesTitle(undefined, incident.metric, incident.instance);
+}
 
 /** What the incidents list shows; reflected in its query string. */
 export interface IncidentFilters {
