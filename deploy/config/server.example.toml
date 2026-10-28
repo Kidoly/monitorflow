@@ -49,6 +49,10 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # server certificate it issues to itself on first start.
 # server_names = ["localhost", "127.0.0.1"]
 
+# https URL of the web interface, used in the setup link printed while no
+# user exists (ADR-0057). Unset: https:// and the first server name.
+# web_url = "https://monitor.example.net"
+
 # Package mirrors (ADR-0030). Plain HTTP on purpose: apt and dnf check the
 # content by its signatures. Serves /apt/, /dnf/ and /keys/ from mirror_dir.
 # mirror_listen_addr = "0.0.0.0:7480"

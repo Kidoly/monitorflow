@@ -1114,6 +1114,15 @@ export interface Health {
   status: "ok";
 }
 
+/** `GET /api/setup` (ADR-0057). */
+export interface SetupStatus {
+  /** No account exists yet: sign-in cannot work until the setup link is used. */
+  pending: boolean;
+}
+
+/** Shortest password the server accepts. */
+export const MIN_PASSWORD_LENGTH = 12;
+
 /**
  * A failed request. `status` is the HTTP status, or 0 when the server could
  * not be reached. `message` is the API's generic `{"error"}` text.
@@ -1246,6 +1255,16 @@ export const api = {
     }),
 
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
+
+  setupStatus: (signal?: AbortSignal) => request<SetupStatus>("/api/setup", { signal, redirectOn401: false }),
+
+  /** Creates the first administrator with the setup link's `token`, and signs it in. */
+  setup: (token: string, username: string, password: string) =>
+    request<Me>("/api/setup", {
+      method: "POST",
+      body: { token, username, password },
+      redirectOn401: false,
+    }),
 
   me: (signal?: AbortSignal) => request<Me>("/api/auth/me", { signal }),
 

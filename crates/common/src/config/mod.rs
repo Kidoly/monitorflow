@@ -979,6 +979,10 @@ pub struct ServerConfig {
     /// in the certificate the built-in CA issues it (ADR-0007). The
     /// environment override is a comma-separated list.
     pub server_names: Vec<String>,
+    /// https URL browsers open the web interface at, like
+    /// `https://monitor.example.net`, for the setup link (ADR-0057).
+    /// Unset, `https://` and the first of `server_names`.
+    pub web_url: Option<String>,
     pub ingest: IngestConfig,
     pub tls: ServerTlsPaths,
     pub log: LogConfig,
@@ -1095,6 +1099,7 @@ impl Default for ServerConfig {
             // Three missed heartbeats at the agent's default interval.
             heartbeat_timeout: 3 * DEFAULT_HEARTBEAT_INTERVAL,
             server_names: vec!["localhost".into(), "127.0.0.1".into()],
+            web_url: None,
             ingest: IngestConfig::default(),
             tls: ServerTlsPaths::default(),
             log: LogConfig::default(),
@@ -1115,6 +1120,31 @@ impl Default for ServerConfig {
 }
 
 impl ServerConfig {
+    /// Base URL of the web interface without a trailing slash: `web_url`,
+    /// or `https://` and the first server name. An explicit `:443` is
+    /// dropped, as compose writes it from the published port.
+    pub fn web_base_url(&self) -> String {
+        let url = match &self.web_url {
+            Some(url) => url.trim_end_matches('/').to_owned(),
+            None => {
+                let name = self
+                    .server_names
+                    .first()
+                    .map_or("localhost", String::as_str);
+                // An IPv6 address needs brackets in a URL.
+                if name.contains(':') {
+                    format!("https://[{name}]")
+                } else {
+                    format!("https://{name}")
+                }
+            }
+        };
+        match url.strip_suffix(":443") {
+            Some(base) if !base["https://".len()..].contains('/') => base.to_owned(),
+            _ => url,
+        }
+    }
+
     /// `agent_download_url` without a trailing slash, unless it is the
     /// default: a custom install source (ADR-0054).
     pub fn custom_agent_download_url(&self) -> Option<String> {
@@ -1503,6 +1533,7 @@ impl LoadConfig for ServerConfig {
         if let Some(names) = env.list("server_names") {
             self.server_names = names;
         }
+        env.set_opt("web_url", &mut self.web_url)?;
         self.ingest.apply_env(env)?;
         self.tls.apply_env(env)?;
         env.set("mirror_listen_addr", &mut self.mirror_listen_addr)?;
@@ -1543,6 +1574,14 @@ impl LoadConfig for ServerConfig {
                 "agent_download_url",
                 "must be an https URL without user, query or fragment",
             ));
+        }
+        if let Some(url) = &self.web_url {
+            if !(url.starts_with("https://") && valid_mirror_url(url)) {
+                return Err(check.fail(
+                    "web_url",
+                    "must be an https URL without user, query or fragment",
+                ));
+            }
         }
         if let Some(url) = &self.release_url {
             if !valid_mirror_url(url) {

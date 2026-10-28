@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState, useSyncExternalStore } from "react";
 
+import { SetupHint } from "@/components/SetupHint";
 import { Button } from "@/components/ui/Button";
 import { Banner } from "@/components/ui/PageState";
 import { ApiError, api, describeError } from "@/lib/api";
@@ -32,7 +33,18 @@ export function LoginForm() {
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [retryIn, setRetryIn] = useState(RETRY_SECONDS);
+  const [setupPending, setSetupPending] = useState(false);
   const waiting = failure?.kind === "unreachable";
+
+  // Without any account, sign-in cannot work: say how to create the first one (ADR-0057).
+  useEffect(() => {
+    const controller = new AbortController();
+    api.setupStatus(controller.signal).then(
+      (status) => setSetupPending(status.pending),
+      () => {},
+    );
+    return () => controller.abort();
+  }, []);
 
   // While unreachable, check the server every few seconds; sign-in waits for it.
   useEffect(() => {
@@ -85,6 +97,23 @@ export function LoginForm() {
 
   const invalid = failure?.kind === "credentials";
   const server = host || "The server";
+
+  if (setupPending) {
+    return (
+      <div className={styles.page}>
+        <main id="main" className={styles.main}>
+          <h1 className={styles.brand}>MonitorFlow</h1>
+          <div className={styles.box}>
+            <h2 className={styles.title}>Finish setting up</h2>
+            <Banner tone="warn">
+              <strong>No account yet.</strong> Create the administrator with the setup link.
+            </Banner>
+            <SetupHint />
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.page}>

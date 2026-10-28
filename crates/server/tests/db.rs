@@ -173,6 +173,7 @@ db_tests! {
                 "server_settings",
                 "servers",
                 "sessions",
+                "setup_tokens",
                 "sites",
                 "thresholds",
                 "user_roles",

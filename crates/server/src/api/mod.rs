@@ -19,6 +19,8 @@
 //! | GET | `/api/health/ready` | none | `{"status": "ready"}`, or 503 `{"status": "unavailable"}` when PostgreSQL is unreachable |
 //! | POST | `/api/auth/login` | none | body `{"username", "password"}`; 200 [`Me`] and the session cookie, or 401 |
 //! | POST | `/api/auth/logout` | session | 204, clears the cookie |
+//! | GET | `/api/setup` | none | [`setup::Status`]: `{"pending"}`, true while no user exists (ADR-0057) |
+//! | POST | `/api/setup` | setup link | body `{"token", "username", "password"}`; 200 [`Me`] and the session cookie; 400 for a bad username or password, 410 for a used, replaced or expired link, 409 once a user exists |
 //! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}]}` |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
 //! | GET | `/api/servers/{id}` | read | [`ServerDetail`]: one listing row plus `certificate`, see below |
@@ -452,6 +454,7 @@ pub mod server_update;
 pub mod servers;
 pub mod session;
 pub mod settings;
+pub mod setup;
 pub mod sites;
 pub mod sources;
 pub mod thresholds;
@@ -634,6 +637,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
+        .route("/api/setup", get(setup::status).post(setup::complete))
         .route("/api/servers", get(servers::list))
         .route("/api/servers/{id}", get(servers::detail))
         .route("/api/sites", get(sites::list))
