@@ -7,15 +7,19 @@
 //! its `inbox/` subdirectory, so nothing it plants can redirect what the
 //! updater writes.
 
+pub mod backup;
 pub mod env_file;
 pub mod host;
 pub mod project;
+pub mod restore;
 pub mod source;
 pub mod update;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
+use monitorflow_common::server_update::backup::{BackupKind, BackupRequest, BACKUP_REQUEST_FILE};
 use monitorflow_common::server_update::{
     read_small, Request, HEARTBEAT, MAX_STATE_FILE, REQUEST_FILE,
 };
@@ -24,8 +28,10 @@ use crate::update::Updater;
 
 /// Subdirectory of the update volume the server writes requests in.
 pub const INBOX: &str = "inbox";
-/// The server's user in its image (`deploy/docker/server.Dockerfile`).
+/// The server's user in its image (`deploy/docker/server.Dockerfile`),
+/// and its group since backups.
 pub const SERVER_UID: u32 = 10001;
+pub const SERVER_GID: u32 = 10001;
 /// How often the inbox is read.
 const POLL: Duration = Duration::from_secs(2);
 /// How often the running version is asked again between updates.
@@ -37,6 +43,8 @@ pub struct Settings {
     pub update_dir: PathBuf,
     pub state_dir: PathBuf,
     pub backup_dir: PathBuf,
+    /// The server's data volume, saved in backups.
+    pub serverdata_dir: PathBuf,
     /// Where compose mounts the project directory.
     pub deploy_dir: PathBuf,
     pub release_url: Option<String>,
@@ -80,6 +88,7 @@ impl Settings {
                 "/var/lib/monitorflow/updater",
             ),
             backup_dir: path("MONITORFLOW_BACKUP_DIR", "/backups"),
+            serverdata_dir: path("MONITORFLOW_SERVERDATA_DIR", "/serverdata"),
             deploy_dir: path("MONITORFLOW_DEPLOY_DIR", "/deploy"),
             release_url,
             agent_download_url,
@@ -95,16 +104,18 @@ impl Settings {
     }
 
     /// Creates the volumes' directories: the update volume and the private
-    /// ones for root, the inbox for the server's user.
+    /// one for root, the inbox for the server's user, and the backups
+    /// readable by the server's group, which new files inherit, for
+    /// downloads (ADR-0058).
     pub fn prepare_dirs(&self) -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
-        for (dir, mode) in [
-            (&self.update_dir, 0o755),
-            (&self.state_dir, 0o700),
-            (&self.backup_dir, 0o700),
+        for (dir, group, mode) in [
+            (&self.update_dir, 0, 0o755),
+            (&self.state_dir, 0, 0o700),
+            (&self.backup_dir, SERVER_GID, 0o2750),
         ] {
             std::fs::create_dir_all(dir)?;
-            std::os::unix::fs::chown(dir, Some(0), Some(0))?;
+            std::os::unix::fs::chown(dir, Some(0), Some(group))?;
             std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode))?;
         }
         let inbox = self.update_dir.join(INBOX);
@@ -149,7 +160,19 @@ pub fn take_request(
     Some(bytes.and_then(|bytes| Request::parse(&bytes)))
 }
 
-/// Serves requests until `stop` resolves.
+/// Takes "Back up now" out of the inbox, if it is there.
+pub fn take_backup_request(update_dir: &Path) -> Option<Result<BackupRequest, String>> {
+    let path = update_dir.join(INBOX).join(BACKUP_REQUEST_FILE);
+    let bytes = match read_small(&path, MAX_STATE_FILE) {
+        Ok(None) => return None,
+        Ok(Some(bytes)) => Ok(bytes),
+        Err(e) => Err(format!("cannot read the backup request: {e}")),
+    };
+    let _ = std::fs::remove_file(&path);
+    Some(bytes.and_then(|bytes| BackupRequest::parse(&bytes)))
+}
+
+/// Serves requests and takes the daily backup until `stop` resolves.
 pub async fn serve(
     updater: &mut Updater<'_>,
     settings: &Settings,
@@ -161,7 +184,9 @@ pub async fn serve(
         if let Some(state) = updater.recover().await {
             tracing::info!(?state, "interrupted update finished");
         }
+        updater.recover_backup();
     }
+    let started = Utc::now();
     let running = updater.running().await;
     updater.reporter.set_running(running);
     let (mut last_beat, mut last_running) = (Instant::now(), Instant::now());
@@ -177,6 +202,32 @@ pub async fn serve(
                     Err(e) => tracing::error!(error = %e, "cannot lock the state volume"),
                 }
                 last_running = Instant::now() - RUNNING_REFRESH;
+            }
+        }
+        let asked = match take_backup_request(&settings.update_dir) {
+            None => None,
+            Some(Err(error)) => {
+                tracing::warn!(%error, "backup request refused");
+                None
+            }
+            Some(Ok(request)) => Some((BackupKind::Manual, request.id, request.requested_by)),
+        };
+        let next = updater.next_backup(started);
+        updater.reporter.status.backups.next_at = Some(next);
+        let job = asked.or_else(|| {
+            (Utc::now() >= next).then(|| {
+                let id = format!("daily-{}", Utc::now().format("%Y%m%d%H%M%S"));
+                (BackupKind::Daily, id, String::new())
+            })
+        });
+        if let Some((kind, id, by)) = job {
+            match Lock::acquire(&settings.state_dir) {
+                Ok(_lock) => {
+                    let _ = updater.backup(kind, id, &by).await;
+                    updater.reporter.status.backups.next_at = Some(updater.next_backup(started));
+                    updater.reporter.write();
+                }
+                Err(e) => tracing::error!(error = %e, "cannot lock the state volume"),
             }
         }
         if last_running.elapsed() >= RUNNING_REFRESH {

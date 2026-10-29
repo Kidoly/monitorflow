@@ -28,7 +28,7 @@ use super::sensors::body;
 use super::{ApiError, ApiState};
 
 /// The subdirectory of the update volume the server writes requests in.
-const INBOX: &str = "inbox";
+pub(super) const INBOX: &str = "inbox";
 /// Older heartbeats mean the updater is gone.
 const ALIVE: Duration = Duration::from_secs(4 * HEARTBEAT.as_secs());
 
@@ -38,6 +38,8 @@ const ALIVE: Duration = Duration::from_secs(4 * HEARTBEAT.as_secs());
 pub struct ServerUpdateSettings {
     /// The volume shared with the updater; `None` turns updates off.
     pub dir: Option<PathBuf>,
+    /// The backups volume, read-only, for downloads (ADR-0058).
+    pub backup_dir: Option<PathBuf>,
     /// `release_url`, else `agent_download_url`.
     pub source: String,
     /// The keys built in; tests use their own.
@@ -49,6 +51,7 @@ impl ServerUpdateSettings {
     pub fn from_config(config: &ServerConfig) -> Self {
         Self {
             dir: config.server_update_dir.clone(),
+            backup_dir: config.backup_dir.clone(),
             source: update::source(config.release_url.as_deref(), &config.agent_download_url)
                 .to_owned(),
             keys: release::trusted_keys()
@@ -129,7 +132,7 @@ pub struct Started {
     pub id: String,
 }
 
-fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
+pub(super) fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
     if user.administered_customers() != Scope::All {
         return Err(ApiError::Forbidden);
     }
@@ -143,7 +146,7 @@ fn running_version() -> Version {
 }
 
 /// `status.json` and whether a request waits, read off the runtime.
-async fn read_state(dir: Option<PathBuf>) -> Result<(Option<Status>, bool), ApiError> {
+pub(super) async fn read_state(dir: Option<PathBuf>) -> Result<(Option<Status>, bool), ApiError> {
     let Some(dir) = dir else {
         return Ok((None, false));
     };
@@ -158,7 +161,7 @@ async fn read_state(dir: Option<PathBuf>) -> Result<(Option<Status>, bool), ApiE
     .map_err(|e| ApiError::Internal(e.to_string()))?
 }
 
-fn alive(status: &Status) -> bool {
+pub(super) fn alive(status: &Status) -> bool {
     Utc::now()
         .signed_duration_since(status.heartbeat_at)
         .to_std()
@@ -325,6 +328,7 @@ mod tests {
             heartbeat_at: Utc::now() - chrono::Duration::seconds(age),
             running: None,
             update: None,
+            backups: Default::default(),
         }
     }
 

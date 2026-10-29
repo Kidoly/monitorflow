@@ -40,10 +40,10 @@ function run(overrides: Partial<ServerUpdateRun> = {}): ServerUpdateRun {
     state: "succeeded",
     steps: [
       { at: "2026-10-27T10:00:00Z", message: "release 0.2.0 verified" },
-      { at: "2026-10-27T10:01:00Z", message: "database saved to monitorflow-0.1.0-to-0.2.0-20261027T100100Z.dump" },
+      { at: "2026-10-27T10:01:00Z", message: "database and server data saved to monitorflow-backup-20261027T100100Z-update.tar.gz" },
     ],
     error: null,
-    backup: "monitorflow-0.1.0-to-0.2.0-20261027T100100Z.dump",
+    backup: "monitorflow-backup-20261027T100100Z-update.tar.gz",
     migrated: false,
     started_at: "2026-10-27T10:00:00Z",
     finished_at: "2026-10-27T10:03:00Z",
@@ -112,7 +112,7 @@ describe("ServerUpdatePage", () => {
 
     await user.click(screen.getByRole("button", { name: "Update to 0.2.0…" }));
     const confirm = screen.getByRole("form", { name: "Update the server to 0.2.0?" });
-    expect(confirm).toHaveTextContent("The database is backed up first.");
+    expect(confirm).toHaveTextContent("The database and the server data are backed up first.");
     await user.click(within(confirm).getByRole("button", { name: "Update to 0.2.0" }));
 
     const post = fetchMock.mock.calls.find(([url, init]) => url === "/api/server-update" && init?.method === "POST");
@@ -184,7 +184,7 @@ describe("ServerUpdatePage", () => {
     }
   });
 
-  it("gives the restore commands after a rollback that followed migrations", async () => {
+  it("gives the restore command after a rollback that followed migrations", async () => {
     stubFetch({
       "GET /api/server-update": {
         status: 200,
@@ -194,9 +194,8 @@ describe("ServerUpdatePage", () => {
     renderPage();
     expect(await screen.findByText("Rolled back")).toBeInTheDocument();
     expect(screen.getByText(/migrations are forward-only/)).toBeInTheDocument();
-    expect(screen.getByText(/pg_restore -U monitorflow -d monitorflow --no-owner/)).toHaveTextContent(
-      "/backups/monitorflow-0.1.0-to-0.2.0-20261027T100100Z.dump",
-    );
+    expect(screen.getByText("deploy/restore.sh monitorflow-backup-20261027T100100Z-update.tar.gz")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Backups" })).toHaveAttribute("href", "/admin/backups");
   });
 
   it("reports a rollback without migrations as complete", async () => {
@@ -208,6 +207,6 @@ describe("ServerUpdatePage", () => {
     });
     renderPage();
     expect(await screen.findByText(/0.1.0 runs again with the same data/)).toBeInTheDocument();
-    expect(screen.queryByText(/pg_restore/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/restore\.sh/)).not.toBeInTheDocument();
   });
 });

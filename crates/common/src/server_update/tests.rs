@@ -230,10 +230,17 @@ fn states_and_status_round_trip() {
             started_at: Utc::now(),
             finished_at: None,
         }),
+        backups: backup::Backups::default(),
     };
     let json = serde_json::to_string(&status).unwrap();
     assert!(json.contains(r#""state":"caching_agents""#), "{json}");
     assert_eq!(serde_json::from_str::<Status>(&json).unwrap(), status);
+    // The status of an updater older than backups.
+    let old = r#"{"updater_version": "0.1.0", "heartbeat_at": "2026-10-29T00:00:00Z", "running": null, "update": null}"#;
+    assert_eq!(
+        serde_json::from_str::<Status>(old).unwrap().backups,
+        backup::Backups::default()
+    );
 }
 
 #[test]

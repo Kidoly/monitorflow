@@ -1,7 +1,7 @@
 # ADR-0056: Updating the central server from the web interface
 
 Date: 2026-10-27
-Status: accepted; implemented in stages (see the end)
+Status: accepted; implemented in stages (see the end); backups amended by ADR-0058
 
 ## Context
 
@@ -53,7 +53,7 @@ When it picks up a request, the updater:
 
 1. **Verifies** the release as above. The running version is what `monitorflow-server --version` prints in the running server container, so a local build counts too; the same version is a no-op and an older one is refused, with no override.
 2. **Downloads** the other files of the release (agent executables, installer files, MSI) into the `update` volume, each checked against `SHA256SUMS`, for step 7, and **pulls** the three images by digest.
-3. **Backs up** PostgreSQL with `pg_dump -Fc` streamed from the `postgres` container into the `backups` volume (or the host directory `BACKUP_DIR`), as `monitorflow-<from>-to-<to>-<time>.dump`, and records the latest applied migration. The update stops if the dump fails. Dumps are not deleted; the operator prunes them.
+3. **Backs up** PostgreSQL with `pg_dump -Fc` streamed from the `postgres` container into the `backups` volume (or the host directory `BACKUP_DIR`), as `monitorflow-<from>-to-<to>-<time>.dump`, and records the latest applied migration. The update stops if the dump fails. Dumps are not deleted; the operator prunes them. (Since ADR-0058, this step takes a full backup, which is pruned with the others.)
 4. **Pins** the new digests in `deploy/.env` (`SERVER_IMAGE`, `WEB_IMAGE`, `UPDATER_IMAGE`), written next to it and renamed, so a later `docker compose up` by hand keeps them. The previous values are kept in the updater's state.
 5. **Recreates** `server` and `web` with `docker compose up -d --no-deps --no-build --pull never --wait`. The server applies migrations when it starts.
 6. **Checks** that the server is healthy (its health check is `/api/health/ready`, which needs the database) and that it now reports the target version.

@@ -614,6 +614,48 @@ export interface ServerUpdateView {
   requested: boolean;
 }
 
+export type BackupKind = "daily" | "manual" | "update";
+
+/** One backup file in the backups volume (ADR-0058). */
+export interface BackupFile {
+  name: string;
+  size: number;
+  created_at: string;
+  kind: BackupKind;
+}
+
+/** The last backup, running or finished. */
+export interface BackupRun {
+  id: string;
+  kind: BackupKind;
+  /** Empty for automatic ones. */
+  requested_by: string;
+  state: "running" | "succeeded" | "failed";
+  error: string | null;
+  /** What a backup that succeeded left out or noticed. */
+  warning: string | null;
+  file: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/** `GET /api/backups`. */
+export interface BackupsView {
+  /** The updater service, which takes backups, is set up. */
+  enabled: boolean;
+  /** Files can be downloaded. */
+  downloads: boolean;
+  updater_alive: boolean;
+  /** "Back up now" waits for the updater. */
+  requested: boolean;
+  keep: number;
+  last: BackupRun | null;
+  last_success_at: string | null;
+  next_at: string | null;
+  /** Newest first. */
+  files: BackupFile[];
+}
+
 /** `POST /api/server-update/check`. */
 export interface ServerUpdateCheck {
   source: string;
@@ -1499,6 +1541,8 @@ export const api = {
   /** Server updates; global administrators only (ADR-0056). */
   serverUpdate: (signal?: AbortSignal) => request<ServerUpdateView>("/api/server-update", { signal }),
 
+  backups: (signal?: AbortSignal) => request<BackupsView>("/api/backups", { signal }),
+  startBackup: () => request<{ id: string }>("/api/backups", { method: "POST" }),
   checkServerUpdate: () => request<ServerUpdateCheck>("/api/server-update/check", { method: "POST" }),
 
   startServerUpdate: (version: string) =>

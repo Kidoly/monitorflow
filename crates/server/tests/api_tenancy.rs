@@ -758,6 +758,11 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = method.eq("POST").then(|| json!({ "version": "99.0.0" }));
             assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
         }
+        // Backups hold every customer's data: global administrators only.
+        ("GET", "/api/backups") | ("POST", "/api/backups") | ("GET", "/api/backups/{name}") => {
+            let uri = path.replace("{name}", "monitorflow-backup-20261029T030000Z-daily.tar.gz");
+            assert_eq!(ctx.status(method, &uri, None).await, StatusCode::FORBIDDEN);
+        }
         // Automatic updates are server-wide: global administrators only.
         ("GET", "/api/auto-update")
         | ("GET", "/api/settings/auto-update")

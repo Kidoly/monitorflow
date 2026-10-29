@@ -45,6 +45,16 @@ pub trait Host: Send + Sync {
     /// Recreates the `updater` service from a one-off container of its new
     /// image, which outlives this one.
     async fn replace_updater(&self) -> Result<(), HostError>;
+    /// What `monitorflow-server --version` prints in the server image of
+    /// `.env`, whether the server runs or not.
+    async fn image_version(&self) -> Result<Version, HostError>;
+    /// Stops `server` and `web`.
+    async fn stop_server(&self) -> Result<(), HostError>;
+    /// Starts PostgreSQL if needed, creates the database again and loads
+    /// the `pg_dump -Fc` at `dump` into it.
+    async fn restore_database(&self, dump: &Path) -> Result<(), HostError>;
+    /// Starts every service and waits until they are healthy.
+    async fn start_all(&self) -> Result<(), HostError>;
 }
 
 /// The Docker CLI and its compose plugin, on the project of [`Project`].
@@ -91,6 +101,24 @@ impl Compose {
         let mut all = vec!["exec", "-T", service];
         all.extend_from_slice(args);
         self.output(true, &all).await
+    }
+
+    /// `compose exec -T postgres` of `args`, with `stdin` from a file.
+    async fn exec_with_input(&self, args: &[&str], stdin: &Path) -> Result<(), HostError> {
+        let file = std::fs::File::open(stdin)
+            .map_err(|e| HostError(format!("{}: {e}", stdin.display())))?;
+        let mut all = vec!["exec", "-T", "postgres"];
+        all.extend_from_slice(args);
+        let output = self
+            .command(true, &all)
+            .stdin(file)
+            .output()
+            .await
+            .map_err(|e| HostError(format!("cannot run docker: {e}")))?;
+        if !output.status.success() {
+            return Err(HostError(failure(&all, &output.stderr)));
+        }
+        Ok(())
     }
 
     fn up_args(&self) -> Vec<String> {
@@ -240,6 +268,97 @@ impl Host for Compose {
                 "--no-deps",
                 "updater",
                 "replace-self",
+            ],
+        )
+        .await
+        .map(drop)
+    }
+
+    async fn image_version(&self) -> Result<Version, HostError> {
+        parse_version(
+            &self
+                .output(
+                    true,
+                    &[
+                        "run",
+                        "--rm",
+                        "--no-deps",
+                        "-T",
+                        "--pull",
+                        "never",
+                        "--entrypoint",
+                        "monitorflow-server",
+                        "server",
+                        "--version",
+                    ],
+                )
+                .await?,
+        )
+    }
+
+    async fn stop_server(&self) -> Result<(), HostError> {
+        let mut args = vec!["stop"];
+        args.extend(SERVICES);
+        self.output(true, &args).await.map(drop)
+    }
+
+    async fn restore_database(&self, dump: &Path) -> Result<(), HostError> {
+        self.output(
+            true,
+            &[
+                "up",
+                "--detach",
+                "--no-build",
+                "--pull",
+                "never",
+                "--wait",
+                "postgres",
+            ],
+        )
+        .await?;
+        let recreate = [
+            "psql",
+            "-U",
+            DB,
+            "-d",
+            "postgres",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-c",
+            "DROP DATABASE IF EXISTS monitorflow WITH (FORCE)",
+            "-c",
+            "CREATE DATABASE monitorflow OWNER monitorflow",
+        ];
+        self.exec("postgres", &recreate).await?;
+        self.exec_with_input(
+            &[
+                "pg_restore",
+                "-U",
+                DB,
+                "-d",
+                DB,
+                "--no-owner",
+                "--exit-on-error",
+                "--single-transaction",
+            ],
+            dump,
+        )
+        .await
+    }
+
+    async fn start_all(&self) -> Result<(), HostError> {
+        let timeout = self.timeout.as_secs().to_string();
+        self.output(
+            true,
+            &[
+                "up",
+                "--detach",
+                "--no-build",
+                "--pull",
+                "never",
+                "--wait",
+                "--wait-timeout",
+                &timeout,
             ],
         )
         .await

@@ -1008,6 +1008,9 @@ pub struct ServerConfig {
     /// The volume shared with the updater container (ADR-0056); unset, the
     /// server cannot be updated from the web interface.
     pub server_update_dir: Option<PathBuf>,
+    /// The updater's backups volume, mounted read-only (ADR-0058); unset,
+    /// backups cannot be downloaded from the web interface.
+    pub backup_dir: Option<PathBuf>,
     /// Default source of those install commands (ADR-0054). Unset leaves
     /// it to the web interface's setting; `custom` uses
     /// `agent_download_url`, which must then not be GitHub's.
@@ -1109,6 +1112,7 @@ impl Default for ServerConfig {
             agent_download_url: DEFAULT_AGENT_DOWNLOAD_URL.into(),
             release_url: None,
             server_update_dir: None,
+            backup_dir: None,
             agent_install_source: None,
             mirror: MirrorConfig::default(),
             ai: AiConfig::default(),
@@ -1542,6 +1546,7 @@ impl LoadConfig for ServerConfig {
         env.set("agent_download_url", &mut self.agent_download_url)?;
         env.set_opt("release_url", &mut self.release_url)?;
         env.set_opt("server_update_dir", &mut self.server_update_dir)?;
+        env.set_opt("backup_dir", &mut self.backup_dir)?;
         env.set_opt("agent_install_source", &mut self.agent_install_source)?;
         self.mirror.apply_env(env)?;
         self.ai.apply_env(env)?;
