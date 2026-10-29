@@ -47,6 +47,7 @@ const PATHS = {
     </>
   ),
   update: <path d="M8 13V3M4 7l4-4 4 4M3 13h10" />,
+  backups: <path d="M3 4h10v3H3zM4 7v6h8V7M7 10h2" />,
   chevron: <path d="M4 6l4 4 4-4" />,
   scope: (
     <>

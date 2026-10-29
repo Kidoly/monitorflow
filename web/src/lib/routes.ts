@@ -41,6 +41,13 @@ export const AUTO_UPDATE_PATH = "/admin/updates/";
 
 /** Updating the central server (ADR-0056). */
 export const SERVER_UPDATE_PATH = "/admin/server-update/";
+/** Backups of the server (ADR-0058). */
+export const BACKUPS_PATH = "/admin/backups/";
+
+/** Where the browser downloads the backup `name`: a plain GET with the session cookie. */
+export function backupDownloadHref(name: string): string {
+  return `/api/backups/${encodeURIComponent(name)}`;
+}
 
 /** Link to the page of the mirror `id`. */
 export function mirrorHref(id: string): string {

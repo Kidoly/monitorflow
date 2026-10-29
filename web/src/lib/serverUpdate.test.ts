@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ServerUpdateCheck, ServerUpdateRun } from "./api";
-import { changeLines, imageText, inProgress, restoreCommands } from "./serverUpdate";
+import { changeLines, imageText, inProgress, restoreCommand } from "./serverUpdate";
 
 const run = (state: ServerUpdateRun["state"]): ServerUpdateRun => ({
   id: "r1",
@@ -58,10 +58,9 @@ describe("server update helpers", () => {
     expect(changeLines({ ...check, latest: null })).toEqual([]);
   });
 
-  it("restores the named dump", () => {
-    const commands = restoreCommands("monitorflow-0.1.0-to-0.2.0-20261027T100000Z.dump").split("\n");
-    expect(commands[0]).toContain("stop server");
-    expect(commands[3]).toContain("pg_restore -U monitorflow -d monitorflow --no-owner /backups/monitorflow-0.1.0-to-0.2.0");
-    expect(commands.at(-1)).toContain("up -d --wait server");
+  it("restores the named backup in one command", () => {
+    expect(restoreCommand("monitorflow-backup-20261027T100000Z-update.tar.gz")).toBe(
+      "deploy/restore.sh monitorflow-backup-20261027T100000Z-update.tar.gz",
+    );
   });
 });

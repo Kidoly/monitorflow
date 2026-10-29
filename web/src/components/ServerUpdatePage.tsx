@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useState } from "react";
 
 import {
@@ -11,7 +12,8 @@ import {
   describeError,
 } from "@/lib/api";
 import { administersEverything, useMe } from "@/lib/me";
-import { changeLines, imageText, inProgress, isFinal, restoreCommands, STATE_WORDS } from "@/lib/serverUpdate";
+import { BACKUPS_PATH } from "@/lib/routes";
+import { changeLines, imageText, inProgress, isFinal, restoreCommand, STATE_WORDS } from "@/lib/serverUpdate";
 import { usePolledData } from "@/lib/usePolledData";
 
 import styles from "./ServerUpdate.module.css";
@@ -215,7 +217,7 @@ function Check({ view, busy, onStarted }: { view: ServerUpdateView; busy: boolea
               title={`Update the server to ${latest.version}?`}
               consequence={
                 <>
-                  The database is backed up first. The server and the web interface then restart, for a few minutes:
+                  The database and the server data are backed up first. The server and the web interface then restart, for a few minutes:
                   agents reconnect by themselves and this page follows the update. If the new version does not become
                   healthy, the previous one is restored.
                 </>
@@ -254,7 +256,7 @@ function LastUpdate({ run, requested, loadedAt }: { run: ServerUpdateRun; reques
         {run.backup && (
           <>
             {" "}
-            · database backup <code>{run.backup}</code>
+            · backup <code>{run.backup}</code>
           </>
         )}
       </p>
@@ -282,10 +284,11 @@ function LastUpdate({ run, requested, loadedAt }: { run: ServerUpdateRun; reques
         <Banner tone="bad">
           <p>
             {run.error}. The new version had already migrated the database, and migrations are forward-only: the previous
-            version cannot use it. Restore the backup taken before the update, on the server host:
+            version cannot use it. Restore the backup taken before the update: download it from{" "}
+            <Link href={BACKUPS_PATH}>Backups</Link>, then run on the server host:
           </p>
-          <pre className={styles.commands}>{restoreCommands(run.backup ?? "<backup>")}</pre>
-          <p>Data written since the backup is lost. See {GUIDE}, Restoring after a failed update.</p>
+          <pre className={styles.commands}>{restoreCommand(run.backup ?? "<backup>")}</pre>
+          <p>Data written since the backup is lost.</p>
         </Banner>
       )}
       {requested && <p className={styles.note}>Another update is waiting for the updater.</p>}

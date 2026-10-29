@@ -67,6 +67,7 @@ describe("AppShell", () => {
       "Enrollment tokens",
       "Users and roles",
       "Server update",
+      "Backups",
     ]);
     expect(within(nav()).getByText("Remediation")).toBeInTheDocument();
     expect(within(nav()).getByText("Updates")).toBeInTheDocument();

@@ -6,7 +6,9 @@
 # update. Checks that the new version runs, the data is kept, the backup
 # exists, the agent release is cached and the updater replaced itself.
 # Then a release whose server image cannot start is rolled back, and a
-# downgrade and a release signed by another key are refused.
+# downgrade and a release signed by another key are refused. Last, a
+# backup taken with "Back up now" is downloaded and restored with
+# deploy/restore.sh (ADR-0058).
 #
 # The images must trust MF_TEST_SIGNING_KEY: build them with its public
 # half in deploy/release-keys.pem. With MF_TEST_BUILD=0 the images are not
@@ -174,9 +176,11 @@ check ".env pins the release's images" pinned "$next_server"
 check "the session and the data are kept" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
 check "the update is audited" test "$(psql "SELECT count(*) FROM audit_log WHERE action = 'server.update'")" = 1
 backup=$(jq -r .backup "$work/next.json")
-check "a backup was taken before the update" grep -q "^monitorflow-.*-to-$NEXT-.*\.dump$" <<<"$backup"
-check "the backup is a dump pg_restore reads" \
-    sh -c "docker compose -p $project -f '$work/deploy/docker-compose.yml' -f '$work/deploy/docker-compose.test.yml' exec -T postgres pg_restore --list '/backups/$backup' | grep -q 'TABLE public sites'"
+check "a backup was taken before the update" grep -q '^monitorflow-backup-.*-update\.tar\.gz$' <<<"$backup"
+get "backups/$backup" >"$work/update-backup.tar.gz" || true
+check "it holds the database and the server's CA" \
+    sh -c "tar -tzf '$work/update-backup.tar.gz' | grep -qx 'serverdata/ca/ca-key.pem' && tar -tzf '$work/update-backup.tar.gz' | grep -qx database.dump"
+check "the backups page lists it" sh -c "curl -fsSk -b '$work/cookies' '$api/backups' | jq -e --arg b '$backup' '.files | map(.name) | index(\$b)'"
 check "the agent release is cached" sh -c "docker compose -p $project -f '$work/deploy/docker-compose.yml' -f '$work/deploy/docker-compose.test.yml' exec -T server monitorflow-server agent-release list | grep -qx $NEXT"
 check "the release's installer is served for installs" \
     curl -fsSk -o /dev/null "https://127.0.0.1:$HTTPS_PORT/agent/$NEXT/install.sh"
@@ -205,7 +209,36 @@ forged_refused() { get server-update | jq -e '.update.id == "forged" and .update
 check "a forged request for it fails" until_true 60 forged_refused
 check "and the server still runs $NEXT" test "$(server_version)" = "monitorflow-server $NEXT"
 
+echo "backing up and restoring"
+backup_now() {
+    [ "$(post backups '')" = 202 ] || return 1
+    jq -r .id "$work/answer" >"$work/backup-id"
+}
+check "Back up now is accepted" until_true 120 backup_now
+backup_done() {
+    get backups | jq -e --arg id "$(cat "$work/backup-id")" '.last.id == $id and .last.state == "succeeded"' >/dev/null
+}
+check "the backup succeeds" until_true 300 backup_done
+name=$(get backups | jq -r .last.file)
+get "backups/$name" >"$work/backup.tar.gz" || true
+check "it downloads" tar -tzf "$work/backup.tar.gz"
+check "the download is audited" test "$(psql "SELECT count(*) FROM audit_log WHERE action = 'server.backup.download'")" -ge 1
+ca() { compose exec -T server sha256sum /var/lib/monitorflow/server/ca/ca-key.pem; }
+ca_before=$(ca)
+compose exec -T server monitorflow-server token create --role agent --id ci-lost --site lost --create-site >/dev/null
+compose exec -T server sh -c 'echo stray >/var/lib/monitorflow/server/stray'
+COMPOSE_PROJECT_NAME=$project COMPOSE_FILE="$work/deploy/docker-compose.yml:$work/deploy/docker-compose.test.yml" \
+    "$work/deploy/restore.sh" "$work/backup.tar.gz" >"$work/restore.log" 2>&1 && restored=yes || restored=no
+check "deploy/restore.sh succeeds" test "$restored" = yes
+check "data written after the backup is gone" test "$(psql "SELECT count(*) FROM sites WHERE name = 'lost'")" = 0
+check "data before it is back" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
+no_stray() { ! compose exec -T server test -e /var/lib/monitorflow/server/stray; }
+check "the server data is the backup's" no_stray
+check "the CA is the same" test "$(ca)" = "$ca_before"
+check "the API is ready after the restore" curl -fsSk "$api/health/ready"
+
 if [ "$failed" -ne 0 ]; then
+    cat "$work/restore.log" 2>/dev/null || true
     cat "$work/next.json" "$work/broken.json" 2>/dev/null || true
     compose logs --tail 80 updater server
     exit 1

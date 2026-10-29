@@ -39,8 +39,6 @@ services:
       - pgdata:/var/lib/postgresql/data
       - dbcerts:/certs:ro
       - ./docker/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
-      # Dumps the updater takes, readable for pg_restore (ADR-0056).
-      - ${BACKUP_DIR:-backups}:/backups:ro
     networks: [storage]
     depends_on:
       db-certs: { condition: service_completed_successfully }
@@ -83,6 +81,8 @@ services:
       # Server updates through the updater service (ADR-0056).
       MONITORFLOW_SERVER_UPDATE_DIR: /var/lib/monitorflow/update
       MONITORFLOW_RELEASE_URL: ${RELEASE_URL:-}
+      # The updater's backups, for downloads (ADR-0058).
+      MONITORFLOW_BACKUP_DIR: /var/lib/monitorflow/backups
       # Unset: chosen in the web interface, github by default (ADR-0054).
       MONITORFLOW_AGENT_INSTALL_SOURCE: ${AGENT_INSTALL_SOURCE:-}
       # The ports published below, for the install commands of new tokens.
@@ -93,6 +93,7 @@ services:
       - dbcerts:/certs:ro
       # Requests go to its inbox; the rest belongs to the updater.
       - update:/var/lib/monitorflow/update
+      - ${BACKUP_DIR:-backups}:/var/lib/monitorflow/backups:ro
     networks: [storage, front]
     ports:
       - "${GRPC_PORT:-7443}:7443"
@@ -129,8 +130,9 @@ services:
       server: { condition: service_healthy }
     restart: unless-stopped
 
-  # Installs releases when the server asks (ADR-0056). The only service
-  # with the Docker socket; it has no listener.
+  # Installs releases when the server asks (ADR-0056) and backs up the
+  # database and serverdata every day (ADR-0058). The only service with
+  # the Docker socket; it has no listener.
   updater:
     build:
       context: ..
@@ -147,6 +149,8 @@ services:
       - update:/var/lib/monitorflow/update
       - updater:/var/lib/monitorflow/updater
       - ${BACKUP_DIR:-backups}:/backups
+      # Saved in backups, written back by deploy/restore.sh.
+      - serverdata:/serverdata
     restart: unless-stopped
 
 networks:
@@ -160,12 +164,13 @@ volumes:
   pgdata:
   vmdata:
   vldata:
-  # Holds the CA: losing it means enrolling every agent again. Back it up.
+  # Holds the CA: losing it means enrolling every agent again. In backups.
   serverdata:
   caddydata:
   # Requests and status of server updates, shared by server and updater.
   update:
   # The updater's own state: what to roll back to.
   updater:
-  # Database dumps taken before each update, unless BACKUP_DIR is set.
+  # Daily backups and those before each update, the 7 newest kept, unless
+  # BACKUP_DIR is set. They hold the CA keys: protect copies.
   backups:

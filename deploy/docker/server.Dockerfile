@@ -32,11 +32,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && cp target/release/monitorflow-server /usr/local/bin/
 
 FROM debian:trixie-slim
-# ca-certificates for the AI provider; openssl for db-certs.
+# ca-certificates for the AI provider; openssl for db-certs. The group
+# is fixed too: the updater lets it read backups (ADR-0058).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates openssl \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --home-dir /var/lib/monitorflow/server \
+    && groupadd --system --gid 10001 monitorflow \
+    && useradd --system --uid 10001 --gid 10001 --home-dir /var/lib/monitorflow/server \
         --shell /usr/sbin/nologin monitorflow \
     && install -d -o monitorflow -g monitorflow -m 0700 /var/lib/monitorflow/server
 COPY --from=build /usr/local/bin/monitorflow-server /usr/local/bin/

@@ -84,6 +84,9 @@
 //! | GET | `/api/server-update` | global administrator | [`server_update::UpdateView`]: running version, updater and last update (ADR-0056) |
 //! | POST | `/api/server-update/check` | global administrator | [`server_update::CheckResult`]: the latest release, verified, and what it changes |
 //! | POST | `/api/server-update` | global administrator | body `{"version"}`; 202 `{"id"}`; 400 unless newer, 409 without a running updater or while busy; audited |
+//! | GET | `/api/backups` | global administrator | [`backups::BackupsView`]: last backup, next one and the files kept (ADR-0058) |
+//! | POST | `/api/backups` | global administrator | "Back up now"; 202 `{"id"}`; 409 without a running updater or while one runs; audited |
+//! | GET | `/api/backups/{name}` | global administrator | the backup file as an attachment; audited |
 //! | GET | `/api/campaigns` | customer role | [`campaigns::CampaignList`], newest first, paginated |
 //! | POST | `/api/campaigns` | customer administrator | body [`campaigns::CreateRequest`]; 201 [`campaigns::CampaignDetail`] |
 //! | GET | `/api/campaigns/{id}` | customer role | [`campaigns::CampaignDetail`]: the campaign, its waves and servers |
@@ -431,6 +434,7 @@ pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
 pub mod auto_update;
+pub mod backups;
 pub mod campaigns;
 pub mod commands;
 pub mod customers;
@@ -742,6 +746,8 @@ pub fn router(state: ApiState) -> Router {
             get(server_update::get).post(server_update::start),
         )
         .route("/api/server-update/check", post(server_update::check))
+        .route("/api/backups", get(backups::get).post(backups::start))
+        .route("/api/backups/{name}", get(backups::download))
         .route(
             "/api/servers/{id}/sources",
             post(sources::configure).delete(sources::revert),

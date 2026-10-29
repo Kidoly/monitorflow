@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::release::{self, PublicKey, Release, ReleaseError, Version};
 
+pub mod backup;
+
 /// The release file naming the images, listed in `SHA256SUMS`.
 pub const IMAGES_FILE: &str = "images.json";
 /// Files of the shared volume.
@@ -312,6 +314,9 @@ pub struct Status {
     pub running: Option<Running>,
     /// The last update, running or finished.
     pub update: Option<UpdateRun>,
+    /// Backups (ADR-0058).
+    #[serde(default)]
+    pub backups: backup::Backups,
 }
 
 /// How often the updater rewrites its status.
@@ -337,7 +342,7 @@ pub struct UpdateRun {
     /// What happened so far, oldest first.
     pub steps: Vec<Step>,
     pub error: Option<String>,
-    /// File name of the database dump in the backups volume.
+    /// File name of the backup taken first, in the backups volume.
     pub backup: Option<String>,
     /// Whether the new server applied migrations: a rollback then needs the
     /// backup restored.
