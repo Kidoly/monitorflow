@@ -1,8 +1,7 @@
 //! Incident endpoints (ADR-0017, ADR-0019): read-only views of what the
-//! threshold engine opened and resolved.
+//! threshold engine and the offline rule (ADR-0057) opened and resolved.
 //!
-//! The engine owns `incidents` and `incident_events`; nothing here writes
-//! them. Every role reads the incidents of the servers of its sites, and
+//! They own `incidents` and `incident_events`; nothing here writes them. Every role reads the incidents of the servers of its sites, and
 //! an incident outside them is not found.
 
 use axum::extract::rejection::QueryRejection;
@@ -63,10 +62,16 @@ pub struct ListParams {
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct IncidentView {
     pub id: Uuid,
-    pub server_id: Uuid,
+    /// `null` for a relay's offline incident.
+    pub server_id: Option<Uuid>,
+    /// Set for a relay's offline incident only (ADR-0057).
+    pub relay_id: Option<Uuid>,
+    /// The server's hostname, or the relay's name.
     pub hostname: String,
     pub site_id: Uuid,
     pub site_name: String,
+    pub customer_id: Uuid,
+    /// `offline` when the server or relay stopped reporting (ADR-0057).
     pub metric: String,
     /// `""` for a series without an instance.
     pub instance: String,
@@ -133,13 +138,15 @@ fn decode_cursor(cursor: &str) -> Result<Cursor, ApiError> {
         .ok_or_else(|| ApiError::Invalid("invalid cursor".into()))
 }
 
-const SELECT: &str = "SELECT i.id, i.server_id, s.hostname, s.site_id, si.name AS site_name,
-                             i.metric, i.instance, i.severity, i.state, i.opened_at,
+const SELECT: &str = "SELECT i.id, i.server_id, i.relay_id,
+                             COALESCE(s.hostname, r.name) AS hostname, si.id AS site_id,
+                             si.name AS site_name, si.customer_id, i.metric, i.instance, i.severity, i.state, i.opened_at,
                              i.resolved_at, i.last_value, i.last_value_at, i.peak_value,
                              i.threshold
                       FROM incidents i
-                      JOIN servers s ON s.id = i.server_id
-                      JOIN sites si ON si.id = s.site_id";
+                      LEFT JOIN servers s ON s.id = i.server_id
+                      LEFT JOIN relays r ON r.id = i.relay_id
+                      JOIN sites si ON si.id = COALESCE(s.site_id, r.site_id)";
 
 /// `GET /api/incidents`: one page of the incidents of the user's sites,
 /// open ones first, then newest first.
@@ -177,11 +184,11 @@ pub async fn list(
     // had no incidents.
     let mut rows: Vec<IncidentView> = sqlx::query_as(&format!(
         "{SELECT}
-         WHERE ($1 OR s.site_id = ANY($2))
+         WHERE ($1 OR si.id = ANY($2))
            AND ($3::text IS NULL OR i.state = $3)
            AND ($4::text IS NULL OR i.severity = $4)
            AND ($5::uuid IS NULL OR i.server_id = $5)
-           AND ($6::uuid IS NULL OR s.site_id = $6)
+           AND ($6::uuid IS NULL OR si.id = $6)
            AND ($7::timestamptz IS NULL OR i.resolved_at IS NULL OR i.resolved_at >= $7)
            AND ($8::timestamptz IS NULL OR i.opened_at <= $8)
            AND ($9::boolean IS NULL OR (i.state = 'open', i.opened_at, i.id) < ($9, $10, $11))

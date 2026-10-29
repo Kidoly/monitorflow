@@ -236,9 +236,8 @@ struct Tracked {
     incident: Option<(Uuid, f64)>,
 }
 
-// TODO(host-down): an agent that stops reporting is not an incident: its
-// series keep their open incidents (ADR-0017, no data). A "host down" rule
-// on the registry's liveness will open one.
+// An agent that stops reporting keeps its series' open incidents
+// (ADR-0017, no data); `offline` opens one for the silence (ADR-0057).
 struct Engine {
     settings: EngineSettings,
     /// Thresholds per agent ID; `None` for peers without a `servers` row.

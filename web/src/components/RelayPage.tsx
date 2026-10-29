@@ -35,6 +35,7 @@ import { UUID } from "@/lib/uuid";
 
 import { AdminLayout } from "./AdminLayout";
 import styles from "./AdminPages.module.css";
+import { OfflineAlerts } from "./OfflineAlerts";
 import { CertificateCell, relayStatus } from "./RelayList";
 
 /** RFC 5280 reasons, as the revoke route takes them (ADR-0029). */
@@ -225,6 +226,9 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
     { label: "Server names", value: relay.server_names.join(", ") || "—" },
     ...(certificate ? [{ label: "Certificate serial", value: certificate.serial, mono: true }] : []),
     { label: "Enrolled", value: formatMinute(new Date(relay.created_at)) },
+    ...(relay.revoked_at
+      ? []
+      : [{ label: "Offline alerts", value: <OfflineAlerts kind="relays" target={relay} onChanged={refresh} /> }]),
     ...(relay.revoked_at
       ? [
           { label: "Revoked", value: formatMinute(new Date(relay.revoked_at)) },

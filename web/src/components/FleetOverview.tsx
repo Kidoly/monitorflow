@@ -6,10 +6,11 @@ import { useCallback, useState } from "react";
 import { type Incident, type Server, api, describeError, isUnauthorized, isAbortError } from "@/lib/api";
 import { certificateState } from "@/lib/certificates";
 import { formatOs } from "@/lib/format";
+import { incidentTitle, isOffline } from "@/lib/incidents";
 import { administersCustomer, useMe } from "@/lib/me";
 import { incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
-import { formatSensorValue, seriesTitle } from "@/lib/sensors";
+import { formatSensorValue } from "@/lib/sensors";
 import { REFRESH_MS, usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
 import { Button, ButtonLink } from "@/components/ui/Button";
@@ -61,8 +62,8 @@ async function loadFleet(signal: AbortSignal): Promise<Fleet> {
   return { servers, incidents: open };
 }
 
-function inScope(server: Server, scope: Scope): boolean {
-  return (!scope.customerId || server.customer_id === scope.customerId) && (!scope.siteId || server.site_id === scope.siteId);
+function inScope(item: { customer_id?: string; site_id: string }, scope: Scope): boolean {
+  return (!scope.customerId || item.customer_id === scope.customerId) && (!scope.siteId || item.site_id === scope.siteId);
 }
 
 function toRows(fleet: Fleet, now: Date): Row[] {
@@ -100,8 +101,9 @@ export function FleetOverview() {
 
   const now = updatedAt ?? new Date();
   const all = data ? toRows({ ...data, servers: data.servers.filter((s) => inScope(s, scope)) }, now) : [];
+  // Servers' and relays' incidents: a relay offline counts too (ADR-0057).
   const ids = new Set(all.map((r) => r.server.id));
-  const incidents = data?.incidents?.filter((i) => ids.has(i.server_id)) ?? [];
+  const incidents = data?.incidents?.filter((i) => (i.server_id ? ids.has(i.server_id) : inScope(i, scope))) ?? [];
   const online = all.filter((r) => r.server.status === "online" && !r.revoked).length;
 
   const status = params.get("status");
@@ -287,9 +289,9 @@ function Problem({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
     return (
       <span className={styles.problem}>
         <StatusLabel kind="severity" value={incident.severity} />
-        &nbsp; {seriesTitle(undefined, incident.metric, incident.instance)}{" "}
+        &nbsp; {incidentTitle(incident)}{" "}
         <span>
-          {formatSensorValue(incident.metric, incident.last_value)} ·{" "}
+          {!isOffline(incident) && `${formatSensorValue(incident.metric, incident.last_value)} · `}
           {formatDuration((now.getTime() - Date.parse(incident.opened_at)) / 1000)}
         </span>
       </span>

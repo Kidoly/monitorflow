@@ -7,10 +7,12 @@ import {
   filtersFromQuery,
   filtersToQuery,
   incidentSeconds,
+  incidentTitle,
   incidentWindow,
+  isOffline,
   resolvesWhen,
 } from "./incidents";
-import { incidentsHref } from "./routes";
+import { incidentPeerHref, incidentsHref } from "./routes";
 
 const SITE = "0b8d2f6e-1c4a-4f7e-9d2b-3a5c6e7f8a90";
 const SERVER = "6f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a01";
@@ -108,5 +110,15 @@ describe("incident window margins and recovery", () => {
     expect(resolvesWhen({ ...threshold, warning: null }, pct)).toBe("the value is at or below 93%");
     expect(resolvesWhen({ ...threshold, comparison: "<", warning: 0.1, critical: null }, pct)).toBe("the value is at or above 12%");
     expect(resolvesWhen({ ...threshold, warning: null, critical: null }, pct)).toBeNull();
+  });
+});
+
+describe("offline incidents", () => {
+  it("are titled and linked to their server or relay", () => {
+    expect(isOffline({ metric: "offline" })).toBe(true);
+    expect(incidentTitle({ metric: "offline", instance: "" })).toBe("Offline");
+    expect(incidentTitle({ metric: "monitorflow_disk_used_ratio", instance: "/var" })).toBe("Disk used /var");
+    expect(incidentPeerHref({ server_id: "s1" })).toBe("/servers/view/?id=s1");
+    expect(incidentPeerHref({ server_id: null, relay_id: "r1" })).toBe("/admin/relays/view/?id=r1");
   });
 });

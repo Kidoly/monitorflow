@@ -1,7 +1,8 @@
 //! `GET /api/sites`: the sites a user may read, for site-level
 //! configuration in the web interface; `PUT
 //! /api/sites/{id}/agent-auto-update` sets the site's automatic update
-//! override (ADR-0053, ADR-0055).
+//! override (ADR-0053, ADR-0055); offline alerts are set in
+//! [`super::offline_alerts`].
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -30,6 +31,9 @@ pub struct SiteView {
     /// The site's automatic update override: `null` follows the
     /// server-wide setting (ADR-0055).
     pub agent_auto_update: Option<bool>,
+    /// Whether servers and relays of the site open incidents when offline
+    /// (ADR-0057).
+    pub offline_alerts: bool,
     /// Whether automatic updates apply to the site, override or not.
     #[sqlx(skip)]
     pub agent_auto_update_effective: bool,
@@ -53,7 +57,7 @@ const SELECT_SITES: &str = "SELECT si.id, si.name, count(s.id) AS server_count,
                                    (SELECT count(*) FROM relays r WHERE r.site_id = si.id)
                                        AS relay_count,
                                    si.customer_id, c.name AS customer_name,
-                                   si.agent_auto_update
+                                   si.agent_auto_update, si.offline_alerts
                             FROM sites si
                             JOIN customers c ON c.id = si.customer_id
                             LEFT JOIN servers s ON s.site_id = si.id";

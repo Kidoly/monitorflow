@@ -18,8 +18,8 @@ import {
 } from "@/lib/api";
 import { metricsError } from "@/lib/charts";
 import { formatSeconds } from "@/lib/format";
-import { INCIDENT_MARGINS, incidentWindow, resolvesWhen } from "@/lib/incidents";
-import { incidentsHref, sensorHref, serverHref } from "@/lib/routes";
+import { INCIDENT_MARGINS, OFFLINE_AFTER_S, incidentTitle, incidentWindow, isOffline, resolvesWhen } from "@/lib/incidents";
+import { incidentPeerHref, incidentsHref, sensorHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue, seriesTitle } from "@/lib/sensors";
 import { SEVERITY_LABELS } from "@/lib/thresholds";
@@ -52,7 +52,8 @@ type Chart = { start: number; end: number; step: number } & ({ series: MetricSer
 
 interface Loaded {
   incident: IncidentDetail;
-  chart: Chart;
+  /** Null for an offline incident, which has no metric to draw. */
+  chart: Chart | null;
   /** What the AI remediation loop did about it; null when nothing, or not readable. */
   remediation: RemediationIncident | null;
   margin: Margin;
@@ -69,6 +70,7 @@ async function loadIncident(id: string, margin: Margin, signal: AbortSignal): Pr
       },
     ),
   ]);
+  if (isOffline(incident) || !incident.server_id) return { incident, chart: null, remediation, margin };
   const window = incidentWindow(incident.opened_at, incident.resolved_at, new Date(), margin.seconds);
   let chart: Chart;
   try {
@@ -113,7 +115,7 @@ export function IncidentPage({ id }: { id: string | null }) {
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher, { enabled: valid });
 
   const incident = data?.incident;
-  const title = incident ? seriesTitle(undefined, incident.metric, incident.instance) : "";
+  const title = incident ? incidentTitle(incident) : "";
   useEffect(() => {
     if (incident) document.title = `${title} on ${incident.hostname} · MonitorFlow`;
   }, [incident, title]);
@@ -144,6 +146,12 @@ export function IncidentPage({ id }: { id: string | null }) {
   const resolved = incident.resolved_at ? Date.parse(incident.resolved_at) / 1000 : null;
   const tone: Tone = incident.severity === "critical" ? "bad" : "warn";
   const ratio = incident.metric.endsWith("_ratio");
+  const offline = chart === null;
+  const host = (
+    <Link href={scopedHref(incidentPeerHref(incident), scope)} className={styles.underline}>
+      {incident.hostname}
+    </Link>
+  );
 
   return (
     <Page>
@@ -151,12 +159,15 @@ export function IncidentPage({ id }: { id: string | null }) {
       <PageHeader
         detail
         title={
-          <>
-            {title} on{" "}
-            <Link href={scopedHref(serverHref(incident.server_id), scope)} className={styles.underline}>
-              {incident.hostname}
-            </Link>
-          </>
+          offline ? (
+            <>
+              {host} {open ? "is offline" : "was offline"}
+            </>
+          ) : (
+            <>
+              {title} on {host}
+            </>
+          )
         }
         status={
           <>
@@ -169,8 +180,10 @@ export function IncidentPage({ id }: { id: string | null }) {
         meta={open ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : "Resolved: it no longer changes."}
         actions={
           <>
-            <ButtonLink href={scopedHref(sensorHref(incident.server_id, incident.metric, incident.instance), scope)}>Open sensor</ButtonLink>
-            <ButtonLink href={scopedHref(serverHref(incident.server_id), scope)}>Open {incident.hostname}</ButtonLink>
+            {incident.server_id && !offline && (
+              <ButtonLink href={scopedHref(sensorHref(incident.server_id, incident.metric, incident.instance), scope)}>Open sensor</ButtonLink>
+            )}
+            <ButtonLink href={scopedHref(incidentPeerHref(incident), scope)}>Open {incident.hostname}</ButtonLink>
           </>
         }
       />
@@ -179,8 +192,12 @@ export function IncidentPage({ id }: { id: string | null }) {
         compact
         label="Summary"
         tiles={[
-          { label: "Last value", value: format(incident.last_value), tone: open ? tone : "plain" },
-          { label: "Peak", value: format(incident.peak_value) },
+          ...(offline
+            ? [{ label: "Last heard from", value: minutes(incident.opened_at), tone: open ? tone : ("plain" as const) }]
+            : [
+                { label: "Last value", value: format(incident.last_value), tone: open ? tone : ("plain" as const) },
+                { label: "Peak", value: format(incident.peak_value) },
+              ]),
           {
             label: new Date(incident.opened_at).toDateString() === now.toDateString()
               ? "Opened"
@@ -190,7 +207,7 @@ export function IncidentPage({ id }: { id: string | null }) {
           { label: open ? "Duration" : "Lasted", value: formatDuration(((resolved ?? now.getTime() / 1000) - opened)) },
         ]}
       />
-      {"error" in chart ? (
+      {chart === null ? null : "error" in chart ? (
         <Banner tone="bad">{chart.error}</Banner>
       ) : (
         <TimeChart
@@ -228,7 +245,18 @@ export function IncidentPage({ id }: { id: string | null }) {
         />
       )}
       <div className={styles.pair}>
-        <FactsBox title="Threshold when it opened" facts={thresholdFacts(incident.threshold, format)} />
+        {offline ? (
+          <FactsBox
+            title="Rule"
+            facts={[
+              { label: "Opens", value: `after ${formatSeconds(OFFLINE_AFTER_S)} without a heartbeat` },
+              { label: "Resolves when", value: "it connects again, or is muted or revoked" },
+              { label: "Mute", value: <>Offline alerts on {host}, or for its site in Administration › Sites</> },
+            ]}
+          />
+        ) : (
+          <FactsBox title="Threshold when it opened" facts={thresholdFacts(incident.threshold, format)} />
+        )}
         <TableBox title="Timeline">
           <Timeline events={incident.events} format={format} now={now} />
         </TableBox>

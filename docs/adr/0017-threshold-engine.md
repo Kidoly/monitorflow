@@ -34,6 +34,6 @@ Architecture §5 puts the threshold engine on the central server, so rules chang
 - A threshold on a metric no sensor emits does nothing, silently; the API should warn about it.
 - Durations count sample time. An agent whose clock is wrong opens incidents at the wrong wall time, but with the right duration.
 - A dropped batch only delays a transition until the next sample of the series, unless it breaks a pending run longer than `max_gap`.
-- An incident on a server whose agent stopped stays open until the host-down rule exists or the threshold is removed.
+- An incident on a server whose agent stopped stays open until the threshold is removed or the agent reports again; ADR-0057 adds the offline incident for the silence itself.
 - Sensors with an interval above `max_gap` can only fire with a duration of 0, until `max_gap` follows the sensor interval.
 - The API task can read thresholds, incidents, events and alert states as they are and writes only `thresholds`; the engine owns the other three tables.

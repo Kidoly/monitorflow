@@ -15,6 +15,7 @@ import { scopedHref } from "@/lib/scope";
 import { usePolledData } from "@/lib/usePolledData";
 
 import { AdminLayout } from "./AdminLayout";
+import { OfflineAlerts } from "./OfflineAlerts";
 import styles from "./AdminPages.module.css";
 
 /** What the design asks of new names; the site name labels every stored metric. */
@@ -152,6 +153,11 @@ function CustomerSites({
       key: "auto-update",
       header: "Automatic updates",
       cell: (site) => <AutoUpdate site={site} canChange={canCreate} onChanged={onChanged} />,
+    },
+    {
+      key: "offline-alerts",
+      header: "Offline alerts",
+      cell: (site) => <OfflineAlerts kind="sites" target={{ ...site, site_id: site.id }} onChanged={onChanged} />,
     },
   ];
   return (
