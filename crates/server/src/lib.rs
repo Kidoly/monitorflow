@@ -14,6 +14,7 @@ pub mod enroll;
 pub mod grpc;
 pub mod ingest;
 pub mod mirror;
+pub mod notify;
 pub mod relay_commands;
 pub mod remediation;
 pub mod renew;

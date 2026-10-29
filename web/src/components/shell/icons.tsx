@@ -47,6 +47,7 @@ const PATHS = {
     </>
   ),
   update: <path d="M8 13V3M4 7l4-4 4 4M3 13h10" />,
+  bell: <path d="M4 11V7a4 4 0 0 1 8 0v4l1 1H3zM7 14h2" />,
   chevron: <path d="M4 6l4 4 4-4" />,
   scope: (
     <>

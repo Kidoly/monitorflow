@@ -769,6 +769,18 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = method.ne("GET").then(|| json!({}));
             assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
+        // Notification channels may cover every customer: global
+        // administrators only (ADR-0058).
+        ("GET", "/api/notifications/channels")
+        | ("POST", "/api/notifications/channels")
+        | ("PUT", "/api/notifications/channels/{id}")
+        | ("DELETE", "/api/notifications/channels/{id}")
+        | ("POST", "/api/notifications/channels/{id}/test") => {
+            let uri = path.replace("{id}", &Uuid::new_v4().to_string());
+            let body = matches!(method, "POST" | "PUT")
+                .then(|| json!({ "kind": "webhook", "settings": { "url": "https://x.example/" } }));
+            assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
+        }
         // Creation: a customer admin cannot create customers, nor sites of B.
         ("POST", "/api/customers") => {
             assert_eq!(

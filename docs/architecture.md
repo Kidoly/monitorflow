@@ -99,6 +99,10 @@ The same crate serves Windows agents (ADR-0048): `cpu`, `memory`, `disk`, `port`
 
 Runs on the central server, not on the agent, so rules can change without touching the fleet. It evaluates incoming samples against the sensor's thresholds, tracks state per (server, sensor), and opens or closes incidents. Alert state is persisted in PostgreSQL so a server restart does not lose or duplicate incidents.
 
+### Notifications
+
+Database triggers on incident events, approvals and failed updates write an outbox; a server task delivers it to the email and webhook channels administrators set up in the web interface, each for every customer or one (ADR-0058).
+
 ## 6. Storage
 
 | Data | Store | Why |
@@ -268,7 +272,7 @@ Recorded in short form here; rationale in `docs/adr/`.
 | AI provider | Provider-agnostic trait; Claude API first |
 | AI in MSP mode | One shared configuration; one customer per request; secrets redacted |
 | Snapshots | Proxmox first |
-| Notifications | Not in the first version |
+| Notifications | Email (SMTP) and signed JSON webhooks set up in the interface with a test button; an outbox filled by triggers on incident events, pending approvals and failed updates, delivered at most once by a polling task; secrets never returned (ADR-0058) |
 | Threshold evaluation | Server side |
 | Time series | VictoriaMetrics, not a custom store |
 | Peer identity | Role and ID in a `monitorflow://<role>/<id>` URI SAN; relays speak only for agents of their site |

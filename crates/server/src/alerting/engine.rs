@@ -59,7 +59,8 @@ pub struct Notification<'a> {
 
 /// Where incident changes go besides the database. Called on the engine
 /// task: an implementation that does I/O must queue and return.
-// TODO(notifications): mail, webhook and chat notifiers.
+// Email and webhook notifications do not go through here: database
+// triggers on incident events fill their outbox (ADR-0058).
 pub trait Notifier: Send + Sync + 'static {
     fn notify(&self, notification: &Notification<'_>);
 }

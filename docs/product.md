@@ -9,13 +9,14 @@ Status: draft, 2026-10-18.
 - Host full apt and dnf mirrors and run scheduled update campaigns.
 - Alert on sensor thresholds and let an AI propose or run shell remediation, with approval, audit and rollback.
 - Ship a web interface from the first version, with graphs and a live view of the fleet.
+- Notify by email and webhook when incidents open or resolve, approvals wait and updates fail (ADR-0058).
 
 ## Non-goals for the first version
 
 - Windows agents (planned later).
 - A custom time-series database.
 - A local or self-hosted AI model.
-- Alert notification channels (email, webhook, chat).
+- Dedicated chat integrations. Email and webhook notifications are in the first version (ADR-0058, which revises this list); chat services are reached through webhooks.
 
 ## Roadmap
 

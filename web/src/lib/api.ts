@@ -1164,6 +1164,55 @@ interface RequestOptions {
   redirectOn401?: boolean;
 }
 
+/** SMTP settings of an email channel; the password is never sent back (ADR-0058). */
+export interface EmailSettings {
+  host: string;
+  port: number;
+  /** Empty without authentication. */
+  username: string;
+  /** Empty: the username is the sender. */
+  from: string;
+  to: string[];
+}
+
+export interface WebhookSettings {
+  url: string;
+}
+
+/** One channel of `GET /api/notifications/channels`: global administrators only (ADR-0058). */
+export type NotificationChannel = (
+  | { kind: "email"; settings: EmailSettings }
+  | { kind: "webhook"; settings: WebhookSettings }
+) & {
+  id: string;
+  /** Whether a password or signing secret is stored; the secret itself never leaves the server. */
+  has_secret: boolean;
+  /** Null: every customer. */
+  customer_id: string | null;
+  customer_name: string | null;
+  created_at: string;
+  last_sent_at: string | null;
+  /** The last delivery's or test's error in plain words; null once one works. */
+  last_error: string | null;
+  last_error_at: string | null;
+};
+
+export interface NotificationChannelList {
+  channels: NotificationChannel[];
+}
+
+/** Body of creating or editing a channel; on edit an empty `secret` keeps the stored one. */
+export type NotificationChannelRequest = (
+  | { kind: "email"; settings: Partial<EmailSettings> & Pick<EmailSettings, "host" | "to"> }
+  | { kind: "webhook"; settings: WebhookSettings }
+) & { secret?: string | null; customer_id: string | null };
+
+/** Result of "Send test": the error says why in plain words. */
+export interface ChannelTestResult {
+  ok: boolean;
+  error: string | null;
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
   const headers: Record<string, string> = { Accept: "application/json" };
@@ -1359,6 +1408,23 @@ export const api = {
   /** Changes the address in install commands; global administrators only, audited. `null` is the default. */
   setPublicAddress: (body: { address: string | null }) =>
     request<PublicAddress>("/api/settings/public-address", { method: "PUT", body }),
+
+  /** Notification channels, without secrets; global administrators only (ADR-0058). */
+  notificationChannels: (signal?: AbortSignal) =>
+    request<NotificationChannelList>("/api/notifications/channels", { signal }),
+
+  createNotificationChannel: (body: NotificationChannelRequest) =>
+    request<NotificationChannel>("/api/notifications/channels", { method: "POST", body }),
+
+  updateNotificationChannel: (id: string, body: NotificationChannelRequest) =>
+    request<NotificationChannel>(`/api/notifications/channels/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteNotificationChannel: (id: string) =>
+    request<void>(`/api/notifications/channels/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Sends a test now; 200 with `ok` false and the reason when it does not go through. */
+  testNotificationChannel: (id: string) =>
+    request<ChannelTestResult>(`/api/notifications/channels/${encodeURIComponent(id)}/test`, { method: "POST" }),
 
   /** Revokes an unused token; 409 once used. */
   revokeToken: (id: string) => request<void>(`/api/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
