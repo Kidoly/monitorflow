@@ -1120,6 +1120,50 @@ export interface SetupStatus {
   pending: boolean;
 }
 
+/** One account of `GET /api/users` (ADR-0058). */
+export interface UserAccount {
+  id: string;
+  username: string;
+  /** `invited`: has not chosen a password with their link yet. */
+  state: "active" | "invited" | "disabled";
+  created_at: string;
+  roles: RoleGrant[];
+  /** Expiry of the user's unused password link, if any. */
+  link_expires_at: string | null;
+}
+
+export interface UserList {
+  users: UserAccount[];
+}
+
+/** A new password link; its token is only returned once. */
+export interface PasswordLink {
+  token: string;
+  expires_at: string;
+}
+
+/** A role and where it applies; no customer and no site is everything. */
+export interface GrantRequest {
+  role: Role;
+  customer_id?: string;
+  site_id?: string;
+}
+
+/** `POST /api/password-link`: whose link it is. */
+export interface LinkOwner {
+  username: string;
+  /** The user never had a password: the link is an invitation. */
+  invited: boolean;
+}
+
+/** Page where a password link is used. */
+export const WELCOME_PATH = "/welcome/";
+
+/** The address to give a user for `link`, on this page's origin. */
+export function passwordLinkUrl(link: PasswordLink): string {
+  return `${window.location.origin}${WELCOME_PATH}#${link.token}`;
+}
+
 /** Shortest password the server accepts. */
 export const MIN_PASSWORD_LENGTH = 12;
 
@@ -1320,6 +1364,46 @@ export const api = {
       method: "PUT",
       body: { enabled },
     }),
+
+  /** Creates the customer `name`; global administrators only. */
+  createCustomer: (name: string) => request<Customer>("/api/customers", { method: "POST", body: { name } }),
+
+  /** Renames a customer; global administrators only. */
+  renameCustomer: (customerId: string, name: string) =>
+    request<Customer>(`/api/customers/${encodeURIComponent(customerId)}`, { method: "PUT", body: { name } }),
+
+  /** Every account; global administrators only (ADR-0058). */
+  users: (signal?: AbortSignal) => request<UserList>("/api/users", { signal }),
+
+  /** Creates `username` with one role, and returns their invitation link. */
+  inviteUser: (username: string, grant: GrantRequest) =>
+    request<{ user: UserAccount; link: PasswordLink }>("/api/users", {
+      method: "POST",
+      body: { username, ...grant },
+    }),
+
+  /** A new password link for the user, replacing their previous one. */
+  passwordLink: (userId: string) =>
+    request<PasswordLink>(`/api/users/${encodeURIComponent(userId)}/link`, { method: "POST" }),
+
+  setUserDisabled: (userId: string, disabled: boolean) =>
+    request<UserAccount>(`/api/users/${encodeURIComponent(userId)}/disabled`, { method: "PUT", body: { disabled } }),
+
+  removeUser: (userId: string) => request<void>(`/api/users/${encodeURIComponent(userId)}`, { method: "DELETE" }),
+
+  grantRole: (userId: string, grant: GrantRequest) =>
+    request<UserAccount>(`/api/users/${encodeURIComponent(userId)}/roles`, { method: "POST", body: grant }),
+
+  revokeRole: (userId: string, grant: GrantRequest) =>
+    request<UserAccount>(`/api/users/${encodeURIComponent(userId)}/roles`, { method: "DELETE", body: grant }),
+
+  /** Whose password link `token` is; 410 when it is no longer valid. */
+  inspectPasswordLink: (token: string) =>
+    request<LinkOwner>("/api/password-link", { method: "POST", body: { token }, redirectOn401: false }),
+
+  /** Sets the password with the link `token`, and signs the user in. */
+  usePasswordLink: (token: string, password: string) =>
+    request<Me>("/api/password-link/use", { method: "POST", body: { token, password }, redirectOn401: false }),
 
   /** Creates the site `name` under `customerId`; customer administrators only. */
   createSite: (customerId: string, name: string) =>

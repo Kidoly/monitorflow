@@ -156,6 +156,7 @@ db_tests! {
                 "mirror_runs",
                 "mirror_snapshots",
                 "mirrors",
+                "password_links",
                 "proxmox_snapshots",
                 "relay_auto_updates",
                 "relay_commands",

@@ -643,7 +643,7 @@ async fn announce_setup(config: &ServerConfig, pool: &sqlx::PgPool) -> anyhow::R
         // The one secret the server logs: single use, short-lived, and it
         // grants nothing once an account exists (ADR-0057).
         tracing::warn!(
-            setup_url = %token.url(&config.web_base_url()),
+            setup_url = %token.setup_url(&config.web_base_url()),
             valid_hours = setup::TTL.as_secs() / 3600,
             "no user yet: open the setup link to create the administrator"
         );
@@ -658,7 +658,7 @@ async fn setup_link_command(config: &ServerConfig, pool: &sqlx::PgPool) -> anyho
                 "Open this link to create the administrator (valid {} hours, once):",
                 setup::TTL.as_secs() / 3600
             );
-            println!("{}", token.url(&config.web_base_url()));
+            println!("{}", token.setup_url(&config.web_base_url()));
         }
         None => println!(
             "Setup is done: a user exists. Sign in at {}/",

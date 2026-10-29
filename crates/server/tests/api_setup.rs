@@ -63,7 +63,7 @@ async fn pending(pool: &PgPool) -> bool {
 /// A new setup link's secret, from its fragment.
 async fn issue(pool: &PgPool) -> String {
     let token = setup::issue(pool).await.unwrap().expect("no user yet");
-    let url = token.url("https://mon.example.net");
+    let url = token.setup_url("https://mon.example.net");
     url.split_once('#').unwrap().1.to_owned()
 }
 

@@ -1,6 +1,6 @@
 //! User accounts and role grants, managed from the server CLI (`user add`,
-//! `user grant`) and, for the first administrator, the setup link
-//! ([`super::setup`]).
+//! `user grant`), the web interface ([`super::user_admin`]) and, for the
+//! first administrator, the setup link ([`super::setup`]).
 
 use monitorflow_common::redact::Secret;
 use serde_json::json;
@@ -67,8 +67,18 @@ pub enum GrantScope {
 }
 
 impl GrantScope {
+    /// The scope of `user_roles` columns; `None` when both are set.
+    pub fn from_columns(customer_id: Option<Uuid>, site_id: Option<Uuid>) -> Option<Self> {
+        match (customer_id, site_id) {
+            (None, None) => Some(Self::Global),
+            (Some(id), None) => Some(Self::Customer(id)),
+            (None, Some(id)) => Some(Self::Site(id)),
+            (Some(_), Some(_)) => None,
+        }
+    }
+
     /// `(customer_id, site_id)` of `user_roles`.
-    fn columns(self) -> (Option<Uuid>, Option<Uuid>) {
+    pub(super) fn columns(self) -> (Option<Uuid>, Option<Uuid>) {
         match self {
             Self::Global => (None, None),
             Self::Customer(id) => (Some(id), None),
@@ -77,7 +87,7 @@ impl GrantScope {
     }
 
     /// Audit details of a grant: `role`, plus the scope unless global.
-    fn details(self, role: Role) -> serde_json::Value {
+    pub(super) fn details(self, role: Role) -> serde_json::Value {
         let mut details = json!({ "role": role });
         match self {
             Self::Global => {}
@@ -111,7 +121,15 @@ pub async fn create_user_with(
 ) -> Result<Uuid, CreateUserError> {
     let hash = hash_new_password(username, password).await?;
     let mut tx = pool.begin().await?;
-    let id = insert_user(&mut tx, username, &hash, role, scope, ("system", actor)).await?;
+    let id = insert_user(
+        &mut tx,
+        username,
+        Some(&hash),
+        role,
+        scope,
+        ("system", actor),
+    )
+    .await?;
     tx.commit().await?;
     Ok(id)
 }
@@ -123,6 +141,11 @@ pub(super) async fn hash_new_password(
     password: &Secret,
 ) -> Result<String, CreateUserError> {
     validate_username(username)?;
+    hash_password(password).await
+}
+
+/// Checks the length of a new password, then hashes it off the runtime.
+pub(super) async fn hash_password(password: &Secret) -> Result<String, CreateUserError> {
     if password.expose().chars().count() < MIN_PASSWORD_LEN {
         return Err(CreateUserError::PasswordTooShort);
     }
@@ -132,11 +155,13 @@ pub(super) async fn hash_new_password(
 
 /// Inserts a user with the argon2 `hash` and its first role, audited as
 /// done by `actor` (`(actor_kind, actor_id)`), in the caller's transaction.
-/// The setup link dies with it (ADR-0057).
+/// Without `hash` the user is invited: it cannot sign in until it sets a
+/// password with its link (ADR-0058). The setup link dies with it
+/// (ADR-0057).
 pub(super) async fn insert_user(
     tx: &mut PgConnection,
     username: &str,
-    hash: &str,
+    hash: Option<&str>,
     role: Role,
     scope: GrantScope,
     actor: (&str, &str),
@@ -239,5 +264,24 @@ mod tests {
         for bad in ["", "a b", "a\tb", "a\u{7}", &"a".repeat(65)] {
             assert!(validate_username(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn scopes_come_from_one_column_at_most() {
+        let id = Uuid::from_u128(7);
+        assert_eq!(
+            GrantScope::from_columns(None, None),
+            Some(GrantScope::Global)
+        );
+        assert_eq!(
+            GrantScope::from_columns(Some(id), None),
+            Some(GrantScope::Customer(id))
+        );
+        assert_eq!(
+            GrantScope::from_columns(None, Some(id)),
+            Some(GrantScope::Site(id))
+        );
+        assert_eq!(GrantScope::from_columns(Some(id), Some(id)), None);
+        assert_eq!(GrantScope::Site(id).columns(), (None, Some(id)));
     }
 }

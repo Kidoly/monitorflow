@@ -236,3 +236,38 @@
   font-weight: 600;
 }
 
+
+/* Users: one role grant, with its revoke button. */
+.grant {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 8px 4px 0;
+  padding: 1px 2px 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.grantRemove {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.grantRemove:hover,
+.grantRemove:focus-visible {
+  color: var(--bad);
+  background: var(--hl);
+}
+
+/* Pushes a section head's control to the right end. */
+.push {
+  margin-left: auto;
+}

@@ -63,7 +63,7 @@ impl FromRequestParts<ApiState> for CurrentUser {
     }
 }
 
-async fn load_user(
+pub(super) async fn load_user(
     pool: &PgPool,
     id: Uuid,
     session: SessionToken,
@@ -146,7 +146,8 @@ impl From<&CurrentUser> for Me {
 
 struct Account {
     id: Uuid,
-    password_hash: String,
+    /// `None` for an invited user without a password yet (ADR-0058).
+    password_hash: Option<String>,
     disabled: bool,
 }
 
@@ -156,7 +157,7 @@ pub async fn login(
     request: Result<Json<LoginRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Json(request) = request.map_err(|_| ApiError::BadRequest)?;
-    let account = sqlx::query_as::<_, (Uuid, String, bool)>(
+    let account = sqlx::query_as::<_, (Uuid, Option<String>, bool)>(
         "SELECT id, password_hash, disabled_at IS NOT NULL
          FROM users WHERE lower(username) = lower($1)",
     )
@@ -170,7 +171,7 @@ pub async fn login(
     });
 
     // Always run one argon2 verification, account or not.
-    let stored = account.as_ref().map(|a| a.password_hash.clone());
+    let stored = account.as_ref().and_then(|a| a.password_hash.clone());
     let password = request.password;
     let matches = tokio::task::spawn_blocking(move || {
         password::verify_or_dummy(stored.as_deref(), password.expose())
@@ -184,6 +185,7 @@ pub async fn login(
             let (actor_id, reason) = match &other {
                 None => ("unknown".to_owned(), "unknown_user"),
                 Some(a) if a.disabled => (a.id.to_string(), "disabled"),
+                Some(a) if a.password_hash.is_none() => (a.id.to_string(), "no_password"),
                 Some(a) => (a.id.to_string(), "bad_password"),
             };
             // The submitted username is not recorded: users sometimes type

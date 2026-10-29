@@ -1,6 +1,6 @@
-//! Customers (ADR-0026): `GET /api/customers`, and creation of customers
-//! and of sites under a customer by administrators, from the API or the
-//! server CLI.
+//! Customers (ADR-0026): `GET /api/customers`, creation and renaming of
+//! customers and creation of sites under a customer by administrators,
+//! from the API or the server CLI.
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -119,6 +119,46 @@ pub async fn create_customer(
     .await?;
     tx.commit().await?;
     Ok(id)
+}
+
+/// Renames `customer` to `name` and audits it; `false` when it does not
+/// exist. Only the name changes: grants and sites refer to the ID.
+pub async fn rename_customer(
+    pool: &PgPool,
+    customer: Uuid,
+    name: &str,
+    actor: Actor<'_>,
+) -> Result<bool, TenancyError> {
+    validate_name(name)?;
+    let mut tx = pool.begin().await?;
+    let old: Option<String> = sqlx::query_scalar(
+        "UPDATE customers c SET name = $2 FROM customers o
+         WHERE c.id = $1 AND o.id = c.id RETURNING o.name",
+    )
+    .bind(customer)
+    .bind(name)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| unique(e, "customer"))?;
+    let Some(old) = old else {
+        return Ok(false);
+    };
+    if old != name {
+        let target = customer.to_string();
+        audit::record(
+            &mut *tx,
+            Event {
+                actor_kind: actor.0,
+                actor_id: actor.1,
+                action: "customer.rename",
+                target: Some(("customer", &target)),
+                details: json!({ "from": old, "to": name }),
+            },
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(true)
 }
 
 /// Creates the site `name` under `customer` and audits it.
@@ -266,6 +306,31 @@ pub async fn create(
         site_count: 0,
     };
     Ok((StatusCode::CREATED, Json(customer)))
+}
+
+/// `PUT /api/customers/{id}`: renames a customer; global administrators
+/// only, like creation.
+pub async fn rename(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    request: Result<Json<NameRequest>, JsonRejection>,
+) -> Result<Json<CustomerView>, ApiError> {
+    if user.administered_customers() != Scope::All {
+        return Err(ApiError::Forbidden);
+    }
+    let customer = parse_id(&id)?;
+    let name = body(request)?.name;
+    let actor = user.id.to_string();
+    if !rename_customer(&state.pool, customer, &name, ("user", &actor)).await? {
+        return Err(ApiError::NotFound);
+    }
+    tracing::info!(user = %user.id, %customer, "customer renamed");
+    visible_to(&state, &user, Some(customer))
+        .await?
+        .pop()
+        .map(Json)
+        .ok_or(ApiError::NotFound)
 }
 
 /// `POST /api/customers/{id}/sites`: administrators of the customer. A
