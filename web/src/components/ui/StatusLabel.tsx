@@ -15,6 +15,7 @@ export const STATUS_WORDS = {
   severity: { critical: ["Critical", "bad"], warning: ["Warning", "warn"], resolved: ["Resolved", "neutral"] },
   certificate: { revoked: ["Revoked", "bad"] },
   token: { pending: ["Pending", "info"], used: ["Used", "ok"], expired: ["Expired", "neutral"], revoked: ["Revoked", "neutral"] },
+  installKey: { active: ["Active", "ok"], expired: ["Expired", "neutral"], used_up: ["All hosts used", "neutral"], revoked: ["Revoked", "neutral"] },
   run: {
     running: ["Running", "info"],
     sent: ["Sent", "info"],

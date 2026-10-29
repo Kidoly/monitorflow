@@ -129,7 +129,7 @@ export function FleetOverview() {
   const canEnroll = administersCustomer(me, scope.customerId ?? undefined);
   const enroll = canEnroll && (
     <ButtonLink variant="k" href={scopedHref(TOKENS_PATH, scope)}>
-      Enroll agent
+      Add servers
     </ButtonLink>
   );
 
@@ -193,7 +193,7 @@ export function FleetOverview() {
         <ErrorState what="servers" error={describeError(error)} onRetry={refresh} />
       ) : data && all.length === 0 ? (
         <EmptyState title="No servers yet" actions={enroll}>
-          Enroll an agent with a one-time token: it appears here as soon as it connects.
+          Paste one install command on your hosts: each appears here under its name as soon as it connects.
         </EmptyState>
       ) : (
         <>

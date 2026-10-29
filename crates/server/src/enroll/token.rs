@@ -33,7 +33,7 @@ pub enum Creator {
 }
 
 impl Creator {
-    fn user_id(self) -> Option<Uuid> {
+    pub(crate) fn user_id(self) -> Option<Uuid> {
         match self {
             Self::User(id) => Some(id),
             Self::Cli => None,
@@ -41,7 +41,7 @@ impl Creator {
     }
 
     /// `(actor_kind, actor_id)` of the audit log.
-    fn actor(self) -> (&'static str, String) {
+    pub(crate) fn actor(self) -> (&'static str, String) {
         match self {
             Self::User(id) => ("user", id.to_string()),
             Self::Cli => ("system", "cli".into()),

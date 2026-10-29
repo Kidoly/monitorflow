@@ -18,6 +18,9 @@ pub enum InventoryError {
     Revoked { role: PeerRole, id: String },
     #[error("{role} {id} is not enrolled")]
     NotEnrolled { role: PeerRole, id: String },
+    /// Enrolled by an install key that asks for approval (ADR-0058).
+    #[error("waiting for an administrator to approve this host in the web interface")]
+    AwaitingApproval,
     #[error("inventory database error: {0}")]
     Db(#[from] sqlx::Error),
 }
@@ -231,6 +234,15 @@ async fn agent_hello(
             site_name(tx, site_id).await
         }
         None => {
+            let pending: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pending_hosts WHERE peer_id = $1)",
+            )
+            .bind(id)
+            .fetch_one(&mut **tx)
+            .await?;
+            if pending {
+                return Err(InventoryError::AwaitingApproval);
+            }
             let site_id: Uuid = sqlx::query_scalar(crate::db::ENROLLED_AGENT_SITE)
                 .bind(id)
                 .fetch_optional(&mut **tx)

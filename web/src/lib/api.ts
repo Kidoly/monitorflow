@@ -835,6 +835,63 @@ export interface CreatedToken extends EnrollmentToken {
   address: PublicAddress;
 }
 
+export type InstallKeyState = "active" | "expired" | "used_up" | "revoked";
+
+/** One install key of `GET /api/install-keys`, never with its secret (ADR-0058). */
+export interface InstallKey {
+  id: string;
+  site_id: string;
+  site_name: string;
+  customer_id: string;
+  customer_name: string;
+  created_by_username: string | null;
+  created_at: string;
+  expires_at: string;
+  /** Null for no limit. */
+  max_hosts: number | null;
+  host_count: number;
+  require_approval: boolean;
+  revoked_at: string | null;
+  state: InstallKeyState;
+}
+
+/** A host enrolled by a key that asks for approval, which cannot connect yet. */
+export interface PendingHost {
+  peer_id: string;
+  hostname: string;
+  site_id: string;
+  site_name: string;
+  customer_name: string;
+  install_key_id: string;
+  /** IP address it enrolled from. */
+  source: string | null;
+  created_at: string;
+}
+
+export interface InstallKeyList {
+  keys: InstallKey[];
+  pending_hosts: PendingHost[];
+}
+
+/** Body of `POST /api/install-keys`. */
+export interface InstallKeyRequest {
+  site_id: string;
+  /** One hour to one year; 30 days when absent. */
+  ttl_s?: number;
+  /** No limit when absent. */
+  max_hosts?: number;
+  require_approval: boolean;
+}
+
+/** `POST /api/install-keys`: the only answer that carries the key, in `token` as installers take it. */
+export interface CreatedInstallKey extends InstallKey {
+  token: string;
+  upstream_url: string;
+  enroll_url: string;
+  install: AgentInstall;
+  address: PublicAddress;
+}
+
 /** `GET /api/settings/public-address`, and the `address` of a new token. */
 export interface PublicAddress {
   /** The host the install commands connect to, without a port. */
@@ -1359,6 +1416,20 @@ export const api = {
   /** Changes the address in install commands; global administrators only, audited. `null` is the default. */
   setPublicAddress: (body: { address: string | null }) =>
     request<PublicAddress>("/api/settings/public-address", { method: "PUT", body }),
+
+  /** Install keys and hosts waiting for approval, of the customers the user administers (ADR-0058). */
+  installKeys: (signal?: AbortSignal) => request<InstallKeyList>("/api/install-keys", { signal }),
+
+  createInstallKey: (body: InstallKeyRequest) =>
+    request<CreatedInstallKey>("/api/install-keys", { method: "POST", body }),
+
+  /** Stops a key from enrolling more hosts; hosts it enrolled keep working. */
+  revokeInstallKey: (id: string) =>
+    request<void>(`/api/install-keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Lets a waiting host connect, or revokes its certificate. */
+  decidePendingHost: (peerId: string, decision: "approve" | "reject") =>
+    request<void>(`/api/pending-hosts/${encodeURIComponent(peerId)}/${decision}`, { method: "POST" }),
 
   /** Revokes an unused token; 409 once used. */
   revokeToken: (id: string) => request<void>(`/api/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),

@@ -1,6 +1,8 @@
 //! Enrollment of new agents and relays (ADR-0007): an administrator creates
-//! a one-time token, the peer exchanges it with a CSR for a certificate.
+//! a one-time token, the peer exchanges it with a CSR for a certificate;
+//! a reusable install key enrolls many agents of a site (ADR-0058).
 
+pub mod install_key;
 pub mod limiter;
 pub mod server_cert;
 mod service;

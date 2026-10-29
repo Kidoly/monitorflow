@@ -64,7 +64,7 @@ describe("AppShell", () => {
       "Audit log",
       "Relays",
       "Sites",
-      "Enrollment tokens",
+      "Add servers",
       "Users and roles",
       "Server update",
     ]);
