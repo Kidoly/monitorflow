@@ -39,6 +39,10 @@
 //! | GET | `/api/tokens` | customer administrator | [`tokens::TokenList`]: enrollment tokens without secrets, see below |
 //! | POST | `/api/tokens` | customer administrator | body [`tokens::CreateRequest`]; 201 [`tokens::CreatedToken`], the only time the token is returned |
 //! | DELETE | `/api/tokens/{id}` | customer administrator | 204; 409 once used |
+//! | GET | `/api/install-keys` | customer administrator | [`install_keys::KeyList`]: install keys without secrets and the hosts waiting for approval (ADR-0058) |
+//! | POST | `/api/install-keys` | customer administrator | body [`install_keys::CreateRequest`]; 201 [`install_keys::CreatedKey`], the only time the key is returned; audited |
+//! | DELETE | `/api/install-keys/{id}` | customer administrator | 204, the key enrolls no more hosts; 409 if already revoked; audited |
+//! | POST | `/api/pending-hosts/{peer_id}/approve`, `/api/pending-hosts/{peer_id}/reject` | customer administrator | 204; reject revokes the host's certificates; 409 once decided; audited |
 //! | GET | `/api/customers` | any role | [`customers::CustomerList`]: `{"customers": [{"id", "name", "site_count"}]}`, see below |
 //! | POST | `/api/customers` | global administrator | body `{"name"}`; 201 [`customers::CustomerView`] |
 //! | POST | `/api/customers/{id}/sites` | customer administrator | body `{"name"}`; 201 [`sites::SiteView`] |
@@ -444,6 +448,7 @@ pub mod customers;
 mod error;
 mod health;
 pub mod incidents;
+pub mod install_keys;
 pub mod metrics;
 pub mod mirrors;
 pub mod offline_alerts;
@@ -678,6 +683,19 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/servers/{id}/revoke", post(revoke::server))
         .route("/api/tokens", get(tokens::list).post(tokens::create))
         .route("/api/tokens/{id}", delete(tokens::delete))
+        .route(
+            "/api/install-keys",
+            get(install_keys::list).post(install_keys::create),
+        )
+        .route("/api/install-keys/{id}", delete(install_keys::revoke))
+        .route(
+            "/api/pending-hosts/{peer_id}/approve",
+            post(install_keys::approve),
+        )
+        .route(
+            "/api/pending-hosts/{peer_id}/reject",
+            post(install_keys::reject),
+        )
         .route(
             "/api/customers",
             get(customers::list).post(customers::create),

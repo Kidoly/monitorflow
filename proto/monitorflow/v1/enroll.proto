@@ -18,6 +18,10 @@ message EnrollRequest {
   // PKCS#10 certificate signing request in PEM. Only its public key is
   // used: the identity comes from the token.
   string csr_pem = 2;
+  // Host name of an enrolling agent. With a reusable install key it
+  // becomes the agent's ID, made unique by the server (ADR-0058); a
+  // single-use token ignores it. Empty for relays.
+  string hostname = 3;
 }
 
 message EnrollResponse {

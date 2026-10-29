@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use monitorflow_common::tls::PeerRole;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use super::access::authorize_admin;
@@ -97,18 +98,7 @@ async fn revoke(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| ApiError::Conflict(format!("the {kind} is already revoked")))?;
-    // Expired certificates are refused anyway and stay out of the CRL.
-    let serials: Vec<Vec<u8>> = sqlx::query_scalar(
-        "UPDATE certificates SET revoked_at = now(), revocation_reason = $3
-         WHERE peer_role = $1 AND peer_id = $2 AND revoked_at IS NULL AND not_after > now()
-         RETURNING serial",
-    )
-    .bind(role.as_str())
-    .bind(&peer_id)
-    .bind(reason_name(reason))
-    .fetch_all(&mut *tx)
-    .await?;
-    let serials: Vec<Serial> = serials.iter().map(|s| Serial::from_bytes(s)).collect();
+    let serials = revoke_certificates(&mut tx, role, &peer_id, reason).await?;
     let shown: Vec<String> = serials.iter().map(Serial::to_string).collect();
     let actor = user.id.to_string();
     audit::record(
@@ -147,6 +137,29 @@ async fn revoke(
         serials: shown,
         closed_streams,
     }))
+}
+
+/// Marks every unexpired, unrevoked certificate of the peer revoked in
+/// `tx` and returns their serials, for the caller to pass to the CA before
+/// committing. Expired certificates are refused anyway and stay out of the
+/// CRL.
+pub(super) async fn revoke_certificates(
+    tx: &mut Transaction<'_, Postgres>,
+    role: PeerRole,
+    peer_id: &str,
+    reason: RevocationReason,
+) -> Result<Vec<Serial>, sqlx::Error> {
+    let serials: Vec<Vec<u8>> = sqlx::query_scalar(
+        "UPDATE certificates SET revoked_at = now(), revocation_reason = $3
+         WHERE peer_role = $1 AND peer_id = $2 AND revoked_at IS NULL AND not_after > now()
+         RETURNING serial",
+    )
+    .bind(role.as_str())
+    .bind(peer_id)
+    .bind(reason_name(reason))
+    .fetch_all(&mut **tx)
+    .await?;
+    Ok(serials.iter().map(|s| Serial::from_bytes(s)).collect())
 }
 
 /// `certificates.revocation_reason`, as the API spells it.

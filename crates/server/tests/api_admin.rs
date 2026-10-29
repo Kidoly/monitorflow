@@ -265,6 +265,86 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn an_install_key_is_shown_once_listed_revoked_and_approves_hosts(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let (customer, site) = customer_site(&pool, "acme").await;
+        let cookie = h.user("boss", Role::Administrator, GrantScope::Customer(customer)).await;
+        let request = json!({ "site_id": site, "require_approval": true });
+        let (status, created, _) = h.call("POST", "/api/install-keys", Some(&cookie), Some(request)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let secret = created["token"].as_str().unwrap().to_owned();
+        assert_eq!(EnrollmentToken::parse(&secret).unwrap().ca_fingerprint(), &CA_PIN);
+        assert_eq!(created["state"], "active");
+        assert_eq!(created["max_hosts"], Value::Null);
+        assert_eq!(created["host_count"], 0);
+        assert_eq!(created["enroll_url"], "https://mf.example:7445");
+        assert_eq!(created["install"]["source"], "github");
+        let ttl = chrono::DateTime::parse_from_rfc3339(created["expires_at"].as_str().unwrap()).unwrap()
+            - chrono::DateTime::parse_from_rfc3339(created["created_at"].as_str().unwrap()).unwrap();
+        assert_eq!(ttl.num_days(), 30);
+        let (status, body, _) = h
+            .call("POST", "/api/install-keys", Some(&cookie), Some(json!({ "site_id": site, "max_hosts": 0 })))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        // A host enrolled through it waits; its record is not a token.
+        let key_id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
+        sqlx::query(
+            "INSERT INTO enrollment_tokens (token_hash, role, peer_id, site_id, expires_at, used_at,
+                                            used_by_peer_id, install_key_id)
+             VALUES (decode(repeat('cd', 32), 'hex'), 'agent', 'web-01', $1, now() + interval '1 second',
+                     now(), 'web-01', $2)",
+        )
+        .bind(site)
+        .bind(key_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO pending_hosts (peer_id, site_id, install_key_id, hostname, source)
+                     VALUES ('web-01', $1, $2, 'web-01', '192.0.2.7')")
+            .bind(site)
+            .bind(key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, list, _) = h.call("GET", "/api/install-keys", Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(list["keys"].as_array().unwrap().len(), 1);
+        assert!(list["keys"][0].get("token").is_none());
+        let secret_part = secret.split('.').nth(1).unwrap();
+        assert!(!list.to_string().contains(secret_part));
+        assert_eq!(list["pending_hosts"][0]["peer_id"], "web-01");
+        assert_eq!(list["pending_hosts"][0]["source"], "192.0.2.7");
+        let (_, tokens, _) = h.call("GET", "/api/tokens", Some(&cookie), None).await;
+        assert_eq!(tokens["tokens"], json!([]));
+
+        let (status, _, _) = h.call("POST", "/api/pending-hosts/web-01/approve", Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, _, _) = h.call("POST", "/api/pending-hosts/web-01/approve", Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(audit(&pool, "pending_host.approve").await[0].1, "web-01");
+
+        let uri = format!("/api/install-keys/{key_id}");
+        let (status, _, _) = h.call("DELETE", &uri, Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, _, _) = h.call("DELETE", &uri, Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (_, list, _) = h.call("GET", "/api/install-keys", Some(&cookie), None).await;
+        assert_eq!(list["keys"][0]["state"], "revoked");
+        assert_eq!(list["pending_hosts"], json!([]));
+        assert_eq!(audit(&pool, "install_key.create").await.len(), 1);
+        assert_eq!(audit(&pool, "install_key.revoke").await.len(), 1);
+        assert!(!audit(&pool, "install_key.create").await[0].2.to_string().contains(secret_part));
+
+        // A site administrator cannot create keys, as with tokens.
+        let site_admin = h.user("local", Role::Administrator, GrantScope::Site(site)).await;
+        let (status, _, _) = h
+            .call("POST", "/api/install-keys", Some(&site_admin), Some(json!({ "site_id": site })))
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[sqlx::test]
     async fn a_token_is_shown_once_and_listed_without_its_secret(pool: PgPool) {
         let h = Harness::new(&pool);
         let (customer, site) = customer_site(&pool, "acme").await;
