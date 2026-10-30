@@ -8,3 +8,4 @@ pub mod redact;
 pub mod risk;
 pub mod runner;
 pub mod snapshot;
+pub mod switch;

@@ -13,7 +13,8 @@ import {
   isUnauthorized,
 } from "@/lib/api";
 import { riskWord, snapshotReason, timeLeft } from "@/lib/remediation";
-import { AUDIT_PATH, auditHref, serverHref } from "@/lib/routes";
+import { administersEverything, useMe } from "@/lib/me";
+import { AI_SETTINGS_PATH, AUDIT_PATH, auditHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { seriesTitle } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
@@ -52,6 +53,8 @@ export function ApprovalQueue() {
 
   const fetcher = useCallback((signal: AbortSignal) => api.approvals(signal), []);
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher);
+  const aiFetcher = useCallback((signal: AbortSignal) => api.aiSettings(signal), []);
+  const ai = usePolledData(aiFetcher);
 
   const inScope = (p: PendingApproval) =>
     (!scope.customerId || p.customer_id === scope.customerId) && (!scope.siteId || p.site_id === scope.siteId);
@@ -121,6 +124,7 @@ export function ApprovalQueue() {
           },
         ]}
       />
+      {ai.data && !ai.data.enabled && <AiOff />}
       {notice && (
         <Banner tone={notice.tone} role="status">
           {notice.text}
@@ -163,6 +167,21 @@ export function ApprovalQueue() {
         Approved commands run once on the agent, as its user. Every decision is recorded in the incident&apos;s audit log.
       </p>
     </Page>
+  );
+}
+
+/** Says that nothing new will arrive here, and who can change that. */
+function AiOff() {
+  const me = useMe();
+  return (
+    <Banner tone="warn">
+      <strong>AI is off.</strong> No new commands are proposed, and any waiting here stay on hold until it is back on.{" "}
+      {administersEverything(me) ? (
+        <Link href={AI_SETTINGS_PATH}>Turn on AI</Link>
+      ) : (
+        "A global administrator can turn it on under Administration › AI."
+      )}
+    </Banner>
   );
 }
 

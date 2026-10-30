@@ -42,7 +42,10 @@ impl ShellHandler {
 impl Handler for ShellHandler {
     async fn run(&self, payload: &[u8]) -> Output {
         if !self.enabled {
-            return Output::rejected("shell commands are disabled on this agent (commands.shell)");
+            return Output::rejected(
+                "shell commands are disabled on this agent (commands.shell); \
+                 run the installer with MF_ALLOW_COMMANDS=1 to allow them",
+            );
         }
         let Ok(request) = ShellCommand::decode(payload) else {
             return Output::rejected("invalid ShellCommand payload");

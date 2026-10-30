@@ -32,6 +32,9 @@
 #                    release signature cannot be checked.
 #   MF_ALLOW_UNSIGNED=1  install a release without SHA256SUMS.sig, like
 #                    0.1.0, checking its checksums only.
+#   MF_ALLOW_COMMANDS=1  agent only: let it run the shell commands of AI
+#                    remediation (commands.shell), also on a host already
+#                    installed; 0 takes that back. Unset keeps what is there.
 #   MF_UNINSTALL=1   remove the binary, service and sudo rules; keep the
 #                    configuration and identity. With MF_PURGE=1, remove
 #                    those and the service's user too.
@@ -62,6 +65,7 @@ DATA_DIR=/var/lib/monitorflow/$MF_ROLE
 SUDOERS=/etc/sudoers.d/monitorflow-$MF_ROLE
 UNIT=/etc/systemd/system/monitorflow-$MF_ROLE.service
 SERVICE=monitorflow-$MF_ROLE
+ALLOW_COMMANDS=$UNIT.d/allow-commands.conf
 
 MF_SERVER=${MF_SERVER:-}
 MF_TOKEN=${MF_TOKEN:-}
@@ -75,6 +79,7 @@ MF_PURGE=${MF_PURGE:-}
 MF_REQUIRE_SIGNATURE=${MF_REQUIRE_SIGNATURE:-}
 MF_ALLOW_UNSIGNED=${MF_ALLOW_UNSIGNED:-}
 MF_MIRROR_URL=${MF_MIRROR_URL:-}
+MF_ALLOW_COMMANDS=${MF_ALLOW_COMMANDS:-}
 
 # Public keys that sign releases (ADR-0053), filled in from
 # deploy/release-keys.pem by deploy/release-files.sh.
@@ -182,7 +187,8 @@ verify() {
 uninstall() {
     if [ -f "$UNIT" ]; then
         systemctl disable --now "$SERVICE" >/dev/null 2>&1 || true
-        rm -f "$UNIT"
+        rm -f "$UNIT" "$ALLOW_COMMANDS"
+        rmdir "$UNIT.d" 2>/dev/null || true
         systemctl daemon-reload
     fi
     rm -f "$BIN" "$SUDOERS" "$ENV_FILE"
@@ -311,6 +317,11 @@ if [ -n "$MF_MIRROR_URL" ]; then
         *) die "MF_MIRROR_URL must be an http(s) URL like http://relay1.example.com:7480" ;;
     esac
 fi
+case $MF_ALLOW_COMMANDS in
+    '' | 0 | 1) ;;
+    *) die "MF_ALLOW_COMMANDS must be 1 or 0" ;;
+esac
+[ -z "$MF_ALLOW_COMMANDS" ] || [ "$MF_ROLE" = agent ] || die "MF_ALLOW_COMMANDS is for agents"
 
 if [ -n "$MF_DOWNLOAD_URL" ]; then
     [ -z "$MF_VERSION" ] || die "MF_VERSION selects a GitHub release; with MF_DOWNLOAD_URL, point it at the files of that version instead"
@@ -374,6 +385,15 @@ install -o root -g root -m 0755 "$tmp/$asset" "$BIN.new"
 mv -f "$BIN.new" "$BIN"
 install_sudoers
 install -o root -g root -m 0644 "$tmp/$SERVICE.service" "$UNIT"
+# A drop-in, so it outlives agent.toml edits and self-updates of the unit.
+if [ "$MF_ALLOW_COMMANDS" = 1 ]; then
+    install -d -m 0755 "$UNIT.d"
+    printf '[Service]\nEnvironment=MONITORFLOW_COMMANDS_SHELL=true\n' >"$ALLOW_COMMANDS"
+    say "this agent will run the commands AI remediation sends; MF_ALLOW_COMMANDS=0 takes that back"
+elif [ "$MF_ALLOW_COMMANDS" = 0 ]; then
+    rm -f "$ALLOW_COMMANDS"
+    rmdir "$UNIT.d" 2>/dev/null || true
+fi
 systemctl daemon-reload
 
 if [ -n "$upstream_url" ] && [ "$MF_ROLE" = relay ]; then

@@ -4,6 +4,7 @@ import type { AgentInstall } from "./api";
 import {
   type Command,
   type InstallTarget,
+  allowCommandsCommand,
   endpoints,
   hostPort,
   isHttpsOrigin,
@@ -175,5 +176,23 @@ describe("install commands", () => {
     expect(isMirrorUrl("http://relay1.example:7480")).toBe(true);
     expect(isMirrorUrl("https://[2001:db8::1]:7480/")).toBe(true);
     for (const bad of ["ftp://x", "http://a b", "http://x?y", "http://x;rm"]) expect(isMirrorUrl(bad)).toBe(false);
+  });
+});
+
+describe("allowCommandsCommand", () => {
+  it("re-runs the installer of the default source with the opt-in", () => {
+    expect(text(allowCommandsCommand(install(), ORIGIN))).toBe(
+      `curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_ALLOW_COMMANDS=1 sh`,
+    );
+    expect(text(allowCommandsCommand(install({ source: "custom" }), ORIGIN))).toBe(
+      "curl -fsSL https://files.example/mf/0.2.0/install.sh \\\n  | sudo MF_DOWNLOAD_URL=https://files.example/mf/0.2.0 MF_ALLOW_COMMANDS=1 sh",
+    );
+  });
+
+  it("pins the checksums from this server, and says when it cannot", () => {
+    expect(text(allowCommandsCommand(install({ source: "central" }), ORIGIN))).toContain(
+      `sudo MF_DOWNLOAD_URL=${ORIGIN}/agent/0.3.0 MF_SUMS_SHA256=${SUMS} MF_ALLOW_COMMANDS=1 sh "$f"`,
+    );
+    expect(unavailable(allowCommandsCommand(install({ source: "central", central: null }), ORIGIN))).toContain("no agent release");
   });
 });

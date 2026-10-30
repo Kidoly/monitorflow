@@ -1016,13 +1016,14 @@ pub struct ServerConfig {
     /// `agent_download_url`, which must then not be GitHub's.
     pub agent_install_source: Option<AgentInstallSource>,
     pub mirror: MirrorConfig,
-    /// AI provider of the remediation loop (ADR-0039). Off by default.
+    /// AI provider of the remediation loop (ADR-0039). Off by default; when
+    /// off, the web interface may turn it on (ADR-0064).
     pub ai: AiConfig,
     /// Proxmox VE clusters snapshotted before change-tier commands
     /// (ADR-0044). Off by default.
     pub proxmox: ProxmoxConfig,
-    /// Limits of the remediation loop (ADR-0043), which runs when `ai` is
-    /// enabled.
+    /// Limits of the remediation loop (ADR-0043), which runs while AI is
+    /// on.
     pub remediation: RemediationConfig,
     /// Automatic agent and relay updates (ADR-0055).
     pub auto_update: AutoUpdateConfig,

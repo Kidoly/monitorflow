@@ -1370,6 +1370,23 @@ export interface ChannelTestResult {
   error: string | null;
 }
 
+/** A model offered for AI, the default first (ADR-0064). */
+export interface AiModel {
+  id: string;
+  name: string;
+  note: string;
+}
+
+/** `GET /api/settings/ai`, readable by every user; the key itself never leaves the server. */
+export interface AiSettings {
+  enabled: boolean;
+  /** Set by `[ai]` in the server's configuration, which takes precedence and locks the page. */
+  from_config: boolean;
+  has_key: boolean;
+  model: string;
+  models: AiModel[];
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
   const headers: Record<string, string> = { Accept: "application/json" };
@@ -1612,6 +1629,20 @@ export const api = {
   /** Changes the address in install commands; global administrators only, audited. `null` is the default. */
   setPublicAddress: (body: { address: string | null }) =>
     request<PublicAddress>("/api/settings/public-address", { method: "PUT", body }),
+
+  /** Whether AI is on, and its model; never the key (ADR-0064). */
+  aiSettings: (signal?: AbortSignal) => request<AiSettings>("/api/settings/ai", { signal }),
+
+  /** Saves the AI settings, testing them when they turn AI on; global administrators only, audited. An empty key keeps the stored one. */
+  setAiSettings: (body: { api_key: string | null; model: string; enabled: boolean }) =>
+    request<AiSettings>("/api/settings/ai", { method: "PUT", body }),
+
+  /** Forgets the API key, which turns AI off; global administrators only, audited. */
+  removeAiKey: () => request<AiSettings>("/api/settings/ai", { method: "DELETE" }),
+
+  /** Tests a key and model without saving; an empty key tests the stored one. */
+  testAiSettings: (body: { api_key: string | null; model: string }) =>
+    request<ChannelTestResult>("/api/settings/ai/test", { method: "POST", body }),
 
   /** Notification channels, without secrets; global administrators only (ADR-0060). */
   notificationChannels: (signal?: AbortSignal) =>

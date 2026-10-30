@@ -152,21 +152,38 @@ function installerCommand(
     [...role, ...download, `MF_SERVER=${server}`, enroll && `MF_ENROLL=${enroll}`, `MF_TOKEN=${target.token}`]
       .filter(Boolean)
       .join(" ");
-  const central = target.install.central;
+  return runInstaller(target.install, source, files.url, env);
+}
+
+/** The one line that lets an installed Linux agent run AI commands (ADR-0064), from the default source. */
+export function allowCommandsCommand(install: AgentInstall, origin: string): Command {
+  const files = base(install, install.source, origin);
+  if ("unavailable" in files) return files;
+  return runInstaller(install, install.source, files.url, (download) => [...download, "MF_ALLOW_COMMANDS=1"].join(" "));
+}
+
+/** Fetches install.sh from `url` and runs it with `env` of the download variables. */
+function runInstaller(
+  install: AgentInstall,
+  source: InstallSource,
+  url: string,
+  env: (download: string[]) => string,
+): Command {
+  const central = install.central;
   if (source === "central" && central) {
     if (!central.installer_sha256) {
       return { unavailable: `The release ${central.version} on this server has no install.sh; import a complete release.` };
     }
-    const vars = env([`MF_DOWNLOAD_URL=${files.url}`, `MF_SUMS_SHA256=${central.sums_sha256}`]);
+    const vars = env([`MF_DOWNLOAD_URL=${url}`, `MF_SUMS_SHA256=${central.sums_sha256}`]);
     return {
       text:
-        `f=$(mktemp) && curl -fsSLk -o "$f" ${files.url}/install.sh \\\n` +
+        `f=$(mktemp) && curl -fsSLk -o "$f" ${url}/install.sh \\\n` +
         `  && echo "${central.installer_sha256}  $f" | sha256sum -c \\\n` +
         `  && sudo ${vars} sh "$f"; rm -f "$f"`,
     };
   }
-  const vars = env(source === "custom" ? [`MF_DOWNLOAD_URL=${files.url}`] : []);
-  return { text: `curl -fsSL ${files.url}/install.sh \\\n  | sudo ${vars} sh` };
+  const vars = env(source === "custom" ? [`MF_DOWNLOAD_URL=${url}`] : []);
+  return { text: `curl -fsSL ${url}/install.sh \\\n  | sudo ${vars} sh` };
 }
 
 /** Download and silent install of the MSI, for an elevated PowerShell. */

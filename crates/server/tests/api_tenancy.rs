@@ -824,6 +824,21 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = method.ne("GET").then(|| json!({}));
             assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
+        // Server-wide, and no customer's data: every user reads whether AI
+        // is on, for Approvals; only global administrators change it.
+        ("GET", "/api/settings/ai") => {
+            assert_eq!(ctx.status(method, path, None).await, StatusCode::OK);
+        }
+        ("PUT", "/api/settings/ai")
+        | ("DELETE", "/api/settings/ai")
+        | ("POST", "/api/settings/ai/test") => {
+            let body = match method {
+                "PUT" => Some(json!({ "model": "claude-opus-5-5", "enabled": false })),
+                "POST" => Some(json!({})),
+                _ => None,
+            };
+            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+        }
         // Notification channels may cover every customer: global
         // administrators only (ADR-0060).
         ("GET", "/api/notifications/channels")

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { REFRESH_MS } from "@/lib/usePolledData";
+import { As, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { setUrl } from "@/test/navigation";
 import { CUSTOMER_ID, INCIDENT_ID, PENDING_ID, pending } from "@/test/remediation";
@@ -49,6 +50,37 @@ describe("ApprovalQueue", () => {
     expect(screen.getByText(/2 waiting · Updated/)).toBeInTheDocument();
     await act(() => vi.advanceTimersByTimeAsync(2000));
     expect(rows[1]).toHaveTextContent("20 min 3 s left");
+  });
+
+  it("says when AI is off and how to turn it on", async () => {
+    const ai = (enabled: boolean) => ({ status: 200, body: { enabled, from_config: false, has_key: false, model: "m", models: [] } });
+    stubFetch({ [LIST]: list(), "GET /api/settings/ai": ai(false) });
+    const { unmount } = render(
+      <As user={me({ role: "administrator", customer_id: null, site_id: null })}>
+        <ApprovalQueue />
+      </As>,
+    );
+    expect(await screen.findByText("AI is off.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Turn on AI" })).toHaveAttribute("href", "/admin/ai");
+    unmount();
+
+    render(
+      <As user={me()}>
+        <ApprovalQueue />
+      </As>,
+    );
+    expect(await screen.findByText(/A global administrator can turn it on/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Turn on AI" })).not.toBeInTheDocument();
+  });
+
+  it("says nothing about AI while it is on", async () => {
+    stubFetch({
+      [LIST]: list(),
+      "GET /api/settings/ai": { status: 200, body: { enabled: true, from_config: false, has_key: true, model: "m", models: [] } },
+    });
+    render(<ApprovalQueue />);
+    expect(await screen.findByText("Nothing waiting for approval")).toBeInTheDocument();
+    expect(screen.queryByText("AI is off.")).not.toBeInTheDocument();
   });
 
   it("shows the AI's text, the rule and that rollback is limited", async () => {

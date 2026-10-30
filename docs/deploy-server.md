@@ -159,7 +159,7 @@ The server applies database migrations when it starts. Remove the `*_IMAGE` line
 
 ## Other settings
 
-Every server setting has a `MONITORFLOW_*` variable (see `deploy/config/server.example.toml`). For sections that need files, like `[ai]` with its `api_key_file` or `[[proxmox.clusters]]`, mount your own `server.toml` at `/etc/monitorflow/server.toml` and the files it names in a `docker-compose.override.yml`. The variables the compose file sets still apply on top.
+Every server setting has a `MONITORFLOW_*` variable (see `deploy/config/server.example.toml`). AI needs none of this: set it up under Administration › AI, with no restart (ADR-0064). For sections that need files, like `[ai]` with its `api_key_file`, which then takes precedence over the web interface, or `[[proxmox.clusters]]`, mount your own `server.toml` at `/etc/monitorflow/server.toml` and the files it names in a `docker-compose.override.yml`. The variables the compose file sets still apply on top.
 
 ## Limits
 

@@ -116,6 +116,9 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 
 # AI-driven remediation (ADR-0039). Off by default. The AI only proposes
 # commands; each one is risk-classified by rules and approved as configured.
+# Most servers set this up in the web interface (Administration > AI, no
+# restart, ADR-0064). enabled = true here takes precedence over it and locks
+# that page; enabled = false leaves the choice to the web interface.
 [ai]
 # enabled = false
 # Only "claude" (Anthropic Messages API) for now.
@@ -141,7 +144,7 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 
 [remediation]
 # Limits of each AI remediation incident (ADR-0043), which opens for every
-# new threshold incident while [ai] is enabled. Hitting one hands the
+# new threshold incident while AI is on. Hitting one hands the
 # incident to a human. Read-only commands run automatically; others wait
 # for approval or are refused, by the rules of ADR-0041 only.
 # Most commands run for one incident.

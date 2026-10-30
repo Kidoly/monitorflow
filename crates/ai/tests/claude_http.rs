@@ -8,9 +8,9 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::Router;
-use monitorflow_ai::claude::{ClaudeOptions, ClaudeProvider};
+use monitorflow_ai::claude::{explain, ClaudeOptions, ClaudeProvider, MODELS};
 use monitorflow_ai::{AiError, AiProvider, DataBlock, Step, StepRequest};
-use monitorflow_common::config::AiConfig;
+use monitorflow_common::config::{AiConfig, DEFAULT_AI_MODEL};
 use monitorflow_common::redact::Secret;
 use serde_json::{json, Value};
 
@@ -241,4 +241,78 @@ async fn built_from_config() {
     };
     let error = monitorflow_ai::from_config(&missing).await.unwrap_err();
     assert!(matches!(error, AiError::ApiKeyFile { .. }), "{error:?}");
+}
+
+fn failure(status: u16, kind: &str, message: &str) -> Reply {
+    let body = json!({"type": "error", "error": {"type": kind, "message": message}});
+    (status, vec![], body.to_string(), Duration::ZERO)
+}
+
+#[tokio::test]
+async fn the_check_is_one_small_request() {
+    let (mock, options) = serve(vec![ok()]).await;
+    ClaudeProvider::new(options).unwrap().check().await.unwrap();
+    let seen = mock.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].0["x-api-key"], KEY);
+    assert_eq!(seen[0].1["max_tokens"], 1);
+    assert_eq!(seen[0].1["model"], "claude-opus-5-5");
+}
+
+#[tokio::test]
+async fn a_failed_check_says_what_to_do_and_is_not_retried() {
+    let cases = [
+        (
+            failure(401, "authentication_error", "invalid x-api-key"),
+            "refused this API key",
+        ),
+        (
+            failure(404, "not_found_error", "model: x"),
+            "Pick another model",
+        ),
+        (
+            failure(429, "rate_limit_error", "slow down"),
+            "Wait a minute",
+        ),
+        (
+            failure(
+                400,
+                "invalid_request_error",
+                "Your credit balance is too low",
+            ),
+            "no credit left",
+        ),
+        (
+            failure(529, "overloaded_error", "Overloaded"),
+            "in a few minutes",
+        ),
+        (failure(400, "invalid_request_error", "odd"), "(400): odd"),
+    ];
+    for (reply, words) in cases {
+        let (mock, options) = serve(vec![reply]).await;
+        let provider = ClaudeProvider::new(options).unwrap();
+        let error = provider.check().await.unwrap_err();
+        let plain = explain(&error);
+        assert!(plain.contains(words), "{plain}");
+        assert!(!plain.contains(KEY));
+        assert_eq!(mock.seen.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn an_unreachable_api_is_named_in_plain_words() {
+    let mut options = ClaudeOptions::new(Secret::new(KEY));
+    options.base_url = "http://127.0.0.1:1".into();
+    let error = ClaudeProvider::new(options)
+        .unwrap()
+        .check()
+        .await
+        .unwrap_err();
+    assert!(explain(&error).contains("could not reach Anthropic"));
+}
+
+#[test]
+fn the_list_starts_with_the_default_model() {
+    assert_eq!(MODELS[0].id, DEFAULT_AI_MODEL);
+    assert_eq!(AiConfig::default().model, MODELS[0].id);
 }
