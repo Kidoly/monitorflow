@@ -50,6 +50,9 @@ impl SourcesHandler {
                 let host = match self.family {
                     OsFamily::Debian => Family::Apt,
                     OsFamily::Rhel => Family::Dnf,
+                    OsFamily::Linux => {
+                        return Err("package sources are not available on this system".into())
+                    }
                 };
                 if spec.family() != host {
                     return Err(format!(

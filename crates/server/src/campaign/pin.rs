@@ -63,6 +63,7 @@ pub(super) struct Pending {
     pub peer_id: String,
     pub revoked: bool,
     pub os_family: String,
+    pub package_updates: bool,
     pub configure_state: Option<State>,
     pub configure_error: Option<String>,
     pub restore_command_id: Option<Uuid>,
@@ -79,6 +80,8 @@ pub(super) enum Next {
     Restart,
     /// Gets no update, for this reason.
     Fail(String),
+    /// Leave the campaign: the host cannot take it (ADR-0063).
+    Skip,
 }
 
 impl Pending {
@@ -300,6 +303,7 @@ mod tests {
             peer_id: "agent-1".into(),
             revoked: false,
             os_family: "debian".into(),
+            package_updates: true,
             configure_state: configure,
             configure_error: Some("apt-get update failed".into()),
             restore_command_id: restore.map(|_| Uuid::nil()),

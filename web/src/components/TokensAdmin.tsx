@@ -581,7 +581,7 @@ function InstallCommands({ token }: { token: InstallTarget }) {
   const commands: { name: string; note: string; command: Command }[] = [
     {
       name: "Linux",
-      note: "as root, on a host with systemd",
+      note: "as root, on any Linux with systemd",
       command: linuxInstallCommand(token, source, origin, through),
     },
     {
@@ -695,7 +695,7 @@ function RelayInstallCommand({ token }: { token: CreatedToken }) {
         </p>
       )}
       {"text" in command ? (
-        <InstallCommand name="Linux" note="as root, on a host with systemd" text={command.text} />
+        <InstallCommand name="Linux" note="as root, on any Linux with systemd" text={command.text} />
       ) : (
         <Banner tone="warn">{command.unavailable}</Banner>
       )}

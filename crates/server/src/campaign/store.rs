@@ -30,7 +30,8 @@ pub(super) const COLUMNS: &str =
 pub type Actor<'a> = (&'a str, &'a str);
 
 /// A campaign to create. Targets are `server_ids` and the unrevoked
-/// servers of `site_id`, all of `customer_id`.
+/// servers of `site_id`, all of `customer_id`, without those that cannot
+/// take package updates unless it updates agents (ADR-0063).
 #[derive(Debug, Clone)]
 pub struct NewCampaign {
     pub customer_id: Uuid,
@@ -524,7 +525,8 @@ async fn check_timezones(conn: &mut PgConnection, windows: &[Window]) -> Result<
 }
 
 /// The targets of `new`, by hostname: its servers, which must be the
-/// customer's and unrevoked, and the unrevoked servers of its site.
+/// customer's and unrevoked, and the unrevoked servers of its site. A
+/// package campaign leaves out the servers without a package manager.
 async fn targets(conn: &mut PgConnection, new: &NewCampaign) -> Result<Vec<Uuid>, CampaignError> {
     if let Some(site) = new.site_id {
         let found: Option<Uuid> =
@@ -561,16 +563,18 @@ async fn targets(conn: &mut PgConnection, new: &NewCampaign) -> Result<Vec<Uuid>
         "SELECT s.id FROM servers s JOIN sites t ON t.id = s.site_id
          WHERE t.customer_id = $1 AND s.revoked_at IS NULL
            AND (s.id = ANY($2) OR s.site_id = $3)
+           AND (s.package_updates OR $4)
          ORDER BY s.hostname, s.peer_id",
     )
     .bind(new.customer_id)
     .bind(&new.server_ids)
     .bind(new.site_id)
+    .bind(new.agent_version.is_some())
     .fetch_all(&mut *conn)
     .await?;
     if targets.is_empty() {
         return Err(CampaignError::Invalid(
-            "the campaign targets no server".into(),
+            "the campaign targets no server that can take it".into(),
         ));
     }
     if targets.len() > MAX_TARGETS {

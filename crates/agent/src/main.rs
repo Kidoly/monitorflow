@@ -232,9 +232,12 @@ fn load(path: &Path, logs: Logs) -> anyhow::Result<AgentConfig> {
 
 /// The agent, until `stop` fires.
 async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
-    // Before enrolling, so an unsupported host never spends a token.
+    // Before enrolling: Windows fails here without spending a token.
     let host = os::detect().context("cannot start on this host")?;
     tracing::info!(hostname = %host.hostname, os_family = %host.os_family, os_version = %host.os_version, "host detected");
+    if !host.package_manager {
+        tracing::info!("no package manager to drive on this host: package updates are unavailable, monitoring works normally");
+    }
 
     let identity = match enroll::ensure_identity(&config, Backoff::default(), stop.clone()).await {
         Ok(identity) => identity,
@@ -303,7 +306,8 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
 
 /// Package reports every `packages.report_interval`, and the handlers of
 /// `apply_updates`, the source commands and `shell`; returns the reports
-/// for the stream.
+/// for the stream. Without a package manager there are no reports, and
+/// the package commands are refused as unsupported (ADR-0063).
 #[cfg(unix)]
 fn platform_handlers(
     config: &AgentConfig,
@@ -312,26 +316,40 @@ fn platform_handlers(
     stop: &Shutdown,
 ) -> Option<tokio::sync::watch::Receiver<Option<monitorflow_common::proto::v1::PackageReport>>> {
     use monitorflow_agent::commands::shell::ShellHandler;
+    use monitorflow_agent::commands::unsupported::Unsupported;
     use monitorflow_agent::packages::{
         self, ApplyUpdatesHandler, Reports, SourcesAction, SourcesHandler, Tools,
     };
     use monitorflow_common::command;
 
     let tools = Tools::default();
-    let manager = packages::for_family(host.os_family, tools.clone());
-    let (reports, latest_report) = Reports::new(manager.clone());
-    let report_every = Duration::from_secs(config.packages.report_interval);
-    tokio::spawn(reports.clone().run(report_every, stop.clone()));
-    handlers.register(
-        command::APPLY_UPDATES,
-        Arc::new(ApplyUpdatesHandler::new(manager, reports, tools.clone())),
-    );
-    for (kind, action) in [
-        (command::CONFIGURE_SOURCES, SourcesAction::Apply),
-        (command::REVERT_SOURCES, SourcesAction::Revert),
-    ] {
-        let handler = SourcesHandler::new(action, host.os_family, tools.clone());
-        handlers.register(kind, Arc::new(handler));
+    let manager =
+        packages::for_family(host.os_family, tools.clone()).filter(|_| host.package_manager);
+    let latest_report = manager.map(|manager| {
+        let (reports, latest_report) = Reports::new(manager.clone());
+        let report_every = Duration::from_secs(config.packages.report_interval);
+        tokio::spawn(reports.clone().run(report_every, stop.clone()));
+        handlers.register(
+            command::APPLY_UPDATES,
+            Arc::new(ApplyUpdatesHandler::new(manager, reports, tools.clone())),
+        );
+        for (kind, action) in [
+            (command::CONFIGURE_SOURCES, SourcesAction::Apply),
+            (command::REVERT_SOURCES, SourcesAction::Revert),
+        ] {
+            let handler = SourcesHandler::new(action, host.os_family, tools.clone());
+            handlers.register(kind, Arc::new(handler));
+        }
+        latest_report
+    });
+    if latest_report.is_none() {
+        for (kind, what) in [
+            (command::APPLY_UPDATES, "package updates"),
+            (command::CONFIGURE_SOURCES, "package sources"),
+            (command::REVERT_SOURCES, "package sources"),
+        ] {
+            handlers.register(kind, Arc::new(Unsupported::new(what, "this system")));
+        }
     }
     handlers.register(
         command::SHELL,
@@ -346,7 +364,7 @@ fn platform_handlers(
             },
         )),
     );
-    Some(latest_report)
+    latest_report
 }
 
 /// Windows Update reports and `apply_updates` through the update service

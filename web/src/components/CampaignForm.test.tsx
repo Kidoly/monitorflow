@@ -34,6 +34,23 @@ const inventory = {
 };
 
 describe("CampaignForm", () => {
+  it("leaves out hosts that take no package updates, and says so", async () => {
+    const user = userEvent.setup();
+    stubFetch({
+      ...inventory,
+      "GET /api/servers": {
+        status: 200,
+        body: { servers: [server(), server({ id: WEB2, peer_id: "web-2", hostname: "web-2", package_updates: false })], next_cursor: null },
+      },
+    });
+    render(<CampaignForm me={customerAdmin} />);
+    const form = await screen.findByRole("form", { name: "New campaign" });
+    await user.selectOptions(within(form).getByLabelText("Every server of the site"), "site-1");
+    expect(screen.getByText("1 server targeted. 1 left out: package updates aren't available on it.")).toBeInTheDocument();
+    expect(within(form).getByRole("checkbox", { name: /web-2/ })).toBeDisabled();
+    expect(within(form).getByRole("checkbox", { name: /web-2/ })).not.toBeChecked();
+  });
+
   it("creates a campaign with a pilot wave and a window, then opens it", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({ ...inventory, "POST /api/campaigns": { status: 201, body: detail() } });

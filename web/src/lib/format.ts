@@ -1,9 +1,9 @@
-const OS_NAMES: Record<string, string> = { debian: "Debian", rhel: "RHEL", windows: "Windows" };
+const OS_NAMES: Record<string, string> = { debian: "Debian", rhel: "RHEL", windows: "Windows", linux: "Linux" };
 
-/** `debian` + `12` gives `Debian 12`. A Windows version names the product already. */
+/** `debian` + `12` gives `Debian 12`. A Windows version, or that of a distribution outside the families, names the system already. */
 export function formatOs(family: string, version: string | null): string {
   const name = OS_NAMES[family] ?? family;
-  if (family === "windows" && version) return version;
+  if ((family === "windows" || family === "linux") && version) return version;
   return version ? `${name} ${version}` : name;
 }
 

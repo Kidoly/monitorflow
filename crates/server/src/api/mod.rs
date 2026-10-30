@@ -329,8 +329,8 @@
 //! `-`, and for a Windows server KB numbers (`KB5034441`) or update IDs
 //! (ADR-0049); `ttl_s` (60 s to 7 days, default one hour) is how long the agent
 //! may still start it. It needs an administrator role on the server's
-//! customer, as revocation does (ADR-0029); a revoked server is 409. The
-//! command is queued, sent as soon as the agent is connected and has no
+//! customer, as revocation does (ADR-0029); a revoked server is 409, and
+//! so is one with `package_updates` false (ADR-0063). The command is queued, sent as soon as the agent is connected and has no
 //! other command in flight, and audited as `command.create`. A command is
 //! `{"id", "server_id", "kind", "parameters", "state", "issued_at",
 //! "expires_at", "sent_at", "started_at", "finished_at", "exit_code",
@@ -427,7 +427,8 @@
 //!   "id": "uuid", "peer_id": "agent-1", "hostname": "web-1",
 //!   "site_id": "uuid", "site_name": "paris",
 //!   "customer_id": "uuid", "customer_name": "default", "relay_id": null,
-//!   "os_family": "debian", "os_version": "12", "agent_version": "0.1.0",
+//!   "os_family": "debian", "os_version": "12", "package_updates": true,
+//!   "agent_version": "0.1.0",
 //!   "created_at": "2026-10-18T12:00:00Z", "revoked_at": null,
 //!   "status": "online",
 //!   "connected_at": "2026-10-18T12:00:00Z",

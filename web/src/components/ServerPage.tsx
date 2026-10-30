@@ -325,6 +325,9 @@ function ServerFacts({
             .join(" · "),
         },
         { label: "Certificate", value: certificate ? <CertificateFact certificate={certificate} now={now} /> : "none issued" },
+        ...(server.package_updates === false
+          ? [{ label: "Package updates", value: "Package updates aren't available on this system; monitoring works normally" }]
+          : []),
         { label: "Enrolled", value: minutes(server.created_at) },
         { label: "Certificate ID", value: server.peer_id, mono: true },
         ...(server.revoked_at

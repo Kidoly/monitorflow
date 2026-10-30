@@ -8,6 +8,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use super::PackageError;
+use crate::os::OsFamily;
 
 /// Time allowed to an unprivileged read like `dpkg-query`.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -62,6 +63,19 @@ impl Run {
 }
 
 impl Tools {
+    /// Whether `family`'s package tools are on this host: an image-based
+    /// system can belong to a family and have none (ADR-0063).
+    pub fn package_manager(&self, family: OsFamily) -> bool {
+        match family {
+            OsFamily::Debian => self.apt_get.exists() && self.dpkg_query.exists(),
+            OsFamily::Rhel => self.dnf.exists() && self.rpm.exists(),
+            OsFamily::Linux => false,
+            // The update service, whatever the paths here (ADR-0049).
+            #[cfg(windows)]
+            OsFamily::Windows => true,
+        }
+    }
+
     /// Runs `program args` as root: `sudo -n [env…] program args`. Sudo
     /// passes `env` only where sudoers keeps those variables. No timeout:
     /// the command dispatcher bounds the whole command, and dropping the

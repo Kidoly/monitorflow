@@ -33,6 +33,7 @@ fn host() -> HostInfo {
         hostname: "web-01.example".into(),
         os_family: OsFamily::Debian,
         os_version: "debian 12".into(),
+        package_manager: true,
     }
 }
 

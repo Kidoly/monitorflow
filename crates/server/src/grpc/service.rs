@@ -147,8 +147,9 @@ fn check_release(peer: &str) -> Result<(), HandshakeError> {
 }
 
 /// Values stored in the `servers` row (ADR-0008); the schema accepts these
-/// `os_family` values only; `windows` since ADR-0047.
-const OS_FAMILIES: [&str; 3] = ["debian", "rhel", "windows"];
+/// `os_family` values only; `windows` since ADR-0047, `linux` since
+/// ADR-0063.
+const OS_FAMILIES: [&str; 4] = ["debian", "rhel", "windows", "linux"];
 const MAX_HOSTNAME: usize = 253;
 const MAX_VERSION: usize = 128;
 

@@ -191,6 +191,7 @@ impl Harness {
                 hostname: "web-01".into(),
                 os_family: "debian".into(),
                 os_version: "debian 12".into(),
+                no_package_manager: false,
             })),
         })
         .await

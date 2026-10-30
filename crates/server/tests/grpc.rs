@@ -178,6 +178,7 @@ fn hello_v(agent_id: &str, version: &str) -> Envelope {
             hostname: format!("{agent_id}.example"),
             os_family: "debian".into(),
             os_version: "debian 12".into(),
+            no_package_manager: false,
         })),
     }
 }
@@ -765,6 +766,46 @@ db_tests! {
         let updated = server_row(&pool, "agent-1").await.unwrap();
         assert_eq!(updated.os_family, "windows");
         assert_eq!(updated.hostname, "WIN-01");
+    }
+
+    #[sqlx::test]
+    async fn any_linux_connects_and_stores_whether_it_takes_package_updates(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        enrolled(&pool, "agent-1", paris).await;
+        let h = db_harness(&pool, settings()).await;
+        let package_updates = || async {
+            let stored: bool =
+                sqlx::query_scalar("SELECT package_updates FROM servers WHERE peer_id = 'agent-1'")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            stored
+        };
+
+        // An unknown distribution (ADR-0063).
+        let alpine = with_hello("agent-1", |hello| {
+            hello.os_family = "linux".into();
+            hello.os_version = "alpine 3.20".into();
+            hello.no_package_manager = true;
+        });
+        let _peer = h.open(&h.ca.client("agent-1", 10), alpine).await.unwrap();
+        assert_eq!(server_row(&pool, "agent-1").await.unwrap().os_family, "linux");
+        assert!(!package_updates().await);
+
+        // An agent before ADR-0063 leaves the flag false: a known family counts.
+        let _peer = h.open(&h.ca.client("agent-1", 11), hello("agent-1")).await.unwrap();
+        assert!(package_updates().await);
+
+        // A known family on an image-based host, without its tools.
+        let image = with_hello("agent-1", |hello| hello.no_package_manager = true);
+        let _peer = h.open(&h.ca.client("agent-1", 12), image).await.unwrap();
+        assert_eq!(server_row(&pool, "agent-1").await.unwrap().os_family, "debian");
+        assert!(!package_updates().await);
+
+        // The family alone is enough, should a relay have dropped the flag.
+        let linux = with_hello("agent-1", |hello| hello.os_family = "linux".into());
+        let _peer = h.open(&h.ca.client("agent-1", 13), linux).await.unwrap();
+        assert!(!package_updates().await);
     }
 
     #[sqlx::test]

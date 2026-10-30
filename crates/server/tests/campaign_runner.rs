@@ -410,6 +410,28 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_host_that_lost_its_package_manager_leaves_without_failing(pool: PgPool) {
+        let f = Fleet::new(&pool, 3).await;
+        let runner = Runner::new(pool.clone());
+        let now = Utc::now();
+        let mut new = f.campaign(vec![WaveSpec::Size(2), WaveSpec::Size(1)]);
+        new.failure_threshold = FailureThreshold { value: 0, unit: FailureUnit::Count };
+        let id = f.start(&new).await;
+        sqlx::query("UPDATE servers SET package_updates = false WHERE hostname <> 'web-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(queued(runner.advance(id, now).await.unwrap()), ["agent-1"]);
+        f.report(id, 0, CommandStatus::Succeeded).await;
+        // The second wave has nobody left and passes through.
+        runner.advance(id, now).await.unwrap();
+        runner.advance(id, now).await.unwrap();
+        assert_eq!(f.state(id).await.0, CampaignState::Completed);
+        assert_eq!(f.commands(id).await, [(0, State::Succeeded)]);
+    }
+
+    #[sqlx::test]
     async fn agent_campaigns_send_self_updates_to_linux_and_windows(pool: PgPool) {
         let f = Fleet::new(&pool, 2).await;
         let runner = Runner::new(pool.clone());

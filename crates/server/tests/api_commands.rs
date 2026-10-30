@@ -334,6 +334,43 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn hosts_without_a_package_manager_take_no_updates_or_sources(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let admin = h.login("admin", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let alpine: Uuid = sqlx::query_scalar(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family, package_updates)
+             VALUES ('agent-2', $1, 'edge-1', 'linux', false) RETURNING id",
+        )
+        .bind(h.site)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let unavailable = "package updates aren't available on this system";
+
+        let (status, server) = h.send("GET", &format!("/api/servers/{alpine}"), &admin, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(server["os_family"], "linux");
+        assert_eq!(server["package_updates"], false);
+        let (_, other) = h.send("GET", &format!("/api/servers/{}", h.server), &admin, None).await;
+        assert_eq!(other["package_updates"], true);
+
+        let commands = format!("/api/servers/{alpine}/commands");
+        let (status, body) = h.send("POST", &commands, &admin, Some(json!({"kind": "apply_updates"}))).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], unavailable);
+        let sources = format!("/api/servers/{alpine}/sources");
+        for (method, body) in [("POST", Some(json!({"mirrors": [{"name": "debian-12"}]}))), ("DELETE", None)] {
+            let (status, body) = h.send(method, &sources, &admin, body).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{method}");
+            assert_eq!(body["error"], unavailable);
+        }
+
+        // Its agent still updates itself.
+        let (status, body) = h.send("POST", &commands, &admin, Some(json!({"kind": "self_update", "version": "0.3.0"}))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+
+    #[sqlx::test]
     async fn windows_servers_take_windows_update_names_and_no_sources(pool: PgPool) {
         let h = Harness::new(&pool).await;
         let admin = h.login("admin", Role::Administrator, GrantScope::Customer(h.customer)).await;

@@ -220,6 +220,18 @@ describe("ServerPage", () => {
     await vi.waitFor(() => expect(within(screen.getByRole("table", { name: "Commands" })).getAllByRole("row")).toHaveLength(2));
   });
 
+  it("says in plain words when the host takes no package updates", async () => {
+    const server = { ...web1, os_family: "linux", os_version: "alpine 3.20", package_updates: false };
+    stubFetch(routes({ [`GET /api/servers/${ID}`]: ok(server) }));
+    render(<ServerPage id={ID} />);
+    await heading();
+    expect(screen.getByText("Package updates aren't available on this system; monitoring works normally")).toBeInTheDocument();
+    expect(screen.getByText("alpine 3.20")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "Updates" }));
+    expect(await screen.findByText(/update web-1 with\s+its own tools/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open campaigns" })).not.toBeInTheDocument();
+  });
+
   it("switches tabs through the URL", async () => {
     stubFetch(routes());
     render(<ServerPage id={ID} />);

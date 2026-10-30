@@ -209,6 +209,8 @@ async fn agent_hello(
         non_empty(&hello.os_version),
         non_empty(&hello.agent_version),
     );
+    // The family alone says so too, should an older relay drop the flag.
+    let package_updates = !hello.no_package_manager && hello.os_family != "linux";
 
     match existing {
         Some((_, true, _)) => Err(InventoryError::Revoked {
@@ -220,7 +222,8 @@ async fn agent_hello(
             // composite foreign key keeps it in the server's site.
             sqlx::query(
                 "UPDATE servers SET hostname = $2, os_family = $3, os_version = $4,
-                        agent_version = $5, relay_id = $6, last_seen_at = now()
+                        agent_version = $5, relay_id = $6, package_updates = $7,
+                        last_seen_at = now()
                  WHERE id = $1",
             )
             .bind(server_id)
@@ -229,6 +232,7 @@ async fn agent_hello(
             .bind(&os_version)
             .bind(&agent_version)
             .bind(relay_id)
+            .bind(package_updates)
             .execute(&mut **tx)
             .await?;
             site_name(tx, site_id).await
@@ -253,8 +257,9 @@ async fn agent_hello(
                 })?;
             let server_id: Uuid = sqlx::query_scalar(
                 "INSERT INTO servers (peer_id, site_id, relay_id, hostname, os_family,
-                                      os_version, agent_version, last_seen_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+                                      os_version, agent_version, package_updates,
+                                      last_seen_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
                  RETURNING id",
             )
             .bind(id)
@@ -264,6 +269,7 @@ async fn agent_hello(
             .bind(&hello.os_family)
             .bind(&os_version)
             .bind(&agent_version)
+            .bind(package_updates)
             .fetch_one(&mut **tx)
             .await?;
             let actor = accepted.peer.uri();

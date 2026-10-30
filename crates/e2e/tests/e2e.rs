@@ -14,7 +14,7 @@
 //!
 //! Needs `DATABASE_URL` at build time (see `build.rs`); the test creates its
 //! own database on that server and drops it at the end. The agent reads a
-//! fake debian os-release through `MONITORFLOW_OS_RELEASE_PATH`, so the
+//! fake os-release through `MONITORFLOW_OS_RELEASE_PATH`, so the
 //! test runs on any Linux host, whatever its distribution.
 
 mod support;
@@ -243,6 +243,8 @@ key = "{data}/tls/key.pem"
     );
 
     // Without a token the agent can only come back with its stored identity.
+    // It also comes back on a distribution outside the families (ADR-0063).
+    std::fs::write(&os_release, "ID=arch\n").unwrap();
     std::fs::write(&agent_config, agent_toml(None)).unwrap();
     let mut agent = Process::spawn(
         "agent (restart)",
@@ -255,6 +257,9 @@ key = "{data}/tls/key.pem"
     });
     assert_eq!(back["id"], online["id"], "the same server row is reused");
     assert_ne!(back["connected_at"], online["connected_at"]);
+    assert_eq!(back["os_family"], "linux");
+    assert_eq!(back["os_version"], "arch");
+    assert_eq!(back["package_updates"], false);
 
     // A relay for the site, then a second agent behind it (ADR-0025).
     let (relay_listen, relay_mirrors) = (free_addr(), free_addr());
