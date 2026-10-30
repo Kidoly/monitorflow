@@ -8,7 +8,6 @@
 //! link is single use, expires after [`TTL`], and dies as soon as any user
 //! exists, including one created with `monitorflow-server user add`.
 
-use std::fmt;
 use std::time::Duration;
 
 use axum::extract::rejection::JsonRejection;
@@ -16,9 +15,7 @@ use axum::extract::State;
 use axum::http::header::SET_COOKIE;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use monitorflow_common::redact::{Secret, REDACTED};
-use ring::digest::{digest, SHA256};
-use ring::rand::{SecureRandom, SystemRandom};
+use monitorflow_common::redact::Secret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
@@ -26,6 +23,7 @@ use uuid::Uuid;
 
 use super::audit::{self, Event};
 use super::auth::Me;
+use super::one_time::OneTimeToken;
 use super::users::{self, CreateUserError, GrantScope};
 use super::{session, ApiError, ApiState, Role};
 
@@ -38,48 +36,16 @@ pub const DEFAULT_SITE: &str = "main";
 /// Path of the setup page in the web interface.
 pub const PAGE_PATH: &str = "/setup/";
 
-const TOKEN_BYTES: usize = 32;
-
 /// Audit actor of what the setup link does before a user exists.
 const ACTOR: (&str, &str) = ("system", "setup");
 
-/// The secret of a setup link. `Debug` never shows it.
-#[derive(Clone, PartialEq, Eq)]
-pub struct SetupToken(String);
-
-impl fmt::Debug for SetupToken {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SetupToken({REDACTED})")
-    }
-}
+/// The secret of a setup link.
+pub type SetupToken = OneTimeToken;
 
 impl SetupToken {
-    fn generate() -> Self {
-        let mut bytes = [0u8; TOKEN_BYTES];
-        SystemRandom::new()
-            .fill(&mut bytes)
-            .expect("the system random generator failed");
-        Self(bytes.iter().map(|b| format!("{b:02x}")).collect())
-    }
-
-    /// Accepts only the exact format [`SetupToken::generate`] produces.
-    fn parse(value: &str) -> Option<Self> {
-        let valid = value.len() == 2 * TOKEN_BYTES
-            && value
-                .bytes()
-                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
-        valid.then(|| Self(value.to_owned()))
-    }
-
-    fn hash(&self) -> Vec<u8> {
-        digest(&SHA256, self.0.as_bytes()).as_ref().to_vec()
-    }
-
-    /// The link to give the person installing the server. The secret is
-    /// in the fragment, which browsers never send, so it stays out of the
-    /// reverse proxy's access log.
-    pub fn url(&self, web_base_url: &str) -> String {
-        format!("{web_base_url}{PAGE_PATH}#{}", self.0)
+    /// The link to give the person installing the server.
+    pub fn setup_url(&self, web_base_url: &str) -> String {
+        self.url(web_base_url, PAGE_PATH)
     }
 }
 
@@ -239,7 +205,7 @@ pub async fn complete(
     let id = users::insert_user(
         &mut tx,
         &request.username,
-        &hash,
+        Some(&hash),
         Role::Administrator,
         GrantScope::Global,
         ACTOR,
@@ -277,31 +243,4 @@ pub async fn complete(
         }],
     };
     Ok(([(SET_COOKIE, cookie)], Json(me)).into_response())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tokens_are_random_hex_and_parse_strictly() {
-        let token = SetupToken::generate();
-        assert_eq!(token.0.len(), 64);
-        assert_ne!(token, SetupToken::generate());
-        assert_eq!(SetupToken::parse(&token.0), Some(token.clone()));
-        for bad in ["", "abc", &"A".repeat(64), &"0".repeat(63), &"0".repeat(65)] {
-            assert_eq!(SetupToken::parse(bad), None, "{bad}");
-        }
-        assert_eq!(token.hash().len(), 32);
-        assert!(!format!("{token:?}").contains(&token.0));
-    }
-
-    #[test]
-    fn the_secret_is_in_the_fragment() {
-        let token = SetupToken::parse(&"ab".repeat(32)).unwrap();
-        assert_eq!(
-            token.url("https://mon.example.net"),
-            format!("https://mon.example.net/setup/#{}", "ab".repeat(32))
-        );
-    }
 }

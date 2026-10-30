@@ -870,7 +870,7 @@ function TokenTable({
       cell: (token) => (
         <>
           {formatWhen(new Date(token.created_at), now)}{" "}
-          <span className={styles.dim}>by {token.created_by_username ?? "the server CLI"}</span>
+          <span className={styles.dim}>by {token.created_by_username ?? "the server CLI or a removed user"}</span>
         </>
       ),
     },

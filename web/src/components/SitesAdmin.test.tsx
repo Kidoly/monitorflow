@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { CSRF_HEADER } from "@/lib/api";
-import { customerAdmin, relay } from "@/test/admin";
+import { customerAdmin, me, relay } from "@/test/admin";
 import { requestHeaders, stubFetch } from "@/test/fetch";
 
 import { SitesAdmin } from "./SitesAdmin";
@@ -37,6 +37,48 @@ const relays = {
 };
 
 describe("SitesAdmin", () => {
+  it("lets administrators of everything create and rename customers", async () => {
+    const root = me({ role: "administrator", customer_id: null, site_id: null });
+    const fetchMock = stubFetch({
+      "GET /api/customers": { status: 200, body: { customers: [{ id: "c1", name: "default", site_count: 0 }] } },
+      "GET /api/sites": { status: 200, body: { sites: [] } },
+      "GET /api/servers": servers,
+      "GET /api/relays": relays,
+      "POST /api/customers": { status: 201, body: { id: "c2", name: "Acme Hosting", site_count: 0 } },
+      "PUT /api/customers/c1": { status: 409, body: { error: "a customer with this name already exists" } },
+    });
+    const user = userEvent.setup();
+    render(<SitesAdmin me={root} />);
+    const form = await screen.findByRole("form", { name: "New customer" });
+    await user.type(within(form).getByLabelText("Customer name"), "Acme Hosting");
+    await user.click(within(form).getByRole("button", { name: "Create customer" }));
+    expect(await within(form).findByRole("status")).toHaveTextContent("Created Acme Hosting. Add its first site above.");
+    expect(fetchMock.mock.calls.find(([u, i]) => u === "/api/customers" && i?.method === "POST")?.[1]?.body).toBe(
+      JSON.stringify({ name: "Acme Hosting" }),
+    );
+
+    const section = screen.getByRole("region", { name: "default" });
+    await user.click(within(section).getByRole("button", { name: "Rename default" }));
+    const field = within(section).getByLabelText("New name");
+    await user.clear(field);
+    await user.type(field, "Acme Hosting");
+    await user.click(within(section).getByRole("button", { name: "Save" }));
+    expect(await within(section).findByRole("alert")).toHaveTextContent('A customer named "Acme Hosting" already exists.');
+  });
+
+  it("hides customer creation from customer administrators", async () => {
+    stubFetch({
+      "GET /api/customers": { status: 200, body: { customers: [{ id: "c1", name: "acme", site_count: 0 }] } },
+      "GET /api/sites": { status: 200, body: { sites: [] } },
+      "GET /api/servers": servers,
+      "GET /api/relays": relays,
+    });
+    render(<SitesAdmin me={customerAdmin} />);
+    await screen.findByRole("region", { name: "acme" });
+    expect(screen.queryByRole("form", { name: "New customer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Rename/ })).not.toBeInTheDocument();
+  });
+
   it("groups sites by customer and creates sites only where allowed", async () => {
     const paris = site("s1", "paris", "c1", "acme");
     const fetchMock = stubFetch({

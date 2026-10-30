@@ -221,7 +221,7 @@ Next.js (React, TypeScript) built as a static export and served by the central s
 
 Screens for the first version: fleet overview, graphs, alerts and incidents, approval queue, update campaigns, audit log, administration (agents, relays, tokens, certificates, users, roles).
 
-The first administrator is created in the browser with a one-time setup link the server prints while no user exists (ADR-0057).
+The first administrator is created in the browser with a one-time setup link the server prints while no user exists (ADR-0057). Administrators of everything then invite users, grant roles and reset passwords under Administration › Users and roles, with one-time password links (ADR-0059).
 
 Access is role-based: viewer, operator, approver, administrator. In MSP mode each customer sees only its own sites; tenancy is enforced in the API layer, never only in the frontend.
 

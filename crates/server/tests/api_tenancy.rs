@@ -832,6 +832,36 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 StatusCode::FORBIDDEN
             );
         }
+        ("PUT", "/api/customers/{id}") => {
+            let uri = format!("/api/customers/{}", b.customer);
+            assert_eq!(
+                ctx.status(method, &uri, Some(json!({ "name": "mine" })))
+                    .await,
+                StatusCode::FORBIDDEN
+            );
+        }
+        // Users (ADR-0059): global administrators only.
+        ("GET", "/api/users")
+        | ("POST", "/api/users")
+        | ("DELETE", "/api/users/{id}")
+        | ("POST", "/api/users/{id}/link")
+        | ("PUT", "/api/users/{id}/disabled")
+        | ("POST", "/api/users/{id}/roles")
+        | ("DELETE", "/api/users/{id}/roles") => {
+            let body = json!({ "username": "eve", "role": "administrator", "disabled": true });
+            let body = method.ne("GET").then_some(body);
+            assert_eq!(
+                ctx.status(method, &concrete(path), body).await,
+                StatusCode::FORBIDDEN
+            );
+        }
+        // Password links: no session, and no valid link.
+        ("POST", "/api/password-link") | ("POST", "/api/password-link/use") => {
+            let body = json!({ "token": "0".repeat(64), "password": PASSWORD });
+            let (status, body) = ctx.send(method, path, None, Some(body)).await;
+            assert_eq!(status, StatusCode::GONE);
+            assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
+        }
         ("POST", "/api/customers/{id}/sites") => {
             let uri = format!("/api/customers/{}/sites", b.customer);
             assert_eq!(

@@ -242,7 +242,7 @@ export function InstallKeyTable({
       cell: (key) => (
         <>
           {formatWhen(new Date(key.created_at), now)}{" "}
-          <span className={styles.dim}>by {key.created_by_username ?? "the server CLI"}</span>
+          <span className={styles.dim}>by {key.created_by_username ?? "the server CLI or a removed user"}</span>
         </>
       ),
     },

@@ -45,7 +45,17 @@
 //! | POST | `/api/pending-hosts/{peer_id}/approve`, `/api/pending-hosts/{peer_id}/reject` | customer administrator | 204; reject revokes the host's certificates; 409 once decided; audited |
 //! | GET | `/api/customers` | any role | [`customers::CustomerList`]: `{"customers": [{"id", "name", "site_count"}]}`, see below |
 //! | POST | `/api/customers` | global administrator | body `{"name"}`; 201 [`customers::CustomerView`] |
+//! | PUT | `/api/customers/{id}` | global administrator | body `{"name"}`; renames; [`customers::CustomerView`]; audited |
 //! | POST | `/api/customers/{id}/sites` | customer administrator | body `{"name"}`; 201 [`sites::SiteView`] |
+//! | GET | `/api/users` | global administrator | [`user_admin::UserList`]: `{"users": [{"id", "username", "state", "created_at", "roles", "link_expires_at"}]}`, see below |
+//! | POST | `/api/users` | global administrator | body `{"username", "role", "customer_id"?, "site_id"?}`; 201 [`user_admin::Invited`] with the password link's `token` |
+//! | DELETE | `/api/users/{id}` | global administrator | 204; 409 for oneself or the last administrator |
+//! | POST | `/api/users/{id}/link` | global administrator | 201 [`user_admin::LinkView`], a new password link replacing the previous one; 409 while disabled |
+//! | PUT | `/api/users/{id}/disabled` | global administrator | body `{"disabled"}`; [`user_admin::UserView`]; 409 for oneself or the last administrator |
+//! | POST | `/api/users/{id}/roles` | global administrator | body `{"role", "customer_id"?, "site_id"?}`; grants; [`user_admin::UserView`] |
+//! | DELETE | `/api/users/{id}/roles` | global administrator | the same body; revokes; [`user_admin::UserView`]; 409 for the last administrator |
+//! | POST | `/api/password-link` | password link | body `{"token"}`; [`user_admin::LinkOwner`] `{"username", "invited"}`; 410 for a dead link |
+//! | POST | `/api/password-link/use` | password link | body `{"token", "password"}`; 200 [`Me`] and the session cookie; 400 for a short password, 410 for a dead link |
 //! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled": true, false or null}`; [`sites::SiteView`]; audited (ADR-0055) |
 //! | PUT | `/api/sites/{id}/offline-alerts`, `/api/servers/{id}/offline-alerts`, `/api/relays/{id}/offline-alerts` | modify | body and answer `{"enabled": bool}`: offline incidents on or muted; audited (ADR-0057) |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
@@ -144,6 +154,18 @@
 //! across customers. Duplicates are 409. Both are audited
 //! (`customer.create`, `site.create`). Sites never move between customers
 //! through the API.
+//!
+//! # Users
+//!
+//! Global administrators manage every account (ADR-0059). `state` is
+//! `active`, `invited` (no password yet) or `disabled`. A password link,
+//! `/welcome/#<token>`, is the invitation and the password reset: single
+//! use, valid 7 days, one per user, and only returned when issued. Using
+//! it sets the password, ends the user's sessions and signs it in. No
+//! change may leave the server without an enabled global administrator who
+//! has a password. All changes are audited (`user.create`,
+//! `user.link_issued`, `user.grant`, `user.revoke`, `user.disable`,
+//! `user.enable`, `user.remove`, `user.password_set`).
 //!
 //! # Relays and enrollment tokens
 //!
@@ -452,6 +474,7 @@ pub mod install_keys;
 pub mod metrics;
 pub mod mirrors;
 pub mod offline_alerts;
+mod one_time;
 pub mod packages;
 pub mod password;
 pub mod proxmox;
@@ -472,6 +495,7 @@ pub mod sites;
 pub mod sources;
 pub mod thresholds;
 pub mod tokens;
+pub mod user_admin;
 pub mod users;
 
 use std::future::Future;
@@ -700,6 +724,17 @@ pub fn router(state: ApiState) -> Router {
             "/api/customers",
             get(customers::list).post(customers::create),
         )
+        .route("/api/customers/{id}", put(customers::rename))
+        .route("/api/users", get(user_admin::list).post(user_admin::invite))
+        .route("/api/users/{id}", delete(user_admin::remove))
+        .route("/api/users/{id}/link", post(user_admin::link))
+        .route("/api/users/{id}/disabled", put(user_admin::set_disabled))
+        .route(
+            "/api/users/{id}/roles",
+            post(user_admin::grant).delete(user_admin::revoke),
+        )
+        .route("/api/password-link", post(user_admin::inspect_link))
+        .route("/api/password-link/use", post(user_admin::use_link))
         .route(
             "/api/customers/{id}/sites",
             post(customers::create_customer_site),
