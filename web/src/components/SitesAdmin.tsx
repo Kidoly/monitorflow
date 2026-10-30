@@ -9,19 +9,24 @@ import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { Label } from "@/components/ui/StatusLabel";
 import { Banner, ErrorState, LoadingBlock, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { ApiError, type Customer, type Me, type Relay, type Server, type Site, api, describeError } from "@/lib/api";
-import { administersCustomer } from "@/lib/me";
+import { administersCustomer, administersEverything } from "@/lib/me";
 import { siteHref } from "@/lib/routes";
 import { scopedHref } from "@/lib/scope";
 import { usePolledData } from "@/lib/usePolledData";
 
 import { AdminLayout } from "./AdminLayout";
+import { OfflineAlerts } from "./OfflineAlerts";
 import styles from "./AdminPages.module.css";
 
 /** What the design asks of new names; the site name labels every stored metric. */
 const SITE_NAME = /^[a-z0-9-]+$/;
 const MAX_NAME = 64;
 
-/** `/admin/sites/`: sites grouped by customer, with a create form per administered customer. */
+/**
+ * `/admin/sites/`: sites grouped by customer, with a create form per
+ * administered customer. Administrators of everything also create and
+ * rename customers.
+ */
 export function SitesAdminPage() {
   return <AdminLayout>{(me) => <SitesAdmin me={me} />}</AdminLayout>;
 }
@@ -93,10 +98,12 @@ export function SitesAdmin({ me }: { me: Me }) {
               relayNames: data.relays.filter((r) => r.site_id === site.id && !r.revoked_at).map((r) => r.peer_id),
             }))}
           canCreate={administersCustomer(me, customer.id)}
+          canRename={administersEverything(me)}
           onCreated={refresh}
           onChanged={refresh}
         />
       ))}
+      {data && administersEverything(me) && <CreateCustomer onCreated={refresh} />}
     </div>
   );
 }
@@ -105,12 +112,14 @@ function CustomerSites({
   customer,
   rows,
   canCreate,
+  canRename,
   onCreated,
   onChanged,
 }: {
   customer: Customer;
   rows: Row[];
   canCreate: boolean;
+  canRename: boolean;
   onCreated: () => void;
   onChanged: () => void;
 }) {
@@ -153,6 +162,11 @@ function CustomerSites({
       header: "Automatic updates",
       cell: (site) => <AutoUpdate site={site} canChange={canCreate} onChanged={onChanged} />,
     },
+    {
+      key: "offline-alerts",
+      header: "Offline alerts",
+      cell: (site) => <OfflineAlerts kind="sites" target={{ ...site, site_id: site.id }} onChanged={onChanged} />,
+    },
   ];
   return (
     <section className={styles.section} aria-labelledby={titleId}>
@@ -163,6 +177,7 @@ function CustomerSites({
         <span className={styles.dim}>
           {plural(rows.length, "site")} · {plural(servers, "server")} · {plural(relays, "relay")}
         </span>
+        {canRename && <RenameCustomer customer={customer} onRenamed={onChanged} />}
       </div>
       {rows.length === 0 ? (
         <p className={styles.sectionNote}>No sites yet.</p>
@@ -299,5 +314,127 @@ function CreateSite({ customer, onCreated }: { customer: Customer; onCreated: ()
         Create site
       </Button>
     </form>
+  );
+}
+
+/** Turns the customer's name into a field with Save and Cancel. */
+function RenameCustomer({ customer, onRenamed }: { customer: Customer; onRenamed: () => void }) {
+  const [name, setName] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (name === null) {
+    return (
+      <Button size="small" className={styles.push} aria-label={`Rename ${customer.name}`} onClick={() => setName(customer.name)}>
+        Rename
+      </Button>
+    );
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const wanted = (name ?? "").trim();
+    setBusy(true);
+    setError(null);
+    try {
+      await api.renameCustomer(customer.id, wanted);
+      setName(null);
+      onRenamed();
+    } catch (e) {
+      setError(
+        e instanceof ApiError && e.status === 409
+          ? `A customer named "${wanted}" already exists.`
+          : `Renaming failed. ${describeError(e)}`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className={cx(styles.buttons, styles.push)} onSubmit={submit} aria-label={`Rename ${customer.name}`}>
+      <input
+        className={fieldClass}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        maxLength={MAX_NAME}
+        aria-label="New name"
+        autoFocus
+      />
+      <Button size="small" variant="k" type="submit" disabled={busy || name.trim() === ""}>
+        Save
+      </Button>
+      <Button size="small" onClick={() => setName(null)} disabled={busy}>
+        Cancel
+      </Button>
+      {error && (
+        <span className={styles.hintError} role="alert">
+          {error}
+        </span>
+      )}
+    </form>
+  );
+}
+
+/** Customers group sites for MSPs: each one's users can be limited to it. */
+function CreateCustomer({ onCreated }: { onCreated: () => void }) {
+  const titleId = useId();
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const wanted = name.trim();
+    setBusy(true);
+    setMessage(null);
+    try {
+      const customer = await api.createCustomer(wanted);
+      setName("");
+      setMessage({ error: false, text: `Created ${customer.name}. Add its first site above.` });
+      onCreated();
+    } catch (e) {
+      setMessage({
+        error: true,
+        text:
+          e instanceof ApiError && e.status === 409
+            ? `A customer named "${wanted}" already exists.`
+            : `Creating the customer failed. ${describeError(e)}`,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className={styles.section} aria-labelledby={titleId}>
+      <div className={styles.sectionHead}>
+        <h2 id={titleId} className={styles.sectionTitle}>
+          New customer
+        </h2>
+        <span className={styles.dim}>For an MSP: a customer has its own sites, and users can be limited to it.</span>
+      </div>
+      <form className={styles.newSite} onSubmit={submit} aria-label="New customer" noValidate>
+        <label className={styles.field}>
+          Customer name
+          <input
+            className={cx(fieldClass, styles.siteName)}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Acme Hosting"
+            maxLength={MAX_NAME}
+            required
+          />
+        </label>
+        {message && (
+          <span className={message.error ? styles.hintError : styles.hint} role={message.error ? "alert" : "status"}>
+            {message.text}
+          </span>
+        )}
+        <Button variant="k" type="submit" disabled={busy || name.trim() === ""}>
+          Create customer
+        </Button>
+      </form>
+    </section>
   );
 }

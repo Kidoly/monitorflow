@@ -68,7 +68,7 @@ gRPC over HTTP/2 with mutual TLS on every link: agent ↔ relay, relay ↔ relay
 - **mTLS everywhere.** No plaintext link, ever, including in development. TLS 1.3 only, ALPN `h2`; peers trust only the MonitorFlow CA, never system roots. Helpers live in `common::tls`; `scripts/dev-certs.sh` creates a throwaway dev CA for local runs.
 - **Peer identity and roles.** Every certificate carries exactly one URI SAN `monitorflow://<role>/<id>`, with role `agent`, `relay` or `server` and an ID of 1 to 64 characters from `[A-Za-z0-9._-]`. The CN is informational and never used to decide identity. Handlers read the verified identity with `common::tls::peer_identity`. See ADR-0004.
 - **Who may speak for an agent.** A peer whose certificate role is `agent` may only send a `Hello.agent_id` equal to its own certificate ID. A peer whose role is `relay` forwards for other agents: the central server accepts an `agent_id` from a relay only if that agent is assigned to the relay's site in the database. Relays can be chained: the server then checks the whole path a call took, each hop naming only the peer it verified, against the parent relay the administrator chose for each relay, so a relay speaks only for its own subtree (ADR-0028). Consequence: a compromised relay can forge upstream data (metrics, logs, command results) only for agents of its own site, or of its subtree when chained. It still cannot inject commands downstream, because every command is signed by the central server (below).
-- **Built-in certificate authority** on the central server. Enrollment: an administrator creates a one-time token; a new agent or relay presents it and receives a short-lived client certificate; the peer renews it over mTLS before expiry (ADR-0010).
+- **Built-in certificate authority** on the central server. Enrollment: an administrator creates a one-time token, or a reusable install key per site for agents, which then take their host name as ID (ADR-0058); a new agent or relay presents it and receives a short-lived client certificate; the peer renews it over mTLS before expiry (ADR-0010).
 - **Revocation.** An agent or relay can be revoked from the web interface; its certificate is rejected at the next connection (the server keeps a revocation list checked on handshake).
 - **Signed commands.** Every command sent to an agent is signed by the central server's command key. The agent verifies the signature before execution, so a compromised relay cannot inject commands.
 - **Signed releases.** Release files are signed with an offline Ed25519 key whose public half is compiled into every binary; agents and the installer refuse files it did not sign, whoever serves them, and agents refuse downgrades unless told explicitly (ADR-0053).
@@ -101,7 +101,7 @@ Runs on the central server, not on the agent, so rules can change without touchi
 
 ### Notifications
 
-Database triggers on incident events, approvals and failed updates write an outbox; a server task delivers it to the email and webhook channels administrators set up in the web interface, each for every customer or one (ADR-0058).
+Database triggers on incident events, approvals and failed updates write an outbox, with failed backups copied from the updater's status; a server task delivers it to the email and webhook channels administrators set up in the web interface, each for every customer or one (ADR-0060).
 
 ## 6. Storage
 
@@ -225,7 +225,7 @@ Next.js (React, TypeScript) built as a static export and served by the central s
 
 Screens for the first version: fleet overview, graphs, alerts and incidents, approval queue, update campaigns, audit log, administration (agents, relays, tokens, certificates, users, roles).
 
-The first administrator is created in the browser with a one-time setup link the server prints while no user exists (ADR-0057).
+The first administrator is created in the browser with a one-time setup link the server prints while no user exists (ADR-0057). Administrators of everything then invite users, grant roles and reset passwords under Administration › Users and roles, with one-time password links (ADR-0059).
 
 Access is role-based: viewer, operator, approver, administrator. In MSP mode each customer sees only its own sites; tenancy is enforced in the API layer, never only in the frontend.
 
@@ -272,7 +272,7 @@ Recorded in short form here; rationale in `docs/adr/`.
 | AI provider | Provider-agnostic trait; Claude API first |
 | AI in MSP mode | One shared configuration; one customer per request; secrets redacted |
 | Snapshots | Proxmox first |
-| Notifications | Email (SMTP) and signed JSON webhooks set up in the interface with a test button; an outbox filled by triggers on incident events, pending approvals and failed updates, delivered at most once by a polling task; secrets never returned (ADR-0058) |
+| Notifications | Email (SMTP) and signed JSON webhooks set up in the interface with a test button; an outbox filled by triggers on incident events, pending approvals and failed updates, delivered at most once by a polling task; secrets never returned (ADR-0060) |
 | Threshold evaluation | Server side |
 | Time series | VictoriaMetrics, not a custom store |
 | Peer identity | Role and ID in a `monitorflow://<role>/<id>` URI SAN; relays speak only for agents of their site |
@@ -283,10 +283,12 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Windows Update | WUA COM API in a LocalSystem service (`update-service` of the agent binary) behind a named pipe for the agent's service SID only; machine's own source (WU or WSUS) respected; updates reported as packages by KB number with classification and severity; `apply_updates` kinds map to all but feature upgrades, the Security Updates classification, or named KBs; reboot only with `allow_reboot`; Windows campaign targets skip pinned sources (ADR-0049) |
 | Sensor configuration | Built-in defaults, then site rows, then server rows in PostgreSQL; pushed after Hello and on revision change, polled every 10 s; agents acknowledge and persist it (ADR-0016) |
 | Threshold engine | Thresholds per metric with site and server layers over built-in defaults; per-severity timers on sample time with hysteresis; one open incident per series by partial unique index; state in `alert_states` reloaded at start (ADR-0017) |
+| Offline incidents | Built-in rule, no configuration: a server or relay without a stream for 5 minutes (since its last message and the server's start) opens a critical incident with the reserved metric `offline`, a relay's with `relay_id` instead of `server_id`; resolved on reconnect, mute or revocation; servers behind an offline relay open none; stateless 30 s task over the database and the registry; muted per site, server or relay through `offline_alerts`, audited (ADR-0057) |
 | Relay forwarding | The relay terminates agent mTLS (CA, CRL fetched from upstream, Hello ID = certificate ID) and opens one upstream stream per agent stream with its own certificate, forwarding payloads unchanged; relay certificates carry admin-chosen server names (ADR-0025) |
 | Renewal through relays | The relay serves `CertificateService::Renew` and forwards it as `RenewForwarded` with the agent's verified certificate; the server checks it against the CA, the relay policy and ADR-0010's rules (ADR-0028) |
 | Relay chaining | Each relay has an admin-chosen parent; every hop adds the peer it verified to a `monitorflow-via` path, and the server accepts only paths along parent links down from the connecting relay; relays serve the CRL downstream (ADR-0028) |
 | Peer administration | Enrollment tokens and revocation of agents and relays from the API by customer administrators; tokens returned once; revocation updates rows, certificates and the CRL and closes live streams (ADR-0029) |
+| Install keys | One reusable key per site enrolls agents under their host names, made unique and never reusing an ID; 30 days and any number of hosts by default, optional host limit and approval of new hosts, 30 enrollments a minute per key, revocable; recorded as used tokens so inventory code is unchanged; single-use tokens under Advanced (ADR-0058) |
 | Relay store-and-forward | `SampleBatch` envelopes buffered on disk per origin (CRC-checked segments, size and age caps, oldest dropped first) while the upstream is down, replayed oldest first before live data with the stored Hello and `monitorflow-via` path; at-least-once for buffered data until server acks exist (ADR-0027) |
 | Package mirrors | Global, admin-managed; aptly and reposync + createrepo_c run behind a runner trait, one job per mirror under an advisory lock; snapshots are aptly publishes or hardlinked directories; served over plain HTTP at a fixed layout, integrity from the server's GPG signatures (ADR-0030) |
 | Package source configuration | Signed spec with inline keys checked by fingerprint; deb822 or `.repo` files under `/etc`; one active backup with a manifest synced before any change, revert byte for byte, automatic revert on a failed post-check; root helper via exact sudoers rules (ADR-0032) |

@@ -17,10 +17,12 @@ use monitorflow_common::PROTOCOL_VERSION;
 use monitorflow_server::api::{self, auth::CSRF_HEADER, users, ApiSettings, ApiState, Role};
 use monitorflow_server::ca::{CaOptions, CertificateAuthority, ServerName};
 use monitorflow_server::db;
+use monitorflow_server::enroll::install_key::{self, KeyRequest};
 use monitorflow_server::enroll::token::{self, Creator, TokenError, TokenRequest};
 use monitorflow_server::enroll::{self, EnrollError, Enroller, FailureLimiter};
 use monitorflow_server::grpc::{
-    self, AgentStreamService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
+    self, AcceptedHello, AgentStreamService, DbInventory, DbRelayPolicy, Inventory, InventoryError,
+    Registry, StreamSettings,
 };
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
 use rustls::pki_types::CertificateDer;
@@ -212,6 +214,15 @@ impl Server {
         token: &str,
         csr_pem: &str,
     ) -> Result<EnrollResponse, Box<tonic::Status>> {
+        self.enroll_host(token, csr_pem, "").await
+    }
+
+    async fn enroll_host(
+        &self,
+        token: &str,
+        csr_pem: &str,
+        hostname: &str,
+    ) -> Result<EnrollResponse, Box<tonic::Status>> {
         let pin = *EnrollmentToken::parse(token).unwrap().ca_fingerprint();
         let channel = tls::connect(
             &self.enroll_url,
@@ -223,6 +234,7 @@ impl Server {
         let request = EnrollRequest {
             token: token.into(),
             csr_pem: csr_pem.into(),
+            hostname: hostname.into(),
         };
         EnrollServiceClient::new(channel)
             .enroll(request)
@@ -287,7 +299,196 @@ async fn enroll_as(
         .await
 }
 
+/// A new install key of the site `paris`.
+async fn install_key(
+    pki: &Pki,
+    pool: &PgPool,
+    max_hosts: Option<u32>,
+    require_approval: bool,
+) -> String {
+    let request = KeyRequest {
+        site_id: site(pool).await,
+        ttl: install_key::DEFAULT_TTL,
+        max_hosts,
+        require_approval,
+        creator: Creator::Cli,
+    };
+    let created = install_key::create(pool, pki.fingerprint(), &request)
+        .await
+        .unwrap();
+    created.key.to_secret_string().expose().to_owned()
+}
+
+/// Enrolls with `key` as the host `hostname`; returns the agent ID.
+async fn enroll_host(
+    pki: &Pki,
+    pool: &PgPool,
+    key: &str,
+    hostname: &str,
+) -> Result<String, EnrollError> {
+    let csr = csr(&KeyPair::generate().unwrap(), "monitorflow-agent", vec![]);
+    let enrolled = pki
+        .enroller(pool)
+        .enroll_host(key, &csr, hostname, None)
+        .await?;
+    assert_eq!(enrolled.identity.role(), PeerRole::Agent);
+    Ok(enrolled.identity.id().to_owned())
+}
+
+/// The first Hello of the agent `id`, as the stream sends it.
+async fn first_hello(pool: &PgPool, id: &str) -> Result<String, InventoryError> {
+    let peer = PeerIdentity::new(PeerRole::Agent, id).unwrap();
+    let hello = Hello {
+        agent_id: id.into(),
+        hostname: id.into(),
+        os_family: "debian".into(),
+        ..Default::default()
+    };
+    DbInventory::new(pool.clone())
+        .hello(AcceptedHello {
+            peer: &peer,
+            hello: &hello,
+            via_relay: None,
+            role: PeerRole::Agent,
+        })
+        .await
+}
+
 db_tests! {
+    #[sqlx::test]
+    async fn an_install_key_enrolls_many_hosts_under_unique_names(pool: PgPool) {
+        let pki = Pki::new();
+        // web-01 is taken by a single-use token, WEB-02 by a revoked server.
+        pki.token(&pool, "web-01").await;
+        sqlx::query("INSERT INTO servers (peer_id, site_id, hostname, os_family, revoked_at)
+                     VALUES ('WEB-02', $1, 'x', 'debian', now())")
+            .bind(site(&pool).await)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let key = install_key(&pki, &pool, None, false).await;
+        let mut ids = Vec::new();
+        for hostname in ["web-01", "Web-01", "web-02", "db 1", "db-1"] {
+            ids.push(enroll_host(&pki, &pool, &key, hostname).await.unwrap());
+        }
+        assert_eq!(ids, ["web-01-2", "web-01-3", "web-02-2", "db-1", "db-1-2"]);
+
+        // Each host lands in the key's site at its first Hello.
+        assert_eq!(first_hello(&pool, "db-1").await.unwrap(), "paris");
+        let (count, recorded): (i32, i64) = sqlx::query_as(
+            "SELECT host_count, (SELECT count(*) FROM enrollment_tokens t
+                                 WHERE t.install_key_id = k.id AND t.used_at IS NOT NULL)
+             FROM install_keys k",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((count, recorded), (5, 5));
+        let audited: serde_json::Value = sqlx::query_scalar(
+            "SELECT details FROM audit_log WHERE action = 'peer.enroll' AND target_id = 'db-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(audited["install_key_id"].is_string(), "{audited}");
+    }
+
+    #[sqlx::test]
+    async fn install_keys_stop_at_their_limit_expiry_or_revocation(pool: PgPool) {
+        let pki = Pki::new();
+        let one = install_key(&pki, &pool, Some(1), false).await;
+        enroll_host(&pki, &pool, &one, "a").await.unwrap();
+        refused(enroll_host(&pki, &pool, &one, "b").await);
+
+        let revoked = install_key(&pki, &pool, None, false).await;
+        let expired = install_key(&pki, &pool, None, false).await;
+        sqlx::query("UPDATE install_keys SET revoked_at = now() WHERE key_hash = $1")
+            .bind(token::hash(&EnrollmentToken::parse(&revoked).unwrap()).as_slice())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE install_keys SET created_at = now() - interval '2 days',
+                                             expires_at = now() - interval '1 day'
+                     WHERE key_hash = $1")
+            .bind(token::hash(&EnrollmentToken::parse(&expired).unwrap()).as_slice())
+            .execute(&pool)
+            .await
+            .unwrap();
+        refused(enroll_host(&pki, &pool, &revoked, "c").await);
+        refused(enroll_host(&pki, &pool, &expired, "c").await);
+
+        // Relays and agents too old to send their host name are told why.
+        let key = install_key(&pki, &pool, None, false).await;
+        let err = enroll_host(&pki, &pool, &key, " ").await.unwrap_err();
+        assert!(matches!(err, EnrollError::NoHostname), "{err:?}");
+        assert_eq!(tonic::Status::from(err).code(), Code::InvalidArgument);
+        assert_eq!(count(&pool, "SELECT count(*) FROM certificates").await, 1);
+    }
+
+    #[sqlx::test]
+    async fn install_keys_enroll_at_most_a_few_hosts_a_minute(pool: PgPool) {
+        let pki = Pki::new();
+        let key = install_key(&pki, &pool, None, false).await;
+        for i in 0..install_key::MAX_PER_MINUTE {
+            enroll_host(&pki, &pool, &key, &format!("h{i}")).await.unwrap();
+        }
+        let err = enroll_host(&pki, &pool, &key, "one-more").await.unwrap_err();
+        assert!(matches!(err, EnrollError::Busy), "{err:?}");
+        // Agents retry RESOURCE_EXHAUSTED.
+        assert_eq!(tonic::Status::from(err).code(), Code::ResourceExhausted);
+    }
+
+    #[sqlx::test]
+    async fn hosts_of_an_approval_key_wait_until_approved(pool: PgPool) {
+        let pki = Pki::new();
+        let key = install_key(&pki, &pool, None, true).await;
+        let id = enroll_host(&pki, &pool, &key, "web-01").await.unwrap();
+        let err = first_hello(&pool, &id).await.unwrap_err();
+        assert!(matches!(err, InventoryError::AwaitingApproval), "{err:?}");
+        assert_eq!(count(&pool, "SELECT count(*) FROM servers").await, 0);
+        sqlx::query("DELETE FROM pending_hosts").execute(&pool).await.unwrap();
+        assert_eq!(first_hello(&pool, &id).await.unwrap(), "paris");
+        assert_eq!(count(&pool, "SELECT count(*) FROM servers").await, 1);
+    }
+
+    #[sqlx::test]
+    async fn concurrent_hosts_with_one_name_get_distinct_ids(pool: PgPool) {
+        let pki = Pki::new();
+        let key = install_key(&pki, &pool, Some(3), false).await;
+        let tasks: Vec<_> = (0..4)
+            .map(|_| {
+                let (enroller, key) = (pki.enroller(&pool), key.clone());
+                tokio::spawn(async move {
+                    let csr = csr(&KeyPair::generate().unwrap(), "x", vec![]);
+                    enroller.enroll_host(&key, &csr, "web", None).await.map(|e| e.identity.id().to_owned())
+                })
+            })
+            .collect();
+        let mut ids = Vec::new();
+        for task in tasks {
+            if let Ok(id) = task.await.unwrap() {
+                ids.push(id);
+            }
+        }
+        ids.sort();
+        assert_eq!(ids, ["web", "web-2", "web-3"]);
+    }
+
+    #[sqlx::test]
+    async fn an_install_key_enrolls_over_the_wire(pool: PgPool) {
+        let pki = Pki::new();
+        let dir = TempDir::new().unwrap();
+        let server = Server::start(&pki, &pool, FailureLimiter::default(), dir.path()).await;
+        let key = install_key(&pki, &pool, None, false).await;
+        let csr = csr(&KeyPair::generate().unwrap(), "x", vec![]);
+        let reply = server.enroll_host(&key, &csr, "Web-02.example").await.unwrap();
+        assert_eq!(reply.peer_uri, "monitorflow://agent/web-02.example");
+        let again = server.enroll_host(&key, &csr, "Web-02.example").await.unwrap();
+        assert_eq!(again.peer_uri, "monitorflow://agent/web-02.example-2");
+        let old = server.enroll(&key, &csr).await.unwrap_err();
+        assert_eq!(old.code(), Code::InvalidArgument);
+    }
+
     #[sqlx::test]
     async fn relay_enrollment_creates_its_row_in_the_token_site(pool: PgPool) {
         let pki = Pki::new();

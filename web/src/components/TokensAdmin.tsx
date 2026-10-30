@@ -12,6 +12,7 @@ import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatAgo } from "@/components/ui/time";
 import {
   type AgentInstall,
+  type CreatedInstallKey,
   type CreatedToken,
   type EnrollmentToken,
   type InstallSource,
@@ -26,6 +27,7 @@ import { formatWhen } from "@/lib/clock";
 import {
   type Command,
   IMPORT_COMMAND,
+  type InstallTarget,
   SOURCE_WORDS,
   isSafeUrl,
   isServerAddress,
@@ -39,6 +41,7 @@ import { usePolledData } from "@/lib/usePolledData";
 
 import { AdminLayout } from "./AdminLayout";
 import styles from "./AdminPages.module.css";
+import { CreateInstallKey, InstallKeyTable, PendingHosts } from "./InstallKeys";
 
 /** Validity choices; the API takes 60 s to 7 days. */
 const TTLS: [number, string][] = [
@@ -50,7 +53,11 @@ const TTLS: [number, string][] = [
 
 const ROLE_WORDS: Record<TokenRole, string> = { agent: "Agent", relay: "Relay" };
 
-/** `/admin/tokens/`: create, list and revoke enrollment tokens (ADR-0029). */
+/**
+ * `/admin/tokens/`: the site's reusable install command first, with hosts
+ * waiting for approval (ADR-0058); single-use tokens under Advanced
+ * (ADR-0029).
+ */
 export function TokensAdminPage() {
   return <AdminLayout>{(me) => <TokensAdmin me={me} />}</AdminLayout>;
 }
@@ -62,16 +69,20 @@ function initialRole(): TokenRole {
 }
 
 async function load(signal: AbortSignal) {
-  const [list, { sites }] = await Promise.all([api.tokens(signal), api.sites(signal)]);
-  return { tokens: list.tokens, more: list.next_cursor !== null, sites };
+  const [list, keys, { sites }] = await Promise.all([api.tokens(signal), api.installKeys(signal), api.sites(signal)]);
+  return { tokens: list.tokens, more: list.next_cursor !== null, sites, ...keys };
 }
 
 export function TokensAdmin({ me }: { me: Me }) {
   const allowed = administersCustomer(me);
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(load, { enabled: allowed });
-  // Held in memory only, until dismissed or the page is left: the API never returns it again.
+  // Held in memory only, until dismissed or the page is left: the API never returns them again.
   const [created, setCreated] = useState<CreatedToken | null>(null);
+  const [createdKey, setCreatedKey] = useState<CreatedInstallKey | null>(null);
+  // Relays enroll with single-use tokens only: the relays page links here with `?role=relay`.
+  const [advanced, setAdvanced] = useState(() => initialRole() === "relay");
   const peerRef = useRef<HTMLInputElement>(null);
+  const advancedId = useId();
 
   if (!allowed) {
     return (
@@ -84,8 +95,8 @@ export function TokensAdmin({ me }: { me: Me }) {
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Enrollment tokens"
-        meta="A token lets one agent or relay enroll once. It is shown a single time, at creation."
+        title="Add servers"
+        meta="Paste one command on each host: the agent installs, enrolls and appears under the host's name."
       />
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
@@ -96,29 +107,69 @@ export function TokensAdmin({ me }: { me: Me }) {
         <>
           {data && administered.length === 0 ? (
             <EmptyState title="No site to enroll into yet">Create one under Sites first.</EmptyState>
+          ) : createdKey ? (
+            <NewInstallKey
+              installKey={createdKey}
+              editable={administersEverything(me)}
+              onDone={() => setCreatedKey(null)}
+            />
           ) : (
-            <CreateToken
-              me={me}
+            <CreateInstallKey
               sites={administered}
-              peerRef={peerRef}
-              onCreated={(token) => {
-                setCreated(token);
+              username={me.username}
+              onCreated={(key) => {
+                setCreatedKey(key);
                 refresh();
               }}
             />
           )}
-          {created && (
-            <NewToken
-              token={created}
-              editable={administersEverything(me)}
-              onDone={() => setCreated(null)}
-              onAnother={() => {
-                setCreated(null);
-                peerRef.current?.focus();
-              }}
-            />
+          <PendingHosts hosts={data?.pending_hosts ?? []} now={updatedAt ?? new Date()} onChange={refresh} />
+          <InstallKeyTable keys={data?.keys} now={updatedAt ?? new Date()} onChange={refresh} />
+          <section className={styles.section} aria-labelledby={advancedId}>
+            <div className={styles.sectionHead}>
+              <h2 id={advancedId} className={styles.sectionTitle}>
+                Advanced
+              </h2>
+              <Button size="small" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>
+                {advanced ? "Hide single-use tokens" : "Show single-use tokens"}
+              </Button>
+            </div>
+            <p className={styles.sectionNote}>
+              A token enrolls one agent once, under the name you choose. Relays always enroll with one.
+            </p>
+          </section>
+          {advanced && (
+            <>
+              {data && administered.length > 0 && (
+                <CreateToken
+                  me={me}
+                  sites={administered}
+                  peerRef={peerRef}
+                  onCreated={(token) => {
+                    setCreated(token);
+                    refresh();
+                  }}
+                />
+              )}
+              {created && (
+                <NewToken
+                  token={created}
+                  editable={administersEverything(me)}
+                  onDone={() => setCreated(null)}
+                  onAnother={() => {
+                    setCreated(null);
+                    peerRef.current?.focus();
+                  }}
+                />
+              )}
+              <TokenTable
+                tokens={data?.tokens}
+                more={data?.more ?? false}
+                now={updatedAt ?? new Date()}
+                onChange={refresh}
+              />
+            </>
           )}
-          <TokenTable tokens={data?.tokens} more={data?.more ?? false} now={updatedAt ?? new Date()} onChange={refresh} />
           <DefaultInstallSource editable={administersEverything(me)} />
         </>
       )}
@@ -325,6 +376,43 @@ function NewToken({
   );
 }
 
+/** A new install command, shown once with the address it connects to. */
+function NewInstallKey({
+  installKey: created,
+  editable,
+  onDone,
+}: {
+  installKey: CreatedInstallKey;
+  editable: boolean;
+  onDone: () => void;
+}) {
+  const titleId = useId();
+  const [address, setAddress] = useState(created.address);
+  const key = { ...created, upstream_url: address.upstream_url, enroll_url: address.enroll_url };
+  return (
+    <section className={cx(styles.panel, styles.created)} aria-labelledby={titleId} aria-live="polite">
+      <div className={styles.panelTitle}>
+        <Label tone="ok">Created</Label>
+        <h2 id={titleId} className={styles.sectionTitle}>
+          Install command for {key.site_name} · works until {formatWhen(new Date(key.expires_at), new Date())}
+        </h2>
+      </div>
+      <Banner tone="warn" role="alert">
+        <strong>This command will not be shown again.</strong> Copy it now and keep it with your notes or deployment
+        scripts. It works on {key.max_hosts === null ? "any number of hosts" : `up to ${key.max_hosts} hosts`}
+        {key.require_approval ? ", which wait for your approval below" : ""}. If you lose it, create a new one.
+      </Banner>
+      <ServerAddress value={address} editable={editable} onChange={setAddress} />
+      <InstallCommands token={key} />
+      <div className={styles.buttons}>
+        <Button variant="k" onClick={onDone}>
+          Done
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 const OTHER_ADDRESS = "other";
 
 /** This page's host name, which hosts often reach the server at too; loopback names are left out. */
@@ -478,8 +566,11 @@ function SourceRadios({
   );
 }
 
-/** Ready-to-paste install commands for an agent token (ADR-0052), from a chosen source (ADR-0054). */
-function InstallCommands({ token }: { token: CreatedToken }) {
+/**
+ * Ready-to-paste install commands for an agent token or install key
+ * (ADR-0052, ADR-0058), from a chosen source (ADR-0054).
+ */
+function InstallCommands({ token }: { token: InstallTarget }) {
   const titleId = useId();
   const sourceName = useId();
   const [source, setSource] = useState<InstallSource>(token.install.source);
@@ -609,8 +700,8 @@ function RelayInstallCommand({ token }: { token: CreatedToken }) {
         <Banner tone="warn">{command.unavailable}</Banner>
       )}
       <p className={styles.fieldNote}>
-        Then install the site&apos;s agents with a token each, giving this relay&apos;s address in &quot;Connect through
-        a relay&quot;. The relay updates itself with the agents (Updates › Automatic updates).
+        Then create the site&apos;s install command above, giving this relay&apos;s address in &quot;Connect through a
+        relay&quot;. The relay updates itself with the agents (Updates › Automatic updates).
       </p>
     </div>
   );
@@ -779,7 +870,7 @@ function TokenTable({
       cell: (token) => (
         <>
           {formatWhen(new Date(token.created_at), now)}{" "}
-          <span className={styles.dim}>by {token.created_by_username ?? "the server CLI"}</span>
+          <span className={styles.dim}>by {token.created_by_username ?? "the server CLI or a removed user"}</span>
         </>
       ),
     },

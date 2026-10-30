@@ -1,4 +1,4 @@
-//! Notifications (ADR-0058): the triggers that fill the outbox, delivery
+//! Notifications (ADR-0060): the triggers that fill the outbox, delivery
 //! to a webhook and an SMTP server on loopback, customer scoping, the API's
 //! secrecy and its test button. Ignored without `DATABASE_URL`.
 
@@ -7,13 +7,18 @@ use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, Request, StatusCode};
+use chrono::{TimeDelta, Utc};
 use monitorflow_common::redact::Secret;
+use monitorflow_common::server_update::backup::{BackupKind, BackupRun, BackupState, Backups};
+use monitorflow_common::server_update::{Status, STATUS_FILE};
+use monitorflow_common::tls::PeerRole;
+use monitorflow_server::alerting::offline::{self, OfflineSettings};
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::grpc::Registry;
 use monitorflow_server::notify::send::{signature, SIGNATURE_HEADER, TIMESTAMP_HEADER};
-use monitorflow_server::notify::{self, Destination, Dispatcher, Email, Webhook};
+use monitorflow_server::notify::{self, backup, Destination, Dispatcher, Email, Webhook};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -217,6 +222,58 @@ async fn smtp_server() -> (u16, Arc<Mutex<Vec<String>>>) {
     (port, mails)
 }
 
+/// Texts the webhook `hooks` received, in order, forgetting them.
+fn texts(hooks: &Mutex<Vec<(HeaderMap, Bytes)>>) -> Vec<String> {
+    let mut texts: Vec<String> = hooks
+        .lock()
+        .unwrap()
+        .drain(..)
+        .map(|(_, body)| {
+            let payload: Value = serde_json::from_slice(&body).unwrap();
+            payload["text"].as_str().unwrap().to_owned()
+        })
+        .collect();
+    texts.sort();
+    texts
+}
+
+async fn offline_check(pool: &PgPool, up: &[(PeerRole, &str)]) {
+    let online = up
+        .iter()
+        .map(|&(role, id)| ((role, id.to_owned()), Utc::now()))
+        .collect();
+    let started = Utc::now() - TimeDelta::days(1);
+    offline::check(pool, &online, started, &OfflineSettings::default())
+        .await
+        .unwrap();
+}
+
+/// Writes the `status.json` of an updater whose last backup failed.
+fn failed_backup(dir: &std::path::Path, last_success: Option<chrono::DateTime<Utc>>) {
+    let status = Status {
+        updater_version: "0.1.0".into(),
+        heartbeat_at: Utc::now(),
+        running: None,
+        update: None,
+        backups: Backups {
+            last: Some(BackupRun {
+                id: Uuid::new_v4().to_string(),
+                kind: BackupKind::Daily,
+                requested_by: String::new(),
+                state: BackupState::Failed,
+                error: Some("pg_dump: no space left on device".into()),
+                warning: None,
+                file: None,
+                started_at: Utc::now(),
+                finished_at: Some(Utc::now()),
+            }),
+            last_success_at: last_success,
+            ..Backups::default()
+        },
+    };
+    std::fs::write(dir.join(STATUS_FILE), serde_json::to_vec(&status).unwrap()).unwrap();
+}
+
 fn fast(pool: &PgPool) -> Dispatcher {
     Dispatcher::new(pool.clone(), "https://mf.example").with_retries(vec![Duration::ZERO])
 }
@@ -400,6 +457,90 @@ db_tests! {
         .await
         .unwrap();
         assert!(sent.is_some() && error.is_none());
+    }
+
+    #[sqlx::test]
+    async fn offline_servers_and_relays_notify_with_the_right_ending(pool: PgPool) {
+        let (customer, _, relay) = place(&pool, "acme").await;
+        for table in ["servers", "relays"] {
+            sqlx::query(&format!("UPDATE {table} SET last_seen_at = now() - interval '1 hour'"))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let (url, hooks) = receiver(StatusCode::OK).await;
+        let hook = Destination::Webhook(Webhook { url });
+        notify::insert(&pool, &hook, None, Some(customer)).await.unwrap();
+        let dispatcher = fast(&pool);
+
+        offline_check(&pool, &[]).await;
+        let events = outbox(&pool).await;
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert!(events.iter().all(|(e, owner, _)| e == "incident.opened" && *owner == Some(customer)));
+        let on_relay = events.iter().find(|(_, _, d)| !d["relay"].is_null()).unwrap();
+        assert_eq!(on_relay.2["relay"]["id"], relay.to_string());
+        assert_eq!(on_relay.2["server"], Value::Null);
+        assert_eq!(on_relay.2["site"]["name"], "acme-site");
+        dispatcher.pass().await.unwrap();
+        assert_eq!(
+            texts(&hooks),
+            [
+                "Critical: acme-web (acme / acme-site) is offline",
+                "Critical: relay acme-gw (acme / acme-site) is offline",
+            ]
+        );
+
+        // The server reconnects; the relay is revoked, which is not back.
+        sqlx::query("UPDATE relays SET revoked_at = now() WHERE id = $1")
+            .bind(relay)
+            .execute(&pool)
+            .await
+            .unwrap();
+        offline_check(&pool, &[(PeerRole::Agent, "acme-web")]).await;
+        dispatcher.pass().await.unwrap();
+        assert_eq!(
+            texts(&hooks),
+            [
+                "Resolved: acme-web (acme / acme-site) is back online",
+                "Resolved: relay acme-gw (acme / acme-site) was revoked",
+            ]
+        );
+    }
+
+    #[sqlx::test]
+    async fn a_failed_backup_notifies_once_per_outage(pool: PgPool) {
+        let (customer, _, _) = place(&pool, "acme").await;
+        let (url, hooks) = receiver(StatusCode::OK).await;
+        let (scoped_url, scoped) = receiver(StatusCode::OK).await;
+        let all = Destination::Webhook(Webhook { url });
+        notify::insert(&pool, &all, None, None).await.unwrap();
+        let one = Destination::Webhook(Webhook { url: scoped_url });
+        notify::insert(&pool, &one, None, Some(customer)).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let dispatcher = fast(&pool);
+
+        // Without a status, or an updater that has not reported, nothing.
+        assert!(!backup::check(&pool, dir.path()).await.unwrap());
+
+        let since = Utc::now() - TimeDelta::days(2);
+        failed_backup(dir.path(), Some(since));
+        assert!(backup::check(&pool, dir.path()).await.unwrap());
+        dispatcher.pass().await.unwrap();
+        assert_eq!(texts(&hooks), ["Backup of the server failed: pg_dump: no space left on device"]);
+        assert!(scoped.lock().unwrap().is_empty(), "server-wide: not one customer's channel");
+
+        // The hourly retry fails too: the same outage.
+        failed_backup(dir.path(), Some(since));
+        assert!(!backup::check(&pool, dir.path()).await.unwrap());
+
+        // A success in between makes the next failure a new outage.
+        failed_backup(dir.path(), Some(Utc::now()));
+        assert!(backup::check(&pool, dir.path()).await.unwrap());
+        // A server that never had a backup has one outage too.
+        failed_backup(dir.path(), None);
+        assert!(backup::check(&pool, dir.path()).await.unwrap());
+        failed_backup(dir.path(), None);
+        assert!(!backup::check(&pool, dir.path()).await.unwrap());
     }
 
     #[sqlx::test]

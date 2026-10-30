@@ -11,7 +11,8 @@
 #   MF_SERVER        host:port (or https URL) of the upstream, server or
 #                    relay. Required on the first install; port 7443 by
 #                    default. IPv6 addresses in brackets: [2001:db8::1]:7443
-#   MF_TOKEN         one-time enrollment token. Required unless enrolled.
+#   MF_TOKEN         the site's install key (agents, ADR-0058) or a one-time
+#                    enrollment token. Required unless enrolled.
 #   MF_ENROLL        host:port (or https URL) of the server's enrollment
 #                    listener. Defaults to MF_SERVER's host on port 7445;
 #                    set it when MF_SERVER is a relay.
@@ -269,7 +270,7 @@ wait_for_enrollment() {
                 say "the $MF_ROLE stopped before it enrolled"
             fi
             journalctl -u "$SERVICE" -n 15 --no-pager >&2 || true
-            die "enrollment failed; see journalctl -u $SERVICE. Check MF_SERVER, MF_ENROLL and that the token is unused and not expired, then run the installer again"
+            die "enrollment failed; see journalctl -u $SERVICE. Check MF_SERVER, MF_ENROLL and that the token or install command is still valid, then run the installer again"
         fi
         sleep 1
         waited=$((waited + 1))
@@ -328,7 +329,7 @@ esac
 if enrolled; then
     [ -z "$MF_TOKEN" ] || say "already enrolled: MF_TOKEN is not used; revoke it in the web interface"
 else
-    [ -n "$MF_TOKEN" ] || die "MF_TOKEN is required: create a $MF_ROLE token in the web interface (Admin › Enrollment tokens)"
+    [ -n "$MF_TOKEN" ] || die "MF_TOKEN is required: copy the command from the web interface (Administration › Add servers)"
     case $MF_TOKEN in
         *[!A-Za-z0-9._-]* | *.*.*.*) die "MF_TOKEN is not an enrollment token (mfe1.…)" ;;
         mfe1.?*.?*) ;;

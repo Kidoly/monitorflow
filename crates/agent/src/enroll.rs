@@ -9,16 +9,20 @@ use crate::backoff::Backoff;
 use crate::identity::AgentIdentity;
 use crate::shutdown::Shutdown;
 
-/// Loads the agent identity, enrolling first when there is none.
+/// Loads the agent identity, enrolling first when there is none. The host
+/// name goes with the request: an install key makes it the agent's ID
+/// (ADR-0058).
 pub async fn ensure_identity(
     config: &AgentConfig,
     backoff: Backoff,
     shutdown: Shutdown,
 ) -> Result<AgentIdentity, EnrollError> {
-    monitorflow_common::client::enroll::ensure_identity(
-        &EnrollSettings::agent(config),
-        backoff,
-        shutdown,
-    )
-    .await
+    let hostname = tokio::task::spawn_blocking(crate::os::hostname)
+        .await
+        .unwrap_or_default();
+    let settings = EnrollSettings {
+        hostname,
+        ..EnrollSettings::agent(config)
+    };
+    monitorflow_common::client::enroll::ensure_identity(&settings, backoff, shutdown).await
 }

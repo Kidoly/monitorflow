@@ -98,6 +98,10 @@ impl From<HandshakeError> for Status {
             HandshakeError::Inventory(InventoryError::Db(_)) => {
                 Status::unavailable("inventory unavailable; retry later")
             }
+            // Agents retry UNAVAILABLE, so they connect once approved.
+            HandshakeError::Inventory(InventoryError::AwaitingApproval) => {
+                Status::unavailable(message)
+            }
             HandshakeError::SensorConfig(_) => {
                 Status::unavailable("sensor configuration unavailable; retry later")
             }
@@ -833,6 +837,10 @@ mod tests {
             id: "web-01".into(),
         };
         assert_eq!(code(revoked.into()), Code::PermissionDenied);
+        assert_eq!(
+            code(InventoryError::AwaitingApproval.into()),
+            Code::Unavailable
+        );
         let status = Status::from(HandshakeError::from(InventoryError::Db(
             sqlx::Error::PoolClosed,
         )));

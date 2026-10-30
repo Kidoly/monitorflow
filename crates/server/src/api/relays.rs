@@ -77,6 +77,10 @@ pub struct RelayView {
     pub relay_version: Option<String>,
     /// Its latest self-update.
     pub last_update: Option<RelayCommand>,
+    /// Whether it opens an incident when offline (ADR-0057); muted when
+    /// this or `site_offline_alerts` is `false`.
+    pub offline_alerts: bool,
+    pub site_offline_alerts: bool,
 }
 
 /// Body of `GET /api/relays/{id}`.
@@ -105,6 +109,7 @@ pub struct AttachedServer {
 const SELECT_RELAYS: &str = "SELECT r.id, r.peer_id, r.name, r.site_id, si.name AS site_name,
             si.customer_id, c.name AS customer_name, r.created_at, r.last_seen_at,
             r.revoked_at, r.mirror_url, r.mirror_reported_at, r.relay_version,
+            r.offline_alerts, si.offline_alerts AS site_offline_alerts,
             (SELECT max(ce.not_after) FROM certificates ce
              WHERE ce.peer_role = 'relay' AND ce.peer_id = r.peer_id
                AND ce.revoked_at IS NULL) AS cert_not_after,
@@ -133,6 +138,8 @@ struct Row {
     mirror_url: Option<String>,
     mirror_reported_at: Option<DateTime<Utc>>,
     relay_version: Option<String>,
+    offline_alerts: bool,
+    site_offline_alerts: bool,
     cert_not_after: Option<DateTime<Utc>>,
     server_names: Vec<String>,
     server_count: i64,
@@ -291,6 +298,8 @@ impl RelayView {
             mirror_url: row.mirror_url,
             mirror_reported_at: row.mirror_reported_at,
             relay_version: row.relay_version,
+            offline_alerts: row.offline_alerts,
+            site_offline_alerts: row.site_offline_alerts,
             last_update,
         }
     }

@@ -62,7 +62,7 @@ async-trait = "0.1"
 # rustls on ring, like the rest of the workspace; no OpenSSL.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 snap = "1"
-# Notification email (ADR-0058): SMTP over rustls on ring, no OpenSSL.
+# Notification email (ADR-0060): SMTP over rustls on ring, no OpenSSL.
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
 # Relay mirror sync (ADR-0034): apt `Packages` and dnf primary metadata
 # come plain, gzip, xz, bzip2 or zstd. Pure Rust, no C libraries.

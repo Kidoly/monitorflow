@@ -11,6 +11,8 @@ use monitorflow_common::server_update::{
 };
 use serde::{Deserialize, Serialize};
 
+use monitorflow_common::server_update::backup::BackupKind;
+
 use crate::env_file::{EnvFile, Pins};
 use crate::host::Host;
 use crate::source::Source;
@@ -52,13 +54,15 @@ impl Reporter {
             .ok()
             .flatten()
             .and_then(|bytes| serde_json::from_slice::<Status>(&bytes).ok());
+        let (update, backups) = previous.map(|s| (s.update, s.backups)).unwrap_or_default();
         Self {
             dir: dir.to_owned(),
             status: Status {
                 updater_version: monitorflow_common::VERSION.to_owned(),
                 heartbeat_at: Utc::now(),
                 running: None,
-                update: previous.and_then(|s| s.update),
+                update,
+                backups,
             },
         }
     }
@@ -103,7 +107,7 @@ impl Reporter {
         self.write();
     }
 
-    fn step(&mut self, message: impl Into<String>) {
+    pub(crate) fn step(&mut self, message: impl Into<String>) {
         let message = message.into();
         tracing::info!("{message}");
         self.run().steps.push(Step {
@@ -137,8 +141,10 @@ pub struct Updater<'a> {
     pub server_update_dir: PathBuf,
     /// The updater's own volume.
     pub state_dir: PathBuf,
-    /// Where database dumps go.
+    /// Where backups go.
     pub backup_dir: PathBuf,
+    /// The server's data volume, which backups include.
+    pub serverdata_dir: PathBuf,
     pub reporter: Reporter,
 }
 
@@ -203,15 +209,23 @@ impl Updater<'_> {
             Ok(version) => version,
             Err(e) => return self.reporter.finish(UpdateState::Failed, fail(&e)),
         };
-        let name = format!(
-            "monitorflow-{current}-to-{target}-{}.dump",
-            Utc::now().format("%Y%m%dT%H%M%SZ")
-        );
-        if let Err(e) = self.backup(&name).await {
-            return self.reporter.finish(UpdateState::Failed, Some(e));
-        }
+        let name = match self
+            .backup(
+                BackupKind::Update,
+                request.id.clone(),
+                &request.requested_by,
+            )
+            .await
+        {
+            Ok(name) => name,
+            Err(e) => {
+                let error = format!("backup failed: {e}");
+                return self.reporter.finish(UpdateState::Failed, Some(error));
+            }
+        };
         self.reporter.run().backup = Some(name.clone());
-        self.reporter.step(format!("database saved to {name}"));
+        self.reporter
+            .step(format!("database and server data saved to {name}"));
 
         let previous = match self.env.pins() {
             Ok(pins) => pins,
@@ -303,17 +317,6 @@ impl Updater<'_> {
         self.update_dir.join(RELEASE_DIR).join(version.to_string())
     }
 
-    async fn backup(&self, name: &str) -> Result<(), String> {
-        let part = self.backup_dir.join(format!(".{name}.part"));
-        let _ = std::fs::remove_file(&part);
-        if let Err(e) = self.host.dump_database(&part).await {
-            let _ = std::fs::remove_file(&part);
-            return Err(format!("database backup failed: {e}"));
-        }
-        std::fs::rename(&part, self.backup_dir.join(name))
-            .map_err(|e| format!("database backup failed: {e}"))
-    }
-
     /// After the new server is confirmed: the agent cache, then the
     /// updater itself.
     async fn complete(&mut self, pending: &Pending, staged: bool) -> UpdateState {
@@ -374,7 +377,7 @@ impl Updater<'_> {
             let backup = self.reporter.run().backup.clone().unwrap_or_default();
             self.reporter.step(format!(
                 "the new version migrated the database, which the previous one cannot use: \
-                 restore {backup} (docs/deploy-server.md, Restoring after a failed update)"
+                 restore {backup} with deploy/restore.sh"
             ));
         }
         let _ = std::fs::remove_dir_all(self.release_dir(&pending.to));

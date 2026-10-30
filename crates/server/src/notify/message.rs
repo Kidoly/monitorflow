@@ -1,6 +1,6 @@
 //! What a notification says: one line of text, a link to the page that
 //! shows it, an email body, and the webhook payload (version 1, documented
-//! in ADR-0058).
+//! in ADR-0060).
 
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
@@ -17,7 +17,7 @@ pub const PAYLOAD_VERSION: u32 = 1;
 pub struct Event {
     pub id: i64,
     /// `incident.opened`, `incident.escalated`, `incident.resolved`,
-    /// `approval.waiting`, `update.failed`, or `test`.
+    /// `approval.waiting`, `update.failed`, `backup.failed`, or `test`.
     pub event: String,
     pub customer_id: Option<Uuid>,
     /// The objects of the event, written by the triggers.
@@ -112,7 +112,11 @@ fn incident_text(event: &str, details: &Value) -> String {
     // Offline incidents (ADR-0057's 'offline' metric) read as a state.
     if str_at(incident, &["metric"]) == Some("offline") {
         return match event {
-            "incident.resolved" => format!("Resolved: {place} is back online"),
+            "incident.resolved" => match str_at(incident, &["reason"]) {
+                Some("revoked") => format!("Resolved: {place} was revoked"),
+                Some("muted") => format!("Resolved: offline alerts for {place} were muted"),
+                _ => format!("Resolved: {place} is back online"),
+            },
             _ => format!("{}: {place} is offline", capitalized(severity)),
         };
     }
@@ -167,6 +171,7 @@ fn path(event: &Event) -> String {
             format!("/incidents/view/?id={}", id(&["incident", "id"]))
         }
         "approval.waiting" => "/remediation/approvals/".into(),
+        "backup.failed" => "/admin/backups/".into(),
         "update.failed" => match str_at(d, &["update", "kind"]) {
             Some("campaign") => format!("/campaigns/view/?id={}", id(&["update", "campaign_id"])),
             Some("automatic_rollout") => "/admin/updates/".into(),
@@ -196,6 +201,10 @@ pub fn render(event: &Event, web_url: &str) -> Message {
             )
         }
         "update.failed" => update_text(d),
+        "backup.failed" => match str_at(d, &["backup", "error"]) {
+            Some(error) => format!("Backup of the server failed: {error}"),
+            None => "Backup of the server failed".to_owned(),
+        },
         e => incident_text(e, d),
     };
     let url = format!("{web_url}{}", path(event));
@@ -313,6 +322,42 @@ mod tests {
             up.text,
             "Resolved: relay gw-1 (acme / paris) is back online"
         );
+    }
+
+    #[test]
+    fn an_offline_incident_only_says_back_online_when_it_is() {
+        let resolved = |reason: Option<&str>| {
+            let mut details = incident("offline", "critical", None);
+            details["incident"]["reason"] = json!(reason);
+            render(&event("incident.resolved", details), WEB).text
+        };
+        let back = "Resolved: web-1 (paris) is back online";
+        assert_eq!(resolved(Some("back_online")), back);
+        assert_eq!(resolved(None), back);
+        assert_eq!(
+            resolved(Some("revoked")),
+            "Resolved: web-1 (paris) was revoked"
+        );
+        assert_eq!(
+            resolved(Some("muted")),
+            "Resolved: offline alerts for web-1 (paris) were muted"
+        );
+    }
+
+    #[test]
+    fn a_failed_backup_links_to_the_backups_page() {
+        let failed = render(
+            &event(
+                "backup.failed",
+                json!({"backup": {"error": "pg_dump: no space left"}}),
+            ),
+            WEB,
+        );
+        assert_eq!(
+            failed.text,
+            "Backup of the server failed: pg_dump: no space left"
+        );
+        assert_eq!(failed.url, "https://mf.example/admin/backups/");
     }
 
     #[test]

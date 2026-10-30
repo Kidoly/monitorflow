@@ -1,4 +1,4 @@
--- Notifications (ADR-0058): email and webhook channels set up in the web
+-- Notifications (ADR-0060): email and webhook channels set up in the web
 -- interface, and an outbox of events the server delivers to them.
 --
 -- Triggers fill the outbox from the tables where things happen, so every
@@ -25,7 +25,7 @@ CREATE TABLE notification_channels (
     last_error_at timestamptz
 );
 COMMENT ON TABLE notification_channels IS
-    'Email and webhook destinations of notifications; secret never leaves the server. See ADR-0058.';
+    'Email and webhook destinations of notifications; secret never leaves the server. See ADR-0060.';
 
 -- What to tell, written by the triggers below. The dispatcher claims rows
 -- by setting `sent_at`, delivers them to every matching channel, and
@@ -34,7 +34,7 @@ CREATE TABLE notification_outbox (
     id          bigserial   PRIMARY KEY,
     event       text        NOT NULL CHECK (event IN ('incident.opened', 'incident.escalated',
                                                       'incident.resolved', 'approval.waiting',
-                                                      'update.failed')),
+                                                      'update.failed', 'backup.failed')),
     -- The customer it concerns, for channels scoped to one; NULL when
     -- server-wide, like a halted automatic rollout.
     customer_id uuid,
@@ -44,8 +44,14 @@ CREATE TABLE notification_outbox (
     sent_at     timestamptz
 );
 COMMENT ON TABLE notification_outbox IS
-    'Events waiting for, or recently given to, notification channels. See ADR-0058.';
+    'Events waiting for, or recently given to, notification channels. See ADR-0060.';
 CREATE INDEX notification_outbox_pending_idx ON notification_outbox (id) WHERE sent_at IS NULL;
+-- Backups fail in `status.json`, not in a table: the server copies a
+-- failure here (`notify::backup`). The last success names the outage, so
+-- retries an hour apart notify once, again a week later if it lasts, when
+-- the row is pruned.
+CREATE UNIQUE INDEX notification_outbox_one_backup_outage_key ON notification_outbox
+    ((coalesce(details #>> '{backup,last_success_at}', ''))) WHERE event = 'backup.failed';
 
 -- `{"id", "name"}` of a server, relay, site or customer, or NULL.
 CREATE FUNCTION notification_ref(id uuid, name text) RETURNS jsonb
@@ -65,33 +71,34 @@ LANGUAGE sql STABLE AS $$
 $$;
 
 -- Incidents: opened, escalated to critical, resolved. Deescalations are
--- not worth waking anyone. The relay is read from the row as JSON, so the
--- trigger works whether or not incidents carry one.
+-- not worth waking anyone. Offline incidents (ADR-0057) come through here
+-- too, with a relay instead of a server.
 CREATE FUNCTION notification_incident_event() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
-    i       incidents;
-    relay   uuid;
-    place   record;
+    i     incidents;
+    place record;
 BEGIN
     IF NEW.kind NOT IN ('opened', 'escalated', 'resolved') THEN
         RETURN NULL;
     END IF;
     SELECT * INTO i FROM incidents WHERE id = NEW.incident_id;
-    relay := (to_jsonb(i) ->> 'relay_id')::uuid;
-    SELECT * INTO place FROM notification_place(i.server_id, relay);
+    SELECT * INTO place FROM notification_place(i.server_id, i.relay_id);
     INSERT INTO notification_outbox (event, customer_id, details)
     VALUES ('incident.' || NEW.kind, place.customer_id, jsonb_build_object(
         'occurred_at', NEW.occurred_at,
         'customer', place.customer,
         'site', place.site,
         'server', (SELECT notification_ref(id, hostname) FROM servers WHERE id = i.server_id),
-        'relay', (SELECT notification_ref(id, name) FROM relays WHERE id = relay),
+        'relay', (SELECT notification_ref(id, name) FROM relays WHERE id = i.relay_id),
         'incident', jsonb_build_object(
             'id', i.id, 'metric', i.metric, 'instance', i.instance,
             -- The incident's severity when resolved, the new one otherwise.
             'severity', coalesce(NEW.severity, i.severity),
             'value', NEW.value, 'peak_value', i.peak_value,
+            -- Why it changed, when the writer says: an offline incident
+            -- resolves on back_online, revoked or muted.
+            'reason', NEW.details ->> 'reason',
             'opened_at', i.opened_at, 'resolved_at', i.resolved_at)));
     RETURN NULL;
 END;

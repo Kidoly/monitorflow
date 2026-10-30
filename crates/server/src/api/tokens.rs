@@ -287,7 +287,8 @@ pub async fn create(
 }
 
 /// `GET /api/tokens`: tokens of the sites whose customer the user
-/// administers, newest first. 403 without such a grant.
+/// administers, newest first, without the records of install key
+/// enrollments (ADR-0058). 403 without such a grant.
 pub async fn list(
     State(state): State<ApiState>,
     user: CurrentUser,
@@ -305,7 +306,7 @@ pub async fn list(
     let (after_time, after_id) = after.unzip();
     let mut tokens: Vec<TokenView> = sqlx::query_as(&format!(
         "SELECT * FROM ({SELECT_TOKENS}
-                        WHERE ($1 OR t.site_id = ANY($2))
+                        WHERE ($1 OR t.site_id = ANY($2)) AND t.install_key_id IS NULL
                           AND ($3::timestamptz IS NULL OR (t.created_at, t.id) < ($3, $4))) x
          WHERE $5::text IS NULL OR x.state = $5
          ORDER BY x.created_at DESC, x.id DESC

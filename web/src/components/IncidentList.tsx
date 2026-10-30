@@ -5,10 +5,10 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { type Incident, type Server, type Site, api, describeError, isUnauthorized } from "@/lib/api";
-import { type IncidentFilters, apiQuery, filtersFromQuery } from "@/lib/incidents";
-import { incidentHref, serverHref } from "@/lib/routes";
+import { type IncidentFilters, apiQuery, filtersFromQuery, incidentTitle, isOffline } from "@/lib/incidents";
+import { incidentHref, incidentPeerHref } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
-import { formatSensorValue, seriesTitle } from "@/lib/sensors";
+import { formatSensorValue } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
 import { replaceParams } from "@/lib/urlState";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
@@ -19,6 +19,9 @@ import { StatusLabel } from "@/components/ui/StatusLabel";
 import { formatDay, formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
 import styles from "./IncidentList.module.css";
+
+/** A threshold incident's value; offline ones have none. */
+const value = (i: Incident, v: number) => (isOffline(i) ? "—" : formatSensorValue(i.metric, v));
 
 /** Incidents per "Load more". */
 export const PAGE_SIZE = 50;
@@ -106,7 +109,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
       cell: (i) => (
         <PrimaryCell
           title={i.hostname}
-          href={scopedHref(serverHref(i.server_id), scope)}
+          href={scopedHref(incidentPeerHref(i), scope)}
           sub={[i.site_name, customers.get(i.site_id)].filter(Boolean).join(" · ")}
         />
       ),
@@ -116,7 +119,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
       header: "Metric",
       cell: (i) => (
         <Link href={scopedHref(incidentHref(i.id), scope)} className={i.state === "open" ? styles.strong : undefined}>
-          {seriesTitle(undefined, i.metric, i.instance)}
+          {incidentTitle(i)}
         </Link>
       ),
     },
@@ -138,9 +141,9 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     {
       key: "last",
       header: "Last value",
-      cell: (i) => <span className={i.state === "open" ? styles.strong : undefined}>{formatSensorValue(i.metric, i.last_value)}</span>,
+      cell: (i) => <span className={i.state === "open" ? styles.strong : undefined}>{value(i, i.last_value)}</span>,
     },
-    { key: "peak", header: "Peak", cell: (i) => formatSensorValue(i.metric, i.peak_value) },
+    { key: "peak", header: "Peak", cell: (i) => value(i, i.peak_value) },
   ];
 
   const critical = open.filter((i) => i.severity === "critical").length;
@@ -185,7 +188,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
       {!data && error !== null && !isUnauthorized(error) ? (
         <ErrorState what="incidents" error={describeError(error)} onRetry={refresh} />
       ) : data && incidents.length === 0 ? (
-        <EmptyState>{filtered ? "No incidents match these filters." : "No incidents. Thresholds have not fired yet."}</EmptyState>
+        <EmptyState>{filtered ? "No incidents match these filters." : "No incidents. No threshold has fired and every server and relay is reporting."}</EmptyState>
       ) : (
         <DataTable
           label="Incidents"

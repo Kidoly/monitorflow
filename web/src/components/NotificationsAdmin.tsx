@@ -22,7 +22,7 @@ import { Banner, EmptyState, ErrorState, LoadingBlock, NoPermission, PageHeader 
 import { RelativeTime } from "./ui/RelativeTime";
 import { Label } from "./ui/StatusLabel";
 
-/** `/admin/notifications/`: global administrators only, like the API (ADR-0058). */
+/** `/admin/notifications/`: global administrators only, like the API (ADR-0060). */
 export function NotificationsPage() {
   const me = useMe();
   if (!administersEverything(me)) {
@@ -118,7 +118,7 @@ function Notifications() {
       {actionError && <Banner tone="bad">{actionError}</Banner>}
       <p className={styles.footnote}>
         MonitorFlow sends a message when an incident opens, becomes critical or resolves, when a command waits for
-        approval, and when an update fails.
+        approval, and when an update or a backup fails.
       </p>
       {editing ? (
         <ChannelForm

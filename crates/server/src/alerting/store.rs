@@ -195,7 +195,8 @@ impl AlertStore {
             "SELECT server_id, metric, instance, a.warning_since, a.critical_since,
                     a.last_sample_at, i.id, i.severity, i.peak_value, i.last_value_at
              FROM alert_states a
-             FULL JOIN (SELECT * FROM incidents WHERE state = 'open') i
+             -- Offline incidents belong to their own task (ADR-0057).
+             FULL JOIN (SELECT * FROM incidents WHERE state = 'open' AND metric <> 'offline') i
                  USING (server_id, metric, instance)",
         )
         .fetch_all(&self.pool)

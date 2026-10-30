@@ -21,7 +21,7 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use super::limiter::{FailureLimiter, UNKNOWN_SOURCE};
-use super::{ca_fingerprint, server_cert, token};
+use super::{ca_fingerprint, install_key, server_cert, token};
 use crate::api::audit::{self, Event};
 use crate::ca::{CertificateAuthority, IssuedCert};
 
@@ -40,6 +40,13 @@ pub enum EnrollError {
     Refused,
     #[error("invalid CSR")]
     InvalidCsr,
+    /// An install key needs the host name an agent sends (ADR-0058).
+    #[error("no host name with an install key")]
+    NoHostname,
+    /// The install key's per-minute allowance is spent; not a failure of
+    /// the caller.
+    #[error("install key busy")]
+    Busy,
     #[error("enrollment failed: {0}")]
     Internal(String),
 }
@@ -56,6 +63,12 @@ impl From<EnrollError> for Status {
             EnrollError::Refused => Status::permission_denied("enrollment refused"),
             EnrollError::InvalidCsr => {
                 Status::invalid_argument("invalid CSR: expected a signed PKCS#10 request in PEM")
+            }
+            EnrollError::NoHostname => Status::invalid_argument(
+                "install keys enroll agents that send their host name: use a single-use token for relays and older agents",
+            ),
+            EnrollError::Busy => {
+                Status::resource_exhausted("too many enrollments with this install key; retry later")
             }
             EnrollError::Internal(_) => Status::internal("enrollment failed"),
         }
@@ -89,14 +102,27 @@ impl Enroller {
         }
     }
 
-    /// Consumes `token` and signs the key of `csr_pem` for the identity the
-    /// token names. Token use, certificate record and audit row commit
-    /// together; on any error the token stays usable. `source` goes to the
-    /// audit log.
+    /// [`Self::enroll_host`] without a host name: single-use tokens only.
     pub async fn enroll(
         &self,
         token: &str,
         csr_pem: &str,
+        source: Option<IpAddr>,
+    ) -> Result<Enrolled, EnrollError> {
+        self.enroll_host(token, csr_pem, "", source).await
+    }
+
+    /// Consumes `token` and signs the key of `csr_pem` for the identity the
+    /// token names. A single-use token is tried first; otherwise `token`
+    /// may be an install key, which enrolls an agent under an ID made from
+    /// `hostname` (ADR-0058). Token use, certificate record and audit row
+    /// commit together; on any error the token stays usable. `source` goes
+    /// to the audit log.
+    pub async fn enroll_host(
+        &self,
+        token: &str,
+        csr_pem: &str,
+        hostname: &str,
         source: Option<IpAddr>,
     ) -> Result<Enrolled, EnrollError> {
         // Checks that need no database come first, so their answers say
@@ -107,6 +133,7 @@ impl Enroller {
         }
         CertificateSigningRequestParams::from_pem(csr_pem).map_err(|_| EnrollError::InvalidCsr)?;
 
+        let hash = token::hash(&token);
         let mut tx = self.pool.begin().await?;
         // Concurrent uses wait on the row lock, then see used_at set.
         let row: Option<TokenRow> = sqlx::query_as(
@@ -114,11 +141,25 @@ impl Enroller {
              WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
              RETURNING id, role, peer_id, site_id, server_names, parent_relay_id",
         )
-        .bind(token::hash(&token).as_slice())
+        .bind(hash.as_slice())
         .fetch_optional(&mut *tx)
         .await?;
-        let Some((token_id, role, peer_id, site_id, server_names, parent)) = row else {
-            return Err(EnrollError::Refused);
+        let (token_id, role, peer_id, site_id, server_names, parent, key_id) = match row {
+            Some((token_id, role, peer_id, site_id, names, parent)) => {
+                (token_id, role, peer_id, site_id, names, parent, None)
+            }
+            None => match install_key::consume(&mut tx, &hash, hostname, source).await? {
+                Some(used) => (
+                    used.token_id,
+                    "agent".to_owned(),
+                    used.peer_id,
+                    used.site_id,
+                    Vec::new(),
+                    None,
+                    Some(used.key_id),
+                ),
+                None => return Err(EnrollError::Refused),
+            },
         };
         let role = match role.as_str() {
             "agent" => PeerRole::Agent,
@@ -150,6 +191,7 @@ impl Enroller {
         .await?;
         let details = serde_json::json!({
             "token_id": token_id,
+            "install_key_id": key_id,
             "site_id": site_id,
             "serial": cert.serial.to_string(),
             "source": source.map(|ip| ip.to_string()),
@@ -263,13 +305,19 @@ impl EnrollService for Enroller {
             ));
         }
         let request = request.into_inner();
-        let enrolled = match Enroller::enroll(self, &request.token, &request.csr_pem, source).await
+        let enrolled = match self
+            .enroll_host(&request.token, &request.csr_pem, &request.hostname, source)
+            .await
         {
             Ok(enrolled) => enrolled,
             Err(error) => {
                 match &error {
                     EnrollError::Internal(why) => {
                         tracing::error!(?source, error = %why, "enrollment failed")
+                    }
+                    // Holders of a valid key: not an attempt to count.
+                    EnrollError::Busy | EnrollError::NoHostname => {
+                        tracing::info!(?source, %error, "enrollment postponed or refused")
                     }
                     // Routine and cheap to trigger: keep them at debug.
                     _ => {

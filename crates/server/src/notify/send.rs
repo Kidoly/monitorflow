@@ -20,7 +20,7 @@ pub const TIMEOUT: Duration = Duration::from_secs(15);
 /// Port of SMTP over TLS from the first byte; others use STARTTLS.
 pub const SMTPS_PORT: u16 = 465;
 
-/// Headers of webhook requests (ADR-0058).
+/// Headers of webhook requests (ADR-0060).
 pub const EVENT_HEADER: &str = "x-monitorflow-event";
 pub const DELIVERY_HEADER: &str = "x-monitorflow-delivery";
 pub const TIMESTAMP_HEADER: &str = "x-monitorflow-timestamp";

@@ -106,8 +106,12 @@ pub struct ServerView {
     pub last_heartbeat: Option<DateTime<Utc>>,
     /// Peer ID of the relay carrying the live stream, if any.
     pub via_relay: Option<String>,
-    /// Threshold incidents currently open on this server.
+    /// Threshold and offline incidents currently open on this server.
     pub open_incidents: i64,
+    /// Whether it opens an incident when offline (ADR-0057); muted when
+    /// this or `site_offline_alerts` is `false`.
+    pub offline_alerts: bool,
+    pub site_offline_alerts: bool,
     /// Latest expiry among the agent's unrevoked certificates; `null` when
     /// it has none. Past dates mean every certificate has expired.
     pub cert_not_after: Option<DateTime<Utc>>,
@@ -166,7 +170,7 @@ impl From<CertificateRow> for CertificateView {
 const SELECT_SERVERS: &str = "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name,
             si.customer_id, c.name AS customer_name, s.relay_id,
             s.os_family, s.os_version, s.agent_version, s.created_at, s.last_seen_at,
-            s.revoked_at,
+            s.revoked_at, s.offline_alerts, si.offline_alerts AS site_offline_alerts,
             -- One probe of the partial unique index on open incidents.
             (SELECT count(*) FROM incidents i
              WHERE i.server_id = s.id AND i.state = 'open') AS open_incidents,
@@ -194,6 +198,8 @@ struct Row {
     created_at: DateTime<Utc>,
     last_seen_at: Option<DateTime<Utc>>,
     revoked_at: Option<DateTime<Utc>>,
+    offline_alerts: bool,
+    site_offline_alerts: bool,
     open_incidents: i64,
     cert_not_after: Option<DateTime<Utc>>,
 }
@@ -333,6 +339,8 @@ impl ServerView {
             last_heartbeat: row.last_seen_at,
             via_relay: None,
             open_incidents: row.open_incidents,
+            offline_alerts: row.offline_alerts,
+            site_offline_alerts: row.site_offline_alerts,
             cert_not_after: row.cert_not_after,
         }
     }

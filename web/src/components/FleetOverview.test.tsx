@@ -92,6 +92,18 @@ describe("FleetOverview", () => {
     expect(screen.getByRole("button", { name: "Problems first" })).toBeInTheDocument();
   });
 
+  it("counts offline servers and relays in the critical tile", async () => {
+    const opened = new Date(NOW.getTime() - 12 * 60_000).toISOString();
+    const down = incident({ id: "i2", server_id: "s2", metric: "offline", instance: "", opened_at: opened });
+    const relay = incident({ id: "i3", server_id: null, relay_id: "r1", hostname: "relay-1", customer_id: "c1", metric: "offline", instance: "" });
+    stubFetch(reply([web1, db1], [down, relay]));
+    render(<FleetOverview />);
+    const [first] = await rows();
+    expect(first).toHaveTextContent(/db-1.*Offline\s*Critical\s+Offline 12 min/);
+    const tiles = screen.getByRole("group", { name: "Summary, click to filter" });
+    expect(within(tiles).getByRole("link", { name: /Critical incidents\s*2/ })).toBeInTheDocument();
+  });
+
   it("filters from the URL and keeps the scope", async () => {
     setUrl("/?customer=0b8f3c4e-1a2b-4c3d-8e9f-000000000001&status=offline");
     stubFetch(reply([web1, db1, server({ id: "s9", hostname: "other", customer_id: "0b8f3c4e-1a2b-4c3d-8e9f-000000000002" }), { ...db1, id: "s5", hostname: "db-2", customer_id: "0b8f3c4e-1a2b-4c3d-8e9f-000000000001" }]));
@@ -157,7 +169,7 @@ describe("FleetOverview", () => {
       </As>,
     );
     expect(await screen.findByText("No servers yet")).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: "Enroll agent" })[0]).toHaveAttribute("href", expect.stringMatching(/^\/admin\/tokens\/?$/));
+    expect(screen.getAllByRole("link", { name: "Add servers" })[0]).toHaveAttribute("href", expect.stringMatching(/^\/admin\/tokens\/?$/));
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     unmount();
 
@@ -167,7 +179,7 @@ describe("FleetOverview", () => {
       </As>,
     );
     expect(await screen.findByText("No servers yet")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Enroll agent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Add servers" })).not.toBeInTheDocument();
   });
 
   it("explains a 403", async () => {

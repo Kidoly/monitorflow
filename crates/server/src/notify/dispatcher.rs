@@ -3,12 +3,14 @@
 //! once: a claimed event is not sent again after a restart.
 
 use std::future::Future;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use sqlx::PgPool;
 use tokio::task::JoinSet;
 use tokio::time::{interval, sleep, MissedTickBehavior};
 
+use super::backup;
 use super::message::{render, Event, Message};
 use super::send::{deliver, http_client, SendError};
 use super::{channels, record_outcome, Channel};
@@ -20,6 +22,9 @@ const BATCH: i64 = 100;
 /// Events older than this when claimed are dropped: after a long outage a
 /// flood of stale alerts helps no one.
 const MAX_AGE: chrono::TimeDelta = chrono::TimeDelta::hours(24);
+/// Passes between two looks at the updater's status: a minute at the
+/// default poll.
+const BACKUP_CHECK_PASSES: u64 = 12;
 /// Delivered events are kept this long, then deleted.
 const KEEP_DAYS: i32 = 7;
 
@@ -31,6 +36,9 @@ pub struct Dispatcher {
     http: reqwest::Client,
     /// Waits before the second and later tries of a delivery.
     retries: Vec<Duration>,
+    /// The updater's shared directory (`server_update_dir`), to hear of
+    /// failed backups; `None` without an updater.
+    status_dir: Option<PathBuf>,
 }
 
 impl Dispatcher {
@@ -40,12 +48,19 @@ impl Dispatcher {
             web_url: web_url.into().trim_end_matches('/').to_owned(),
             http: http_client(),
             retries: vec![Duration::from_secs(2), Duration::from_secs(10)],
+            status_dir: None,
         }
     }
 
     /// Without waits between tries, for tests.
     pub fn with_retries(mut self, retries: Vec<Duration>) -> Self {
         self.retries = retries;
+        self
+    }
+
+    /// Notifies failed backups reported in the updater's `dir`.
+    pub fn with_status_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.status_dir = dir;
         self
     }
 
@@ -59,6 +74,15 @@ impl Dispatcher {
             tokio::select! {
                 _ = &mut stop => return,
                 _ = tick.tick() => {}
+            }
+            if let Some(dir) = self
+                .status_dir
+                .as_ref()
+                .filter(|_| passes.is_multiple_of(BACKUP_CHECK_PASSES))
+            {
+                if let Err(error) = backup::check(&self.pool, dir).await {
+                    tracing::warn!(%error, "could not record a failed backup; will retry");
+                }
             }
             if let Err(error) = self.pass().await {
                 tracing::warn!(%error, "could not read the notification outbox; will retry");

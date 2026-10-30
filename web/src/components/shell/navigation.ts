@@ -4,6 +4,7 @@ import {
   APPROVALS_PATH,
   AUDIT_PATH,
   AUTO_UPDATE_PATH,
+  BACKUPS_PATH,
   CAMPAIGNS_PATH,
   MIRRORS_PATH,
   NOTIFICATIONS_PATH,
@@ -72,7 +73,7 @@ export const NAVIGATION: NavSection[] = [
     items: [
       { label: "Relays", href: RELAYS_PATH, icon: "relays", iconWhenCollapsed: true },
       { label: "Sites", href: SITES_PATH, icon: "sites", iconWhenCollapsed: true },
-      { label: "Enrollment tokens", href: TOKENS_PATH, icon: "tokens", iconWhenCollapsed: true },
+      { label: "Add servers", href: TOKENS_PATH, icon: "tokens", iconWhenCollapsed: true },
       { label: "Users and roles", href: USERS_PATH, icon: "users", iconWhenCollapsed: true },
       {
         label: "Notifications",
@@ -85,6 +86,13 @@ export const NAVIGATION: NavSection[] = [
         label: "Server update",
         href: SERVER_UPDATE_PATH,
         icon: "update",
+        iconWhenCollapsed: true,
+        visible: administersEverything,
+      },
+      {
+        label: "Backups",
+        href: BACKUPS_PATH,
+        icon: "backups",
         iconWhenCollapsed: true,
         visible: administersEverything,
       },

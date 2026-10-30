@@ -68,6 +68,8 @@ pub async fn new_alerts(
     sqlx::query_as(
         "SELECT a.id, a.server_id, a.metric, a.instance FROM incidents a
          WHERE a.state = 'open' AND a.opened_at > now() - make_interval(secs => $1)
+           -- No command reaches an offline host (ADR-0057).
+           AND a.metric <> 'offline'
            AND NOT EXISTS (SELECT 1 FROM remediation_incidents r WHERE r.alert_incident_id = a.id)
          ORDER BY a.opened_at LIMIT $2",
     )

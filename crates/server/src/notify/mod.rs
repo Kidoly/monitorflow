@@ -1,8 +1,9 @@
-//! Notifications (ADR-0058): email and webhook channels, and the outbox
+//! Notifications (ADR-0060): email and webhook channels, and the outbox
 //! triggers fill when incidents change, commands wait for approval or
-//! updates fail. The [`dispatcher`] delivers each event to every channel
-//! whose customer matches.
+//! updates fail, and [`backup`] when a backup fails. The [`dispatcher`]
+//! delivers each event to every channel whose customer matches.
 
+pub mod backup;
 pub mod dispatcher;
 pub mod message;
 pub mod send;

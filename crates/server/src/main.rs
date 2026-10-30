@@ -9,6 +9,7 @@ use monitorflow_common::config::{self, ServerConfig};
 use monitorflow_common::logging;
 use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::{Identity, PeerRole};
+use monitorflow_server::alerting::offline::{self, OfflineSettings};
 use monitorflow_server::alerting::{AlertStore, Alerts, EngineSettings, LogNotifier};
 use monitorflow_server::api::users::GrantScope;
 use monitorflow_server::api::{
@@ -408,6 +409,8 @@ async fn main() -> anyhow::Result<()> {
         ca.clone(),
         DispatcherSettings::default(),
     );
+    // Servers and relays that stop reporting open incidents (ADR-0057).
+    offline::spawn(pool.clone(), registry.clone(), OfflineSettings::default());
     // Relays' own self-updates (ADR-0055).
     let relay_commands = RelayCommands::spawn(pool.clone(), registry.clone(), ca.clone());
     // Update campaigns (ADR-0033) queue through the same dispatcher, and
@@ -453,7 +456,7 @@ async fn main() -> anyhow::Result<()> {
         .with_mirrors(mirrors.clone())
         .with_campaigns(campaigns.clone());
     let remediation = remediation_loop(&config, pool.clone(), commands.clone()).await?;
-    // Notifications (ADR-0058): the outbox the database triggers fill.
+    // Notifications (ADR-0060): the outbox the database triggers fill.
     let notify_pool = pool.clone();
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
@@ -544,6 +547,7 @@ async fn main() -> anyhow::Result<()> {
         },
         async {
             notify::Dispatcher::new(notify_pool, config.web_base_url())
+                .with_status_dir(config.server_update_dir.clone())
                 .run(notify::dispatcher::POLL, until_stopped())
                 .await;
             Ok(())
@@ -652,7 +656,7 @@ async fn announce_setup(config: &ServerConfig, pool: &sqlx::PgPool) -> anyhow::R
         // The one secret the server logs: single use, short-lived, and it
         // grants nothing once an account exists (ADR-0057).
         tracing::warn!(
-            setup_url = %token.url(&config.web_base_url()),
+            setup_url = %token.setup_url(&config.web_base_url()),
             valid_hours = setup::TTL.as_secs() / 3600,
             "no user yet: open the setup link to create the administrator"
         );
@@ -667,7 +671,7 @@ async fn setup_link_command(config: &ServerConfig, pool: &sqlx::PgPool) -> anyho
                 "Open this link to create the administrator (valid {} hours, once):",
                 setup::TTL.as_secs() / 3600
             );
-            println!("{}", token.url(&config.web_base_url()));
+            println!("{}", token.setup_url(&config.web_base_url()));
         }
         None => println!(
             "Setup is done: a user exists. Sign in at {}/",

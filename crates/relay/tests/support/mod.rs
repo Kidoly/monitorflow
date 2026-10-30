@@ -244,6 +244,7 @@ pub async fn enroll_with(
         paths: paths(pki.dir.path(), id),
         token: Some(created.token.to_secret_string()),
         enroll_url: enroll_url.into(),
+        hostname: String::new(),
     };
     let (_trigger, stop) = shutdown::channel();
     let fast = Backoff::new(Duration::from_millis(50), Duration::from_millis(200));

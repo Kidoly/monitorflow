@@ -1,4 +1,4 @@
-//! Notification channels (ADR-0058): email and webhook destinations set
+//! Notification channels (ADR-0060): email and webhook destinations set
 //! up by global administrators, each optionally limited to one customer,
 //! with a test that answers in plain words. The SMTP password or webhook
 //! signing secret is written, never read back: views say `has_secret`.

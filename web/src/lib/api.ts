@@ -59,6 +59,9 @@ export interface Server {
   open_incidents: number;
   /** Latest expiry among the agent's unrevoked certificates; null when it has none. */
   cert_not_after: string | null;
+  /** Offline incidents of this one (ADR-0057); absent is on. Muted when this or `site_offline_alerts` is false. */
+  offline_alerts?: boolean;
+  site_offline_alerts?: boolean;
 }
 
 /** The certificate the CA issued last to an agent, revoked or not. */
@@ -258,6 +261,8 @@ export interface Site {
   agent_auto_update: boolean | null;
   /** Whether automatic updates apply to the site's agents and relays. */
   agent_auto_update_effective: boolean;
+  /** Whether its servers and relays open incidents when offline (ADR-0057); absent is on. */
+  offline_alerts?: boolean;
 }
 
 /** Server-wide automatic update settings (ADR-0055). */
@@ -375,6 +380,9 @@ export interface Relay {
   relay_version?: string | null;
   /** Its latest self-update. */
   last_update?: RelayCommand | null;
+  /** Offline incidents of this one (ADR-0057); absent is on. Muted when this or `site_offline_alerts` is false. */
+  offline_alerts?: boolean;
+  site_offline_alerts?: boolean;
 }
 
 /** A relay self-update (ADR-0055). */
@@ -451,10 +459,16 @@ export interface ThresholdSnapshot {
 /** One incident of `GET /api/incidents`. Times are sample times. */
 export interface Incident {
   id: string;
-  server_id: string;
+  /** Null for a relay's offline incident. */
+  server_id: string | null;
+  /** Set for a relay's offline incident (ADR-0057). */
+  relay_id?: string | null;
+  /** The server's hostname, or the relay's name. */
   hostname: string;
   site_id: string;
   site_name: string;
+  customer_id?: string;
+  /** `offline` when the server or relay stopped reporting (ADR-0057). */
   metric: string;
   /** `""` for a series without an instance. */
   instance: string;
@@ -598,6 +612,48 @@ export interface ServerUpdateView {
   update: ServerUpdateRun | null;
   /** A request waits for the updater. */
   requested: boolean;
+}
+
+export type BackupKind = "daily" | "manual" | "update";
+
+/** One backup file in the backups volume (ADR-0058). */
+export interface BackupFile {
+  name: string;
+  size: number;
+  created_at: string;
+  kind: BackupKind;
+}
+
+/** The last backup, running or finished. */
+export interface BackupRun {
+  id: string;
+  kind: BackupKind;
+  /** Empty for automatic ones. */
+  requested_by: string;
+  state: "running" | "succeeded" | "failed";
+  error: string | null;
+  /** What a backup that succeeded left out or noticed. */
+  warning: string | null;
+  file: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/** `GET /api/backups`. */
+export interface BackupsView {
+  /** The updater service, which takes backups, is set up. */
+  enabled: boolean;
+  /** Files can be downloaded. */
+  downloads: boolean;
+  updater_alive: boolean;
+  /** "Back up now" waits for the updater. */
+  requested: boolean;
+  keep: number;
+  last: BackupRun | null;
+  last_success_at: string | null;
+  next_at: string | null;
+  /** Newest first. */
+  files: BackupFile[];
 }
 
 /** `POST /api/server-update/check`. */
@@ -832,6 +888,63 @@ export interface CreatedToken extends EnrollmentToken {
   /** Where the install commands may download the agent from (ADR-0054). */
   install: AgentInstall;
   /** The address in `upstream_url` and `enroll_url`. */
+  address: PublicAddress;
+}
+
+export type InstallKeyState = "active" | "expired" | "used_up" | "revoked";
+
+/** One install key of `GET /api/install-keys`, never with its secret (ADR-0058). */
+export interface InstallKey {
+  id: string;
+  site_id: string;
+  site_name: string;
+  customer_id: string;
+  customer_name: string;
+  created_by_username: string | null;
+  created_at: string;
+  expires_at: string;
+  /** Null for no limit. */
+  max_hosts: number | null;
+  host_count: number;
+  require_approval: boolean;
+  revoked_at: string | null;
+  state: InstallKeyState;
+}
+
+/** A host enrolled by a key that asks for approval, which cannot connect yet. */
+export interface PendingHost {
+  peer_id: string;
+  hostname: string;
+  site_id: string;
+  site_name: string;
+  customer_name: string;
+  install_key_id: string;
+  /** IP address it enrolled from. */
+  source: string | null;
+  created_at: string;
+}
+
+export interface InstallKeyList {
+  keys: InstallKey[];
+  pending_hosts: PendingHost[];
+}
+
+/** Body of `POST /api/install-keys`. */
+export interface InstallKeyRequest {
+  site_id: string;
+  /** One hour to one year; 30 days when absent. */
+  ttl_s?: number;
+  /** No limit when absent. */
+  max_hosts?: number;
+  require_approval: boolean;
+}
+
+/** `POST /api/install-keys`: the only answer that carries the key, in `token` as installers take it. */
+export interface CreatedInstallKey extends InstallKey {
+  token: string;
+  upstream_url: string;
+  enroll_url: string;
+  install: AgentInstall;
   address: PublicAddress;
 }
 
@@ -1120,6 +1233,50 @@ export interface SetupStatus {
   pending: boolean;
 }
 
+/** One account of `GET /api/users` (ADR-0059). */
+export interface UserAccount {
+  id: string;
+  username: string;
+  /** `invited`: has not chosen a password with their link yet. */
+  state: "active" | "invited" | "disabled";
+  created_at: string;
+  roles: RoleGrant[];
+  /** Expiry of the user's unused password link, if any. */
+  link_expires_at: string | null;
+}
+
+export interface UserList {
+  users: UserAccount[];
+}
+
+/** A new password link; its token is only returned once. */
+export interface PasswordLink {
+  token: string;
+  expires_at: string;
+}
+
+/** A role and where it applies; no customer and no site is everything. */
+export interface GrantRequest {
+  role: Role;
+  customer_id?: string;
+  site_id?: string;
+}
+
+/** `POST /api/password-link`: whose link it is. */
+export interface LinkOwner {
+  username: string;
+  /** The user never had a password: the link is an invitation. */
+  invited: boolean;
+}
+
+/** Page where a password link is used. */
+export const WELCOME_PATH = "/welcome/";
+
+/** The address to give a user for `link`, on this page's origin. */
+export function passwordLinkUrl(link: PasswordLink): string {
+  return `${window.location.origin}${WELCOME_PATH}#${link.token}`;
+}
+
 /** Shortest password the server accepts. */
 export const MIN_PASSWORD_LENGTH = 12;
 
@@ -1164,7 +1321,7 @@ interface RequestOptions {
   redirectOn401?: boolean;
 }
 
-/** SMTP settings of an email channel; the password is never sent back (ADR-0058). */
+/** SMTP settings of an email channel; the password is never sent back (ADR-0060). */
 export interface EmailSettings {
   host: string;
   port: number;
@@ -1179,7 +1336,7 @@ export interface WebhookSettings {
   url: string;
 }
 
-/** One channel of `GET /api/notifications/channels`: global administrators only (ADR-0058). */
+/** One channel of `GET /api/notifications/channels`: global administrators only (ADR-0060). */
 export type NotificationChannel = (
   | { kind: "email"; settings: EmailSettings }
   | { kind: "webhook"; settings: WebhookSettings }
@@ -1370,6 +1527,53 @@ export const api = {
       body: { enabled },
     }),
 
+  /** Creates the customer `name`; global administrators only. */
+  createCustomer: (name: string) => request<Customer>("/api/customers", { method: "POST", body: { name } }),
+
+  /** Renames a customer; global administrators only. */
+  renameCustomer: (customerId: string, name: string) =>
+    request<Customer>(`/api/customers/${encodeURIComponent(customerId)}`, { method: "PUT", body: { name } }),
+
+  /** Every account; global administrators only (ADR-0059). */
+  users: (signal?: AbortSignal) => request<UserList>("/api/users", { signal }),
+
+  /** Creates `username` with one role, and returns their invitation link. */
+  inviteUser: (username: string, grant: GrantRequest) =>
+    request<{ user: UserAccount; link: PasswordLink }>("/api/users", {
+      method: "POST",
+      body: { username, ...grant },
+    }),
+
+  /** A new password link for the user, replacing their previous one. */
+  passwordLink: (userId: string) =>
+    request<PasswordLink>(`/api/users/${encodeURIComponent(userId)}/link`, { method: "POST" }),
+
+  setUserDisabled: (userId: string, disabled: boolean) =>
+    request<UserAccount>(`/api/users/${encodeURIComponent(userId)}/disabled`, { method: "PUT", body: { disabled } }),
+
+  removeUser: (userId: string) => request<void>(`/api/users/${encodeURIComponent(userId)}`, { method: "DELETE" }),
+
+  grantRole: (userId: string, grant: GrantRequest) =>
+    request<UserAccount>(`/api/users/${encodeURIComponent(userId)}/roles`, { method: "POST", body: grant }),
+
+  revokeRole: (userId: string, grant: GrantRequest) =>
+    request<UserAccount>(`/api/users/${encodeURIComponent(userId)}/roles`, { method: "DELETE", body: grant }),
+
+  /** Whose password link `token` is; 410 when it is no longer valid. */
+  inspectPasswordLink: (token: string) =>
+    request<LinkOwner>("/api/password-link", { method: "POST", body: { token }, redirectOn401: false }),
+
+  /** Sets the password with the link `token`, and signs the user in. */
+  usePasswordLink: (token: string, password: string) =>
+    request<Me>("/api/password-link/use", { method: "POST", body: { token, password }, redirectOn401: false }),
+
+  /** Turns offline incidents on or off for a site, server or relay; operators of the site (ADR-0057). */
+  setOfflineAlerts: (kind: "sites" | "servers" | "relays", id: string, enabled: boolean) =>
+    request<{ enabled: boolean }>(`/api/${kind}/${encodeURIComponent(id)}/offline-alerts`, {
+      method: "PUT",
+      body: { enabled },
+    }),
+
   /** Creates the site `name` under `customerId`; customer administrators only. */
   createSite: (customerId: string, name: string) =>
     request<Site>(`/api/customers/${encodeURIComponent(customerId)}/sites`, {
@@ -1409,7 +1613,7 @@ export const api = {
   setPublicAddress: (body: { address: string | null }) =>
     request<PublicAddress>("/api/settings/public-address", { method: "PUT", body }),
 
-  /** Notification channels, without secrets; global administrators only (ADR-0058). */
+  /** Notification channels, without secrets; global administrators only (ADR-0060). */
   notificationChannels: (signal?: AbortSignal) =>
     request<NotificationChannelList>("/api/notifications/channels", { signal }),
 
@@ -1425,6 +1629,19 @@ export const api = {
   /** Sends a test now; 200 with `ok` false and the reason when it does not go through. */
   testNotificationChannel: (id: string) =>
     request<ChannelTestResult>(`/api/notifications/channels/${encodeURIComponent(id)}/test`, { method: "POST" }),
+  /** Install keys and hosts waiting for approval, of the customers the user administers (ADR-0058). */
+  installKeys: (signal?: AbortSignal) => request<InstallKeyList>("/api/install-keys", { signal }),
+
+  createInstallKey: (body: InstallKeyRequest) =>
+    request<CreatedInstallKey>("/api/install-keys", { method: "POST", body }),
+
+  /** Stops a key from enrolling more hosts; hosts it enrolled keep working. */
+  revokeInstallKey: (id: string) =>
+    request<void>(`/api/install-keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Lets a waiting host connect, or revokes its certificate. */
+  decidePendingHost: (peerId: string, decision: "approve" | "reject") =>
+    request<void>(`/api/pending-hosts/${encodeURIComponent(peerId)}/${decision}`, { method: "POST" }),
 
   /** Revokes an unused token; 409 once used. */
   revokeToken: (id: string) => request<void>(`/api/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
@@ -1544,6 +1761,8 @@ export const api = {
   /** Server updates; global administrators only (ADR-0056). */
   serverUpdate: (signal?: AbortSignal) => request<ServerUpdateView>("/api/server-update", { signal }),
 
+  backups: (signal?: AbortSignal) => request<BackupsView>("/api/backups", { signal }),
+  startBackup: () => request<{ id: string }>("/api/backups", { method: "POST" }),
   checkServerUpdate: () => request<ServerUpdateCheck>("/api/server-update/check", { method: "POST" }),
 
   startServerUpdate: (version: string) =>

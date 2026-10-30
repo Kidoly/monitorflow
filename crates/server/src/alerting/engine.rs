@@ -60,7 +60,7 @@ pub struct Notification<'a> {
 /// Where incident changes go besides the database. Called on the engine
 /// task: an implementation that does I/O must queue and return.
 // Email and webhook notifications do not go through here: database
-// triggers on incident events fill their outbox (ADR-0058).
+// triggers on incident events fill their outbox (ADR-0060).
 pub trait Notifier: Send + Sync + 'static {
     fn notify(&self, notification: &Notification<'_>);
 }
@@ -237,9 +237,8 @@ struct Tracked {
     incident: Option<(Uuid, f64)>,
 }
 
-// TODO(host-down): an agent that stops reporting is not an incident: its
-// series keep their open incidents (ADR-0017, no data). A "host down" rule
-// on the registry's liveness will open one.
+// An agent that stops reporting keeps its series' open incidents
+// (ADR-0017, no data); `offline` opens one for the silence (ADR-0057).
 struct Engine {
     settings: EngineSettings,
     /// Thresholds per agent ID; `None` for peers without a `servers` row.
