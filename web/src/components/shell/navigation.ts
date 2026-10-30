@@ -7,6 +7,7 @@ import {
   BACKUPS_PATH,
   CAMPAIGNS_PATH,
   MIRRORS_PATH,
+  NOTIFICATIONS_PATH,
   RELAYS_PATH,
   SERVER_UPDATE_PATH,
   SITES_PATH,
@@ -74,6 +75,13 @@ export const NAVIGATION: NavSection[] = [
       { label: "Sites", href: SITES_PATH, icon: "sites", iconWhenCollapsed: true },
       { label: "Add servers", href: TOKENS_PATH, icon: "tokens", iconWhenCollapsed: true },
       { label: "Users and roles", href: USERS_PATH, icon: "users", iconWhenCollapsed: true },
+      {
+        label: "Notifications",
+        href: NOTIFICATIONS_PATH,
+        icon: "bell",
+        iconWhenCollapsed: true,
+        visible: administersEverything,
+      },
       {
         label: "Server update",
         href: SERVER_UPDATE_PATH,

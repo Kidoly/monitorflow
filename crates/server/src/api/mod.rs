@@ -115,6 +115,11 @@
 //! | GET | `/api/servers/{id}/proxmox` | customer administrator | [`proxmox::ProxmoxView`], see below |
 //! | PUT | `/api/servers/{id}/proxmox` | customer administrator | body [`proxmox::MappingRequest`]; 200 [`proxmox::ProxmoxView`] |
 //! | DELETE | `/api/servers/{id}/proxmox` | customer administrator | 204; 404 without a mapping |
+//! | GET | `/api/notifications/channels` | global administrator | [`notifications::ChannelList`]: channels without secrets, `has_secret` and the last error (ADR-0060) |
+//! | POST | `/api/notifications/channels` | global administrator | body [`notifications::ChannelRequest`]; 201 [`notifications::ChannelView`]; audited |
+//! | PUT | `/api/notifications/channels/{id}` | global administrator | body [`notifications::ChannelRequest`], an empty secret keeps the stored one; 200 [`notifications::ChannelView`]; audited |
+//! | DELETE | `/api/notifications/channels/{id}` | global administrator | 204; audited |
+//! | POST | `/api/notifications/channels/{id}/test` | global administrator | sends a test now; 200 [`notifications::TestResult`] `{"ok", "error"}` |
 //!
 //! # Authentication
 //!
@@ -473,6 +478,7 @@ pub mod incidents;
 pub mod install_keys;
 pub mod metrics;
 pub mod mirrors;
+pub mod notifications;
 pub mod offline_alerts;
 mod one_time;
 pub mod packages;
@@ -550,6 +556,8 @@ pub struct ApiSettings {
     /// `auto_update.enabled` from the configuration, which locks the
     /// setting in the web interface (ADR-0055).
     pub auto_update_enabled: Option<bool>,
+    /// Base URL of the web interface, for links in notifications.
+    pub web_url: String,
 }
 
 impl ApiSettings {
@@ -563,6 +571,7 @@ impl ApiSettings {
             server_update: server_update::ServerUpdateSettings::from_config(config),
             agent_install: settings::InstallConfig::from_config(config),
             auto_update_enabled: config.auto_update.enabled,
+            web_url: config.web_base_url(),
             proxmox_enabled: config.proxmox.enabled,
             proxmox_clusters: config
                 .proxmox
@@ -845,6 +854,18 @@ pub fn router(state: ApiState) -> Router {
             get(public_address::get).put(public_address::set),
         )
         .route("/api/remediation/classify", post(remediation::classify))
+        .route(
+            "/api/notifications/channels",
+            get(notifications::list).post(notifications::create),
+        )
+        .route(
+            "/api/notifications/channels/{id}",
+            put(notifications::update).delete(notifications::delete),
+        )
+        .route(
+            "/api/notifications/channels/{id}/test",
+            post(notifications::test),
+        )
         .route(
             "/api/servers/{id}/proxmox",
             get(proxmox::get).put(proxmox::set).delete(proxmox::clear),

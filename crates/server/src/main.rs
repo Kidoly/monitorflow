@@ -29,6 +29,7 @@ use monitorflow_server::ingest::{Ingest, JsonLines, RemoteWrite, Writer, WriterS
 use monitorflow_server::mirror::{
     self, CommandRunner, JobKind, Layout, MirrorSpec, Mirrors, Trigger,
 };
+use monitorflow_server::notify;
 use monitorflow_server::relay_commands::RelayCommands;
 use monitorflow_server::remediation::context::Backends;
 use monitorflow_server::remediation::runner::{self, Remediation};
@@ -455,6 +456,8 @@ async fn main() -> anyhow::Result<()> {
         .with_mirrors(mirrors.clone())
         .with_campaigns(campaigns.clone());
     let remediation = remediation_loop(&config, pool.clone(), commands.clone()).await?;
+    // Notifications (ADR-0060): the outbox the database triggers fill.
+    let notify_pool = pool.clone();
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
@@ -540,6 +543,13 @@ async fn main() -> anyhow::Result<()> {
             if let Some(remediation) = remediation {
                 remediation.run(until_stopped()).await;
             }
+            Ok(())
+        },
+        async {
+            notify::Dispatcher::new(notify_pool, config.web_base_url())
+                .with_status_dir(config.server_update_dir.clone())
+                .run(notify::dispatcher::POLL, until_stopped())
+                .await;
             Ok(())
         },
         async {

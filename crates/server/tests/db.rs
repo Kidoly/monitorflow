@@ -157,6 +157,8 @@ db_tests! {
                 "mirror_runs",
                 "mirror_snapshots",
                 "mirrors",
+                "notification_channels",
+                "notification_outbox",
                 "password_links",
                 "pending_hosts",
                 "proxmox_snapshots",
