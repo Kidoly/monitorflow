@@ -81,14 +81,14 @@ Everything installable in one line, updatable in two clicks, and usable without 
 
 - [x] First-run setup in the browser: one-time setup link while no user exists, `/setup/` creates the first administrator, a login page that says so, a default site.
 - [ ] One-line server installer (`curl … | sudo sh`): installs Docker if missing, no git clone, generates secrets, guesses and confirms the public name, pulls published images, prints the URL and setup link; `--uninstall` (ADR; needs a release with the ADR-0056 images).
-- [ ] Server and relay offline incidents: a built-in rule on missed heartbeats, counted in the fleet tiles, can be muted per site or server.
+- [x] Server and relay offline incidents: a built-in rule on missed heartbeats, counted in the fleet tiles, can be muted per site or server.
 - [ ] Notifications: email and webhook channels configured in the interface with a test button, for incidents, approvals and failed updates (ADR revising the product non-goal).
-- [ ] Reusable install command per site: an install key valid for N hosts or days, hostname as the ID, optional approval of new hosts; single-use tokens under Advanced (ADR).
+- [x] Reusable install command per site: an install key valid for N hosts or days, hostname as the ID, optional approval of new hosts; single-use tokens under Advanced (ADR).
 - [x] Editable server address in install commands: a public address setting defaulted to the first server name, picked or edited on the tokens page (the published ports are already used).
 - [ ] Relay onboarding without typing: Relays › Add relay, server names reported by the relay and confirmed instead of typed (ADR), mirroring as a checkbox, "Add servers behind this relay".
 - [x] Edit thresholds and add checks in the interface, per server or per site, in plain words.
 - [ ] Users, customers and roles in the interface: create customers, invite users by one-time link, grant and revoke roles.
-- [ ] One-click backups: daily backup of the database and `serverdata` with retention, back up now and download in Settings, `--restore` in the server installer; replaces the unpruned update dumps.
+- [x] One-click backups: daily backup of the database and `serverdata` with retention, back up now and download in Settings, `--restore` in the server installer; replaces the unpruned update dumps.
 - [ ] Update available everywhere: daily background release check with a banner and a notification; release import from the interface for servers without Internet.
 - [ ] AI setup in the interface: API key, model, test and enable in Settings; `MF_ALLOW_COMMANDS=1` in the agent installer for the shell opt-in; approvals say when AI is off.
 - [ ] Mirrors that work in the production compose: mirror tools sidecar image, add a mirror from a list of distributions with a size estimate.
