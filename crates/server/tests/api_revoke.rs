@@ -224,6 +224,41 @@ fn live(id: &str, role: PeerRole, via_relay: Option<&str>) -> PeerInfo {
 
 db_tests! {
     #[sqlx::test]
+    async fn rejecting_a_pending_host_revokes_its_certificates(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        // agent-1 enrolled through a key that asks for approval (ADR-0058).
+        sqlx::query("DELETE FROM servers").execute(&pool).await.unwrap();
+        sqlx::query(
+            "WITH k AS (INSERT INTO install_keys (key_hash, site_id, expires_at, require_approval)
+                        VALUES (decode(repeat('ab', 32), 'hex'), $1, now() + interval '1 day', true)
+                        RETURNING id)
+             INSERT INTO pending_hosts (peer_id, site_id, install_key_id, hostname)
+             SELECT 'agent-1', $1, id, 'web-1' FROM k",
+        )
+        .bind(h.site)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let viewer = h.login("viewer", Role::Viewer, GrantScope::Customer(h.customer)).await;
+        let (status, _) = h.call("/api/pending-hosts/agent-1/reject", &viewer, json!({})).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let cookie = h.login("boss", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let (status, body) = h.call("/api/pending-hosts/agent-1/reject", &cookie, json!({})).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        assert_eq!(h.revoked_in_crl(), [vec![0x10]]);
+        let (status, _) = h.call("/api/pending-hosts/agent-1/reject", &cookie, json!({})).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let audit: Vec<String> = sqlx::query_scalar(
+            "SELECT target_id FROM audit_log WHERE action = 'pending_host.reject'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(audit, ["agent-1"]);
+    }
+
+    #[sqlx::test]
     async fn revoking_a_server_updates_rows_crl_streams_and_audit(pool: PgPool) {
         let h = Harness::new(&pool).await;
         let (tx, _rx) = tokio::sync::mpsc::channel(1);

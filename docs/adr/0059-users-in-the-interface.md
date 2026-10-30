@@ -1,4 +1,4 @@
-# ADR-0058: Users, customers and roles in the interface
+# ADR-0059: Users, customers and roles in the interface
 
 Date: 2026-10-29
 Status: accepted
@@ -19,7 +19,7 @@ Users, grants and customers could only be created with `monitorflow-server user 
 - the current password keeps working until the link is used; using it ends every session of the user;
 - a disabled user's link is void, and none can be issued until it is enabled again.
 
-**Disable and remove.** Disabling keeps the account and its roles, ends its sessions and blocks sign-in, and can be undone. Removing deletes the account, its roles, sessions and link. What the user did stays: the audit log names it by ID (and `user.remove` records the username), and the rows it created (commands, campaigns, enrollment tokens, remediation rules and decisions, Proxmox settings) keep existing with their user reference set to NULL. The foreign keys become `ON DELETE SET NULL` for that, and the single-use trigger of enrollment tokens allows exactly that change on a used token. The username is free again afterwards.
+**Disable and remove.** Disabling keeps the account and its roles, ends its sessions and blocks sign-in, and can be undone. Removing deletes the account, its roles, sessions and link. What the user did stays: the audit log names it by ID (and `user.remove` records the username), and the rows it created (commands, campaigns, enrollment tokens, install keys, remediation rules and decisions, Proxmox settings) keep existing with their user reference set to NULL. The foreign keys become `ON DELETE SET NULL` for that, and the single-use trigger of enrollment tokens allows exactly that change on a used token. The username is free again afterwards.
 
 **No lockout.** A change that would leave no *active global administrator* (enabled, with a password, with an administrator grant on everything) is refused with 409: revoking that grant, disabling or removing the account. Such changes take a lock on `user_roles` so two administrators cannot remove each other at once. An administrator cannot disable or remove their own account at all. An invited administrator does not count until they set a password.
 
@@ -38,3 +38,4 @@ Rejected:
 - A colleague or a customer is onboarded from the browser: name, role, copy the link.
 - `users.password_hash` is nullable; sign-in treats a missing password like a wrong one.
 - History rows can lose their user reference; the audit log is the record of who did what.
+- Install keys a removed user created keep enrolling hosts until they expire or are revoked: they belong to the site, not the person. The token and key lists say "the server CLI or a removed user" when no creator is left.

@@ -9,6 +9,9 @@ use axum::http::{Request, StatusCode};
 use chrono::Utc;
 use monitorflow_common::redact::Secret;
 use monitorflow_common::release::{sha256, PublicKey};
+use monitorflow_common::server_update::backup::{
+    file_name, BackupFile, BackupKind, BackupRun, BackupState, Backups,
+};
 use monitorflow_common::server_update::{Running, Status, UpdateRun, UpdateState};
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::server_update::ServerUpdateSettings;
@@ -99,9 +102,11 @@ impl Harness {
     fn new(pool: &PgPool, source: &str, keys: Vec<PublicKey>) -> Self {
         let volume = TempDir::new().unwrap();
         std::fs::create_dir(volume.path().join("inbox")).unwrap();
+        std::fs::create_dir(volume.path().join("backups")).unwrap();
         let settings = ApiSettings {
             server_update: ServerUpdateSettings {
                 dir: Some(volume.path().to_owned()),
+                backup_dir: Some(volume.path().join("backups")),
                 source: source.into(),
                 keys,
                 client: reqwest::Client::new(),
@@ -121,6 +126,10 @@ impl Harness {
 
     /// What the updater would write.
     fn write_status(&self, age_s: i64, update: Option<UpdateRun>) {
+        self.write_full_status(age_s, update, Backups::default());
+    }
+
+    fn write_full_status(&self, age_s: i64, update: Option<UpdateRun>, backups: Backups) {
         let status = Status {
             updater_version: "0.1.0".into(),
             heartbeat_at: Utc::now() - chrono::Duration::seconds(age_s),
@@ -131,6 +140,7 @@ impl Harness {
                 updater_image: None,
             }),
             update,
+            backups,
         };
         std::fs::write(
             self.dir().join("status.json"),
@@ -146,6 +156,20 @@ impl Harness {
         cookie: &str,
         body: Option<Value>,
     ) -> (StatusCode, Value) {
+        let (status, _, bytes) = self.call_raw(method, uri, cookie, body).await;
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    async fn call_raw(
+        &self,
+        method: &str,
+        uri: &str,
+        cookie: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
         let state = ApiState::new(
             self.pool.clone(),
             Registry::default(),
@@ -161,13 +185,11 @@ impl Harness {
             .unwrap();
         let response = api::router(state).oneshot(request).await.unwrap();
         let status = response.status();
+        let headers = response.headers().clone();
         let bytes = axum::body::to_bytes(response.into_body(), 1 << 22)
             .await
             .unwrap();
-        (
-            status,
-            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-        )
+        (status, headers, bytes.to_vec())
     }
 
     async fn user(&self, name: &str, role: Role) -> String {
@@ -351,5 +373,69 @@ db_tests! {
         off.settings.server_update.dir = None;
         let (status, _) = off.call("POST", "/api/server-update", &admin, Some(start(NEWER))).await;
         assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[sqlx::test]
+    async fn backups_are_shown_requested_and_downloaded_by_global_administrators(pool: PgPool) {
+        let h = Harness::new(&pool, "http://127.0.0.1:9/mf", vec![]);
+        let admin = h.user("root", Role::Administrator).await;
+        let viewer = h.user("viewer", Role::Viewer).await;
+        let name = file_name(Utc::now(), BackupKind::Daily);
+        for (method, uri) in [("GET", "/api/backups".to_owned()), ("POST", "/api/backups".to_owned()), ("GET", format!("/api/backups/{name}"))] {
+            let (status, _, _) = h.call_raw(method, &uri, &viewer, None).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
+        }
+
+        let (status, body) = h.call("POST", "/api/backups", &admin, None).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::CONFLICT, Some("the updater is not running")));
+
+        std::fs::write(h.dir().join("backups").join(&name), b"archive").unwrap();
+        let failed = BackupRun {
+            id: "d1".into(),
+            kind: BackupKind::Daily,
+            requested_by: String::new(),
+            state: BackupState::Failed,
+            error: Some("pg_dump: connection refused".into()),
+            warning: None,
+            file: None,
+            started_at: Utc::now(),
+            finished_at: Some(Utc::now()),
+        };
+        let backups = Backups {
+            last: Some(failed),
+            last_success_at: Some(Utc::now()),
+            next_at: Some(Utc::now()),
+            files: vec![BackupFile { name: name.clone(), size: 7, created_at: Utc::now(), kind: BackupKind::Daily }],
+        };
+        h.write_full_status(5, None, backups.clone());
+        let (status, body) = h.call("GET", "/api/backups", &admin, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!((body["enabled"].clone(), body["downloads"].clone(), body["updater_alive"].clone()), (json!(true), json!(true), json!(true)));
+        assert_eq!(body["keep"], 7);
+        assert_eq!(body["last"]["state"], "failed");
+        assert_eq!(body["last"]["error"], "pg_dump: connection refused");
+        assert_eq!(body["files"][0]["name"], name.as_str());
+
+        let (status, body) = h.call("POST", "/api/backups", &admin, None).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        let written: Value = serde_json::from_slice(&std::fs::read(h.dir().join("inbox/backup.json")).unwrap()).unwrap();
+        assert_eq!((written["id"].as_str(), written["requested_by"].as_str()), (body["id"].as_str(), Some("root")));
+        let (_, body) = h.call("GET", "/api/backups", &admin, None).await;
+        assert_eq!(body["requested"], true);
+        let (status, _) = h.call("POST", "/api/backups", &admin, None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "one at a time");
+
+        let (status, headers, bytes) = h.call_raw("GET", &format!("/api/backups/{name}"), &admin, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(bytes, b"archive");
+        assert_eq!(headers["content-disposition"], format!("attachment; filename=\"{name}\"").as_str());
+        assert_eq!(headers["cache-control"], "no-store");
+        for bad in ["status.json", "..%2Fstatus.json", "monitorflow-backup-20260101T000000Z-daily.tar.gz"] {
+            let (status, _, _) = h.call_raw("GET", &format!("/api/backups/{bad}"), &admin, None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{bad}");
+        }
+        let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action IN ('server.backup', 'server.backup.download')")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(audited, 2);
     }
 }

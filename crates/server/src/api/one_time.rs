@@ -1,5 +1,5 @@
 //! The secret of a one-time link: the setup link (ADR-0057) and password
-//! links (ADR-0058). Only its SHA-256 is stored.
+//! links (ADR-0059). Only its SHA-256 is stored.
 
 use std::fmt;
 

@@ -4,19 +4,21 @@ How to install the agent on a Linux server, with the installer or by hand, until
 
 ## Quick install
 
-With a token from the web interface (Admin › Enrollment tokens, role Agent), on a host with systemd, x86_64 or aarch64:
+With the install command from the web interface (Administration › Add servers), on a host with systemd, x86_64 or aarch64:
 
 ```
 curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
   | sudo MF_SERVER=monitorflow.example.com:7443 MF_TOKEN=mfe1.… sh
 ```
 
-The installer (ADR-0052) downloads the static agent for the host's architecture and `SHA256SUMS` from the same place, verifies the release signature `SHA256SUMS.sig` against the release keys it carries (ADR-0053, with OpenSSL 3; without it, it warns and checks checksums only), checks the checksum before it changes anything, and then does every step of [Binary and user](#binary-and-user) and [Sudo rules](#sudo-rules): binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface shows this command filled in, and the Windows one, once an agent token is created, from the source you pick there ([Install sources](#install-sources)); give it the relay's address there if the agent connects through one.
+The installer (ADR-0052) downloads the static agent for the host's architecture and `SHA256SUMS` from the same place, verifies the release signature `SHA256SUMS.sig` against the release keys it carries (ADR-0053, with OpenSSL 3; without it, it warns and checks checksums only), checks the checksum before it changes anything, and then does every step of [Binary and user](#binary-and-user) and [Sudo rules](#sudo-rules): binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface shows this command filled in, and the Windows one, once a site's install command is created, from the source you pick there ([Install sources](#install-sources)); give it the relay's address there if the agent connects through one.
+
+One command serves every host of a site, for 30 days by default (ADR-0058). Each host enrolls under its own host name, made unique with `-2`, `-3`… when another server already has it. When the command was created with "Approve new hosts before they appear", new hosts wait under Waiting for approval on the same page until an administrator approves them. Revoking the command stops new installs; hosts already installed keep working. For one host under a name you choose, and for relays, single-use tokens remain under Advanced.
 
 | Variable | Meaning |
 | --- | --- |
 | `MF_SERVER` | `host:port` of the server or relay the agent connects to, port 7443 by default. An https URL works too. IPv6 addresses in brackets: `[2001:db8::1]:7443`. Required on the first install |
-| `MF_TOKEN` | The enrollment token. Required unless the host is enrolled |
+| `MF_TOKEN` | The site's install key, or a single-use enrollment token. Required unless the host is enrolled |
 | `MF_ENROLL` | `host:port` of the server's enrollment listener. By default `MF_SERVER`'s host on port 7445, which is right for a direct connection. Set it when `MF_SERVER` is a relay, to the central server's address: relays do not enroll agents (ADR-0025) |
 | `MF_VERSION` | Release to install, like `0.2.0`. The latest by default |
 | `MF_DOWNLOAD_URL` | https URL of a directory holding the release files, instead of GitHub ([Install sources](#install-sources)) |

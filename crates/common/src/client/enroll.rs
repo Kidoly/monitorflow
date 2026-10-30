@@ -30,7 +30,7 @@ pub enum EnrollError {
     #[error("enrollment_token: {0}")]
     BadToken(String),
     /// Unknown, expired or used token, or one for another CA. Final.
-    #[error("enrollment refused: the token is unknown, expired, already used or for another server; create a new one")]
+    #[error("enrollment refused: the token or install key is unknown, expired, used up, revoked or for another server; create a new one")]
     Refused,
     /// The server answered something that does not match the token or our
     /// key. Nothing was stored.
@@ -59,6 +59,9 @@ pub struct EnrollSettings {
     pub paths: TlsPaths,
     pub token: Option<Secret>,
     pub enroll_url: String,
+    /// The host's name, sent by agents: with an install key it becomes
+    /// their ID (ADR-0058). Empty for relays.
+    pub hostname: String,
 }
 
 impl EnrollSettings {
@@ -68,6 +71,7 @@ impl EnrollSettings {
             paths: config.tls_paths(),
             token: config.enrollment_token.clone(),
             enroll_url: config.enroll_url(),
+            hostname: String::new(),
         }
     }
 
@@ -77,6 +81,7 @@ impl EnrollSettings {
             paths: config.tls_paths(),
             token: config.enrollment_token.clone(),
             enroll_url: config.enroll_url(),
+            hostname: String::new(),
         }
     }
 }
@@ -118,7 +123,7 @@ pub async fn ensure_identity(
     );
     let enrolled = loop {
         let attempt = tokio::select! {
-            result = request(url, &token, role) => result,
+            result = request(url, &token, role, &settings.hostname) => result,
             () = shutdown.wait() => return Err(EnrollError::Shutdown),
         };
         match attempt {
@@ -161,6 +166,7 @@ pub async fn request(
     url: &str,
     token: &EnrollmentToken,
     role: PeerRole,
+    hostname: &str,
 ) -> Result<Enrolled, EnrollError> {
     let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
         .map_err(|e| EnrollError::Transient(format!("cannot generate a key: {e}")))?;
@@ -175,6 +181,7 @@ pub async fn request(
     let request = EnrollRequest {
         token: token.to_secret_string().expose().to_owned(),
         csr_pem: csr,
+        hostname: hostname.to_owned(),
     };
     let mut client = EnrollServiceClient::new(channel);
     let call = client.enroll(request);

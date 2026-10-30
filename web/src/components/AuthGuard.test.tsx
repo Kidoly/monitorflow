@@ -47,7 +47,7 @@ describe("AuthGuard", () => {
     render(<AuthGuard>fleet page</AuthGuard>);
     expect(await screen.findByRole("link", { name: "Relays" })).toHaveAttribute("href", expect.stringMatching(/^\/admin\/relays\/?$/));
     expect(screen.getByRole("link", { name: "Sites" })).toHaveAttribute("href", expect.stringMatching(/^\/admin\/sites\/?$/));
-    expect(screen.getByRole("link", { name: "Enrollment tokens" })).toHaveAttribute("href", expect.stringMatching(/^\/admin\/tokens\/?$/));
+    expect(screen.getByRole("link", { name: "Add servers" })).toHaveAttribute("href", expect.stringMatching(/^\/admin\/tokens\/?$/));
   });
 
   it("shows Campaigns to customer-wide roles only", async () => {

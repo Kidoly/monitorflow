@@ -48,17 +48,7 @@ export function changeLines(check: ServerUpdateCheck): string[] {
   ];
 }
 
-/**
- * The commands that put the database back as it was before a failed update
- * that migrated it, with the dump in the backups volume (docs/deploy-server.md).
- */
-export function restoreCommands(backup: string): string {
-  const compose = "docker compose -f deploy/docker-compose.yml";
-  return [
-    `${compose} stop server`,
-    `${compose} exec -T postgres dropdb -U monitorflow --force monitorflow`,
-    `${compose} exec -T postgres createdb -U monitorflow monitorflow`,
-    `${compose} exec -T postgres pg_restore -U monitorflow -d monitorflow --no-owner /backups/${backup}`,
-    `${compose} up -d --wait server`,
-  ].join("\n");
+/** The command that restores `backup` on the server host, after downloading it (ADR-0058). */
+export function restoreCommand(backup: string): string {
+  return `deploy/restore.sh ${backup}`;
 }

@@ -87,14 +87,12 @@ Volumes are prefixed with the project name, like `monitorflow_serverdata`.
 | `vmdata`, `vldata` | Metrics and logs |
 | `dbcerts` | Certificates of the database link, created again when the volume is empty |
 | `caddydata` | Caddy's certificates and CA |
-| `backups` | Database dumps taken before each update; `BACKUP_DIR` in `deploy/.env` puts them in a host directory instead |
+| `backups` | Backups: daily, on request and before each update, the 7 newest kept; `BACKUP_DIR` in `deploy/.env` puts them in a host directory instead |
 | `update`, `updater` | Update requests and status, and the updater's own state |
 
-Back up `serverdata` and a dump of the database:
+The updater backs up the database and `serverdata` every day and keeps the 7 newest backups (ADR-0058). **Administration, Backups** shows the last one, takes one now and downloads any of them. A backup holds the CA keys: whoever has the file can impersonate the server, so keep copies somewhere safe. Metrics, logs and the mirror repositories are not in backups.
 
-```
-docker compose -f deploy/docker-compose.yml exec -T postgres pg_dump -U monitorflow monitorflow | gzip > monitorflow-db.sql.gz
-```
+To restore one, on a fresh install or on this one: `deploy/restore.sh <file>`.
 
 ## Updating
 
@@ -106,7 +104,7 @@ In **Administration, Server update** (global administrators):
 2. **Update to …**, then confirm. The updater:
    - verifies the release again with the keys built into it, and refuses anything that is not newer than the running server;
    - pulls the release's images by digest;
-   - dumps the database into the `backups` volume (`monitorflow-<from>-to-<to>-<time>.dump`);
+   - takes a backup (`monitorflow-backup-<time>-update.tar.gz`), as on the Backups page;
    - pins the images in `deploy/.env` (`SERVER_IMAGE`, `WEB_IMAGE`, `UPDATER_IMAGE`);
    - recreates `server` and `web` and waits until the server is healthy and reports the new version;
    - adds the release's agents to the server's cache, so agents can follow (ADR-0053);
@@ -126,17 +124,7 @@ Migrations are forward-only: a server refuses a database migrated by a newer ver
 
 ### Restoring after a failed update
 
-On the server host, with the dump named on the page:
-
-```
-docker compose -f deploy/docker-compose.yml stop server
-docker compose -f deploy/docker-compose.yml exec -T postgres dropdb -U monitorflow --force monitorflow
-docker compose -f deploy/docker-compose.yml exec -T postgres createdb -U monitorflow monitorflow
-docker compose -f deploy/docker-compose.yml exec -T postgres pg_restore -U monitorflow -d monitorflow --no-owner /backups/<dump>
-docker compose -f deploy/docker-compose.yml up -d --wait server
-```
-
-PostgreSQL mounts the `backups` volume read-only at `/backups` for this. The updater does not delete dumps: remove old ones from the volume, or from `BACKUP_DIR`, yourself.
+Download the backup named on the page from **Administration, Backups**, then on the server host: `deploy/restore.sh <file>`. That backup is kept until the next update, whatever its age.
 
 ### Offline servers
 

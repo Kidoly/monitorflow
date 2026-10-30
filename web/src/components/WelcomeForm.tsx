@@ -20,7 +20,7 @@ import styles from "./LoginForm.module.css";
 type Failure = { kind: "mismatch" } | { kind: "other"; message: string };
 
 /**
- * `/welcome/#<token>` (ADR-0058): the link an administrator gives to invite
+ * `/welcome/#<token>` (ADR-0059): the link an administrator gives to invite
  * a user or reset their password. The user chooses a password and is
  * signed in.
  */

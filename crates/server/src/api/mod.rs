@@ -39,6 +39,10 @@
 //! | GET | `/api/tokens` | customer administrator | [`tokens::TokenList`]: enrollment tokens without secrets, see below |
 //! | POST | `/api/tokens` | customer administrator | body [`tokens::CreateRequest`]; 201 [`tokens::CreatedToken`], the only time the token is returned |
 //! | DELETE | `/api/tokens/{id}` | customer administrator | 204; 409 once used |
+//! | GET | `/api/install-keys` | customer administrator | [`install_keys::KeyList`]: install keys without secrets and the hosts waiting for approval (ADR-0058) |
+//! | POST | `/api/install-keys` | customer administrator | body [`install_keys::CreateRequest`]; 201 [`install_keys::CreatedKey`], the only time the key is returned; audited |
+//! | DELETE | `/api/install-keys/{id}` | customer administrator | 204, the key enrolls no more hosts; 409 if already revoked; audited |
+//! | POST | `/api/pending-hosts/{peer_id}/approve`, `/api/pending-hosts/{peer_id}/reject` | customer administrator | 204; reject revokes the host's certificates; 409 once decided; audited |
 //! | GET | `/api/customers` | any role | [`customers::CustomerList`]: `{"customers": [{"id", "name", "site_count"}]}`, see below |
 //! | POST | `/api/customers` | global administrator | body `{"name"}`; 201 [`customers::CustomerView`] |
 //! | PUT | `/api/customers/{id}` | global administrator | body `{"name"}`; renames; [`customers::CustomerView`]; audited |
@@ -53,6 +57,7 @@
 //! | POST | `/api/password-link` | password link | body `{"token"}`; [`user_admin::LinkOwner`] `{"username", "invited"}`; 410 for a dead link |
 //! | POST | `/api/password-link/use` | password link | body `{"token", "password"}`; 200 [`Me`] and the session cookie; 400 for a short password, 410 for a dead link |
 //! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled": true, false or null}`; [`sites::SiteView`]; audited (ADR-0055) |
+//! | PUT | `/api/sites/{id}/offline-alerts`, `/api/servers/{id}/offline-alerts`, `/api/relays/{id}/offline-alerts` | modify | body and answer `{"enabled": bool}`: offline incidents on or muted; audited (ADR-0057) |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
 //! | GET | `/api/settings/auto-update` | global administrator | [`policy::Settings`](crate::auto_update::policy::Settings) as they apply (ADR-0055) |
@@ -94,6 +99,9 @@
 //! | GET | `/api/server-update` | global administrator | [`server_update::UpdateView`]: running version, updater and last update (ADR-0056) |
 //! | POST | `/api/server-update/check` | global administrator | [`server_update::CheckResult`]: the latest release, verified, and what it changes |
 //! | POST | `/api/server-update` | global administrator | body `{"version"}`; 202 `{"id"}`; 400 unless newer, 409 without a running updater or while busy; audited |
+//! | GET | `/api/backups` | global administrator | [`backups::BackupsView`]: last backup, next one and the files kept (ADR-0058) |
+//! | POST | `/api/backups` | global administrator | "Back up now"; 202 `{"id"}`; 409 without a running updater or while one runs; audited |
+//! | GET | `/api/backups/{name}` | global administrator | the backup file as an attachment; audited |
 //! | GET | `/api/campaigns` | customer role | [`campaigns::CampaignList`], newest first, paginated |
 //! | POST | `/api/campaigns` | customer administrator | body [`campaigns::CreateRequest`]; 201 [`campaigns::CampaignDetail`] |
 //! | GET | `/api/campaigns/{id}` | customer role | [`campaigns::CampaignDetail`]: the campaign, its waves and servers |
@@ -149,7 +157,7 @@
 //!
 //! # Users
 //!
-//! Global administrators manage every account (ADR-0058). `state` is
+//! Global administrators manage every account (ADR-0059). `state` is
 //! `active`, `invited` (no password yet) or `disabled`. A password link,
 //! `/welcome/#<token>`, is the invitation and the password reset: single
 //! use, valid 7 days, one per user, and only returned when issued. Using
@@ -243,7 +251,9 @@
 //! # Incidents
 //!
 //! Read-only: the threshold engine owns incidents and their events
-//! (ADR-0019). `GET /api/incidents` takes optional `state` (`open`,
+//! (ADR-0019), and the offline rule those with `metric` `offline`, where a
+//! relay's has `relay_id` set, `server_id` null and the relay's name as
+//! `hostname` (ADR-0057). `GET /api/incidents` takes optional `state` (`open`,
 //! `resolved`), `severity` (`warning`, `critical`), `server_id`,
 //! `site_id`, `from` and `to` (RFC 3339; incidents active at some point of
 //! the range), `limit` (1 to 500, default 100) and `cursor`. Open incidents
@@ -453,14 +463,17 @@ pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
 pub mod auto_update;
+pub mod backups;
 pub mod campaigns;
 pub mod commands;
 pub mod customers;
 mod error;
 mod health;
 pub mod incidents;
+pub mod install_keys;
 pub mod metrics;
 pub mod mirrors;
+pub mod offline_alerts;
 mod one_time;
 pub mod packages;
 pub mod password;
@@ -669,6 +682,15 @@ pub fn router(state: ApiState) -> Router {
             "/api/sites/{id}/agent-auto-update",
             put(sites::set_agent_auto_update),
         )
+        .route("/api/sites/{id}/offline-alerts", put(offline_alerts::site))
+        .route(
+            "/api/servers/{id}/offline-alerts",
+            put(offline_alerts::server),
+        )
+        .route(
+            "/api/relays/{id}/offline-alerts",
+            put(offline_alerts::relay),
+        )
         .route("/api/auto-update", get(auto_update::status))
         .route(
             "/api/settings/auto-update",
@@ -685,6 +707,19 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/servers/{id}/revoke", post(revoke::server))
         .route("/api/tokens", get(tokens::list).post(tokens::create))
         .route("/api/tokens/{id}", delete(tokens::delete))
+        .route(
+            "/api/install-keys",
+            get(install_keys::list).post(install_keys::create),
+        )
+        .route("/api/install-keys/{id}", delete(install_keys::revoke))
+        .route(
+            "/api/pending-hosts/{peer_id}/approve",
+            post(install_keys::approve),
+        )
+        .route(
+            "/api/pending-hosts/{peer_id}/reject",
+            post(install_keys::reject),
+        )
         .route(
             "/api/customers",
             get(customers::list).post(customers::create),
@@ -777,6 +812,8 @@ pub fn router(state: ApiState) -> Router {
             get(server_update::get).post(server_update::start),
         )
         .route("/api/server-update/check", post(server_update::check))
+        .route("/api/backups", get(backups::get).post(backups::start))
+        .route("/api/backups/{name}", get(backups::download))
         .route(
             "/api/servers/{id}/sources",
             post(sources::configure).delete(sources::revert),

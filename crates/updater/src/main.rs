@@ -14,7 +14,7 @@ use monitorflow_updater::host::{self, Compose};
 use monitorflow_updater::project::Project;
 use monitorflow_updater::source::{self, Source};
 use monitorflow_updater::update::{Reporter, Updater};
-use monitorflow_updater::{serve, Lock, Settings};
+use monitorflow_updater::{restore, serve, Lock, Settings};
 use tokio::signal::unix::{signal, SignalKind};
 
 #[derive(Parser, Debug)]
@@ -36,6 +36,9 @@ enum Command {
     /// Recreate the updater service with the image in `.env`; run in a
     /// one-off container by the updater it replaces.
     ReplaceSelf,
+    /// Replace the database and the server's data with a backup's, then
+    /// start everything: what `deploy/restore.sh` runs (ADR-0058).
+    Restore { file: PathBuf },
 }
 
 /// The compose labels of this container.
@@ -78,6 +81,25 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     settings.prepare_dirs().context("preparing the volumes")?;
+    if let Some(Command::Restore { file }) = &cli.command {
+        let _lock = Lock::acquire(&settings.state_dir)?;
+        let work = std::env::temp_dir().join(format!("monitorflow-restore-{}", std::process::id()));
+        std::fs::create_dir_all(&work)?;
+        let result = restore::restore(
+            &compose,
+            file,
+            &settings.serverdata_dir,
+            &work,
+            &mut |line| println!("{line}"),
+        )
+        .await;
+        let _ = std::fs::remove_dir_all(&work);
+        if let Err(e) = result {
+            eprintln!("restore failed: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
 
     let http = source::Http {
         client: reqwest::Client::builder()
@@ -106,6 +128,7 @@ async fn main() -> anyhow::Result<()> {
         server_update_dir: host::SERVER_UPDATE_DIR.into(),
         state_dir: settings.state_dir.clone(),
         backup_dir: settings.backup_dir.clone(),
+        serverdata_dir: settings.serverdata_dir.clone(),
         reporter: Reporter::open(&settings.update_dir),
     };
 
@@ -145,7 +168,7 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
-        Some(Command::ReplaceSelf) => unreachable!("handled above"),
+        Some(Command::ReplaceSelf | Command::Restore { .. }) => unreachable!("handled above"),
         None => {
             tracing::info!(source = settings.source(), "serving update requests");
             let mut term = signal(SignalKind::terminate())?;

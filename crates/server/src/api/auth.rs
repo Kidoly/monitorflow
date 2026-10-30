@@ -146,7 +146,7 @@ impl From<&CurrentUser> for Me {
 
 struct Account {
     id: Uuid,
-    /// `None` for an invited user without a password yet (ADR-0058).
+    /// `None` for an invited user without a password yet (ADR-0059).
     password_hash: Option<String>,
     disabled: bool,
 }

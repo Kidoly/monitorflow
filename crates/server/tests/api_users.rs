@@ -1,4 +1,4 @@
-//! Users managed from the web interface (ADR-0058): invitations and
+//! Users managed from the web interface (ADR-0059): invitations and
 //! password resets by one-time link, grants, disabling and removal, and the
 //! guard that keeps one administrator. Ignored without `DATABASE_URL`.
 
@@ -283,6 +283,14 @@ db_tests! {
         .execute(&pool)
         .await
         .unwrap();
+        sqlx::query(
+            "INSERT INTO install_keys (key_hash, site_id, created_by, expires_at)
+             SELECT sha256('y'), id, $1, now() + interval '1 hour' FROM sites",
+        )
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let uri = format!("/api/users/{bob}/disabled");
         let (status, _, view) = send(&pool, "PUT", &uri, Some(&admin), Some(json!({ "disabled": true }))).await;
@@ -306,6 +314,11 @@ db_tests! {
             .await
             .unwrap();
         assert_eq!(creators, [None]);
+        let key_owners: Vec<Option<Uuid>> = sqlx::query_scalar("SELECT created_by FROM install_keys")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(key_owners, [None]);
         // The name is free again.
         let (status, _, _) = send(&pool, "POST", "/api/users", Some(&admin), Some(json!({ "username": "BOB", "role": "viewer" }))).await;
         assert_eq!(status, StatusCode::CREATED);

@@ -64,9 +64,10 @@ describe("AppShell", () => {
       "Audit log",
       "Relays",
       "Sites",
-      "Enrollment tokens",
+      "Add servers",
       "Users and roles",
       "Server update",
+      "Backups",
     ]);
     expect(within(nav()).getByText("Remediation")).toBeInTheDocument();
     expect(within(nav()).getByText("Updates")).toBeInTheDocument();

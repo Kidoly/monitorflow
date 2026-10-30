@@ -29,7 +29,7 @@ import { AdminLayout } from "./AdminLayout";
 import styles from "./AdminPages.module.css";
 
 /**
- * `/admin/users/` (ADR-0058). Administrators of everything invite users by
+ * `/admin/users/` (ADR-0059). Administrators of everything invite users by
  * one-time link, grant and revoke roles, issue password links, and disable
  * or remove accounts. Other administrators see their own account.
  */

@@ -18,6 +18,11 @@ export function sensorHref(id: string, metric: string, instance = ""): string {
   return `/servers/sensor/?${params}`;
 }
 
+/** Link to the server or relay of an incident. */
+export function incidentPeerHref(incident: { server_id: string | null; relay_id?: string | null }): string {
+  return incident.server_id ? serverHref(incident.server_id) : relayHref(incident.relay_id ?? "");
+}
+
 /** Link to the incidents list with `filters` (see `lib/incidents.ts`). */
 export function incidentsHref(filters: Partial<IncidentFilters> = {}): string {
   const query = filtersToQuery({ ...NO_FILTERS, ...filters });
@@ -41,6 +46,13 @@ export const AUTO_UPDATE_PATH = "/admin/updates/";
 
 /** Updating the central server (ADR-0056). */
 export const SERVER_UPDATE_PATH = "/admin/server-update/";
+/** Backups of the server (ADR-0058). */
+export const BACKUPS_PATH = "/admin/backups/";
+
+/** Where the browser downloads the backup `name`: a plain GET with the session cookie. */
+export function backupDownloadHref(name: string): string {
+  return `/api/backups/${encodeURIComponent(name)}`;
+}
 
 /** Link to the page of the mirror `id`. */
 export function mirrorHref(id: string): string {

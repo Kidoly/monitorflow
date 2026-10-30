@@ -140,7 +140,7 @@ describe("IncidentList", () => {
   it("says when there are no incidents at all", async () => {
     stubFetch({ ...options, [OPEN]: openReply, [`GET /api/incidents?limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [], next_cursor: null } } });
     render(<IncidentList filters={NO_FILTERS} />);
-    expect(await screen.findByText(/No incidents\. Thresholds have not fired yet/)).toBeInTheDocument();
+    expect(await screen.findByText(/No incidents\. No threshold has fired/)).toBeInTheDocument();
   });
 
   it("shows errors and keeps the last list when a refresh fails", async () => {

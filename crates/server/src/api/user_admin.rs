@@ -1,4 +1,4 @@
-//! Users managed from the web interface (ADR-0058). Global administrators
+//! Users managed from the web interface (ADR-0059). Global administrators
 //! invite users, grant and revoke roles, disable, enable and remove
 //! accounts, and issue password links. A password link,
 //! `/welcome/#<secret>`, lets its user choose a password and signs them

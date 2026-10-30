@@ -156,7 +156,7 @@ pub(super) async fn hash_password(password: &Secret) -> Result<String, CreateUse
 /// Inserts a user with the argon2 `hash` and its first role, audited as
 /// done by `actor` (`(actor_kind, actor_id)`), in the caller's transaction.
 /// Without `hash` the user is invited: it cannot sign in until it sets a
-/// password with its link (ADR-0058). The setup link dies with it
+/// password with its link (ADR-0059). The setup link dies with it
 /// (ADR-0057).
 pub(super) async fn insert_user(
     tx: &mut PgConnection,

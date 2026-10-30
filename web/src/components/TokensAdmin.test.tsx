@@ -1,12 +1,23 @@
 // @vitest-environment-options {"url": "https://mf.example/admin/tokens/"}
 import { render, screen, within } from "@testing-library/react";
+import type { UserEvent } from "@testing-library/user-event";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { type AgentInstall, CSRF_HEADER, type CreatedToken, type EnrollmentToken, type PublicAddress } from "@/lib/api";
+import {
+  type AgentInstall,
+  CSRF_HEADER,
+  type CreatedInstallKey,
+  type CreatedToken,
+  type EnrollmentToken,
+  type InstallKey,
+  type PendingHost,
+  type PublicAddress,
+} from "@/lib/api";
 import { customerAdmin, me, siteAdmin } from "@/test/admin";
-import { requestHeaders, stubFetch } from "@/test/fetch";
+import { requestHeaders, stubFetch as stubRoutes } from "@/test/fetch";
 
+import { hostsWords } from "./InstallKeys";
 import { TokensAdmin, configSnippet } from "./TokensAdmin";
 
 const SECRET = "mfe1.c2VjcmV0.Y2E";
@@ -80,8 +91,175 @@ const sites = {
   },
 };
 
+const key = (overrides: Partial<InstallKey> = {}): InstallKey => ({
+  id: "k1",
+  site_id: "site-1",
+  site_name: "paris",
+  customer_id: "c1",
+  customer_name: "acme",
+  created_by_username: "alice",
+  created_at: "2026-10-22T10:00:00Z",
+  expires_at: "2026-11-21T10:00:00Z",
+  max_hosts: null,
+  host_count: 0,
+  require_approval: false,
+  revoked_at: null,
+  state: "active",
+  ...overrides,
+});
+
+const pendingHost: PendingHost = {
+  peer_id: "web-01-2",
+  hostname: "web-01",
+  site_id: "site-1",
+  site_name: "paris",
+  customer_name: "acme",
+  install_key_id: "k1",
+  source: "192.0.2.7",
+  created_at: "2026-10-22T10:05:00Z",
+};
+
+/** Every page load also lists install keys; none unless a test says otherwise. */
+const stubFetch = (routes: Parameters<typeof stubRoutes>[0]) =>
+  stubRoutes({ "GET /api/install-keys": { status: 200, body: { keys: [], pending_hosts: [] } }, ...routes });
+
+/** Opens the single-use tokens under Advanced and returns their form. */
+async function newTokenForm(user: UserEvent) {
+  await user.click(await screen.findByRole("button", { name: "Show single-use tokens" }));
+  return screen.findByRole("form", { name: "New token" });
+}
+
 describe("TokensAdmin", () => {
   afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("leads with one install command for a site, shown once", async () => {
+    const user = userEvent.setup();
+    const createdKey: CreatedInstallKey = {
+      ...key(),
+      token: SECRET,
+      upstream_url: "https://mf.example:7443",
+      enroll_url: "https://mf.example:7445",
+      install: install(),
+      address: address(),
+    };
+    const fetchMock = stubFetch({
+      "GET /api/install-keys": [
+        { status: 200, body: { keys: [], pending_hosts: [] } },
+        { status: 200, body: { keys: [key()], pending_hosts: [] } },
+      ],
+      "GET /api/tokens": { status: 200, body: { tokens: [], next_cursor: null } },
+      "GET /api/sites": sites,
+      "GET /api/settings/agent-install": settings,
+      "POST /api/install-keys": { status: 201, body: createdKey },
+    });
+    render(<TokensAdmin me={customerAdmin} />);
+    expect(await screen.findByText("None yet: create one above, then paste it on your hosts.")).toBeInTheDocument();
+    // Single-use tokens wait under Advanced.
+    expect(screen.queryByRole("form", { name: "New token" })).not.toBeInTheDocument();
+    const form = screen.getByRole("form", { name: "Install command" });
+    await within(within(form).getByLabelText("Site")).findByRole("option");
+    expect(within(form).getByLabelText("Works for")).toHaveValue("2592000");
+    await user.click(within(form).getByRole("button", { name: "Create install command" }));
+
+    const panel = await screen.findByRole("region", { name: /^Install command for paris · works until/ });
+    expect(within(panel).getByRole("alert")).toHaveTextContent(
+      "This command will not be shown again. Copy it now and keep it with your notes or deployment scripts. It works on any number of hosts.",
+    );
+    const commands = within(panel).getByRole("group", { name: "Install the agent" });
+    expect(within(commands).getByLabelText(/^Linux/)).toHaveTextContent(
+      `| sudo MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
+    );
+    expect(within(commands).getByLabelText(/^Windows/)).toHaveTextContent(`ENROLLMENT_TOKEN=${SECRET}`);
+    const post = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "POST");
+    expect(requestHeaders(fetchMock, post)[CSRF_HEADER]).toBe("1");
+    expect(JSON.parse(String(fetchMock.mock.calls[post]?.[1]?.body))).toEqual({
+      site_id: "site-1",
+      ttl_s: 2592000,
+      require_approval: false,
+    });
+
+    await user.click(within(panel).getByRole("button", { name: "Done" }));
+    expect(document.body.textContent).not.toContain(SECRET);
+    const row = await screen.findByRole("row", { name: /acme › paris/ });
+    expect(row).toHaveTextContent(/0 hosts\s*Active/);
+    expect(screen.getByRole("form", { name: "Install command" })).toBeInTheDocument();
+  });
+
+  it("sends a host limit and approval when asked", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      "GET /api/tokens": { status: 200, body: { tokens: [], next_cursor: null } },
+      "GET /api/sites": sites,
+      "GET /api/settings/agent-install": settings,
+      "POST /api/install-keys": { status: 400, body: { error: "the host limit must be between 1 and 100000" } },
+    });
+    render(<TokensAdmin me={customerAdmin} />);
+    const form = await screen.findByRole("form", { name: "Install command" });
+    await within(within(form).getByLabelText("Site")).findByRole("option");
+    await user.selectOptions(within(form).getByLabelText("Works for"), "604800");
+    await user.type(within(form).getByLabelText(/^Up to/), "10");
+    await user.click(within(form).getByRole("checkbox", { name: "Approve new hosts before they appear" }));
+    await user.click(within(form).getByRole("button", { name: "Create install command" }));
+    expect(await within(form).findByRole("alert")).toHaveTextContent("Creating the install command failed.");
+    const post = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "POST");
+    expect(JSON.parse(String(fetchMock.mock.calls[post]?.[1]?.body))).toEqual({
+      site_id: "site-1",
+      ttl_s: 604800,
+      max_hosts: 10,
+      require_approval: true,
+    });
+  });
+
+  it("approves or rejects waiting hosts and revokes a command", async () => {
+    const user = userEvent.setup();
+    const approvalKey = key({ require_approval: true, max_hosts: 5, host_count: 2 });
+    const fetchMock = stubFetch({
+      "GET /api/install-keys": [
+        { status: 200, body: { keys: [approvalKey], pending_hosts: [pendingHost, { ...pendingHost, peer_id: "db-1", hostname: "db-1" }] } },
+        { status: 200, body: { keys: [approvalKey], pending_hosts: [{ ...pendingHost, peer_id: "db-1", hostname: "db-1" }] } },
+        { status: 200, body: { keys: [approvalKey], pending_hosts: [] } },
+        { status: 200, body: { keys: [{ ...approvalKey, state: "revoked" }], pending_hosts: [] } },
+      ],
+      "GET /api/tokens": { status: 200, body: { tokens: [], next_cursor: null } },
+      "GET /api/sites": sites,
+      "GET /api/settings/agent-install": settings,
+      "POST /api/pending-hosts/web-01-2/approve": { status: 204 },
+      "POST /api/pending-hosts/db-1/reject": { status: 204 },
+      "DELETE /api/install-keys/k1": { status: 204 },
+    });
+    render(<TokensAdmin me={customerAdmin} />);
+    const waiting = await screen.findByRole("region", { name: "Waiting for approval" });
+    const web = within(waiting).getByRole("row", { name: /web-01/ });
+    expect(web).toHaveTextContent(/web-01 · named web-01-2\s*paris\s*192\.0\.2\.7/);
+    await user.click(within(web).getByRole("button", { name: "Approve web-01" }));
+    await screen.findByRole("button", { name: "Reject db-1" }).then((b) => user.click(b));
+    const confirm = screen.getByRole("form", { name: "Reject this host?" });
+    expect(confirm).toHaveTextContent("it can never connect as db-1");
+    await user.click(within(confirm).getByRole("button", { name: "Reject host" }));
+    await screen.findByRole("region", { name: "Install commands" });
+    expect(screen.queryByRole("region", { name: "Waiting for approval" })).not.toBeInTheDocument();
+
+    const row = screen.getByRole("row", { name: /acme › paris/ });
+    expect(row).toHaveTextContent("2 of 5 hosts · with approval");
+    await user.click(within(row).getByRole("button", { name: "Revoke the install command of paris" }));
+    await user.click(within(row).getByRole("button", { name: "Revoke command" }));
+    expect(await screen.findByText("Revoked")).toBeInTheDocument();
+    const methods = fetchMock.mock.calls.map(([url, init]) => `${init?.method ?? "GET"} ${String(url)}`);
+    expect(methods).toEqual(
+      expect.arrayContaining([
+        "POST /api/pending-hosts/web-01-2/approve",
+        "POST /api/pending-hosts/db-1/reject",
+        "DELETE /api/install-keys/k1",
+      ]),
+    );
+  });
+
+  it("words host counts", () => {
+    expect(hostsWords({ host_count: 0, max_hosts: null })).toBe("0 hosts");
+    expect(hostsWords({ host_count: 1, max_hosts: null })).toBe("1 host");
+    expect(hostsWords({ host_count: 1, max_hosts: 1 })).toBe("1 of 1 host");
+    expect(hostsWords({ host_count: 3, max_hosts: 10 })).toBe("3 of 10 hosts");
+  });
 
   it("creates a relay token and shows it once with its configuration", async () => {
     const user = userEvent.setup();
@@ -95,7 +273,7 @@ describe("TokensAdmin", () => {
       "POST /api/tokens": { status: 201, body: created },
     });
     render(<TokensAdmin me={customerAdmin} />);
-    const form = await screen.findByRole("form", { name: "New token" });
+    const form = await newTokenForm(user);
     expect(form).toHaveTextContent("Recorded in the audit log as alice.");
     // Only sites of administered customers are offered.
     const site = within(form).getByLabelText("Site");
@@ -162,7 +340,7 @@ describe("TokensAdmin", () => {
       "POST /api/tokens": { status: 201, body: agentToken },
     });
     render(<TokensAdmin me={customerAdmin} />);
-    const form = await screen.findByRole("form", { name: "New token" });
+    const form = await newTokenForm(user);
     await within(within(form).getByLabelText("Site")).findByRole("option");
     await user.type(within(form).getByLabelText("Peer ID"), "web-03");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
@@ -215,7 +393,7 @@ describe("TokensAdmin", () => {
       ],
     });
     render(<TokensAdmin me={globalAdmin} />);
-    const form = await screen.findByRole("form", { name: "New token" });
+    const form = await newTokenForm(user);
     await within(within(form).getByLabelText("Site")).findAllByRole("option");
     await user.type(within(form).getByLabelText("Peer ID"), "web-06");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
@@ -265,7 +443,7 @@ describe("TokensAdmin", () => {
       "POST /api/tokens": { status: 201, body: agentToken },
     });
     render(<TokensAdmin me={customerAdmin} />);
-    const form = await screen.findByRole("form", { name: "New token" });
+    const form = await newTokenForm(user);
     await within(within(form).getByLabelText("Site")).findByRole("option");
     await user.type(within(form).getByLabelText("Peer ID"), "web-07");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
@@ -289,7 +467,7 @@ describe("TokensAdmin", () => {
       "POST /api/tokens": { status: 201, body: agentToken },
     });
     render(<TokensAdmin me={customerAdmin} />);
-    const form = await screen.findByRole("form", { name: "New token" });
+    const form = await newTokenForm(user);
     await within(within(form).getByLabelText("Site")).findByRole("option");
     await user.type(within(form).getByLabelText("Peer ID"), "web-04");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
@@ -329,7 +507,7 @@ describe("TokensAdmin", () => {
       "POST /api/tokens": { status: 201, body: agentToken },
     });
     render(<TokensAdmin me={customerAdmin} />);
-    const form = await screen.findByRole("form", { name: "New token" });
+    const form = await newTokenForm(user);
     await within(within(form).getByLabelText("Site")).findByRole("option");
     await user.type(within(form).getByLabelText("Peer ID"), "web-05");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
@@ -400,7 +578,7 @@ describe("TokensAdmin", () => {
       "POST /api/tokens": { status: 201, body: created },
     });
     render(<TokensAdmin me={customerAdmin} />);
-    const form = await screen.findByRole("form", { name: "New token" });
+    const form = await newTokenForm(user);
     await within(within(form).getByLabelText("Site")).findByRole("option");
     await user.click(within(form).getByRole("radio", { name: "Relay" }));
     await user.type(within(form).getByLabelText("Peer ID"), "relay-1");
@@ -418,7 +596,9 @@ describe("TokensAdmin", () => {
       "GET /api/settings/agent-install": settings,
     });
     render(<TokensAdmin me={customerAdmin} />);
+    // Relays enroll with single-use tokens only, so they show at once.
     expect(await screen.findByRole("radio", { name: "Relay" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Hide single-use tokens" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByLabelText(/Server names/)).toBeEnabled();
   });
 
@@ -440,6 +620,7 @@ describe("TokensAdmin", () => {
       "DELETE /api/tokens/t1": { status: 204 },
     });
     render(<TokensAdmin me={customerAdmin} />);
+    await user.click(await screen.findByRole("button", { name: "Show single-use tokens" }));
     const pending = await screen.findByRole("row", { name: /web-01/ });
     expect(pending).toHaveTextContent(/web-01\s*Agent\s*paris\s*Pending/);
     expect(screen.getByRole("region", { name: "Tokens" })).toHaveTextContent("1 pending");

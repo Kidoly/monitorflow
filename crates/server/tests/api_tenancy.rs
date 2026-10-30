@@ -91,9 +91,10 @@ fn source_routes() -> BTreeSet<(String, String)> {
     routes
 }
 
-/// A path template with `{id}` filled in.
+/// A path template with `{id}` and `{peer_id}` filled in.
 fn concrete(path: &str) -> String {
     path.replace("{id}", &Uuid::from_u128(42).to_string())
+        .replace("{peer_id}", "nobody")
 }
 
 /// Fake VictoriaMetrics: records the query string of every request and
@@ -149,6 +150,9 @@ struct Tenant {
     pending: Uuid,
     relay: Uuid,
     token: Uuid,
+    /// An install key with a host, `pending-<name>`, waiting for approval
+    /// (ADR-0058).
+    install_key: Uuid,
     command: Uuid,
     /// A draft campaign of one wave with the server (ADR-0033).
     campaign: Uuid,
@@ -253,6 +257,25 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    let install_key = one(
+        "INSERT INTO install_keys (key_hash, site_id, expires_at, require_approval)
+         VALUES (sha256(convert_to($1, 'UTF8')), $2, now() + interval '1 day', true) RETURNING id",
+    )
+    .bind(format!("key-{name}"))
+    .bind(site)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO pending_hosts (peer_id, site_id, install_key_id, hostname)
+         VALUES ($1, $2, $3, $1)",
+    )
+    .bind(format!("pending-{name}"))
+    .bind(site)
+    .bind(install_key)
+    .execute(pool)
+    .await
+    .unwrap();
     let command = one("INSERT INTO commands (server_id, kind, payload, expires_at)
          VALUES ($1, 'apply_updates', '', now() + interval '1 hour') RETURNING id")
     .bind(server)
@@ -300,6 +323,7 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
         server,
         relay,
         token,
+        install_key,
         site_sensor: ids[0],
         server_sensor: ids[1],
         site_threshold: ids[2],
@@ -724,6 +748,32 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = json!({ "role": "agent", "peer_id": "intruder", "site_id": b.site });
             assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
         }
+        ("GET", "/api/install-keys") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            let text = body.to_string();
+            assert!(
+                Ctx::mentions(&body, a.install_key) && !Ctx::mentions(&body, b.install_key),
+                "{body}"
+            );
+            assert!(
+                text.contains("pending-a") && !text.contains("pending-b"),
+                "{body}"
+            );
+        }
+        ("POST", "/api/install-keys") => {
+            let body = json!({ "site_id": b.site });
+            assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+        }
+        ("DELETE", "/api/install-keys/{id}") => {
+            let uri = format!("/api/install-keys/{}", b.install_key);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("POST", "/api/pending-hosts/{peer_id}/approve")
+        | ("POST", "/api/pending-hosts/{peer_id}/reject") => {
+            let uri = path.replace("{peer_id}", "pending-b");
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
         ("DELETE", "/api/tokens/{id}") => {
             let uri = format!("/api/tokens/{}", b.token);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
@@ -758,6 +808,11 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = method.eq("POST").then(|| json!({ "version": "99.0.0" }));
             assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
         }
+        // Backups hold every customer's data: global administrators only.
+        ("GET", "/api/backups") | ("POST", "/api/backups") | ("GET", "/api/backups/{name}") => {
+            let uri = path.replace("{name}", "monitorflow-backup-20261029T030000Z-daily.tar.gz");
+            assert_eq!(ctx.status(method, &uri, None).await, StatusCode::FORBIDDEN);
+        }
         // Automatic updates are server-wide: global administrators only.
         ("GET", "/api/auto-update")
         | ("GET", "/api/settings/auto-update")
@@ -785,7 +840,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 StatusCode::FORBIDDEN
             );
         }
-        // Users (ADR-0058): global administrators only.
+        // Users (ADR-0059): global administrators only.
         ("GET", "/api/users")
         | ("POST", "/api/users")
         | ("DELETE", "/api/users/{id}")
@@ -920,6 +975,18 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         ("PUT", "/api/sites/{id}/agent-auto-update") => {
             let uri = path.replace("{id}", &b.site.to_string());
             let body = Some(json!({ "enabled": true }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
+        ("PUT", "/api/sites/{id}/offline-alerts")
+        | ("PUT", "/api/servers/{id}/offline-alerts")
+        | ("PUT", "/api/relays/{id}/offline-alerts") => {
+            let id = match path.split('/').nth(2) {
+                Some("sites") => b.site,
+                Some("servers") => b.server,
+                _ => b.relay,
+            };
+            let uri = path.replace("{id}", &id.to_string());
+            let body = Some(json!({ "enabled": false }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
         ("GET", "/api/sites/{id}/sensor_configs")
@@ -1077,6 +1144,14 @@ db_tests! {
             check(&ctx, method, path).await;
         }
 
+        let untouched: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pending_hosts),
+                    (SELECT count(*) FROM install_keys WHERE revoked_at IS NULL)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(untouched, (2, 2), "an administrator of A decided on B's hosts or keys");
         let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM mirror_runs").fetch_one(&pool).await.unwrap();
         assert_eq!(runs, 0, "a customer administrator started a mirror job");
         // Writes against B changed nothing (A's rows were not touched either).

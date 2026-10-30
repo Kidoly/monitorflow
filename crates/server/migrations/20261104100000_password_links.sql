@@ -1,4 +1,4 @@
--- Users managed from the web interface (ADR-0058).
+-- Users managed from the web interface (ADR-0059).
 
 -- An invited user has no password until they open their link.
 ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
@@ -17,13 +17,19 @@ CREATE TABLE password_links (
     CHECK (expires_at > created_at)
 );
 COMMENT ON TABLE password_links IS
-    'Hash of the one-time link that sets a user''s password; see ADR-0058.';
+    'Hash of the one-time link that sets a user''s password; see ADR-0059.';
 
 -- Removing a user keeps the history it left. The rows stay, without the
 -- link to the account; the audit log still names it by ID.
 ALTER TABLE enrollment_tokens
     DROP CONSTRAINT enrollment_tokens_created_by_fkey,
     ADD CONSTRAINT enrollment_tokens_created_by_fkey
+        FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL;
+COMMENT ON COLUMN enrollment_tokens.created_by IS
+    'User who created the token; NULL when created from the server CLI or when that user was removed.';
+ALTER TABLE install_keys
+    DROP CONSTRAINT install_keys_created_by_fkey,
+    ADD CONSTRAINT install_keys_created_by_fkey
         FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL;
 ALTER TABLE campaigns
     DROP CONSTRAINT campaigns_created_by_fkey,
