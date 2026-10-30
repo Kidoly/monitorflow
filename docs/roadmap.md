@@ -87,7 +87,7 @@ Everything installable in one line, updatable in two clicks, and usable without 
 - [x] Editable server address in install commands: a public address setting defaulted to the first server name, picked or edited on the tokens page (the published ports are already used).
 - [ ] Relay onboarding without typing: Relays › Add relay, server names reported by the relay and confirmed instead of typed (ADR), mirroring as a checkbox, "Add servers behind this relay".
 - [x] Edit thresholds and add checks in the interface, per server or per site, in plain words.
-- [ ] Users, customers and roles in the interface: create customers, invite users by one-time link, grant and revoke roles.
+- [x] Users, customers and roles in the interface: create customers, invite users by one-time link, grant and revoke roles.
 - [x] One-click backups: daily backup of the database and `serverdata` with retention, back up now and download in Settings, `--restore` in the server installer; replaces the unpruned update dumps.
 - [ ] Update available everywhere: daily background release check with a banner and a notification; release import from the interface for servers without Internet.
 - [ ] AI setup in the interface: API key, model, test and enable in Settings; `MF_ALLOW_COMMANDS=1` in the agent installer for the shell opt-in; approvals say when AI is off.
