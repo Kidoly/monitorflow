@@ -6,11 +6,11 @@ import type { Tone } from "./tone";
 
 /**
  * Every status word of the handoff and its tint, by domain: the same word
- * can take another tint elsewhere ("Revoked" is neutral for a server, bad
+ * can take another tint elsewhere ("Removed" is neutral for a server, "Revoked" bad
  * for a certificate; "Pending" is info for a token, warn for a patch).
  */
 export const STATUS_WORDS = {
-  server: { online: ["Online", "ok"], offline: ["Offline", "bad"], revoked: ["Revoked", "neutral"] },
+  server: { online: ["Online", "ok"], offline: ["Offline", "bad"], revoked: ["Removed", "neutral"] },
   sensor: { ok: ["OK", "ok"], warning: ["Warning", "warn"], critical: ["Critical", "bad"], unknown: ["Unknown", "neutral"] },
   severity: { critical: ["Critical", "bad"], warning: ["Warning", "warn"], resolved: ["Resolved", "neutral"] },
   certificate: { revoked: ["Revoked", "bad"] },

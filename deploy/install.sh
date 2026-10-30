@@ -327,7 +327,7 @@ esac
 
 # Check every input before changing anything.
 if enrolled; then
-    [ -z "$MF_TOKEN" ] || say "already enrolled: MF_TOKEN is not used; revoke it in the web interface"
+    [ -z "$MF_TOKEN" ] || say "already enrolled: MF_TOKEN is not used. If this host was removed in the web interface, run the uninstall command it shows, then this one again"
 else
     [ -n "$MF_TOKEN" ] || die "MF_TOKEN is required: copy the command from the web interface (Administration › Add servers)"
     case $MF_TOKEN in

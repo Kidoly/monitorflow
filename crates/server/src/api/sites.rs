@@ -54,13 +54,15 @@ async fn auto_update_default(state: &ApiState) -> Result<bool, sqlx::Error> {
 
 /// Columns of [`SiteView`]; callers add `WHERE` before the grouping.
 const SELECT_SITES: &str = "SELECT si.id, si.name, count(s.id) AS server_count,
-                                   (SELECT count(*) FROM relays r WHERE r.site_id = si.id)
+                                   (SELECT count(*) FROM relays r
+                                    WHERE r.site_id = si.id AND r.revoked_at IS NULL)
                                        AS relay_count,
                                    si.customer_id, c.name AS customer_name,
                                    si.agent_auto_update, si.offline_alerts
                             FROM sites si
                             JOIN customers c ON c.id = si.customer_id
-                            LEFT JOIN servers s ON s.site_id = si.id";
+                            LEFT JOIN servers s ON s.site_id = si.id
+                                                   AND s.revoked_at IS NULL";
 
 /// The site `id`, without access checks.
 pub(super) async fn fetch(state: &ApiState, id: Uuid) -> Result<Option<SiteView>, sqlx::Error> {

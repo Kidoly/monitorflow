@@ -12,6 +12,7 @@ import {
   isMirrorUrl,
   linuxInstallCommand,
   relayInstallCommand,
+  uninstallCommand,
   windowsInstallCommand,
 } from "./install";
 
@@ -175,5 +176,54 @@ describe("install commands", () => {
     expect(isMirrorUrl("http://relay1.example:7480")).toBe(true);
     expect(isMirrorUrl("https://[2001:db8::1]:7480/")).toBe(true);
     for (const bad of ["ftp://x", "http://a b", "http://x?y", "http://x;rm"]) expect(isMirrorUrl(bad)).toBe(false);
+  });
+});
+
+describe("uninstall commands", () => {
+  const address = {
+    address: "monitor.lan",
+    default: "mf.example",
+    names: ["mf.example"],
+    certified: false,
+    upstream_url: "https://monitor.lan:7443",
+    enroll_url: "https://monitor.lan:7445",
+  };
+
+  it("runs the installer of the default source, purging the identity", () => {
+    expect(uninstallCommand("agent", "debian", install(), address, ORIGIN)).toBe(
+      `curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_UNINSTALL=1 MF_PURGE=1 sh`,
+    );
+    expect(uninstallCommand("relay", "linux", install({ source: "custom" }), address, ORIGIN)).toBe(
+      "curl -fsSL https://files.example/mf/0.2.0/install.sh \\\n  | sudo MF_ROLE=relay MF_UNINSTALL=1 MF_PURGE=1 sh",
+    );
+  });
+
+  it("pins the checksum of this server's installer, at the public address", () => {
+    const command = uninstallCommand("agent", "rhel", install({ source: "central" }), address, "https://mf.example:8443");
+    expect(command).toContain("curl -fsSLk -o \"$f\" https://monitor.lan:8443/agent/0.3.0/install.sh");
+    expect(command).toContain(`echo "${INSTALLER}  $f" | sha256sum -c`);
+    expect(command).toContain("sudo MF_UNINSTALL=1 MF_PURGE=1 sh \"$f\"");
+    const v6 = { ...address, address: "2001:db8::1" };
+    expect(uninstallCommand("agent", "rhel", install({ source: "central" }), v6, ORIGIN)).toContain(
+      "https://[2001:db8::1]/agent/0.3.0/install.sh",
+    );
+  });
+
+  it("falls back to GitHub when the default source has no installer", () => {
+    const github = `curl -fsSL ${GITHUB}/install.sh`;
+    for (const source of [
+      install({ source: "central", central: null }),
+      install({ source: "central", central: { ...install().central!, installer_sha256: null } }),
+      install({ source: "custom", custom_url: null }),
+    ]) {
+      expect(uninstallCommand("agent", "debian", source, address, ORIGIN)).toContain(github);
+    }
+  });
+
+  it("finds the MSI by its product code on Windows", () => {
+    const command = uninstallCommand("agent", "windows", install(), address, ORIGIN);
+    expect(command).toContain("Where-Object DisplayName -eq 'MonitorFlow agent'");
+    expect(command).toContain('"/x $($app.PSChildName) /qn REMOVE_DATA=1"');
+    expect(command).not.toContain("curl");
   });
 });

@@ -502,7 +502,7 @@ db_tests! {
             texts(&hooks),
             [
                 "Resolved: acme-web (acme / acme-site) is back online",
-                "Resolved: relay acme-gw (acme / acme-site) was revoked",
+                "Resolved: relay acme-gw (acme / acme-site) was removed",
             ]
         );
     }

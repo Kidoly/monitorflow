@@ -50,7 +50,6 @@ const db1 = server({
   connected_at: null,
   last_heartbeat: new Date(2026, 9, 22, 13, 51).toISOString(),
 });
-const old = server({ id: "s3", hostname: "web-10", status: "offline", revoked_at: "2026-10-14T10:00:00Z" });
 const mail = server({ id: "s4", hostname: "mail-1", cert_not_after: new Date(NOW.getTime() + 5.5 * 86_400_000).toISOString() });
 const disk = incident({ server_id: "s1", opened_at: new Date(NOW.getTime() - (4 * 3600 + 20 * 60) * 1000).toISOString(), last_value: 0.968 });
 
@@ -72,18 +71,17 @@ describe("FleetOverview", () => {
   afterEach(() => vi.useRealTimers());
 
   it("lists servers problems first, with counters and a problem per row", async () => {
-    stubFetch(reply([mail, old, db1, web1]));
+    stubFetch(reply([mail, db1, web1]));
     render(<FleetOverview />);
-    const [first, second, third, fourth] = await rows();
+    const [first, second, third] = await rows();
     expect(first).toHaveTextContent(/web-1Debian 12 · agent 0\.1\.0 · via relay-paris-1\s*Online\s*Critical\s+Disk used \/var 96\.8% · 4 h 20 min\s*paris\s*12 s ago/);
     expect(second).toHaveTextContent(/db-1RHEL 9 · agent unknown\s*Offline\s*No heartbeat since 13:51/);
     expect(third).toHaveTextContent(/mail-1.*Online\s*Warning\s+Certificate expires in 6 days/);
-    expect(fourth).toHaveTextContent(/web-10.*Revoked\s*Revoked on 14 Oct/);
     expect(within(first!).getByRole("link", { name: "web-1" })).toHaveAttribute("href", expect.stringMatching(/^\/servers\/view\/?\?id=s1$/));
-    expect(screen.getByText(/4 servers, 2 online · Updated 14:32:05, refreshes every 15 seconds/)).toBeInTheDocument();
+    expect(screen.getByText(/3 servers, 2 online · Updated 14:32:05, refreshes every 15 seconds/)).toBeInTheDocument();
 
     const tiles = screen.getByRole("group", { name: "Summary, click to filter" });
-    expect(within(tiles).getByRole("link", { name: /Online\s*2\s*\/ 4/ })).toHaveAttribute("href", "/?status=online");
+    expect(within(tiles).getByRole("link", { name: /Online\s*2\s*\/ 3/ })).toHaveAttribute("href", "/?status=online");
     expect(within(tiles).getByRole("link", { name: /Critical incidents\s*1/ })).toHaveAttribute(
       "href",
       expect.stringMatching(/^\/incidents\/?\?state=open&severity=critical$/),

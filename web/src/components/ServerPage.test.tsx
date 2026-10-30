@@ -249,7 +249,7 @@ describe("ServerPage", () => {
     expect(screen.getByRole("button", { name: "Add a check" })).toBeInTheDocument();
   });
 
-  it("lets administrators of the customer revoke the server after confirmation", async () => {
+  it("lets administrators of the customer remove the server, then shows how to uninstall it", async () => {
     // Other customers' administrators and viewers get no button.
     stubFetch(routes());
     const { unmount } = render(
@@ -258,7 +258,7 @@ describe("ServerPage", () => {
       </As>,
     );
     await heading();
-    expect(screen.queryByRole("button", { name: /Revoke/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
     unmount();
 
     const fetchMock = stubFetch(
@@ -266,10 +266,19 @@ describe("ServerPage", () => {
         [`GET /api/servers/${ID}`]: [ok(web1), ok({ ...web1, revoked_at: "2026-10-22T10:00:00Z", status: "offline" })],
         [`POST /api/servers/${ID}/revoke`]: ok({
           revoked_at: "2026-10-22T10:00:00Z",
-          reason: "key_compromise",
+          reason: "cessation_of_operation",
           serials: ["3f2a"],
           closed_streams: 1,
         }),
+        "GET /api/settings/agent-install": ok({
+          source: "github",
+          custom_url: null,
+          source_from_config: false,
+          custom_url_from_config: false,
+          github_url: "https://github.com/x/releases/latest/download",
+          central: null,
+        }),
+        "GET /api/settings/public-address": ok({ address: "mf.example" }),
       }),
     );
     render(
@@ -277,17 +286,27 @@ describe("ServerPage", () => {
         <ServerPage id={ID} />
       </As>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "Revoke web-1…" }));
-    expect(screen.getByRole("form", { name: "Revoke web-1?" })).toHaveTextContent("cannot be undone");
-    const confirm = screen.getByRole("button", { name: "Revoke web-1" });
-    expect(confirm).toBeDisabled();
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Reason" }), "key_compromise");
+    await userEvent.click(await screen.findByRole("button", { name: "Remove web-1…" }));
+    expect(screen.getByRole("form", { name: "Remove web-1?" })).toHaveTextContent("history is kept");
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/revoke"))).toBe(false);
-    await userEvent.click(confirm);
+    await userEvent.click(screen.getByRole("button", { name: "Remove web-1" }));
     const revoke = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/revoke"));
-    expect(JSON.parse(String(revoke?.[1]?.body))).toEqual({ reason: "key_compromise" });
-    expect(await screen.findByText("Revoked", { selector: "span" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Revoke/ })).not.toBeInTheDocument();
+    expect(JSON.parse(String(revoke?.[1]?.body))).toEqual({ reason: "cessation_of_operation" });
+    expect(await screen.findByText("Removed", { selector: "span" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
+    const panel = await screen.findByRole("region", { name: "Removed" });
+    expect(await within(panel).findByText(/MF_UNINSTALL=1 MF_PURGE=1/)).toHaveTextContent(
+      "curl -fsSL https://github.com/x/releases/latest/download/install.sh",
+    );
+    expect(within(panel).getByRole("link", { name: "Add servers" })).toHaveAttribute("href", expect.stringContaining("/admin/tokens"));
+  });
+
+  it("shows readers of a removed server no uninstall command", async () => {
+    stubFetch(routes({ [`GET /api/servers/${ID}`]: ok({ ...web1, revoked_at: "2026-10-22T10:00:00Z", status: "offline" }) }));
+    render(<ServerPage id={ID} />);
+    const panel = await screen.findByRole("region", { name: "Removed" });
+    expect(panel).toHaveTextContent("web-1 was removed");
+    expect(within(panel).queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("says when the server does not exist or is out of scope", async () => {

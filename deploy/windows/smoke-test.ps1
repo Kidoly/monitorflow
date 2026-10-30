@@ -162,7 +162,10 @@ Check (Test-Path "$data\agent\marker") "the agent's data is kept"
 Write-Host "== reinstall without properties, uninstall with REMOVE_DATA=1"
 Msiexec "reinstall" @("/i", "`"$UpgradeMsi`"") | Out-Null
 Check ((Get-Service $service).Status -eq "Stopped") "without UPSTREAM_URL the service is not started"
-Msiexec "purge" @("/x", "`"$UpgradeMsi`"", "REMOVE_DATA=1") | Out-Null
+# By product code, as the interface's uninstall command does (ADR-0062).
+$app = Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall |
+    Get-ItemProperty | Where-Object DisplayName -eq "MonitorFlow agent"
+Msiexec "purge" @("/x", $app.PSChildName, "REMOVE_DATA=1") | Out-Null
 Check ($null -eq (Service-Info)) "the service is removed"
 Check (-not (Test-Path $data)) "$data is removed"
 Write-Host "MSI smoke test passed"

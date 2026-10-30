@@ -265,7 +265,8 @@ pub async fn revoke(
 }
 
 /// `POST /api/pending-hosts/{peer_id}/approve`: the host's next connection
-/// is accepted and it appears in the server list.
+/// is accepted and it appears in the server list; a removed server is back
+/// from now (ADR-0062).
 pub async fn approve(
     State(state): State<ApiState>,
     user: CurrentUser,
@@ -274,6 +275,13 @@ pub async fn approve(
     let (peer_id, site_id) = pending(&state, &user, &peer_id).await?;
     let mut tx = state.pool.begin().await?;
     take(&mut tx, &peer_id).await?;
+    sqlx::query(
+        "UPDATE servers SET revoked_at = NULL, last_seen_at = now()
+         WHERE peer_id = $1 AND revoked_at IS NOT NULL",
+    )
+    .bind(&peer_id)
+    .execute(&mut *tx)
+    .await?;
     record(
         &mut tx,
         &user,

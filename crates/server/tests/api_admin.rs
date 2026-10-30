@@ -415,6 +415,57 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_token_for_an_id_removed_elsewhere_says_so(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let (_, paris) = customer_site(&pool, "acme").await;
+        let (_, lyon) = customer_site(&pool, "other").await;
+        sqlx::query(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family, revoked_at)
+             VALUES ('web-01', $1, 'web-01', 'debian', now())",
+        )
+        .bind(paris)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let cookie = h.user("admin", Role::Administrator, GrantScope::Global).await;
+        let request = |site: Uuid| json!({ "role": "agent", "peer_id": "web-01", "site_id": site });
+        let (status, body, _) = h.call("POST", "/api/tokens", Some(&cookie), Some(request(lyon))).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("site-acme"), "{body}");
+        let (status, body, _) = h.call("POST", "/api/tokens", Some(&cookie), Some(request(paris))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+
+    #[sqlx::test]
+    async fn approving_a_removed_host_brings_it_back(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let (_, site) = customer_site(&pool, "acme").await;
+        let cookie = h.user("admin", Role::Administrator, GrantScope::Global).await;
+        let (status, key, _) = h
+            .call("POST", "/api/install-keys", Some(&cookie), Some(json!({ "site_id": site, "require_approval": true })))
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{key}");
+        sqlx::query(
+            "WITH removed AS (INSERT INTO servers (peer_id, site_id, hostname, os_family, revoked_at)
+                              VALUES ('web-01', $1, 'web-01', 'debian', now()))
+             INSERT INTO pending_hosts (peer_id, site_id, install_key_id, hostname)
+             VALUES ('web-01', $1, $2, 'web-01')",
+        )
+        .bind(site)
+        .bind(Uuid::parse_str(key["id"].as_str().unwrap()).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, _, _) = h.call("POST", "/api/pending-hosts/web-01/approve", Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let live: i64 = sqlx::query_scalar("SELECT count(*) FROM servers WHERE revoked_at IS NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(live, 1);
+    }
+
+    #[sqlx::test]
     async fn token_requests_are_validated(pool: PgPool) {
         let mut h = Harness::new(&pool);
         let (_, site) = customer_site(&pool, "acme").await;

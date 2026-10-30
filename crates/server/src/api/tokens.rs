@@ -252,6 +252,7 @@ pub async fn create(
         .enrollment
         .as_deref()
         .ok_or_else(|| ApiError::Internal("enrollment is not configured".into()))?;
+    refuse_removed_elsewhere(&state, &request, site_id).await?;
     // Before the token exists, so a failure here does not lose one.
     let install = super::settings::agent_install(&state).await?;
     let address = super::public_address::current(&state.pool, settings).await?;
@@ -284,6 +285,35 @@ pub async fn create(
             address,
         }),
     ))
+}
+
+/// 409 when the ID belongs to a peer removed from another site: enrollment
+/// could not bring it back here (ADR-0062), so say it before the install.
+async fn refuse_removed_elsewhere(
+    state: &ApiState,
+    request: &CreateRequest,
+    site_id: Uuid,
+) -> Result<(), ApiError> {
+    // The table name is one of two constants, never input.
+    let table = match PeerRole::from(request.role) {
+        PeerRole::Relay => "relays",
+        _ => "servers",
+    };
+    let elsewhere: Option<String> = sqlx::query_scalar(&format!(
+        "SELECT si.name FROM {table} p JOIN sites si ON si.id = p.site_id
+         WHERE p.peer_id = $1 AND p.revoked_at IS NOT NULL AND p.site_id <> $2"
+    ))
+    .bind(&request.peer_id)
+    .bind(site_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    match elsewhere {
+        Some(site) => Err(ApiError::Conflict(format!(
+            "`{}` was removed from the site {site}: enroll it there, or give it another ID",
+            request.peer_id
+        ))),
+        None => Ok(()),
+    }
 }
 
 /// `GET /api/tokens`: tokens of the sites whose customer the user

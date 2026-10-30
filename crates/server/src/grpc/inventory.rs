@@ -178,6 +178,18 @@ async fn relay_hello(
     }
 }
 
+async fn awaiting_approval(
+    tx: &mut Transaction<'_, Postgres>,
+    id: &str,
+) -> Result<bool, InventoryError> {
+    Ok(
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pending_hosts WHERE peer_id = $1)")
+            .bind(id)
+            .fetch_one(&mut **tx)
+            .await?,
+    )
+}
+
 /// An agent's Hello: updates its `servers` row, or creates it in the site
 /// of its enrollment token. The site of an existing row never changes.
 async fn agent_hello(
@@ -211,6 +223,10 @@ async fn agent_hello(
     );
 
     match existing {
+        // A removed server enrolled again, until its approval restores it.
+        Some((_, true, _)) if awaiting_approval(tx, id).await? => {
+            Err(InventoryError::AwaitingApproval)
+        }
         Some((_, true, _)) => Err(InventoryError::Revoked {
             role: PeerRole::Agent,
             id: id.to_owned(),
@@ -234,13 +250,7 @@ async fn agent_hello(
             site_name(tx, site_id).await
         }
         None => {
-            let pending: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM pending_hosts WHERE peer_id = $1)",
-            )
-            .bind(id)
-            .fetch_one(&mut **tx)
-            .await?;
-            if pending {
+            if awaiting_approval(tx, id).await? {
                 return Err(InventoryError::AwaitingApproval);
             }
             let site_id: Uuid = sqlx::query_scalar(crate::db::ENROLLED_AGENT_SITE)

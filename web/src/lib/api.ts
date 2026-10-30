@@ -253,7 +253,7 @@ export interface Site {
   id: string;
   name: string;
   server_count: number;
-  /** Enrolled relays, revoked ones included. */
+  /** Enrolled relays, without removed ones. */
   relay_count: number;
   customer_id: string;
   customer_name: string;
@@ -1604,6 +1604,7 @@ export const api = {
 
   /** The default install source; customer administrators (ADR-0054). */
   agentInstall: (signal?: AbortSignal) => request<AgentInstall>("/api/settings/agent-install", { signal }),
+  publicAddress: (signal?: AbortSignal) => request<PublicAddress>("/api/settings/public-address", { signal }),
 
   /** Changes the default install source; global administrators only, audited. */
   setAgentInstall: (body: { source: InstallSource; custom_url: string | null }) =>
