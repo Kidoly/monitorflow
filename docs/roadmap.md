@@ -90,7 +90,7 @@ Everything installable in one line, updatable in two clicks, and usable without 
 - [x] Users, customers and roles in the interface: create customers, invite users by one-time link, grant and revoke roles.
 - [x] One-click backups: daily backup of the database and `serverdata` with retention, back up now and download in Settings, `--restore` in the server installer; replaces the unpruned update dumps.
 - [x] Update available everywhere: daily background release check with a banner and a notification; release import from the interface for servers without Internet.
-- [ ] AI setup in the interface: API key, model, test and enable in Settings; `MF_ALLOW_COMMANDS=1` in the agent installer for the shell opt-in; approvals say when AI is off.
+- [x] AI setup in the interface: API key, model, test and enable in Settings; `MF_ALLOW_COMMANDS=1` in the agent installer for the shell opt-in; approvals say when AI is off.
 - [ ] Mirrors that work in the production compose: mirror tools sidecar image, add a mirror from a list of distributions with a size estimate.
 - [ ] Plain-language pass: rename jargon on screen, certificate expiry warning only when renewal is late or failed, quiet CLI output, an action button in every empty state.
 - [x] Remove a server end to end: revoke, hide from lists, show the uninstall command, re-enroll the same host later.
