@@ -4,7 +4,7 @@ Status: draft, 2026-10-18. This document is the technical reference for every co
 
 ## 1. Overview
 
-MonitorFlow is an open source monitoring and fleet management platform written in Rust, in the spirit of Zabbix or PRTG. Target scale for the first version: about 1,000 Linux servers (Debian/Ubuntu and RHEL/Rocky).
+MonitorFlow is an open source monitoring and fleet management platform written in Rust, in the spirit of Zabbix or PRTG. Target scale for the first version: about 1,000 Linux servers (Debian/Ubuntu and RHEL/Rocky for package updates, any distribution for monitoring, ADR-0063).
 
 It does three things:
 
@@ -121,6 +121,8 @@ The central server hosts full repository mirrors. Relays sync a copy. Agents poi
 | --- | --- | --- | --- |
 | apt | Debian, Ubuntu | `aptly` | Snapshots let a campaign pin an exact repository state |
 | dnf | RHEL, Rocky | `reposync` + `createrepo_c` | Snapshots kept as dated directories |
+
+Other distributions, and hosts of these families without their tools, are monitored the same way but take no updates or sources: the agent says so in its `Hello`, the server stores it as `servers.package_updates`, campaigns leave them out and the server page says why (ADR-0063).
 
 Mirroring reuses proven tools, orchestrated from Rust, rather than reimplementing repository formats. Pulp is an alternative that handles both families in one tool, at the cost of a heavier deployment; it is not used in the first version.
 

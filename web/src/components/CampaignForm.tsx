@@ -99,7 +99,10 @@ export function CampaignForm({ me }: { me: Me }) {
   const servers = inventory.servers
     .filter((s) => s.customer_id === draft.customerId && s.revoked_at === null)
     .sort((a, b) => a.site_name.localeCompare(b.site_name) || a.hostname.localeCompare(b.hostname));
-  const targets = campaignTargets(inventory.servers, draft.customerId, draft.siteId, draft.serverIds);
+  const agentUpdate = draft.update === "agent";
+  const targets = campaignTargets(inventory.servers, draft.customerId, draft.siteId, draft.serverIds, agentUpdate);
+  const noPackages = (s: Server) => !agentUpdate && s.package_updates === false;
+  const leftOut = servers.filter((s) => noPackages(s) && (s.site_id === draft.siteId || draft.serverIds.includes(s.id))).length;
   const request = toRequest(draft);
   const errors = validateCampaign(request, targets.map((t) => t.id));
 
@@ -173,17 +176,18 @@ export function CampaignForm({ me }: { me: Me }) {
                 <label>
                   <input
                     type="checkbox"
-                    checked={draft.serverIds.includes(s.id) || s.site_id === draft.siteId}
-                    disabled={s.site_id === draft.siteId}
+                    checked={!noPackages(s) && (draft.serverIds.includes(s.id) || s.site_id === draft.siteId)}
+                    disabled={noPackages(s) || s.site_id === draft.siteId}
                     onChange={(e) => set({ serverIds: toggle(draft.serverIds, s.id, e.target.checked) })}
                   />
-                  {s.hostname} <span className={own.dim}>({s.site_name})</span>
+                  {s.hostname} <span className={own.dim}>({s.site_name}{noPackages(s) && ", no package updates"})</span>
                 </label>
               </li>
             ))}
           </ul>
           <p className={own.note} role="status">
             {targets.length} server{targets.length === 1 ? "" : "s"} targeted.
+            {leftOut > 0 && ` ${leftOut} left out: package updates aren't available on ${leftOut === 1 ? "it" : "them"}.`}
           </p>
         </Fieldset>
 

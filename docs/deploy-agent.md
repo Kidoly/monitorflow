@@ -4,7 +4,7 @@ How to install the agent on a Linux server, with the installer or by hand, until
 
 ## Quick install
 
-With the install command from the web interface (Administration › Add servers), on a host with systemd, x86_64 or aarch64:
+With the install command from the web interface (Administration › Add servers), on any Linux distribution with systemd, x86_64 or aarch64:
 
 ```
 curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
@@ -12,6 +12,8 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
 ```
 
 The installer (ADR-0052) downloads the static agent for the host's architecture and `SHA256SUMS` from the same place, verifies the release signature `SHA256SUMS.sig` against the release keys it carries (ADR-0053, with OpenSSL 3; without it, it warns and checks checksums only), checks the checksum before it changes anything, and then does every step of [Binary and user](#binary-and-user) and [Sudo rules](#sudo-rules): binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface shows this command filled in, and the Windows one, once a site's install command is created, from the source you pick there ([Install sources](#install-sources)); give it the relay's address there if the agent connects through one.
+
+The agent monitors any distribution (ADR-0063). Updates and package sources need the Debian or RHEL family with apt or dnf present; on any other host the server page says "Package updates aren't available on this system; monitoring works normally", and campaigns leave the host out.
 
 One command serves every host of a site, for 30 days by default (ADR-0058). Each host enrolls under its own host name, made unique with `-2`, `-3`… when another server already has it. When the command was created with "Approve new hosts before they appear", new hosts wait under Waiting for approval on the same page until an administrator approves them. Revoking the command stops new installs; hosts already installed keep working. For one host under a name you choose, and for relays, single-use tokens remain under Advanced.
 
@@ -145,6 +147,8 @@ Restart=on-failure
 ```
 
 On the first start, pass the enrollment token with `MONITORFLOW_ENROLLMENT_TOKEN` so it never stays on disk (ADR-0007).
+
+Without systemd, start the same command as `monitorflow` from your init system, with the token in its environment the first time. Everything works but the `systemd` sensor and self-updates, which fail and leave the running version in place: update with a new binary at the same path, then restart it.
 
 ## Sudo rules
 

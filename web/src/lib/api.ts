@@ -42,9 +42,11 @@ export interface Server {
   customer_id: string;
   customer_name: string;
   relay_id: string | null;
-  /** `debian` or `rhel`. */
+  /** `debian`, `rhel`, `windows`, or `linux` for any other distribution. */
   os_family: string;
   os_version: string | null;
+  /** False when the host takes no package updates or sources (ADR-0063); absent is true. */
+  package_updates?: boolean;
   agent_version: string | null;
   created_at: string;
   revoked_at: string | null;

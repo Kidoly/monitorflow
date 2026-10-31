@@ -12,8 +12,9 @@ for the run (and dropped afterwards, failure included):
 3. write a minimal agent config with the token, start the agent;
 4. log in through the API and poll `GET /api/servers` until `e2e-01` is online
    with the host's hostname and the fake os-release's family and version;
-5. SIGTERM the agent and see it go offline; restart it without a token and see
-   it come back with its stored identity;
+5. SIGTERM the agent and see it go offline; restart it without a token on a
+   fake unknown distribution and see it come back with its stored identity,
+   family `linux` and no package updates;
 6. `token create` a relay with `--server-name 127.0.0.1` and an agent `e2e-02`,
    start the relay and the agent pointed at it, and see `e2e-02` online with
    `via_relay` set; SIGTERM the relay and see the agent go offline;

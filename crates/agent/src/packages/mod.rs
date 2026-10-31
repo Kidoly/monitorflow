@@ -64,6 +64,9 @@ pub enum PackageError {
     /// A root helper failed; its own error line.
     #[error("{0}")]
     Helper(String),
+    /// Refused on a host outside the package families (ADR-0063).
+    #[error("package updates are not available on this system")]
+    Unavailable,
 }
 
 impl PackageError {
@@ -102,12 +105,13 @@ pub trait PackageManager: Send + Sync + 'static {
     async fn reboot_required(&self) -> Result<bool, PackageError>;
 }
 
-/// apt on the Debian family, dnf on the RHEL family.
+/// apt on the Debian family, dnf on the RHEL family, none elsewhere.
 #[cfg(unix)]
-pub fn for_family(family: OsFamily, tools: Tools) -> Arc<dyn PackageManager> {
+pub fn for_family(family: OsFamily, tools: Tools) -> Option<Arc<dyn PackageManager>> {
     match family {
-        OsFamily::Debian => Arc::new(apt::Apt::new(tools)),
-        OsFamily::Rhel => Arc::new(dnf::Dnf::new(tools)),
+        OsFamily::Debian => Some(Arc::new(apt::Apt::new(tools))),
+        OsFamily::Rhel => Some(Arc::new(dnf::Dnf::new(tools))),
+        OsFamily::Linux => None,
     }
 }
 

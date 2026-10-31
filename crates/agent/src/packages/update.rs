@@ -233,6 +233,7 @@ pub async fn run(spec: &UpdateSpec, family: OsFamily, tools: &Tools) -> Outcome 
             outcome.upgraded = true;
             outcome.step(tools.direct(&[], &tools.dnf, &dnf_upgrade(spec)).await);
         }
+        OsFamily::Linux => outcome.error = Some(PackageError::Unavailable),
     }
     outcome
 }
@@ -246,6 +247,20 @@ mod tests {
             kind,
             packages: packages.iter().map(|p| p.to_string()).collect(),
         }
+    }
+
+    #[tokio::test]
+    async fn an_unknown_distribution_runs_nothing() {
+        let outcome = run(
+            &spec(UpdateKind::All, &[]),
+            OsFamily::Linux,
+            &Tools::default(),
+        )
+        .await;
+        assert_eq!(outcome.error, Some(PackageError::Unavailable));
+        assert!(outcome.runs.is_empty());
+        assert!(!outcome.upgraded);
+        assert_eq!(outcome.exit_code(), 1);
     }
 
     #[test]

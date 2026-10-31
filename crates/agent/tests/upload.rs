@@ -108,6 +108,7 @@ impl Running {
             hostname: format!("{id}.example"),
             os_family: OsFamily::Debian,
             os_version: "debian 12".into(),
+            package_manager: true,
         };
         let agent = Agent::new(StreamSettings::from_config(&config), identity, host)
             .with_sensors(stream_end)
