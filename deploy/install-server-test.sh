@@ -57,7 +57,15 @@ docker run -d --name "$host" --hostname fresh --privileged --cgroupns=private \
     --tmpfs /run --tmpfs /run/lock -v /var/lib/docker -v /var/lib/containerd \
     -p "$PORT:$PORT" "$host" >/dev/null
 in_host() { docker exec -i "$host" "$@"; }
-until in_host systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'; do sleep 1; done
+# Not is-system-running: some units never settle in a container.
+for _ in $(seq 120); do in_host systemctl is-active -q basic.target 2>/dev/null && break; sleep 1; done
+if ! in_host systemctl is-active -q basic.target; then
+    in_host systemctl list-jobs --no-pager || true
+    in_host systemctl --failed --no-pager || true
+    docker logs --tail 40 "$host" || true
+    echo "the fresh host's systemd did not start" >&2
+    exit 1
+fi
 
 docker run -d --name "$host-registry" --network "container:$host" -e "REGISTRY_HTTP_ADDR=:$PORT" registry:2.8.3 >/dev/null
 for _ in $(seq 30); do curl -fs "http://$REGISTRY/v2/" >/dev/null && break; sleep 1; done

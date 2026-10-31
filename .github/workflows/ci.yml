@@ -172,6 +172,7 @@ jobs:
         env:
           MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
       - run: deploy/install-server-test.sh
+        timeout-minutes: 25
         env:
           MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
   # The installer is piped to sh, so it must stay POSIX (ADR-0052).
