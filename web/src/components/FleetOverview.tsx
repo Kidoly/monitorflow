@@ -22,7 +22,7 @@ import { problemRank } from "@/components/ui/problemsFirst";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { StatTiles } from "@/components/ui/StatTiles";
-import { formatDuration, formatExact, formatShortDate, formatSince } from "@/components/ui/time";
+import { formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
 import styles from "./FleetOverview.module.css";
 
@@ -39,8 +39,7 @@ interface Row {
   incident: Incident | undefined;
   critical: number;
   warning: number;
-  revoked: boolean;
-  /** 0 open critical … 4 healthy, 5 revoked: the "Problems first" order. */
+  /** 0 open critical … 4 healthy: the "Problems first" order. */
   rank: number;
 }
 
@@ -72,17 +71,14 @@ function toRows(fleet: Fleet, now: Date): Row[] {
     const critical = incidents.filter((i) => i.severity === "critical").length;
     const warning = fleet.incidents ? incidents.length - critical : server.open_incidents;
     const incident = incidents.find((i) => i.severity === "critical") ?? incidents[0];
-    const revoked = server.revoked_at !== null;
-    const rank = revoked
-      ? 5
-      : problemRank({
-          critical,
-          warning,
-          offline: server.status === "offline",
-          certificateWarning: server.cert_not_after !== null && certificateState(server.cert_not_after, now) !== "valid",
-          name: server.hostname,
-        });
-    return { server, incident, critical, warning, revoked, rank };
+    const rank = problemRank({
+      critical,
+      warning,
+      offline: server.status === "offline",
+      certificateWarning: server.cert_not_after !== null && certificateState(server.cert_not_after, now) !== "valid",
+      name: server.hostname,
+    });
+    return { server, incident, critical, warning, rank };
   });
 }
 
@@ -104,13 +100,13 @@ export function FleetOverview() {
   // Servers' and relays' incidents: a relay offline counts too (ADR-0057).
   const ids = new Set(all.map((r) => r.server.id));
   const incidents = data?.incidents?.filter((i) => (i.server_id ? ids.has(i.server_id) : inScope(i, scope))) ?? [];
-  const online = all.filter((r) => r.server.status === "online" && !r.revoked).length;
+  const online = all.filter((r) => r.server.status === "online").length;
 
   const status = params.get("status");
   const query = params.get("q")?.trim().toLowerCase() ?? "";
   const filtered = all.filter(
     (r) =>
-      (!status || (r.revoked ? "revoked" : r.server.status) === status) &&
+      (!status || r.server.status === status) &&
       (!scope.siteId && params.get("site") ? r.server.site_id === params.get("site") : true) &&
       (!params.get("os") || r.server.os_family === params.get("os")) &&
       (params.get("incidents") !== "1" || r.critical + r.warning > 0) &&
@@ -157,8 +153,8 @@ export function FleetOverview() {
     {
       key: "status",
       header: "Status",
-      cell: (r) => <StatusLabel kind="server" value={r.revoked ? "revoked" : r.server.status} />,
-      sortValue: (r) => (r.revoked ? "revoked" : r.server.status),
+      cell: (r) => <StatusLabel kind="server" value={r.server.status} />,
+      sortValue: (r) => r.server.status,
     },
     { key: "problem", header: "Problem", cell: (r) => <Problem row={r} now={now} scope={scope} /> },
     { key: "site", header: "Site", cell: (r) => r.server.site_name, sortValue: (r) => r.server.site_name },
@@ -232,7 +228,6 @@ export function FleetOverview() {
                 options: [
                   { value: "online", label: "Online" },
                   { value: "offline", label: "Offline" },
-                  { value: "revoked", label: "Revoked" },
                 ],
               },
               ...(scope.siteId ? [] : [{ name: "site", label: "Site", options: sites.map(([value, label]) => ({ value, label })) }]),
@@ -256,7 +251,6 @@ export function FleetOverview() {
               sort={sort}
               onSortChange={setSort}
               defaultOrder={problemsFirst}
-              rowMuted={(r) => r.revoked}
               loading={!data}
             />
           )}
@@ -282,9 +276,6 @@ export function FleetOverview() {
 /** "Critical  Disk used /var 96.8% · 4 h 20 min", or why else the server needs a look. */
 function Problem({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
   const { server, incident } = row;
-  if (row.revoked) {
-    return <span className={styles.muted}>Revoked on {formatShortDate(new Date(server.revoked_at!))}</span>;
-  }
   if (incident) {
     return (
       <span className={styles.problem}>

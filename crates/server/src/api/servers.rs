@@ -209,7 +209,8 @@ struct Row {
 }
 
 /// `GET /api/servers`: one page of the servers of the sites the user may
-/// read, sorted by site name, hostname and peer ID. Needs at least one role.
+/// read, sorted by site name, hostname and peer ID, without removed ones
+/// (ADR-0062). Needs at least one role.
 pub async fn list(
     State(state): State<ApiState>,
     user: CurrentUser,
@@ -230,7 +231,7 @@ pub async fn list(
     };
     let mut rows: Vec<Row> = sqlx::query_as(&format!(
         "{SELECT_SERVERS}
-         WHERE ($1 OR s.site_id = ANY($2))
+         WHERE ($1 OR s.site_id = ANY($2)) AND s.revoked_at IS NULL
            AND ($3::text IS NULL OR (si.name, s.hostname, s.peer_id) > ($3, $4, $5))
          ORDER BY si.name, s.hostname, s.peer_id
          LIMIT $6"
@@ -262,7 +263,8 @@ pub async fn list(
 }
 
 /// `GET /api/servers/{id}`: one server the user may read, with its
-/// current certificate. Outside the user's sites it is 404.
+/// current certificate. Removed servers stay readable, for their history.
+/// Outside the user's sites it is 404.
 pub async fn detail(
     State(state): State<ApiState>,
     user: CurrentUser,

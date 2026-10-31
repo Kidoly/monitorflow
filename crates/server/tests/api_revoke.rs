@@ -152,6 +152,27 @@ impl Harness {
         )
     }
 
+    async fn get(&self, uri: &str, cookie: &str) -> (StatusCode, Value) {
+        let state = ApiState::new(
+            self.pool.clone(),
+            self.registry.clone(),
+            ApiSettings::default(),
+        );
+        let request = Request::get(uri)
+            .header("cookie", cookie)
+            .body(Body::empty())
+            .unwrap();
+        let response = api::router(state).oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
     async fn login(&self, name: &str, role: Role, scope: GrantScope) -> String {
         users::create_user_with(
             &self.pool,
@@ -304,6 +325,89 @@ db_tests! {
 
         let (status, _) = h.call(&uri, &cookie, json!({})).await;
         assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[sqlx::test]
+    async fn removing_a_server_closes_its_incidents_and_hides_it(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let open = |metric: &'static str| {
+            sqlx::query(
+                "INSERT INTO incidents (server_id, metric, instance, severity, opened_at, last_value,
+                                        last_value_at, peak_value, threshold)
+                 VALUES ($1, $2, '', 'critical', now() - interval '1 hour', 1, now(), 1, '{}')",
+            )
+            .bind(h.server)
+            .bind(metric)
+        };
+        open("offline").execute(&pool).await.unwrap();
+        open("monitorflow_cpu_usage").execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO alert_states (server_id, metric, instance, warning_since, last_sample_at)
+             VALUES ($1, 'monitorflow_cpu_usage', '', now(), now())",
+        )
+        .bind(h.server)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Made before the removal: must not bring the server back.
+        sqlx::query(
+            "INSERT INTO enrollment_tokens (token_hash, role, peer_id, site_id, expires_at)
+             SELECT sha256('old'::bytea), 'agent', peer_id, site_id, now() + interval '1 hour'
+             FROM servers WHERE id = $1",
+        )
+        .bind(h.server)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let cookie = h.login("boss", Role::Administrator, GrantScope::Customer(h.customer)).await;
+
+        let (status, body) = h.call(&format!("/api/servers/{}/revoke", h.server), &cookie, json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        let reasons: Vec<Option<String>> = sqlx::query_scalar(
+            "SELECT e.details ->> 'reason' FROM incidents i
+             JOIN incident_events e ON e.incident_id = i.id AND e.kind = 'resolved'
+             WHERE i.state = 'resolved' AND i.server_id = $1",
+        )
+        .bind(h.server)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(reasons, [Some("revoked".to_owned()), Some("revoked".to_owned())]);
+        let left: i64 = sqlx::query_scalar(
+            "SELECT (SELECT count(*) FROM alert_states)
+                  + (SELECT count(*) FROM enrollment_tokens WHERE used_at IS NULL)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, 0);
+
+        // Gone from the lists and counts, still readable with its history.
+        let (status, list) = h.get("/api/servers", &cookie).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(list["servers"], json!([]));
+        let (_, sites) = h.get("/api/sites", &cookie).await;
+        assert_eq!(sites["sites"][0]["server_count"], 0);
+        let (_, relays) = h.get("/api/relays", &cookie).await;
+        assert_eq!(relays["relays"][0]["server_count"], 0);
+        let (status, detail) = h.get(&format!("/api/servers/{}", h.server), &cookie).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(detail["revoked_at"].is_string());
+    }
+
+    #[sqlx::test]
+    async fn a_removed_relay_leaves_the_lists(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let cookie = h.login("root", Role::Administrator, GrantScope::Global).await;
+        let (status, _) = h.call(&format!("/api/relays/{}/revoke", h.relay), &cookie, json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, relays) = h.get("/api/relays", &cookie).await;
+        assert_eq!(relays["relays"], json!([]));
+        let (_, sites) = h.get("/api/sites", &cookie).await;
+        assert_eq!(sites["sites"][0]["relay_count"], 0);
+        let (status, _) = h.get(&format!("/api/relays/{}", h.relay), &cookie).await;
+        assert_eq!(status, StatusCode::OK);
     }
 
     #[sqlx::test]

@@ -118,7 +118,8 @@ const SELECT_RELAYS: &str = "SELECT r.id, r.peer_id, r.name, r.site_id, si.name 
                       WHERE t.role = 'relay' AND t.peer_id = r.peer_id
                         AND t.used_at IS NOT NULL
                       ORDER BY t.used_at DESC LIMIT 1), '{}') AS server_names,
-            (SELECT count(*) FROM servers s WHERE s.relay_id = r.id) AS server_count
+            (SELECT count(*) FROM servers s
+             WHERE s.relay_id = r.id AND s.revoked_at IS NULL) AS server_count
      FROM relays r
      JOIN sites si ON si.id = r.site_id
      JOIN customers c ON c.id = si.customer_id";
@@ -163,7 +164,7 @@ pub async fn list(
     let (after_site, after_peer) = after.unzip();
     let mut rows: Vec<Row> = sqlx::query_as(&format!(
         "{SELECT_RELAYS}
-         WHERE ($1 OR r.site_id = ANY($2))
+         WHERE ($1 OR r.site_id = ANY($2)) AND r.revoked_at IS NULL
            AND ($3::text IS NULL OR (si.name, r.peer_id) > ($3, $4))
          ORDER BY si.name, r.peer_id
          LIMIT $5"
@@ -218,7 +219,7 @@ pub async fn detail(
     let row = row.ok_or(ApiError::NotFound)?;
     let certificate = latest_certificate(&state.pool, PeerRole::Relay, &row.peer_id).await?;
     let attached: Vec<(Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, peer_id, hostname FROM servers WHERE relay_id = $1
+        "SELECT id, peer_id, hostname FROM servers WHERE relay_id = $1 AND revoked_at IS NULL
          ORDER BY hostname, peer_id",
     )
     .bind(id)

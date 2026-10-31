@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::enroll_service_client::EnrollServiceClient;
@@ -358,10 +359,10 @@ db_tests! {
     #[sqlx::test]
     async fn an_install_key_enrolls_many_hosts_under_unique_names(pool: PgPool) {
         let pki = Pki::new();
-        // web-01 is taken by a single-use token, WEB-02 by a revoked server.
+        // web-01 is taken by a single-use token, WEB-02 by a server in use.
         pki.token(&pool, "web-01").await;
-        sqlx::query("INSERT INTO servers (peer_id, site_id, hostname, os_family, revoked_at)
-                     VALUES ('WEB-02', $1, 'x', 'debian', now())")
+        sqlx::query("INSERT INTO servers (peer_id, site_id, hostname, os_family)
+                     VALUES ('WEB-02', $1, 'x', 'debian')")
             .bind(site(&pool).await)
             .execute(&pool)
             .await
@@ -517,7 +518,7 @@ db_tests! {
     }
 
     #[sqlx::test]
-    async fn enrollment_cannot_move_or_revive_a_peer(pool: PgPool) {
+    async fn enrollment_cannot_move_a_peer_and_brings_a_removed_one_back(pool: PgPool) {
         let pki = Pki::new();
         enroll_as(&pki, &pool, PeerRole::Relay, "relay-1", "paris").await.unwrap();
         refused(enroll_as(&pki, &pool, PeerRole::Relay, "relay-1", "lyon").await);
@@ -533,10 +534,86 @@ db_tests! {
 
         sqlx::query("UPDATE servers SET revoked_at = now()").execute(&pool).await.unwrap();
         sqlx::query("UPDATE relays SET revoked_at = now()").execute(&pool).await.unwrap();
-        refused(enroll_as(&pki, &pool, PeerRole::Agent, "web-01", "paris").await);
-        refused(enroll_as(&pki, &pool, PeerRole::Relay, "relay-1", "paris").await);
+        // Removed from paris: another site still cannot take them.
+        refused(enroll_as(&pki, &pool, PeerRole::Agent, "web-01", "lyon").await);
+        refused(enroll_as(&pki, &pool, PeerRole::Relay, "relay-1", "lyon").await);
         // Refusals roll back: only the two accepted enrollments issued one.
         assert_eq!(count(&pool, "SELECT count(*) FROM certificates").await, 2);
+
+        enroll_as(&pki, &pool, PeerRole::Agent, "web-01", "paris").await.unwrap();
+        enroll_as(&pki, &pool, PeerRole::Relay, "relay-1", "paris").await.unwrap();
+        for table in ["servers", "relays"] {
+            let live = count(&pool, &format!("SELECT count(*) FROM {table} WHERE revoked_at IS NULL")).await;
+            assert_eq!(live, 1, "{table}");
+        }
+        assert_eq!(count(&pool, "SELECT count(*) FROM audit_log WHERE action IN ('server.restore', 'relay.restore')").await, 2);
+    }
+
+    #[sqlx::test]
+    async fn an_install_key_brings_a_removed_host_back_under_its_id(pool: PgPool) {
+        let pki = Pki::new();
+        let paris = site(&pool).await;
+        // Enrolled with a token under another ID than its host name.
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family, revoked_at, last_seen_at)
+             VALUES ('agent-7', $1, 'web-07', 'debian', now(), '2026-01-01Z'),
+                    ('web-08', $1, 'web-08', 'debian', NULL, NULL)
+             RETURNING id",
+        )
+        .bind(paris)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let key = install_key(&pki, &pool, None, false).await;
+        assert_eq!(enroll_host(&pki, &pool, &key, "WEB-07").await.unwrap(), "agent-7");
+        let (back, seen): (Uuid, DateTime<Utc>) = sqlx::query_as(
+            "SELECT id, last_seen_at FROM servers WHERE peer_id = 'agent-7' AND revoked_at IS NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(back, id);
+        // Just back: no offline incident before its first Hello.
+        assert!(Utc::now() - seen < chrono::Duration::minutes(1));
+        assert_eq!(count(&pool, "SELECT count(*) FROM servers").await, 2);
+        first_hello(&pool, "agent-7").await.unwrap();
+        // A server in use still gets a new ID.
+        assert_eq!(enroll_host(&pki, &pool, &key, "web-08").await.unwrap(), "web-08-2");
+    }
+
+    #[sqlx::test]
+    async fn a_removed_host_in_another_site_gets_a_new_id(pool: PgPool) {
+        let pki = Pki::new();
+        let lyon = token::site_id(&pool, "lyon", true).await.unwrap().unwrap();
+        sqlx::query(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family, revoked_at)
+             VALUES ('web-01', $1, 'web-01', 'debian', now())",
+        )
+        .bind(lyon)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let key = install_key(&pki, &pool, None, false).await;
+        assert_eq!(enroll_host(&pki, &pool, &key, "web-01").await.unwrap(), "web-01-2");
+    }
+
+    #[sqlx::test]
+    async fn a_removed_host_waits_for_approval_before_it_comes_back(pool: PgPool) {
+        let pki = Pki::new();
+        sqlx::query(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family, revoked_at)
+             VALUES ('web-01', $1, 'web-01', 'debian', now())",
+        )
+        .bind(site(&pool).await)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let key = install_key(&pki, &pool, None, true).await;
+        assert_eq!(enroll_host(&pki, &pool, &key, "web-01").await.unwrap(), "web-01");
+        assert_eq!(count(&pool, "SELECT count(*) FROM servers WHERE revoked_at IS NULL").await, 0);
+        assert!(matches!(first_hello(&pool, "web-01").await, Err(InventoryError::AwaitingApproval)));
+        // A second try does not collide with the waiting row.
+        assert_eq!(enroll_host(&pki, &pool, &key, "web-01").await.unwrap(), "web-01-2");
     }
 
     #[sqlx::test]

@@ -2,10 +2,11 @@
  * Install commands for a new agent token (ADR-0052): the Linux one-liner of
  * `deploy/install.sh` and the Windows MSI line (ADR-0050), from one of three
  * sources (ADR-0054); and the relay's one-liner, the same installer with
- * `MF_ROLE=relay` (ADR-0055).
+ * `MF_ROLE=relay` (ADR-0055). Also the uninstall commands shown after
+ * removing a server or relay (ADR-0062).
  */
 
-import type { AgentInstall, InstallSource } from "./api";
+import type { AgentInstall, InstallSource, PublicAddress } from "./api";
 
 /** Port of the enrollment listener the agent assumes without `enroll_url`. */
 const DEFAULT_ENROLL_PORT = "7445";
@@ -158,15 +159,60 @@ function installerCommand(
       return { unavailable: `The release ${central.version} on this server has no install.sh; import a complete release.` };
     }
     const vars = env([`MF_DOWNLOAD_URL=${files.url}`, `MF_SUMS_SHA256=${central.sums_sha256}`]);
-    return {
-      text:
-        `f=$(mktemp) && curl -fsSLk -o "$f" ${files.url}/install.sh \\\n` +
-        `  && echo "${central.installer_sha256}  $f" | sha256sum -c \\\n` +
-        `  && sudo ${vars} sh "$f"; rm -f "$f"`,
-    };
+    return { text: pinnedInstaller(files.url, central.installer_sha256, vars) };
   }
   const vars = env(source === "custom" ? [`MF_DOWNLOAD_URL=${files.url}`] : []);
-  return { text: `curl -fsSL ${files.url}/install.sh \\\n  | sudo ${vars} sh` };
+  return { text: pipedInstaller(files.url, vars) };
+}
+
+/** Runs the installer of `url` only if its checksum matches. */
+function pinnedInstaller(url: string, sha256: string, vars: string): string {
+  return (
+    `f=$(mktemp) && curl -fsSLk -o "$f" ${url}/install.sh \\\n` +
+    `  && echo "${sha256}  $f" | sha256sum -c \\\n` +
+    `  && sudo ${vars} sh "$f"; rm -f "$f"`
+  );
+}
+
+function pipedInstaller(url: string, vars: string): string {
+  return `curl -fsSL ${url}/install.sh \\\n  | sudo ${vars} sh`;
+}
+
+/** The web interface's origin at the public address, on this page's port. */
+function publicOrigin(origin: string, address: string): string {
+  if (!isHttpsOrigin(origin)) return origin;
+  const port = new URL(origin).port;
+  return `https://${address.includes(":") ? `[${address}]` : address}${port && `:${port}`}`;
+}
+
+/**
+ * What removes an agent or relay from its host, with its configuration and
+ * identity, so that enrolling the host again starts clean. On Linux, the
+ * installer from the default source, or GitHub when that source offers none.
+ * The MSI needs no download: Windows knows its product code.
+ */
+export function uninstallCommand(
+  kind: "agent" | "relay",
+  osFamily: string,
+  install: AgentInstall,
+  address: PublicAddress,
+  origin: string,
+): string {
+  if (osFamily === "windows") {
+    return [
+      `$app = Get-ChildItem HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall | Get-ItemProperty | Where-Object DisplayName -eq 'MonitorFlow agent'`,
+      `Start-Process msiexec -Wait -ArgumentList "/x $($app.PSChildName) /qn REMOVE_DATA=1"`,
+    ].join("\n");
+  }
+  const vars = [kind === "relay" && "MF_ROLE=relay", "MF_UNINSTALL=1", "MF_PURGE=1"].filter(Boolean).join(" ");
+  const files = base(install, install.source, publicOrigin(origin, address.address));
+  const central = install.source === "central" ? install.central : null;
+  if ("unavailable" in files || (central && !central.installer_sha256)) {
+    return pipedInstaller(install.github_url.replace(/\/+$/, ""), vars);
+  }
+  return central?.installer_sha256
+    ? pinnedInstaller(files.url, central.installer_sha256, vars)
+    : pipedInstaller(files.url, vars);
 }
 
 /** Download and silent install of the MSI, for an elevated PowerShell. */

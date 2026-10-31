@@ -150,7 +150,6 @@ export function RelayList({ me }: { me: Me }) {
           columns={columns}
           rows={relays ?? []}
           rowKey={(relay) => relay.id}
-          rowMuted={(relay) => relay.revoked_at !== null}
           loading={!relays}
         />
       )}

@@ -250,7 +250,7 @@ export function IncidentPage({ id }: { id: string | null }) {
             title="Rule"
             facts={[
               { label: "Opens", value: `after ${formatSeconds(OFFLINE_AFTER_S)} without a heartbeat` },
-              { label: "Resolves when", value: "it connects again, or is muted or revoked" },
+              { label: "Resolves when", value: "it connects again, or is muted or removed" },
               { label: "Mute", value: <>Offline alerts on {host}, or for its site in Administration › Sites</> },
             ]}
           />

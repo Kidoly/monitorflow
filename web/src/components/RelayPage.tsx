@@ -36,6 +36,7 @@ import { UUID } from "@/lib/uuid";
 import { AdminLayout } from "./AdminLayout";
 import styles from "./AdminPages.module.css";
 import { OfflineAlerts } from "./OfflineAlerts";
+import { RemovedPanel, RemovePeer } from "./RemovePeer";
 import { CertificateCell, relayStatus } from "./RelayList";
 
 /** RFC 5280 reasons, as the revoke route takes them (ADR-0029). */
@@ -231,7 +232,6 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
       : [{ label: "Offline alerts", value: <OfflineAlerts kind="relays" target={relay} onChanged={refresh} /> }]),
     ...(relay.revoked_at
       ? [
-          { label: "Revoked", value: formatMinute(new Date(relay.revoked_at)) },
           ...(certificate?.revocation_reason ? [
                 {
                   label: "Reason",
@@ -285,25 +285,22 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
           administersCustomer(me, relay.customer_id) && (
             <>
             <UpdateRelay relay={relay} latest={latest} me={me} onQueued={refresh} />
-            <InlineConfirm
-              trigger={`Revoke ${relay.peer_id}…`}
-              title={`Revoke ${relay.peer_id}?`}
-              consequence="Its certificates go into the revocation list, its connections close now, including the agents it forwards, and it cannot connect again. This cannot be undone: enrolling it again needs a new ID."
-              reasons={REASONS}
-              confirmLabel={`Revoke ${relay.peer_id}`}
-              pendingLabel="Revoking…"
-              onConfirm={async (reason) => {
-                await api.revoke("relays", relay.id, reason ?? "unspecified");
-                refresh();
-              }}
-              describeError={(e) => `Revocation failed. ${describeError(e)}`}
-            />
+            <RemovePeer kind="relays" id={relay.id} name={relay.peer_id} onRemoved={refresh} />
             </>
           )
         }
       />
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
+      )}
+      {relay.revoked_at && (
+        <RemovedPanel
+          kind="relay"
+          name={relay.peer_id}
+          osFamily="linux"
+          removedAt={relay.revoked_at}
+          canAdminister={administersCustomer(me, relay.customer_id)}
+        />
       )}
       <FactsBox columns={2} facts={facts} />
       <section className={styles.section} aria-labelledby="attached-title">

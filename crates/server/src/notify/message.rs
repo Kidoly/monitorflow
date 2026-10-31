@@ -109,11 +109,14 @@ fn incident_text(event: &str, details: &Value) -> String {
     let place = place(details);
     let severity = str_at(incident, &["severity"]).unwrap_or("warning");
     let value = incident.get("value").and_then(Value::as_f64).map(number);
+    // Removing a peer closes its incidents of any metric (ADR-0062).
+    if event == "incident.resolved" && str_at(incident, &["reason"]) == Some("revoked") {
+        return format!("Resolved: {place} was removed");
+    }
     // Offline incidents (ADR-0057's 'offline' metric) read as a state.
     if str_at(incident, &["metric"]) == Some("offline") {
         return match event {
             "incident.resolved" => match str_at(incident, &["reason"]) {
-                Some("revoked") => format!("Resolved: {place} was revoked"),
                 Some("muted") => format!("Resolved: offline alerts for {place} were muted"),
                 _ => format!("Resolved: {place} is back online"),
             },
@@ -336,7 +339,7 @@ mod tests {
         assert_eq!(resolved(None), back);
         assert_eq!(
             resolved(Some("revoked")),
-            "Resolved: web-1 (paris) was revoked"
+            "Resolved: web-1 (paris) was removed"
         );
         assert_eq!(
             resolved(Some("muted")),

@@ -28,7 +28,7 @@ One command serves every host of a site, for 30 days by default (ADR-0058). Each
 | `MF_TIMEOUT` | Seconds to wait for the enrollment, 120 by default |
 | `MF_REQUIRE_SIGNATURE=1` | Fail instead of warning when OpenSSL 3 is missing and the signature cannot be checked |
 | `MF_ALLOW_UNSIGNED=1` | Install a release without `SHA256SUMS.sig`, like 0.1.0, with its checksums checked only |
-| `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too |
+| `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too. "Remove" on the server's page shows the command to use |
 
 An agent behind a relay:
 

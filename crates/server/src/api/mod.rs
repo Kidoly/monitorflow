@@ -205,8 +205,17 @@
 //! `cessation_of_operation`; default `unspecified`), publishes a new CRL
 //! and closes its live streams, and a relay's forwarded ones, with
 //! `PERMISSION_DENIED`. The answer is `{"revoked_at", "reason", "serials",
-//! "closed_streams"}`. It is audited as `server.revoke` or `relay.revoke`
-//! and cannot be undone.
+//! "closed_streams"}`. It is audited as `server.revoke` or `relay.revoke`.
+//!
+//! The interface calls this "Remove" (ADR-0062). The same call resolves
+//! the peer's open incidents with the reason `revoked` and deletes its
+//! unused tokens. The peer then leaves the lists and counts; `GET
+//! /api/servers/{id}` and `GET /api/relays/{id}` still answer, and metrics
+//! and incidents follow their retention. Enrolling the peer again in the
+//! same site brings the row back with its history: a single-use token for
+//! its ID, or an install key used by the same host name, audited as
+//! `server.restore` or `relay.restore`. A token for an ID removed from
+//! another site is 409.
 //!
 //! # Mirrors
 //!

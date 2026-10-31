@@ -26,7 +26,7 @@ describe("StatusLabel", () => {
   it("tints the same word by domain", () => {
     render(
       <>
-        <StatusLabel kind="server" value="revoked" />
+        <StatusLabel kind="token" value="revoked" />
         <StatusLabel kind="certificate" value="revoked" />
         <StatusLabel kind="token" value="pending" />
         <StatusLabel kind="patch" value="pending" small />

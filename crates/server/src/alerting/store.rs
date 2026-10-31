@@ -92,7 +92,8 @@ impl AlertStore {
     }
 
     /// The thresholds of the agent `peer_id`, or `None` without a
-    /// `servers` row. One statement, so the revision matches the rows.
+    /// `servers` row or for a removed server (ADR-0062). One statement, so
+    /// the revision matches the rows.
     pub async fn load_rules(&self, peer_id: &str) -> Result<Option<ServerRules>, sqlx::Error> {
         type Line = (
             Uuid,
@@ -114,7 +115,7 @@ impl AlertStore {
              FROM servers s
              JOIN sites si ON si.id = s.site_id
              LEFT JOIN thresholds t ON t.site_id = s.site_id OR t.server_id = s.id
-             WHERE s.peer_id = $1",
+             WHERE s.peer_id = $1 AND s.revoked_at IS NULL",
         )
         .bind(peer_id)
         .fetch_all(&self.pool)
@@ -160,12 +161,13 @@ impl AlertStore {
         }))
     }
 
-    /// Current threshold revisions of `server_ids`.
+    /// Current threshold revisions of `server_ids`, removed ones left out,
+    /// so the engine forgets them.
     pub async fn revisions(&self, server_ids: &[Uuid]) -> Result<Vec<(Uuid, u64)>, sqlx::Error> {
         let rows: Vec<(Uuid, i64)> = sqlx::query_as(
             "SELECT s.id, si.threshold_revision + s.threshold_revision
              FROM servers s JOIN sites si ON si.id = s.site_id
-             WHERE s.id = ANY($1)",
+             WHERE s.id = ANY($1) AND s.revoked_at IS NULL",
         )
         .bind(server_ids)
         .fetch_all(&self.pool)
