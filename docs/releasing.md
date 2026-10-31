@@ -31,10 +31,10 @@ Check the pair before the first release: `openssl pkey -in monitorflow-release.p
 
 ## Images
 
-Each release pushes `ghcr.io/kidoly/monitorflow-server`, `monitorflow-web` and `monitorflow-updater`, tagged with the version, each a multi-platform index for `linux/amd64` and `linux/arm64` built on native runners. `images.json`, a release file listed in `SHA256SUMS`, names them by the digest of that index:
+Each release pushes `ghcr.io/kidoly/monitorflow-server`, `monitorflow-web`, `monitorflow-updater` and `monitorflow-mirror`, tagged with the version, each a multi-platform index for `linux/amd64` and `linux/arm64` built on native runners. `images.json`, a release file listed in `SHA256SUMS`, names them by the digest of that index:
 
 ```
-{"version": "0.2.0", "images": {"server": "ghcr.io/kidoly/monitorflow-server@sha256:…", "web": "…", "updater": "…"}}
+{"version": "0.2.0", "images": {"server": "ghcr.io/kidoly/monitorflow-server@sha256:…", "web": "…", "updater": "…", "mirror": "…"}}
 ```
 
 Servers install a release's images by those digests only, after checking the signature (ADR-0056); the version tags are for people. The `release` job publishes nothing when an image fails to build, so a release always has its images.

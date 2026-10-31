@@ -13,6 +13,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use monitorflow_common::config::MirrorConfig;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// Bytes kept of a command's stdout and of its stderr: the end, where the
@@ -31,7 +32,8 @@ const PASSED_ENV: [&str; 8] = [
     "NO_PROXY",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Tool {
     Aptly,
     Reposync,
@@ -51,7 +53,7 @@ impl Tool {
 }
 
 /// One command to run.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Invocation {
     pub tool: Tool,
     pub args: Vec<OsString>,
@@ -95,7 +97,7 @@ impl fmt::Display for Invocation {
 
 /// What a finished command printed. A non-zero exit is not an error here;
 /// see [`Output::check`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Output {
     pub success: bool,
     /// `exit status: 1`, `signal: 9 (SIGKILL)`…
@@ -157,6 +159,8 @@ pub enum RunError {
         tool: &'static str,
         error: std::io::Error,
     },
+    #[error("{0}")]
+    Tools(String),
     #[error("{tool} failed ({status}): {}", last_line.escape_debug())]
     Failed {
         tool: &'static str,
@@ -205,6 +209,12 @@ impl CommandRunner {
             timeout: Duration::from_secs(config.sync_timeout),
             gnupg_home: gnupg_home.into(),
         }
+    }
+
+    /// The same programs under another timeout.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 
     fn program(&self, tool: Tool) -> &Path {

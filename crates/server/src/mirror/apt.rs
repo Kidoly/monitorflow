@@ -32,6 +32,11 @@ fn keyring(layout: &Layout) -> OsString {
     arg
 }
 
+fn architectures(mirror: &Mirror) -> Option<OsString> {
+    (!mirror.architectures.is_empty())
+        .then(|| format!("-architectures={}", mirror.architectures.join(",")).into())
+}
+
 /// `aptly mirror list -raw`: one aptly mirror name per line.
 pub fn list(layout: &Layout) -> Invocation {
     let mut args = aptly(layout, ["mirror", "list"]);
@@ -42,9 +47,10 @@ pub fn list(layout: &Layout) -> Invocation {
 pub fn create(layout: &Layout, mirror: &Mirror, component: &str) -> Invocation {
     let mut args = aptly(layout, ["mirror", "create"]);
     args.push(keyring(layout));
-    if !mirror.architectures.is_empty() {
-        args.push(format!("-architectures={}", mirror.architectures.join(",")).into());
-    }
+    // Debian's security archive lists `updates/main` in its `Release` but
+    // serves `main`, as apt asks for it.
+    args.push("-force-components".into());
+    args.extend(architectures(mirror));
     args.extend(
         [
             mirror_name(mirror, component),
@@ -112,6 +118,8 @@ pub fn publish(layout: &Layout, mirror: &Mirror, snapshot: &str, key: &str) -> I
         ]
         .map(OsString::from),
     );
+    // aptly cannot guess them for a component with no packages.
+    args.extend(architectures(mirror));
     for component in &mirror.components {
         args.push(snapshot_name(mirror, component, snapshot).into());
     }
@@ -163,7 +171,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             create(&layout, &m, "main").to_string(),
-            format!("aptly mirror create {c} {k} -architectures=amd64 mf:m:main https://up/debian bookworm main")
+            format!("aptly mirror create {c} {k} -force-components -architectures=amd64 mf:m:main https://up/debian bookworm main")
         );
         assert_eq!(
             update(&layout, &m, "contrib").to_string(),
@@ -175,7 +183,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             publish(&layout, &m, "s1", "FPR").to_string(),
-            format!("aptly publish snapshot {c} -batch -gpg-key=FPR -component=main,contrib -distribution=bookworm mf:m:main:s1 mf:m:contrib:s1 m/s1")
+            format!("aptly publish snapshot {c} -batch -gpg-key=FPR -component=main,contrib -distribution=bookworm -architectures=amd64 mf:m:main:s1 mf:m:contrib:s1 m/s1")
         );
         let cleanup: Vec<String> = cleanup(&layout, &m, "s1")
             .iter()

@@ -102,6 +102,15 @@ pub async fn generate(
         .ok_or(KeyError::Missing.into())
 }
 
+/// The signing key, created on first use so that adding a mirror needs no
+/// step before it.
+pub async fn ensure(runner: &dyn Runner, layout: &Layout) -> Result<String, SigningError> {
+    match export(runner, layout).await? {
+        Some(key) => Ok(key),
+        None => generate(runner, layout, DEFAULT_UID).await,
+    }
+}
+
 /// Imports a secret key from `file` and exports its public half.
 pub async fn import(
     runner: &dyn Runner,
@@ -207,7 +216,8 @@ mod tests {
         let gpg = FakeGpg::default();
         assert_eq!(export(&gpg, &layout).await.unwrap(), None);
         assert!(!layout.public_key().exists());
-        assert_eq!(generate(&gpg, &layout, DEFAULT_UID).await.unwrap(), "GEN1");
+        assert_eq!(ensure(&gpg, &layout).await.unwrap(), "GEN1");
+        assert_eq!(ensure(&gpg, &layout).await.unwrap(), "GEN1");
         assert_eq!(
             std::fs::read_to_string(layout.public_key()).unwrap(),
             "PUBLIC GEN1"

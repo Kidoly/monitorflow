@@ -9,6 +9,11 @@ rust-version.workspace = true
 name = "monitorflow-server"
 path = "src/main.rs"
 
+# Runs the mirror tools in their sidecar container (ADR-0067).
+[[bin]]
+name = "monitorflow-mirror-tools"
+path = "src/bin/monitorflow-mirror-tools.rs"
+
 [dependencies]
 # server-update: checks and requests of server updates (ADR-0056).
 monitorflow-common = { workspace = true, features = ["mirror", "server-update"] }

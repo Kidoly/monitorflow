@@ -65,10 +65,11 @@ impl Signer {
     fn release(&self, version: &str, server: Option<String>) -> TempDir {
         let dir = TempDir::new().unwrap();
         let images = format!(
-            r#"{{"version": "{version}", "images": {{"server": "{}", "web": "{}", "updater": "{}"}}}}"#,
+            r#"{{"version": "{version}", "images": {{"server": "{}", "web": "{}", "updater": "{}", "mirror": "{}"}}}}"#,
             server.unwrap_or(image("server", version)),
             image("web", version),
-            image("updater", version)
+            image("updater", version),
+            image("mirror", version)
         );
         let files: [(&str, Vec<u8>); 4] = [
             ("VERSION", format!("{version}\n").into_bytes()),
@@ -331,7 +332,11 @@ async fn updates_to_a_signed_release_after_a_backup() {
     assert!(std::fs::read_to_string(&volumes.env)
         .unwrap()
         .starts_with("DOMAIN=mf.test\n"));
-    assert_eq!(host.state().pulled.len(), 3);
+    assert_eq!(
+        pins.mirror.as_deref(),
+        Some(image("mirror", "0.2.0").as_str())
+    );
+    assert_eq!(host.state().pulled.len(), 4);
     // The agent release went through the server's import, from the path
     // the server container sees, then the staging copy was removed.
     assert_eq!(

@@ -29,7 +29,7 @@ use monitorflow_server::grpc::{
 };
 use monitorflow_server::ingest::{Ingest, JsonLines, RemoteWrite, Writer, WriterSettings};
 use monitorflow_server::mirror::{
-    self, CommandRunner, JobKind, Layout, MirrorSpec, Mirrors, Trigger,
+    self, JobKind, Layout, MirrorSpec, Mirrors, ToolsRunner, Trigger,
 };
 use monitorflow_server::notify;
 use monitorflow_server::relay_commands::RelayCommands;
@@ -831,7 +831,7 @@ async fn mirror_command(
             return Ok(());
         }
         MirrorCommand::Key(command) => {
-            let runner = CommandRunner::new(&config.mirror, mirrors.layout().gnupg());
+            let runner = ToolsRunner::new(&config.mirror, mirrors.layout());
             let key = match command {
                 KeyCommand::Generate { uid } => {
                     mirror::signing::generate(&runner, mirrors.layout(), &uid).await?
@@ -899,7 +899,7 @@ async fn open_mirrors(config: &ServerConfig, pool: sqlx::PgPool) -> anyhow::Resu
     tokio::task::spawn_blocking(move || prepared.prepare())
         .await?
         .with_context(|| format!("preparing {}", layout.root().display()))?;
-    let runner = Arc::new(CommandRunner::new(&config.mirror, layout.gnupg()));
+    let runner = Arc::new(ToolsRunner::new(&config.mirror, &layout));
     match mirror::signing::export(runner.as_ref(), &layout).await {
         Ok(Some(key)) => tracing::info!(%key, "mirror signing key exported"),
         Ok(None) => tracing::info!(

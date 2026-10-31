@@ -37,6 +37,8 @@ COPY --from=docker /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker /usr/local/libexec/docker/cli-plugins/docker-compose \
     /usr/local/libexec/docker/cli-plugins/docker-compose
 COPY --from=build /usr/local/bin/monitorflow-updater /usr/local/bin/
+# The mirrors volume is the server's user's whichever service creates it.
+RUN install -d -o 10001 -g 10001 /serverdata/mirrors
 # Root: the Docker socket is root's anyway, and the updater keeps the
 # update volume's root owned by root (crates/updater/src/lib.rs).
 ENTRYPOINT ["monitorflow-updater"]

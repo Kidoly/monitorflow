@@ -8,7 +8,7 @@
 # request that changes these files, builds the same files as the
 # `release-files` artifact, signed with a throwaway key, and publishes
 # nothing.
-# It also builds the server, web and updater images for amd64 and arm64
+# It also builds the server, web, updater and mirror images for amd64 and arm64
 # (ADR-0056); a tag pushes them to GHCR and lists their digests in
 # images.json, a release file covered by the signature. Other runs build
 # them without pushing.
@@ -129,7 +129,7 @@ jobs:
       packages: write
     strategy:
       matrix:
-        image: [server, web, updater]
+        image: [server, web, updater, mirror]
         platform: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
@@ -192,7 +192,7 @@ jobs:
         run: |
           set -euo pipefail
           images='{}'
-          for image in server web updater; do
+          for image in server web updater mirror; do
             repo=$REGISTRY/monitorflow-$image
             amd64=$(cat "digests/$image-amd64") arm64=$(cat "digests/$image-arm64")
             if [ "$PUBLISH" = true ]; then

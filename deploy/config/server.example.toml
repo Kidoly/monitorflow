@@ -104,6 +104,8 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # key = "/var/lib/monitorflow/server/tls/key.pem"
 
 # Tools run by mirror syncs and snapshots, looked up on PATH unless absolute.
+# Not used while the mirror tools sidecar answers on <mirror_dir>/tools/tools.sock
+# (ADR-0067).
 [mirror]
 # aptly = "aptly"
 # reposync = "reposync"

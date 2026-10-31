@@ -1,9 +1,9 @@
 # MonitorFlow central server for production (ADR-0051, docs/deploy-server.md).
 # Copy .env.example to .env next to this file and fill it in, then:
 #   docker compose -f deploy/docker-compose.yml up -d --build
-# SERVER_IMAGE, WEB_IMAGE and UPDATER_IMAGE in .env run the images of a
-# release by digest instead of local builds; the updater sets them when it
-# installs a release (ADR-0056).
+# SERVER_IMAGE, WEB_IMAGE, UPDATER_IMAGE and MIRROR_IMAGE in .env run the
+# images of a release by digest instead of local builds; the updater sets
+# them when it installs a release (ADR-0056).
 name: monitorflow
 
 x-server-build: &server-build
@@ -88,8 +88,11 @@ services:
       # The ports published below, for the install commands of new tokens.
       MONITORFLOW_GRPC_PUBLIC_PORT: ${GRPC_PORT:-7443}
       MONITORFLOW_ENROLL_PUBLIC_PORT: ${ENROLL_PORT:-7445}
+      # What agents and relays download packages from (ADR-0067).
+      MONITORFLOW_MIRROR_PUBLIC_URL: ${MIRROR_PUBLIC_URL:-http://${DOMAIN}:${MIRROR_PORT:-7480}}
     volumes:
       - serverdata:/var/lib/monitorflow/server
+      - mirrors:/var/lib/monitorflow/server/mirrors
       - dbcerts:/certs:ro
       # Requests go to its inbox; the rest belongs to the updater.
       - update:/var/lib/monitorflow/update
@@ -98,6 +101,8 @@ services:
     ports:
       - "${GRPC_PORT:-7443}:7443"
       - "${ENROLL_PORT:-7445}:7445"
+      # Signed public packages only, plain on purpose (ADR-0030).
+      - "${MIRROR_PORT:-7480}:7480"
     depends_on:
       postgres: { condition: service_healthy }
       victoriametrics: { condition: service_started }
@@ -130,6 +135,24 @@ services:
       server: { condition: service_healthy }
     restart: unless-stopped
 
+  # Runs aptly, reposync, createrepo_c and gpg for the server, which asks
+  # through a socket in the mirrors volume (ADR-0067). No listener, no
+  # database, and only the mirrors volume: the server's keys stay away from
+  # tools that parse what they download.
+  mirror:
+    build:
+      context: ..
+      dockerfile: deploy/docker/mirror.Dockerfile
+    image: ${MIRROR_IMAGE:-monitorflow-mirror:local}
+    volumes: ["mirrors:/var/lib/monitorflow/server/mirrors"]
+    networks: [mirror]
+    healthcheck:
+      test: ["CMD", "test", "-S", "/var/lib/monitorflow/server/mirrors/tools/tools.sock"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   # Installs releases when the server asks (ADR-0056) and backs up the
   # database and serverdata every day (ADR-0058). The only service with
   # the Docker socket; it has no listener.
@@ -151,6 +174,8 @@ services:
       - ${BACKUP_DIR:-backups}:/backups
       # Saved in backups, written back by deploy/restore.sh.
       - serverdata:/serverdata
+      # The mirror signing key is in backups, the repositories are not.
+      - mirrors:/serverdata/mirrors
     restart: unless-stopped
 
 networks:
@@ -158,6 +183,8 @@ networks:
   storage:
     internal: true
   front:
+  # The mirror tools reach upstreams, and nothing of the stack.
+  mirror:
 
 volumes:
   dbcerts:
@@ -166,6 +193,9 @@ volumes:
   vldata:
   # Holds the CA: losing it means enrolling every agent again. In backups.
   serverdata:
+  # Package repositories, snapshots and their signing key, shared by the
+  # server and the mirror tools. Tens to hundreds of GB once in use.
+  mirrors:
   caddydata:
   # Requests and status of server updates, shared by server and updater.
   update:

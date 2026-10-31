@@ -6,7 +6,7 @@ How to run the central server with Docker Compose: the server, the web interface
 
 - Docker Engine 23 or later with the compose and buildx plugins (`docker-compose-plugin` and `docker-buildx-plugin` in Docker's packages). The images use BuildKit features.
 - 2 vCPU and 4 GB of RAM for a few dozen agents, and disk for metrics and logs, kept 90 and 30 days by default.
-- Inbound ports: 443 and 80 for browsers, 7443 (gRPC, mTLS) and 7445 (enrollment) for agents and relays.
+- Inbound ports: 443 and 80 for browsers, 7443 (gRPC, mTLS) and 7445 (enrollment) for agents and relays, 7480 (package mirrors) for hosts that update from this server.
 - For updates from the web interface: outbound HTTPS to `github.com` and `ghcr.io`, or to your own copy of the releases (see [Offline servers](#offline-servers)), and disk for the database dumps taken before each update.
 - The `updater` service mounts the Docker socket, `/var/run/docker.sock`, which gives it root on the host. It has no listener and only installs releases signed by the project's key. With rootless Docker, set `DOCKER_SOCKET` in `deploy/.env` to your socket.
 
@@ -66,7 +66,7 @@ docker compose -f deploy/docker-compose.yml exec server monitorflow-server agent
 
 An update of the server from the web interface imports its release this way by itself ([Updating](#updating)).
 
-Then choose "This server" as the default install source on the tokens page, or set `AGENT_INSTALL_SOURCE=central` in `deploy/.env`. Releases stay in the `serverdata` volume.
+Then choose "This server" as the default install source on the tokens page, or set `AGENT_INSTALL_SOURCE=central` in `deploy/.env`. Releases stay in the `mirrors` volume.
 
 The web image's Caddy forwards `/agent/*` to the server like `/api/*`. With a reverse proxy of your own, forward both paths to the API listener.
 
@@ -85,6 +85,7 @@ Volumes are prefixed with the project name, like `monitorflow_serverdata`.
 | Volume | Holds |
 | --- | --- |
 | `serverdata` | The built-in CA, the server's certificate, the command signing key. Without it every agent and relay must enroll again |
+| `mirrors` | Package mirrors and their signing key, and the agent release cache. Tens to hundreds of GB once in use |
 | `pgdata` | Inventory, configuration, campaigns, incidents, audit log |
 | `vmdata`, `vldata` | Metrics and logs |
 | `dbcerts` | Certificates of the database link, created again when the volume is empty |
@@ -92,7 +93,7 @@ Volumes are prefixed with the project name, like `monitorflow_serverdata`.
 | `backups` | Backups: daily, on request and before each update, the 7 newest kept; `BACKUP_DIR` in `deploy/.env` puts them in a host directory instead |
 | `update`, `updater` | Update requests and status, and the updater's own state |
 
-The updater backs up the database and `serverdata` every day and keeps the 7 newest backups (ADR-0058). **Administration, Backups** shows the last one, takes one now and downloads any of them. A backup holds the CA keys: whoever has the file can impersonate the server, so keep copies somewhere safe. Metrics, logs and the mirror repositories are not in backups.
+The updater backs up the database and `serverdata` every day and keeps the 7 newest backups (ADR-0058). **Administration, Backups** shows the last one, takes one now and downloads any of them. A backup holds the CA keys: whoever has the file can impersonate the server, so keep copies somewhere safe. Metrics, logs and the mirror repositories are not in backups; the mirror signing key is.
 
 To restore one, on a fresh install or on this one: `deploy/restore.sh <file>`.
 
@@ -169,4 +170,3 @@ Every server setting has a `MONITORFLOW_*` variable (see `deploy/config/server.e
 
 - VictoriaMetrics and VictoriaLogs are reached over plain HTTP on an internal Docker network that is never published (ADR-0051). PostgreSQL is reached over TLS.
 - The server image trusts the release keys of `deploy/release-keys.pem` at build time; imports of releases signed with another key are refused.
-- The server image has no `aptly`, `reposync` or `createrepo_c`, so package mirrors (ADR-0030) are not available with it yet.

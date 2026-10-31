@@ -19,6 +19,9 @@ use crate::project::Project;
 const DB: &str = "monitorflow";
 /// Services an update recreates.
 pub const SERVICES: [&str; 2] = ["server", "web"];
+/// Recreated with them when the compose file has it: one from before
+/// ADR-0067 does not.
+pub const MIRROR_SERVICE: &str = "mirror";
 /// Where the update volume is mounted in the server container too.
 pub const SERVER_UPDATE_DIR: &str = "/var/lib/monitorflow/update";
 
@@ -36,7 +39,7 @@ pub trait Host: Send + Sync {
     async fn latest_migration(&self) -> Result<i64, HostError>;
     /// Writes a `pg_dump -Fc` of the database to `dest`.
     async fn dump_database(&self, dest: &Path) -> Result<(), HostError>;
-    /// Recreates `server` and `web` with the images of `.env` and waits
+    /// Recreates `server`, `web` and `mirror` with the images of `.env` and waits
     /// until they are healthy.
     async fn recreate(&self) -> Result<(), HostError>;
     /// `monitorflow-server agent-release import` of `dir`, a path of the
@@ -121,7 +124,7 @@ impl Compose {
         Ok(())
     }
 
-    fn up_args(&self) -> Vec<String> {
+    fn up_args(&self, mirror: bool) -> Vec<String> {
         let mut args: Vec<String> = [
             "up",
             "--detach",
@@ -136,6 +139,9 @@ impl Compose {
         .into();
         args.push(self.timeout.as_secs().to_string());
         args.extend(SERVICES.map(String::from));
+        if mirror {
+            args.push(MIRROR_SERVICE.into());
+        }
         args
     }
 }
@@ -237,7 +243,8 @@ impl Host for Compose {
     }
 
     async fn recreate(&self) -> Result<(), HostError> {
-        let args = self.up_args();
+        let services = self.output(true, &["config", "--services"]).await?;
+        let args = self.up_args(services.lines().any(|s| s == MIRROR_SERVICE));
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         self.output(true, &args).await.map(drop)
     }
@@ -416,8 +423,12 @@ mod tests {
             timeout: Duration::from_secs(300),
         };
         assert_eq!(
-            compose.up_args().join(" "),
+            compose.up_args(false).join(" "),
             "up --detach --no-deps --no-build --pull never --wait --wait-timeout 300 server web"
         );
+        assert!(compose
+            .up_args(true)
+            .join(" ")
+            .ends_with(" server web mirror"));
     }
 }

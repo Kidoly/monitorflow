@@ -138,7 +138,9 @@ A plain HTTP listener (`mirror_listen_addr`, default `0.0.0.0:7480`) serves `mir
 | `/dnf/<mirror>/<snapshot>/`, `/dnf/<mirror>/current/` | dnf repository of a snapshot; `current` is the newest |
 | `/keys/monitorflow-archive.asc` | public key signing apt `Release` files and dnf `repomd.xml` |
 
-Integrity comes from the signatures, not the transport. Setup on the server host:
+Integrity comes from the signatures, not the transport.
+
+In the production compose the tools run in the `mirror` sidecar, which shares `mirror_dir` with the server and takes commands over a Unix socket in it (ADR-0067). Administrators add a distribution from a list in the web interface, which shows its size and the free space and refuses what does not fit; the signing key and the upstream archive keys need no step. On a host without the sidecar, or for a mirror outside the list:
 
 1. Install `aptly`, `dnf-plugins-core` (for `reposync`), `createrepo_c` and `gpg`, or set their paths under `[mirror]`.
 2. Create the signing key with `monitorflow-server mirror key generate`, or import an existing secret key with `monitorflow-server mirror key import --file key.asc`. It lives in `<mirror_dir>/gnupg` without a passphrase; the public half is written to `<mirror_dir>/keys/monitorflow-archive.asc`.

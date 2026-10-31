@@ -9,6 +9,7 @@ import { describeMirror, intervalText, nextSync, shortTime } from "@/lib/mirrors
 import { mirrorHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
+import { AddMirror } from "./AddMirror";
 import styles from "./Mirrors.module.css";
 import { Button } from "./ui/Button";
 import { type Column, DataTable, PrimaryCell, useUrlSort } from "./ui/DataTable";
@@ -109,6 +110,8 @@ function MirrorList() {
   const params = useSearchParams();
   const pathname = usePathname();
   const [sort, setSort] = useUrlSort();
+  const [adding, setAdding] = useState(false);
+  const [added, setAdded] = useState<string | null>(null);
 
   const meta = (
     <>
@@ -121,7 +124,16 @@ function MirrorList() {
       )}
     </>
   );
-  const header = <PageHeader title="Mirrors" meta={meta} />;
+  const openAdd = () => {
+    setAdded(null);
+    setAdding(true);
+  };
+  const addButton = (
+    <Button variant="k" onClick={openAdd}>
+      Add a mirror
+    </Button>
+  );
+  const header = <PageHeader title="Mirrors" meta={meta} actions={!adding && addButton} />;
   if (error instanceof ApiError && error.status === 403) {
     return (
       <div className={styles.page}>
@@ -189,6 +201,21 @@ function MirrorList() {
       {header}
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       {jobs.error && <Banner tone="bad">{jobs.error}</Banner>}
+      {added && (
+        <Banner tone="ok" role="status">
+          {added} added. The first sync starts within a minute and can take hours; this page shows its progress.
+        </Banner>
+      )}
+      {adding && (
+        <AddMirror
+          onClose={() => setAdding(false)}
+          onAdded={(name) => {
+            setAdded(name);
+            setAdding(false);
+            refresh();
+          }}
+        />
+      )}
       <StatTiles
         dense
         maxWidth={1000}
@@ -224,8 +251,8 @@ function MirrorList() {
         search={{ name: "q", label: "Search", placeholder: "Mirror name", width: 200 }}
       />
       {data.mirrors.length === 0 ? (
-        <EmptyState title="No mirrors yet">
-          Add one on the server host with <code>monitorflow-server mirror add</code>.
+        <EmptyState title="No mirrors yet" actions={!adding && addButton}>
+          Keep a copy of a distribution here, and your servers update from it instead of the Internet.
         </EmptyState>
       ) : rows.length === 0 ? (
         <EmptyState>No mirror matches these filters.</EmptyState>

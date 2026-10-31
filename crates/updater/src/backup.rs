@@ -20,11 +20,12 @@ use crate::update::Updater;
 /// What backups leave out of the server's data: the mirror repositories,
 /// synced again from upstream, and the agent release cache, filled again
 /// by the next update. Mirror keys and configuration are kept.
-pub const EXCLUDED: [&str; 4] = [
+pub const EXCLUDED: [&str; 5] = [
     "mirrors/aptly",
     "mirrors/dnf",
     "mirrors/dnf-work",
     "mirrors/agent",
+    "mirrors/tools",
 ];
 /// The automatic backup: once a day, an hour after a failure, and not in
 /// the first minutes, while the deployment starts.

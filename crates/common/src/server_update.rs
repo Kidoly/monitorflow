@@ -98,6 +98,8 @@ pub struct Images {
     pub server: ImageRef,
     pub web: ImageRef,
     pub updater: ImageRef,
+    /// The mirror tools (ADR-0067); not in older releases.
+    pub mirror: Option<ImageRef>,
 }
 
 /// `images.json` as written by the release workflow. Unknown keys are
@@ -113,6 +115,7 @@ struct ImagesFileImages {
     server: String,
     web: String,
     updater: String,
+    mirror: Option<String>,
 }
 
 /// Checks `bytes` against its line in the verified `release`, then its
@@ -135,6 +138,12 @@ pub fn verify_images(release: &Release, bytes: &[u8]) -> Result<Images, UpdateEr
         server: ImageRef::parse(&file.images.server)?,
         web: ImageRef::parse(&file.images.web)?,
         updater: ImageRef::parse(&file.images.updater)?,
+        mirror: file
+            .images
+            .mirror
+            .as_deref()
+            .map(ImageRef::parse)
+            .transpose()?,
     })
 }
 

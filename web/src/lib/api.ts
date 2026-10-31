@@ -1217,6 +1217,23 @@ export interface MirrorList {
   mirrors: Mirror[];
 }
 
+/** One distribution of `GET /api/mirrors/catalog` (ADR-0067). */
+export interface MirrorDistribution {
+  id: string;
+  name: string;
+  family: "apt" | "dnf";
+  size_bytes: number;
+  added: boolean;
+  /** Why it cannot be added now, in a sentence. */
+  problem: string | null;
+}
+
+export interface MirrorCatalog {
+  tools: { available: boolean; problem: string | null };
+  disk: { free_bytes: number; total_bytes: number } | null;
+  distributions: MirrorDistribution[];
+}
+
 export interface MirrorSnapshot {
   id: string;
   mirror_id: string;
@@ -1777,6 +1794,13 @@ export const api = {
   /** Resumes a halted rollout; global administrators only; audited. */
   resumeRollout: (kind: RolloutKind, version: string) =>
     request<Rollout>(`/api/auto-update/rollouts/${kind}/${encodeURIComponent(version)}/resume`, { method: "POST" }),
+
+  /** What can be added, with its size, the free disk and the tools' state. */
+  mirrorCatalog: (signal?: AbortSignal) => request<MirrorCatalog>("/api/mirrors/catalog", { signal }),
+
+  /** Adds every mirror of a distribution; 409 says why not in a sentence. */
+  addMirror: (distribution: string) =>
+    request<MirrorList>("/api/mirrors", { method: "POST", body: { distribution } }),
 
   mirror: (id: string, signal?: AbortSignal) =>
     request<MirrorDetail>(`/api/mirrors/${encodeURIComponent(id)}`, { signal }),
