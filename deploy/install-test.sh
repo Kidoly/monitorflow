@@ -242,6 +242,8 @@ check "a later run keeps the opt-in" test "$(shell_env)" = MONITORFLOW_COMMANDS_
 installer MF_DOWNLOAD_URL="$base" MF_ALLOW_COMMANDS=0
 check "MF_ALLOW_COMMANDS=0 takes it back" test -z "$(shell_env)"
 check "agent online after the opt-in" online "$PEER"
+# These runs came quickly: systemd allows 5 starts in 10 seconds.
+sudo systemctl reset-failed monitorflow-agent
 
 if [ -n "$newer" ]; then
     echo "== self-update"
