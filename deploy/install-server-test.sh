@@ -170,7 +170,7 @@ password=$(env_value POSTGRES_PASSWORD)
 check "a password was generated" test "${#password}" = 48
 check "setup is pending" bash -c "docker exec $host curl -fsSk https://$guessed/api/setup | jq -e .pending"
 link=$(grep -o 'https://[^ ]*/setup/#[^ ]*' "$work/install.log" | tail -n 1)
-check "the setup link names the public name" grep -q "^https://$guessed:443/setup/#" <<<"$link"
+check "the setup link names the public name" grep -q "^https://$guessed/setup/#" <<<"$link"
 admin=$(openssl rand -hex 16)
 in_host curl -fsSk -c /tmp/cookies -H 'content-type: application/json' -H 'x-monitorflow-csrf: 1' \
     -d "$(jq -n --arg t "${link#*#}" --arg p "$admin" '{token: $t, username: "admin", password: $p}')" \
@@ -204,7 +204,7 @@ installer base >"$work/older.log"
 check "an older release is not installed over it" grep -q 'nothing to update' "$work/older.log"
 
 echo "== uninstall, keeping the data"
-installer next -- --uninstall
+installer next --uninstall
 check "the containers are gone" test -z "$(containers)"
 check "the data is kept" volume_exists
 check "the settings are kept" test "$(env_value POSTGRES_PASSWORD)" = "$password"
@@ -215,12 +215,12 @@ check "with the same CA" test "$(ca)" = "$serverdata_ca"
 
 echo "== data without settings"
 in_host mv /opt/monitorflow/deploy/.env /root/env
-installer next -- --uninstall >/dev/null
+installer next --uninstall >/dev/null
 check "no new password over an old database" refuses next
 in_host mv /root/env /opt/monitorflow/deploy/.env
 
 echo "== uninstall with the data"
-installer next -- --uninstall --purge
+installer next --uninstall --purge
 check "the containers are gone" test -z "$(containers)"
 check "the data is gone" bash -c "! docker exec $host docker volume inspect monitorflow_pgdata"
 check "the files are gone" absent /opt/monitorflow
@@ -229,8 +229,8 @@ echo "== MF_PUBLIC_NAME"
 VARS=MF_PUBLIC_NAME=monitor.internal installer next | tee "$work/named.log"
 check "it is the public name" test "$(env_value DOMAIN)" = monitor.internal
 check "agents can use it or the address" test "$(env_value SERVER_NAMES)" = "monitor.internal,$guessed"
-check "the setup link names it" grep -q 'https://monitor.internal:443/setup/#' "$work/named.log"
-installer next -- --uninstall --purge >/dev/null
+check "the setup link names it" grep -q 'https://monitor.internal/setup/#' "$work/named.log"
+installer next --uninstall --purge >/dev/null
 
 echo "== --restore on a new install, on a terminal"
 in_host curl -fsSL -o /root/install-server.sh "$files/base/install-server.sh"
