@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Completes a directory of release files (ADR-0052, ADR-0053, ADR-0055):
-# adds the installer with the release keys filled in, the systemd units,
-# the sudo rules and VERSION next to the agent and relay binaries already
-# in it, writes
-# SHA256SUMS over everything and signs it into SHA256SUMS.sig. The release
+# Completes a directory of release files (ADR-0052, ADR-0053, ADR-0055,
+# ADR-0065): adds the agent and server installers with the release keys
+# filled in, what the server installer deploys, the systemd units, the sudo
+# rules and VERSION next to the agent and relay binaries already in it,
+# writes SHA256SUMS over everything and signs it into SHA256SUMS.sig. The release
 # workflow publishes the result; deploy/install-test.sh serves it to the
 # installer.
 #   MF_SIGNING_KEY=key.pem deploy/release-files.sh DIR
@@ -29,12 +29,17 @@ if ! grep -qxF "$(printf '%s\n' "$public" | sed -n 2p)" "$keys"; then
     exit 1
 fi
 
-# The keys go where install.sh has the line @RELEASE_KEYS@.
-awk -v keys="$keys" '
-    $0 == "@RELEASE_KEYS@" { while ((getline line < keys) > 0) if (line !~ /^#/ && line != "") print line; next }
-    { print }
-' "$deploy/install.sh" >"$dir/install.sh"
-chmod 0755 "$dir/install.sh"
+# The keys go where the installers have the line @RELEASE_KEYS@.
+for installer in install.sh install-server.sh; do
+    awk -v keys="$keys" '
+        $0 == "@RELEASE_KEYS@" { while ((getline line < keys) > 0) if (line !~ /^#/ && line != "") print line; close(keys); next }
+        { print }
+    ' "$deploy/$installer" >"$dir/$installer"
+    chmod 0755 "$dir/$installer"
+done
+# Installed as <root>/deploy, so commands that name deploy/ work there too.
+tar -czf "$dir/monitorflow-server-compose.tar.gz" -C "$deploy/.." --owner=0 --group=0 --numeric-owner \
+    deploy/docker-compose.yml deploy/docker/pg_hba.conf deploy/restore.sh deploy/.env.example
 install -m 0644 "$deploy/systemd/monitorflow-agent.service" "$dir/monitorflow-agent.service"
 install -m 0644 "$deploy/sudoers/monitorflow-agent" "$dir/monitorflow-agent-sudoers"
 install -m 0644 "$deploy/systemd/monitorflow-relay.service" "$dir/monitorflow-relay.service"

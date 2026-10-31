@@ -53,7 +53,13 @@ openssl pkeyutl -verify -pubin -inkey deploy/release-keys.pem -rawin -in SHA256S
 
 (`-inkey` reads the first key of the file; with several, put the one to check in a file of its own.)
 
-If a release changes the systemd unit or the sudo rules, say in its notes that hosts must run the installer again: a self-update replaces the binary only. If it changes `deploy/docker-compose.yml` beyond the images, say that servers must update their copy of the file: the updater changes images, not the compose file.
+If a release changes the systemd unit or the sudo rules, say in its notes that hosts must run the installer again: a self-update replaces the binary only. If it changes `deploy/docker-compose.yml` beyond the images, say that servers must run the server installer again: the updater changes images, not the compose file.
+
+The first release with the mirror tools (ADR-0067) is such a release. Its notes must say:
+
+> **Existing servers: run the server installer again.** Package mirrors need a new compose file, which an update from the web interface does not change. `curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install-server.sh | sudo sh` refreshes it, pins and starts the mirror tools, and keeps your settings and data; it also installs this release if the server does not run it yet. It opens port 7480 for package mirrors: set `MIRROR_PORT` in `deploy/.env` first if that port is taken. Until then the server works as before, and Add a mirror says the tools are not running.
+
+The server installer (ADR-0065) is the asset `install-server.sh`. It installs what `monitorflow-server-compose.tar.gz` holds, the files listed in `deploy/release-files.sh`. Add a file there when `deploy/docker-compose.yml` starts to need one, and a key to the `images.json` of the workflow when it starts to need an image: the installer pins every key `name` as `NAME_IMAGE`. Since a release's `install-server.sh` lands at `releases/latest/download/` as soon as it is published, a release without images, or with private packages, breaks new installs: make the packages public right after the first one.
 
 Sites without Internet access import the assets of the release, all of them, into their central server (`monitorflow-server agent-release import`, ADR-0054). Keep the asset names fixed: the server, the installer and the token page's commands look for them by name.
 

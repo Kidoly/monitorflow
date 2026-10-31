@@ -23,6 +23,10 @@ message RenewRequest {
   // PKCS#10 certificate signing request in PEM, for a fresh key. Only its
   // public key is used: the identity comes from the presenting certificate.
   string csr_pem = 1;
+  // Asked by a relay waiting for its names (ADR-0066): issue a certificate
+  // only if an administrator confirmed names it does not carry yet,
+  // otherwise FAILED_PRECONDITION. Not limited by the renewal interval.
+  bool names_only = 2;
 }
 
 message ForwardedRenewRequest {
@@ -32,6 +36,8 @@ message ForwardedRenewRequest {
   // it against the CA and the CRL. The identity of the new certificate is
   // the one of this certificate.
   bytes peer_cert_der = 2;
+  // The `names_only` of the peer's `Renew`.
+  bool names_only = 3;
 }
 
 message RenewResponse {

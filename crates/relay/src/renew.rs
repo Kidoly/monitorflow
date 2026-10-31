@@ -139,9 +139,11 @@ impl CertificateService for RenewProxy {
         check_peer(&peer).inspect_err(|status| {
             tracing::warn!(%peer, %status, "renewal refused");
         })?;
+        let request = request.into_inner();
         let forwarded = ForwardedRenewRequest {
-            csr_pem: request.into_inner().csr_pem,
+            csr_pem: request.csr_pem,
             peer_cert_der: leaf.to_vec(),
+            names_only: request.names_only,
         };
         let via = Via::origin(peer.clone());
         self.forward(&peer, via, forwarded).await.map(Response::new)

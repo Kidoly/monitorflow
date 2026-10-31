@@ -1,31 +1,39 @@
 # Installing the server
 
-How to run the central server with Docker Compose: the server, the web interface behind Caddy, PostgreSQL, VictoriaMetrics and VictoriaLogs on one host (ADR-0051), and the updater that installs new releases from the web interface (ADR-0056). For agents, see [Installing the agent](deploy-agent.md).
+On a Linux host, as root:
+
+```
+curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install-server.sh | sudo sh
+```
+
+That is all: it installs Docker if it is missing, asks for the name browsers and agents use (and suggests one), generates the secrets, starts everything, and prints the address and a one-time link that creates the administrator. Nothing to clone, build or edit.
+
+The rest of this page is reference. The server runs with Docker Compose: the server, the web interface behind Caddy, PostgreSQL, VictoriaMetrics and VictoriaLogs on one host (ADR-0051), and the updater that installs new releases from the web interface (ADR-0056). For agents, see [Installing the agent](deploy-agent.md).
 
 ## Requirements
 
-- Docker Engine 23 or later with the compose and buildx plugins (`docker-compose-plugin` and `docker-buildx-plugin` in Docker's packages). The images use BuildKit features.
 - 2 vCPU and 4 GB of RAM for a few dozen agents, and disk for metrics and logs, kept 90 and 30 days by default.
-- Inbound ports: 443 and 80 for browsers, 7443 (gRPC, mTLS) and 7445 (enrollment) for agents and relays, 7480 (package mirrors) for hosts that update from this server.
-- For updates from the web interface: outbound HTTPS to `github.com` and `ghcr.io`, or to your own copy of the releases (see [Offline servers](#offline-servers)), and disk for the database dumps taken before each update.
+- Inbound ports: 443 and 80 for browsers, 7443 (gRPC, mTLS) and 7445 (enrollment) for agents and relays, 7480 (package mirrors) for hosts that update from this server. The installer stops and names a port that is taken.
+- For updates from the web interface: outbound HTTPS to `github.com` and `ghcr.io`, or to your own copy of the releases (see [Offline servers](#offline-servers)), and disk for the backups taken before each update.
 - The `updater` service mounts the Docker socket, `/var/run/docker.sock`, which gives it root on the host. It has no listener and only installs releases signed by the project's key. With rootless Docker, set `DOCKER_SOCKET` in `deploy/.env` to your socket.
 
-## First start
+The installer installs Docker with [Docker's official script](https://get.docker.com), which covers Debian, Ubuntu, Fedora, RHEL, CentOS and Rocky. On another distribution, install Docker Engine 23 or later and its compose plugin first, then run the installer.
 
-```
-git clone https://github.com/Kidoly/monitorflow.git && cd monitorflow
-cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
-# Set DOMAIN, SERVER_NAMES and POSTGRES_PASSWORD (openssl rand -hex 24).
-docker compose -f deploy/docker-compose.yml up -d --build --wait
-```
+## The installer
 
-The first build compiles the server and the web interface, which takes several minutes. `--wait` returns once every service is healthy.
+Everything lives in `/opt/monitorflow/deploy`: the compose file, and `.env` with the settings and the database password. Commands on this page that start with `docker compose -f deploy/…` or `deploy/restore.sh` run from `/opt/monitorflow`.
+
+- **Without a terminal**, as under automation, it uses `MF_PUBLIC_NAME`, or its guess: the host's full name if that resolves to a public address, else its IP address. To choose: `curl … | sudo MF_PUBLIC_NAME=monitor.example.com sh`.
+- **Run it again at any time.** Settings and secrets stay, the stack comes back up, and a newer release is installed through the updater, with a backup and a rollback. The compose file follows the release. After editing `.env`, run it again too.
+- **Moving to a new host:** `curl … | sudo sh -s -- --restore monitorflow-backup-….tar.gz` installs, then restores the backup. Give the old server's name, so agents find it.
+- **Removing it:** `curl … | sudo sh -s -- --uninstall` removes the containers and, on a terminal, asks whether to delete the data. Without a terminal, or if you press Enter, the data stays in Docker volumes and `.env` stays too, and running the installer brings all of it back. `--uninstall --purge` deletes them without asking. Docker stays installed.
+- It checks `SHA256SUMS.sig` against the release keys it carries, with OpenSSL 3, and so the compose files and the image digests of `images.json` (ADR-0056); a host without OpenSSL 3 gets a warning and checks the checksums only. `MF_VERSION=0.2.0` installs a given release, and `MF_DOWNLOAD_URL` a copy of the release files on your own https server, which then also serves updates.
 
 On the first start the server creates its CA and its own certificate for `SERVER_NAMES` in the `serverdata` volume, and `db-certs` the certificates of the database link in `dbcerts`. A name added to `SERVER_NAMES` later gets a new server certificate at the next start.
 
 ## Administrator and first agent
 
-While no user exists, the server prints a one-time setup link in its log (ADR-0057). Open it to choose the administrator's name and password; you are then signed in, with a site `main` to add servers to. The link works once and for 24 hours. To print a new one:
+The installer prints a one-time setup link, and so does the server in its log while no user exists (ADR-0057). Open it to choose the administrator's name and password; you are then signed in, with a site `main` to add servers to. The link works once and for 24 hours. To print a new one, run the installer again or, from `/opt/monitorflow`:
 
 ```
 docker compose -f deploy/docker-compose.yml exec server monitorflow-server setup-link
@@ -117,9 +125,9 @@ In **Administration, Server update** (global administrators):
 
 The update is audited (`server.update`). The page follows it, keeps the last status while the server and the web interface restart, and shows the result; reload the page afterwards to get the new web interface. Agents and relays reconnect by themselves.
 
-A deployment built from a checkout updates the same way: the first update switches it to the published images.
+A deployment built from a checkout ([below](#from-a-checkout)) updates the same way: the first update switches it to the published images.
 
-The updater changes images only. When a release changes `docker-compose.yml` itself, its notes say so; update the file by hand (`git pull`) and run `docker compose -f deploy/docker-compose.yml up -d --wait`.
+The updater changes images only. When a release changes `docker-compose.yml` itself, its notes say so: run the installer again, which updates the file. From a checkout: `git pull`, then `docker compose -f deploy/docker-compose.yml up -d --wait`.
 
 ### When an update fails
 
@@ -153,12 +161,16 @@ To serve releases to several offline servers, copy the release files to a web se
 
 ### From a checkout
 
-Without the updater, or to run your own builds:
+To run your own builds instead of the published images, you need Docker with the compose and buildx plugins (the images use BuildKit features):
 
 ```
-git pull
+git clone https://github.com/Kidoly/monitorflow.git && cd monitorflow
+cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
+# Set DOMAIN, SERVER_NAMES and POSTGRES_PASSWORD (openssl rand -hex 24).
 docker compose -f deploy/docker-compose.yml up -d --build --wait
 ```
+
+The first build compiles the server and the web interface, which takes several minutes. To update, `git pull` and run the last command again.
 
 The server applies database migrations when it starts. Remove the `*_IMAGE` lines from `deploy/.env` first if an update had pinned published images; going back to a build older than the release you ran is a downgrade, which the database refuses.
 

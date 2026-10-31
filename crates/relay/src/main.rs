@@ -18,6 +18,7 @@ use monitorflow_relay::forward::{ForwardSettings, Forwarder};
 use monitorflow_relay::listener::{self, CrlCache, CrlSettings, Services, TlsPublisher};
 use monitorflow_relay::mirror;
 use monitorflow_relay::mirror::task::{MirrorSettings, MirrorTask};
+use monitorflow_relay::names;
 use monitorflow_relay::renew::{RenewProxy, RenewSettings};
 use monitorflow_relay::self_update;
 use tokio::net::TcpListener;
@@ -74,18 +75,19 @@ async fn main() -> anyhow::Result<()> {
 
     let (trigger, stop) = shutdown::channel();
     shutdown::on_signals(trigger).context("cannot install signal handlers")?;
-    let enroll = EnrollSettings::relay(&config);
+    let (hostname, reported) = tokio::task::spawn_blocking(names::local).await?;
+    let enroll = EnrollSettings {
+        hostname,
+        server_names: reported,
+        ..EnrollSettings::relay(&config)
+    };
     let identity = match enroll::ensure_identity(&enroll, Backoff::default(), stop.clone()).await {
         Ok(identity) => identity,
         Err(EnrollError::Shutdown) => return Ok(()),
         Err(error) => return Err(error).context("no usable relay identity"),
     };
-    let names = listener::server_names(&identity).map_err(anyhow::Error::msg)?;
-    anyhow::ensure!(
-        !names.is_empty(),
-        "the relay certificate names no DNS name or IP address, so agents cannot verify this relay; create a relay token with --server-name, remove the identity files and enroll again"
-    );
-    tracing::info!(peer = %identity.id, ?names, not_after = ?identity.not_after, "identity loaded");
+    let server_names = listener::server_names(&identity).map_err(anyhow::Error::msg)?;
+    tracing::info!(peer = %identity.id, names = ?server_names, not_after = ?identity.not_after, "identity loaded");
     let relay_id = identity.peer_id().to_owned();
 
     let (renewal, identities) = Renewal::new(
@@ -93,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
         config.tls_paths(),
         identity,
     );
-    tokio::spawn(renewal.run(stop.clone()));
+    tokio::spawn(renewal.awaiting_names(names::lacks_names).run(stop.clone()));
     let ca_certs = monitorflow_common::tls::load_certs(&config.tls_paths().ca_cert)
         .context("loading the CA certificate")?;
     let commands = self_update::start(&relay_id, ca_certs, &config.data_dir, stop.clone());
@@ -106,6 +108,12 @@ async fn main() -> anyhow::Result<()> {
     // mirrors start with a public URL (ADR-0037).
     let (mirror_reports, served_mirrors) = watch::channel(RelayMirrors::default());
     tokio::spawn(control.with_mirrors(served_mirrors).run(stop.clone()));
+
+    // The relay shows online over its own stream while it waits: agents and
+    // mirrors need names that an administrator confirmed (ADR-0066).
+    let Some(server_names) = names::confirmed(identities.clone(), stop.clone()).await else {
+        return Ok(());
+    };
 
     let crl = CrlSettings::for_upstream(&config.upstream_url);
     let started = TlsPublisher::start(crl, identities.clone(), Backoff::default(), stop.clone())
@@ -144,7 +152,8 @@ async fn main() -> anyhow::Result<()> {
     if config.mirror.enabled {
         // Mirroring is secondary to monitoring: a busy port or a bad
         // mirror directory must not stop agent forwarding (ADR-0034).
-        if let Err(error) = start_mirrors(&config, stop.clone(), mirror_reports).await {
+        let url = public_mirror_url(&config, &server_names);
+        if let Err(error) = start_mirrors(&config, url, stop.clone(), mirror_reports).await {
             tracing::error!(
                 error = format!("{error:#}"),
                 "mirrors disabled; agent forwarding continues"
@@ -221,11 +230,19 @@ fn self_update(config: &std::path::Path, step: Option<SelfUpdateStep>) -> anyhow
     Ok(())
 }
 
+/// `mirror.public_url`, or the mirror listener at the relay's first name
+/// (ADR-0066).
+fn public_mirror_url(config: &RelayConfig, server_names: &[String]) -> Option<String> {
+    let derived = || names::mirror_url(server_names, config.mirror_listen_addr.port());
+    config.mirror.public_url.clone().or_else(derived)
+}
+
 /// Starts the mirror listener and the sync loop (ADR-0034). Fails without
 /// spawning anything if the directory, listener or sync client cannot be
 /// set up.
 async fn start_mirrors(
     config: &RelayConfig,
+    public_url: Option<String>,
     stop: Shutdown,
     reports: watch::Sender<RelayMirrors>,
 ) -> anyhow::Result<()> {
@@ -235,8 +252,8 @@ async fn start_mirrors(
         .with_context(|| format!("cannot prepare {}", config.mirror_dir().display()))?;
     let mut task = MirrorTask::new(MirrorSettings::from_config(config))
         .context("cannot build the mirror sync client")?;
-    match &config.mirror.public_url {
-        Some(url) => task = task.with_reports(url.clone(), reports),
+    match public_url {
+        Some(url) => task = task.with_reports(url, reports),
         None => tracing::warn!(
             "mirror.public_url is not set: the server keeps pointing this relay's agents at its own mirrors"
         ),
@@ -280,15 +297,36 @@ mod tests {
         config
     }
 
+    #[test]
+    fn the_mirror_url_comes_from_the_configuration_or_the_first_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = relay_config(dir.path(), "0.0.0.0:7480".parse().unwrap());
+        let names = ["relay1.example".to_owned()];
+        assert_eq!(
+            public_mirror_url(&config, &names).as_deref(),
+            Some("http://relay1.example:7480")
+        );
+        config.mirror.public_url = Some("http://mirror.example".into());
+        assert_eq!(
+            public_mirror_url(&config, &names).as_deref(),
+            Some("http://mirror.example")
+        );
+    }
+
     #[tokio::test]
     async fn a_busy_mirror_port_is_an_error_not_a_panic() {
         let dir = tempfile::tempdir().unwrap();
         let taken = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let config = relay_config(dir.path(), taken.local_addr().unwrap());
         let (_trigger, stop) = shutdown::channel();
-        let error = start_mirrors(&config, stop, watch::channel(RelayMirrors::default()).0)
-            .await
-            .unwrap_err();
+        let error = start_mirrors(
+            &config,
+            None,
+            stop,
+            watch::channel(RelayMirrors::default()).0,
+        )
+        .await
+        .unwrap_err();
         assert!(
             format!("{error:#}").contains("binding the mirror listener"),
             "{error:#}"
@@ -303,9 +341,14 @@ mod tests {
         let mut config = relay_config(dir.path(), "127.0.0.1:0".parse().unwrap());
         config.mirror_dir = Some(file.join("mirrors"));
         let (_trigger, stop) = shutdown::channel();
-        let error = start_mirrors(&config, stop, watch::channel(RelayMirrors::default()).0)
-            .await
-            .unwrap_err();
+        let error = start_mirrors(
+            &config,
+            None,
+            stop,
+            watch::channel(RelayMirrors::default()).0,
+        )
+        .await
+        .unwrap_err();
         assert!(format!("{error:#}").contains("cannot prepare"), "{error:#}");
     }
 
@@ -314,9 +357,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = relay_config(dir.path(), "127.0.0.1:0".parse().unwrap());
         let (trigger, stop) = shutdown::channel();
-        start_mirrors(&config, stop, watch::channel(RelayMirrors::default()).0)
-            .await
-            .unwrap();
+        start_mirrors(
+            &config,
+            None,
+            stop,
+            watch::channel(RelayMirrors::default()).0,
+        )
+        .await
+        .unwrap();
         assert!(dir.path().join("mirrors/apt").is_dir());
         trigger.fire();
     }

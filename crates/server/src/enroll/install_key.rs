@@ -2,13 +2,14 @@
 //! each under its own host name, until it expires, reaches its host limit
 //! or is revoked. A key has the token format of ADR-0007, so installers
 //! take it where they take a token; only the SHA-256 of its secret is
-//! stored, in `install_keys`.
+//! stored, in `install_keys`. A relay's key enrolls one relay, under its
+//! host name, whose names an administrator confirms (ADR-0066).
 
 use std::net::IpAddr;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use monitorflow_common::tls::{EnrollmentToken, Fingerprint};
+use monitorflow_common::tls::{EnrollmentToken, Fingerprint, PeerRole};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
@@ -16,6 +17,8 @@ use super::token::{self, Creator, TokenError};
 use super::EnrollError;
 
 pub const DEFAULT_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+/// A relay's command is pasted once, soon after it is created.
+pub const RELAY_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 pub const MIN_TTL: Duration = Duration::from_secs(60 * 60);
 pub const MAX_TTL: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 /// Largest host limit; no limit is `None`.
@@ -34,6 +37,9 @@ const ID_LOCK: i64 = 0x6d66_6964; // "mfid"
 /// What a new key allows.
 #[derive(Debug, Clone)]
 pub struct KeyRequest {
+    /// `Agent`, or `Relay` for a key of one host without approval, as the
+    /// administrator confirms the relay anyway.
+    pub role: PeerRole,
     pub site_id: Uuid,
     pub ttl: Duration,
     /// Hosts the key may enroll; `None` for no limit.
@@ -45,6 +51,17 @@ pub struct KeyRequest {
 
 impl KeyRequest {
     fn validate(&self) -> Result<(), TokenError> {
+        let relay = self.role == PeerRole::Relay;
+        if self.role == PeerRole::Server {
+            return Err(TokenError::Invalid(
+                "install keys enroll agents and relays".into(),
+            ));
+        }
+        if relay && (self.max_hosts != Some(1) || self.require_approval) {
+            return Err(TokenError::Invalid(
+                "a relay's install key works for one host, without approval".into(),
+            ));
+        }
         if !(MIN_TTL..=MAX_TTL).contains(&self.ttl) {
             return Err(TokenError::Invalid(format!(
                 "validity must be between {} hour and {} days",
@@ -84,8 +101,8 @@ pub async fn create(
     let mut tx = pool.begin().await?;
     let (id, expires_at): (Uuid, DateTime<Utc>) = sqlx::query_as(
         "INSERT INTO install_keys (key_hash, site_id, created_by, expires_at, max_hosts,
-                                   require_approval)
-         VALUES ($1, $2, $3, now() + make_interval(secs => $4), $5, $6)
+                                   require_approval, role)
+         VALUES ($1, $2, $3, now() + make_interval(secs => $4), $5, $6, $7)
          RETURNING id, expires_at",
     )
     .bind(token::hash(&key).as_slice())
@@ -94,6 +111,7 @@ pub async fn create(
     .bind(request.ttl.as_secs_f64())
     .bind(request.max_hosts.map(|n| n as i32))
     .bind(request.require_approval)
+    .bind(request.role.as_str())
     .fetch_one(&mut *tx)
     .await?;
     let (actor_kind, actor_id) = request.creator.actor();
@@ -106,6 +124,7 @@ pub async fn create(
             target: Some(("install_key", &id.to_string())),
             details: serde_json::json!({
                 "site_id": request.site_id,
+                "role": request.role.as_str(),
                 "expires_at": expires_at,
                 "max_hosts": request.max_hosts,
                 "require_approval": request.require_approval,
@@ -127,13 +146,16 @@ pub async fn create(
 pub(super) struct Consumed {
     pub key_id: Uuid,
     pub token_id: Uuid,
+    /// `agent` or `relay`, as tokens store it.
+    pub role: String,
     pub peer_id: String,
     pub site_id: Uuid,
 }
 
-/// Uses the key with hash `key_hash` for the agent `hostname`, in `tx`:
+/// Uses the key with hash `key_hash` for the peer `hostname`, in `tx`:
 /// takes back the ID of the same host if it was removed from the key's
-/// site (ADR-0062), otherwise picks a new unique ID from the host name;
+/// site (ADR-0062), otherwise picks a new unique ID of its role from the
+/// host name;
 /// records the enrollment as a used token of the key's site, counts it,
 /// and puts the host in `pending_hosts` when the key asks for approval.
 /// `None` when no usable key has that hash.
@@ -144,8 +166,8 @@ pub(super) async fn consume(
     source: Option<IpAddr>,
 ) -> Result<Option<Consumed>, EnrollError> {
     // Concurrent uses wait on the row lock, then see the new host_count.
-    let key: Option<(Uuid, Uuid, Option<Uuid>, bool)> = sqlx::query_as(
-        "SELECT id, site_id, created_by, require_approval FROM install_keys
+    let key: Option<(Uuid, Uuid, Option<Uuid>, bool, String)> = sqlx::query_as(
+        "SELECT id, site_id, created_by, require_approval, role FROM install_keys
          WHERE key_hash = $1 AND revoked_at IS NULL AND expires_at > now()
            AND (max_hosts IS NULL OR host_count < max_hosts)
          FOR UPDATE",
@@ -153,7 +175,7 @@ pub(super) async fn consume(
     .bind(key_hash.as_slice())
     .fetch_optional(&mut **tx)
     .await?;
-    let Some((key_id, site_id, created_by, require_approval)) = key else {
+    let Some((key_id, site_id, created_by, require_approval, role)) = key else {
         return Ok(None);
     };
     if hostname.trim().is_empty() {
@@ -175,9 +197,9 @@ pub(super) async fn consume(
         .execute(&mut **tx)
         .await?;
     let base = peer_id_from_hostname(hostname);
-    let peer_id = match removed_id(tx, site_id, hostname, &base).await? {
+    let peer_id = match removed_id(tx, &role, site_id, hostname, &base).await? {
         Some(id) => id,
-        None => new_id(tx, &base).await?,
+        None => new_id(tx, &role, &base).await?,
     };
 
     // A hash of a secret nobody holds: the row exists only as a record.
@@ -185,7 +207,7 @@ pub(super) async fn consume(
     let token_id: Uuid = sqlx::query_scalar(
         "INSERT INTO enrollment_tokens (token_hash, role, peer_id, site_id, created_by,
                                         expires_at, used_at, used_by_peer_id, install_key_id)
-         VALUES ($1, 'agent', $2, $3, $4, now() + interval '1 second', now(), $2, $5)
+         VALUES ($1, $6, $2, $3, $4, now() + interval '1 second', now(), $2, $5)
          RETURNING id",
     )
     .bind(token::hash(&unusable).as_slice())
@@ -193,6 +215,7 @@ pub(super) async fn consume(
     .bind(site_id)
     .bind(created_by)
     .bind(key_id)
+    .bind(&role)
     .fetch_one(&mut **tx)
     .await?;
     sqlx::query("UPDATE install_keys SET host_count = host_count + 1 WHERE id = $1")
@@ -215,20 +238,34 @@ pub(super) async fn consume(
     Ok(Some(Consumed {
         key_id,
         token_id,
+        role,
         peer_id,
         site_id,
     }))
 }
 
-/// The ID of the server last removed from `site_id` with this host name
-/// or ID: enrolling the host again brings that row back instead of adding
-/// a second one. Not a host already waiting for approval.
+/// The ID of the server or relay last removed from `site_id` with this
+/// host name or ID: enrolling the host again brings that row back instead
+/// of adding a second one. Not a host already waiting for approval.
 async fn removed_id(
     tx: &mut Transaction<'_, Postgres>,
+    role: &str,
     site_id: Uuid,
     hostname: &str,
     base: &str,
 ) -> Result<Option<String>, EnrollError> {
+    if role == "relay" {
+        return Ok(sqlx::query_scalar(
+            "SELECT peer_id FROM relays
+             WHERE site_id = $1 AND revoked_at IS NOT NULL AND lower(peer_id) = $2
+             ORDER BY revoked_at DESC
+             LIMIT 1",
+        )
+        .bind(site_id)
+        .bind(base)
+        .fetch_optional(&mut **tx)
+        .await?);
+    }
     Ok(sqlx::query_scalar(
         "SELECT s.peer_id FROM servers s
          WHERE s.site_id = $1 AND s.revoked_at IS NOT NULL
@@ -245,19 +282,25 @@ async fn removed_id(
 }
 
 /// `base`, or `base` with the first free suffix.
-async fn new_id(tx: &mut Transaction<'_, Postgres>, base: &str) -> Result<String, EnrollError> {
+async fn new_id(
+    tx: &mut Transaction<'_, Postgres>,
+    role: &str,
+    base: &str,
+) -> Result<String, EnrollError> {
+    let table = if role == "relay" { "relays" } else { "servers" };
     for n in 1..=MAX_SUFFIX {
         let candidate = with_suffix(base, n);
         // Any trace of the ID counts, revoked or pending, in any case:
         // a key never gives a new host an ID that was ever given out.
-        let taken: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM servers WHERE lower(peer_id) = $1)
+        let taken: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS (SELECT 1 FROM {table} WHERE lower(peer_id) = $1)
                  OR EXISTS (SELECT 1 FROM certificates
-                            WHERE peer_role = 'agent' AND lower(peer_id) = $1)
+                            WHERE peer_role = $2 AND lower(peer_id) = $1)
                  OR EXISTS (SELECT 1 FROM enrollment_tokens
-                            WHERE role = 'agent' AND lower(peer_id) = $1)",
-        )
+                            WHERE role = $2 AND lower(peer_id) = $1)"
+        ))
         .bind(&candidate)
+        .bind(role)
         .fetch_one(&mut **tx)
         .await?;
         if !taken {
@@ -346,6 +389,7 @@ mod tests {
     #[test]
     fn requests_are_validated() {
         let request = |ttl, max_hosts| KeyRequest {
+            role: PeerRole::Agent,
             site_id: Uuid::nil(),
             ttl,
             max_hosts,

@@ -20,6 +20,8 @@
 #   MF_MIRROR_URL    relay only: the http(s) URL this relay's agents reach
 #                    its mirror listener at, like http://relay1.example.com:7480;
 #                    turns on the relay's copy of the mirrors (ADR-0034).
+#   MF_MIRROR=1      relay only: the same, at the first of the relay's
+#                    confirmed names on port 7480 (ADR-0066).
 #   MF_VERSION       release to install from GitHub, like 0.2.0; latest by
 #                    default.
 #   MF_DOWNLOAD_URL  https URL of a directory holding the release files,
@@ -80,6 +82,7 @@ MF_PURGE=${MF_PURGE:-}
 MF_REQUIRE_SIGNATURE=${MF_REQUIRE_SIGNATURE:-}
 MF_ALLOW_UNSIGNED=${MF_ALLOW_UNSIGNED:-}
 MF_MIRROR_URL=${MF_MIRROR_URL:-}
+MF_MIRROR=${MF_MIRROR:-}
 MF_ALLOW_COMMANDS=${MF_ALLOW_COMMANDS:-}
 
 # Public keys that sign releases (ADR-0053), filled in from
@@ -247,7 +250,8 @@ install_sudoers() {
 }
 
 # Writes relay.toml as docs/deploy-relay.md shows it: the upstream, the
-# enrollment endpoint when given, and the mirror copy with MF_MIRROR_URL.
+# enrollment endpoint when given, and the mirror copy with MF_MIRROR_URL
+# or MF_MIRROR.
 write_relay_config() {
     {
         printf '# MonitorFlow relay (docs/deploy-relay.md), written by install.sh.\n'
@@ -256,6 +260,8 @@ write_relay_config() {
         [ -z "$enroll_url" ] || printf 'enroll_url = "%s"\n' "$enroll_url"
         if [ -n "$MF_MIRROR_URL" ]; then
             printf '\n[mirror]\nenabled = true\npublic_url = "%s"\n' "$MF_MIRROR_URL"
+        elif [ "$MF_MIRROR" = 1 ]; then
+            printf '\n[mirror]\nenabled = true\n'
         fi
     } >"$tmp/relay.toml"
     install -o root -g "$RUN_USER" -m 0640 "$tmp/relay.toml" "$CONF"
@@ -319,6 +325,7 @@ case $MF_SUMS_SHA256 in
         MF_SUMS_SHA256=$(printf '%s' "$MF_SUMS_SHA256" | tr 'A-F' 'a-f')
         ;;
 esac
+[ -z "$MF_MIRROR" ] || [ "$MF_ROLE" = relay ] || die "MF_MIRROR is for relays (MF_ROLE=relay)"
 if [ -n "$MF_MIRROR_URL" ]; then
     [ "$MF_ROLE" = relay ] || die "MF_MIRROR_URL is for relays (MF_ROLE=relay)"
     case $MF_MIRROR_URL in
@@ -360,7 +367,7 @@ fi
 upstream_url=
 enroll_url=
 if [ -f "$CONF" ]; then
-    [ -z "$MF_SERVER$MF_ENROLL$MF_MIRROR_URL" ] || say "keeping the existing $CONF: MF_SERVER, MF_ENROLL and MF_MIRROR_URL are not used"
+    [ -z "$MF_SERVER$MF_ENROLL$MF_MIRROR_URL$MF_MIRROR" ] || say "keeping the existing $CONF: MF_SERVER, MF_ENROLL, MF_MIRROR_URL and MF_MIRROR are not used"
 else
     [ -n "$MF_SERVER" ] || die "MF_SERVER is required: the host:port of the server or relay the $MF_ROLE connects to"
     upstream_url=$(to_url "$MF_SERVER" MF_SERVER 7443)

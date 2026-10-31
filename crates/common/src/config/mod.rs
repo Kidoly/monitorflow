@@ -783,8 +783,9 @@ pub struct RelayMirrorConfig {
 }
 
 const MIN_MIRROR_SYNC_INTERVAL: u64 = 60;
-/// Default of `mirror.max_snapshot_bytes`, 256 GiB.
-pub const DEFAULT_MIRROR_MAX_SNAPSHOT_BYTES: u64 = 256 << 30;
+/// Default of `mirror.max_snapshot_bytes`, 512 GiB: above the largest
+/// repository of the server's catalog (ADR-0067).
+pub const DEFAULT_MIRROR_MAX_SNAPSHOT_BYTES: u64 = 512 << 30;
 const MAX_MIRROR_DOWNLOADS: usize = 64;
 
 impl Default for RelayMirrorConfig {

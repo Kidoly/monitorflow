@@ -81,7 +81,8 @@ export function AddMirror({ onAdded, onClose }: { onAdded: (name: string) => voi
         {data.disk
           ? `${formatBytes(data.disk.free_bytes)} free of ${formatBytes(data.disk.total_bytes)} on this server. `
           : ""}
-        A mirror syncs every day and keeps a snapshot of each sync.
+        A mirror syncs every day and keeps a snapshot of each sync. Relays set to serve mirrors copy it too, and need
+        the same space.
       </p>
       <DataTable
         dense

@@ -1,7 +1,7 @@
 # ADR-0067: Mirrors in the production compose
 
 Date: 2026-10-31
-Status: accepted; amends ADR-0030 and ADR-0056
+Status: accepted; amends ADR-0030, ADR-0034, ADR-0056 and ADR-0065
 
 ## Context
 
@@ -30,7 +30,7 @@ Rejected:
 
 ### Storage
 
-`mirrors` is its own volume, mounted at the default `mirror_dir`, `/var/lib/monitorflow/server/mirrors`, in the server, so no setting changes. It sits over the directory of the same name in `serverdata`, whose agent release cache the server fills again at the update installing this compose file (ADR-0056, step 7). The updater mounts it at `/serverdata/mirrors`, so backups keep what they kept: the signing key and the keyring, without the repositories (ADR-0058). `mirrors/tools` joins the exclusions.
+`mirrors` is its own volume, mounted at the default `mirror_dir`, `/var/lib/monitorflow/server/mirrors`, in the server, so no setting changes. It sits over the directory of the same name in `serverdata`, whose agent release cache it hides: see "Existing installs". The updater mounts it at `/serverdata/mirrors`, so backups keep what they kept: the signing key and the keyring, without the repositories (ADR-0058). `mirrors/tools` joins the exclusions.
 
 The compose file publishes `MIRROR_PORT` (7480) and sets `mirror_public_url` to `http://DOMAIN:MIRROR_PORT`, or `MIRROR_PUBLIC_URL`, so the sources of agents work without a setting.
 
@@ -38,11 +38,23 @@ The compose file publishes `MIRROR_PORT` (7480) and sets `mirror_public_url` to 
 
 The release workflow builds and pushes `monitorflow-mirror` like the other images, and `images.json` names it under `mirror`, so the signature covers it. It is optional when read: a release from before this ADR has no such key. `MIRROR_IMAGE` in `deploy/.env` joins the pins, unset for a local build. The updater pulls it, pins it, rolls it back with the others and recreates `mirror` with `server` and `web`, when the compose file has the service: one from before this ADR does not, and an update must not fail for that. A running sync is interrupted and its mirror synced again at the next interval.
 
+### Existing installs
+
+Running the server installer again takes an install to this compose file, and it is what the release notes must point to (`docs/releasing.md`). Three things are its job, as a compose file changes outside the updater:
+
+- It requires `mirror` in `images.json`, like the other images, and pins it at install.
+- On an install from before this ADR, it pulls and pins `MIRROR_IMAGE` before anything else. An updater older than this ADR would not, and the new compose file cannot start `mirror` without it. An image the install has pinned already stays the updater's. This covers any image a later release adds.
+- It refreshes the compose file after the update, so the updater has cached the agent release in the directory the new volume then hides. On the first start with the volume, the installer imports the release again. If that fails it warns, and hosts can still install from GitHub.
+
+It also checks `MIRROR_PORT` with the other ports. The mirror tools need no file of the compose bundle: their image holds everything.
+
 ### Adding a mirror in the interface
 
 `GET /api/mirrors/catalog` lists the distributions an administrator can add, with an estimate of their size, the free space of the disk of `mirror_dir` and whether the tools answer. `POST /api/mirrors` with `{"distribution": "debian-13"}` adds one. There is no form: anything outside the list stays the CLI's `mirror add`.
 
 A distribution is every repository its hosts need, one mirror each, because a host needs them together: the release, updates and security for Debian and Ubuntu, BaseOS and AppStream for Rocky and AlmaLinux. They are for amd64, synced daily, with a snapshot after each sync. Ubuntu leaves out `restricted`, several hundred GiB of kernel modules in `-updates`, and `multiverse`. Mirrors are created in one step, and the scheduler starts them within a minute, under `max_concurrent_syncs`.
+
+Relays with the mirroring checkbox (ADR-0066) copy every mirror added here, so the checkbox and the page say so, in the same sizes. Their `mirror.max_snapshot_bytes` default goes from 256 to 512 GiB: `ubuntu-22.04-updates` alone is about 270 GiB.
 
 The estimates are constants in `mirror::catalog`, added up from the upstream package indexes and rounded up. A live estimate would need upstream at the moment the page opens, and would change little.
 
@@ -62,8 +74,8 @@ Everything else is done by the first add. The signing key is created if there is
 ## Consequences
 
 - Mirrors work out of the box: three clicks in the interface, and no step on the host. The CI compose job proves it with a small signed upstream, real tools, and real apt and dnf clients installing from the result. The catalog's URLs and sizes are checked by hand, not in CI: a real sync takes hours and hundreds of GiB.
-- The compose file gains a service, a volume and a published port. As ADR-0056 says, a release that needs another compose file must say so: this one's notes must. Until that file is updated, the server works as before and "Add a mirror" says the tools are not running.
-- An updater older than this ADR ignores `mirror` in `images.json`, so the first update to this release leaves `MIRROR_IMAGE` unset. The next update pins it. An operator who takes the new compose file sooner sets it from `images.json`.
+- The compose file gains a service, a volume and a published port. As ADR-0056 says, a release that needs another compose file must say so: this one's notes must. Until the installer has run again, the server works as before and "Add a mirror" says the tools are not running.
+- An operator who runs from a checkout rather than the installer takes the new compose file by hand: `git pull`, then `up -d --build`, or `MIRROR_IMAGE` from `images.json`. Agent releases are cached again at the next update.
 - Snapshots accumulate, as ADR-0030 said: without contents indexes a published snapshot costs tens of MiB of metadata and hardlinks a day, and packages removed upstream stay in the pool. Retention needs the list of snapshots in use and is still to do. Meanwhile the free space shown when adding a mirror is what an administrator has to watch.
 - The size estimates age. They are rounded up, and the check is against them, not against the real need, so a disk can still fill up during a sync; the run then fails with the tool's error.
 - Only amd64 is in the catalog. arm64 hosts need `mirror add`.

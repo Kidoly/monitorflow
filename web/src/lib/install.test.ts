@@ -10,8 +10,8 @@ import {
   isHttpsOrigin,
   isSafeUrl,
   isServerAddress,
-  isMirrorUrl,
   linuxInstallCommand,
+  relayAddress,
   relayInstallCommand,
   uninstallCommand,
   windowsInstallCommand,
@@ -160,8 +160,8 @@ describe("install commands", () => {
     expect(text(relayInstallCommand(target(), "github", ORIGIN))).toBe(
       `curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_ROLE=relay MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
     );
-    expect(text(relayInstallCommand(target(), "custom", ORIGIN, "http://relay1.example:7480"))).toBe(
-      `curl -fsSL https://files.example/mf/0.2.0/install.sh \\\n  | sudo MF_ROLE=relay MF_MIRROR_URL=http://relay1.example:7480 MF_DOWNLOAD_URL=https://files.example/mf/0.2.0 MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
+    expect(text(relayInstallCommand(target(), "custom", ORIGIN, true))).toBe(
+      `curl -fsSL https://files.example/mf/0.2.0/install.sh \\\n  | sudo MF_ROLE=relay MF_MIRROR=1 MF_DOWNLOAD_URL=https://files.example/mf/0.2.0 MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
     );
     const central = text(relayInstallCommand(target(), "central", ORIGIN));
     expect(central).toContain(`echo "${INSTALLER}  $f" | sha256sum -c`);
@@ -174,9 +174,15 @@ describe("install commands", () => {
     expect(unavailable(relayInstallCommand(target({ install: install({ central: null }) }), "central", ORIGIN))).toContain(
       "Server update",
     );
-    expect(isMirrorUrl("http://relay1.example:7480")).toBe(true);
-    expect(isMirrorUrl("https://[2001:db8::1]:7480/")).toBe(true);
-    for (const bad of ["ftp://x", "http://a b", "http://x?y", "http://x;rm"]) expect(isMirrorUrl(bad)).toBe(false);
+  });
+
+  it("brackets a relay's IPv6 address for the agents' command", () => {
+    expect(relayAddress("relay1.example")).toBe("relay1.example");
+    expect(relayAddress("10.0.0.5")).toBe("10.0.0.5");
+    expect(relayAddress("2001:db8::5")).toBe("[2001:db8::5]");
+    expect(text(linuxInstallCommand(target(), "github", ORIGIN, relayAddress("2001:db8::5")))).toContain(
+      "MF_SERVER=[2001:db8::5]:7443 MF_ENROLL=mf.example:7445",
+    );
   });
 });
 

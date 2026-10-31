@@ -36,6 +36,8 @@ pub struct RenewalSettings {
     pub backoff: Backoff,
     /// Failures are logged as errors once less than this is left.
     pub urgent_before: Duration,
+    /// Time between two asks of a relay waiting for its names (ADR-0066).
+    pub names_every: Duration,
 }
 
 impl RenewalSettings {
@@ -52,6 +54,7 @@ impl RenewalSettings {
             connect_timeout: tls::DEFAULT_TIMEOUT,
             backoff: Backoff::new(Duration::from_secs(30), Duration::from_secs(30 * 60)),
             urgent_before: Duration::from_secs(24 * 60 * 60),
+            names_every: Duration::from_secs(10),
         }
     }
 }
@@ -83,6 +86,7 @@ pub struct Renewal {
     settings: RenewalSettings,
     paths: TlsPaths,
     identity: watch::Sender<StoredIdentity>,
+    lacks_names: Option<fn(&StoredIdentity) -> bool>,
 }
 
 impl Renewal {
@@ -96,8 +100,17 @@ impl Renewal {
             settings,
             paths,
             identity: tx,
+            lacks_names: None,
         };
         (renewal, rx)
+    }
+
+    /// While `lacks_names` holds for the identity, a relay also asks for
+    /// the names an administrator confirmed (ADR-0066), much more often
+    /// than it checks its certificate's age.
+    pub fn awaiting_names(mut self, lacks_names: fn(&StoredIdentity) -> bool) -> Self {
+        self.lacks_names = Some(lacks_names);
+        self
     }
 
     /// Checks now, then after every wait, until `shutdown`.
@@ -105,7 +118,7 @@ impl Renewal {
         let mut backoff = self.settings.backoff.clone();
         loop {
             let wait = tokio::select! {
-                wait = self.check(&mut backoff) => wait,
+                wait = self.check_all(&mut backoff) => wait,
                 () = shutdown.wait() => return,
             };
             tokio::select! {
@@ -113,6 +126,24 @@ impl Renewal {
                 () = shutdown.wait() => return,
             }
         }
+    }
+
+    /// [`Self::check`], then the names a waiting relay asks for; returns
+    /// the time until the next check.
+    async fn check_all(&self, backoff: &mut Backoff) -> Duration {
+        let wait = self.check(backoff).await;
+        let current = self.identity.borrow().clone();
+        if !self.lacks_names.is_some_and(|lacks| lacks(&current)) {
+            return wait;
+        }
+        match self.request(&current, true).await {
+            Ok(renewed) => {
+                tracing::info!(peer = %renewed.id, "an administrator confirmed the server names; reconnecting with them");
+                self.identity.send_replace(renewed);
+            }
+            Err(error) => tracing::debug!(%error, "no confirmed server names yet"),
+        }
+        wait.min(self.settings.names_every)
     }
 
     /// Renews if due; returns the time until the next check.
@@ -155,6 +186,16 @@ impl Renewal {
     /// One attempt: new key, CSR, `Renew`, checks, then the files. Nothing
     /// is written unless the response matches our CA, key and identity.
     pub async fn renew(&self, current: &StoredIdentity) -> Result<StoredIdentity, RenewError> {
+        self.request(current, false).await
+    }
+
+    /// [`Self::renew`]; with `names_only`, the server answers only with
+    /// names the certificate does not carry yet.
+    async fn request(
+        &self,
+        current: &StoredIdentity,
+        names_only: bool,
+    ) -> Result<StoredIdentity, RenewError> {
         let failed = |e: &dyn std::fmt::Display| RenewError::Failed(e.to_string());
         let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
             .map_err(|e| RenewError::Failed(format!("cannot generate a key: {e}")))?;
@@ -167,7 +208,10 @@ impl Renewal {
             .await
             .map_err(|e| RenewError::Failed(tls::error_chain(&e)))?;
         let mut client = CertificateServiceClient::new(channel);
-        let call = client.renew(RenewRequest { csr_pem });
+        let call = client.renew(RenewRequest {
+            csr_pem,
+            names_only,
+        });
         let response = match tokio::time::timeout(CALL_TIMEOUT, call).await {
             Err(_) => return Err(RenewError::Failed("no answer in time".into())),
             Ok(Err(status)) => return Err(classify(&status)),

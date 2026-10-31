@@ -231,6 +231,7 @@ export function InstallKeyTable({
       cell: (key) => (
         <>
           {hostsWords(key)}
+          {key.role === "relay" && <span className={styles.dim}> · relay</span>}
           {key.require_approval && <span className={styles.dim}> · with approval</span>}
         </>
       ),

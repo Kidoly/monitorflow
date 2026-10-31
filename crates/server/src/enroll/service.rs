@@ -21,7 +21,7 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use super::limiter::{FailureLimiter, UNKNOWN_SOURCE};
-use super::{ca_fingerprint, install_key, server_cert, token};
+use super::{ca_fingerprint, install_key, relay_names, server_cert, token};
 use crate::api::audit::{self, Event};
 use crate::ca::{CertificateAuthority, IssuedCert};
 
@@ -40,7 +40,7 @@ pub enum EnrollError {
     Refused,
     #[error("invalid CSR")]
     InvalidCsr,
-    /// An install key needs the host name an agent sends (ADR-0058).
+    /// An install key needs the host name a peer sends (ADR-0058).
     #[error("no host name with an install key")]
     NoHostname,
     /// The install key's per-minute allowance is spent; not a failure of
@@ -65,7 +65,7 @@ impl From<EnrollError> for Status {
                 Status::invalid_argument("invalid CSR: expected a signed PKCS#10 request in PEM")
             }
             EnrollError::NoHostname => Status::invalid_argument(
-                "install keys enroll agents that send their host name: use a single-use token for relays and older agents",
+                "install keys need a host name, which older agents and relays do not send: use a single-use token, or update them",
             ),
             EnrollError::Busy => {
                 Status::resource_exhausted("too many enrollments with this install key; retry later")
@@ -112,17 +112,33 @@ impl Enroller {
         self.enroll_host(token, csr_pem, "", source).await
     }
 
-    /// Consumes `token` and signs the key of `csr_pem` for the identity the
-    /// token names. A single-use token is tried first; otherwise `token`
-    /// may be an install key, which enrolls an agent under an ID made from
-    /// `hostname` (ADR-0058). Token use, certificate record and audit row
-    /// commit together; on any error the token stays usable. `source` goes
-    /// to the audit log.
+    /// [`Self::enroll_reporting`] without reported names.
     pub async fn enroll_host(
         &self,
         token: &str,
         csr_pem: &str,
         hostname: &str,
+        source: Option<IpAddr>,
+    ) -> Result<Enrolled, EnrollError> {
+        self.enroll_reporting(token, csr_pem, hostname, &[], source)
+            .await
+    }
+
+    /// Consumes `token` and signs the key of `csr_pem` for the identity the
+    /// token names. A single-use token is tried first; otherwise `token`
+    /// may be an install key, which enrolls an agent under an ID made from
+    /// `hostname` (ADR-0058). A relay enrolled by a key, or by a token
+    /// without server names, waits for an administrator to confirm
+    /// `reported`, and its certificate names nothing until then (ADR-0066).
+    /// Token use, certificate record and
+    /// audit row commit together; on any error the token stays usable.
+    /// `source` goes to the audit log.
+    pub async fn enroll_reporting(
+        &self,
+        token: &str,
+        csr_pem: &str,
+        hostname: &str,
+        reported: &[String],
         source: Option<IpAddr>,
     ) -> Result<Enrolled, EnrollError> {
         // Checks that need no database come first, so their answers say
@@ -151,7 +167,7 @@ impl Enroller {
             None => match install_key::consume(&mut tx, &hash, hostname, source).await? {
                 Some(used) => (
                     used.token_id,
-                    "agent".to_owned(),
+                    used.role,
                     used.peer_id,
                     used.site_id,
                     Vec::new(),
@@ -169,8 +185,23 @@ impl Enroller {
         let identity =
             PeerIdentity::new(role, &peer_id).map_err(|e| EnrollError::Internal(e.to_string()))?;
         let prepared = prepare_inventory(&mut tx, role, &peer_id, site_id, parent).await?;
+        if role == PeerRole::Relay {
+            // A key's relay always waits. A token names its relay, so one
+            // without names waits only if the relay has some to propose.
+            let waiting = server_names.is_empty() && (key_id.is_some() || !reported.is_empty());
+            sqlx::query(
+                "UPDATE relays SET pending_names = $2, pending_source = $3, confirmed_names = NULL
+                 WHERE peer_id = $1",
+            )
+            .bind(&peer_id)
+            .bind(waiting.then(|| relay_names::reported(reported)))
+            .bind(source.filter(|_| waiting).map(|ip| ip.to_string()))
+            .execute(&mut *tx)
+            .await?;
+        }
 
-        // Names come from the token, like the identity (ADR-0025).
+        // Names come from the token, like the identity (ADR-0025), never
+        // from the peer (ADR-0066).
         let names = server_cert::parse_names(&server_names);
         let (ca, csr, id) = (self.ca.clone(), csr_pem.to_owned(), identity.clone());
         let cert = tokio::task::spawn_blocking(move || ca.issue(&csr, &id, None, &names))
@@ -363,7 +394,13 @@ impl EnrollService for Enroller {
         }
         let request = request.into_inner();
         let enrolled = match self
-            .enroll_host(&request.token, &request.csr_pem, &request.hostname, source)
+            .enroll_reporting(
+                &request.token,
+                &request.csr_pem,
+                &request.hostname,
+                &request.server_names,
+                source,
+            )
             .await
         {
             Ok(enrolled) => enrolled,

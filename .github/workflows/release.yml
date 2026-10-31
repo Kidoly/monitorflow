@@ -1,7 +1,8 @@
 # Agent release files (ADR-0052): static Linux binaries of the agent and
 # the relay (ADR-0055) for x86_64 and aarch64, the Windows executable and
-# MSI, the installer, the systemd units and sudo rules, VERSION, SHA256SUMS and its signature SHA256SUMS.sig
-# (ADR-0053). A `v*` tag publishes them as a GitHub Release with stable
+# MSI, the installers of the agent and the server with the compose files
+# the latter deploys (ADR-0065), the systemd units and sudo rules, VERSION,
+# SHA256SUMS and its signature SHA256SUMS.sig (ADR-0053). A `v*` tag publishes them as a GitHub Release with stable
 # asset names, so releases/latest/download/<name> works; it signs with the
 # RELEASE_SIGNING_KEY secret, whose public half must be in
 # deploy/release-keys.pem (docs/releasing.md). A manual run, or a pull
@@ -22,7 +23,10 @@ on:
       - .github/workflows/release.yml
       - .github/actions/build-agent-linux/**
       - deploy/install.sh
+      - deploy/install-server.sh
       - deploy/release-files.sh
+      - deploy/docker-compose.yml
+      - deploy/restore.sh
       - deploy/release-keys.pem
       - deploy/systemd/**
       - deploy/sudoers/**

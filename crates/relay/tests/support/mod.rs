@@ -245,6 +245,7 @@ pub async fn enroll_with(
         token: Some(created.token.to_secret_string()),
         enroll_url: enroll_url.into(),
         hostname: String::new(),
+        server_names: Vec::new(),
     };
     let (_trigger, stop) = shutdown::channel();
     let fast = Backoff::new(Duration::from_millis(50), Duration::from_millis(200));

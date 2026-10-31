@@ -226,6 +226,46 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_relay_collects_confirmed_names_and_nothing_else(pool: PgPool) {
+        use monitorflow_server::ca::ServerName;
+        let pki = Pki::new();
+        let waiting = pki.enroll(&pool, PeerRole::Relay, "relay-1").await;
+        assert_eq!(waiting.presented.server_names, []);
+        let renewer = pki.renewer(&pool).with_min_interval(Duration::from_secs(3600));
+        let asked = renewer.renew_names(&waiting.presented, &fresh_csr()).await;
+        assert!(matches!(asked, Err(RenewError::NoNewNames)), "{asked:?}");
+
+        sqlx::query(
+            "UPDATE relays SET confirmed_names = '{relay-1.example,10.0.0.7}', pending_names = NULL",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // It does not wait for the interval that limits renewals.
+        let confirmed = renewer.renew_names(&waiting.presented, &fresh_csr()).await.unwrap();
+        let confirmed = presented(&confirmed.cert.cert_pem);
+        let expected = vec![
+            ServerName::Dns("relay-1.example".into()),
+            ServerName::Ip("10.0.0.7".parse().unwrap()),
+        ];
+        assert_eq!(confirmed.server_names, expected);
+
+        // Nothing new after that, and the limit is back.
+        let asked = renewer.renew_names(&confirmed, &fresh_csr()).await;
+        assert!(matches!(asked, Err(RenewError::NoNewNames)), "{asked:?}");
+        let again = renewer.renew(&confirmed, &fresh_csr()).await;
+        assert!(matches!(again, Err(RenewError::TooSoon(_))), "{again:?}");
+    }
+
+    #[sqlx::test]
+    async fn a_waiting_relay_still_renews_when_due(pool: PgPool) {
+        let pki = Pki::new();
+        let waiting = pki.enroll(&pool, PeerRole::Relay, "relay-1").await;
+        let renewed = pki.renewer(&pool).renew(&waiting.presented, &fresh_csr()).await.unwrap();
+        assert_eq!(presented(&renewed.cert.cert_pem).server_names, []);
+    }
+
+    #[sqlx::test]
     async fn revoked_rows_and_certificates_are_refused(pool: PgPool) {
         let pki = Pki::new();
         let renewer = pki.renewer(&pool);
@@ -351,7 +391,7 @@ db_tests! {
         let channel = tls::connect(&url, identity.client_config().unwrap(), TIMEOUT).await.unwrap();
         let mut client = CertificateServiceClient::new(channel);
         let reply = client
-            .renew(RenewRequest { csr_pem: csr(&KeyPair::generate().unwrap(), "web-02", vec![]) })
+            .renew(RenewRequest { csr_pem: csr(&KeyPair::generate().unwrap(), "web-02", vec![]), names_only: false })
             .await
             .unwrap()
             .into_inner();
@@ -360,7 +400,7 @@ db_tests! {
         assert!(reply.not_after_unix > 0);
         assert_ne!(presented(&reply.cert_pem).serial, agent.presented.serial);
 
-        let status = client.renew(RenewRequest { csr_pem: "x".repeat(32 * 1024) }).await.unwrap_err();
+        let status = client.renew(RenewRequest { csr_pem: "x".repeat(32 * 1024), names_only: false }).await.unwrap_err();
         assert_eq!(status.code(), Code::OutOfRange, "{status:?}");
     }
 }

@@ -217,4 +217,78 @@ describe("RelayPage", () => {
     render(<RelayPage id={ID} me={customerAdmin} />);
     expect(await screen.findByText("Relay not found")).toBeInTheDocument();
   });
+
+  it("offers servers behind the relay, pointing at its first name", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      [`GET /api/relays/${ID}`]: { status: 200, body: detail({ servers: [], server_names: ["relay1.lan", "10.0.0.5"] }) },
+      "GET /api/agent-releases": { status: 200, body: { latest: null, releases: [] } },
+      "POST /api/install-keys": {
+        status: 201,
+        body: {
+          id: "k1",
+          role: "agent",
+          site_id: "site-1",
+          site_name: "paris",
+          customer_id: "c1",
+          customer_name: "acme",
+          created_by_username: "alice",
+          created_at: "2026-10-22T10:00:00Z",
+          expires_at: "2026-11-21T10:00:00Z",
+          max_hosts: null,
+          host_count: 0,
+          require_approval: false,
+          revoked_at: null,
+          state: "active",
+          token: "mfe1.c2VjcmV0.Y2E",
+          upstream_url: "https://mf.example:7443",
+          enroll_url: "https://mf.example:7445",
+          install: {
+            source: "github",
+            source_from_config: false,
+            custom_url: null,
+            custom_url_from_config: false,
+            github_url: "https://example.test/download",
+            central: null,
+          },
+          address: {
+            address: "mf.example",
+            default: "mf.example",
+            names: ["mf.example"],
+            certified: true,
+            upstream_url: "https://mf.example:7443",
+            enroll_url: "https://mf.example:7445",
+          },
+        },
+      },
+    });
+    render(
+      <As user={customerAdmin}>
+        <RelayPage id={ID} me={customerAdmin} />
+      </As>,
+    );
+    await user.click(await screen.findByRole("button", { name: "Add servers behind this relay" }));
+    const linux = await screen.findByLabelText(/^Linux/);
+    expect(linux).toHaveTextContent("MF_SERVER=relay1.lan:7443 MF_ENROLL=mf.example:7445");
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ site_id: "site-1", require_approval: false });
+  });
+
+  it("asks to confirm a waiting relay before anything goes through it", async () => {
+    stubFetch({
+      [`GET /api/relays/${ID}`]: {
+        status: 200,
+        body: detail({ servers: [], server_names: [], pending_names: ["relay1.lan"], pending_source: "203.0.113.9" }),
+      },
+      "GET /api/agent-releases": { status: 200, body: { latest: null, releases: [] } },
+    });
+    render(
+      <As user={customerAdmin}>
+        <RelayPage id={ID} me={customerAdmin} />
+      </As>,
+    );
+    expect(await screen.findByRole("form", { name: "Confirm relay-1" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "relay1.lan" })).toBeChecked();
+    expect(screen.queryByRole("button", { name: "Add servers behind this relay" })).not.toBeInTheDocument();
+  });
 });

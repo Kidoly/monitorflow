@@ -2,7 +2,8 @@
 //! from the database, with their live connection from the gRPC
 //! [`Registry`](crate::grpc::Registry) and the agents they carry, their
 //! version and self-updates; `POST /api/relays/{id}/update` updates one
-//! (ADR-0055).
+//! (ADR-0055); `POST /api/relays/{id}/names` confirms the names of a relay
+//! that waits for them (ADR-0066).
 
 use std::collections::HashMap;
 
@@ -29,6 +30,7 @@ use super::servers::{
     Status, DEFAULT_LIMIT, MAX_LIMIT,
 };
 use super::{ApiError, ApiState};
+use crate::enroll::relay_names::{self, NameError};
 use crate::relay_commands::{self, RelayCommand};
 
 /// Body of `GET /api/relays`, sorted by site name and peer ID.
@@ -61,8 +63,15 @@ pub struct RelayView {
     /// Latest expiry among the relay's unrevoked certificates.
     pub cert_not_after: Option<DateTime<Utc>>,
     /// Names its certificate carries for agents, from its enrollment
-    /// token (ADR-0025); renewal keeps them.
+    /// token (ADR-0025) or confirmed by an administrator (ADR-0066);
+    /// renewal keeps them.
     pub server_names: Vec<String>,
+    /// While the relay waits for an administrator: the names it reported,
+    /// which are not on any certificate; `null` otherwise. It speaks for
+    /// no agent until then (ADR-0066).
+    pub pending_names: Option<Vec<String>>,
+    /// The address it enrolled from, while it waits.
+    pub pending_source: Option<String>,
     /// Servers whose latest connection came through this relay.
     pub server_count: i64,
     /// Agent streams the relay forwards right now.
@@ -110,11 +119,13 @@ const SELECT_RELAYS: &str = "SELECT r.id, r.peer_id, r.name, r.site_id, si.name 
             si.customer_id, c.name AS customer_name, r.created_at, r.last_seen_at,
             r.revoked_at, r.mirror_url, r.mirror_reported_at, r.relay_version,
             r.offline_alerts, si.offline_alerts AS site_offline_alerts,
+            r.pending_names, r.pending_source,
             (SELECT max(ce.not_after) FROM certificates ce
              WHERE ce.peer_role = 'relay' AND ce.peer_id = r.peer_id
                AND ce.revoked_at IS NULL) AS cert_not_after,
             -- The latest consumed token, on the (peer_id, used_at) index.
-            coalesce((SELECT t.server_names FROM enrollment_tokens t
+            coalesce(r.confirmed_names,
+                     (SELECT t.server_names FROM enrollment_tokens t
                       WHERE t.role = 'relay' AND t.peer_id = r.peer_id
                         AND t.used_at IS NOT NULL
                       ORDER BY t.used_at DESC LIMIT 1), '{}') AS server_names,
@@ -141,6 +152,8 @@ struct Row {
     relay_version: Option<String>,
     offline_alerts: bool,
     site_offline_alerts: bool,
+    pending_names: Option<Vec<String>>,
+    pending_source: Option<String>,
     cert_not_after: Option<DateTime<Utc>>,
     server_names: Vec<String>,
     server_count: i64,
@@ -295,6 +308,8 @@ impl RelayView {
             revoked_at: row.revoked_at,
             cert_not_after: row.cert_not_after,
             server_names: row.server_names,
+            pending_names: row.pending_names,
+            pending_source: row.pending_source,
             server_count: row.server_count,
             mirror_url: row.mirror_url,
             mirror_reported_at: row.mirror_reported_at,
@@ -397,4 +412,81 @@ pub async fn update(
         commands.dispatch(&peer_id);
     }
     Ok((StatusCode::ACCEPTED, Json(command)))
+}
+
+/// Body of `POST /api/relays/{id}/names`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfirmNames {
+    /// The names for its certificate, in order of preference: those it
+    /// reported that the administrator kept, and any added.
+    pub names: Vec<String>,
+}
+
+/// `POST /api/relays/{id}/names`: administrators of the relay's customer
+/// confirm the names of a relay waiting for them (ADR-0066). The relay can
+/// then speak for its site's agents, and collects a certificate with these
+/// names within seconds. 409 if it is not waiting, or a name is another's.
+pub async fn confirm_names(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    request: Result<Json<ConfirmNames>, JsonRejection>,
+) -> Result<StatusCode, ApiError> {
+    let id = parse_id(&id)?;
+    let mut tx = state.pool.begin().await?;
+    let relay: Option<(Uuid, String, bool, Option<Vec<String>>)> = sqlx::query_as(
+        "SELECT site_id, peer_id, revoked_at IS NOT NULL, pending_names FROM relays
+         WHERE id = $1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    authorize_admin(&user, relay.as_ref().map(|r| r.0))?;
+    let (site_id, peer_id, revoked, reported) = relay.ok_or(ApiError::NotFound)?;
+    if revoked {
+        return Err(ApiError::Conflict("the relay is revoked".into()));
+    }
+    let Some(reported) = reported else {
+        return Err(ApiError::Conflict(
+            "the relay is not waiting for names".into(),
+        ));
+    };
+    let request = body(request)?;
+    let settings = state
+        .enrollment
+        .as_deref()
+        .ok_or_else(|| ApiError::Internal("enrollment is not configured".into()))?;
+    let address = super::public_address::current(&state.pool, settings).await?;
+    let mut server_names = address.names;
+    server_names.push(address.address);
+    let names = relay_names::check(&request.names, &server_names).map_err(|e| match e {
+        NameError::ServerName(_) => ApiError::Conflict(e.to_string()),
+        _ => ApiError::Invalid(e.to_string()),
+    })?;
+    relay_names::check_free(&mut tx, site_id, &names)
+        .await?
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+    sqlx::query(
+        "UPDATE relays SET confirmed_names = $2, pending_names = NULL, pending_source = NULL
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&names)
+    .execute(&mut *tx)
+    .await?;
+    let actor = user.id.to_string();
+    audit::record(
+        &mut *tx,
+        Event {
+            actor_kind: "user",
+            actor_id: &actor,
+            action: "relay.confirm_names",
+            target: Some(("relay", &id.to_string())),
+            details: json!({ "peer_id": peer_id, "names": names, "reported": reported }),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
 }

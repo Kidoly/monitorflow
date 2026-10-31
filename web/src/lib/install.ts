@@ -118,22 +118,21 @@ export function linuxInstallCommand(
 
 /**
  * The relay's command, as in docs/deploy-relay.md: the same installer with
- * `MF_ROLE=relay`, connecting to the server; `mirrorUrl` turns on its copy
- * of the mirrors.
+ * `MF_ROLE=relay`, connecting to the server; `mirror` turns on its copy of
+ * the mirrors, served at its first confirmed name (ADR-0066).
  */
 export function relayInstallCommand(
   target: InstallTarget,
   source: InstallSource,
   origin: string,
-  mirrorUrl = "",
+  mirror = false,
 ): Command {
-  const mirror = mirrorUrl.trim() ? [`MF_MIRROR_URL=${mirrorUrl.trim()}`] : [];
-  return installerCommand(target, source, origin, "", ["MF_ROLE=relay", ...mirror]);
+  return installerCommand(target, source, origin, "", ["MF_ROLE=relay", ...(mirror ? ["MF_MIRROR=1"] : [])]);
 }
 
-/** Whether `url` can be a relay's mirror URL in a shell command, as the installer accepts it. */
-export function isMirrorUrl(url: string): boolean {
-  return /^https?:\/\/[A-Za-z0-9.:_/[\]-]+$/.test(url.trim());
+/** A relay's name as agents' commands take it: an IPv6 address in brackets. */
+export function relayAddress(name: string): string {
+  return name.includes(":") ? `[${name}]` : name;
 }
 
 function installerCommand(

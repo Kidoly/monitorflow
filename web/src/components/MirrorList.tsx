@@ -252,7 +252,8 @@ function MirrorList() {
       />
       {data.mirrors.length === 0 ? (
         <EmptyState title="No mirrors yet" actions={!adding && addButton}>
-          Keep a copy of a distribution here, and your servers update from it instead of the Internet.
+          Keep a copy of a distribution here, and your servers update from it instead of the Internet. Relays set to serve
+          mirrors copy it for their sites.
         </EmptyState>
       ) : rows.length === 0 ? (
         <EmptyState>No mirror matches these filters.</EmptyState>
@@ -269,7 +270,9 @@ function MirrorList() {
           rowActions={(m) => <MirrorButtons mirror={m} jobs={jobs} />}
         />
       )}
-      <p className={styles.note}>Open a mirror for its snapshots and run history.</p>
+      <p className={styles.note}>
+        Open a mirror for its snapshots and run history. Relays set to serve mirrors copy all of them.
+      </p>
     </div>
   );
 }
