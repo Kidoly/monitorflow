@@ -18,7 +18,10 @@ for the run (and dropped afterwards, failure included):
 6. `token create` a relay with `--server-name 127.0.0.1` and an agent `e2e-02`,
    start the relay and the agent pointed at it, and see `e2e-02` online with
    `via_relay` set; SIGTERM the relay and see the agent go offline;
-7. SIGTERM the server and the agents and check they exit with status 0, and
+7. add a relay with a relay install key: it shows online and waiting, has no
+   listener, and after its names are confirmed through the API it starts
+   its listener and reports its mirrors at the confirmed name;
+8. SIGTERM the server and the agents and check they exit with status 0, and
    that no log contains a token secret or the password.
 
 Child processes are killed if the test fails, and their logs are printed.

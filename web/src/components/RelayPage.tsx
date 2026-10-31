@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
+import { Button } from "@/components/ui/Button";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { type Fact, FactsBox } from "@/components/ui/FactsBox";
@@ -14,6 +15,7 @@ import { StatusLabel } from "@/components/ui/StatusLabel";
 import {
   ApiError,
   type AttachedServer,
+  type CreatedInstallKey,
   type Incident,
   type Me,
   type RelayCommand,
@@ -27,17 +29,20 @@ import { updateAvailable } from "@/lib/agentVersion";
 import { certificateState } from "@/lib/certificates";
 import { formatDay, formatMinute, formatWhen } from "@/lib/clock";
 import { formatOs, formatValue, unitOf } from "@/lib/format";
-import { administersCustomer } from "@/lib/me";
+import { relayAddress } from "@/lib/install";
+import { administersCustomer, administersEverything } from "@/lib/me";
 import { metricTitle } from "@/lib/metrics";
 import { RELAYS_PATH, serverHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 import { UUID } from "@/lib/uuid";
 
+import { ConfirmRelayNames } from "./AddRelay";
 import { AdminLayout } from "./AdminLayout";
 import styles from "./AdminPages.module.css";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
 import { CertificateCell, relayStatus } from "./RelayList";
+import { NewInstallKey } from "./TokensAdmin";
 
 /** RFC 5280 reasons, as the revoke route takes them (ADR-0029). */
 const REASONS: { value: RevocationReason; label: string }[] = [
@@ -149,6 +154,51 @@ function UpdateRelay({ relay, latest, me, onQueued }: { relay: RelayDetail; late
   );
 }
 
+/**
+ * "Add servers behind this relay": a new install command of the relay's
+ * site, already pointing at the relay's first name (ADR-0066).
+ */
+function AddServers({ relay, me }: { relay: RelayDetail; me: Me }) {
+  const [created, setCreated] = useState<CreatedInstallKey | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function create() {
+    setBusy(true);
+    setError(null);
+    try {
+      setCreated(await api.createInstallKey({ site_id: relay.site_id, require_approval: false }));
+    } catch (e) {
+      setError(`Creating the install command failed. ${describeError(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (created) {
+    return (
+      <NewInstallKey
+        installKey={created}
+        editable={administersEverything(me)}
+        relay={relayAddress(relay.server_names[0] ?? "")}
+        onDone={() => setCreated(null)}
+      />
+    );
+  }
+  return (
+    <div className={styles.buttons}>
+      <Button variant="k" disabled={busy} onClick={() => void create()}>
+        Add servers behind this relay
+      </Button>
+      {error && (
+        <p className={styles.formError} role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** The worst open incident, else why an offline server is quiet. */
 function Problem({ row, now }: { row: Row; now: Date }) {
   const [worst, ...others] = row.incidents;
@@ -224,7 +274,10 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
     },
     { label: "Version", value: relay.relay_version ?? "—" },
     ...(relay.last_update ? [{ label: "Self-update", value: updateText(relay.last_update) }] : []),
-    { label: "Server names", value: relay.server_names.join(", ") || "—" },
+    {
+      label: "Server names",
+      value: relay.pending_names ? "Waiting for confirmation" : relay.server_names.join(", ") || "—",
+    },
     ...(certificate ? [{ label: "Certificate serial", value: certificate.serial, mono: true }] : []),
     { label: "Enrolled", value: formatMinute(new Date(relay.created_at)) },
     ...(relay.revoked_at
@@ -245,6 +298,7 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
   ];
 
   const connected = rows.filter((row) => row.status === "online").length;
+  const canAdminister = !relay.revoked_at && administersCustomer(me, relay.customer_id);
   const columns: Column<Row>[] = [
     {
       key: "host",
@@ -302,6 +356,7 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
           canAdminister={administersCustomer(me, relay.customer_id)}
         />
       )}
+      {relay.pending_names && canAdminister && <ConfirmRelayNames relay={relay} onConfirmed={refresh} />}
       <FactsBox columns={2} facts={facts} />
       <section className={styles.section} aria-labelledby="attached-title">
         <div className={styles.sectionHead}>
@@ -312,8 +367,15 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
             {rows.length} {rows.length === 1 ? "server" : "servers"}, {connected} connected now
           </span>
         </div>
+        {canAdminister && !relay.pending_names && relay.server_names.length > 0 && (
+          <AddServers relay={relay} me={me} />
+        )}
         {rows.length === 0 ? (
-          <p className={styles.sectionNote}>No agent has connected through this relay yet.</p>
+          <p className={styles.sectionNote}>
+            {relay.pending_names
+              ? "Agents can connect through this relay once its names are confirmed."
+              : "No agent has connected through this relay yet."}
+          </p>
         ) : (
           <DataTable bare label={`Servers connecting through ${relay.peer_id}`} columns={columns} rows={rows} rowKey={(row) => row.id} />
         )}

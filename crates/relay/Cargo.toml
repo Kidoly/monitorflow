@@ -38,6 +38,8 @@ ruzstd.workspace = true
 lzma-rust2.workspace = true
 bzip2.workspace = true
 quick-xml.workspace = true
+# The addresses a relay reports for confirmation (ADR-0066).
+if-addrs.workspace = true
 
 [dev-dependencies]
 monitorflow-server = { path = "../server" }

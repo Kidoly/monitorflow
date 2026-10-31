@@ -236,6 +236,7 @@ impl Server {
             token: token.into(),
             csr_pem: csr_pem.into(),
             hostname: hostname.into(),
+            server_names: Vec::new(),
         };
         EnrollServiceClient::new(channel)
             .enroll(request)
@@ -308,10 +309,27 @@ async fn install_key(
     require_approval: bool,
 ) -> String {
     let request = KeyRequest {
+        role: PeerRole::Agent,
         site_id: site(pool).await,
         ttl: install_key::DEFAULT_TTL,
         max_hosts,
         require_approval,
+        creator: Creator::Cli,
+    };
+    let created = install_key::create(pool, pki.fingerprint(), &request)
+        .await
+        .unwrap();
+    created.key.to_secret_string().expose().to_owned()
+}
+
+/// A new key of the site `paris` for one relay.
+async fn relay_key(pki: &Pki, pool: &PgPool) -> String {
+    let request = KeyRequest {
+        role: PeerRole::Relay,
+        site_id: site(pool).await,
+        ttl: install_key::RELAY_TTL,
+        max_hosts: Some(1),
+        require_approval: false,
         creator: Creator::Cli,
     };
     let created = install_key::create(pool, pki.fingerprint(), &request)
@@ -849,6 +867,118 @@ db_tests! {
         assert_eq!(servers[0]["site_name"], "paris");
         assert_eq!(servers[0]["os_family"], "debian");
         assert_eq!(servers[0]["status"], "online");
+    }
+
+    #[sqlx::test]
+    async fn a_relay_key_enrolls_one_relay_that_waits_for_its_names(pool: PgPool) {
+        let pki = Pki::new();
+        let key = relay_key(&pki, &pool).await;
+        let csr = csr(&KeyPair::generate().unwrap(), "monitorflow-relay", vec![]);
+        let reported = ["Relay1.Example".to_owned(), "*.example".to_owned(), "127.0.0.1".to_owned(), "10.0.0.5".to_owned()];
+        let source = Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9)));
+        let enrolled = pki
+            .enroller(&pool)
+            .enroll_reporting(&key, &csr, "Relay1.Example", &reported, source)
+            .await
+            .unwrap();
+        assert_eq!(enrolled.identity.role(), PeerRole::Relay);
+        assert_eq!(enrolled.identity.id(), "relay1.example");
+
+        // What the relay said is kept apart from any certificate, cleaned.
+        let (pending, from, confirmed): (Option<Vec<String>>, Option<String>, Option<Vec<String>>) = sqlx::query_as(
+            "SELECT pending_names, pending_source, confirmed_names FROM relays WHERE peer_id = 'relay1.example'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(pending.unwrap(), ["relay1.example", "10.0.0.5"]);
+        assert_eq!(from.as_deref(), Some("203.0.113.9"));
+        assert_eq!(confirmed, None);
+
+        // A relay's key works once.
+        let error = pki
+            .enroller(&pool)
+            .enroll_reporting(&key, &csr, "relay2", &[], None)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, EnrollError::Refused), "{error:?}");
+        // No key without a host name, from a relay too old to send one.
+        let key = relay_key(&pki, &pool).await;
+        let error = pki.enroller(&pool).enroll(&key, &csr, None).await.unwrap_err();
+        assert!(matches!(error, EnrollError::NoHostname), "{error:?}");
+    }
+
+    #[sqlx::test]
+    async fn a_waiting_relay_speaks_for_no_agent(pool: PgPool) {
+        let pki = Pki::new();
+        let agent = enroll_as(&pki, &pool, PeerRole::Agent, "web-01", "paris").await.unwrap();
+        let csr = csr(&KeyPair::generate().unwrap(), "monitorflow-relay", vec![]);
+        pki.enroller(&pool)
+            .enroll_host(&relay_key(&pki, &pool).await, &csr, "relay1", None)
+            .await
+            .unwrap();
+        let id = agent.identity.id();
+        assert!(!db::relay_may_speak_for(&pool, "relay1", id).await.unwrap());
+        let child = PeerIdentity::new(PeerRole::Agent, id).unwrap();
+        assert!(!db::relay_route_allowed(&pool, &["relay1"], &child).await.unwrap());
+
+        sqlx::query("UPDATE relays SET confirmed_names = '{relay1.example}', pending_names = NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(db::relay_may_speak_for(&pool, "relay1", id).await.unwrap());
+        assert!(db::relay_route_allowed(&pool, &["relay1"], &child).await.unwrap());
+    }
+
+    #[sqlx::test]
+    async fn relay_keys_give_new_ids_and_bring_back_a_removed_relay(pool: PgPool) {
+        let pki = Pki::new();
+        let csr = csr(&KeyPair::generate().unwrap(), "monitorflow-relay", vec![]);
+        let enroll = |key: String| {
+            let (pki, pool, csr) = (&pki, &pool, &csr);
+            async move {
+                let enrolled = pki.enroller(pool).enroll_host(&key, csr, "relay1", None).await.unwrap();
+                enrolled.identity.id().to_owned()
+            }
+        };
+        assert_eq!(enroll(relay_key(&pki, &pool).await).await, "relay1");
+        // A second host of that name is another relay.
+        assert_eq!(enroll(relay_key(&pki, &pool).await).await, "relay1-2");
+        sqlx::query("UPDATE relays SET revoked_at = now() WHERE peer_id = 'relay1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(enroll(relay_key(&pki, &pool).await).await, "relay1");
+        let restored: (bool, bool) = sqlx::query_as(
+            "SELECT revoked_at IS NULL, pending_names IS NOT NULL FROM relays WHERE peer_id = 'relay1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(restored, (true, true));
+    }
+
+    #[sqlx::test]
+    async fn a_token_with_names_ignores_what_the_relay_reports(pool: PgPool) {
+        let pki = Pki::new();
+        let site_id = site(&pool).await;
+        let request = TokenRequest {
+            role: PeerRole::Relay,
+            server_names: vec!["relay1.example".into()],
+            ..request(site_id, "relay1")
+        };
+        let created = token::create(&pool, pki.fingerprint(), &request).await.unwrap();
+        let csr = csr(&KeyPair::generate().unwrap(), "relay1", vec![]);
+        let reported = ["evil.example".to_owned()];
+        pki.enroller(&pool)
+            .enroll_reporting(created.token.to_secret_string().expose(), &csr, "relay1", &reported, None)
+            .await
+            .unwrap();
+        let pending: Option<Vec<String>> = sqlx::query_scalar("SELECT pending_names FROM relays")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(pending, None);
     }
 
     #[sqlx::test]

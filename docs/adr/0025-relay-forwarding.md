@@ -1,7 +1,7 @@
 # ADR-0025: Relay forwarding model
 
 Date: 2026-10-19
-Status: accepted; buffering and sequence numbers amended by ADR-0027
+Status: accepted; buffering and sequence numbers amended by ADR-0027; who proposes a relay's names amended by ADR-0066
 
 ## Context
 

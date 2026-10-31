@@ -20,8 +20,13 @@ message EnrollRequest {
   string csr_pem = 2;
   // Host name of an enrolling agent. With a reusable install key it
   // becomes the agent's ID, made unique by the server (ADR-0058); a
-  // single-use token ignores it. Empty for relays.
+  // single-use token ignores it. Relays send it too: a relay's install key
+  // takes the relay's ID from it (ADR-0066).
   string hostname = 3;
+  // DNS names and IP addresses a relay finds on its host. Only proposals:
+  // none reaches a certificate until an administrator confirms it, and a
+  // token that names server names ignores them (ADR-0066).
+  repeated string server_names = 4;
 }
 
 message EnrollResponse {

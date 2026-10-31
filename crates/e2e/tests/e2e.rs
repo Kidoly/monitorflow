@@ -19,6 +19,7 @@
 
 mod support;
 
+use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -321,13 +322,96 @@ key = "{data}/tls/key.pem"
         |s| s["status"] == "offline",
     );
 
+    // Relays › Add relay (ADR-0066): the relay enrolls with a key, waits
+    // for its names, and starts serving once an administrator confirms.
+    let sites = http(api, "GET", "/api/sites", Some(&cookie), None)
+        .unwrap()
+        .json();
+    let site = sites["sites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|site| site["name"] == SITE)
+        .expect("the site of the tokens");
+    let request = serde_json::json!({"site_id": site["id"], "role": "relay"});
+    let created = http(
+        api,
+        "POST",
+        "/api/install-keys",
+        Some(&cookie),
+        Some(&request.to_string()),
+    )
+    .unwrap();
+    assert_eq!(created.status, 201, "relay key: {}", created.body);
+    let relay_key = created.json()["token"].as_str().unwrap().to_owned();
+    let (added_listen, added_mirrors) = (free_addr(), free_addr());
+    let added_config = dir.path().join("relay-added.toml");
+    std::fs::write(
+        &added_config,
+        format!(
+            "listen_addr = \"{added_listen}\"\nupstream_url = \"https://{grpc}\"\nenroll_url = \"https://{enroll}\"\ndata_dir = \"{}\"\nheartbeat_interval = 1\nenrollment_token = \"{relay_key}\"\nmirror_listen_addr = \"{added_mirrors}\"\n[mirror]\nenabled = true\nupstream_url = \"http://{mirrors}\"\n",
+            dir.path().join("relay-added").display()
+        ),
+    )
+    .unwrap();
+    let mut added = Process::spawn(
+        "relay (added)",
+        command(&binaries.relay, &added_config),
+        &dir.path().join("relay-added.log"),
+        &logs,
+    );
+    let relays = || {
+        http(api, "GET", "/api/relays", Some(&cookie), None)
+            .ok()
+            .map(|response| response.json())
+    };
+    let waiting = wait_for("the added relay online and waiting", timeout, || {
+        relays()?["relays"]
+            .as_array()?
+            .iter()
+            .find(|relay| relay["pending_names"].is_array() && relay["status"] == "online")
+            .cloned()
+    });
+    added.assert_running();
+    assert_eq!(waiting["server_names"], serde_json::json!([]));
+    assert!(TcpStream::connect(added_listen).is_err(), "no listener yet");
+    let added_id = waiting["id"].as_str().unwrap();
+    let names = serde_json::json!({"names": ["relay2.e2e.example"]}).to_string();
+    let confirmed = http(
+        api,
+        "POST",
+        &format!("/api/relays/{added_id}/names"),
+        Some(&cookie),
+        Some(&names),
+    )
+    .unwrap();
+    assert_eq!(confirmed.status, 204, "confirm: {}", confirmed.body);
+    // Asked every 10 s; the mirror report comes from the new certificate.
+    let mirror_url = format!("http://relay2.e2e.example:{}", added_mirrors.port());
+    wait_for(
+        "the added relay's mirror report",
+        Duration::from_secs(30),
+        || {
+            relays()?["relays"]
+                .as_array()?
+                .iter()
+                .find(|relay| relay["id"] == added_id && relay["mirror_url"] == mirror_url.as_str())
+                .cloned()
+        },
+    );
+    wait_for("the added relay's listener", timeout, || {
+        TcpStream::connect(added_listen).ok()
+    });
+    added.assert_running();
+    assert!(added.terminate(Duration::from_secs(10)).success());
+
     assert!(server.terminate(Duration::from_secs(10)).success());
     assert!(agent.terminate(Duration::from_secs(10)).success());
     assert!(relayed.terminate(Duration::from_secs(10)).success());
 
     let all = logs.all();
     assert!(!all.contains(secret), "a log contains the token secret");
-    for token in [&relay_token, &relayed_token] {
+    for token in [&relay_token, &relayed_token, &relay_key] {
         let secret = token.split('.').nth(1).unwrap();
         assert!(!all.contains(secret), "a log contains a token secret");
     }

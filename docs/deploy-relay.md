@@ -5,18 +5,21 @@ A relay forwards the streams of the agents of a site to the central server, buff
 ## Before you start
 
 - A host with systemd, x86_64 or aarch64, that the site's agents reach on port 7443 (and 7480 if it serves mirrors), and that reaches the server on 7443 and 7445.
-- A relay token. Relay tokens name the DNS names or addresses agents use to reach the relay, which go in its certificate; create one on the server:
-
-  ```
-  docker compose exec server monitorflow-server token create --role relay --id relay1-paris \
-    --site paris --server-name relay1.paris.example
-  ```
-
-  Repeat `--server-name` for each name or address. A relay behind another relay adds `--parent-relay <relay id>` (ADR-0028).
 
 ## Quick install
 
-Create a relay token under Admin › Enrollment tokens (role Relay, with the names agents use to reach it): the panel shows the command below filled in, from the source chosen there (GitHub, this server or a custom URL), with the mirror URL if you give one. By hand:
+Under Relays, choose **Add relay**, pick the site and paste the command on the relay's host. It installs the relay, which finds its host name and addresses and appears on the same page. Tick the names agents reach it at, then **Confirm names**: the relay collects its certificate and starts accepting agents within seconds (ADR-0066). Its page then offers **Add servers behind this relay**, with the install command already pointing at it.
+
+The checkbox in the panel turns on [mirrors](#mirrors). The command works on one host, for a day.
+
+The other way is a relay token, for scripts, a chosen ID or a relay behind another relay: under Add servers › Advanced in the web interface, or on the server:
+
+```
+docker compose exec server monitorflow-server token create --role relay --id relay1-paris \
+  --site paris --server-name relay1.paris.example
+```
+
+Repeat `--server-name` for each name or address; without any, the relay reports its names and waits for confirmation. A relay behind another relay adds `--parent-relay <relay id>` (ADR-0028). The command is then:
 
 ```
 curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
@@ -31,13 +34,14 @@ The installer verifies the release signature and checksums before it changes any
 | `MF_SERVER` | `host:port` of the server (or of the parent relay), port 7443 by default; an https URL works too. Required on the first install |
 | `MF_TOKEN` | The relay token. Required unless the relay is enrolled |
 | `MF_ENROLL` | `host:port` of the server's enrollment listener; by default `MF_SERVER`'s host on port 7445. Set it when `MF_SERVER` is a parent relay |
-| `MF_MIRROR_URL` | The http(s) URL the site's hosts reach this relay's mirror listener at, like `http://relay1.paris.example:7480`. Turns on the copy of the mirrors and agent releases ([Mirrors](#mirrors)) |
+| `MF_MIRROR=1` | Turn on the copy of the mirrors and agent releases ([Mirrors](#mirrors)), served at the relay's first name on port 7480 |
+| `MF_MIRROR_URL` | The same at another http(s) URL the site's hosts reach this relay's mirror listener at, like `http://mirrors.paris.example:7480` |
 | `MF_VERSION`, `MF_DOWNLOAD_URL`, `MF_TIMEOUT`, `MF_REQUIRE_SIGNATURE`, `MF_ALLOW_UNSIGNED` | As for the agent ([Installing the agent](deploy-agent.md#quick-install)) |
 | `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rule; `relay.toml` and the identity stay. Add `MF_PURGE=1` to remove them and the user too |
 
 Running the installer again upgrades the relay in place and keeps its configuration and identity. A relay and an agent can share a host: they use different users, files and units.
 
-Agents of the site then connect to the relay and enroll with the server:
+Agents of the site then connect to the relay and enroll with the server, which is what the relay's page gives:
 
 ```
 curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
@@ -86,7 +90,7 @@ The relay runs as `monitorflow-relay` and needs root for one thing only: replaci
 
 ## Mirrors
 
-With `MF_MIRROR_URL` (or `[mirror] enabled = true` and `public_url`), the relay copies the server's package mirrors and agent releases and serves them on port 7480 (ADR-0034, ADR-0037): agents of the site then download from it. A copy of every mirror can take tens of gigabytes under `/var/lib/monitorflow/relay/mirrors`; `mirror.mirrors` limits it to some.
+With the checkbox of Add relay (`MF_MIRROR=1`, or `[mirror] enabled = true`), the relay copies the server's package mirrors and agent releases and serves them on port 7480 (ADR-0034, ADR-0037): agents of the site then download from it. A copy of every mirror can take tens of gigabytes under `/var/lib/monitorflow/relay/mirrors`; `mirror.mirrors` limits it to some. Which mirrors the server holds is chosen under Mirrors. Agents reach the relay's copy at its first server name on port 7480 unless `mirror.public_url` says otherwise.
 
 ## Self-update
 

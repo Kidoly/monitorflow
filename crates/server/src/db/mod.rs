@@ -79,6 +79,8 @@ pub async fn relay_may_speak_for(
              SELECT 1
              FROM relays r
              WHERE r.peer_id = $1 AND r.revoked_at IS NULL
+               -- Until an administrator confirms it, a relay speaks for itself only.
+               AND r.pending_names IS NULL
                AND r.site_id = COALESCE(
                    (SELECT s.site_id FROM servers s WHERE s.peer_id = $2),
                    (SELECT t.site_id FROM enrollment_tokens t
@@ -116,6 +118,7 @@ pub async fn relay_route_allowed(
          FROM unnest($1::text[]) WITH ORDINALITY AS hop (peer_id, n)
          JOIN relays child ON child.peer_id = hop.peer_id AND child.revoked_at IS NULL
          JOIN relays parent ON parent.id = child.parent_relay_id AND parent.revoked_at IS NULL
+              AND parent.pending_names IS NULL
          WHERE hop.n > 1 AND parent.peer_id = ($1::text[])[hop.n - 1]",
     )
     .bind(relays)
@@ -130,7 +133,8 @@ pub async fn relay_route_allowed(
             "SELECT EXISTS (
                  SELECT 1 FROM relays child
                  JOIN relays parent ON parent.id = child.parent_relay_id
-                 WHERE child.peer_id = $1 AND parent.peer_id = $2 AND parent.revoked_at IS NULL)",
+                 WHERE child.peer_id = $1 AND parent.peer_id = $2 AND parent.revoked_at IS NULL
+                   AND parent.pending_names IS NULL)",
         )
         .bind(origin.id())
         .bind(attached)

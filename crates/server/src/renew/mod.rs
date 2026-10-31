@@ -29,6 +29,7 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::api::audit::{self, Event};
 use crate::ca::{CertificateAuthority, IssuedCert, Serial, ServerName};
+use crate::enroll::server_cert::parse_names;
 
 /// Largest request accepted: a CSR fits in a few KiB.
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
@@ -46,6 +47,9 @@ pub enum RenewError {
     TooSoon(Duration),
     #[error("invalid CSR: expected a signed PKCS#10 request in PEM")]
     InvalidCsr,
+    /// A relay asked for names nobody confirmed yet (ADR-0066).
+    #[error("waiting for an administrator to confirm this relay's server names")]
+    NoNewNames,
     #[error("renewal failed: {0}")]
     Internal(String),
 }
@@ -63,6 +67,7 @@ impl From<RenewError> for Status {
             RenewError::Refused(_) => Status::permission_denied(message),
             RenewError::TooSoon(_) => Status::resource_exhausted(message),
             RenewError::InvalidCsr => Status::invalid_argument(message),
+            RenewError::NoNewNames => Status::failed_precondition(message),
             RenewError::Internal(_) => Status::internal("renewal failed"),
         }
     }
@@ -75,7 +80,8 @@ pub struct PresentedCert {
     pub serial: Serial,
     pub not_after: SystemTime,
     /// DNS names and IP addresses of a relay, copied into its next
-    /// certificate. The CA wrote them from its enrollment token.
+    /// certificate unless an administrator confirmed others (ADR-0066).
+    /// The CA wrote them from its enrollment token or that confirmation.
     pub server_names: Vec<ServerName>,
 }
 
@@ -170,7 +176,18 @@ impl Renewer {
         presented: &PresentedCert,
         csr_pem: &str,
     ) -> Result<Renewed, RenewError> {
-        self.issue_renewal(presented, csr_pem, None).await
+        self.issue_renewal(presented, csr_pem, None, false).await
+    }
+
+    /// [`Self::renew`] only for the names an administrator confirmed and
+    /// `presented` does not carry yet, whatever the renewal interval:
+    /// [`RenewError::NoNewNames`] otherwise (ADR-0066).
+    pub async fn renew_names(
+        &self,
+        presented: &PresentedCert,
+        csr_pem: &str,
+    ) -> Result<Renewed, RenewError> {
+        self.issue_renewal(presented, csr_pem, None, true).await
     }
 
     /// [`Self::renew`] for the peer whose certificate `relay` forwards
@@ -186,6 +203,19 @@ impl Renewer {
         via: Option<&Via>,
         peer_cert: &CertificateDer<'_>,
         csr_pem: &str,
+    ) -> Result<Renewed, RenewError> {
+        self.forwarded(relay, via, peer_cert, csr_pem, false).await
+    }
+
+    /// [`Self::renew_forwarded`], or its [`Self::renew_names`] with
+    /// `names_only`.
+    async fn forwarded(
+        &self,
+        relay: &PeerIdentity,
+        via: Option<&Via>,
+        peer_cert: &CertificateDer<'_>,
+        csr_pem: &str,
+        names_only: bool,
     ) -> Result<Renewed, RenewError> {
         let refused = |why: String| Err(RenewError::Refused(why));
         if relay.role() != PeerRole::Relay {
@@ -214,7 +244,8 @@ impl Renewer {
             return refused(format!("{relay} may not renew for {peer}"));
         }
         let attached = relays.last().copied();
-        self.issue_renewal(&presented, csr_pem, attached).await
+        self.issue_renewal(&presented, csr_pem, attached, names_only)
+            .await
     }
 
     /// The checks of ADR-0010 and the issuance, for `presented` as seen by
@@ -224,6 +255,7 @@ impl Renewer {
         presented: &PresentedCert,
         csr_pem: &str,
         via_relay: Option<&str>,
+        names_only: bool,
     ) -> Result<Renewed, RenewError> {
         let peer = &presented.identity;
         let refused = |why: &str| Err(RenewError::Refused(why.to_owned()));
@@ -265,6 +297,13 @@ impl Renewer {
             Some(_) => {}
         }
         check_inventory(&mut tx, peer).await?;
+        let names = confirmed_names(&mut tx, peer)
+            .await?
+            .unwrap_or_else(|| presented.server_names.clone());
+        let new_names = !same_names(&names, &presented.server_names);
+        if names_only && !new_names {
+            return Err(RenewError::NoNewNames);
+        }
         let too_soon: Option<bool> = sqlx::query_scalar(
             "SELECT max(issued_at) > now() - make_interval(secs => $3)
              FROM certificates WHERE peer_role = $1 AND peer_id = $2",
@@ -274,12 +313,11 @@ impl Renewer {
         .bind(self.min_interval.as_secs_f64())
         .fetch_one(&mut *tx)
         .await?;
-        if too_soon == Some(true) {
+        if too_soon == Some(true) && !new_names {
             return Err(RenewError::TooSoon(self.min_interval));
         }
 
         let (ca, csr, identity) = (self.ca.clone(), csr_pem.to_owned(), peer.clone());
-        let names = presented.server_names.clone();
         let cert = tokio::task::spawn_blocking(move || ca.issue(&csr, &identity, None, &names))
             .await
             .map_err(|e| RenewError::Internal(e.to_string()))?
@@ -320,6 +358,28 @@ impl Renewer {
     }
 }
 
+/// The names an administrator confirmed for a relay (ADR-0066); `None` for
+/// other peers and for relays that have their names from a token.
+async fn confirmed_names(
+    tx: &mut Transaction<'_, Postgres>,
+    peer: &PeerIdentity,
+) -> Result<Option<Vec<ServerName>>, RenewError> {
+    if peer.role() != PeerRole::Relay {
+        return Ok(None);
+    }
+    let names: Option<Option<Vec<String>>> =
+        sqlx::query_scalar("SELECT confirmed_names FROM relays WHERE peer_id = $1")
+            .bind(peer.id())
+            .fetch_optional(&mut **tx)
+            .await?;
+    Ok(names.flatten().map(|names| parse_names(&names)))
+}
+
+/// Whether two lists hold the same names, in any order.
+fn same_names(a: &[ServerName], b: &[ServerName]) -> bool {
+    a.iter().all(|name| b.contains(name)) && b.iter().all(|name| a.contains(name))
+}
+
 /// A revoked inventory row refuses the renewal, as it refuses the stream
 /// (ADR-0008). The row is locked until commit, so a revocation cannot slip
 /// in between. An agent may have no row yet if it never said Hello: its
@@ -351,7 +411,12 @@ impl CertificateService for Renewer {
     ) -> Result<Response<RenewResponse>, Status> {
         let presented = PresentedCert::from_request(&request)?;
         let peer = presented.identity.clone();
-        let result = Renewer::renew(self, &presented, &request.into_inner().csr_pem).await;
+        let request = request.into_inner();
+        let result = if request.names_only {
+            self.renew_names(&presented, &request.csr_pem).await
+        } else {
+            Renewer::renew(self, &presented, &request.csr_pem).await
+        };
         self.respond(&peer, result)
     }
 
@@ -363,8 +428,15 @@ impl CertificateService for Renewer {
         let via = Via::from_metadata(request.metadata())?;
         let request = request.into_inner();
         let cert = CertificateDer::from(request.peer_cert_der);
-        let result =
-            Renewer::renew_forwarded(self, &relay, via.as_ref(), &cert, &request.csr_pem).await;
+        let result = self
+            .forwarded(
+                &relay,
+                via.as_ref(),
+                &cert,
+                &request.csr_pem,
+                request.names_only,
+            )
+            .await;
         self.respond(&relay, result)
     }
 }

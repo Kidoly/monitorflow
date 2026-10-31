@@ -265,6 +265,103 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_relay_key_works_once_for_a_day(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let (customer, site) = customer_site(&pool, "acme").await;
+        let cookie = h.user("boss", Role::Administrator, GrantScope::Customer(customer)).await;
+        let request = json!({ "site_id": site, "role": "relay" });
+        let (status, created, _) = h.call("POST", "/api/install-keys", Some(&cookie), Some(request)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        assert_eq!(created["role"], "relay");
+        assert_eq!(created["max_hosts"], 1);
+        assert_eq!(created["require_approval"], false);
+        let ttl = chrono::DateTime::parse_from_rfc3339(created["expires_at"].as_str().unwrap()).unwrap()
+            - chrono::DateTime::parse_from_rfc3339(created["created_at"].as_str().unwrap()).unwrap();
+        assert_eq!(ttl.num_hours(), 24);
+        let (_, list, _) = h.call("GET", "/api/install-keys", Some(&cookie), None).await;
+        assert_eq!(list["keys"][0]["role"], "relay");
+    }
+
+    #[sqlx::test]
+    async fn an_administrator_confirms_what_a_relay_reported(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let (customer, site) = customer_site(&pool, "acme").await;
+        let (_, other_site) = customer_site(&pool, "other").await;
+        let cookie = h.user("boss", Role::Administrator, GrantScope::Customer(customer)).await;
+        let relay: Uuid = sqlx::query_scalar(
+            "INSERT INTO relays (peer_id, site_id, name, pending_names, pending_source)
+             VALUES ('relay1', $1, 'relay1', '{relay1.example,10.0.0.5}', '203.0.113.9') RETURNING id",
+        )
+        .bind(site)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO relays (peer_id, site_id, name, confirmed_names)
+             VALUES ('theirs', $1, 'theirs', '{theirs.example,10.0.0.5}')",
+        )
+        .bind(other_site)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (status, listed, _) = h.call("GET", "/api/relays", Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK, "{listed}");
+        assert_eq!(listed["relays"][0]["pending_names"], json!(["relay1.example", "10.0.0.5"]));
+        assert_eq!(listed["relays"][0]["pending_source"], "203.0.113.9");
+        assert_eq!(listed["relays"][0]["server_names"], json!([]));
+
+        let uri = format!("/api/relays/{relay}/names");
+        let confirm = |names: Value| h.call("POST", &uri, Some(&cookie), Some(json!({ "names": names })));
+        for (names, status) in [
+            (json!([]), StatusCode::BAD_REQUEST),
+            (json!(["*.example"]), StatusCode::BAD_REQUEST),
+            (json!(["localhost"]), StatusCode::BAD_REQUEST),
+            // The server's own name, and the name of another site's relay.
+            (json!(["MF.example"]), StatusCode::CONFLICT),
+            (json!(["relay1.example", "theirs.example"]), StatusCode::CONFLICT),
+        ] {
+            let (got, body, _) = confirm(names.clone()).await;
+            assert_eq!(got, status, "{names}: {body}");
+        }
+
+        // A private address is another host on another network; a name added by hand is fine.
+        let (status, body, _) = confirm(json!(["Relay1.example", "10.0.0.5", "added.example"])).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        let (_, detail, _) = h.call("GET", &format!("/api/relays/{relay}"), Some(&cookie), None).await;
+        assert_eq!(detail["server_names"], json!(["relay1.example", "10.0.0.5", "added.example"]));
+        assert_eq!(detail["pending_names"], Value::Null);
+        assert_eq!(detail["pending_source"], Value::Null);
+
+        let (_, _, details) = audit(&pool, "relay.confirm_names").await.remove(0);
+        assert_eq!(details["peer_id"], "relay1");
+        assert_eq!(details["reported"], json!(["relay1.example", "10.0.0.5"]));
+
+        // Once.
+        let (status, body, _) = confirm(json!(["relay1.example"])).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    }
+
+    #[sqlx::test]
+    async fn only_administrators_confirm_names(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let (customer, site) = customer_site(&pool, "acme").await;
+        let relay: Uuid = sqlx::query_scalar(
+            "INSERT INTO relays (peer_id, site_id, name, pending_names)
+             VALUES ('relay1', $1, 'relay1', '{}') RETURNING id",
+        )
+        .bind(site)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let cookie = h.user("op", Role::Operator, GrantScope::Customer(customer)).await;
+        let (status, body, _) = h
+            .call("POST", &format!("/api/relays/{relay}/names"), Some(&cookie), Some(json!({ "names": ["relay1.example"] })))
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+
+    #[sqlx::test]
     async fn an_install_key_is_shown_once_listed_revoked_and_approves_hosts(pool: PgPool) {
         let h = Harness::new(&pool);
         let (customer, site) = customer_site(&pool, "acme").await;

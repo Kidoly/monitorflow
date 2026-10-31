@@ -1,24 +1,23 @@
 "use client";
 
-import { useCallback } from "react";
+import Link from "next/link";
+import { useCallback, useState } from "react";
 
-import { ButtonLink } from "@/components/ui/Button";
+import { Button } from "@/components/ui/Button";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
-import { EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
+import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { type Me, type Relay, api, describeError } from "@/lib/api";
 import { certificateState } from "@/lib/certificates";
 import { daysUntil, formatDay } from "@/lib/clock";
 import { administersCustomer } from "@/lib/me";
-import { TOKENS_PATH, relayHref } from "@/lib/routes";
+import { relayHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
+import { AddRelay, ConfirmRelayNames } from "./AddRelay";
 import { AdminLayout } from "./AdminLayout";
 import styles from "./AdminPages.module.css";
-
-/** Where "New relay token" leads: the token form with Relay chosen. */
-export const NEW_RELAY_TOKEN_HREF = `${TOKENS_PATH}?role=relay`;
 
 /** `/admin/relays/`: every relay the user reads. */
 export function RelayListPage() {
@@ -52,6 +51,8 @@ export function CertificateCell({ notAfter, now }: { notAfter: string | null; no
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export function RelayList({ me }: { me: Me }) {
+  const [adding, setAdding] = useState(false);
+  const [confirmed, setConfirmed] = useState<Relay | null>(null);
   const fetcher = useCallback(async (signal: AbortSignal) => (await api.relays(signal)).relays, []);
   const { data: relays, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher);
   const now = updatedAt ?? new Date();
@@ -85,7 +86,9 @@ export function RelayList({ me }: { me: Me }) {
       key: "names",
       header: "Server names",
       cell: (relay) =>
-        relay.server_names.length > 0 ? (
+        relay.pending_names ? (
+          <Label tone="warn">Waiting for confirmation</Label>
+        ) : relay.server_names.length > 0 ? (
           <span className={styles.mono}>{relay.server_names.join(" · ")}</span>
         ) : (
           <span className={styles.dim}>—</span>
@@ -119,31 +122,54 @@ export function RelayList({ me }: { me: Me }) {
           ) : undefined
         }
         actions={
-          canEnroll && (
-            <ButtonLink variant="k" href={NEW_RELAY_TOKEN_HREF}>
-              New relay token
-            </ButtonLink>
+          canEnroll &&
+          !adding && (
+            <Button variant="k" onClick={() => setAdding(true)}>
+              Add relay
+            </Button>
           )
         }
       />
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
       )}
+      {adding && <AddRelay me={me} onDone={() => setAdding(false)} />}
+      {relays
+        ?.filter((relay) => relay.pending_names && administersCustomer(me, relay.customer_id))
+        .map((relay) => (
+          <ConfirmRelayNames
+            key={relay.id}
+            relay={relay}
+            onConfirmed={() => {
+              setConfirmed(relay);
+              refresh();
+            }}
+          />
+        ))}
+      {confirmed && (
+        <Banner tone="info">
+          {confirmed.peer_id} is ready.{" "}
+          <Link href={relayHref(confirmed.id)}>Add servers behind this relay</Link>
+        </Banner>
+      )}
       {!relays && error ? (
         <ErrorState what="relays" error={describeError(error)} onRetry={refresh} />
       ) : relays?.length === 0 ? (
-        <EmptyState
-          title="No relays yet"
-          actions={
-            canEnroll && (
-              <ButtonLink variant="k" href={NEW_RELAY_TOKEN_HREF}>
-                New relay token
-              </ButtonLink>
-            )
-          }
-        >
-          A relay enrolls with a relay enrollment token, then agents of its site connect through it.
-        </EmptyState>
+        !adding && (
+          <EmptyState
+            title="No relays yet"
+            actions={
+              canEnroll && (
+                <Button variant="k" onClick={() => setAdding(true)}>
+                  Add relay
+                </Button>
+              )
+            }
+          >
+            A relay carries the servers of a site that cannot reach this server directly. It takes one command on one
+            of the site&apos;s hosts.
+          </EmptyState>
+        )
       ) : (
         <DataTable
           label="Relays"

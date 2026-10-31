@@ -1,7 +1,7 @@
 # ADR-0058: Reusable install keys per site
 
 Date: 2026-10-29
-Status: accepted
+Status: accepted; relays use install keys too since ADR-0066
 
 ## Context
 

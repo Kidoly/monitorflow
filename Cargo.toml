@@ -19,6 +19,7 @@ repository = "https://github.com/Kidoly/monitorflow"
 rust-version = "1.99"
 
 [workspace.dependencies]
+if-addrs = "0.15"
 monitorflow-common = { path = "crates/common" }
 monitorflow-sensors = { path = "crates/sensors" }
 monitorflow-ai = { path = "crates/ai" }
