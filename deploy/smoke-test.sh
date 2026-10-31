@@ -116,14 +116,16 @@ add --name fixture-apt --family apt --url http://fixture:8000/apt --distribution
 # With an architecture: the noarch package must still come.
 add --name fixture-dnf --family dnf --url http://fixture:8000/dnf --arch x86_64
 compose exec -T server monitorflow-server mirror key generate >/dev/null
+run_ended() { # mirror-id mirror-name
+    get "mirrors/$1" >"$work/mirror-$2" && jq -e '.last_run.state != "running"' "$work/mirror-$2" >/dev/null
+}
 # Starts a sync of $1 through the API and waits for its end.
 synced() {
     local id code
     id=$(get mirrors | jq -r --arg n "$1" '.mirrors[] | select(.name == $n) | .id')
     code=$(post "mirrors/$id/sync" '')
     [ "$code" = 202 ] || { echo "sync refused: $(cat "$work/answer")" >&2; return 1; }
-    run_ended() { get "mirrors/$id" >"$work/mirror-$1" && jq -e '.last_run.state != "running"' "$work/mirror-$1" >/dev/null; }
-    until_true 180 run_ended "$1" || return 1
+    until_true 180 run_ended "$id" "$1" || return 1
     jq -e '.last_run.state == "succeeded" and .current_snapshot != null' "$work/mirror-$1" >/dev/null
 }
 check "an apt mirror syncs and publishes" synced fixture-apt

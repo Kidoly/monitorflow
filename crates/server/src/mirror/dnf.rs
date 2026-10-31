@@ -32,7 +32,7 @@ pub fn reposync(layout: &Layout, mirror: &Mirror) -> Invocation {
         args.push(format!("--arch={arch}").into());
     }
     // `--arch` is an exact match: a repository is mostly noarch packages.
-    if !mirror.architectures.is_empty() {
+    if !mirror.architectures.is_empty() && !mirror.architectures.iter().any(|a| a == "noarch") {
         args.push("--arch=noarch".into());
     }
     Invocation::new(Tool::Reposync, args)
@@ -81,6 +81,13 @@ mod tests {
             reposync(&layout, &m).to_string(),
             "reposync --repofrompath=mf-m,https://up/debian --repoid=mf-m --download-path=/srv/m/dnf-work/m --norepopath --delete --download-metadata --arch=amd64 --arch=noarch"
         );
+        let listed = Mirror {
+            architectures: vec!["x86_64".into(), "noarch".into()],
+            ..m.clone()
+        };
+        assert!(reposync(&layout, &listed)
+            .to_string()
+            .ends_with(" --arch=x86_64 --arch=noarch"));
         assert_eq!(
             createrepo(&layout, &m).to_string(),
             "createrepo_c --update --workers=4 --general-compress-type=gz /srv/m/dnf-work/m"

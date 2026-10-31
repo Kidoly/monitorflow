@@ -173,4 +173,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck --version && shellcheck deploy/*.sh deploy/docker/*.sh scripts/*.sh
+      - run: shellcheck --version && shellcheck deploy/*.sh deploy/docker/*.sh deploy/mirror-fixture/*.sh scripts/*.sh
