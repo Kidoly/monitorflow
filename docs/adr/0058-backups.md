@@ -36,7 +36,7 @@ It is written next to its final name and renamed, so a listed file is complete.
 
 ### Restore
 
-`deploy/restore.sh FILE` runs `monitorflow-updater restore` in a one-off updater container, with the file mounted read-only. It reads the manifest and refuses a backup taken by a newer server than the image in `.env`. Then it stops `server` and `web`, starts PostgreSQL if needed, drops and creates the database, `pg_restore`s the dump, replaces `serverdata` (keeping the excluded trees), and starts every service with `up --wait`. It holds the updater's lock, so no backup or update runs meanwhile. It works on the deployment the backup came from, and on a fresh install: the server's identity and agents' records come back together, so agents reconnect. The one-line server installer will call it for `--restore`.
+`deploy/restore.sh FILE` runs `monitorflow-updater restore` in a one-off updater container, with the file mounted read-only. It reads the manifest and refuses a backup taken by a newer server than the image in `.env`. Then it stops `server` and `web`, starts PostgreSQL if needed, drops and creates the database, `pg_restore`s the dump, replaces `serverdata` (keeping the excluded trees), and starts every service with `up --wait`. It holds the updater's lock, so no backup or update runs meanwhile. It works on the deployment the backup came from, and on a fresh install: the server's identity and agents' records come back together, so agents reconnect. The one-line server installer calls it for `--restore` (ADR-0065).
 
 The updater still never restores by itself after a failed update (ADR-0056): the page names the backup and the command.
 
