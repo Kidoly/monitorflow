@@ -34,14 +34,28 @@ const LIST_LIMIT: i64 = 100;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRequest {
+    /// `agent` by default. A `relay` key enrolls one relay, whose names an
+    /// administrator confirms (ADR-0066), so it takes no host limit or
+    /// approval.
+    #[serde(default)]
+    pub role: KeyRole,
     pub site_id: Uuid,
-    /// Validity in seconds, one hour to one year; 30 days by default.
+    /// Validity in seconds, one hour to one year; 30 days by default, one
+    /// day for a relay.
     pub ttl_s: Option<u64>,
     /// Hosts the key may enroll; no limit when absent.
     pub max_hosts: Option<u32>,
     /// New hosts wait for an administrator before they appear.
     #[serde(default)]
     pub require_approval: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyRole {
+    #[default]
+    Agent,
+    Relay,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -71,6 +85,8 @@ impl TryFrom<String> for KeyState {
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct KeyView {
     pub id: Uuid,
+    /// `agent` or `relay`.
+    pub role: String,
     pub site_id: Uuid,
     pub site_name: String,
     pub customer_id: Uuid,
@@ -120,7 +136,7 @@ pub struct CreatedKey {
     pub address: super::public_address::PublicAddress,
 }
 
-const SELECT_KEYS: &str = "SELECT k.id, k.site_id, si.name AS site_name, si.customer_id,
+const SELECT_KEYS: &str = "SELECT k.id, k.role, k.site_id, si.name AS site_name, si.customer_id,
             c.name AS customer_name, u.username AS created_by_username, k.created_at,
             k.expires_at, k.max_hosts, k.host_count, k.require_approval, k.revoked_at,
             CASE WHEN k.revoked_at IS NOT NULL THEN 'revoked'
@@ -152,10 +168,9 @@ pub async fn create(
     // Before the key exists, so a failure here does not lose one.
     let install = super::settings::agent_install(&state).await?;
     let address = super::public_address::current(&state.pool, settings).await?;
-    let created = install_key::create(
-        &state.pool,
-        settings.ca_fingerprint,
-        &KeyRequest {
+    let key = match request.role {
+        KeyRole::Agent => KeyRequest {
+            role: PeerRole::Agent,
             site_id,
             ttl: request
                 .ttl_s
@@ -164,8 +179,18 @@ pub async fn create(
             require_approval: request.require_approval,
             creator: Creator::User(user.id),
         },
-    )
-    .await?;
+        KeyRole::Relay => KeyRequest {
+            role: PeerRole::Relay,
+            site_id,
+            ttl: request
+                .ttl_s
+                .map_or(install_key::RELAY_TTL, Duration::from_secs),
+            max_hosts: Some(1),
+            require_approval: false,
+            creator: Creator::User(user.id),
+        },
+    };
+    let created = install_key::create(&state.pool, settings.ca_fingerprint, &key).await?;
     let view = sqlx::query_as(&format!("{SELECT_KEYS} WHERE k.id = $1"))
         .bind(created.id)
         .fetch_one(&state.pool)

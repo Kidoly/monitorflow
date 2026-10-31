@@ -5,8 +5,8 @@
 # Commented-out keys show their default.
 
 # gRPC listener for agents (mTLS). Agents set their upstream_url to this
-# address, under one of the names given with --server-name to the relay's
-# enrollment token.
+# address, under one of the names on the relay's certificate: confirmed in
+# the web interface, or given with --server-name to its enrollment token.
 # listen_addr = "0.0.0.0:7443"
 
 # gRPC endpoint of the central server. Required. Must be https.
@@ -65,7 +65,7 @@ upstream_url = "https://monitorflow.example.com:7443"
 # URL the hosts of this relay's agents reach mirror_listen_addr at, http or
 # https. Reported to the server, which then points those hosts' package
 # sources here instead of at its own mirror_public_url (ADR-0037). Unset,
-# they keep the server's.
+# the relay's first server name on the port of mirror_listen_addr (ADR-0066).
 # public_url = "http://relay.example.com:7480"
 # Seconds between syncs, at least 60.
 # sync_interval = 900

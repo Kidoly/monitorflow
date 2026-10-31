@@ -374,6 +374,10 @@ export interface Relay {
   cert_not_after: string | null;
   /** Names agents use to reach the relay, from its certificate. */
   server_names: string[];
+  /** While it waits for an administrator: the names it reported, on no certificate yet (ADR-0066). */
+  pending_names?: string[] | null;
+  /** The address it enrolled from, while it waits. */
+  pending_source?: string | null;
   /** Servers whose latest connection came through the relay. */
   server_count: number;
   /** Agent streams it forwards right now. */
@@ -907,6 +911,7 @@ export type InstallKeyState = "active" | "expired" | "used_up" | "revoked";
 /** One install key of `GET /api/install-keys`, never with its secret (ADR-0058). */
 export interface InstallKey {
   id: string;
+  role: TokenRole;
   site_id: string;
   site_name: string;
   customer_id: string;
@@ -942,6 +947,8 @@ export interface InstallKeyList {
 
 /** Body of `POST /api/install-keys`. */
 export interface InstallKeyRequest {
+  /** Agents when absent; a `relay` key works for one host, for a day (ADR-0066). */
+  role?: TokenRole;
   site_id: string;
   /** One hour to one year; 30 days when absent. */
   ttl_s?: number;
@@ -1823,6 +1830,10 @@ export const api = {
     request<{ id: string }>("/api/server-update", { method: "POST", body: { version } }),
 
   /** Queues a `self_update` to `version`; customer administrators only (ADR-0053). */
+  /** Confirms the names for a waiting relay's certificate; administrators of its customer (ADR-0066). */
+  confirmRelayNames: (relayId: string, names: string[]) =>
+    request<void>(`/api/relays/${encodeURIComponent(relayId)}/names`, { method: "POST", body: { names } }),
+
   /** Queues a relay self-update; administrators of its customer (ADR-0055). */
   updateRelay: (relayId: string, version: string) =>
     request<RelayCommand>(`/api/relays/${encodeURIComponent(relayId)}/update`, {

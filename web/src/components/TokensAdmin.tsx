@@ -31,7 +31,6 @@ import {
   SOURCE_WORDS,
   isSafeUrl,
   isServerAddress,
-  isMirrorUrl,
   linuxInstallCommand,
   relayInstallCommand,
   windowsInstallCommand,
@@ -63,12 +62,6 @@ export function TokensAdminPage() {
   return <AdminLayout>{(me) => <TokensAdmin me={me} />}</AdminLayout>;
 }
 
-/** `?role=relay` (the relays page's "New relay token") preselects Relay. */
-function initialRole(): TokenRole {
-  if (typeof window === "undefined") return "agent";
-  return new URLSearchParams(window.location.search).get("role") === "relay" ? "relay" : "agent";
-}
-
 async function load(signal: AbortSignal) {
   const [list, keys, { sites }] = await Promise.all([api.tokens(signal), api.installKeys(signal), api.sites(signal)]);
   return { tokens: list.tokens, more: list.next_cursor !== null, sites, ...keys };
@@ -80,8 +73,7 @@ export function TokensAdmin({ me }: { me: Me }) {
   // Held in memory only, until dismissed or the page is left: the API never returns them again.
   const [created, setCreated] = useState<CreatedToken | null>(null);
   const [createdKey, setCreatedKey] = useState<CreatedInstallKey | null>(null);
-  // Relays enroll with single-use tokens only: the relays page links here with `?role=relay`.
-  const [advanced, setAdvanced] = useState(() => initialRole() === "relay");
+  const [advanced, setAdvanced] = useState(false);
   const peerRef = useRef<HTMLInputElement>(null);
   const advancedId = useId();
 
@@ -136,7 +128,7 @@ export function TokensAdmin({ me }: { me: Me }) {
               </Button>
             </div>
             <p className={styles.sectionNote}>
-              A token enrolls one agent once, under the name you choose. Relays always enroll with one.
+              A token enrolls one agent or relay once, under the name you choose. Relays › Add relay needs none.
             </p>
           </section>
           {advanced && (
@@ -190,7 +182,7 @@ function CreateToken({
   onCreated: (token: CreatedToken) => void;
 }) {
   const titleId = useId();
-  const [role, setRole] = useState<TokenRole>(initialRole);
+  const [role, setRole] = useState<TokenRole>("agent");
   const [peerId, setPeerId] = useState("");
   const [siteId, setSiteId] = useState("");
   const [ttl, setTtl] = useState(3600);
@@ -372,19 +364,21 @@ function NewToken({
           )}
         </div>
       </div>
-      {token.role === "agent" ? <InstallCommands token={token} /> : <RelayInstallCommand token={token} />}
+      {token.role === "agent" ? <InstallCommands token={token} /> : <RelayInstallCommand target={token} />}
     </section>
   );
 }
 
-/** A new install command, shown once with the address it connects to. */
-function NewInstallKey({
+/** A new install command, shown once with the address it connects to, through `relay` if given. */
+export function NewInstallKey({
   installKey: created,
   editable,
+  relay = "",
   onDone,
 }: {
   installKey: CreatedInstallKey;
   editable: boolean;
+  relay?: string;
   onDone: () => void;
 }) {
   const titleId = useId();
@@ -404,7 +398,43 @@ function NewInstallKey({
         {key.require_approval ? ", which wait for your approval below" : ""}. If you lose it, create a new one.
       </Banner>
       <ServerAddress value={address} editable={editable} onChange={setAddress} />
-      <InstallCommands token={key} />
+      <InstallCommands token={key} relay={relay} />
+      <div className={styles.buttons}>
+        <Button variant="k" onClick={onDone}>
+          Done
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/** A new relay's command, shown once: the key works on one host, and the relay then waits to be confirmed. */
+export function NewRelayKey({
+  installKey: created,
+  editable,
+  onDone,
+}: {
+  installKey: CreatedInstallKey;
+  editable: boolean;
+  onDone: () => void;
+}) {
+  const titleId = useId();
+  const [address, setAddress] = useState(created.address);
+  const key = { ...created, upstream_url: address.upstream_url, enroll_url: address.enroll_url };
+  return (
+    <section className={cx(styles.panel, styles.created)} aria-labelledby={titleId} aria-live="polite">
+      <div className={styles.panelTitle}>
+        <Label tone="ok">Created</Label>
+        <h2 id={titleId} className={styles.sectionTitle}>
+          Add a relay to {key.site_name} · works until {formatWhen(new Date(key.expires_at), new Date())}
+        </h2>
+      </div>
+      <Banner tone="warn" role="alert">
+        <strong>This command will not be shown again and works on one host.</strong> Paste it on the relay&apos;s host;
+        the relay then appears on this page, and you confirm its names.
+      </Banner>
+      <ServerAddress value={address} editable={editable} onChange={setAddress} />
+      <RelayInstallCommand target={key} />
       <div className={styles.buttons}>
         <Button variant="k" onClick={onDone}>
           Done
@@ -569,13 +599,13 @@ function SourceRadios({
 
 /**
  * Ready-to-paste install commands for an agent token or install key
- * (ADR-0052, ADR-0058), from a chosen source (ADR-0054).
+ * (ADR-0052, ADR-0058), from a chosen source (ADR-0054), through `initialRelay` if given.
  */
-function InstallCommands({ token }: { token: InstallTarget }) {
+function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTarget; relay?: string }) {
   const titleId = useId();
   const sourceName = useId();
   const [source, setSource] = useState<InstallSource>(token.install.source);
-  const [relay, setRelay] = useState("");
+  const [relay, setRelay] = useState(initialRelay);
   const valid = relay.trim() === "" || isServerAddress(relay);
   const through = valid ? relay : "";
   const origin = pageOrigin();
@@ -648,16 +678,15 @@ function InstallCommands({ token }: { token: InstallTarget }) {
 
 /**
  * The relay's ready-to-paste install command (ADR-0055), from the chosen
- * source like the agent's, with the optional mirror URL.
+ * source like the agent's, with mirroring as a checkbox (ADR-0066).
  */
-function RelayInstallCommand({ token }: { token: CreatedToken }) {
+function RelayInstallCommand({ target }: { target: InstallTarget }) {
   const titleId = useId();
   const sourceName = useId();
-  const [source, setSource] = useState<InstallSource>(token.install.source);
-  const [mirror, setMirror] = useState("");
-  const valid = mirror.trim() === "" || isMirrorUrl(mirror);
-  const command = relayInstallCommand(token, source, pageOrigin(), valid ? mirror : "");
-  const central = token.install.central;
+  const [source, setSource] = useState<InstallSource>(target.install.source);
+  const [mirror, setMirror] = useState(false);
+  const command = relayInstallCommand(target, source, pageOrigin(), mirror);
+  const central = target.install.central;
   return (
     <div className={styles.stack} role="group" aria-labelledby={titleId}>
       <h3 id={titleId} className={styles.sectionTitle}>
@@ -673,36 +702,19 @@ function RelayInstallCommand({ token }: { token: CreatedToken }) {
           site&apos;s certificate.
         </p>
       )}
-      <label className={styles.field}>
-        <span>
-          Serve mirrors at{" "}
-          <span className={styles.fieldNote}>
-            — optional; the URL this site&apos;s hosts reach the relay&apos;s mirror listener at
-          </span>
-        </span>
-        <input
-          className={cx(fieldClass, styles.mono)}
-          value={mirror}
-          onChange={(e) => setMirror(e.target.value)}
-          placeholder="http://relay1.paris.example:7480"
-          aria-invalid={!valid}
-          spellCheck={false}
-          autoCapitalize="none"
-        />
+      <label className={styles.check}>
+        <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} /> Serve the package
+        mirrors and agent releases to this site&apos;s hosts{" "}
+        <span className={styles.fieldNote}>— a copy can take tens of gigabytes on the relay</span>
       </label>
-      {!valid && (
-        <p className={styles.formError} role="alert">
-          Enter an http or https URL, like http://relay1.paris.example:7480.
-        </p>
-      )}
       {"text" in command ? (
         <InstallCommand name="Linux" note="as root, on any Linux with systemd" text={command.text} />
       ) : (
         <Banner tone="warn">{command.unavailable}</Banner>
       )}
       <p className={styles.fieldNote}>
-        Then create the site&apos;s install command above, giving this relay&apos;s address in &quot;Connect through a
-        relay&quot;. The relay updates itself with the agents (Updates › Automatic updates).
+        Once the relay is online, its page gives the command for the servers behind it. It updates itself with the agents
+        (Updates › Automatic updates).
       </p>
     </div>
   );

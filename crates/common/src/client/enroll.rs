@@ -59,9 +59,12 @@ pub struct EnrollSettings {
     pub paths: TlsPaths,
     pub token: Option<Secret>,
     pub enroll_url: String,
-    /// The host's name, sent by agents: with an install key it becomes
-    /// their ID (ADR-0058). Empty for relays.
+    /// The host's name: with an install key it becomes the peer's ID
+    /// (ADR-0058, ADR-0066).
     pub hostname: String,
+    /// Names a relay found on its host, for an administrator to confirm
+    /// (ADR-0066). Empty for agents.
+    pub server_names: Vec<String>,
 }
 
 impl EnrollSettings {
@@ -72,6 +75,7 @@ impl EnrollSettings {
             token: config.enrollment_token.clone(),
             enroll_url: config.enroll_url(),
             hostname: String::new(),
+            server_names: Vec::new(),
         }
     }
 
@@ -82,6 +86,7 @@ impl EnrollSettings {
             token: config.enrollment_token.clone(),
             enroll_url: config.enroll_url(),
             hostname: String::new(),
+            server_names: Vec::new(),
         }
     }
 }
@@ -123,7 +128,7 @@ pub async fn ensure_identity(
     );
     let enrolled = loop {
         let attempt = tokio::select! {
-            result = request(url, &token, role, &settings.hostname) => result,
+            result = request(url, &token, settings) => result,
             () = shutdown.wait() => return Err(EnrollError::Shutdown),
         };
         match attempt {
@@ -165,9 +170,9 @@ async fn blocking<T: Send + 'static>(
 pub async fn request(
     url: &str,
     token: &EnrollmentToken,
-    role: PeerRole,
-    hostname: &str,
+    settings: &EnrollSettings,
 ) -> Result<Enrolled, EnrollError> {
+    let role = settings.role;
     let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
         .map_err(|e| EnrollError::Transient(format!("cannot generate a key: {e}")))?;
     let csr = csr(&key, role)
@@ -181,7 +186,8 @@ pub async fn request(
     let request = EnrollRequest {
         token: token.to_secret_string().expose().to_owned(),
         csr_pem: csr,
-        hostname: hostname.to_owned(),
+        hostname: settings.hostname.clone(),
+        server_names: settings.server_names.clone(),
     };
     let mut client = EnrollServiceClient::new(channel);
     let call = client.enroll(request);

@@ -59,6 +59,7 @@
 //! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled": true, false or null}`; [`sites::SiteView`]; audited (ADR-0055) |
 //! | PUT | `/api/sites/{id}/offline-alerts`, `/api/servers/{id}/offline-alerts`, `/api/relays/{id}/offline-alerts` | modify | body and answer `{"enabled": bool}`: offline incidents on or muted; audited (ADR-0057) |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
+//! | POST | `/api/relays/{id}/names` | customer administrator | body [`relays::ConfirmNames`]; 204; 409 if it is not waiting, or a name is the server's or another site's relay's; audited (ADR-0066) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
 //! | GET | `/api/settings/auto-update` | global administrator | [`policy::Settings`](crate::auto_update::policy::Settings) as they apply (ADR-0055) |
 //! | PUT | `/api/settings/auto-update` | global administrator | body [`auto_update::SettingsRequest`]; the settings; 409 against the configuration; audited |
@@ -185,6 +186,8 @@
 //! `peer_id`, `name`, site and customer, `created_at`, `revoked_at`, the
 //! live `status`, `connected_at` and `last_heartbeat` of the relay's own
 //! stream, `cert_not_after`, the `server_names` of its certificate,
+//! `pending_names` and `pending_source` while it waits for an administrator
+//! to confirm its names (ADR-0066),
 //! `server_count` (servers whose latest connection came through it) and
 //! `connected_agents` (streams it forwards now). The detail adds
 //! `certificate` as for servers and `servers`: `[{"id", "peer_id",
@@ -737,6 +740,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/relays/{id}", get(relays::detail))
         .route("/api/relays/{id}/revoke", post(revoke::relay))
         .route("/api/relays/{id}/update", post(relays::update))
+        .route("/api/relays/{id}/names", post(relays::confirm_names))
         .route("/api/servers/{id}/revoke", post(revoke::server))
         .route("/api/tokens", get(tokens::list).post(tokens::create))
         .route("/api/tokens/{id}", delete(tokens::delete))

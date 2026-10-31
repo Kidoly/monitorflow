@@ -93,6 +93,7 @@ const sites = {
 
 const key = (overrides: Partial<InstallKey> = {}): InstallKey => ({
   id: "k1",
+  role: "agent",
   site_id: "site-1",
   site_name: "paris",
   customer_id: "c1",
@@ -304,8 +305,8 @@ describe("TokensAdmin", () => {
     expect(within(install).getByLabelText(/^Linux/)).toHaveTextContent(
       `| sudo MF_ROLE=relay MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
     );
-    await user.type(within(install).getByLabelText(/Serve mirrors at/), "http://relay1.example:7480");
-    expect(within(install).getByLabelText(/^Linux/)).toHaveTextContent("MF_MIRROR_URL=http://relay1.example:7480");
+    await user.click(within(install).getByRole("checkbox", { name: /package mirrors/ }));
+    expect(within(install).getByLabelText(/^Linux/)).toHaveTextContent("MF_ROLE=relay MF_MIRROR=1 MF_SERVER=");
     expect(within(panel).queryByRole("group", { name: "Install the agent" })).not.toBeInTheDocument();
     const post = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "POST");
     expect(requestHeaders(fetchMock, post)[CSRF_HEADER]).toBe("1");
@@ -586,20 +587,6 @@ describe("TokensAdmin", () => {
     await user.click(within(form).getByRole("button", { name: "Create token" }));
     await screen.findByRole("region", { name: /^Token for relay-1/ });
     expect(screen.queryByRole("group", { name: "Install the agent" })).not.toBeInTheDocument();
-  });
-
-  it("preselects Relay from the relays page's link", async () => {
-    window.history.replaceState(null, "", "/admin/tokens/?role=relay");
-    stubFetch({
-      "GET /api/tokens": { status: 200, body: { tokens: [], next_cursor: null } },
-      "GET /api/sites": sites,
-      "GET /api/settings/agent-install": settings,
-    });
-    render(<TokensAdmin me={customerAdmin} />);
-    // Relays enroll with single-use tokens only, so they show at once.
-    expect(await screen.findByRole("radio", { name: "Relay" })).toBeChecked();
-    expect(screen.getByRole("button", { name: "Hide single-use tokens" })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByLabelText(/Server names/)).toBeEnabled();
   });
 
   it("hides used tokens until asked, and revokes a pending one in its row", async () => {
