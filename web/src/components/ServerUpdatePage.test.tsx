@@ -27,6 +27,7 @@ function view(overrides: Partial<ServerUpdateView> = {}): ServerUpdateView {
     },
     update: null,
     requested: false,
+    available: null,
     ...overrides,
   };
 }
@@ -133,7 +134,9 @@ describe("ServerUpdatePage", () => {
     renderPage();
     const check = await screen.findByRole("button", { name: "Check for updates" });
     await user.click(check);
-    expect(await screen.findByText(/No update can be checked: .*dns error/)).toHaveTextContent("Offline servers");
+    expect(await screen.findByText(/cannot reach the release source/)).toHaveTextContent("Offline servers");
+    expect(screen.queryByText(/dns error/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await user.click(check);
     expect(await screen.findByText(/cannot be used: SHA256SUMS.sig does not verify/)).toBeInTheDocument();
     await user.click(check);
@@ -154,6 +157,68 @@ describe("ServerUpdatePage", () => {
     await user.click(screen.getByRole("button", { name: "Check for updates" }));
     expect(await screen.findByText("The updater is not running, so the update cannot start.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Update to/ })).not.toBeInTheDocument();
+  });
+
+  it("goes straight to the update when the daily check saw a release", async () => {
+    stubFetch({
+      "GET /api/server-update": {
+        status: 200,
+        body: view({ available: { version: "0.2.0", release_notes_url: null, first_seen_at: "2026-10-27T10:00:00Z" } }),
+      },
+      "POST /api/server-update/check": { status: 200, body: available },
+    });
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Update to 0.2.0…" })).toBeInTheDocument();
+  });
+
+  it("imports the chosen release files and says what is on the server", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      "GET /api/server-update": { status: 200, body: view() },
+      "GET /api/agent-releases": [
+        { status: 200, body: { versions: [], latest: null } },
+        { status: 200, body: { versions: ["0.3.0"], latest: "0.3.0" } },
+      ],
+      "POST /api/agent-releases/import": { status: 200, body: { version: "0.3.0", missing: ["install.sh"] } },
+    });
+    renderPage();
+    expect(await screen.findByText(/It holds no release yet/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "releases page" })).toHaveAttribute(
+      "href",
+      "https://github.com/Kidoly/monitorflow/releases",
+    );
+    await user.upload(screen.getByLabelText("Release files"), [new File(["1"], "VERSION"), new File(["2"], "SHA256SUMS")]);
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    expect(await screen.findByText(/Release 0.3.0 is on this server/)).toHaveTextContent(
+      "Without install.sh, Linux hosts cannot install from this server.",
+    );
+    expect(await screen.findByText(/It holds 0.3.0/)).toBeInTheDocument();
+
+    const call = fetchMock.mock.calls.find(([path]) => path === "/api/agent-releases/import")!;
+    const form = call[1]!.body as FormData;
+    expect(form.getAll("files").map((f) => (f as File).name)).toEqual(["VERSION", "SHA256SUMS"]);
+    expect(call[1]!.headers).not.toHaveProperty("Content-Type");
+    expect(call[1]!.headers).toHaveProperty("X-MonitorFlow-CSRF", "1");
+  });
+
+  it("imports from a URL and shows a refusal as it is", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      "GET /api/server-update": { status: 200, body: view() },
+      "GET /api/agent-releases": { status: 200, body: { versions: [], latest: null } },
+      "POST /api/agent-releases/import-url": [
+        { status: 400, body: { error: "These files are not a genuine MonitorFlow release." } },
+        { status: 200, body: { version: "0.3.0", missing: [] } },
+      ],
+    });
+    renderPage();
+    await user.type(await screen.findByLabelText("Release directory URL"), "https://files.lan/mf/");
+    await user.click(screen.getByRole("button", { name: "Import from URL" }));
+    expect(await screen.findByText("These files are not a genuine MonitorFlow release.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Import from URL" }));
+    expect(await screen.findByText(/Release 0.3.0 is on this server/)).toBeInTheDocument();
+    const call = fetchMock.mock.calls.find(([path]) => path === "/api/agent-releases/import-url")!;
+    expect(JSON.parse(call[1]!.body as string)).toEqual({ url: "https://files.lan/mf/" });
   });
 
   it("says when the server is not set up for updates", async () => {

@@ -42,6 +42,18 @@
   color: var(--muted);
 }
 
+.importRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.url {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
 .release {
   display: flex;
   flex-direction: column;

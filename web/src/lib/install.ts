@@ -19,9 +19,6 @@ export const SOURCE_WORDS: Record<InstallSource, string> = {
   custom: "Custom URL",
 };
 
-/** What the server answers when it holds no release, for the page. */
-export const IMPORT_COMMAND = "monitorflow-server agent-release import --dir DIR";
-
 export interface InstallTarget {
   token: string;
   /** `https://host:port` of the server, from the token response. */
@@ -79,7 +76,7 @@ export function endpoints(target: InstallTarget, relay = ""): { server: string; 
 /** Why `central` offers nothing, or `null` when it can be used. */
 export function centralUnavailable(install: AgentInstall, origin: string): string | null {
   if (!install.central) {
-    return `This server holds no agent release yet. An administrator imports one on the server with \`${IMPORT_COMMAND}\`.`;
+    return "This server holds no agent release yet. A global administrator imports one under Administration › Server update.";
   }
   if (!isHttpsOrigin(origin)) return `Installs from this server need the web interface on HTTPS; this page is on ${origin}.`;
   return null;

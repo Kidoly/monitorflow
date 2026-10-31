@@ -1,6 +1,6 @@
 // Server update display helpers without React (ADR-0056).
 
-import type { ServerUpdateCheck, ServerUpdateRun, ServerUpdateState } from "./api";
+import type { ReleaseImported, ServerUpdateCheck, ServerUpdateRun, ServerUpdateState } from "./api";
 import type { Tone } from "@/components/ui/tone";
 
 /** The word and tint of each state. */
@@ -46,6 +46,20 @@ export function changeLines(check: ServerUpdateCheck): string[] {
       ? `Agent release ${latest.version}: already cached`
       : `Agent release ${latest.version}: cached during the update, so agents can follow`,
   ];
+}
+
+/** The page of releases when `source` is GitHub's, else null. */
+export function releasesPage(source: string): string | null {
+  const repo = source.replace(/\/+$/, "").match(/^(.*)\/releases\/latest\/download$/);
+  return repo ? `${repo[1]}/releases` : null;
+}
+
+/** What a partial import cannot do, in plain words. */
+export function importNotes({ missing }: ReleaseImported): string[] {
+  const lines: string[] = [];
+  if (missing.includes("install.sh")) lines.push("Without install.sh, Linux hosts cannot install from this server.");
+  if (missing.some((name) => name.endsWith(".msi"))) lines.push("Without the MSI, Windows hosts cannot install from this server.");
+  return lines;
 }
 
 /** The command that restores `backup` on the server host, after downloading it (ADR-0058). */

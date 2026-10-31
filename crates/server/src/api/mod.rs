@@ -96,7 +96,9 @@
 //! | GET | `/api/settings/agent-install` | customer administrator | [`settings::AgentInstall`]: default install source, custom URL, what the configuration sets, the release `central` installs (ADR-0054) |
 //! | PUT | `/api/settings/agent-install` | global administrator | body [`settings::AgentInstallRequest`]; 200 [`settings::AgentInstall`]; 409 against the configuration; audited |
 //! | GET | `/api/agent-releases` | any role | [`commands::AgentReleases`]: cached agent versions and the latest (ADR-0053) |
-//! | GET | `/api/server-update` | global administrator | [`server_update::UpdateView`]: running version, updater and last update (ADR-0056) |
+//! | POST | `/api/agent-releases/import` | global administrator | multipart release files; 200 [`release_import::ImportResult`]; 400 when they do not verify; 409 during another import; audited (ADR-0061) |
+//! | POST | `/api/agent-releases/import-url` | global administrator | body [`release_import::UrlRequest`]; as above, from a directory of release files |
+//! | GET | `/api/server-update` | global administrator | [`server_update::UpdateView`]: running version, updater, last update and any newer release the daily check saw (ADR-0056, ADR-0061) |
 //! | POST | `/api/server-update/check` | global administrator | [`server_update::CheckResult`]: the latest release, verified, and what it changes |
 //! | POST | `/api/server-update` | global administrator | body `{"version"}`; 202 `{"id"}`; 400 unless newer, 409 without a running updater or while busy; audited |
 //! | GET | `/api/backups` | global administrator | [`backups::BackupsView`]: last backup, next one and the files kept (ADR-0058) |
@@ -486,6 +488,7 @@ pub mod password;
 pub mod proxmox;
 pub mod public_address;
 pub mod relays;
+pub mod release_import;
 pub mod remediation;
 pub mod remediation_events;
 pub mod remediation_incidents;
@@ -614,6 +617,8 @@ pub struct ApiState {
     /// Woken when a campaign starts or resumes; `None` leaves it to the
     /// runner's next poll.
     pub campaigns: Option<Runner>,
+    /// Held by the release import running, if any.
+    pub release_import: release_import::ImportLock,
 }
 
 impl ApiState {
@@ -629,6 +634,7 @@ impl ApiState {
             relay_commands: None,
             mirrors: None,
             campaigns: None,
+            release_import: release_import::ImportLock::default(),
         }
     }
 
@@ -821,6 +827,14 @@ pub fn router(state: ApiState) -> Router {
             get(server_update::get).post(server_update::start),
         )
         .route("/api/server-update/check", post(server_update::check))
+        .route(
+            "/api/agent-releases/import",
+            post(release_import::upload).layer(DefaultBodyLimit::max(release_import::MAX_RELEASE)),
+        )
+        .route(
+            "/api/agent-releases/import-url",
+            post(release_import::from_url),
+        )
         .route("/api/backups", get(backups::get).post(backups::start))
         .route("/api/backups/{name}", get(backups::download))
         .route(

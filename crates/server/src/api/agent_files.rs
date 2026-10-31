@@ -25,8 +25,8 @@ use crate::agent_releases::{self, ReleaseCache};
 pub const LATEST: &str = "latest";
 
 /// The answer when the cache is empty, for `curl` users and the guide.
-pub const NONE_CACHED: &str = "No agent release is cached on this server yet. An administrator \
-     imports one with `monitorflow-server agent-release import --dir DIR` (docs/deploy-agent.md).\n";
+pub const NONE_CACHED: &str = "No agent release is cached on this server yet. A global \
+     administrator imports one in the web interface, under Administration, Server update.\n";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Found {

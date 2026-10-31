@@ -1,7 +1,7 @@
 # ADR-0056: Updating the central server from the web interface
 
 Date: 2026-10-27
-Status: accepted; implemented in stages (see the end); backups amended by ADR-0058
+Status: accepted; implemented in stages (see the end); backups amended by ADR-0058; background check added by ADR-0061
 
 ## Context
 
