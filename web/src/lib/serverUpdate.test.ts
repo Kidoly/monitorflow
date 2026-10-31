@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ServerUpdateCheck, ServerUpdateRun } from "./api";
-import { changeLines, imageText, inProgress, restoreCommand } from "./serverUpdate";
+import { changeLines, imageText, importNotes, inProgress, releasesPage, restoreCommand } from "./serverUpdate";
 
 const run = (state: ServerUpdateRun["state"]): ServerUpdateRun => ({
   id: "r1",
@@ -62,5 +62,20 @@ describe("server update helpers", () => {
     expect(restoreCommand("monitorflow-backup-20261027T100000Z-update.tar.gz")).toBe(
       "deploy/restore.sh monitorflow-backup-20261027T100000Z-update.tar.gz",
     );
+  });
+});
+
+describe("release import", () => {
+  it("links to the releases page of a GitHub source only", () => {
+    expect(releasesPage("https://github.com/Kidoly/monitorflow/releases/latest/download/")).toBe(
+      "https://github.com/Kidoly/monitorflow/releases",
+    );
+    expect(releasesPage("https://files.lan/mf")).toBeNull();
+  });
+
+  it("says what a partial release cannot do", () => {
+    expect(importNotes({ version: "0.3.0", missing: [] })).toEqual([]);
+    expect(importNotes({ version: "0.3.0", missing: ["monitorflow-agent-linux-aarch64"] })).toEqual([]);
+    expect(importNotes({ version: "0.3.0", missing: ["install.sh", "monitorflow-agent-windows-x86_64.msi"] })).toHaveLength(2);
   });
 });

@@ -172,6 +172,7 @@ db_tests! {
                 "remediation_pending_commands",
                 "remediation_policies",
                 "remediation_rules",
+                "seen_releases",
                 "sensor_configs",
                 "server_packages",
                 "server_proxmox_vms",

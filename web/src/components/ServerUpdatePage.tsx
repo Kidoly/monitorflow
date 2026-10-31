@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   ApiError,
@@ -16,6 +16,7 @@ import { BACKUPS_PATH } from "@/lib/routes";
 import { changeLines, imageText, inProgress, isFinal, restoreCommand, STATE_WORDS } from "@/lib/serverUpdate";
 import { usePolledData } from "@/lib/usePolledData";
 
+import { ReleaseImport } from "./ReleaseImport";
 import styles from "./ServerUpdate.module.css";
 import { Button } from "./ui/Button";
 import { FactsBox } from "./ui/FactsBox";
@@ -105,6 +106,7 @@ function ServerUpdate() {
       <Summary view={data} />
       {!data.enabled ? (
         <Banner tone="info">
+          {data.available && <strong>MonitorFlow {data.available.version} is available. </strong>}
           This server is not set up for updates from the web interface: it needs the updater service of the production
           compose file. See <code>{GUIDE}</code>, Updating.
         </Banner>
@@ -113,6 +115,7 @@ function ServerUpdate() {
       )}
       {data.update && <LastUpdate run={data.update} requested={data.requested} loadedAt={loadedAt} />}
       {!data.update && data.requested && <Banner tone="info">Waiting for the updater to start the update…</Banner>}
+      <ReleaseImport source={data.source} />
     </div>
   );
 }
@@ -166,6 +169,23 @@ function Check({ view, busy, onStarted }: { view: ServerUpdateView; busy: boolea
     }
   }
 
+  // The daily check saw a release: go straight to what it changes and
+  // "Update". A failure here says nothing; "Check for updates" would.
+  const available = view.available?.version;
+  useEffect(() => {
+    if (!available) return;
+    let current = true;
+    api.checkServerUpdate().then(
+      (checked) => {
+        if (current) setResult(checked);
+      },
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, [available]);
+
   async function start(version: string) {
     await api.startServerUpdate(version);
     setResult(null);
@@ -186,10 +206,10 @@ function Check({ view, busy, onStarted }: { view: ServerUpdateView; busy: boolea
       </div>
       {failure && <Banner tone="bad">{failure}</Banner>}
       {result && !result.reachable && (
-        <Banner tone="warn">
-          No update can be checked: {result.error}. A server without Internet access is updated by hand, from the release
-          files and the saved images (<code>{GUIDE}</code>, Offline servers).
-        </Banner>
+        <p className={styles.note}>
+          This server cannot reach the release source, as is usual without Internet access. Agents and relays update from a
+          release imported below; the server itself is updated by hand (<code>{GUIDE}</code>, Offline servers).
+        </p>
       )}
       {result?.reachable && !latest && (
         <Banner tone="bad">The latest release cannot be used: {result.error}</Banner>

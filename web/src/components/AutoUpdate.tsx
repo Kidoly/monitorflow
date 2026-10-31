@@ -53,7 +53,7 @@ export function summary(status: AutoUpdateStatus, kind: AutoUpdateKind): [string
   if (!kind.target) {
     return kind.latest
       ? [`The server (${status.server_version}) is older than the newest release, ${kind.latest}: update the server first.`, "warn"]
-      : ["The server holds no release yet: import one with monitorflow-server agent-release import.", "neutral"];
+      : ["The server holds no release yet: a global administrator imports one under Administration › Server update.", "neutral"];
   }
   const busy = kind.totals.waiting + kind.totals.pending;
   if (busy === 0) return [`Up to date: every agent where automatic updates apply runs ${kind.target} or newer.`, "ok"];

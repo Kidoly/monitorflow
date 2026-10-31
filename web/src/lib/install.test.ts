@@ -91,7 +91,7 @@ describe("install commands", () => {
   it("says why a source cannot be used", () => {
     const empty = target({ install: install({ central: null, custom_url: null }) });
     expect(unavailable(linuxInstallCommand(empty, "central", ORIGIN))).toMatch(/holds no agent release yet/);
-    expect(unavailable(windowsInstallCommand(empty, "central", ORIGIN))).toContain("agent-release import");
+    expect(unavailable(windowsInstallCommand(empty, "central", ORIGIN))).toContain("Server update");
     expect(unavailable(linuxInstallCommand(empty, "custom", ORIGIN))).toMatch(/No custom URL/);
     expect(unavailable(linuxInstallCommand(target(), "central", "http://localhost:3000"))).toMatch(/HTTPS/);
     const partial = target({
@@ -171,7 +171,7 @@ describe("install commands", () => {
       "MF_SERVER=mf.example:27443 MF_ENROLL=mf.example:27445",
     );
     expect(unavailable(relayInstallCommand(target({ install: install({ central: null }) }), "central", ORIGIN))).toContain(
-      "agent-release import",
+      "Server update",
     );
     expect(isMirrorUrl("http://relay1.example:7480")).toBe(true);
     expect(isMirrorUrl("https://[2001:db8::1]:7480/")).toBe(true);

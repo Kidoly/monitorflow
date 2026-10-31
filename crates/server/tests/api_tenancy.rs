@@ -808,6 +808,11 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = method.eq("POST").then(|| json!({ "version": "99.0.0" }));
             assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
         }
+        // The release cache is shared too.
+        ("POST", "/api/agent-releases/import") | ("POST", "/api/agent-releases/import-url") => {
+            let body = Some(json!({ "url": "http://files.example/" }));
+            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+        }
         // Backups hold every customer's data: global administrators only.
         ("GET", "/api/backups") | ("POST", "/api/backups") | ("GET", "/api/backups/{name}") => {
             let uri = path.replace("{name}", "monitorflow-backup-20261029T030000Z-daily.tar.gz");

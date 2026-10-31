@@ -118,7 +118,7 @@ function Notifications() {
       {actionError && <Banner tone="bad">{actionError}</Banner>}
       <p className={styles.footnote}>
         MonitorFlow sends a message when an incident opens, becomes critical or resolves, when a command waits for
-        approval, and when an update or a backup fails.
+        approval, when an update or a backup fails, and when a new version is out.
       </p>
       {editing ? (
         <ChannelForm

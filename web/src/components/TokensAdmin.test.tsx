@@ -513,7 +513,7 @@ describe("TokensAdmin", () => {
     await user.click(within(form).getByRole("button", { name: "Create token" }));
     const group = await screen.findByRole("group", { name: "Install the agent" });
     expect(group).toHaveTextContent(
-      "This server holds no agent release yet. An administrator imports one on the server with `monitorflow-server agent-release import --dir DIR`.",
+      "This server holds no agent release yet. A global administrator imports one under Administration › Server update.",
     );
     expect(within(group).queryByLabelText(/^Linux/)).not.toBeInTheDocument();
     expect(within(group).queryByLabelText(/^Windows/)).not.toBeInTheDocument();

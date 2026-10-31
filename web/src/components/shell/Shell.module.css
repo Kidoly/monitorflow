@@ -40,6 +40,10 @@
   padding: 24px 28px;
 }
 
+.notice {
+  margin-bottom: 20px;
+}
+
 .brand,
 .item {
   display: flex;

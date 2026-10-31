@@ -1,7 +1,7 @@
 # ADR-0054: Agent install sources
 
 Date: 2026-10-27
-Status: accepted; implemented in stages (see the end)
+Status: accepted; implemented in stages (see the end); filling the cache amended by ADR-0061
 
 ## Context
 

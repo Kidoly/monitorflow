@@ -1,6 +1,6 @@
 //! Updating the server from the web interface (ADR-0056): the status the
-//! updater container reports, a check of the latest release, and the
-//! request that starts an update. Every route needs a global administrator
+//! updater container reports, a check of the latest release, what the daily
+//! check saw (ADR-0061), and the request that starts an update. Every route needs a global administrator
 //! role: the server is shared by every customer.
 
 use std::path::{Path, PathBuf};
@@ -26,6 +26,7 @@ use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::sensors::body;
 use super::{ApiError, ApiState};
+use crate::release_check::{self, running_version};
 
 /// The subdirectory of the update volume the server writes requests in.
 pub(super) const INBOX: &str = "inbox";
@@ -80,6 +81,8 @@ pub struct UpdateView {
     pub update: Option<UpdateRun>,
     /// A request waits for the updater to take it.
     pub requested: bool,
+    /// A newer release the last check saw.
+    pub available: Option<release_check::Available>,
 }
 
 #[derive(Debug, Serialize)]
@@ -139,12 +142,6 @@ pub(super) fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn running_version() -> Version {
-    monitorflow_common::VERSION
-        .parse()
-        .expect("the build version is a version")
-}
-
 /// `status.json` and whether a request waits, read off the runtime.
 pub(super) async fn read_state(dir: Option<PathBuf>) -> Result<(Option<Status>, bool), ApiError> {
     let Some(dir) = dir else {
@@ -177,6 +174,7 @@ pub async fn get(
     require_global_admin(&user)?;
     let settings = &state.settings.server_update;
     let (status, requested) = read_state(settings.dir.clone()).await?;
+    let available = release_check::available(&state.pool, &running_version()).await?;
     let (updater, update) = match status {
         None => (None, None),
         Some(status) => (
@@ -196,6 +194,7 @@ pub async fn get(
         updater,
         update,
         requested,
+        available,
     }))
 }
 
@@ -229,6 +228,14 @@ pub async fn check(
         pinned.is_none_or(|pinned| pinned != image.as_str())
     };
     let version = candidate.release.version;
+    let release_notes_url = update::release_notes_url(&settings.source, &version);
+    release_check::record(
+        &state.pool,
+        &version,
+        release_notes_url.as_deref(),
+        &running_version(),
+    )
+    .await?;
     let cache = state.settings.agent_releases.cache.clone();
     let cached_version = version.clone();
     let agent_release_cached = tokio::task::spawn_blocking(move || cache.has(&cached_version))
@@ -236,7 +243,7 @@ pub async fn check(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     result.latest = Some(Latest {
         newer: version > running_version(),
-        release_notes_url: update::release_notes_url(&settings.source, &version),
+        release_notes_url,
         web_changes: differs(
             running.as_ref().and_then(|r| r.web_image.as_ref()),
             &candidate.images.web,
