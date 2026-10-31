@@ -19,7 +19,11 @@ work=$(mktemp -d)
 fixture=monitorflow-smoke-fixture
 trap 'docker rm -f "$fixture" >/dev/null 2>&1 || true; compose down -v --remove-orphans >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 
-compose up -d --build --wait --wait-timeout 600
+if ! compose up -d --build --wait --wait-timeout 600; then
+    compose ps -a
+    compose logs --tail 50 server web postgres mirror
+    exit 1
+fi
 
 failed=0
 check() {
@@ -139,11 +143,13 @@ apt_installs() {
         test -x /usr/bin/mf-fixture"
 }
 dnf_installs() {
-    docker run --rm --network host rockylinux:9-minimal sh -ec "
+    docker run --rm --network host rockylinux:9 sh -ec "
         printf '[f]\nname=f\nbaseurl=$mirror/dnf/fixture-dnf/current/\ngpgcheck=0\nrepo_gpgcheck=1\ngpgkey=$mirror/keys/monitorflow-archive.asc\nenabled=1\n' >/etc/yum.repos.d/f.repo
-        microdnf install -y --disablerepo='*' --enablerepo=f --assumeyes mf-fixture
+        dnf install -y --disablerepo='*' --enablerepo=f mf-fixture
         test -x /usr/bin/mf-fixture"
 }
+keeps_groups() { curl -fsS "$mirror/dnf/fixture-dnf/current/repodata/repomd.xml" | grep -q 'type="group"'; }
+check "a dnf mirror keeps upstream groups" keeps_groups
 check "apt verifies and installs from the mirror" apt_installs
 check "dnf verifies and installs from the mirror" dnf_installs
 

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Builds /srv: one package for all architectures in an apt repository signed
 # by a throwaway key, with a component that holds nothing, and one noarch
-# package in a dnf repository. Runs when the fixture image is built.
+# package in a dnf repository with a group. Runs when the fixture image is
+# built.
 set -eu
 export GNUPGHOME=/tmp/gnupg
 mkdir -m 700 "$GNUPGHOME"
@@ -53,3 +54,9 @@ SPEC
 rpmbuild --quiet -bb --define "_topdir /tmp/rpm" --define "_rpmdir /srv/dnf/Packages" \
     --define '_build_name_fmt %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm' /tmp/rpm/fixture.spec
 createrepo_c --quiet /srv/dnf
+cat >/tmp/comps.xml <<COMPS
+<?xml version="1.0"?>
+<comps><group><id>fixture</id><name>Fixture</name><description>Fixture</description>
+<packagelist><packagereq>mf-fixture</packagereq></packagelist></group></comps>
+COMPS
+modifyrepo_c --mdtype=group /tmp/comps.xml /srv/dnf/repodata >/dev/null
