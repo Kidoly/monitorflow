@@ -367,7 +367,7 @@ impl Engine {
                     self.rules.insert(peer, Some(Arc::new(server)));
                 }
                 Ok(None) => {
-                    // The server row is gone, and its incidents with it.
+                    // The server is removed, and its incidents resolved.
                     self.rules.remove(&peer);
                     self.series.retain(|key, _| key.server_id != server_id);
                 }

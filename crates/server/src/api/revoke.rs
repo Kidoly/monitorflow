@@ -1,7 +1,9 @@
 //! `POST /api/servers/{id}/revoke` and `POST /api/relays/{id}/revoke`
 //! (ADR-0029): marks the peer and its certificates revoked, puts the
 //! serials in the CRL through [`CrlPublisher::revoke`](crate::crl::CrlPublisher::revoke)
-//! and closes its live streams.
+//! and closes its live streams. This is "Remove" in the interface
+//! (ADR-0062): it also resolves the peer's open incidents and drops its
+//! unused tokens, and the peer leaves every list until it enrolls again.
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -18,6 +20,7 @@ use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
+use crate::alerting::offline;
 use crate::ca::{RevocationReason, Serial};
 use crate::grpc::CloseReason;
 
@@ -100,6 +103,22 @@ async fn revoke(
     .ok_or_else(|| ApiError::Conflict(format!("the {kind} is already revoked")))?;
     let serials = revoke_certificates(&mut tx, role, &peer_id, reason).await?;
     let shown: Vec<String> = serials.iter().map(Serial::to_string).collect();
+    // A token from before the removal must not bring the peer back.
+    sqlx::query(
+        "DELETE FROM enrollment_tokens WHERE role = $1 AND peer_id = $2 AND used_at IS NULL",
+    )
+    .bind(role.as_str())
+    .bind(&peer_id)
+    .execute(&mut *tx)
+    .await?;
+    let incidents = offline::resolve_removed(&mut *tx).await?;
+    if role != PeerRole::Relay {
+        // Enrolling again starts from a clean slate.
+        sqlx::query("DELETE FROM alert_states WHERE server_id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
     let actor = user.id.to_string();
     audit::record(
         &mut *tx,
@@ -117,6 +136,7 @@ async fn revoke(
                 "site_id": site_id,
                 "reason": reason,
                 "serials": shown,
+                "incidents_resolved": incidents,
             }),
         },
     )

@@ -133,12 +133,25 @@ export function toRequest(draft: CampaignDraft): CampaignRequest {
   };
 }
 
-/** The servers a campaign would target, in the API's order: hostname, then peer ID. */
-export function campaignTargets(servers: Server[], customerId: string, siteId: string, serverIds: string[]): Server[] {
+/**
+ * The servers a campaign would target, in the API's order: hostname, then
+ * peer ID. Only an agent update reaches hosts that take no package updates.
+ */
+export function campaignTargets(
+  servers: Server[],
+  customerId: string,
+  siteId: string,
+  serverIds: string[],
+  agentUpdate = false,
+): Server[] {
   const named = new Set(serverIds);
   return servers
     .filter(
-      (s) => s.customer_id === customerId && s.revoked_at === null && ((siteId && s.site_id === siteId) || named.has(s.id)),
+      (s) =>
+        s.customer_id === customerId &&
+        s.revoked_at === null &&
+        (agentUpdate || s.package_updates !== false) &&
+        ((siteId && s.site_id === siteId) || named.has(s.id)),
     )
     .sort((a, b) => cmp(a.hostname, b.hostname) || cmp(a.peer_id, b.peer_id));
 }

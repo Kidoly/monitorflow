@@ -13,11 +13,13 @@ use monitorflow_common::server_update::backup::{
     file_name, BackupFile, BackupKind, BackupRun, BackupState, Backups,
 };
 use monitorflow_common::server_update::{Running, Status, UpdateRun, UpdateState};
+use monitorflow_server::agent_releases::ReleaseCache;
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::server_update::ServerUpdateSettings;
 use monitorflow_server::api::users::{self, GrantScope};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::grpc::Registry;
+use monitorflow_server::release_check;
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::{json, Value};
@@ -27,6 +29,7 @@ use tower::ServiceExt;
 
 const PASSWORD: &str = "correct horse battery";
 const NEWER: &str = "99.0.0";
+const AGENT: &str = "monitorflow-agent-linux-x86_64";
 
 macro_rules! db_tests {
     ($($item:item)*) => {
@@ -59,6 +62,8 @@ fn release(version: &str) -> (TempDir, PublicKey) {
     let files = [
         ("VERSION", format!("{version}\n").into_bytes()),
         ("images.json", images.to_string().into_bytes()),
+        // Past the API's usual body limit, as real binaries are.
+        (AGENT, vec![b'x'; 256 * 1024]),
     ];
     let mut sums = String::new();
     for (name, bytes) in &files {
@@ -190,6 +195,66 @@ impl Harness {
             .await
             .unwrap();
         (status, headers, bytes.to_vec())
+    }
+
+    /// Posts `names` from `dir` as the web page does, with a stray file.
+    async fn upload(&self, cookie: &str, dir: &Path, names: &[&str]) -> (StatusCode, Value) {
+        let mut body = Vec::new();
+        for name in names.iter().chain(&["notes.txt"]) {
+            let head = format!(
+                "--xx\r\ncontent-disposition: form-data; name=\"files\"; filename=\"{name}\"\r\n\r\n"
+            );
+            body.extend_from_slice(head.as_bytes());
+            body.extend_from_slice(&std::fs::read(dir.join(name)).unwrap_or_default());
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(b"--xx--\r\n");
+        let state = ApiState::new(
+            self.pool.clone(),
+            Registry::default(),
+            self.settings.clone(),
+        );
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/agent-releases/import")
+            .header(CSRF_HEADER, "1")
+            .header("content-type", "multipart/form-data; boundary=xx")
+            .header("cookie", cookie)
+            .body(Body::from(body))
+            .unwrap();
+        let response = api::router(state).oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 22)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// Imports go to a cache of this harness, trusting `key`.
+    fn with_cache(mut self, key: PublicKey) -> Self {
+        let mirror = self.volume.path().join("mirror");
+        self.settings.agent_releases.cache = ReleaseCache::in_mirror_dir(&mirror);
+        self.settings.agent_releases.keys = vec![key];
+        self
+    }
+
+    fn cached(&self) -> Vec<String> {
+        let cache = &self.settings.agent_releases.cache;
+        let versions = cache.versions().unwrap();
+        versions.iter().map(ToString::to_string).collect()
+    }
+
+    /// Nothing but versions is left in the cache.
+    fn assert_no_leftovers(&self) {
+        let cache = &self.settings.agent_releases.cache;
+        let names: Vec<_> = std::fs::read_dir(cache.dir())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert!(names.iter().all(|n| !n.starts_with('.')), "{names:?}");
     }
 
     async fn user(&self, name: &str, role: Role) -> String {
@@ -437,5 +502,159 @@ db_tests! {
         let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action IN ('server.backup', 'server.backup.download')")
             .fetch_one(&pool).await.unwrap();
         assert_eq!(audited, 2);
+    }
+
+    #[sqlx::test]
+    async fn the_release_check_tells_of_a_version_once(pool: PgPool) {
+        let (files, key) = release(NEWER);
+        let url = serve(files.path().to_owned()).await;
+        let h = Harness::new(&pool, &url, vec![key.clone()]);
+        let admin = h.user("root", Role::Administrator).await;
+        let settings = &h.settings.server_update;
+        let running = release_check::running_version();
+        let told = || async {
+            let rows: Vec<(Value,)> = sqlx::query_as(
+                "SELECT details FROM notification_outbox WHERE event = 'update.available'",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            rows.into_iter().map(|r| r.0).collect::<Vec<_>>()
+        };
+
+        let (_, body) = h.call("GET", "/api/server-update", &admin, None).await;
+        assert_eq!(body["available"], Value::Null);
+
+        assert!(release_check::check(&pool, settings, &running).await);
+        let events = told().await;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["release"]["version"], NEWER);
+        assert_eq!(events[0]["release"]["running_version"], monitorflow_common::VERSION);
+        let (_, body) = h.call("GET", "/api/server-update", &admin, None).await;
+        assert_eq!(body["available"]["version"], NEWER);
+
+        // Once per version, even after the outbox forgot it or from a
+        // check by hand.
+        sqlx::query("DELETE FROM notification_outbox").execute(&pool).await.unwrap();
+        assert!(release_check::check(&pool, settings, &running).await);
+        let (status, _) = h.call("POST", "/api/server-update/check", &admin, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(told().await.is_empty());
+
+        // The running version catches up: the banner goes.
+        let same: monitorflow_common::release::Version = NEWER.parse().unwrap();
+        assert_eq!(release_check::available(&pool, &same).await.unwrap(), None);
+
+        // A release that is no newer tells nobody, and replaces what the
+        // source offered before.
+        let (files, key) = release(monitorflow_common::VERSION);
+        let url = serve(files.path().to_owned()).await;
+        let current = Harness::new(&pool, &url, vec![key]);
+        assert!(release_check::check(&pool, &current.settings.server_update, &running).await);
+        assert!(told().await.is_empty());
+        let (_, body) = h.call("GET", "/api/server-update", &admin, None).await;
+        assert_eq!(body["available"], Value::Null);
+    }
+
+    #[sqlx::test]
+    async fn a_failed_release_check_is_quiet(pool: PgPool) {
+        let (files, _) = release(NEWER);
+        let (_, other) = release(NEWER);
+        let url = serve(files.path().to_owned()).await;
+        let running = release_check::running_version();
+        for h in [
+            Harness::new(&pool, "http://127.0.0.1:9/mf", vec![other.clone()]),
+            Harness::new(&pool, &url, vec![other.clone()]),
+        ] {
+            assert!(!release_check::check(&pool, &h.settings.server_update, &running).await);
+        }
+        assert_eq!(release_check::available(&pool, &running).await.unwrap(), None);
+        let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM notification_outbox")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[sqlx::test]
+    async fn releases_import_from_files_the_browser_uploads(pool: PgPool) {
+        let (files, key) = release("0.3.0");
+        let h = Harness::new(&pool, "http://127.0.0.1:9/mf", vec![]).with_cache(key);
+        let viewer = h.user("viewer", Role::Viewer).await;
+        let admin = h.user("root", Role::Administrator).await;
+        let all = ["SHA256SUMS", "SHA256SUMS.sig", "VERSION", AGENT];
+
+        let (status, _) = h.upload(&viewer, files.path(), &all).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let (status, body) = h.upload(&admin, files.path(), &all[1..]).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("SHA256SUMS:"), "{body}");
+
+        let (status, body) = h.upload(&admin, files.path(), &all).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["version"], "0.3.0");
+        assert!(body["missing"].as_array().unwrap().contains(&json!("install.sh")));
+        assert_eq!(h.cached(), ["0.3.0"]);
+        h.assert_no_leftovers();
+
+        let (actor, target, details): (String, String, Value) = sqlx::query_as(
+            "SELECT actor_id, target_id, details FROM audit_log
+             WHERE action = 'agent_release.import'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!actor.is_empty());
+        assert_eq!(target, "0.3.0");
+        assert_eq!(details["from"], "upload");
+    }
+
+    #[sqlx::test]
+    async fn uploads_that_do_not_verify_leave_no_trace(pool: PgPool) {
+        let (files, _) = release("0.3.0");
+        let (_, other) = release("0.3.0");
+        let h = Harness::new(&pool, "http://127.0.0.1:9/mf", vec![]).with_cache(other);
+        let admin = h.user("root", Role::Administrator).await;
+        let all = ["SHA256SUMS", "SHA256SUMS.sig", "VERSION", AGENT];
+        let (status, body) = h.upload(&admin, files.path(), &all).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("not a genuine"), "{body}");
+        assert!(h.cached().is_empty());
+        h.assert_no_leftovers();
+    }
+
+    #[sqlx::test]
+    async fn releases_import_from_a_url(pool: PgPool) {
+        let (files, key) = release("0.3.0");
+        let url = serve(files.path().to_owned()).await;
+        let h = Harness::new(&pool, "http://127.0.0.1:9/mf", vec![]).with_cache(key);
+        let admin = h.user("root", Role::Administrator).await;
+        let import = "/api/agent-releases/import-url";
+
+        let (status, body) = h.call("POST", import, &admin, Some(json!({ "url": "nope" }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("not a URL"));
+
+        let (status, body) = h
+            .call("POST", import, &admin, Some(json!({ "url": "http://127.0.0.1:9/mf" })))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("Could not download"), "{body}");
+
+        // A directory without a release.
+        let empty = TempDir::new().unwrap();
+        let nothing = serve(empty.path().to_owned()).await;
+        let (status, body) = h.call("POST", import, &admin, Some(json!({ "url": nothing }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("A release needs"), "{body}");
+
+        let (status, body) = h
+            .call("POST", import, &admin, Some(json!({ "url": format!("{url}/") })))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["version"], "0.3.0");
+        assert_eq!(h.cached(), ["0.3.0"]);
+        h.assert_no_leftovers();
     }
 }

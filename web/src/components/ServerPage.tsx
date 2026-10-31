@@ -10,7 +10,6 @@ import {
   type EffectiveSensor,
   type EffectiveSensors,
   type Incident,
-  type RevocationReason,
   type ServerDetail,
   api,
   describeError,
@@ -42,7 +41,7 @@ import { formatExact } from "@/components/ui/time";
 
 import { MonitoringSettings } from "./MonitoringSettings";
 import { OfflineAlerts } from "./OfflineAlerts";
-import { REVOCATION_REASONS } from "./RevokeControl";
+import { RemovedPanel, RemovePeer } from "./RemovePeer";
 import { ServerCommandsTab } from "./ServerCommandsTab";
 import { ServerSensorsTab } from "./ServerSensorsTab";
 import { ServerUpdatesTab } from "./ServerUpdatesTab";
@@ -118,6 +117,7 @@ async function loadServer(id: string, commandLimit: number, signal: AbortSignal)
 }
 
 export function ServerPage({ id }: { id: string | null }) {
+  const me = useMe();
   const valid = id !== null && UUID.test(id);
   const [params, setParams] = useUrlParams();
   const tab: ServerTab = TABS.find((t) => t === params.get("tab")) ?? "sensors";
@@ -161,11 +161,22 @@ export function ServerPage({ id }: { id: string | null }) {
         actions={
           <>
             <UpdateAgent server={server} latest={latestAgent} commands={commands} onQueued={refresh} />
-            <Revoke server={server} onRevoked={refresh} />
+            {!server.revoked_at && administersCustomer(me, server.customer_id) && (
+              <RemovePeer kind="servers" id={server.id} name={server.hostname} onRemoved={refresh} />
+            )}
           </>
         }
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
+      {server.revoked_at && (
+        <RemovedPanel
+          kind="agent"
+          name={server.hostname}
+          osFamily={server.os_family}
+          removedAt={server.revoked_at}
+          canAdminister={administersCustomer(me, server.customer_id)}
+        />
+      )}
       <ServerFacts server={server} latestAgent={latestAgent} now={updatedAt} stale={stale} onChanged={refresh} />
       <Tabs
         label="Server sections"
@@ -255,27 +266,6 @@ function UpdateAgent({
   );
 }
 
-/** "Revoke web-01…", for administrators of the server's customer. */
-function Revoke({ server, onRevoked }: { server: ServerDetail; onRevoked: () => void }) {
-  const me = useMe();
-  if (server.revoked_at || !administersCustomer(me, server.customer_id)) return null;
-  return (
-    <InlineConfirm<RevocationReason>
-      trigger={`Revoke ${server.hostname}…`}
-      title={`Revoke ${server.hostname}?`}
-      consequence="Its certificates go into the revocation list, its connections close now, and it cannot connect again. This cannot be undone: enrolling it again needs a new ID."
-      reasons={REVOCATION_REASONS.map(([value, label]) => ({ value, label }))}
-      confirmLabel={`Revoke ${server.hostname}`}
-      pendingLabel="Revoking…"
-      onConfirm={async (reason) => {
-        await api.revoke("servers", server.id, reason ?? "unspecified");
-        onRevoked();
-      }}
-      describeError={(e) => `Revocation failed. ${describeError(e)}`}
-    />
-  );
-}
-
 /** "2026-10-19 02:14". */
 const minutes = (iso: string) => formatExact(new Date(iso)).slice(0, 16);
 
@@ -325,12 +315,14 @@ function ServerFacts({
             .join(" · "),
         },
         { label: "Certificate", value: certificate ? <CertificateFact certificate={certificate} now={now} /> : "none issued" },
+        ...(server.package_updates === false
+          ? [{ label: "Package updates", value: "Package updates aren't available on this system; monitoring works normally" }]
+          : []),
         { label: "Enrolled", value: minutes(server.created_at) },
         { label: "Certificate ID", value: server.peer_id, mono: true },
         ...(server.revoked_at
           ? []
           : [{ label: "Offline alerts", value: <OfflineAlerts kind="servers" target={server} onChanged={onChanged} /> }]),
-        ...(server.revoked_at ? [{ label: "Revoked", value: minutes(server.revoked_at) }] : []),
       ]}
     />
   );

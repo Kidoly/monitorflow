@@ -42,9 +42,11 @@ export interface Server {
   customer_id: string;
   customer_name: string;
   relay_id: string | null;
-  /** `debian` or `rhel`. */
+  /** `debian`, `rhel`, `windows`, or `linux` for any other distribution. */
   os_family: string;
   os_version: string | null;
+  /** False when the host takes no package updates or sources (ADR-0063); absent is true. */
+  package_updates?: boolean;
   agent_version: string | null;
   created_at: string;
   revoked_at: string | null;
@@ -253,7 +255,7 @@ export interface Site {
   id: string;
   name: string;
   server_count: number;
-  /** Enrolled relays, revoked ones included. */
+  /** Enrolled relays, without removed ones. */
   relay_count: number;
   customer_id: string;
   customer_name: string;
@@ -612,6 +614,8 @@ export interface ServerUpdateView {
   update: ServerUpdateRun | null;
   /** A request waits for the updater. */
   requested: boolean;
+  /** A newer release the daily check saw (ADR-0061). */
+  available: { version: string; release_notes_url: string | null; first_seen_at: string } | null;
 }
 
 export type BackupKind = "daily" | "manual" | "update";
@@ -654,6 +658,13 @@ export interface BackupsView {
   next_at: string | null;
   /** Newest first. */
   files: BackupFile[];
+}
+
+/** `POST /api/agent-releases/import` and `/import-url`. */
+export interface ReleaseImported {
+  version: string;
+  /** Files of a whole release that were not given. */
+  missing: string[];
 }
 
 /** `POST /api/server-update/check`. */
@@ -1316,6 +1327,8 @@ export function setUnauthorizedHandler(handler: () => void): () => void {
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
+  /** Sent as multipart, instead of `body`; the browser sets the content type. */
+  form?: FormData;
   signal?: AbortSignal;
   /** Call the unauthorized handler on 401. Off for login, where 401 means bad credentials. */
   redirectOn401?: boolean;
@@ -1402,7 +1415,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     response = await fetch(path, {
       method,
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: options.form ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
       credentials: "same-origin",
       cache: "no-store",
       signal: options.signal,
@@ -1621,6 +1634,7 @@ export const api = {
 
   /** The default install source; customer administrators (ADR-0054). */
   agentInstall: (signal?: AbortSignal) => request<AgentInstall>("/api/settings/agent-install", { signal }),
+  publicAddress: (signal?: AbortSignal) => request<PublicAddress>("/api/settings/public-address", { signal }),
 
   /** Changes the default install source; global administrators only, audited. */
   setAgentInstall: (body: { source: InstallSource; custom_url: string | null }) =>
@@ -1788,6 +1802,15 @@ export const api = {
   },
 
   agentReleases: (signal?: AbortSignal) => request<AgentReleases>("/api/agent-releases", { signal }),
+
+  /** Imports a release from its files; global administrators only (ADR-0061). */
+  importRelease: (files: File[]) => {
+    const form = new FormData();
+    for (const file of files) form.append("files", file, file.name);
+    return request<ReleaseImported>("/api/agent-releases/import", { method: "POST", form });
+  },
+  importReleaseUrl: (url: string) =>
+    request<ReleaseImported>("/api/agent-releases/import-url", { method: "POST", body: { url } }),
 
   /** Server updates; global administrators only (ADR-0056). */
   serverUpdate: (signal?: AbortSignal) => request<ServerUpdateView>("/api/server-update", { signal }),

@@ -17,7 +17,8 @@ pub const PAYLOAD_VERSION: u32 = 1;
 pub struct Event {
     pub id: i64,
     /// `incident.opened`, `incident.escalated`, `incident.resolved`,
-    /// `approval.waiting`, `update.failed`, `backup.failed`, or `test`.
+    /// `approval.waiting`, `update.failed`, `backup.failed`,
+    /// `update.available`, or `test`.
     pub event: String,
     pub customer_id: Option<Uuid>,
     /// The objects of the event, written by the triggers.
@@ -109,11 +110,14 @@ fn incident_text(event: &str, details: &Value) -> String {
     let place = place(details);
     let severity = str_at(incident, &["severity"]).unwrap_or("warning");
     let value = incident.get("value").and_then(Value::as_f64).map(number);
+    // Removing a peer closes its incidents of any metric (ADR-0062).
+    if event == "incident.resolved" && str_at(incident, &["reason"]) == Some("revoked") {
+        return format!("Resolved: {place} was removed");
+    }
     // Offline incidents (ADR-0057's 'offline' metric) read as a state.
     if str_at(incident, &["metric"]) == Some("offline") {
         return match event {
             "incident.resolved" => match str_at(incident, &["reason"]) {
-                Some("revoked") => format!("Resolved: {place} was revoked"),
                 Some("muted") => format!("Resolved: offline alerts for {place} were muted"),
                 _ => format!("Resolved: {place} is back online"),
             },
@@ -172,6 +176,7 @@ fn path(event: &Event) -> String {
         }
         "approval.waiting" => "/remediation/approvals/".into(),
         "backup.failed" => "/admin/backups/".into(),
+        "update.available" => "/admin/server-update/".into(),
         "update.failed" => match str_at(d, &["update", "kind"]) {
             Some("campaign") => format!("/campaigns/view/?id={}", id(&["update", "campaign_id"])),
             Some("automatic_rollout") => "/admin/updates/".into(),
@@ -205,6 +210,11 @@ pub fn render(event: &Event, web_url: &str) -> Message {
             Some(error) => format!("Backup of the server failed: {error}"),
             None => "Backup of the server failed".to_owned(),
         },
+        "update.available" => format!(
+            "MonitorFlow {} is available; this server runs {}",
+            str_at(d, &["release", "version"]).unwrap_or("a new release"),
+            str_at(d, &["release", "running_version"]).unwrap_or("an older one")
+        ),
         e => incident_text(e, d),
     };
     let url = format!("{web_url}{}", path(event));
@@ -336,7 +346,7 @@ mod tests {
         assert_eq!(resolved(None), back);
         assert_eq!(
             resolved(Some("revoked")),
-            "Resolved: web-1 (paris) was revoked"
+            "Resolved: web-1 (paris) was removed"
         );
         assert_eq!(
             resolved(Some("muted")),
@@ -358,6 +368,23 @@ mod tests {
             "Backup of the server failed: pg_dump: no space left"
         );
         assert_eq!(failed.url, "https://mf.example/admin/backups/");
+    }
+
+    #[test]
+    fn a_new_release_links_to_the_update_page() {
+        let available = render(
+            &event(
+                "update.available",
+                json!({"release": {"version": "0.3.0", "running_version": "0.2.0"}}),
+            ),
+            WEB,
+        );
+        assert_eq!(
+            available.text,
+            "MonitorFlow 0.3.0 is available; this server runs 0.2.0"
+        );
+        assert_eq!(available.url, "https://mf.example/admin/server-update/");
+        assert_eq!(available.payload["release"]["version"], "0.3.0");
     }
 
     #[test]

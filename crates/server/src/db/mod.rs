@@ -85,7 +85,9 @@ pub async fn relay_may_speak_for(
                     WHERE t.peer_id = $2 AND t.role = 'agent' AND t.used_at IS NOT NULL
                     ORDER BY t.used_at DESC LIMIT 1))
                AND NOT EXISTS (
-                   SELECT 1 FROM servers s WHERE s.peer_id = $2 AND s.revoked_at IS NOT NULL)
+                   SELECT 1 FROM servers s WHERE s.peer_id = $2 AND s.revoked_at IS NOT NULL
+                   -- A removed server enrolled again, waiting for approval.
+                   AND NOT EXISTS (SELECT 1 FROM pending_hosts p WHERE p.peer_id = $2))
          )",
     )
     .bind(relay_peer_id)

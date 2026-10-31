@@ -156,6 +156,39 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn package_campaigns_leave_out_hosts_without_a_package_manager(pool: PgPool) {
+        let t = tenant(&pool, "acme").await;
+        let store = CampaignStore::new(pool.clone());
+        sqlx::query(
+            "UPDATE servers SET os_family = 'linux', package_updates = false WHERE id = ANY($1)",
+        )
+        .bind(&t.servers[1..])
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Whether by site or by name.
+        let mut new = campaign(&t);
+        new.server_ids = vec![t.servers[1]];
+        let row = store.create(&new, USER).await.unwrap();
+        assert_eq!(waves(&pool, row.id).await, vec![vec![t.servers[0]]]);
+
+        // Agent updates are not package updates.
+        new.spec = UpdateSpec::default();
+        new.waves = Vec::new();
+        new.agent_version = Some("0.3.0".parse().unwrap());
+        let row = store.create(&new, USER).await.unwrap();
+        assert_eq!(waves(&pool, row.id).await, vec![t.servers.clone()]);
+
+        let mut new = campaign(&t);
+        new.site_id = None;
+        new.server_ids = t.servers[1..].to_vec();
+        new.waves = Vec::new();
+        let error = store.create(&new, USER).await.unwrap_err();
+        assert!(error.to_string().contains("no server that can take it"), "{error}");
+    }
+
+    #[sqlx::test]
     async fn targets_stay_within_the_customer(pool: PgPool) {
         let a = tenant(&pool, "acme").await;
         let b = tenant(&pool, "globex").await;
@@ -174,7 +207,7 @@ db_tests! {
         let mut new = campaign(&a);
         new.site_id = None;
         new.waves = vec![WaveSpec::Servers(vec![b.servers[0]])];
-        assert_eq!(invalid(store.create(&new, USER).await), "the campaign targets no server");
+        assert_eq!(invalid(store.create(&new, USER).await), "the campaign targets no server that can take it");
         new.server_ids = vec![a.servers[0]];
         assert!(invalid(store.create(&new, USER).await).contains("is not a target"));
 

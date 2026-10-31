@@ -91,9 +91,11 @@ pub struct ServerView {
     pub customer_id: Uuid,
     pub customer_name: String,
     pub relay_id: Option<Uuid>,
-    /// `debian` or `rhel`.
+    /// `debian`, `rhel`, `windows`, or `linux` for any other distribution.
     pub os_family: String,
     pub os_version: Option<String>,
+    /// Whether the host can take package updates and sources (ADR-0063).
+    pub package_updates: bool,
     /// Version reported by the live stream, else the one last stored.
     pub agent_version: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -169,7 +171,8 @@ impl From<CertificateRow> for CertificateView {
 /// Columns of [`Row`]; callers add the `WHERE` clause.
 const SELECT_SERVERS: &str = "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name,
             si.customer_id, c.name AS customer_name, s.relay_id,
-            s.os_family, s.os_version, s.agent_version, s.created_at, s.last_seen_at,
+            s.os_family, s.os_version, s.package_updates, s.agent_version, s.created_at,
+            s.last_seen_at,
             s.revoked_at, s.offline_alerts, si.offline_alerts AS site_offline_alerts,
             -- One probe of the partial unique index on open incidents.
             (SELECT count(*) FROM incidents i
@@ -194,6 +197,7 @@ struct Row {
     relay_id: Option<Uuid>,
     os_family: String,
     os_version: Option<String>,
+    package_updates: bool,
     agent_version: Option<String>,
     created_at: DateTime<Utc>,
     last_seen_at: Option<DateTime<Utc>>,
@@ -205,7 +209,8 @@ struct Row {
 }
 
 /// `GET /api/servers`: one page of the servers of the sites the user may
-/// read, sorted by site name, hostname and peer ID. Needs at least one role.
+/// read, sorted by site name, hostname and peer ID, without removed ones
+/// (ADR-0062). Needs at least one role.
 pub async fn list(
     State(state): State<ApiState>,
     user: CurrentUser,
@@ -226,7 +231,7 @@ pub async fn list(
     };
     let mut rows: Vec<Row> = sqlx::query_as(&format!(
         "{SELECT_SERVERS}
-         WHERE ($1 OR s.site_id = ANY($2))
+         WHERE ($1 OR s.site_id = ANY($2)) AND s.revoked_at IS NULL
            AND ($3::text IS NULL OR (si.name, s.hostname, s.peer_id) > ($3, $4, $5))
          ORDER BY si.name, s.hostname, s.peer_id
          LIMIT $6"
@@ -258,7 +263,8 @@ pub async fn list(
 }
 
 /// `GET /api/servers/{id}`: one server the user may read, with its
-/// current certificate. Outside the user's sites it is 404.
+/// current certificate. Removed servers stay readable, for their history.
+/// Outside the user's sites it is 404.
 pub async fn detail(
     State(state): State<ApiState>,
     user: CurrentUser,
@@ -331,6 +337,7 @@ impl ServerView {
             relay_id: row.relay_id,
             os_family: row.os_family,
             os_version: row.os_version,
+            package_updates: row.package_updates,
             agent_version: row.agent_version,
             created_at: row.created_at,
             revoked_at: row.revoked_at,

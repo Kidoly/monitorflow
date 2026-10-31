@@ -134,7 +134,7 @@ fn apply_handler(
     fakes: &Fakes,
     family: OsFamily,
 ) -> (ApplyUpdatesHandler, watch::Receiver<Option<PackageReport>>) {
-    let manager = for_family(family, fakes.tools());
+    let manager = for_family(family, fakes.tools()).unwrap();
     let (reports, rx) = Reports::new(manager.clone());
     (
         ApplyUpdatesHandler::new(manager, reports, fakes.tools()),
@@ -152,6 +152,25 @@ fn payload(packages: &[&str], security_only: bool, allow_reboot: bool) -> Vec<u8
 }
 
 const HELPER: &str = "-n @monitorflow-agent packages update";
+
+#[test]
+fn package_managers_need_their_tools_on_the_host() {
+    let fakes = Fakes::new(0, 0, 0);
+    let tools = fakes.tools();
+    assert!(tools.package_manager(OsFamily::Debian));
+    assert!(tools.package_manager(OsFamily::Rhel));
+    assert!(!tools.package_manager(OsFamily::Linux));
+    assert!(for_family(OsFamily::Linux, tools.clone()).is_none());
+
+    let missing = fakes.path("missing");
+    let tools = Tools {
+        apt_get: missing.clone(),
+        rpm: missing,
+        ..tools
+    };
+    assert!(!tools.package_manager(OsFamily::Debian));
+    assert!(!tools.package_manager(OsFamily::Rhel));
+}
 
 #[tokio::test]
 async fn updates_go_to_the_helper_then_report() {
@@ -372,7 +391,7 @@ async fn the_helper_runs_dnf() {
 #[tokio::test]
 async fn dnf_reports_from_rpm() {
     let fakes = Fakes::new(0, 0, 1);
-    let (reports, report) = Reports::new(for_family(OsFamily::Rhel, fakes.tools()));
+    let (reports, report) = Reports::new(for_family(OsFamily::Rhel, fakes.tools()).unwrap());
     reports.collect().await;
     let report = report.borrow().clone().unwrap();
     assert!(report.reboot_required, "needs-restarting exited 1");
@@ -403,7 +422,7 @@ async fn a_missing_tool_reports_nothing() {
         dpkg_query: missing.into(),
         ..Fakes::new(0, 0, 0).tools()
     };
-    let (reports, rx) = Reports::new(for_family(OsFamily::Debian, tools));
+    let (reports, rx) = Reports::new(for_family(OsFamily::Debian, tools).unwrap());
     reports.collect().await;
     assert!(rx.borrow().is_none());
 }

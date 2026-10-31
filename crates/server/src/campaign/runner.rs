@@ -300,9 +300,11 @@ async fn window_ttl(
 }
 
 /// Queues a command for every server of `wave` without one, if a window
-/// is open long enough; servers revoked since creation are skipped. In a
-/// pinned campaign that command is first `configure_sources`, then the
-/// update once it succeeded.
+/// is open long enough; servers revoked since creation are skipped. A
+/// server that lost its package manager since then leaves a package
+/// campaign, so it does not count as failed (ADR-0063). In a pinned
+/// campaign that command is first `configure_sources`, then the update
+/// once it succeeded.
 async fn queue(
     conn: &mut PgConnection,
     row: &CampaignRow,
@@ -313,7 +315,7 @@ async fn queue(
 ) -> Result<Step, sqlx::Error> {
     let missing: Vec<Pending> = sqlx::query_as(
         "SELECT t.server_id, s.peer_id, s.revoked_at IS NOT NULL AS revoked,
-             s.os_family, cfg.state AS configure_state, cfg.error AS configure_error,
+             s.os_family, s.package_updates, cfg.state AS configure_state, cfg.error AS configure_error,
              t.restore_command_id, r.state AS restore_state
          FROM campaign_targets t JOIN servers s ON s.id = t.server_id
          LEFT JOIN commands cfg ON cfg.id = t.sources_command_id
@@ -340,6 +342,12 @@ async fn queue(
     for target in missing {
         let next = match row.sources_mode {
             _ if target.revoked => Next::Fail("server revoked".into()),
+            _ if !target.package_updates
+                && agent_version.is_none()
+                && target.configure_state.is_none() =>
+            {
+                Next::Skip
+            }
             None => Next::Update,
             // Windows servers take no sources (ADR-0049).
             Some(_) if target.os_family == "windows" => Next::Update,
@@ -348,6 +356,17 @@ async fn queue(
         let built = match next {
             Next::Wait => continue,
             Next::Fail(error) => Err(error),
+            Next::Skip => {
+                sqlx::query(
+                    "DELETE FROM campaign_targets WHERE campaign_id = $1 AND server_id = $2",
+                )
+                .bind(row.id)
+                .bind(target.server_id)
+                .execute(&mut *conn)
+                .await?;
+                skipped += 1;
+                continue;
+            }
             Next::Update => match &agent_version {
                 None => Ok((APPLY_UPDATES, packages.clone())),
                 Some(Ok(version)) => {

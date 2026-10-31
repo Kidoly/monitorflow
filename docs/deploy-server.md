@@ -54,7 +54,9 @@ A token created in the web interface comes with this command filled in, connecti
 
 ## Agent releases on the server
 
-The server serves agent releases to hosts at `https://<DOMAIN>/agent/<version>/` and `https://<DOMAIN>/agent/latest/` (ADR-0054), and to self-updating agents (ADR-0053). It holds only the releases you import. Download every asset of a release from its GitHub page into a directory, on any machine, and copy it to the server host. The import needs no network: it checks the release signature against the keys built into the server, then every file.
+The server serves agent releases to hosts at `https://<DOMAIN>/agent/<version>/` and `https://<DOMAIN>/agent/latest/` (ADR-0054), and to self-updating agents (ADR-0053). It holds only the releases you import. In the web interface, open Administration › Server update, then choose every asset of a release downloaded from its GitHub page, or give the URL of a directory holding them on a web server of your site. The import checks the release signature against the keys built into the server, then every file, and needs no Internet access.
+
+From a shell, for scripts, copy the files to the server host first:
 
 ```
 docker compose -f deploy/docker-compose.yml cp ./monitorflow-0.3.0 server:/tmp/release
@@ -97,6 +99,8 @@ To restore one, on a fresh install or on this one: `deploy/restore.sh <file>`.
 ## Updating
 
 ### From the web interface
+
+The server looks for a new release once a day. When it finds one, global administrators see a line above every page that leads to this update, and channels for all customers get one notification. On a server without Internet access nothing happens and nothing complains.
 
 In **Administration, Server update** (global administrators):
 

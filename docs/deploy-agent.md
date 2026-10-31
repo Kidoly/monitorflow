@@ -4,7 +4,7 @@ How to install the agent on a Linux server, with the installer or by hand, until
 
 ## Quick install
 
-With the install command from the web interface (Administration › Add servers), on a host with systemd, x86_64 or aarch64:
+With the install command from the web interface (Administration › Add servers), on any Linux distribution with systemd, x86_64 or aarch64:
 
 ```
 curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
@@ -12,6 +12,8 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
 ```
 
 The installer (ADR-0052) downloads the static agent for the host's architecture and `SHA256SUMS` from the same place, verifies the release signature `SHA256SUMS.sig` against the release keys it carries (ADR-0053, with OpenSSL 3; without it, it warns and checks checksums only), checks the checksum before it changes anything, and then does every step of [Binary and user](#binary-and-user) and [Sudo rules](#sudo-rules): binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface shows this command filled in, and the Windows one, once a site's install command is created, from the source you pick there ([Install sources](#install-sources)); give it the relay's address there if the agent connects through one.
+
+The agent monitors any distribution (ADR-0063). Updates and package sources need the Debian or RHEL family with apt or dnf present; on any other host the server page says "Package updates aren't available on this system; monitoring works normally", and campaigns leave the host out.
 
 One command serves every host of a site, for 30 days by default (ADR-0058). Each host enrolls under its own host name, made unique with `-2`, `-3`… when another server already has it. When the command was created with "Approve new hosts before they appear", new hosts wait under Waiting for approval on the same page until an administrator approves them. Revoking the command stops new installs; hosts already installed keep working. For one host under a name you choose, and for relays, single-use tokens remain under Advanced.
 
@@ -27,7 +29,7 @@ One command serves every host of a site, for 30 days by default (ADR-0058). Each
 | `MF_REQUIRE_SIGNATURE=1` | Fail instead of warning when OpenSSL 3 is missing and the signature cannot be checked |
 | `MF_ALLOW_UNSIGNED=1` | Install a release without `SHA256SUMS.sig`, like 0.1.0, with its checksums checked only |
 | `MF_ALLOW_COMMANDS=1` | Let this agent run the shell commands of AI remediation (`commands.shell`), through a systemd drop-in. Works on an installed agent too, and is kept by later runs; `MF_ALLOW_COMMANDS=0` takes it back. The web interface shows this line under Administration › AI (ADR-0064) |
-| `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too |
+| `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too. "Remove" on the server's page shows the command to use |
 
 An agent behind a relay:
 
@@ -96,7 +98,7 @@ The token page offers the commands from three sources (ADR-0054). A global admin
 
 Every source serves the same signed files, and the installer checks the release signature whatever the source (with OpenSSL 3).
 
-**This server.** For sites without Internet access. The server keeps whole releases in its cache, the one self-updates use (ADR-0053), and serves them behind the web interface. Once per release, on a machine with Internet access, download every asset of the release from its GitHub page into one directory: `install.sh`, `SHA256SUMS`, `SHA256SUMS.sig`, `VERSION`, `monitorflow-agent-linux-x86_64`, `monitorflow-agent-linux-aarch64`, `monitorflow-agent.service`, `monitorflow-agent-sudoers`, `monitorflow-agent-windows-x86_64.exe` and `monitorflow-agent-windows-x86_64.msi`. Copy the directory to the server host, then import it ([deploy-server.md](deploy-server.md#agent-releases-on-the-server) for the compose variant):
+**This server.** For sites without Internet access. The server keeps whole releases in its cache, the one self-updates use (ADR-0053), and serves them behind the web interface. Once per release, on a machine with Internet access, download every asset of the release from its GitHub page into one directory: `install.sh`, `SHA256SUMS`, `SHA256SUMS.sig`, `VERSION`, `monitorflow-agent-linux-x86_64`, `monitorflow-agent-linux-aarch64`, `monitorflow-agent.service`, `monitorflow-agent-sudoers`, `monitorflow-agent-windows-x86_64.exe` and `monitorflow-agent-windows-x86_64.msi`. Then choose all of them under Administration › Server update in the web interface. From a shell, copy the directory to the server host and import it ([deploy-server.md](deploy-server.md#agent-releases-on-the-server) for the compose variant):
 
 ```
 monitorflow-server agent-release import --dir ./monitorflow-0.3.0
@@ -146,6 +148,8 @@ Restart=on-failure
 ```
 
 On the first start, pass the enrollment token with `MONITORFLOW_ENROLLMENT_TOKEN` so it never stays on disk (ADR-0007).
+
+Without systemd, start the same command as `monitorflow` from your init system, with the token in its environment the first time. Everything works but the `systemd` sensor and self-updates, which fail and leave the running version in place: update with a new binary at the same path, then restart it.
 
 ## Sudo rules
 

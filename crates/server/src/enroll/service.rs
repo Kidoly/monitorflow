@@ -168,7 +168,7 @@ impl Enroller {
         };
         let identity =
             PeerIdentity::new(role, &peer_id).map_err(|e| EnrollError::Internal(e.to_string()))?;
-        let new_relay = prepare_inventory(&mut tx, role, &peer_id, site_id, parent).await?;
+        let prepared = prepare_inventory(&mut tx, role, &peer_id, site_id, parent).await?;
 
         // Names come from the token, like the identity (ADR-0025).
         let names = server_cert::parse_names(&server_names);
@@ -206,23 +206,43 @@ impl Enroller {
         .bind(details.to_string())
         .execute(&mut *tx)
         .await?;
-        if let Some(relay_id) = new_relay {
-            let actor = identity.uri();
-            audit::record(
-                &mut *tx,
-                Event {
-                    actor_kind: "peer",
-                    actor_id: &actor,
-                    action: "relay.create",
-                    target: Some(("relay", &peer_id)),
-                    details: serde_json::json!({
-                        "relay_id": relay_id,
-                        "site_id": site_id,
-                        "parent_relay_id": parent,
-                    }),
-                },
-            )
-            .await?;
+        let actor = identity.uri();
+        match prepared {
+            Prepared::Ready => {}
+            Prepared::NewRelay(relay_id) => {
+                audit::record(
+                    &mut *tx,
+                    Event {
+                        actor_kind: "peer",
+                        actor_id: &actor,
+                        action: "relay.create",
+                        target: Some(("relay", &peer_id)),
+                        details: serde_json::json!({
+                            "relay_id": relay_id,
+                            "site_id": site_id,
+                            "parent_relay_id": parent,
+                        }),
+                    },
+                )
+                .await?;
+            }
+            Prepared::Restored => {
+                let (action, kind) = match role {
+                    PeerRole::Relay => ("relay.restore", "relay"),
+                    _ => ("server.restore", "server"),
+                };
+                audit::record(
+                    &mut *tx,
+                    Event {
+                        actor_kind: "peer",
+                        actor_id: &actor,
+                        action,
+                        target: Some((kind, &peer_id)),
+                        details: serde_json::json!({ "site_id": site_id }),
+                    },
+                )
+                .await?;
+            }
         }
         tx.commit().await?;
         tracing::info!(peer = %identity, serial = %cert.serial, ?source, "enrolled a peer");
@@ -233,18 +253,29 @@ impl Enroller {
 /// A consumed token: ID, role, peer ID, site, server names, parent relay.
 type TokenRow = (Uuid, String, String, Uuid, Vec<String>, Option<Uuid>);
 
+/// What [`prepare_inventory`] did to the peer's row.
+#[derive(Debug, PartialEq, Eq)]
+enum Prepared {
+    Ready,
+    /// A relay without a row got this one.
+    NewRelay(Uuid),
+    /// A removed peer is back, with its history (ADR-0062).
+    Restored,
+}
+
 /// Checks the peer's inventory row before its certificate is issued
-/// (ADR-0008): a revoked row, or a row in another site than the token's or
-/// under another parent relay (ADR-0028), refuses the enrollment. A relay
-/// without a row gets one in the token's site, under the token's parent;
-/// its ID is returned. Agents get theirs at their first Hello.
+/// (ADR-0008): a row in another site than the token's or under another
+/// parent relay (ADR-0028) refuses the enrollment. A removed row comes
+/// back (ADR-0062), except for a host waiting for approval, whose approval
+/// does it. A relay without a row gets one in the token's site, under the
+/// token's parent. Agents get theirs at their first Hello.
 async fn prepare_inventory(
     tx: &mut Transaction<'_, Postgres>,
     role: PeerRole,
     peer_id: &str,
     site_id: Uuid,
     parent: Option<Uuid>,
-) -> Result<Option<Uuid>, EnrollError> {
+) -> Result<Prepared, EnrollError> {
     let sql = match role {
         PeerRole::Relay => {
             "SELECT site_id, revoked_at IS NOT NULL, parent_relay_id FROM relays
@@ -260,20 +291,46 @@ async fn prepare_inventory(
         .fetch_optional(&mut **tx)
         .await?;
     match existing {
+        // A removed relay may come back without a parent: tokens from the
+        // web interface name none.
         Some((existing_site, revoked, existing_parent))
-            if revoked || existing_site != site_id || existing_parent != parent =>
+            if existing_site != site_id
+                || (existing_parent != parent && !(revoked && parent.is_none())) =>
         {
             tracing::warn!(
                 %role,
                 peer_id,
-                revoked,
                 %existing_site,
                 token_site = %site_id,
                 ?existing_parent,
                 token_parent = ?parent,
-                "enrollment refused: the peer's inventory row is revoked, in another site or under another parent relay"
+                "enrollment refused: the peer's inventory row is in another site or under another parent relay"
             );
             Err(EnrollError::Refused)
+        }
+        Some((_, true, _)) => {
+            let sql = match role {
+                PeerRole::Relay => {
+                    "UPDATE relays SET revoked_at = NULL, last_seen_at = now(),
+                                       parent_relay_id = $2
+                     WHERE peer_id = $1"
+                }
+                _ => {
+                    "UPDATE servers SET revoked_at = NULL, last_seen_at = now()
+                     WHERE peer_id = $1 AND $2::uuid IS NULL
+                       AND NOT EXISTS (SELECT 1 FROM pending_hosts p WHERE p.peer_id = $1)"
+                }
+            };
+            let restored = sqlx::query(sql)
+                .bind(peer_id)
+                .bind(parent)
+                .execute(&mut **tx)
+                .await?;
+            Ok(if restored.rows_affected() > 0 {
+                Prepared::Restored
+            } else {
+                Prepared::Ready
+            })
         }
         None if role == PeerRole::Relay => {
             let relay_id = sqlx::query_scalar(
@@ -285,9 +342,9 @@ async fn prepare_inventory(
             .bind(parent)
             .fetch_one(&mut **tx)
             .await?;
-            Ok(Some(relay_id))
+            Ok(Prepared::NewRelay(relay_id))
         }
-        _ => Ok(None),
+        _ => Ok(Prepared::Ready),
     }
 }
 

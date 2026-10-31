@@ -116,4 +116,4 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
   | sudo MF_ROLE=relay MF_UNINSTALL=1 sh
 ```
 
-Revoke the relay in the web interface too, so its certificate no longer works.
+The relay's page in the web interface does this in one go: "Remove" revokes its certificate, hides it from the lists and shows the exact uninstall command. To add it back, uninstall it and enroll it again with a token for the same ID in the same site.

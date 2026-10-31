@@ -12,6 +12,7 @@ use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::{Identity, PeerRole};
 use monitorflow_server::alerting::offline::{self, OfflineSettings};
 use monitorflow_server::alerting::{AlertStore, Alerts, EngineSettings, LogNotifier};
+use monitorflow_server::api::server_update::ServerUpdateSettings;
 use monitorflow_server::api::users::GrantScope;
 use monitorflow_server::api::{
     self, customers, setup, users, ApiSettings, ApiState, EnrollmentSettings, Role,
@@ -32,6 +33,7 @@ use monitorflow_server::mirror::{
 };
 use monitorflow_server::notify;
 use monitorflow_server::relay_commands::RelayCommands;
+use monitorflow_server::release_check;
 use monitorflow_server::remediation::context::Backends;
 use monitorflow_server::remediation::runner::{self, Remediation};
 use monitorflow_server::remediation::snapshot::{ProxmoxSnapshotter, SnapshotHook};
@@ -461,6 +463,8 @@ async fn main() -> anyhow::Result<()> {
     let remediation_pool = pool.clone();
     // Notifications (ADR-0060): the outbox the database triggers fill.
     let notify_pool = pool.clone();
+    // The daily look for a newer release (ADR-0061).
+    let check_pool = pool.clone();
     let renewer = Renewer::new(pool.clone(), ca.clone());
     let enroller = Enroller::new(pool, ca, FailureLimiter::default());
 
@@ -570,6 +574,16 @@ async fn main() -> anyhow::Result<()> {
                 .with_status_dir(config.server_update_dir.clone())
                 .run(notify::dispatcher::POLL, until_stopped())
                 .await;
+            Ok(())
+        },
+        async {
+            release_check::run(
+                check_pool,
+                ServerUpdateSettings::from_config(&config),
+                release_check::AFTER_START,
+                until_stopped(),
+            )
+            .await;
             Ok(())
         },
         async {

@@ -409,7 +409,7 @@ web="https://127.0.0.1:$HTTPS_PORT"
 # release: the files route and the API say so.
 empty_cache() {
     [ "$(curl -sk -o "$work/empty.txt" -w '%{http_code}' "$web/agent/latest/install.sh")" = 404 ] \
-        && grep -q 'agent-release import' "$work/empty.txt"
+        && grep -q 'Server update' "$work/empty.txt"
 }
 if [ -z "$newer" ]; then
     check "empty cache answers 404 with a reason" empty_cache

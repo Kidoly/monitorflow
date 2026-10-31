@@ -225,9 +225,12 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
 
 /** The agent-side opt-in, which stays on each server (architecture §8). */
 function AllowCommands() {
-  const fetcher = useCallback((signal: AbortSignal) => api.agentInstall(signal), []);
+  const fetcher = useCallback(
+    (signal: AbortSignal) => Promise.all([api.agentInstall(signal), api.publicAddress(signal)]),
+    [],
+  );
   const { data } = usePolledData(fetcher);
-  const command = data && allowCommandsCommand(data, window.location.origin);
+  const command = data && allowCommandsCommand(data[0], data[1], window.location.origin);
   return (
     <section className={styles.panel} aria-label="Let AI run commands">
       <h2 className={styles.sectionTitle}>Let AI run commands on a server</h2>

@@ -16,6 +16,7 @@ pub mod ingest;
 pub mod mirror;
 pub mod notify;
 pub mod relay_commands;
+pub mod release_check;
 pub mod remediation;
 pub mod renew;
 pub mod sensor_config;

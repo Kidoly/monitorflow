@@ -131,6 +131,12 @@ describe("toRequest", () => {
     expect(campaignTargets(servers, "c1", "site-1", ["o", "x"]).map((s) => s.id)).toEqual(["o", "a", "b"]);
     expect(campaignTargets(servers, "c1", "", ["b"]).map((s) => s.id)).toEqual(["b"]);
   });
+
+  it("leaves out hosts without package updates, unless it updates agents", () => {
+    const servers = [server({ id: "a" }), server({ id: "b", package_updates: false })];
+    expect(campaignTargets(servers, "c1", "site-1", ["b"]).map((s) => s.id)).toEqual(["a"]);
+    expect(campaignTargets(servers, "c1", "site-1", [], true).map((s) => s.id)).toEqual(["a", "b"]);
+  });
 });
 
 describe("campaign states and labels", () => {

@@ -19,6 +19,8 @@ describe("format", () => {
       "Windows Server 2022 Datacenter 21H2 build 20348.2849",
     );
     expect(formatOs("windows", null)).toBe("Windows");
+    expect(formatOs("linux", "alpine 3.20")).toBe("alpine 3.20");
+    expect(formatOs("linux", null)).toBe("Linux");
   });
 
   it("formats times relative to now", () => {

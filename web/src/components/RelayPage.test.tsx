@@ -100,6 +100,23 @@ const lists = {
   },
 };
 
+const agentInstall = {
+  source: "github",
+  custom_url: null,
+  source_from_config: false,
+  custom_url_from_config: false,
+  github_url: "https://github.com/x/releases/latest/download",
+  central: null,
+};
+const publicAddress = {
+  address: "mf.example",
+  default: "mf.example",
+  names: ["mf.example"],
+  certified: true,
+  upstream_url: "https://mf.example:7443",
+  enroll_url: "https://mf.example:7445",
+};
+
 describe("RelayPage", () => {
   it("shows the facts and the servers connecting through the relay", async () => {
     stubFetch({ [`GET /api/relays/${ID}`]: { status: 200, body: detail() }, ...lists });
@@ -120,11 +137,11 @@ describe("RelayPage", () => {
     // The worst open incident of the server, with how many more are open.
     expect(web).toHaveTextContent(/web-1\s*Debian 12 · agent 0\.4\.2\s*Online\s*Critical\s+CPU usage\s*92%\s*· 1 more/);
     expect(db).toHaveTextContent(/db-1\s*Debian 12 · agent 0\.4\.1\s*Offline\s*No heartbeat since 2026-10-20 22:05/);
-    // A site administrator cannot revoke.
-    expect(screen.queryByRole("button", { name: /Revoke/ })).not.toBeInTheDocument();
+    // A site administrator cannot remove.
+    expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
   });
 
-  it("revokes after confirmation, with the CSRF header and the reason", async () => {
+  it("removes after confirmation, then shows the uninstall command", async () => {
     const fetchMock = stubFetch({
       [`GET /api/relays/${ID}`]: [
         { status: 200, body: detail() },
@@ -132,8 +149,10 @@ describe("RelayPage", () => {
       ],
       [`POST /api/relays/${ID}/revoke`]: {
         status: 200,
-        body: { revoked_at: "2026-10-22T10:00:00Z", reason: "key_compromise", serials: ["0a"], closed_streams: 2 },
+        body: { revoked_at: "2026-10-22T10:00:00Z", reason: "cessation_of_operation", serials: ["0a"], closed_streams: 2 },
       },
+      "GET /api/settings/agent-install": { status: 200, body: agentInstall },
+      "GET /api/settings/public-address": { status: 200, body: publicAddress },
       ...lists,
     });
     render(
@@ -141,22 +160,20 @@ describe("RelayPage", () => {
         <RelayPage id={ID} me={customerAdmin} />
       </As>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "Revoke relay-1…" }));
-    const form = screen.getByRole("form", { name: "Revoke relay-1?" });
-    expect(form).toHaveTextContent("including the agents it forwards");
+    await userEvent.click(await screen.findByRole("button", { name: "Remove relay-1…" }));
+    const form = screen.getByRole("form", { name: "Remove relay-1?" });
+    expect(form).toHaveTextContent("with the agents it forwards");
     await userEvent.click(within(form).getByRole("button", { name: "Cancel" }));
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/revoke"))).toBe(false);
 
-    await userEvent.click(screen.getByRole("button", { name: "Revoke relay-1…" }));
-    const confirm = screen.getByRole("button", { name: "Revoke relay-1" });
-    expect(confirm).toBeDisabled();
-    await userEvent.selectOptions(screen.getByLabelText("Reason"), "key_compromise");
-    await userEvent.click(confirm);
-    expect(await screen.findByText("Revoked", { selector: "span" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Remove relay-1…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove relay-1" }));
+    expect(await screen.findByText("Removed", { selector: "span" })).toBeInTheDocument();
     const call = fetchMock.mock.calls.findIndex(([url]) => String(url).endsWith("/revoke"));
     expect(requestHeaders(fetchMock, call)[CSRF_HEADER]).toBe("1");
-    expect(fetchMock.mock.calls[call]?.[1]?.body).toBe(JSON.stringify({ reason: "key_compromise" }));
-    expect(screen.queryByRole("button", { name: /Revoke/ })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls[call]?.[1]?.body).toBe(JSON.stringify({ reason: "cessation_of_operation" }));
+    expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
+    expect(await screen.findByText(/MF_ROLE=relay MF_UNINSTALL=1 MF_PURGE=1/)).toBeInTheDocument();
   });
 
   it("updates an older relay to the newest release, after confirmation", async () => {

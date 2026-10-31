@@ -18,7 +18,7 @@ describe("RelayListPage", () => {
         body: {
           relays: [
             relay({ id: "r2", peer_id: "relay-2", status: "offline", cert_not_after: "2027-02-11T10:00:00Z" }),
-            relay({ id: "r3", peer_id: "relay-3", revoked_at: "2026-10-20T10:00:00Z", cert_not_after: null }),
+            relay({ id: "r3", peer_id: "relay-3", status: "offline", cert_not_after: null }),
           ],
           next_cursor: null,
         },
@@ -39,7 +39,7 @@ describe("RelayListPage", () => {
       expect.stringMatching(/^\/admin\/relays\/view\/?\?id=6f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a02$/),
     );
     expect(rows[2]).toHaveTextContent(/relay-2.*Offline.*Valid · 2027-02-11/);
-    expect(rows[3]).toHaveTextContent(/relay-3.*Revoked.*None/);
+    expect(rows[3]).toHaveTextContent(/relay-3.*Offline.*None/);
     expect(screen.getByText(/3 relays, 1 online/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "New relay token" })).toHaveAttribute(
       "href",

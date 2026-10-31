@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { Label } from "@/components/ui/StatusLabel";
 import { type Customer, LOGIN_PATH, type Me, type Site, api, describeError, isAbortError } from "@/lib/api";
+import { administersEverything } from "@/lib/me";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -16,6 +17,7 @@ import { isCurrent, visibleNavigation } from "./navigation";
 import styles from "./Shell.module.css";
 import { ScopeSwitcher } from "./ScopeSwitcher";
 import { ThemeToggle } from "./ThemeToggle";
+import { UpdateBanner } from "./UpdateBanner";
 
 /** The API caps a page at 500; past that the count reads "500+". */
 const COUNT_LIMIT = 500;
@@ -170,6 +172,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         <ThemeToggle />
       </nav>
       <main id="main" className={styles.main} tabIndex={-1}>
+        {administersEverything(me) && <UpdateBanner />}
         {children}
       </main>
     </div>

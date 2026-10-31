@@ -132,10 +132,11 @@ pub(super) struct Consumed {
 }
 
 /// Uses the key with hash `key_hash` for the agent `hostname`, in `tx`:
-/// picks a new unique ID from the host name, records the enrollment as a
-/// used token of the key's site, counts it, and puts the host in
-/// `pending_hosts` when the key asks for approval. `None` when no usable
-/// key has that hash.
+/// takes back the ID of the same host if it was removed from the key's
+/// site (ADR-0062), otherwise picks a new unique ID from the host name;
+/// records the enrollment as a used token of the key's site, counts it,
+/// and puts the host in `pending_hosts` when the key asks for approval.
+/// `None` when no usable key has that hash.
 pub(super) async fn consume(
     tx: &mut Transaction<'_, Postgres>,
     key_hash: &[u8; 32],
@@ -174,28 +175,10 @@ pub(super) async fn consume(
         .execute(&mut **tx)
         .await?;
     let base = peer_id_from_hostname(hostname);
-    let mut peer_id = None;
-    for n in 1..=MAX_SUFFIX {
-        let candidate = with_suffix(&base, n);
-        // Any trace of the ID counts, revoked or pending, in any case:
-        // a key never enrolls a host under an ID that was ever given out.
-        let taken: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM servers WHERE lower(peer_id) = $1)
-                 OR EXISTS (SELECT 1 FROM certificates
-                            WHERE peer_role = 'agent' AND lower(peer_id) = $1)
-                 OR EXISTS (SELECT 1 FROM enrollment_tokens
-                            WHERE role = 'agent' AND lower(peer_id) = $1)",
-        )
-        .bind(&candidate)
-        .fetch_one(&mut **tx)
-        .await?;
-        if !taken {
-            peer_id = Some(candidate);
-            break;
-        }
-    }
-    let peer_id = peer_id
-        .ok_or_else(|| EnrollError::Internal(format!("no free ID left for host `{base}`")))?;
+    let peer_id = match removed_id(tx, site_id, hostname, &base).await? {
+        Some(id) => id,
+        None => new_id(tx, &base).await?,
+    };
 
     // A hash of a secret nobody holds: the row exists only as a record.
     let unusable = token::generate([0; 32]).map_err(|e| EnrollError::Internal(e.to_string()))?;
@@ -235,6 +218,55 @@ pub(super) async fn consume(
         peer_id,
         site_id,
     }))
+}
+
+/// The ID of the server last removed from `site_id` with this host name
+/// or ID: enrolling the host again brings that row back instead of adding
+/// a second one. Not a host already waiting for approval.
+async fn removed_id(
+    tx: &mut Transaction<'_, Postgres>,
+    site_id: Uuid,
+    hostname: &str,
+    base: &str,
+) -> Result<Option<String>, EnrollError> {
+    Ok(sqlx::query_scalar(
+        "SELECT s.peer_id FROM servers s
+         WHERE s.site_id = $1 AND s.revoked_at IS NOT NULL
+           AND (lower(s.hostname) = lower($2) OR lower(s.peer_id) = $3)
+           AND NOT EXISTS (SELECT 1 FROM pending_hosts p WHERE p.peer_id = s.peer_id)
+         ORDER BY s.revoked_at DESC
+         LIMIT 1",
+    )
+    .bind(site_id)
+    .bind(hostname.trim())
+    .bind(base)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
+/// `base`, or `base` with the first free suffix.
+async fn new_id(tx: &mut Transaction<'_, Postgres>, base: &str) -> Result<String, EnrollError> {
+    for n in 1..=MAX_SUFFIX {
+        let candidate = with_suffix(base, n);
+        // Any trace of the ID counts, revoked or pending, in any case:
+        // a key never gives a new host an ID that was ever given out.
+        let taken: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM servers WHERE lower(peer_id) = $1)
+                 OR EXISTS (SELECT 1 FROM certificates
+                            WHERE peer_role = 'agent' AND lower(peer_id) = $1)
+                 OR EXISTS (SELECT 1 FROM enrollment_tokens
+                            WHERE role = 'agent' AND lower(peer_id) = $1)",
+        )
+        .bind(&candidate)
+        .fetch_one(&mut **tx)
+        .await?;
+        if !taken {
+            return Ok(candidate);
+        }
+    }
+    Err(EnrollError::Internal(format!(
+        "no free ID left for host `{base}`"
+    )))
 }
 
 /// A peer ID from a host name: lowercase, every run of other characters

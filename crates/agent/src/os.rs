@@ -4,12 +4,17 @@
 //!
 //! For tests only, [`OS_RELEASE_PATH_ENV`] points the agent at another
 //! os-release file, so the end-to-end test can pose as a supported
-//! distribution on any Linux host. The family is still checked: a file
-//! naming an unsupported distribution is refused like the real one.
+//! distribution on any Linux host.
+//!
+//! No distribution is refused: on one outside the families, or without a
+//! readable `os-release`, the agent monitors as usual and only its package
+//! features are off (ADR-0063).
 
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
+
+use crate::packages::Tools;
 
 /// `os-release` locations, in the order systemd documents them.
 const OS_RELEASE: [&str; 2] = ["/etc/os-release", "/usr/lib/os-release"];
@@ -25,6 +30,8 @@ pub enum OsFamily {
     Debian,
     /// RHEL, Rocky, AlmaLinux, CentOS and derivatives: dnf.
     Rhel,
+    /// Any other Linux distribution: monitoring only (ADR-0063).
+    Linux,
     /// Windows and Windows Server; no package manager support yet.
     #[cfg(windows)]
     Windows,
@@ -36,6 +43,7 @@ impl OsFamily {
         match self {
             Self::Debian => "debian",
             Self::Rhel => "rhel",
+            Self::Linux => "linux",
             #[cfg(windows)]
             Self::Windows => "windows",
         }
@@ -61,8 +69,13 @@ impl fmt::Display for OsFamily {
 pub struct HostInfo {
     pub hostname: String,
     pub os_family: OsFamily,
-    /// Distribution and version, like `debian 12` or `rocky 9.4`.
+    /// Distribution and version, like `debian 12` or `rocky 9.4`; empty
+    /// when the host does not say.
     pub os_version: String,
+    /// Whether the family's package tools are on this host. False on
+    /// [`OsFamily::Linux`], and on an image-based system of a known family
+    /// (ADR-0063).
+    pub package_manager: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -71,18 +84,13 @@ pub enum OsError {
     Read { path: PathBuf, error: io::Error },
     #[error("no os-release file found in /etc or /usr/lib")]
     Missing,
-    #[error("os-release has no ID")]
-    NoId,
-    #[error(
-        "unsupported distribution `{id}` (ID_LIKE `{id_like}`): the agent supports the debian and rhel families"
-    )]
-    Unsupported { id: String, id_like: String },
     #[error("cannot read the Windows version from the registry: {0}")]
     Registry(String),
 }
 
-/// Reads the host name and `os-release`, failing on an unsupported family.
-/// Honours [`OS_RELEASE_PATH_ENV`] when it is set and not empty.
+/// Reads the host name and `os-release`, which never fails: the `Result`
+/// is for Windows. Honours [`OS_RELEASE_PATH_ENV`] when it is set and not
+/// empty.
 #[cfg(unix)]
 pub fn detect() -> Result<HostInfo, OsError> {
     let path = std::env::var_os(OS_RELEASE_PATH_ENV)
@@ -91,25 +99,32 @@ pub fn detect() -> Result<HostInfo, OsError> {
     if let Some(path) = &path {
         tracing::warn!(path = %path.display(), "using an os-release override ({OS_RELEASE_PATH_ENV}); this is meant for tests");
     }
-    detect_from(path.as_deref())
+    Ok(detect_from(path.as_deref()))
 }
 
 /// Same as [`detect`], reading `os_release` if given, otherwise the system
-/// files.
-pub fn detect_from(os_release: Option<&Path>) -> Result<HostInfo, OsError> {
+/// files. A file that cannot be read makes an unknown distribution.
+pub fn detect_from(os_release: Option<&Path>) -> HostInfo {
     let text = match os_release {
-        Some(path) => read(path)?.ok_or_else(|| OsError::Read {
-            path: path.to_owned(),
-            error: io::ErrorKind::NotFound.into(),
-        })?,
-        None => read_os_release()?,
+        Some(path) => read(path).and_then(|text| {
+            text.ok_or_else(|| OsError::Read {
+                path: path.to_owned(),
+                error: io::ErrorKind::NotFound.into(),
+            })
+        }),
+        None => read_os_release(),
     };
-    let (os_family, os_version) = parse_os_release(&text)?;
-    Ok(HostInfo {
+    let text = text.unwrap_or_else(|error| {
+        tracing::warn!(%error, "cannot tell the distribution; package features are unavailable");
+        String::new()
+    });
+    let (os_family, os_version) = parse_os_release(&text);
+    HostInfo {
         hostname: hostname(),
         os_family,
         os_version,
-    })
+        package_manager: Tools::default().package_manager(os_family),
+    }
 }
 
 /// The file's text, or `None` if it does not exist.
@@ -152,6 +167,7 @@ pub fn detect() -> Result<HostInfo, OsError> {
         hostname: hostname(),
         os_family: OsFamily::Windows,
         os_version: windows_version(&product, display.as_deref(), &build, ubr),
+        package_manager: Tools::default().package_manager(OsFamily::Windows),
     })
 }
 
@@ -213,8 +229,9 @@ pub fn hostname() -> String {
 }
 
 /// Family and `<ID> <VERSION_ID>` from `os-release` text. `ID` decides
-/// first, then each `ID_LIKE` entry in order.
-pub fn parse_os_release(text: &str) -> Result<(OsFamily, String), OsError> {
+/// first, then each `ID_LIKE` entry in order; anything else is
+/// [`OsFamily::Linux`]. The version is cut to what the server accepts.
+pub fn parse_os_release(text: &str) -> (OsFamily, String) {
     let field = |key: &str| {
         text.lines()
             .filter_map(|line| line.trim().split_once('='))
@@ -222,22 +239,22 @@ pub fn parse_os_release(text: &str) -> Result<(OsFamily, String), OsError> {
             .map(|(_, v)| unquote(v.trim()))
             .next_back()
     };
-    let id = field("ID")
-        .filter(|id| !id.is_empty())
-        .ok_or(OsError::NoId)?;
+    let id = field("ID").unwrap_or_default();
     let id_like = field("ID_LIKE").unwrap_or_default();
     let family = std::iter::once(id.as_str())
         .chain(id_like.split_whitespace())
         .find_map(OsFamily::from_id)
-        .ok_or_else(|| OsError::Unsupported {
-            id: id.clone(),
-            id_like: id_like.clone(),
-        })?;
+        .unwrap_or(OsFamily::Linux);
     let version = match field("VERSION_ID").filter(|v| !v.is_empty()) {
         Some(v) => format!("{id} {v}"),
         None => id,
     };
-    Ok((family, version))
+    let version = version.trim();
+    let end = (0..=MAX_VERSION.min(version.len()))
+        .rev()
+        .find(|&i| version.is_char_boundary(i))
+        .unwrap_or(0);
+    (family, version[..end].to_owned())
 }
 
 /// Shell-style value: `"a b"`, `'a b'` or bare, with `\` escapes in
@@ -264,49 +281,61 @@ fn unquote(value: &str) -> String {
 mod tests {
     use super::*;
 
-    fn parse(text: &str) -> Result<(OsFamily, String), String> {
-        parse_os_release(text).map_err(|e| e.to_string())
+    fn parse(text: &str) -> (OsFamily, String) {
+        parse_os_release(text)
     }
 
     #[test]
     fn real_distributions() {
         let debian = "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nID=debian\n";
-        assert_eq!(
-            parse(debian).unwrap(),
-            (OsFamily::Debian, "debian 12".into())
-        );
+        assert_eq!(parse(debian), (OsFamily::Debian, "debian 12".into()));
         let ubuntu = "NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nID=ubuntu\nID_LIKE=debian\n";
-        assert_eq!(
-            parse(ubuntu).unwrap(),
-            (OsFamily::Debian, "ubuntu 24.04".into())
-        );
+        assert_eq!(parse(ubuntu), (OsFamily::Debian, "ubuntu 24.04".into()));
         let rocky = "NAME=\"Rocky Linux\"\nID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"9.4\"\n";
-        assert_eq!(parse(rocky).unwrap(), (OsFamily::Rhel, "rocky 9.4".into()));
+        assert_eq!(parse(rocky), (OsFamily::Rhel, "rocky 9.4".into()));
         let rhel = "ID=\"rhel\"\nID_LIKE=\"fedora\"\nVERSION_ID=\"9.4\"\n";
-        assert_eq!(parse(rhel).unwrap(), (OsFamily::Rhel, "rhel 9.4".into()));
+        assert_eq!(parse(rhel), (OsFamily::Rhel, "rhel 9.4".into()));
         let mint = "ID=linuxmint\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"22\"\n";
-        assert_eq!(parse(mint).unwrap().0, OsFamily::Debian);
+        assert_eq!(parse(mint).0, OsFamily::Debian);
     }
 
     #[test]
     fn missing_version_and_odd_formatting() {
         let testing = "# Debian testing\n\n  ID = debian \nVERSION_ID=\"\"\n";
-        assert_eq!(parse(testing).unwrap(), (OsFamily::Debian, "debian".into()));
+        assert_eq!(parse(testing), (OsFamily::Debian, "debian".into()));
         let single = "ID='rhel'\nVERSION_ID='8.10'\n";
-        assert_eq!(parse(single).unwrap(), (OsFamily::Rhel, "rhel 8.10".into()));
+        assert_eq!(parse(single), (OsFamily::Rhel, "rhel 8.10".into()));
         // The last assignment wins, as when the file is sourced.
         let twice = "ID=arch\nID=debian\n";
-        assert_eq!(parse(twice).unwrap().0, OsFamily::Debian);
+        assert_eq!(parse(twice).0, OsFamily::Debian);
     }
 
     #[test]
-    fn unsupported_or_empty_is_refused() {
-        let err = parse("ID=fedora\nVERSION_ID=40\n").unwrap_err();
-        assert!(err.contains("unsupported distribution `fedora`"), "{err}");
-        let err = parse("ID=arch\nID_LIKE=\"\"\n").unwrap_err();
-        assert!(err.contains("`arch`"), "{err}");
-        assert_eq!(parse("NAME=x\n").unwrap_err(), "os-release has no ID");
-        assert_eq!(parse("ID=\"\"\n").unwrap_err(), "os-release has no ID");
+    fn unknown_distributions_are_plain_linux() {
+        assert_eq!(
+            parse("ID=fedora\nVERSION_ID=40\n"),
+            (OsFamily::Linux, "fedora 40".into())
+        );
+        assert_eq!(
+            parse("ID=arch\nID_LIKE=\"\"\n"),
+            (OsFamily::Linux, "arch".into())
+        );
+        assert_eq!(
+            parse("ID=alpine\nVERSION_ID=3.20.1\n"),
+            (OsFamily::Linux, "alpine 3.20.1".into())
+        );
+        assert_eq!(parse("NAME=x\n"), (OsFamily::Linux, String::new()));
+        assert_eq!(parse("ID=\"\"\n"), (OsFamily::Linux, String::new()));
+        assert_eq!(parse(""), (OsFamily::Linux, String::new()));
+        assert_eq!(parse("VERSION_ID=1\n"), (OsFamily::Linux, "1".into()));
+        assert_eq!(parse("not a key value file\n").0, OsFamily::Linux);
+    }
+
+    #[test]
+    fn a_long_version_stays_within_what_the_server_accepts() {
+        let (_, version) = parse(&format!("ID=x\nVERSION_ID={}\n", "é".repeat(100)));
+        assert!(version.len() <= MAX_VERSION, "{}", version.len());
+        assert!(version.starts_with("x é"));
     }
 
     #[test]
@@ -317,24 +346,34 @@ mod tests {
     }
 
     #[test]
-    fn override_file_is_read_and_still_checked() {
+    fn override_file_is_read() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("os-release");
         std::fs::write(&path, "ID=debian\nVERSION_ID=\"12\"\n").unwrap();
-        let host = detect_from(Some(&path)).unwrap();
+        let host = detect_from(Some(&path));
         assert_eq!(host.os_family, OsFamily::Debian);
         assert_eq!(host.os_version, "debian 12");
 
         std::fs::write(&path, "ID=arch\n").unwrap();
-        let err = detect_from(Some(&path)).unwrap_err().to_string();
-        assert!(err.contains("unsupported distribution `arch`"), "{err}");
+        let host = detect_from(Some(&path));
+        assert_eq!(host.os_family, OsFamily::Linux);
+        assert_eq!(host.os_version, "arch");
+        assert!(!host.package_manager);
+    }
 
-        let missing = dir.path().join("missing");
-        let err = detect_from(Some(&missing)).unwrap_err().to_string();
-        assert!(
-            err.starts_with("cannot read") && err.contains("missing"),
-            "{err}"
-        );
+    #[test]
+    fn an_unreadable_os_release_is_an_unknown_distribution() {
+        let dir = tempfile::tempdir().unwrap();
+        for path in [dir.path().join("missing"), dir.path().to_owned()] {
+            let host = detect_from(Some(&path));
+            assert_eq!(host.os_family, OsFamily::Linux);
+            assert_eq!(host.os_version, "");
+            assert!(!host.package_manager);
+        }
+        // Not UTF-8.
+        let path = dir.path().join("os-release");
+        std::fs::write(&path, b"ID=\xff\n").unwrap();
+        assert_eq!(detect_from(Some(&path)).os_family, OsFamily::Linux);
     }
 
     #[test]

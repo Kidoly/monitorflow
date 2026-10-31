@@ -361,6 +361,7 @@ impl Agent {
             hostname: self.host.hostname.clone(),
             os_family: self.host.os_family.as_str().into(),
             os_version: self.host.os_version.clone(),
+            no_package_manager: !self.host.package_manager,
         }
     }
 

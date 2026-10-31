@@ -13,6 +13,7 @@ import {
   isMirrorUrl,
   linuxInstallCommand,
   relayInstallCommand,
+  uninstallCommand,
   windowsInstallCommand,
 } from "./install";
 
@@ -91,7 +92,7 @@ describe("install commands", () => {
   it("says why a source cannot be used", () => {
     const empty = target({ install: install({ central: null, custom_url: null }) });
     expect(unavailable(linuxInstallCommand(empty, "central", ORIGIN))).toMatch(/holds no agent release yet/);
-    expect(unavailable(windowsInstallCommand(empty, "central", ORIGIN))).toContain("agent-release import");
+    expect(unavailable(windowsInstallCommand(empty, "central", ORIGIN))).toContain("Server update");
     expect(unavailable(linuxInstallCommand(empty, "custom", ORIGIN))).toMatch(/No custom URL/);
     expect(unavailable(linuxInstallCommand(target(), "central", "http://localhost:3000"))).toMatch(/HTTPS/);
     const partial = target({
@@ -171,7 +172,7 @@ describe("install commands", () => {
       "MF_SERVER=mf.example:27443 MF_ENROLL=mf.example:27445",
     );
     expect(unavailable(relayInstallCommand(target({ install: install({ central: null }) }), "central", ORIGIN))).toContain(
-      "agent-release import",
+      "Server update",
     );
     expect(isMirrorUrl("http://relay1.example:7480")).toBe(true);
     expect(isMirrorUrl("https://[2001:db8::1]:7480/")).toBe(true);
@@ -180,19 +181,92 @@ describe("install commands", () => {
 });
 
 describe("allowCommandsCommand", () => {
+  const address = {
+    address: "monitor.lan",
+    default: "mf.example",
+    names: ["mf.example"],
+    certified: false,
+    upstream_url: "https://monitor.lan:7443",
+    enroll_url: "https://monitor.lan:7445",
+  };
+
   it("re-runs the installer of the default source with the opt-in", () => {
-    expect(text(allowCommandsCommand(install(), ORIGIN))).toBe(
+    expect(text(allowCommandsCommand(install(), address, ORIGIN))).toBe(
       `curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_ALLOW_COMMANDS=1 sh`,
     );
-    expect(text(allowCommandsCommand(install({ source: "custom" }), ORIGIN))).toBe(
+    expect(text(allowCommandsCommand(install({ source: "custom" }), address, ORIGIN))).toBe(
       "curl -fsSL https://files.example/mf/0.2.0/install.sh \\\n  | sudo MF_DOWNLOAD_URL=https://files.example/mf/0.2.0 MF_ALLOW_COMMANDS=1 sh",
     );
   });
 
-  it("pins the checksums from this server, and says when it cannot", () => {
-    expect(text(allowCommandsCommand(install({ source: "central" }), ORIGIN))).toContain(
-      `sudo MF_DOWNLOAD_URL=${ORIGIN}/agent/0.3.0 MF_SUMS_SHA256=${SUMS} MF_ALLOW_COMMANDS=1 sh "$f"`,
+  it("pins the checksums of this server's installer, at the public address", () => {
+    const command = text(allowCommandsCommand(install({ source: "central" }), address, "https://mf.example:8443"));
+    expect(command).toContain("curl -fsSLk -o \"$f\" https://monitor.lan:8443/agent/0.3.0/install.sh");
+    expect(command).toContain(`echo "${INSTALLER}  $f" | sha256sum -c`);
+    expect(command).toContain(
+      `sudo MF_DOWNLOAD_URL=https://monitor.lan:8443/agent/0.3.0 MF_SUMS_SHA256=${SUMS} MF_ALLOW_COMMANDS=1 sh "$f"`,
     );
-    expect(unavailable(allowCommandsCommand(install({ source: "central", central: null }), ORIGIN))).toContain("no agent release");
+    expect(text(allowCommandsCommand(install({ source: "central" }), { ...address, address: "2001:db8::1" }, ORIGIN))).toContain(
+      "https://[2001:db8::1]/agent/0.3.0/install.sh",
+    );
+  });
+
+  it("says when this server cannot offer it", () => {
+    expect(unavailable(allowCommandsCommand(install({ source: "central", central: null }), address, ORIGIN))).toContain(
+      "no agent release",
+    );
+    const noInstaller = { ...install().central!, installer_sha256: null };
+    expect(unavailable(allowCommandsCommand(install({ source: "central", central: noInstaller }), address, ORIGIN))).toContain(
+      "no install.sh",
+    );
+  });
+});
+
+describe("uninstall commands", () => {
+  const address = {
+    address: "monitor.lan",
+    default: "mf.example",
+    names: ["mf.example"],
+    certified: false,
+    upstream_url: "https://monitor.lan:7443",
+    enroll_url: "https://monitor.lan:7445",
+  };
+
+  it("runs the installer of the default source, purging the identity", () => {
+    expect(uninstallCommand("agent", "debian", install(), address, ORIGIN)).toBe(
+      `curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_UNINSTALL=1 MF_PURGE=1 sh`,
+    );
+    expect(uninstallCommand("relay", "linux", install({ source: "custom" }), address, ORIGIN)).toBe(
+      "curl -fsSL https://files.example/mf/0.2.0/install.sh \\\n  | sudo MF_ROLE=relay MF_UNINSTALL=1 MF_PURGE=1 sh",
+    );
+  });
+
+  it("pins the checksum of this server's installer, at the public address", () => {
+    const command = uninstallCommand("agent", "rhel", install({ source: "central" }), address, "https://mf.example:8443");
+    expect(command).toContain("curl -fsSLk -o \"$f\" https://monitor.lan:8443/agent/0.3.0/install.sh");
+    expect(command).toContain(`echo "${INSTALLER}  $f" | sha256sum -c`);
+    expect(command).toContain("sudo MF_UNINSTALL=1 MF_PURGE=1 sh \"$f\"");
+    const v6 = { ...address, address: "2001:db8::1" };
+    expect(uninstallCommand("agent", "rhel", install({ source: "central" }), v6, ORIGIN)).toContain(
+      "https://[2001:db8::1]/agent/0.3.0/install.sh",
+    );
+  });
+
+  it("falls back to GitHub when the default source has no installer", () => {
+    const github = `curl -fsSL ${GITHUB}/install.sh`;
+    for (const source of [
+      install({ source: "central", central: null }),
+      install({ source: "central", central: { ...install().central!, installer_sha256: null } }),
+      install({ source: "custom", custom_url: null }),
+    ]) {
+      expect(uninstallCommand("agent", "debian", source, address, ORIGIN)).toContain(github);
+    }
+  });
+
+  it("finds the MSI by its product code on Windows", () => {
+    const command = uninstallCommand("agent", "windows", install(), address, ORIGIN);
+    expect(command).toContain("Where-Object DisplayName -eq 'MonitorFlow agent'");
+    expect(command).toContain('"/x $($app.PSChildName) /qn REMOVE_DATA=1"');
+    expect(command).not.toContain("curl");
   });
 });

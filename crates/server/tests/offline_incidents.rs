@@ -257,12 +257,24 @@ db_tests! {
         check(&pool, &[]).await;
         assert_eq!(open_offline(&pool).await, [(None, Some(fleet.relay))]);
 
-        // A revoked relay resolves, and its servers speak for themselves.
+        // A removed relay resolves, and its servers speak for themselves.
+        // Still connected a moment longer, it is not "back online".
         sqlx::query("UPDATE relays SET revoked_at = now()")
             .execute(&pool)
             .await
             .unwrap();
-        check(&pool, &[]).await;
+        check(&pool, &[(PeerRole::Relay, "relay-1")]).await;
         assert_eq!(open_offline(&pool).await, [(Some(fleet.behind), None)]);
+        let reason: Option<String> = sqlx::query_scalar(
+            "SELECT e.details ->> 'reason' FROM incident_events e
+             JOIN incidents i ON i.id = e.incident_id
+             WHERE i.relay_id = $1 AND e.kind = 'resolved'
+             ORDER BY e.occurred_at DESC LIMIT 1",
+        )
+        .bind(fleet.relay)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(reason.as_deref(), Some("revoked"));
     }
 }

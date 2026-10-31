@@ -262,6 +262,7 @@ pub async fn create(
         _ => {}
     }
     let (payload, ttl) = check(&request)?;
+    target.check_package_updates()?;
     if let Some(bad) = command::unfit_name(&target.os_family, &request.packages) {
         return Err(ApiError::Invalid(unfit_message(&target.os_family, bad)));
     }
@@ -331,11 +332,15 @@ pub async fn agent_releases(
     }))
 }
 
+/// Why a host without a package manager takes no update or source command.
+const UNAVAILABLE: &str = "package updates aren't available on this system";
+
 /// A server a user may queue commands for.
 pub(super) struct Target {
     pub id: Uuid,
     pub peer_id: String,
     pub os_family: String,
+    pub package_updates: bool,
     pub revoked: bool,
 }
 
@@ -347,26 +352,36 @@ impl Target {
         id: &str,
     ) -> Result<Self, ApiError> {
         let id = parse_id(id)?;
-        let row: Option<(Uuid, String, String, bool)> = sqlx::query_as(
-            "SELECT site_id, peer_id, os_family, revoked_at IS NOT NULL
+        let row: Option<(Uuid, String, String, bool, bool)> = sqlx::query_as(
+            "SELECT site_id, peer_id, os_family, package_updates, revoked_at IS NOT NULL
              FROM servers WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&state.pool)
         .await?;
         authorize_admin(user, row.as_ref().map(|r| r.0))?;
-        let (_, peer_id, os_family, revoked) = row.ok_or(ApiError::NotFound)?;
+        let (_, peer_id, os_family, package_updates, revoked) = row.ok_or(ApiError::NotFound)?;
         Ok(Self {
             id,
             peer_id,
             os_family,
+            package_updates,
             revoked,
         })
+    }
+
+    /// Update commands need a package manager on the host (ADR-0063).
+    fn check_package_updates(&self) -> Result<(), ApiError> {
+        if self.package_updates {
+            return Ok(());
+        }
+        Err(ApiError::Conflict(UNAVAILABLE.into()))
     }
 
     /// Source commands need apt or dnf; Windows servers take none
     /// (ADR-0049).
     pub(super) fn check_sources(&self) -> Result<(), ApiError> {
+        self.check_package_updates()?;
         match self.os_family.as_str() {
             "windows" => Err(ApiError::Invalid(
                 "package sources are not supported on windows servers".into(),

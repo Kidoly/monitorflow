@@ -1,8 +1,9 @@
 //! Offline incidents (ADR-0057): a built-in rule on the registry's
 //! liveness. A server or relay that has had no stream for
 //! [`OfflineSettings::after`] opens a critical incident with the reserved
-//! metric [`OFFLINE_METRIC`]; it resolves when the peer reconnects, or is
-//! revoked or muted.
+//! metric [`OFFLINE_METRIC`]; it resolves when the peer reconnects or is
+//! muted. A removed peer is not watched any more: [`resolve_removed`]
+//! closes all of its incidents, with no word of being back online.
 //!
 //! One task checks every peer every [`OfflineSettings::poll`], from the
 //! database and the registry, so a restart neither loses nor duplicates an
@@ -15,7 +16,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use monitorflow_common::tls::PeerRole;
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::{PgExecutor, PgPool};
 use tokio::time::{interval, MissedTickBehavior};
 use uuid::Uuid;
 
@@ -59,8 +60,8 @@ pub struct Watched {
     pub relay: Option<Uuid>,
     /// Last time recorded, or the enrollment without one.
     pub last_seen: DateTime<Utc>,
-    /// Why no incident may be open: `revoked` or `muted`.
-    pub silenced: Option<&'static str>,
+    /// Muted for the site or the peer: no incident may be open.
+    pub muted: bool,
     /// The open offline incident.
     pub incident: Option<Uuid>,
 }
@@ -70,7 +71,7 @@ pub struct Watched {
 pub enum Action {
     /// Opens an incident dated from the peer's last message.
     Open { since: DateTime<Utc> },
-    /// `reason` is `back_online`, `revoked` or `muted`.
+    /// `reason` is `back_online` or `muted`.
     Resolve {
         id: Uuid,
         at: DateTime<Utc>,
@@ -100,7 +101,7 @@ pub fn decide(
     let relays_down: HashSet<Uuid> = peers
         .iter()
         .filter_map(|p| match p.peer {
-            Peer::Relay(id) if p.silenced.is_none() && connected(p).is_none() => Some(id),
+            Peer::Relay(id) if !p.muted && connected(p).is_none() => Some(id),
             _ => None,
         })
         .collect();
@@ -109,18 +110,18 @@ pub fn decide(
         .iter()
         .filter_map(|p| {
             let since = connected(p);
-            let action = match (p.incident, since, p.silenced) {
+            let action = match (p.incident, since, p.muted) {
                 (Some(id), Some(at), _) => Action::Resolve {
                     id,
                     at,
                     reason: "back_online",
                 },
-                (Some(id), None, Some(reason)) => Action::Resolve {
+                (Some(id), None, true) => Action::Resolve {
                     id,
                     at: now,
-                    reason,
+                    reason: "muted",
                 },
-                (None, None, None)
+                (None, None, false)
                     if now - p.last_seen.max(started) >= after
                         && !p.relay.is_some_and(|r| relays_down.contains(&r)) =>
                 {
@@ -133,8 +134,7 @@ pub fn decide(
         .collect()
 }
 
-/// Every server and relay that may need a change: revoked ones only with
-/// an open incident to resolve.
+/// Every server and relay that is not removed.
 pub async fn load(pool: &PgPool) -> Result<Vec<Watched>, sqlx::Error> {
     type Line = (
         bool,
@@ -143,30 +143,30 @@ pub async fn load(pool: &PgPool) -> Result<Vec<Watched>, sqlx::Error> {
         Option<Uuid>,
         DateTime<Utc>,
         bool,
-        bool,
         Option<Uuid>,
     );
     let lines: Vec<Line> = sqlx::query_as(
         "SELECT false, s.id, s.peer_id, s.relay_id, COALESCE(s.last_seen_at, s.created_at),
-                s.revoked_at IS NOT NULL, si.offline_alerts AND s.offline_alerts, i.id
+                si.offline_alerts AND s.offline_alerts, i.id
          FROM servers s
          JOIN sites si ON si.id = s.site_id
          LEFT JOIN incidents i ON i.server_id = s.id AND i.metric = 'offline'
                               AND i.state = 'open'
-         WHERE s.revoked_at IS NULL OR i.id IS NOT NULL
+         WHERE s.revoked_at IS NULL
          UNION ALL
          SELECT true, r.id, r.peer_id, NULL, COALESCE(r.last_seen_at, r.created_at),
-                r.revoked_at IS NOT NULL, si.offline_alerts AND r.offline_alerts, i.id
+                si.offline_alerts AND r.offline_alerts, i.id
          FROM relays r
          JOIN sites si ON si.id = r.site_id
-         LEFT JOIN incidents i ON i.relay_id = r.id AND i.state = 'open'",
+         LEFT JOIN incidents i ON i.relay_id = r.id AND i.state = 'open'
+         WHERE r.revoked_at IS NULL",
     )
     .fetch_all(pool)
     .await?;
     Ok(lines
         .into_iter()
         .map(
-            |(relay, id, peer_id, via, last_seen, revoked, enabled, incident)| Watched {
+            |(relay, id, peer_id, via, last_seen, enabled, incident)| Watched {
                 peer: if relay {
                     Peer::Relay(id)
                 } else {
@@ -175,17 +175,31 @@ pub async fn load(pool: &PgPool) -> Result<Vec<Watched>, sqlx::Error> {
                 peer_id,
                 relay: via,
                 last_seen,
-                silenced: if revoked {
-                    Some("revoked")
-                } else if !enabled {
-                    Some("muted")
-                } else {
-                    None
-                },
+                muted: !enabled,
                 incident,
             },
         )
         .collect())
+}
+
+/// Resolves every open incident, of any metric, of removed servers and
+/// relays, with the reason `revoked`. Removal calls it in its transaction;
+/// each check calls it again, for a threshold incident a last sample
+/// opened just after. Returns the number resolved.
+pub async fn resolve_removed(db: impl PgExecutor<'_>) -> Result<u64, sqlx::Error> {
+    let done = sqlx::query(
+        "WITH closed AS (
+             UPDATE incidents SET state = 'resolved', resolved_at = GREATEST(now(), opened_at)
+             WHERE state = 'open'
+               AND (server_id IN (SELECT id FROM servers WHERE revoked_at IS NOT NULL)
+                    OR relay_id IN (SELECT id FROM relays WHERE revoked_at IS NOT NULL))
+             RETURNING id, resolved_at)
+         INSERT INTO incident_events (incident_id, occurred_at, kind, details)
+         SELECT id, resolved_at, 'resolved', '{\"reason\": \"revoked\"}'::jsonb FROM closed",
+    )
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected())
 }
 
 /// Writes `action` with its event in one transaction. Returns the
@@ -257,6 +271,10 @@ pub async fn check(
     started: DateTime<Utc>,
     settings: &OfflineSettings,
 ) -> Result<Vec<(Peer, Action)>, sqlx::Error> {
+    let removed = resolve_removed(pool).await?;
+    if removed > 0 {
+        tracing::info!(removed, "resolved the incidents of removed peers");
+    }
     let peers = load(pool).await?;
     let mut written = Vec::new();
     for (peer, action) in decide(&peers, online, Utc::now(), started, settings.after) {
@@ -311,7 +329,7 @@ mod tests {
             peer_id: id.into(),
             relay: None,
             last_seen: at(last_seen),
-            silenced: None,
+            muted: false,
             incident: None,
         }
     }
@@ -340,7 +358,7 @@ mod tests {
         let up = online(&[(PeerRole::Agent, "a")]);
         assert!(decide(&peers, &up, at(60), at(-60), AFTER).is_empty());
         let muted = [Watched {
-            silenced: Some("muted"),
+            muted: true,
             ..peer(a, "a", 0)
         }];
         assert!(decide(&muted, &none, at(60), at(-60), AFTER).is_empty());
@@ -371,23 +389,21 @@ mod tests {
                 }
             )]
         );
-        for reason in ["muted", "revoked"] {
-            let silenced = Watched {
-                silenced: Some(reason),
-                ..open.clone()
-            };
-            assert_eq!(
-                decide(&[silenced], &none, at(60), at(-60), AFTER),
-                [(
-                    a,
-                    Action::Resolve {
-                        id,
-                        at: at(60),
-                        reason
-                    }
-                )]
-            );
-        }
+        let muted = Watched {
+            muted: true,
+            ..open.clone()
+        };
+        assert_eq!(
+            decide(&[muted], &none, at(60), at(-60), AFTER),
+            [(
+                a,
+                Action::Resolve {
+                    id,
+                    at: at(60),
+                    reason: "muted"
+                }
+            )]
+        );
     }
 
     #[test]
@@ -412,7 +428,7 @@ mod tests {
         );
         // A muted relay no longer covers them.
         let muted = Watched {
-            silenced: Some("muted"),
+            muted: true,
             ..relay
         };
         assert_eq!(

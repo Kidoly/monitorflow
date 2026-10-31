@@ -18,6 +18,11 @@ const install = {
   body: { source: "github", custom_url: null, source_from_config: false, custom_url_from_config: false, github_url: GITHUB, central: null },
 };
 
+const address = {
+  status: 200,
+  body: { address: "mf.example", default: "mf.example", names: ["mf.example"], certified: true, upstream_url: "https://mf.example:7443", enroll_url: "https://mf.example:7445" },
+};
+
 function settings(overrides: Partial<AiSettings> = {}): AiSettings {
   return {
     enabled: false,
@@ -64,6 +69,7 @@ describe("AiSettingsPage", () => {
       ],
       [`PUT ${AI}`]: ok(settings({ enabled: true, has_key: true, model: "claude-sonnet-5-5" })),
       "GET /api/settings/agent-install": install,
+      "GET /api/settings/public-address": address,
     });
     page();
     expect(await screen.findByText("AI is off.")).toBeInTheDocument();
@@ -105,6 +111,7 @@ describe("AiSettingsPage", () => {
       [`PUT ${AI}`]: ok(settings({ has_key: true })),
       [`DELETE ${AI}`]: ok(settings()),
       "GET /api/settings/agent-install": install,
+      "GET /api/settings/public-address": address,
     });
     page();
     await user.click(await screen.findByRole("button", { name: "Turn off AI" }));
@@ -122,6 +129,7 @@ describe("AiSettingsPage", () => {
       [`GET ${AI}`]: ok(settings({ enabled: true, from_config: true, has_key: true, model: "claude-custom" })),
       [`POST ${AI}/test`]: { status: 200, body: { ok: true, error: null } },
       "GET /api/settings/agent-install": install,
+      "GET /api/settings/public-address": address,
     });
     page();
     expect(await screen.findByText(/takes precedence over this page/)).toBeInTheDocument();

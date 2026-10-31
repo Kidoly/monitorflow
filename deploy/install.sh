@@ -1,7 +1,8 @@
 #!/bin/sh
-# Installs, upgrades or removes the MonitorFlow agent on a Linux host with
-# systemd, as the manual steps of docs/deploy-agent.md do (ADR-0052), or a
-# relay with MF_ROLE=relay, as those of docs/deploy-relay.md (ADR-0055):
+# Installs, upgrades or removes the MonitorFlow agent on any Linux
+# distribution with systemd, as the manual steps of docs/deploy-agent.md do
+# (ADR-0052, ADR-0063), or a relay with MF_ROLE=relay, as those of
+# docs/deploy-relay.md (ADR-0055):
 #
 #   curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
 #     | sudo MF_SERVER=relay1.example.com:7443 MF_TOKEN=mfe1.… sh
@@ -286,12 +287,21 @@ wait_for_enrollment() {
 
 [ "$(id -u)" -eq 0 ] || die "run as root, like: curl -fsSL …/install.sh | sudo MF_SERVER=… MF_TOKEN=… sh"
 [ "$(uname -s)" = Linux ] || die "this installer is for Linux; see docs/deploy-agent.md for Windows"
-[ -d /run/systemd/system ] || die "systemd is not running; install the $MF_ROLE by hand as in docs/deploy-$MF_ROLE.md"
 
 if [ "$MF_UNINSTALL" = 1 ]; then
     uninstall
     exit 0
 fi
+
+# What the installer cannot do without, said before anything changes. The
+# distribution does not matter (ADR-0063).
+[ -d /run/systemd/system ] || die "this installer needs systemd, which keeps the $MF_ROLE running, and systemd is not running here; on another init system, run the binary as in docs/deploy-$MF_ROLE.md"
+for tool in awk install sha256sum systemctl useradd; do
+    command -v "$tool" >/dev/null 2>&1 || die "this installer needs $tool: install it with your package manager and run the installer again"
+done
+for dir in /usr/bin /etc/systemd/system; do
+    [ -w "$dir" ] || die "$dir is read-only on this host, as on image-based systems, and the $MF_ROLE installs there"
+done
 
 case $(uname -m) in
     x86_64 | amd64) arch=x86_64 ;;
@@ -338,7 +348,7 @@ esac
 
 # Check every input before changing anything.
 if enrolled; then
-    [ -z "$MF_TOKEN" ] || say "already enrolled: MF_TOKEN is not used; revoke it in the web interface"
+    [ -z "$MF_TOKEN" ] || say "already enrolled: MF_TOKEN is not used. If this host was removed in the web interface, run the uninstall command it shows, then this one again"
 else
     [ -n "$MF_TOKEN" ] || die "MF_TOKEN is required: copy the command from the web interface (Administration › Add servers)"
     case $MF_TOKEN in

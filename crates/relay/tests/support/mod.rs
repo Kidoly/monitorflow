@@ -465,6 +465,7 @@ pub fn hello(agent_id: &str) -> Envelope {
             hostname: format!("{agent_id}.example"),
             os_family: "debian".into(),
             os_version: "debian 12".into(),
+            no_package_manager: false,
         })),
     }
 }

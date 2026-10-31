@@ -100,7 +100,9 @@
 //! | GET | `/api/settings/agent-install` | customer administrator | [`settings::AgentInstall`]: default install source, custom URL, what the configuration sets, the release `central` installs (ADR-0054) |
 //! | PUT | `/api/settings/agent-install` | global administrator | body [`settings::AgentInstallRequest`]; 200 [`settings::AgentInstall`]; 409 against the configuration; audited |
 //! | GET | `/api/agent-releases` | any role | [`commands::AgentReleases`]: cached agent versions and the latest (ADR-0053) |
-//! | GET | `/api/server-update` | global administrator | [`server_update::UpdateView`]: running version, updater and last update (ADR-0056) |
+//! | POST | `/api/agent-releases/import` | global administrator | multipart release files; 200 [`release_import::ImportResult`]; 400 when they do not verify; 409 during another import; audited (ADR-0061) |
+//! | POST | `/api/agent-releases/import-url` | global administrator | body [`release_import::UrlRequest`]; as above, from a directory of release files |
+//! | GET | `/api/server-update` | global administrator | [`server_update::UpdateView`]: running version, updater, last update and any newer release the daily check saw (ADR-0056, ADR-0061) |
 //! | POST | `/api/server-update/check` | global administrator | [`server_update::CheckResult`]: the latest release, verified, and what it changes |
 //! | POST | `/api/server-update` | global administrator | body `{"version"}`; 202 `{"id"}`; 400 unless newer, 409 without a running updater or while busy; audited |
 //! | GET | `/api/backups` | global administrator | [`backups::BackupsView`]: last backup, next one and the files kept (ADR-0058) |
@@ -209,8 +211,17 @@
 //! `cessation_of_operation`; default `unspecified`), publishes a new CRL
 //! and closes its live streams, and a relay's forwarded ones, with
 //! `PERMISSION_DENIED`. The answer is `{"revoked_at", "reason", "serials",
-//! "closed_streams"}`. It is audited as `server.revoke` or `relay.revoke`
-//! and cannot be undone.
+//! "closed_streams"}`. It is audited as `server.revoke` or `relay.revoke`.
+//!
+//! The interface calls this "Remove" (ADR-0062). The same call resolves
+//! the peer's open incidents with the reason `revoked` and deletes its
+//! unused tokens. The peer then leaves the lists and counts; `GET
+//! /api/servers/{id}` and `GET /api/relays/{id}` still answer, and metrics
+//! and incidents follow their retention. Enrolling the peer again in the
+//! same site brings the row back with its history: a single-use token for
+//! its ID, or an install key used by the same host name, audited as
+//! `server.restore` or `relay.restore`. A token for an ID removed from
+//! another site is 409.
 //!
 //! # Mirrors
 //!
@@ -333,8 +344,8 @@
 //! `-`, and for a Windows server KB numbers (`KB5034441`) or update IDs
 //! (ADR-0049); `ttl_s` (60 s to 7 days, default one hour) is how long the agent
 //! may still start it. It needs an administrator role on the server's
-//! customer, as revocation does (ADR-0029); a revoked server is 409. The
-//! command is queued, sent as soon as the agent is connected and has no
+//! customer, as revocation does (ADR-0029); a revoked server is 409, and
+//! so is one with `package_updates` false (ADR-0063). The command is queued, sent as soon as the agent is connected and has no
 //! other command in flight, and audited as `command.create`. A command is
 //! `{"id", "server_id", "kind", "parameters", "state", "issued_at",
 //! "expires_at", "sent_at", "started_at", "finished_at", "exit_code",
@@ -431,7 +442,8 @@
 //!   "id": "uuid", "peer_id": "agent-1", "hostname": "web-1",
 //!   "site_id": "uuid", "site_name": "paris",
 //!   "customer_id": "uuid", "customer_name": "default", "relay_id": null,
-//!   "os_family": "debian", "os_version": "12", "agent_version": "0.1.0",
+//!   "os_family": "debian", "os_version": "12", "package_updates": true,
+//!   "agent_version": "0.1.0",
 //!   "created_at": "2026-10-18T12:00:00Z", "revoked_at": null,
 //!   "status": "online",
 //!   "connected_at": "2026-10-18T12:00:00Z",
@@ -491,6 +503,7 @@ pub mod password;
 pub mod proxmox;
 pub mod public_address;
 pub mod relays;
+pub mod release_import;
 pub mod remediation;
 pub mod remediation_events;
 pub mod remediation_incidents;
@@ -622,6 +635,8 @@ pub struct ApiState {
     /// Woken when a campaign starts or resumes; `None` leaves it to the
     /// runner's next poll.
     pub campaigns: Option<Runner>,
+    /// Held by the release import running, if any.
+    pub release_import: release_import::ImportLock,
 }
 
 impl ApiState {
@@ -637,6 +652,7 @@ impl ApiState {
             relay_commands: None,
             mirrors: None,
             campaigns: None,
+            release_import: release_import::ImportLock::default(),
         }
     }
 
@@ -829,6 +845,14 @@ pub fn router(state: ApiState) -> Router {
             get(server_update::get).post(server_update::start),
         )
         .route("/api/server-update/check", post(server_update::check))
+        .route(
+            "/api/agent-releases/import",
+            post(release_import::upload).layer(DefaultBodyLimit::max(release_import::MAX_RELEASE)),
+        )
+        .route(
+            "/api/agent-releases/import-url",
+            post(release_import::from_url),
+        )
         .route("/api/backups", get(backups::get).post(backups::start))
         .route("/api/backups/{name}", get(backups::download))
         .route(

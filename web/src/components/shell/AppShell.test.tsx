@@ -28,6 +28,47 @@ describe("AppShell", () => {
     document.documentElement.removeAttribute("data-theme");
   });
 
+  describe("update banner", () => {
+    const release = { version: "0.2.0", release_notes_url: null, first_seen_at: "2026-10-27T10:00:00Z" };
+    const status = (available: typeof release | null, requested = false) => ({
+      "GET /api/server-update": {
+        status: 200,
+        body: { running_version: "0.1.0", update: null, requested, available },
+      },
+    });
+
+    it("leads global administrators to the update", async () => {
+      stubFetch({ ...SHELL_ROUTES, ...status(release) });
+      render(<AppShell me={admin}>page</AppShell>);
+      expect(await screen.findByText("MonitorFlow 0.2.0 is available.")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Review and update" })).toHaveAttribute("href", "/admin/server-update");
+    });
+
+    it("stays away without a newer release, on the update page and during an update", async () => {
+      for (const [routes, url] of [
+        [status(null), "/"],
+        [status(release), "/admin/server-update/"],
+        [status(release, true), "/"],
+      ] as const) {
+        setUrl(url);
+        const fetchMock = stubFetch({ ...SHELL_ROUTES, ...routes });
+        const { unmount } = render(<AppShell me={admin}>page</AppShell>);
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/server-update", expect.anything()));
+        await screen.findByLabelText("3 open incidents");
+        expect(screen.queryByText(/is available/)).not.toBeInTheDocument();
+        unmount();
+      }
+    });
+
+    it("never asks for customer administrators", async () => {
+      const customer: Me = { ...admin, roles: [{ role: "administrator", customer_id: ACME, site_id: null }] };
+      const fetchMock = stubFetch(SHELL_ROUTES);
+      render(<AppShell me={customer}>page</AppShell>);
+      await screen.findByRole("navigation", { name: "Main" });
+      expect(fetchMock).not.toHaveBeenCalledWith("/api/server-update", expect.anything());
+    });
+  });
+
   it("starts with a skip link to the main content", async () => {
     renderShell();
     await userEvent.tab();
