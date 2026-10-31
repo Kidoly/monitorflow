@@ -157,6 +157,9 @@ jobs:
   # a base build to a newer signed release pushed to a local registry,
   # keeping its data and taking a backup, then a release whose server
   # cannot start rolled back. The images trust a throwaway release key.
+  # Then the server installer (ADR-0065) with the same images, as no
+  # release has any yet: on a systemd container without Docker, from a
+  # local registry and signed release files.
   server-update:
     runs-on: ubuntu-latest
     steps:
@@ -166,6 +169,9 @@ jobs:
           openssl genpkey -algorithm ed25519 -out "$RUNNER_TEMP/e2e-signing.pem"
           openssl pkey -in "$RUNNER_TEMP/e2e-signing.pem" -pubout >>deploy/release-keys.pem
       - run: deploy/update-test.sh
+        env:
+          MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
+      - run: deploy/install-server-test.sh
         env:
           MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
   # The installer is piped to sh, so it must stay POSIX (ADR-0052).
