@@ -22,6 +22,8 @@ describe("visibleNavigation", () => {
     expect(customerAdmin).toContain("Campaigns");
     expect(labels(as(null))).toContain("Notifications");
     expect(customerAdmin).not.toContain("Notifications");
+    expect(labels(as(null))).toContain("AI");
+    expect(customerAdmin).not.toContain("AI");
     expect(labels(as(null))).toContain("Backups");
     expect(customerAdmin).not.toContain("Backups");
   });

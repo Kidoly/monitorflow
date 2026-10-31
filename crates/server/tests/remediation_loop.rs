@@ -31,6 +31,7 @@ use monitorflow_server::remediation::audit::{self, StoredEvent};
 use monitorflow_server::remediation::context::Backends;
 use monitorflow_server::remediation::runner::hook::{self, Change, ChangeHook};
 use monitorflow_server::remediation::runner::{Remediation, Settings};
+use monitorflow_server::remediation::switch;
 use prost::Message;
 use rustls::pki_types::CertificateDer;
 use serde_json::Value;
@@ -668,6 +669,91 @@ db_tests! {
         assert_eq!(state, "cancelled");
         assert!(h.agent.seen().is_empty());
         assert_eq!(ai.requests().len(), 1);
+    }
+
+    #[sqlx::test]
+    async fn stored_settings_start_replace_and_stop_the_loop(pool: PgPool) {
+        let h = Harness::start(&pool, &[]).await;
+        let ai = Arc::new(MockProvider::new([Step::run(
+            "the disk is full",
+            "rm -rf --no-preserve-root /",
+            "untrusted",
+        )]));
+        let started = Arc::new(Mutex::new(Vec::new()));
+        let (stop, stopped) = oneshot::channel::<()>();
+        let supervisor = tokio::spawn(switch::supervise(
+            pool.clone(),
+            Duration::from_millis(50),
+            {
+                let (ai, started) = (ai.clone(), started.clone());
+                let (commands, pool) = (h.commands.clone(), pool.clone());
+                move |wanted: switch::Wanted| {
+                    started.lock().unwrap().push(wanted.model.clone());
+                    let remediation = Remediation::new(
+                        ai.clone(),
+                        &wanted.model,
+                        commands.clone(),
+                        Backends { pool: pool.clone(), metrics: None, logs: None },
+                        settings(),
+                    );
+                    async move { Ok::<_, String>(remediation) }
+                }
+            },
+            async move {
+                let _ = stopped.await;
+            },
+        ));
+        let store = |enabled: bool, model: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO server_settings (singleton, ai_enabled, ai_api_key, ai_model)
+                     VALUES (true, $1, 'sk-ant-test', $2)
+                     ON CONFLICT (singleton) DO UPDATE SET ai_enabled = $1, ai_model = $2",
+                )
+                .bind(enabled)
+                .bind(model)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        let starts = |count: usize| {
+            let started = started.clone();
+            async move {
+                let deadline = tokio::time::Instant::now() + TIMEOUT;
+                while started.lock().unwrap().len() < count {
+                    assert!(tokio::time::Instant::now() < deadline);
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }
+        };
+
+        // Off: nothing runs and the alert stays alone.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(started.lock().unwrap().is_empty());
+        let incidents: i64 = sqlx::query_scalar("SELECT count(*) FROM remediation_incidents")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(incidents, 0);
+
+        // On: the loop takes the alert, no restart needed.
+        store(true, "claude-a").await;
+        h.wait_state("escalated").await;
+        // Another model replaces the loop; off and on starts it again.
+        store(true, "claude-b").await;
+        starts(2).await;
+        store(false, "claude-b").await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(started.lock().unwrap().len(), 2);
+        store(true, "claude-b").await;
+        starts(3).await;
+
+        let _ = stop.send(());
+        supervisor.await.unwrap();
+        assert_eq!(*started.lock().unwrap(), ["claude-a", "claude-b", "claude-b"]);
+        assert_eq!(h.leases().await, 0);
     }
 
     #[sqlx::test]

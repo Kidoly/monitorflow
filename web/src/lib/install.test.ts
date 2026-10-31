@@ -4,6 +4,7 @@ import type { AgentInstall } from "./api";
 import {
   type Command,
   type InstallTarget,
+  allowCommandsCommand,
   endpoints,
   hostPort,
   isHttpsOrigin,
@@ -176,6 +177,48 @@ describe("install commands", () => {
     expect(isMirrorUrl("http://relay1.example:7480")).toBe(true);
     expect(isMirrorUrl("https://[2001:db8::1]:7480/")).toBe(true);
     for (const bad of ["ftp://x", "http://a b", "http://x?y", "http://x;rm"]) expect(isMirrorUrl(bad)).toBe(false);
+  });
+});
+
+describe("allowCommandsCommand", () => {
+  const address = {
+    address: "monitor.lan",
+    default: "mf.example",
+    names: ["mf.example"],
+    certified: false,
+    upstream_url: "https://monitor.lan:7443",
+    enroll_url: "https://monitor.lan:7445",
+  };
+
+  it("re-runs the installer of the default source with the opt-in", () => {
+    expect(text(allowCommandsCommand(install(), address, ORIGIN))).toBe(
+      `curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_ALLOW_COMMANDS=1 sh`,
+    );
+    expect(text(allowCommandsCommand(install({ source: "custom" }), address, ORIGIN))).toBe(
+      "curl -fsSL https://files.example/mf/0.2.0/install.sh \\\n  | sudo MF_DOWNLOAD_URL=https://files.example/mf/0.2.0 MF_ALLOW_COMMANDS=1 sh",
+    );
+  });
+
+  it("pins the checksums of this server's installer, at the public address", () => {
+    const command = text(allowCommandsCommand(install({ source: "central" }), address, "https://mf.example:8443"));
+    expect(command).toContain("curl -fsSLk -o \"$f\" https://monitor.lan:8443/agent/0.3.0/install.sh");
+    expect(command).toContain(`echo "${INSTALLER}  $f" | sha256sum -c`);
+    expect(command).toContain(
+      `sudo MF_DOWNLOAD_URL=https://monitor.lan:8443/agent/0.3.0 MF_SUMS_SHA256=${SUMS} MF_ALLOW_COMMANDS=1 sh "$f"`,
+    );
+    expect(text(allowCommandsCommand(install({ source: "central" }), { ...address, address: "2001:db8::1" }, ORIGIN))).toContain(
+      "https://[2001:db8::1]/agent/0.3.0/install.sh",
+    );
+  });
+
+  it("says when this server cannot offer it", () => {
+    expect(unavailable(allowCommandsCommand(install({ source: "central", central: null }), address, ORIGIN))).toContain(
+      "no agent release",
+    );
+    const noInstaller = { ...install().central!, installer_sha256: null };
+    expect(unavailable(allowCommandsCommand(install({ source: "central", central: noInstaller }), address, ORIGIN))).toContain(
+      "no install.sh",
+    );
   });
 });
 

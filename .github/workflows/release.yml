@@ -70,6 +70,10 @@ jobs:
         uses: ./.github/actions/build-agent-linux
         with:
           target: ${{ matrix.arch }}-unknown-linux-musl
+      # Now: the next build's cache restore may clean target/.
+      - run: |
+          mkdir dist
+          cp "${{ steps.build.outputs.path }}" "dist/monitorflow-agent-linux-${{ matrix.arch }}"
       - id: relay
         uses: ./.github/actions/build-agent-linux
         with:
@@ -77,10 +81,9 @@ jobs:
           package: monitorflow-relay
       # Static, for the right machine; the x86_64 ones also run here.
       - run: |
-          mkdir dist
-          for built in "${{ steps.build.outputs.path }}" "${{ steps.relay.outputs.path }}"; do
+          cp "${{ steps.relay.outputs.path }}" "dist/monitorflow-relay-linux-${{ matrix.arch }}"
+          for built in dist/*; do
             file "$built" | tee /dev/stderr | grep -q 'statically linked'
-            cp "$built" "dist/$(basename "$built")-linux-${{ matrix.arch }}"
           done
       - if: matrix.arch == 'x86_64'
         run: |

@@ -150,16 +150,36 @@ function installerCommand(
     [...role, ...download, `MF_SERVER=${server}`, enroll && `MF_ENROLL=${enroll}`, `MF_TOKEN=${target.token}`]
       .filter(Boolean)
       .join(" ");
-  const central = target.install.central;
+  return runInstaller(target.install, source, files.url, env);
+}
+
+/**
+ * The one line that lets an installed Linux agent run AI commands (ADR-0064),
+ * from the default source, whose files `central` serves at the public address.
+ */
+export function allowCommandsCommand(install: AgentInstall, address: PublicAddress, origin: string): Command {
+  const files = base(install, install.source, publicOrigin(origin, address.address));
+  if ("unavailable" in files) return files;
+  return runInstaller(install, install.source, files.url, (download) => [...download, "MF_ALLOW_COMMANDS=1"].join(" "));
+}
+
+/** Fetches install.sh from `url` and runs it with `env` of the download variables. */
+function runInstaller(
+  install: AgentInstall,
+  source: InstallSource,
+  url: string,
+  env: (download: string[]) => string,
+): Command {
+  const central = install.central;
   if (source === "central" && central) {
     if (!central.installer_sha256) {
       return { unavailable: `The release ${central.version} on this server has no install.sh; import a complete release.` };
     }
-    const vars = env([`MF_DOWNLOAD_URL=${files.url}`, `MF_SUMS_SHA256=${central.sums_sha256}`]);
-    return { text: pinnedInstaller(files.url, central.installer_sha256, vars) };
+    const vars = env([`MF_DOWNLOAD_URL=${url}`, `MF_SUMS_SHA256=${central.sums_sha256}`]);
+    return { text: pinnedInstaller(url, central.installer_sha256, vars) };
   }
-  const vars = env(source === "custom" ? [`MF_DOWNLOAD_URL=${files.url}`] : []);
-  return { text: pipedInstaller(files.url, vars) };
+  const vars = env(source === "custom" ? [`MF_DOWNLOAD_URL=${url}`] : []);
+  return { text: pipedInstaller(url, vars) };
 }
 
 /** Runs the installer of `url` only if its checksum matches. */

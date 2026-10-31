@@ -28,6 +28,7 @@ One command serves every host of a site, for 30 days by default (ADR-0058). Each
 | `MF_TIMEOUT` | Seconds to wait for the enrollment, 120 by default |
 | `MF_REQUIRE_SIGNATURE=1` | Fail instead of warning when OpenSSL 3 is missing and the signature cannot be checked |
 | `MF_ALLOW_UNSIGNED=1` | Install a release without `SHA256SUMS.sig`, like 0.1.0, with its checksums checked only |
+| `MF_ALLOW_COMMANDS=1` | Let this agent run the shell commands of AI remediation (`commands.shell`), through a systemd drop-in. Works on an installed agent too, and is kept by later runs; `MF_ALLOW_COMMANDS=0` takes it back. The web interface shows this line under Administration › AI (ADR-0064) |
 | `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too. "Remove" on the server's page shows the command to use |
 
 An agent behind a relay:
@@ -309,6 +310,6 @@ Updates come from the source the machine is configured for: Windows Update, Micr
 | Update reports | Pending and installed software updates by KB number, with title, classification, MSRC severity, size and restart state, plus whether Windows waits for a restart. Needs the update service (above) |
 | `apply_updates`, update campaigns | Through the update service. All pending updates except feature upgrades, `security_only` for the Security Updates classification, or named KB numbers or update IDs (`KB5034441`). Restarts only with `allow_reboot`, one minute after the result. Windows servers may join any campaign: pinned mirror snapshots do not apply to them |
 | `configure_sources`, `revert_sources` | Refused by the API for Windows servers, and by the agent with "package sources are not supported on Windows yet" |
-| `shell` (AI remediation) | Refused even with `commands.shell = true`: the server's risk rules assume `/bin/sh` (ADR-0047), so a remediation on a Windows server escalates at its first command |
+| `shell` (AI remediation) | Refused even with `commands.shell = true`, so the Windows installer has no `MF_ALLOW_COMMANDS`: the server's risk rules assume `/bin/sh` (ADR-0047), so a remediation on a Windows server escalates at its first command |
 
 There are no sudo rules on Windows. The only privileged part is the update service, which accepts typed requests from the agent alone.

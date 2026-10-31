@@ -232,6 +232,19 @@ check "identity and configuration kept" test "$(sudo sha256sum /var/lib/monitorf
 check "service active after upgrade" systemctl is-active --quiet monitorflow-agent
 check "agent online again" online "$PEER"
 
+echo "== shell opt-in on an installed agent"
+shell_env() { systemctl show -p Environment --value monitorflow-agent; }
+check "commands off by default" bash -c "! systemctl show -p Environment --value monitorflow-agent | grep -q MONITORFLOW_COMMANDS_SHELL"
+installer MF_DOWNLOAD_URL="$base" MF_ALLOW_COMMANDS=1
+check "MF_ALLOW_COMMANDS=1 turns commands on" test "$(shell_env)" = MONITORFLOW_COMMANDS_SHELL=true
+installer MF_DOWNLOAD_URL="$base"
+check "a later run keeps the opt-in" test "$(shell_env)" = MONITORFLOW_COMMANDS_SHELL=true
+installer MF_DOWNLOAD_URL="$base" MF_ALLOW_COMMANDS=0
+check "MF_ALLOW_COMMANDS=0 takes it back" test -z "$(shell_env)"
+check "agent online after the opt-in" online "$PEER"
+# These runs came quickly: systemd allows 5 starts in 10 seconds.
+sudo systemctl reset-failed monitorflow-agent
+
 if [ -n "$newer" ]; then
     echo "== self-update"
     # The agent and relay trust the file server's throwaway CA for their

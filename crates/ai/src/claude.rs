@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use monitorflow_common::config::{AiConfig, DEFAULT_AI_MODEL};
 use monitorflow_common::redact::Secret;
 use reqwest::header::HeaderValue;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
@@ -43,6 +43,37 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
 const MAX_COMMAND_LEN: usize = 4096;
 /// Characters of an API error message kept in [`AiError::Api`].
 const MAX_ERROR_MESSAGE: usize = 512;
+
+/// Time one [`ClaudeProvider::check`] may take.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A model offered in the web interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Model {
+    pub id: &'static str,
+    pub name: &'static str,
+    /// When to pick it, in a few words.
+    pub note: &'static str,
+}
+
+/// The short list of the web interface, the default first.
+pub const MODELS: &[Model] = &[
+    Model {
+        id: DEFAULT_AI_MODEL,
+        name: "Claude Opus 5.5",
+        note: "Recommended: the best diagnoses",
+    },
+    Model {
+        id: "claude-sonnet-5-5",
+        name: "Claude Sonnet 5.5",
+        note: "Half the price, for most incidents",
+    },
+    Model {
+        id: "claude-haiku-5-5",
+        name: "Claude Haiku 5.5",
+        note: "Cheapest, for simple incidents",
+    },
+];
 
 /// Rules appended to the server's system prompt.
 const RULES: &str = "\
@@ -84,6 +115,16 @@ impl ClaudeOptions {
             base_url: DEFAULT_BASE_URL.into(),
         }
     }
+
+    /// `api_key` with the configured model, token limit and timeout.
+    pub fn from_config(api_key: Secret, config: &AiConfig) -> Self {
+        Self {
+            model: config.model.clone(),
+            max_tokens: config.max_tokens,
+            request_timeout: Duration::from_secs(config.request_timeout),
+            ..Self::new(api_key)
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -115,15 +156,25 @@ impl ClaudeProvider {
     /// Reads the key from `api_key_file` and applies the configured model,
     /// token limit and timeout.
     pub async fn from_config(config: &AiConfig) -> Result<Self, AiError> {
-        let path = config
-            .api_key_file
-            .as_deref()
-            .ok_or(AiError::InvalidApiKey("ai.api_key_file is not set"))?;
-        let mut options = ClaudeOptions::new(read_api_key(path).await?);
-        options.model.clone_from(&config.model);
-        options.max_tokens = config.max_tokens;
-        options.request_timeout = Duration::from_secs(config.request_timeout);
-        Self::new(options)
+        Self::new(ClaudeOptions::from_config(
+            read_config_key(config).await?,
+            config,
+        ))
+    }
+
+    /// Whether the key and model work, with the smallest real request, so
+    /// missing credit shows too. Answers at once: no retries.
+    pub async fn check(&self) -> Result<(), AiError> {
+        let body = json!({
+            "model": self.options.model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
+        });
+        let request = self.request(body.to_string().into_bytes());
+        match tokio::time::timeout(CHECK_TIMEOUT, self.send(request)).await {
+            Ok(result) => result.map(drop).map_err(|(error, _)| error),
+            Err(_) => Err(AiError::Transport("no answer within 30 seconds".into())),
+        }
     }
 
     /// POSTs `body`, retrying transient failures, and returns the body of
@@ -148,6 +199,10 @@ impl ClaudeProvider {
     }
 
     async fn attempt(&self, body: Vec<u8>) -> Result<Vec<u8>, (AiError, Option<Duration>)> {
+        self.send(self.request(body)).await
+    }
+
+    fn request(&self, body: Vec<u8>) -> reqwest::RequestBuilder {
         let mut request = self
             .client
             .post(&self.url)
@@ -158,6 +213,13 @@ impl ClaudeProvider {
         if uses_fallback(&self.options.model) {
             request = request.header("anthropic-beta", FALLBACK_BETA);
         }
+        request
+    }
+
+    async fn send(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<Vec<u8>, (AiError, Option<Duration>)> {
         let transport = |e: reqwest::Error| (AiError::Transport(e.without_url().to_string()), None);
         let response = request.send().await.map_err(transport)?;
         let status = response.status();
@@ -184,6 +246,55 @@ impl AiProvider for ClaudeProvider {
         let answer = self.post(body).await?;
         parse_response(&answer)
     }
+}
+
+/// A failed [`ClaudeProvider::check`] in plain words, with what to do next.
+pub fn explain(error: &AiError) -> String {
+    match error {
+        AiError::Api { status: 401, .. } | AiError::InvalidApiKey(_) => {
+            "Anthropic refused this API key. Check that it was copied whole, or create a new one \
+             at console.anthropic.com."
+                .into()
+        }
+        AiError::Api { status: 403, .. } => {
+            "This API key is not allowed to use this model. Check its workspace at \
+             console.anthropic.com, or pick another model."
+                .into()
+        }
+        AiError::Api { status: 404, .. } => {
+            "This API key has no access to this model. Pick another model.".into()
+        }
+        AiError::Api { status: 429, .. } => {
+            "Anthropic is limiting this account right now. Wait a minute and test again.".into()
+        }
+        AiError::Api {
+            status: 400,
+            message,
+            ..
+        } if message.contains("credit") => {
+            "This Anthropic account has no credit left. Add some at console.anthropic.com.".into()
+        }
+        AiError::Api { status, .. } if *status >= 500 => {
+            "Anthropic is having trouble right now. Test again in a few minutes.".into()
+        }
+        AiError::Api {
+            status, message, ..
+        } => format!("Anthropic answered with an error ({status}): {message}"),
+        AiError::Transport(detail) => format!(
+            "This server could not reach Anthropic: {detail}. Check that it can open HTTPS \
+             connections to api.anthropic.com."
+        ),
+        other => other.to_string(),
+    }
+}
+
+/// The key of `config`'s `api_key_file`.
+pub async fn read_config_key(config: &AiConfig) -> Result<Secret, AiError> {
+    let path = config
+        .api_key_file
+        .as_deref()
+        .ok_or(AiError::InvalidApiKey("ai.api_key_file is not set"))?;
+    read_api_key(path).await
 }
 
 /// Reads an API key file: the key alone, surrounding whitespace ignored.

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
+use monitorflow_ai::claude::{ClaudeOptions, ClaudeProvider};
 use monitorflow_common::config::{self, ServerConfig};
 use monitorflow_common::logging;
 use monitorflow_common::redact::Secret;
@@ -36,6 +37,7 @@ use monitorflow_server::release_check;
 use monitorflow_server::remediation::context::Backends;
 use monitorflow_server::remediation::runner::{self, Remediation};
 use monitorflow_server::remediation::snapshot::{ProxmoxSnapshotter, SnapshotHook};
+use monitorflow_server::remediation::switch;
 use monitorflow_server::renew::Renewer;
 use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
 use monitorflow_server::vm_query::VmQuery;
@@ -458,6 +460,7 @@ async fn main() -> anyhow::Result<()> {
         .with_mirrors(mirrors.clone())
         .with_campaigns(campaigns.clone());
     let remediation = remediation_loop(&config, pool.clone(), commands.clone()).await?;
+    let remediation_pool = pool.clone();
     // Notifications (ADR-0060): the outbox the database triggers fill.
     let notify_pool = pool.clone();
     // The daily look for a newer release (ADR-0061).
@@ -544,8 +547,25 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         },
         async {
-            if let Some(remediation) = remediation {
-                remediation.run(until_stopped()).await;
+            match remediation {
+                Some(remediation) => remediation.run(until_stopped()).await,
+                // Off in the configuration: the web interface decides (ADR-0064).
+                None => {
+                    switch::supervise(
+                        remediation_pool.clone(),
+                        runner::POLL,
+                        |wanted| {
+                            start_from_settings(
+                                &config,
+                                remediation_pool.clone(),
+                                commands.clone(),
+                                wanted,
+                            )
+                        },
+                        until_stopped(),
+                    )
+                    .await;
+                }
             }
             Ok(())
         },
@@ -593,9 +613,35 @@ async fn remediation_loop(
         .await
         .context("AI provider")?
     else {
-        tracing::info!("AI remediation disabled ([ai] enabled = false)");
+        tracing::info!("AI remediation not in the configuration: set in the web interface");
         return Ok(None);
     };
+    let model = config.ai.model.clone();
+    build_remediation(config, provider, &model, pool, commands)
+        .await
+        .map(Some)
+}
+
+/// The AI remediation loop on the settings of the web interface.
+async fn start_from_settings(
+    config: &ServerConfig,
+    pool: sqlx::PgPool,
+    commands: Commands,
+    wanted: switch::Wanted,
+) -> anyhow::Result<Remediation> {
+    let mut options = ClaudeOptions::from_config(wanted.api_key, &config.ai);
+    options.model.clone_from(&wanted.model);
+    let provider = Arc::new(ClaudeProvider::new(options).context("AI provider")?);
+    build_remediation(config, provider, &wanted.model, pool, commands).await
+}
+
+async fn build_remediation(
+    config: &ServerConfig,
+    provider: Arc<dyn monitorflow_ai::AiProvider>,
+    model: &str,
+    pool: sqlx::PgPool,
+    commands: Commands,
+) -> anyhow::Result<Remediation> {
     // Snapshots before change-tier commands (ADR-0046); without `[proxmox]`
     // every server records that rollback is limited.
     let snapshots = ProxmoxSnapshotter::from_config(pool.clone(), &config.proxmox)
@@ -616,15 +662,12 @@ async fn remediation_loop(
     };
     let remediation = Remediation::new(
         provider,
-        &config.ai.model,
+        model,
         commands,
         backends,
         runner::Settings::from_config(&config.remediation),
     );
-    Ok(Some(remediation.with_hook(Arc::new(SnapshotHook::new(
-        Arc::new(snapshots),
-        "proxmox",
-    )))))
+    Ok(remediation.with_hook(Arc::new(SnapshotHook::new(Arc::new(snapshots), "proxmox"))))
 }
 
 async fn user_command(pool: &sqlx::PgPool, command: UserCommand) -> anyhow::Result<()> {

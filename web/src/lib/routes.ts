@@ -46,6 +46,8 @@ export const AUTO_UPDATE_PATH = "/admin/updates/";
 
 /** Email and webhook notifications (ADR-0060). */
 export const NOTIFICATIONS_PATH = "/admin/notifications/";
+/** AI setup, global administrators only (ADR-0064). */
+export const AI_SETTINGS_PATH = "/admin/ai/";
 
 /** Updating the central server (ADR-0056). */
 export const SERVER_UPDATE_PATH = "/admin/server-update/";

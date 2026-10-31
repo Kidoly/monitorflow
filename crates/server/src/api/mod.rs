@@ -62,6 +62,10 @@
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
 //! | GET | `/api/settings/auto-update` | global administrator | [`policy::Settings`](crate::auto_update::policy::Settings) as they apply (ADR-0055) |
 //! | PUT | `/api/settings/auto-update` | global administrator | body [`auto_update::SettingsRequest`]; the settings; 409 against the configuration; audited |
+//! | GET | `/api/settings/ai` | any session | [`ai::AiView`]: whether AI is on, whether a key is stored, the model and the models offered; never the key |
+//! | PUT | `/api/settings/ai` | global administrator | body [`ai::SetRequest`]; 200 [`ai::AiView`]; 400 with the reason in plain words when the key or model fails its test; 409 while `[ai] enabled = true` in the configuration; audited, without the key |
+//! | DELETE | `/api/settings/ai` | global administrator | forgets the key and turns AI off; 200 [`ai::AiView`]; 409 as above; audited |
+//! | POST | `/api/settings/ai/test` | global administrator | body [`ai::TestRequest`]; 200 [`notifications::TestResult`]; saves nothing |
 //! | GET | `/api/settings/public-address` | customer administrator | [`public_address::PublicAddress`]: the address in install commands, the default, the certificate's names and whether it covers the address |
 //! | PUT | `/api/settings/public-address` | global administrator | body [`public_address::SetRequest`]; 200 [`public_address::PublicAddress`]; audited |
 //! | POST | `/api/auto-update/rollouts/{kind}/{version}/resume` | global administrator | resumes a halted rollout; audited |
@@ -476,6 +480,7 @@
 
 pub mod access;
 pub mod agent_files;
+pub mod ai;
 pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
@@ -571,6 +576,8 @@ pub struct ApiSettings {
     pub auto_update_enabled: Option<bool>,
     /// Base URL of the web interface, for links in notifications.
     pub web_url: String,
+    /// `[ai]`, which wins over the settings of the web interface (ADR-0064).
+    pub ai: ai::AiSettings,
 }
 
 impl ApiSettings {
@@ -585,6 +592,7 @@ impl ApiSettings {
             agent_install: settings::InstallConfig::from_config(config),
             auto_update_enabled: config.auto_update.enabled,
             web_url: config.web_base_url(),
+            ai: ai::AiSettings::from_config(config),
             proxmox_enabled: config.proxmox.enabled,
             proxmox_clusters: config
                 .proxmox
@@ -877,6 +885,11 @@ pub fn router(state: ApiState) -> Router {
             "/api/settings/public-address",
             get(public_address::get).put(public_address::set),
         )
+        .route(
+            "/api/settings/ai",
+            get(ai::get).put(ai::set).delete(ai::remove_key),
+        )
+        .route("/api/settings/ai/test", post(ai::test))
         .route("/api/remediation/classify", post(remediation::classify))
         .route(
             "/api/notifications/channels",
