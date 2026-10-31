@@ -89,11 +89,11 @@ Everything installable in one line, updatable in two clicks, and usable without 
 - [x] Edit thresholds and add checks in the interface, per server or per site, in plain words.
 - [x] Users, customers and roles in the interface: create customers, invite users by one-time link, grant and revoke roles.
 - [x] One-click backups: daily backup of the database and `serverdata` with retention, back up now and download in Settings, `--restore` in the server installer; replaces the unpruned update dumps.
-- [ ] Update available everywhere: daily background release check with a banner and a notification; release import from the interface for servers without Internet.
+- [x] Update available everywhere: daily background release check with a banner and a notification; release import from the interface for servers without Internet.
 - [ ] AI setup in the interface: API key, model, test and enable in Settings; `MF_ALLOW_COMMANDS=1` in the agent installer for the shell opt-in; approvals say when AI is off.
 - [ ] Mirrors that work in the production compose: mirror tools sidecar image, add a mirror from a list of distributions with a size estimate.
 - [ ] Plain-language pass: rename jargon on screen, certificate expiry warning only when renewal is late or failed, quiet CLI output, an action button in every empty state.
-- [ ] Remove a server end to end: revoke, hide from lists, show the uninstall command, re-enroll the same host later.
-- [ ] Agent on any Linux: start and monitor on unknown distributions with package features reported as unavailable.
+- [x] Remove a server end to end: revoke, hide from lists, show the uninstall command, re-enroll the same host later.
+- [x] Agent on any Linux: start and monitor on unknown distributions with package features reported as unavailable.
 - [ ] Browser certificate without a terminal: ACME when the name is public, otherwise a trust page for the internal CA (ADR, as it is a plaintext listener).
 - [ ] Settings page for runtime server settings, and a one-screen "Getting started" at the top of the install guides.
