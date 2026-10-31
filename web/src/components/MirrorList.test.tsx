@@ -108,6 +108,102 @@ describe("MirrorListPage", () => {
     expect(screen.getByRole("table")).toHaveTextContent(/Running since (\d+ \w{3} )?\d\d:\d\d/);
   });
 
+  describe("adding a mirror", () => {
+    const GIB = 1024 ** 3;
+    const catalog = (overrides = {}) => ({
+      tools: { available: true, problem: null },
+      disk: { free_bytes: 200 * GIB, total_bytes: 1000 * GIB },
+      distributions: [
+        { id: "debian-13", name: "Debian 13 (trixie)", family: "apt", size_bytes: 150 * GIB, added: false, problem: null },
+        { id: "rocky-9", name: "Rocky Linux 9", family: "dnf", size_bytes: 60 * GIB, added: true, problem: null },
+        {
+          id: "ubuntu-24.04",
+          name: "Ubuntu 24.04 LTS (noble)",
+          family: "apt",
+          size_bytes: 280 * GIB,
+          added: false,
+          problem: "Ubuntu 24.04 LTS (noble) needs about 280 GiB and this server has 200 GiB free.",
+        },
+      ],
+      ...overrides,
+    });
+
+    it("guides from the empty state to a synced distribution in one click", async () => {
+      const user = userEvent.setup();
+      const fetchMock = stubFetch({
+        "GET /api/mirrors": { status: 200, body: { mirrors: [] } },
+        "GET /api/mirrors/catalog": { status: 200, body: catalog() },
+        "POST /api/mirrors": { status: 201, body: { mirrors: [mirror()] } },
+      });
+      render(
+        <As user={globalAdmin}>
+          <MirrorListPage />
+        </As>,
+      );
+      expect(await screen.findByText("No mirrors yet")).toBeInTheDocument();
+      expect(screen.queryByText(/monitorflow-server/)).not.toBeInTheDocument();
+      await user.click(within(screen.getByText("No mirrors yet").parentElement!).getByRole("button", { name: "Add a mirror" }));
+
+      const table = await screen.findByRole("table", { name: "Distributions" });
+      expect(screen.getByText(/200 GiB free of 1,000 GiB on this server/)).toBeInTheDocument();
+      expect(within(table).getByText("about 150 GiB")).toBeInTheDocument();
+      expect(within(table).getByText("Added")).toBeInTheDocument();
+      expect(within(table).getByText(/needs about 280 GiB and this server has 200 GiB free/)).toBeInTheDocument();
+      expect(within(table).queryByRole("button", { name: /Ubuntu/ })).not.toBeInTheDocument();
+
+      await user.click(within(table).getByRole("button", { name: "Add Debian 13 (trixie)" }));
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/mirrors",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ distribution: "debian-13" }) }),
+      );
+      expect(await screen.findByRole("status")).toHaveTextContent(
+        "Debian 13 (trixie) added. The first sync starts within a minute",
+      );
+      expect(screen.queryByRole("table", { name: "Distributions" })).not.toBeInTheDocument();
+    });
+
+    it("says what to do when the tools are not running", async () => {
+      const user = userEvent.setup();
+      stubFetch({
+        "GET /api/mirrors": { status: 200, body: { mirrors: mirrors() } },
+        "GET /api/mirrors/catalog": {
+          status: 200,
+          body: catalog({ tools: { available: false, problem: "the mirror tools are not running: refused" } }),
+        },
+      });
+      render(
+        <As user={globalAdmin}>
+          <MirrorListPage />
+        </As>,
+      );
+      await user.click(await screen.findByRole("button", { name: "Add a mirror" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("up -d mirror");
+      expect(await screen.findByRole("button", { name: "Add Debian 13 (trixie)" })).toBeDisabled();
+    });
+
+    it("shows a refusal of the server in its own words", async () => {
+      const user = userEvent.setup();
+      stubFetch({
+        "GET /api/mirrors": { status: 200, body: { mirrors: mirrors() } },
+        "GET /api/mirrors/catalog": { status: 200, body: catalog() },
+        "POST /api/mirrors": {
+          status: 409,
+          body: { error: "Debian 13 (trixie) needs about 150 GiB and this server has 90 GiB free." },
+        },
+      });
+      render(
+        <As user={globalAdmin}>
+          <MirrorListPage />
+        </As>,
+      );
+      await user.click(await screen.findByRole("button", { name: "Add a mirror" }));
+      await user.click(await screen.findByRole("button", { name: "Add Debian 13 (trixie)" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Debian 13 (trixie) needs about 150 GiB and this server has 90 GiB free.",
+      );
+    });
+  });
+
   it("is for global administrators only", () => {
     render(
       <As user={customerAdmin}>

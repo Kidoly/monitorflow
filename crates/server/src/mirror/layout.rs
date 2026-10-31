@@ -10,6 +10,8 @@ use super::model::{Family, Mirror};
 
 /// File name of the public signing key under `keys/`.
 pub const PUBLIC_KEY: &str = "monitorflow-archive.asc";
+/// Directory of the tools sidecar's socket under `mirror_dir` (ADR-0067).
+pub const TOOLS_DIR: &str = "tools";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
@@ -25,6 +27,11 @@ impl Layout {
         &self.root
     }
 
+    /// Where the tools sidecar listens (ADR-0067).
+    pub fn tools_socket(&self) -> PathBuf {
+        self.root.join(TOOLS_DIR).join("tools.sock")
+    }
+
     /// aptly's `rootDir`: its database, package pool and `public/`.
     pub fn aptly_root(&self) -> PathBuf {
         self.root.join("aptly")
@@ -34,8 +41,8 @@ impl Layout {
         self.root.join("aptly.conf")
     }
 
-    /// Upstream archive keys aptly checks `Release` files with; filled by
-    /// the administrator.
+    /// Upstream archive keys aptly checks `Release` files with: the tools
+    /// sidecar adds the catalog's at start, an administrator any others.
     pub fn upstream_keyring(&self) -> PathBuf {
         self.root.join("upstream-keyring.gpg")
     }
@@ -92,7 +99,7 @@ impl Layout {
             "gpgDisableSign": false,
             "gpgDisableVerify": false,
             "gpgProvider": "gpg",
-            "skipContentsPublishing": false,
+            "skipContentsPublishing": true,
         });
         write_atomically(&self.aptly_config(), config.to_string().as_bytes())
     }

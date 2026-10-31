@@ -1,7 +1,7 @@
 # ADR-0030: Mirror orchestration and serving
 
 Date: 2026-10-23
-Status: accepted
+Status: accepted; the tools run in a sidecar and some command lines changed in ADR-0067
 
 ## Context
 

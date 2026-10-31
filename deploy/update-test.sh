@@ -51,7 +51,7 @@ build() {
         -f "$repo/deploy/docker/$1.Dockerfile" -t "$3" "$repo"
 }
 if [ "${MF_TEST_BUILD:-1}" != 0 ]; then
-    for image in server web updater; do build "$image" "" "monitorflow-$image:e2e-base"; done
+    for image in server web updater mirror; do build "$image" "" "monitorflow-$image:e2e-base"; done
     build server "$NEXT" monitorflow-server:e2e-next
     build updater "$NEXT" monitorflow-updater:e2e-next
 fi
@@ -71,6 +71,7 @@ push() {
 next_server=$(push monitorflow-server:e2e-next monitorflow-server "$NEXT")
 next_web=$(push monitorflow-web:e2e-base monitorflow-web "$NEXT")
 next_updater=$(push monitorflow-updater:e2e-next monitorflow-updater "$NEXT")
+next_mirror=$(push monitorflow-mirror:e2e-base monitorflow-mirror "$NEXT")
 broken_server=$(push monitorflow-server:e2e-broken monitorflow-server "$BROKEN")
 
 # Signed release directories, as the release workflow makes them, with a
@@ -79,8 +80,8 @@ release() { # version server-image signing-key
     local dir=$work/releases/$1
     mkdir -p "$dir"
     printf 'agent %s\n' "$1" >"$dir/monitorflow-agent-linux-x86_64"
-    jq -n --arg v "$1" --arg s "$2" --arg w "$next_web" --arg u "$next_updater" \
-        '{version: $v, images: {server: $s, web: $w, updater: $u}}' >"$dir/images.json"
+    jq -n --arg v "$1" --arg s "$2" --arg w "$next_web" --arg u "$next_updater" --arg m "$next_mirror" \
+        '{version: $v, images: {server: $s, web: $w, updater: $u, mirror: $m}}' >"$dir/images.json"
     local keys=$work/keys.pem
     { cat "$repo/deploy/release-keys.pem"; openssl pkey -in "$3" -pubout; } >"$keys"
     MF_SIGNING_KEY=$3 MF_RELEASE_KEYS=$keys MF_RELEASE_VERSION=$1 "$repo/deploy/release-files.sh" "$dir" >/dev/null
@@ -105,10 +106,12 @@ HTTPS_PORT=$HTTPS_PORT
 HTTP_PORT=38080
 GRPC_PORT=37443
 ENROLL_PORT=37445
+MIRROR_PORT=37480
 RELEASE_URL=http://files:8080
 SERVER_IMAGE=monitorflow-server:e2e-base
 WEB_IMAGE=monitorflow-web:e2e-base
 UPDATER_IMAGE=monitorflow-updater:e2e-base
+MIRROR_IMAGE=monitorflow-mirror:e2e-base
 EOF
 cat >"$work/deploy/docker-compose.test.yml" <<EOF
 services:
@@ -173,6 +176,9 @@ check "update to $NEXT succeeded" test "$state" = succeeded
 check "the server runs $NEXT" test "$(server_version)" = "monitorflow-server $NEXT"
 check "the API reports $NEXT" sh -c "curl -fsSk -b '$work/cookies' '$api/server-update' | jq -e '.running_version == \"$NEXT\"'"
 check ".env pins the release's images" pinned "$next_server"
+check ".env pins the mirror image" grep -qx "MIRROR_IMAGE=$next_mirror" "$work/deploy/.env"
+mirror_updated() { [ "$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q mirror)")" = "$next_mirror" ]; }
+check "the mirror tools run the release's image" mirror_updated
 check "the session and the data are kept" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
 check "the update is audited" test "$(psql "SELECT count(*) FROM audit_log WHERE action = 'server.update'")" = 1
 backup=$(jq -r .backup "$work/next.json")
@@ -210,6 +216,8 @@ check "a forged request for it fails" until_true 60 forged_refused
 check "and the server still runs $NEXT" test "$(server_version)" = "monitorflow-server $NEXT"
 
 echo "backing up and restoring"
+# The mirror signing key lives in its own volume and must stay in backups.
+compose exec -T server monitorflow-server mirror key generate >/dev/null
 backup_now() {
     [ "$(post backups '')" = 202 ] || return 1
     jq -r .id "$work/answer" >"$work/backup-id"
@@ -222,9 +230,13 @@ check "the backup succeeds" until_true 300 backup_done
 name=$(get backups | jq -r .last.file)
 get "backups/$name" >"$work/backup.tar.gz" || true
 check "it downloads" tar -tzf "$work/backup.tar.gz"
+check "it holds the mirror signing key, not the tools' socket" \
+    sh -c "tar -tzf '$work/backup.tar.gz' | grep -q '^serverdata/mirrors/gnupg/' && ! tar -tzf '$work/backup.tar.gz' | grep -q '^serverdata/mirrors/tools'"
 check "the download is audited" test "$(psql "SELECT count(*) FROM audit_log WHERE action = 'server.backup.download'")" -ge 1
+key() { compose exec -T server sha256sum /var/lib/monitorflow/server/mirrors/keys/monitorflow-archive.asc; }
 ca() { compose exec -T server sha256sum /var/lib/monitorflow/server/ca/ca-key.pem; }
 ca_before=$(ca)
+key_before=$(key)
 compose exec -T server monitorflow-server token create --role agent --id ci-lost --site lost --create-site >/dev/null
 compose exec -T server sh -c 'echo stray >/var/lib/monitorflow/server/stray'
 COMPOSE_PROJECT_NAME=$project COMPOSE_FILE="$work/deploy/docker-compose.yml:$work/deploy/docker-compose.test.yml" \
@@ -235,6 +247,7 @@ check "data before it is back" test "$(psql "SELECT count(*) FROM sites WHERE na
 no_stray() { ! compose exec -T server test -e /var/lib/monitorflow/server/stray; }
 check "the server data is the backup's" no_stray
 check "the CA is the same" test "$(ca)" = "$ca_before"
+check "the mirror signing key is the same" test "$(key)" = "$key_before"
 check "the API is ready after the restore" curl -fsSk "$api/health/ready"
 
 if [ "$failed" -ne 0 ]; then

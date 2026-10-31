@@ -9,9 +9,12 @@
 //! build their command lines over the files of [`layout`], and [`jobs`]
 //! syncs and snapshots mirrors with them, on request or from the
 //! [`scheduler`]. [`http`] serves the result; [`relays`] records the
-//! copies relays serve (ADR-0037).
+//! copies relays serve (ADR-0037). [`tools`] reaches the tools in their
+//! sidecar container and [`catalog`] lists the distributions an
+//! administrator can add in one click (ADR-0067).
 
 pub mod apt;
+pub mod catalog;
 pub mod dnf;
 pub mod http;
 pub mod jobs;
@@ -22,6 +25,7 @@ pub mod runner;
 pub mod scheduler;
 pub mod signing;
 pub mod store;
+pub mod tools;
 
 pub use jobs::{Job, JobError, JobKind, Mirrors};
 pub use layout::Layout;
@@ -30,3 +34,4 @@ pub use model::{
 };
 pub use runner::{CommandRunner, Invocation, Output, RunError, Runner, Tool};
 pub use store::{MirrorLock, StoreError};
+pub use tools::ToolsRunner;

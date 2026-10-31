@@ -122,6 +122,9 @@ image_lines() {
         | sed -n 's/^[[:space:]]*"\([a-z]*\)":[[:space:]]*"\([a-zA-Z0-9./:_-]*@sha256:[0-9a-f]\{64\}\)"[[:space:]]*$/\1 \2/p'
 }
 
+# SERVER_IMAGE for `server`: the line of `deploy/.env` that pins an image.
+image_key() { printf '%s_IMAGE' "$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"; }
+
 # What this release is, verified: nothing on the host has changed yet.
 download_release() {
     say "downloading the release from $base"
@@ -134,7 +137,7 @@ download_release() {
     done
     version=$(cat "$tmp/VERSION")
     grep -q "\"version\": *\"$version\"" "$tmp/images.json" || die "images.json is not for version $version"
-    for image in server web updater; do
+    for image in server web updater mirror; do
         image_lines | grep -q "^$image " || die "images.json names no $image image by digest: this release has no server images"
     done
 }
@@ -234,7 +237,7 @@ write_env() {
             printf 'DOMAIN=%s\nSERVER_NAMES=%s\nPOSTGRES_PASSWORD=%s\n' "$name" "$names" "$password"
             [ -z "$MF_DOWNLOAD_URL" ] || printf 'RELEASE_URL=%s\n' "$base"
             image_lines | while read -r image reference; do
-                printf '%s_IMAGE=%s\n' "$(printf '%s' "$image" | tr '[:lower:]' '[:upper:]')" "$reference"
+                printf '%s=%s\n' "$(image_key "$image")" "$reference"
             done
         } >"$ENV_FILE.new"
     )
@@ -252,7 +255,7 @@ check_ports() {
     command -v ss >/dev/null 2>&1 || return 0
     [ -z "$(compose ps -q 2>/dev/null)" ] || return 0
     listening=$(ss -Hltn | awk '{ print $4 }')
-    for setting in HTTPS_PORT:443 HTTP_PORT:80 GRPC_PORT:7443 ENROLL_PORT:7445; do
+    for setting in HTTPS_PORT:443 HTTP_PORT:80 GRPC_PORT:7443 ENROLL_PORT:7445 MIRROR_PORT:7480; do
         port=$(env_get "${setting%:*}" "${setting#*:}")
         if printf '%s\n' "$listening" | grep -q ":$port\$"; then
             die "port $port is already in use on this host (see: ss -ltnp): free it, or set ${setting%:*} in $ENV_FILE, then run this again"
@@ -276,6 +279,22 @@ pull_images() {
     }
 }
 
+# Pins the images this release adds to an install from before them, which
+# the new compose file needs: an older updater does not know them. A pin
+# already there is the updater's.
+pin_new_images() {
+    image_lines | while read -r image reference; do
+        key=$(image_key "$image")
+        [ -z "$(env_get "$key" '')" ] || continue
+        say "pulling the $image image, new in this release"
+        docker pull -q "$reference" >/dev/null 2>"$tmp/pull.log" || {
+            cat "$tmp/pull.log" >&2
+            die "cannot pull $reference: check that this host reaches its registry"
+        }
+        printf '%s=%s\n' "$key" "$reference" >>"$ENV_FILE"
+    done
+}
+
 start() {
     say "starting MonitorFlow"
     if ! compose up -d --no-build --wait --wait-timeout 300 >"$tmp/up.log" 2>&1; then
@@ -288,11 +307,9 @@ start() {
 
 running_version() { compose exec -T server monitorflow-server --version | cut -d ' ' -f 2; }
 
-# Updates through the updater, as the web interface does: it checks the
-# release again, backs up, and rolls back. Its image is replaced last, by
-# a container of its own, which `up` must not run into.
-update_server() {
-    say "updating from $1 to $version, with a backup first"
+# Every file of the release in $tmp/release, checked.
+download_release_files() {
+    [ ! -d "$tmp/release" ] || return 0
     mkdir "$tmp/release"
     awk '{ sub(/^\*/, "", $2); print $2 }' "$tmp/SHA256SUMS" | while read -r file; do
         fetch "$base/$file" "$tmp/release/$file"
@@ -300,6 +317,14 @@ update_server() {
     done
     cp "$tmp/SHA256SUMS" "$tmp/release/"
     [ ! -f "$tmp/SHA256SUMS.sig" ] || cp "$tmp/SHA256SUMS.sig" "$tmp/release/"
+}
+
+# Updates through the updater, as the web interface does: it checks the
+# release again, backs up, and rolls back. Its image is replaced last, by
+# a container of its own, which `up` must not run into.
+update_server() {
+    say "updating from $1 to $version, with a backup first"
+    download_release_files
     compose run --rm --no-deps -T -v "$tmp/release:/release:ro" updater update --dir /release \
         || die "the update failed and the updater put the previous version back, or says above what to restore"
     updater=$(env_get UPDATER_IMAGE '')
@@ -311,10 +336,26 @@ update_server() {
     done
 }
 
+# The mirrors volume (ADR-0067) hides the directory that held the agent
+# release cache, so the first start with it needs this release imported
+# again. Hosts can still install from GitHub if that fails.
+refill_agent_cache() {
+    compose exec -T server monitorflow-server agent-release list | grep -qxF "$version" && return 0
+    say "caching release $version on the server for its agents"
+    download_release_files
+    if ! { compose cp "$tmp/release" server:/tmp/release \
+        && compose exec -T server monitorflow-server agent-release import --dir /tmp/release; } >"$tmp/import.log" 2>&1; then
+        tail -n 5 "$tmp/import.log" >&2
+        say "warning: the agent release is not cached; run this installer again"
+    fi
+}
+
 # Brings an installed server up, then to this release if it is newer. The
 # compose files follow the release, as the updater changes images only.
 repair_or_upgrade() {
     [ -f "$DEPLOY/docker-compose.yml" ] || install_bundle
+    had_mirrors=$(grep -cF 'monitorflow-mirror:local' "$DEPLOY/docker-compose.yml") || true
+    pin_new_images
     check_ports
     start
     running=$(running_version)
@@ -328,6 +369,7 @@ repair_or_upgrade() {
         return
     fi
     start
+    [ "$had_mirrors" != 0 ] || refill_agent_cache
 }
 
 restore_backup() {

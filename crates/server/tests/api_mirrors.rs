@@ -40,6 +40,7 @@ macro_rules! db_tests {
 #[derive(Default)]
 struct FakeTools {
     hold: AtomicBool,
+    broken: AtomicBool,
 }
 
 #[async_trait::async_trait]
@@ -47,6 +48,11 @@ impl Runner for FakeTools {
     async fn run(&self, invocation: &Invocation) -> Result<Output, RunError> {
         while self.hold.load(Ordering::SeqCst) {
             tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        if self.broken.load(Ordering::SeqCst) {
+            return Err(RunError::Tools(
+                "the mirror tools are not running: gone".into(),
+            ));
         }
         let line = invocation.to_string();
         let stdout = if line.contains("--list-secret-keys") {
@@ -178,6 +184,73 @@ fn dnf(name: &str) -> MirrorSpec {
 }
 
 db_tests! {
+    #[sqlx::test]
+    async fn a_distribution_is_added_from_the_catalog(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let admin = h.user("root", Role::Administrator, GrantScope::Global).await;
+
+        let (status, catalog) = h.call("GET", "/api/mirrors/catalog", &admin, None).await;
+        assert_eq!(status, StatusCode::OK, "{catalog}");
+        assert_eq!(catalog["tools"]["available"], true);
+        assert!(catalog["disk"]["free_bytes"].as_u64().unwrap() > 0);
+        let rocky = catalog["distributions"].as_array().unwrap().iter()
+            .find(|d| d["id"] == "rocky-9").unwrap();
+        assert_eq!((rocky["family"].as_str(), rocky["added"].as_bool()), (Some("dnf"), Some(false)));
+        assert!(rocky["size_bytes"].as_u64().unwrap() > 1 << 30);
+
+        let add = Some(json!({"distribution": "rocky-9"}));
+        let free = catalog["disk"]["free_bytes"].as_u64().unwrap();
+        let (status, body) = h.call("POST", "/api/mirrors", &admin, add.clone()).await;
+        if free < rocky["size_bytes"].as_u64().unwrap() {
+            // A small test disk: refused in plain words, nothing created.
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert!(body["error"].as_str().unwrap().contains("needs about"), "{body}");
+            assert!(store::list(&pool).await.unwrap().is_empty());
+            return;
+        }
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let names: Vec<_> = body["mirrors"].as_array().unwrap().iter()
+            .map(|m| m["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["rocky-9-baseos", "rocky-9-appstream"]);
+        assert_eq!(body["mirrors"][0]["sync_interval_s"], 86_400);
+        let due: Vec<_> = store::due(&pool).await.unwrap().into_iter().map(|m| m.name).collect();
+        assert_eq!(due.len(), 2, "the scheduler starts them: {due:?}");
+
+        let (status, _) = h.call("POST", "/api/mirrors", &admin, add).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (_, catalog) = h.call("GET", "/api/mirrors/catalog", &admin, None).await;
+        let rocky = catalog["distributions"].as_array().unwrap().iter()
+            .find(|d| d["id"] == "rocky-9").unwrap();
+        assert_eq!(rocky["added"], true);
+
+        let (status, _) = h.call("POST", "/api/mirrors", &admin, Some(json!({"distribution": "beos-5"}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test]
+    async fn without_the_tools_nothing_is_added_and_the_catalog_says_why(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let admin = h.user("root", Role::Administrator, GrantScope::Global).await;
+        h.tools.broken.store(true, Ordering::SeqCst);
+        let (_, catalog) = h.call("GET", "/api/mirrors/catalog", &admin, None).await;
+        assert_eq!(catalog["tools"]["available"], false);
+        assert_eq!(catalog["tools"]["problem"], "the mirror tools are not running: gone");
+        let (status, body) = h.call("POST", "/api/mirrors", &admin, Some(json!({"distribution": "debian-13"}))).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::CONFLICT, Some("the mirror tools are not running: gone")));
+        assert!(store::list(&pool).await.unwrap().is_empty());
+    }
+
+    #[sqlx::test]
+    async fn the_catalog_is_for_global_administrators(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let customer = Uuid::from_u128(1);
+        let admin = h.user("c", Role::Administrator, GrantScope::Customer(customer)).await;
+        let (status, _) = h.call("GET", "/api/mirrors/catalog", &admin, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = h.call("POST", "/api/mirrors", &admin, Some(json!({"distribution": "debian-13"}))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
     #[sqlx::test]
     async fn global_administrators_sync_and_snapshot(pool: PgPool) {
         let h = Harness::new(&pool);

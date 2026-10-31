@@ -799,6 +799,8 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         // Mirrors are global: a customer administrator sees none of them.
         ("GET", "/api/mirrors")
+        | ("POST", "/api/mirrors")
+        | ("GET", "/api/mirrors/catalog")
         | ("GET", "/api/mirrors/{id}")
         | ("POST", "/api/mirrors/{id}/sync")
         | ("POST", "/api/mirrors/{id}/snapshots") => {

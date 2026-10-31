@@ -60,3 +60,27 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* The list of distributions to add. */
+.add {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.addHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.addTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.add code {
+  font-family: var(--mono);
+}

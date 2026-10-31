@@ -11,12 +11,12 @@
 #
 # Checks: tampered and foreign releases change nothing; the one-liner run
 # without a terminal; the setup link; a re-run; an upgrade through the
-# updater; --uninstall, with and without the data; MF_PUBLIC_NAME; --restore
+# updater, from an install older than the mirror tools; --uninstall, with and without the data; MF_PUBLIC_NAME; --restore
 # on a new install, with the public name typed on a terminal.
 #
 # The images must exist and trust MF_TEST_SIGNING_KEY, as for
 # deploy/update-test.sh, which CI runs first:
-# monitorflow-{server,web,updater}:e2e-base and
+# monitorflow-{server,web,updater,mirror}:e2e-base and
 # monitorflow-{server,updater}:e2e-next, built as 99.0.0. Needs docker with
 # compose, curl, jq and openssl, and Internet access from the test host.
 #   MF_TEST_SIGNING_KEY=key.pem deploy/install-server-test.sh
@@ -81,21 +81,26 @@ push() {
 # stand-in agent binary. The release's installer carries the test key.
 keys=$work/keys.pem
 { cat "$repo/deploy/release-keys.pem"; openssl pkey -in "$key" -pubout; } >"$keys"
-release() { # directory version server web updater
+release() { # directory version server web updater mirror
     local dir=$work/serve/$1
     mkdir -p "$dir"
     printf 'agent %s\n' "$2" >"$dir/monitorflow-agent-linux-x86_64"
-    jq -n --arg v "$2" --arg s "$3" --arg w "$4" --arg u "$5" \
-        '{version: $v, images: {server: $s, web: $w, updater: $u}}' >"$dir/images.json"
+    jq -n --arg v "$2" --arg s "$3" --arg w "$4" --arg u "$5" --arg m "$6" \
+        '{version: $v, images: {server: $s, web: $w, updater: $u, mirror: $m}}' >"$dir/images.json"
     MF_SIGNING_KEY=$key MF_RELEASE_KEYS=$keys MF_RELEASE_VERSION=$2 "$repo/deploy/release-files.sh" "$dir" >/dev/null
 }
 base_server=$(push monitorflow-server:e2e-base monitorflow-server "$BASE")
 base_web=$(push monitorflow-web:e2e-base monitorflow-web "$BASE")
 base_updater=$(push monitorflow-updater:e2e-base monitorflow-updater "$BASE")
+base_mirror=$(push monitorflow-mirror:e2e-base monitorflow-mirror "$BASE")
 next_server=$(push monitorflow-server:e2e-next monitorflow-server "$NEXT")
 next_updater=$(push monitorflow-updater:e2e-next monitorflow-updater "$NEXT")
-release base "$BASE" "$base_server" "$base_web" "$base_updater"
-release next "$NEXT" "$next_server" "$base_web" "$next_updater"
+# Another digest, so a check of the image proves an update.
+printf 'FROM monitorflow-mirror:e2e-base\nLABEL release=next\n' \
+    | DOCKER_BUILDKIT=0 docker build -q -t monitorflow-mirror:e2e-next - >/dev/null
+next_mirror=$(push monitorflow-mirror:e2e-next monitorflow-mirror "$NEXT")
+release base "$BASE" "$base_server" "$base_web" "$base_updater" "$base_mirror"
+release next "$NEXT" "$next_server" "$base_web" "$next_updater" "$next_mirror"
 # Copies with a checksum that does not match (signed again, so only the
 # checksum is wrong), and a signature by another key.
 openssl genpkey -algorithm ed25519 -out "$work/other.pem" 2>/dev/null
@@ -148,6 +153,25 @@ ca() { compose exec -T server sha256sum /var/lib/monitorflow/server/ca/ca-key.pe
 api() { in_host curl -fsSk -b /tmp/cookies "https://$(env_value DOMAIN)/api/$1"; }
 containers() { in_host docker ps -aq --filter label=com.docker.compose.project=monitorflow; }
 volume_exists() { in_host docker volume inspect monitorflow_pgdata; }
+# The mirror service runs the image $1, is healthy and answers the server.
+mirror_runs() {
+    local id
+    id=$(compose ps -q mirror)
+    [ "$(in_host docker inspect --format '{{.Config.Image}} {{.State.Health.Status}}' "$id")" = "$1 healthy" ] \
+        && api mirrors/catalog | jq -e '.tools.available'
+}
+# deploy/ as an install from before the mirror tools has it: a compose file
+# without them, and no pin for their image.
+older_install() {
+    compose rm -sf mirror
+    in_host cat /opt/monitorflow/deploy/docker-compose.yml | awk '
+        /^  mirror:$/ && !seen { seen = 1; skip = 1 }
+        skip { if (/restart: unless-stopped/) skip = 0; next }
+        !/mirrors:\/(var|serverdata)|MIRROR_P|:7480"/ { print }' \
+        | in_host sh -c 'cat >/tmp/old.yml && mv /tmp/old.yml /opt/monitorflow/deploy/docker-compose.yml'
+    in_host sed -i '/^MIRROR_IMAGE=/d' /opt/monitorflow/deploy/.env
+    compose up -d --no-build --wait --wait-timeout 300 >/dev/null
+}
 report_cleanly() { grep -q 'is running at https://' "$1" && ! grep -q 'error:' "$1"; }
 
 echo "== refused releases"
@@ -165,6 +189,7 @@ guessed=$(in_host sh -c "ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).
 check "the name is guessed: the address, as no name resolves" test "$(env_value DOMAIN)" = "$guessed"
 check "secrets file root 0600" test "$(in_host stat -c '%U %a' /opt/monitorflow/deploy/.env)" = "root 600"
 check "images are pinned by digest" test "$(env_value SERVER_IMAGE)" = "$base_server"
+check "the mirror image too" test "$(env_value MIRROR_IMAGE)" = "$base_mirror"
 check "the release URL follows the source" test "$(env_value RELEASE_URL)" = "$files/base"
 password=$(env_value POSTGRES_PASSWORD)
 check "a password was generated" test "${#password}" = 48
@@ -178,6 +203,7 @@ in_host curl -fsSk -c /tmp/cookies -H 'content-type: application/json' -H 'x-mon
 check "the link creates the administrator" api auth/me
 compose exec -T server monitorflow-server token create --role agent --id ci --site kept --create-site >/dev/null
 check "the page's command works in /opt/monitorflow" compose exec -T server monitorflow-server setup-link
+check "the mirror tools run after an install" mirror_runs "$base_mirror"
 serverdata_ca=$(ca)
 
 echo "== second run"
@@ -189,10 +215,14 @@ check "the server was not recreated" test "$(compose ps -q server)" = "$server_i
 check "no setup link once a user exists" bash -c "! grep -q /setup/ '$work/rerun.log'"
 check "the session and the data are kept" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
 
-echo "== upgrade by running it again"
+echo "== upgrade by running it again, from before the mirror tools"
+older_install
+check "the older install has no mirror service" test -z "$(compose ps -aq mirror 2>/dev/null)"
 installer next | tee "$work/upgrade.log"
 check "the server runs $NEXT" test "$(server_version)" = "monitorflow-server $NEXT"
 check ".env pins the new images" test "$(env_value SERVER_IMAGE)" = "$next_server"
+check ".env pins the mirror image" test "$(env_value MIRROR_IMAGE)" = "$next_mirror"
+check "the mirror tools run after an upgrade" mirror_runs "$next_mirror"
 check "it keeps the secrets" test "$(env_value POSTGRES_PASSWORD)" = "$password"
 check "the data is kept" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
 check "the updater was replaced" test "$(in_host docker inspect --format '{{.Config.Image}}' "$(compose ps -q updater)")" = "$next_updater"
@@ -212,6 +242,7 @@ check "the compose files are gone" absent /opt/monitorflow/deploy/docker-compose
 installer next | tee "$work/back.log"
 check "running it again brings all of it back" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
 check "with the same CA" test "$(ca)" = "$serverdata_ca"
+check "and the mirror tools" mirror_runs "$next_mirror"
 
 echo "== data without settings"
 in_host mv /opt/monitorflow/deploy/.env /root/env
@@ -244,7 +275,7 @@ check "the server runs $NEXT" test "$(server_version)" = "monitorflow-server $NE
 
 if [ "$failed" -ne 0 ]; then
     compose ps -a || true
-    compose logs --tail 40 server updater || true
+    compose logs --tail 40 server updater mirror || true
     exit 1
 fi
 echo "server install test passed"

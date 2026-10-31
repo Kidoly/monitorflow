@@ -196,9 +196,9 @@ db_tests! {
         let log = fx.take_log();
         let expected = [
             format!("aptly mirror list {config} -raw"),
-            format!("aptly mirror create {config} {keyring} -architectures=amd64 mf:debian:main https://deb.debian.org/debian bookworm main"),
+            format!("aptly mirror create {config} {keyring} -force-components -architectures=amd64 mf:debian:main https://deb.debian.org/debian bookworm main"),
             format!("aptly mirror update {config} {keyring} mf:debian:main"),
-            format!("aptly mirror create {config} {keyring} -architectures=amd64 mf:debian:contrib https://deb.debian.org/debian bookworm contrib"),
+            format!("aptly mirror create {config} {keyring} -force-components -architectures=amd64 mf:debian:contrib https://deb.debian.org/debian bookworm contrib"),
             format!("aptly mirror update {config} {keyring} mf:debian:contrib"),
             "gpg --batch --with-colons --list-secret-keys".to_owned(),
         ];
@@ -208,7 +208,7 @@ db_tests! {
         assert!(log[6..].contains(&format!("aptly snapshot create {config} mf:debian:main:{name} from mirror mf:debian:main")), "{log:?}");
         assert_eq!(
             log.last().unwrap(),
-            &format!("aptly publish snapshot {config} -batch -gpg-key=FPR0123 -component=main,contrib -distribution=bookworm mf:debian:main:{name} mf:debian:contrib:{name} debian/{name}")
+            &format!("aptly publish snapshot {config} -batch -gpg-key=FPR0123 -component=main,contrib -distribution=bookworm -architectures=amd64 mf:debian:main:{name} mf:debian:contrib:{name} debian/{name}")
         );
         assert_eq!(snapshot.state, SnapshotState::Published);
         assert_eq!(snapshot.size_bytes, Some(8));
@@ -290,8 +290,8 @@ db_tests! {
         assert_eq!(
             fx.take_log(),
             [
-                format!("reposync --repofrompath=mf-rocky,https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/ --repoid=mf-rocky --download-path={} --norepopath --delete --arch=x86_64 --arch=noarch", work.display()),
-                format!("createrepo_c --update --workers=4 {}", work.display()),
+                format!("reposync --repofrompath=mf-rocky,https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/ --repoid=mf-rocky --download-path={} --norepopath --delete --download-metadata --arch=x86_64 --arch=noarch", work.display()),
+                format!("createrepo_c --update --workers=4 --general-compress-type=gz {}", work.display()),
             ]
         );
         let run = fx.mirrors.begin(&mirror, JobKind::Snapshot(Some("s1".into())), Trigger::Manual, None).await.unwrap().execute().await;

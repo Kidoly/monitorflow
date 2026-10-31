@@ -20,6 +20,7 @@ fn images_json(version: &str) -> Vec<u8> {
             "server": "ghcr.io/kidoly/monitorflow-server@sha256:{DIGEST}",
             "web": "localhost:5000/monitorflow-web@sha256:{DIGEST}",
             "updater": "ghcr.io/kidoly/monitorflow-updater@sha256:{DIGEST}",
+            "mirror": "ghcr.io/kidoly/monitorflow-mirror@sha256:{DIGEST}",
             "later": "ignored"}}}}"#
     )
     .into_bytes()
@@ -121,6 +122,25 @@ fn images_json_must_name_the_release_version_and_digests() {
         br#"{"version": "0.2.0", "images": {"server": "ghcr.io/kidoly/monitorflow-server:0.2.0",
         "web": "w@sha256:0", "updater": "u"}}"#;
     let files = release_files(&pair, "0.2.0", tagged);
+    assert!(matches!(
+        Candidate::verify("b".into(), files, &[key], None),
+        Err(UpdateError::BadImages(_))
+    ));
+}
+
+#[test]
+fn older_releases_have_no_mirror_image() {
+    let (pair, key) = signer();
+    let older = format!(
+        r#"{{"version": "0.2.0", "images": {{"server": "s@sha256:{DIGEST}",
+        "web": "w@sha256:{DIGEST}", "updater": "u@sha256:{DIGEST}"}}}}"#
+    );
+    let files = release_files(&pair, "0.2.0", older.as_bytes());
+    let candidate = Candidate::verify("b".into(), files, std::slice::from_ref(&key), None).unwrap();
+    assert_eq!(candidate.images.mirror, None);
+
+    let tagged = older.replace(r#""updater""#, r#""mirror": "m:0.2.0", "updater""#);
+    let files = release_files(&pair, "0.2.0", tagged.as_bytes());
     assert!(matches!(
         Candidate::verify("b".into(), files, &[key], None),
         Err(UpdateError::BadImages(_))

@@ -71,6 +71,8 @@
 //! | PUT | `/api/settings/public-address` | global administrator | body [`public_address::SetRequest`]; 200 [`public_address::PublicAddress`]; audited |
 //! | POST | `/api/auto-update/rollouts/{kind}/{version}/resume` | global administrator | resumes a halted rollout; audited |
 //! | GET | `/api/mirrors` | global administrator | [`mirrors::MirrorList`], see below |
+//! | POST | `/api/mirrors` | global administrator | body `{"distribution"}`, an `id` of the catalog; 201 [`mirrors::MirrorList`] of the mirrors created; 409 when the mirror tools are not running, the disk is too small or it is already added |
+//! | GET | `/api/mirrors/catalog` | global administrator | [`mirrors::Catalog`]: the distributions with their size estimate, the free disk space and whether the mirror tools answer |
 //! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots` and the last `runs` |
 //! | POST | `/api/mirrors/{id}/sync` | global administrator | 202 [`mirrors::RunSummary`] of the started sync; 409 while busy |
 //! | POST | `/api/mirrors/{id}/snapshots` | global administrator | body `{"name"?}`; 202 [`mirrors::RunSummary`]; 409 while busy or never synced |
@@ -242,7 +244,8 @@
 //! `finished_at`, and in the detail `output`, the last 64 KiB of the
 //! commands and what they printed. Starting a job answers at once with
 //! the running run; poll the detail for its end. Requests are audited
-//! (`mirror.sync`, `mirror.snapshot`). Mirrors are created with the CLI.
+//! (`mirror.sync`, `mirror.snapshot`). The catalog's distributions are
+//! added from the interface (ADR-0067), any other mirror with the CLI.
 //!
 //! # Sensor configuration
 //!
@@ -776,7 +779,8 @@ pub fn router(state: ApiState) -> Router {
             "/api/customers/{id}/sites",
             post(customers::create_customer_site),
         )
-        .route("/api/mirrors", get(mirrors::list))
+        .route("/api/mirrors", get(mirrors::list).post(mirrors::add))
+        .route("/api/mirrors/catalog", get(mirrors::catalog))
         .route("/api/mirrors/{id}", get(mirrors::detail))
         .route("/api/mirrors/{id}/sync", post(mirrors::sync))
         .route("/api/mirrors/{id}/snapshots", post(mirrors::snapshot))

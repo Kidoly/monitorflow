@@ -705,7 +705,9 @@ function RelayInstallCommand({ target }: { target: InstallTarget }) {
       <label className={styles.check}>
         <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} /> Serve the package
         mirrors and agent releases to this site&apos;s hosts{" "}
-        <span className={styles.fieldNote}>— a copy can take tens of gigabytes on the relay</span>
+        <span className={styles.fieldNote}>
+          — the relay copies every mirror added under Mirrors, 50 to 400 GiB per distribution
+        </span>
       </label>
       {"text" in command ? (
         <InstallCommand name="Linux" note="as root, on any Linux with systemd" text={command.text} />

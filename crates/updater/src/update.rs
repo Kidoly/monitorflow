@@ -193,11 +193,11 @@ impl Updater<'_> {
 
         self.reporter.state(UpdateState::Downloading);
         let staged = self.stage_agent_release(&candidate).await;
-        for image in [
-            &candidate.images.server,
-            &candidate.images.web,
-            &candidate.images.updater,
-        ] {
+        let images = &candidate.images;
+        for image in [&images.server, &images.web, &images.updater]
+            .into_iter()
+            .chain(&images.mirror)
+        {
             if let Err(e) = self.host.pull(image).await {
                 return self.reporter.finish(UpdateState::Failed, fail(&e));
             }

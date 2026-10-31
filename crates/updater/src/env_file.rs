@@ -1,6 +1,6 @@
 //! The image pins in the compose project's `.env` (ADR-0056):
-//! `SERVER_IMAGE`, `WEB_IMAGE` and `UPDATER_IMAGE`. Every other line is
-//! kept as it is.
+//! `SERVER_IMAGE`, `WEB_IMAGE`, `UPDATER_IMAGE` and `MIRROR_IMAGE`. Every
+//! other line is kept as it is.
 
 use std::io;
 use std::os::unix::fs::MetadataExt;
@@ -12,13 +12,15 @@ use serde::{Deserialize, Serialize};
 pub const SERVER: &str = "SERVER_IMAGE";
 pub const WEB: &str = "WEB_IMAGE";
 pub const UPDATER: &str = "UPDATER_IMAGE";
+pub const MIRROR: &str = "MIRROR_IMAGE";
 
-/// The three pins; `None` is no line, the compose file's local build.
+/// The pins; `None` is no line, the compose file's local build.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pins {
     pub server: Option<String>,
     pub web: Option<String>,
     pub updater: Option<String>,
+    pub mirror: Option<String>,
 }
 
 impl From<&Images> for Pins {
@@ -27,16 +29,18 @@ impl From<&Images> for Pins {
             server: Some(images.server.to_string()),
             web: Some(images.web.to_string()),
             updater: Some(images.updater.to_string()),
+            mirror: images.mirror.as_ref().map(ToString::to_string),
         }
     }
 }
 
 impl Pins {
-    fn entries(&self) -> [(&'static str, &Option<String>); 3] {
+    fn entries(&self) -> [(&'static str, &Option<String>); 4] {
         [
             (SERVER, &self.server),
             (WEB, &self.web),
             (UPDATER, &self.updater),
+            (MIRROR, &self.mirror),
         ]
     }
 }
@@ -67,6 +71,7 @@ impl EnvFile {
                 SERVER => pins.server = value,
                 WEB => pins.web = value,
                 UPDATER => pins.updater = value,
+                MIRROR => pins.mirror = value,
                 _ => {}
             }
         }
@@ -118,7 +123,7 @@ fn unquote(value: &str) -> &str {
 /// `text` with every pin line replaced by `pins`, in place of its first
 /// occurrence; a pin set to `None` loses its line.
 pub fn with_pins(text: &str, pins: &Pins) -> String {
-    let mut written = [false; 3];
+    let mut written = [false; 4];
     let mut out = String::with_capacity(text.len() + 256);
     for line in text.lines() {
         let slot = assignment(line)
@@ -161,6 +166,7 @@ mod tests {
             server: server.map(Into::into),
             web: web.map(Into::into),
             updater: updater.map(Into::into),
+            mirror: None,
         }
     }
 
@@ -173,7 +179,13 @@ mod tests {
         let second = with_pins(&first, &pins(Some("s@2"), Some("w@2"), Some("u@2")));
         assert_eq!(second, first.replace("@1", "@2"));
         // Back to local builds: the lines go, the rest stays.
-        let local = with_pins(&second, &Pins::default());
+        let mirrored = Pins {
+            mirror: Some("m@2".into()),
+            ..pins(Some("s@2"), Some("w@2"), Some("u@2"))
+        };
+        let with_mirror = with_pins(&second, &mirrored);
+        assert!(with_mirror.contains("MIRROR_IMAGE=m@2\n"));
+        let local = with_pins(&with_mirror, &Pins::default());
         assert!(!local.contains("_IMAGE="), "{local}");
         assert!(local.contains("POSTGRES_PASSWORD=s3cret\n"));
     }

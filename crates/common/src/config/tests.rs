@@ -848,7 +848,7 @@ fn relay_mirror_limits_are_checked() {
 #[test]
 fn relay_mirror_snapshot_size_bound() {
     let relay: RelayConfig = parse(AGENT_MIN).unwrap();
-    assert_eq!(relay.mirror.max_snapshot_bytes, 256 << 30);
+    assert_eq!(relay.mirror.max_snapshot_bytes, 512 << 30);
     let text = format!("{AGENT_MIN}\n[mirror]\nmax_snapshot_bytes = 1000\n");
     assert_eq!(
         parse::<RelayConfig>(&text)

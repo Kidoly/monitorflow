@@ -40,7 +40,8 @@ RUN apt-get update \
     && groupadd --system --gid 10001 monitorflow \
     && useradd --system --uid 10001 --gid 10001 --home-dir /var/lib/monitorflow/server \
         --shell /usr/sbin/nologin monitorflow \
-    && install -d -o monitorflow -g monitorflow -m 0700 /var/lib/monitorflow/server
+    && install -d -o monitorflow -g monitorflow -m 0700 /var/lib/monitorflow/server \
+    && install -d -o monitorflow -g monitorflow /var/lib/monitorflow/server/mirrors
 COPY --from=build /usr/local/bin/monitorflow-server /usr/local/bin/
 COPY --chmod=0755 deploy/docker/db-certs.sh /usr/local/bin/db-certs
 # Defaults only: the compose file sets the rest through MONITORFLOW_* variables.
