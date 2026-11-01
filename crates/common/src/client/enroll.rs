@@ -25,19 +25,19 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 pub enum EnrollError {
-    #[error("no identity in {} and no enrollment_token configured; create a token on the server and set MONITORFLOW_ENROLLMENT_TOKEN", dir)]
+    #[error("no identity in {} and no enrollment_token configured; copy an install command from the web interface (Administration › Add servers)", dir)]
     NoToken { dir: String },
     #[error("enrollment_token: {0}")]
     BadToken(String),
     /// Unknown, expired or used token, or one for another CA. Final.
-    #[error("enrollment refused: the token or install key is unknown, expired, used up, revoked or for another server; create a new one")]
+    #[error("the central server refused the install command: it is unknown, expired, used up, revoked or for another server; copy a new one from the web interface")]
     Refused,
     /// The server answered something that does not match the token or our
     /// key. Nothing was stored.
-    #[error("enrollment response rejected: {0}")]
+    #[error("first connection rejected: {0}")]
     BadResponse(String),
     /// Network trouble or a busy server; worth retrying.
-    #[error("enrollment failed, will retry: {0}")]
+    #[error("first connection failed, will retry: {0}")]
     Transient(String),
     #[error(transparent)]
     Identity(#[from] IdentityError),

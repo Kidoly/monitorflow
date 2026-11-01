@@ -69,22 +69,21 @@ enum Command {
         #[command(subcommand)]
         command: UserCommand,
     },
-    /// Manage enrollment tokens.
+    /// Manage single-use tokens.
     #[command(subcommand)]
     Token(TokenCommand),
-    /// Manage customers (ADR-0026).
+    /// Manage customers.
     #[command(subcommand)]
     Customer(CustomerCommand),
-    /// Manage package mirrors (ADR-0030).
+    /// Manage package mirrors.
     #[command(subcommand)]
     Mirror(MirrorCommand),
-    /// Agent releases served for self-updates and installs (ADR-0053,
-    /// ADR-0054).
+    /// Agent releases served for self-updates and installs.
     #[command(subcommand)]
     AgentRelease(AgentReleaseCommand),
     /// Print a new one-time link that creates the first administrator in
-    /// the browser, replacing the previous one (ADR-0057). Works only
-    /// while no user exists.
+    /// the browser, replacing the previous one. Works only while no user
+    /// exists.
     SetupLink,
 }
 
@@ -220,19 +219,19 @@ struct GrantArgs {
 
 #[derive(Subcommand, Debug)]
 enum TokenCommand {
-    /// Create a one-time enrollment token and print it, once, on stdout.
+    /// Create a single-use token and print it, once, on stdout.
     Create(CreateToken),
 }
 
 #[derive(Args, Debug)]
 struct CreateToken {
-    /// Role of the peer to enroll.
+    /// What the token installs.
     #[arg(long, value_parser = ["agent", "relay"])]
     role: String,
-    /// Peer ID written in the certificate: 1 to 64 of [A-Za-z0-9._-].
+    /// Name of the agent or relay: 1 to 64 of [A-Za-z0-9._-].
     #[arg(long)]
     id: String,
-    /// Name of the site the peer belongs to.
+    /// Name of the site it belongs to.
     #[arg(long)]
     site: String,
     /// Create the site if it does not exist.
@@ -245,12 +244,12 @@ struct CreateToken {
     /// Validity, like 90s, 15m, 1h or 7d (at most 7d).
     #[arg(long, default_value = "1h", value_parser = token::parse_ttl)]
     ttl: Duration,
-    /// For a relay: a DNS name or IP address its agents connect to. Repeat
-    /// for several; they go in the relay's certificate (ADR-0025).
+    /// For a relay: an address its agents connect to, a DNS name or an IP
+    /// address. Repeat for several; they go in the relay's certificate.
     #[arg(long = "server-name", value_name = "NAME")]
     server_names: Vec<String>,
-    /// For a relay that connects through another relay: the peer ID of
-    /// that relay, its parent (ADR-0028).
+    /// For a relay that connects through another relay: the name of that
+    /// relay, its parent.
     #[arg(long, value_name = "RELAY_ID")]
     parent_relay: Option<String>,
 }
@@ -306,7 +305,7 @@ fn agent_release_command(
             if versions.is_empty() {
                 eprintln!(
                     "no agent release is cached in {}; import one with \
-                     `monitorflow-server agent-release import --dir DIR` (docs/deploy-agent.md)",
+                     `monitorflow-server agent-release import --dir DIR`",
                     cache.dir().display()
                 );
             }
@@ -917,7 +916,7 @@ async fn open_mirrors(config: &ServerConfig, pool: sqlx::PgPool) -> anyhow::Resu
     Ok(Mirrors::new(pool, runner, layout))
 }
 
-/// `token create`: no logging, so stdout holds only the token.
+/// `token create`: stdout holds only the token.
 async fn create_token(config: &ServerConfig, args: CreateToken) -> anyhow::Result<()> {
     let ca = open_ca(config).await?;
     let pool = db::connect(&config.database_url).await?;
@@ -952,7 +951,7 @@ async fn create_token(config: &ServerConfig, args: CreateToken) -> anyhow::Resul
     let created = token::create(&pool, enroll::ca_fingerprint(&ca), &request).await?;
     println!("{}", created.token.to_secret_string().expose());
     eprintln!(
-        "Enrollment token for monitorflow://{role}/{} on site `{}`, valid until {}. It is not shown again.",
+        "Single-use token for {role} {} on site `{}`, valid until {}. It is not shown again.",
         request.peer_id,
         args.site,
         created.expires_at.format("%Y-%m-%d %H:%M:%S UTC")

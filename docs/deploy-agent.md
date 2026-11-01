@@ -10,32 +10,32 @@
      | sudo MF_SERVER=monitorflow.example.com:7443 MF_TOKEN=mfe1.… sh
    ```
 
-3. Paste it on each Linux host; the same command serves every host of the site. On Windows, the page shows a PowerShell line instead.
+3. Paste it on each Linux server; the same command serves every server of the site. On Windows, the page shows a PowerShell line instead.
 
-The host appears in the fleet within seconds, under its own host name. To remove it, use Remove on its page, which shows the uninstall command.
+The server appears in the fleet within seconds, under its own name. To remove it, use Remove on its page, which shows the uninstall command.
 
-The rest of this page is reference. Background is in architecture §4 (least privilege) and §7 (packages), and in ADR-0031, ADR-0032, ADR-0035 and ADR-0036. For Windows, see [Windows](#windows) at the end.
+The rest of this page is reference. Background is in architecture §4 (least privilege) and §7 (packages)[^0031][^0032][^0035][^0036]. For Windows, see [Windows](#windows) at the end.
 
 ## Quick install
 
-The command works on any Linux distribution with systemd, x86_64 or aarch64. The installer (ADR-0052) downloads the static agent for the host's architecture and `SHA256SUMS` from the same place, verifies the release signature `SHA256SUMS.sig` against the release keys it carries (ADR-0053, with OpenSSL 3; without it, it warns and checks checksums only), checks the checksum before it changes anything, and then installs the binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface builds the command from the source you pick there ([Install sources](#install-sources)); give it the relay's address there if the agent connects through one.
+The command works on any Linux distribution with systemd, x86_64 or aarch64. The installer[^0052] downloads the static agent for the machine's architecture and `SHA256SUMS` from the same place, verifies the release signature `SHA256SUMS.sig` against the release keys it carries (with OpenSSL 3; without it, it warns and checks checksums only)[^0053], checks the checksum before it changes anything, and then installs the binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface builds the command from the source you pick there ([Install sources](#install-sources)); give it the relay's address there if the agent connects through one.
 
-The agent monitors any distribution (ADR-0063). Updates and package sources need the Debian or RHEL family with apt or dnf present; on any other host the server page says "Package updates aren't available on this system; monitoring works normally", and campaigns leave the host out.
+The agent monitors any distribution[^0063]. Updates and package sources need the Debian or RHEL family with apt or dnf present; on any other server the server page says "Package updates aren't available on this system; monitoring works normally", and campaigns leave the server out.
 
-One command serves every host of a site, for 30 days by default (ADR-0058). Each host enrolls under its own host name, made unique with `-2`, `-3`… when another server already has it. When the command was created with "Approve new hosts before they appear", new hosts wait under Waiting for approval on the same page until an administrator approves them. Revoking the command stops new installs; hosts already installed keep working. For one host under a name you choose, and for relays, single-use tokens remain under Advanced.
+One command serves every server of a site, for 30 days by default[^0058]. Each server connects under its own name, made unique with `-2`, `-3`… when another server already has it. When the command was created with "Approve new servers before they appear", new servers wait under Waiting for approval on the same page until an administrator approves them. Revoking the command stops new installs; servers already installed keep working. For one server under a name you choose, and for relays, single-use tokens remain under Advanced.
 
 | Variable | Meaning |
 | --- | --- |
 | `MF_SERVER` | `host:port` of the server or relay the agent connects to, port 7443 by default. An https URL works too. IPv6 addresses in brackets: `[2001:db8::1]:7443`. Required on the first install |
-| `MF_TOKEN` | The site's install key, or a single-use enrollment token. Required unless the host is enrolled |
-| `MF_ENROLL` | `host:port` of the server's enrollment listener. By default `MF_SERVER`'s host on port 7445, which is right for a direct connection. Set it when `MF_SERVER` is a relay, to the central server's address: relays do not enroll agents (ADR-0025) |
+| `MF_TOKEN` | The token of the site's install command, or a single-use token. Required on the first install |
+| `MF_ENROLL` | `host:port` where the central server takes first connections. By default port 7445 of the `MF_SERVER` machine, which is right for a direct connection. Set it when `MF_SERVER` is a relay, to the central server's address: relays do not take first connections[^0025] |
 | `MF_VERSION` | Release to install, like `0.2.0`. The latest by default |
 | `MF_DOWNLOAD_URL` | https URL of a directory holding the release files, instead of GitHub ([Install sources](#install-sources)) |
 | `MF_SUMS_SHA256` | SHA-256 of the release's `SHA256SUMS`, as the central server's commands give it. Every file is checked against it, so downloads do not check the certificate (HTTPS still) |
-| `MF_TIMEOUT` | Seconds to wait for the enrollment, 120 by default |
+| `MF_TIMEOUT` | Seconds to wait for the first connection, 120 by default |
 | `MF_REQUIRE_SIGNATURE=1` | Fail instead of warning when OpenSSL 3 is missing and the signature cannot be checked |
 | `MF_ALLOW_UNSIGNED=1` | Install a release without `SHA256SUMS.sig`, like 0.1.0, with its checksums checked only |
-| `MF_ALLOW_COMMANDS=1` | Let this agent run the shell commands of AI remediation (`commands.shell`), through a systemd drop-in. Works on an installed agent too, and is kept by later runs; `MF_ALLOW_COMMANDS=0` takes it back. The web interface shows this line under Administration › AI (ADR-0064) |
+| `MF_ALLOW_COMMANDS=1` | Let this agent run the shell commands of AI remediation (`commands.shell`), through a systemd drop-in. Works on an installed agent too, and is kept by later runs; `MF_ALLOW_COMMANDS=0` takes it back. The web interface shows this line under Administration › AI[^0064] |
 | `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too. "Remove" on the server's page shows the command to use |
 
 An agent behind a relay:
@@ -45,7 +45,7 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
   | sudo MF_SERVER=relay1.paris.example:7443 MF_ENROLL=monitorflow.example.com:7445 MF_TOKEN=mfe1.… sh
 ```
 
-If the enrollment fails, for example on a used or expired token or an unreachable port 7445, the installer stops the service, removes the token, prints the end of the agent's log and exits with an error: see `journalctl -u monitorflow-agent`, fix the cause and run it again, with a new token if needed. The token is never printed. On a host shared with other users, keep it off the command line, where `ps` shows it while the installer runs:
+If the first connection fails, for example on a used or expired token or an unreachable port 7445, the installer stops the service, removes the token, prints the end of the agent's log and exits with an error: see `journalctl -u monitorflow-agent`, fix the cause and run it again, with a new token if needed. The token is never printed. On a server shared with other users, keep it off the command line, where `ps` shows it while the installer runs:
 
 ```
 read -rs MF_TOKEN && export MF_TOKEN
@@ -53,15 +53,15 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
   | sudo --preserve-env=MF_TOKEN MF_SERVER=monitorflow.example.com:7443 sh
 ```
 
-**Upgrades.** Running the same command again on an enrolled host installs the new binary, unit and sudo rules and restarts the agent; `agent.toml` and the identity are kept, and `MF_SERVER`, `MF_ENROLL` and `MF_TOKEN` are not needed. Edit `/etc/monitorflow/agent.toml` to change the upstream later.
+**Upgrades.** Running the same command again on an installed server installs the new binary, unit and sudo rules and restarts the agent; `agent.toml` and the identity are kept, and `MF_SERVER`, `MF_ENROLL` and `MF_TOKEN` are not needed. Edit `/etc/monitorflow/agent.toml` to change the upstream later.
 
-**Ansible and other tools.** Run the site's install command as it is on every host: it enrolls new hosts and upgrades enrolled ones.
+**Ansible and other tools.** Run the site's install command as it is on every server: it adds new servers and upgrades the others.
 
 ## Install sources
 
-The token page offers the commands from three sources (ADR-0054). A global administrator picks the default under Administration › Settings; any command can use another. The configuration can fix the default instead: `agent_install_source` (`AGENT_INSTALL_SOURCE` in the compose `.env`), and `agent_download_url` (`AGENT_DOWNLOAD_URL`) for the custom URL.
+The Add servers page offers the commands from three sources[^0054]. A global administrator picks the default under Administration › Settings; any command can use another. The configuration can fix the default instead: `agent_install_source` (`AGENT_INSTALL_SOURCE` in the compose `.env`), and `agent_download_url` (`AGENT_DOWNLOAD_URL`) for the custom URL.
 
-| Source | Hosts download from | Hosts need |
+| Source | Servers download from | Servers need |
 | --- | --- | --- |
 | GitHub (default) | `https://github.com/Kidoly/monitorflow/releases/latest/download` | Access to GitHub |
 | This server | `https://<web interface>/agent/<version>/`, the server's own copy of a release | Access to the web interface's address, on port 443; not trusting its certificate |
@@ -69,14 +69,14 @@ The token page offers the commands from three sources (ADR-0054). A global admin
 
 Every source serves the same signed files, and the installer checks the release signature whatever the source (with OpenSSL 3).
 
-**This server.** For sites without Internet access. The server keeps whole releases in its cache, the one self-updates use (ADR-0053), and serves them behind the web interface. Once per release, on a machine with Internet access, download every asset of the release from its GitHub page into one directory: `install.sh`, `SHA256SUMS`, `SHA256SUMS.sig`, `VERSION`, `monitorflow-agent-linux-x86_64`, `monitorflow-agent-linux-aarch64`, `monitorflow-agent.service`, `monitorflow-agent-sudoers`, `monitorflow-agent-windows-x86_64.exe` and `monitorflow-agent-windows-x86_64.msi`. Then choose all of them under Administration › Server update in the web interface. From a shell, copy the directory to the server host and import it ([deploy-server.md](deploy-server.md#agent-releases-on-the-server) for the compose variant):
+**This server.** For sites without Internet access. The server keeps whole releases in its cache, the one self-updates use[^0053], and serves them behind the web interface. Once per release, on a machine with Internet access, download every asset of the release from its GitHub page into one directory: `install.sh`, `SHA256SUMS`, `SHA256SUMS.sig`, `VERSION`, `monitorflow-agent-linux-x86_64`, `monitorflow-agent-linux-aarch64`, `monitorflow-agent.service`, `monitorflow-agent-sudoers`, `monitorflow-agent-windows-x86_64.exe` and `monitorflow-agent-windows-x86_64.msi`. Then choose all of them under Administration › Server update in the web interface. From a shell, copy the directory to the central server and import it ([deploy-server.md](deploy-server.md#agent-releases-on-the-server) for the compose variant):
 
 ```
 monitorflow-server agent-release import --dir ./monitorflow-0.3.0
 monitorflow-server agent-release list
 ```
 
-The import reads only that directory and checks the signature, then every file, before it keeps anything; a release that fails is refused whole. Until a release is imported, the token page says so instead of showing a command, and `https://<web interface>/agent/latest/…` answers 404 with the same advice. The command names the newest imported release and carries the checksums of its `install.sh`, `SHA256SUMS` and MSI:
+The import reads only that directory and checks the signature, then every file, before it keeps anything; a release that fails is refused whole. Until a release is imported, the Add servers page says so instead of showing a command, and `https://<web interface>/agent/latest/…` answers 404 with the same advice. The command names the newest imported release and carries the checksums of its `install.sh`, `SHA256SUMS` and MSI:
 
 ```
 f=$(mktemp) && curl -fsSLk -o "$f" https://monitorflow.example.com/agent/0.3.0/install.sh \
@@ -84,7 +84,7 @@ f=$(mktemp) && curl -fsSLk -o "$f" https://monitorflow.example.com/agent/0.3.0/i
   && sudo MF_DOWNLOAD_URL=https://monitorflow.example.com/agent/0.3.0 MF_SUMS_SHA256=<sha256 of SHA256SUMS> MF_SERVER=… MF_TOKEN=… sh "$f"; rm -f "$f"
 ```
 
-Hosts need not trust the web certificate, which is often issued by Caddy's own CA or a company CA: the checksums come from the page you copied the command from, so `curl -k` cannot let a different file through. The Windows lines download the MSI with `curl.exe -k` (Windows 10 1803, Windows Server 2019 and later) and run `msiexec` only if its checksum matches. On older Windows, copy the MSI to the host and compare `Get-FileHash` with its line in `SHA256SUMS`. The address in the command is the one your browser uses for the web interface; if hosts reach it by another name, change it in the command. Hosts that do trust the certificate can also use the moving `latest` directory, like a custom URL: `MF_DOWNLOAD_URL=https://<web interface>/agent/latest`.
+Servers need not trust the web certificate, which is often issued by Caddy's own CA or a company CA: the checksums come from the page you copied the command from, so `curl -k` cannot let a different file through. The Windows lines download the MSI with `curl.exe -k` (Windows 10 1803, Windows Server 2019 and later) and run `msiexec` only if its checksum matches. On older Windows, copy the MSI to the server and compare `Get-FileHash` with its line in `SHA256SUMS`. The address in the command is the one your browser uses for the web interface; if servers reach it by another name, change it in the command. Servers that do trust the certificate can also use the moving `latest` directory, like a custom URL: `MF_DOWNLOAD_URL=https://<web interface>/agent/latest`.
 
 **Custom URL.** Copy the files of a release into one directory of any web server with HTTPS, and pass its URL:
 
@@ -93,7 +93,7 @@ curl -fsSL https://files.example.net/monitorflow/0.2.0/install.sh \
   | sudo MF_DOWNLOAD_URL=https://files.example.net/monitorflow/0.2.0 MF_SERVER=… MF_TOKEN=… sh
 ```
 
-Keep one directory per version: `MF_DOWNLOAD_URL` names the version, and `MF_VERSION` applies to GitHub only. The installer accepts only HTTPS; the host must trust the web server's certificate. The signature makes the copy safe to serve from anywhere: an installer fetched from GitHub refuses files that the project did not sign. Set this URL as the custom URL under Administration › Settings, or as the server's `agent_download_url`, and the web interface's commands and agents' self-updates use it.
+Keep one directory per version: `MF_DOWNLOAD_URL` names the version, and `MF_VERSION` applies to GitHub only. The installer accepts only HTTPS; the server must trust the web server's certificate. The signature makes the copy safe to serve from anywhere: an installer fetched from GitHub refuses files that the project did not sign. Set this URL as the custom URL under Administration › Settings, or as the server's `agent_download_url`, and the web interface's commands and agents' self-updates use it.
 
 ## Without systemd
 
@@ -109,9 +109,9 @@ install -o root -g root -m 0440 monitorflow-agent-sudoers /etc/sudoers.d/monitor
 visudo -cf /etc/sudoers.d/monitorflow-agent
 ```
 
-Start from `deploy/config/agent.example.toml`. The file name in `/etc/sudoers.d` must stay free of dots, or sudo skips it. Do not create `/var/lib/monitorflow/sources-backup/`: the helper does, as root (ADR-0032).
+Start from `deploy/config/agent.example.toml`. The file name in `/etc/sudoers.d` must stay free of dots, or sudo skips it. Do not create `/var/lib/monitorflow/sources-backup/`: the helper does, as root[^0032].
 
-From your init system, run `monitorflow-agent --config /etc/monitorflow/agent.toml` as `monitorflow`, with `MONITORFLOW_ENROLLMENT_TOKEN` in its environment the first time, so the token never stays on disk (ADR-0007). Everything works but the `systemd` sensor and self-updates, which fail and leave the running version in place: update with a new binary at the same path, then restart it.
+From your init system, run `monitorflow-agent --config /etc/monitorflow/agent.toml` as `monitorflow`, with `MONITORFLOW_ENROLLMENT_TOKEN` in its environment the first time, so the token never stays on disk[^0007]. Everything works but the `systemd` sensor and self-updates, which fail and leave the running version in place: update with a new binary at the same path, then restart it.
 
 ## Sudo rules
 
@@ -126,14 +126,14 @@ What the rules allow:
 | `monitorflow-agent sources apply`, `… sources revert` | `configure_sources`, `revert_sources` |
 | `monitorflow-agent self-update` | `self_update`: installs a signed agent release (below) |
 
-There are no wildcards. The agent never runs `apt-get` or `dnf` through sudo: the `packages update` helper reads the kind of update and the package names on stdin, refuses names that are not package names (options, paths, shell characters), and runs `apt-get update` and the upgrade, or `dnf upgrade`, itself (ADR-0036). Security-only updates use `dnf upgrade --security` on dnf, and on apt the packages whose candidate comes from a `-security` suite.
+There are no wildcards. The agent never runs `apt-get` or `dnf` through sudo: the `packages update` helper reads the kind of update and the package names on stdin, refuses names that are not package names (options, paths, shell characters), and runs `apt-get update` and the upgrade, or `dnf upgrade`, itself[^0036]. Security-only updates use `dnf upgrade --security` on dnf, and on apt the packages whose candidate comes from a `-security` suite.
 
 ## Self-update
 
-An administrator can update agents from MonitorFlow instead of running the installer again (ADR-0053). The `self_update` command names a version and where to download it. The agent downloads the release, checks its signature against the release keys built into it and refuses anything else, whatever served it; it refuses older versions unless the command allows a downgrade. Then:
+An administrator can update agents from MonitorFlow instead of running the installer again[^0053]. The `self_update` command names a version and where to download it. The agent downloads the release, checks its signature against the release keys built into it and refuses anything else, whatever served it; it refuses older versions unless the command allows a downgrade. Then:
 
 1. `sudo -n /usr/bin/monitorflow-agent self-update` checks the release again as root, writes the new binary next to `/usr/bin/monitorflow-agent`, keeps the running one as `/var/lib/monitorflow/self-update/previous` and renames the new one into place.
-2. It starts the watchdog in a transient unit, `monitorflow-agent-self-update`, from the previous binary. The watchdog restarts `monitorflow-agent` and waits for the new agent to connect upstream (5 minutes by default).
+2. It starts the watchdog in a transient unit, `monitorflow-agent-self-update`, from the previous binary. The watchdog restarts `monitorflow-agent` and waits for the new agent to connect (5 minutes by default).
 3. If the new agent does not connect in time, the watchdog puts the previous binary back and restarts the service. The command then fails with "rolled back to …".
 
 The outcome is in `/var/lib/monitorflow/self-update/status.json`, and the watchdog's log is in `journalctl -u monitorflow-agent-self-update`. `/var/lib/monitorflow/self-update` belongs to root; the helper refuses it otherwise.
@@ -142,7 +142,7 @@ The outcome is in `/var/lib/monitorflow/self-update/status.json`, and the watchd
 
 **Many servers at once.** An update campaign can update agents instead of packages: choose "The MonitorFlow agent" and a version in the new campaign form (`agent_version` in `POST /api/campaigns`). Waves, maintenance windows and the failure threshold work as for package updates; a rolled-back server counts as failed.
 
-**Automatic updates.** On by default (ADR-0055). Every 5 minutes the server moves online agents to the newest stable release it holds, never newer than the server itself, never to a pre-release and never backwards. Each site starts with one agent, its canary; once the canary is updated and connected again, the site's other agents follow, a quarter of the site at a time. A server is updated automatically at most once per version: one that rolled back stays on its version until an administrator updates it or a newer release comes. When 2 updates of a release have failed (the threshold is a setting), its rollout halts everywhere and waits for a global administrator. Relays are updated the same way and first: an agent behind a relay waits until the relay runs the target version ([Installing a relay](deploy-relay.md#self-update)).
+**Automatic updates.** On by default[^0055]. Every 5 minutes the server moves online agents to the newest stable release it holds, never newer than the server itself, never to a pre-release and never backwards. Each site starts with one agent, as a first test; once it is updated and connected again, the site's other agents follow, a quarter of the site at a time. A server is updated automatically at most once per version: one that rolled back stays on its version until an administrator updates it or a newer release comes. When 2 updates of a release have failed (the threshold is a setting), its rollout halts everywhere and waits for a global administrator. Relays are updated the same way and first: an agent behind a relay waits until the relay runs the target version ([Installing a relay](deploy-relay.md#self-update)).
 
 Updates › Automatic updates (global administrators) shows the version being rolled out, its progress per site, and a halted rollout with the reason and a "Resume" button; global administrators can turn automatic updates off for the whole server, pause them all at once, or change the failure threshold there. Under Admin › Sites, the site's administrators can override the server-wide setting for one site: "Server default", "On" or "Off". `auto_update.enabled` in `server.toml` (or `MONITORFLOW_AUTO_UPDATE_ENABLED`) wins over the web interface and locks the switch there. Updates are audited as `agent.auto_update`, the start and halt of a rollout as `auto_update.rollout_started` and `auto_update.halted`, changes as `settings.auto_update`, `auto_update.resume` and `site.agent_auto_update`.
 
@@ -156,28 +156,28 @@ docker compose exec server monitorflow-server agent-release list
 
 The import checks the signature first. The web interface offers the newest version the server holds.
 
-**Hosts installed before self-update** lack the sudo line above: run the installer once more, which installs the new rules with the new binary. Until then `self_update` fails with "a password is required" and nothing changes. A self-update replaces the binary only; when a release changes the unit or the sudo rules, its notes say to run the installer.
+**Servers installed before self-update** lack the sudo line above: run the installer once more, which installs the new rules with the new binary. Until then `self_update` fails with "a password is required" and nothing changes. A self-update replaces the binary only; when a release changes the unit or the sudo rules, its notes say to run the installer.
 
 ## Pointing a server at the mirrors
 
-On the central server, set `mirror_public_url` to the URL this host reaches the mirror listener at, for example `http://mirror.example.net:7480`. Then an administrator of the server's customer runs:
+On the central server, set `mirror_public_url` to the URL this server reaches the mirror listener at, for example `http://mirror.example.net:7480`. Then an administrator of the server's customer runs:
 
 ```
 POST /api/servers/{id}/sources   {"mirrors": [{"name": "debian-12"}], "mode": "replace"}
 DELETE /api/servers/{id}/sources
 ```
 
-The first request points the host at the mirrors, `current` snapshot by default. The second restores the sources the host had before. Follow the result with `GET /api/commands/{id}`. A failed post-check (`apt-get update` or `dnf makecache`) reverts the host on its own and reports the error. The host must be able to reach `mirror_public_url`, unless its agent connects through a relay that serves the mirrors.
+The first request points the server at the mirrors, `current` snapshot by default. The second restores the sources the server had before. Follow the result with `GET /api/commands/{id}`. A failed post-check (`apt-get update` or `dnf makecache`) reverts the server on its own and reports the error. The server must be able to reach `mirror_public_url`, unless its agent connects through a relay that serves the mirrors.
 
-Behind a relay with mirroring enabled (`[mirror] enabled = true`), set `mirror.public_url` in the relay's configuration to the URL the hosts of its site reach the relay's `mirror_listen_addr` at, for example `http://relay.example.net:7480`. The relay reports it to the server with the snapshots it holds, and `GET /api/relays/{id}` shows it as `mirror_url`. Sources then point at the relay when it holds every snapshot requested (for `current`, any snapshot of the mirror), and at `mirror_public_url` otherwise (ADR-0037). The choice is made when the command is queued: if the relay later drops the snapshot or stops mirroring, send the sources again.
+Behind a relay with mirroring enabled (`[mirror] enabled = true`), set `mirror.public_url` in the relay's configuration to the URL the servers of its site reach the relay's `mirror_listen_addr` at, for example `http://relay.example.net:7480`. The relay reports it to the server with the snapshots it holds, and `GET /api/relays/{id}` shows it as `mirror_url`. Sources then point at the relay when it holds every snapshot requested (for `current`, any snapshot of the mirror), and at `mirror_public_url` otherwise[^0037]. The choice is made when the command is queued: if the relay later drops the snapshot or stops mirroring, send the sources again.
 
 ## Windows
 
-The Windows agent is the same binary built for `x86_64-pc-windows-msvc` (ADR-0047). CI uploads it as the `monitorflow-agent-windows-x86_64` artifact, and its MSI package as `monitorflow-agent-windows-x86_64-msi`. It runs as the service `MonitorFlowAgent` under its virtual account `NT SERVICE\MonitorFlowAgent`, which has no administrator rights.
+The Windows agent is the same binary built for `x86_64-pc-windows-msvc`[^0047]. CI uploads it as the `monitorflow-agent-windows-x86_64` artifact, and its MSI package as `monitorflow-agent-windows-x86_64-msi`. It runs as the service `MonitorFlowAgent` under its virtual account `NT SERVICE\MonitorFlowAgent`, which has no administrator rights.
 
 ### Install with the MSI
 
-The package (ADR-0050) does every manual step below: binary, service, failure actions, folders and ACLs, and it registers the `MonitorFlowAgent` event source. In an elevated PowerShell, with a token from the web interface:
+The package[^0050] does every manual step below: binary, service, failure actions, folders and ACLs, and it registers the `MonitorFlowAgent` event source. In an elevated PowerShell, with a token from the web interface:
 
 ```powershell
 msiexec /i monitorflow-agent-0.1.0-x64.msi /qn /l*v install.log `
@@ -187,15 +187,15 @@ msiexec /i monitorflow-agent-0.1.0-x64.msi /qn /l*v install.log `
 | Property | Effect |
 | --- | --- |
 | `UPSTREAM_URL` | Writes `%ProgramData%\MonitorFlow\agent.toml` with it, unless the file exists, and starts the service. Without it, nothing is written and the service is not started: copy `agent.windows.example.toml` from `%ProgramFiles%\MonitorFlow`, then `Start-Service MonitorFlowAgent` |
-| `ENROLL_URL` | Optional `enroll_url`, needed when the upstream is a relay |
-| `ENROLLMENT_TOKEN` | Optional one-time token. The MSI log shows asterisks in its place. Remove it from `agent.toml` once enrolled (below) |
+| `ENROLL_URL` | Optional `enroll_url`, needed behind a relay |
+| `ENROLLMENT_TOKEN` | Optional single-use token. The MSI log shows asterisks in its place. Remove it from `agent.toml` once connected (below) |
 | `REMOVE_DATA=1` | On uninstall, also deletes `%ProgramData%\MonitorFlow`: configuration, identity and logs |
 
 An invalid URL makes the install fail and roll back; `install.log` has the custom action `WriteAgentConfig` failing. The package is not signed yet, so Windows shows an unknown publisher.
 
 Installing a newer package upgrades in place: the service restarts with the new binary, and `agent.toml` and the identity are kept. `msiexec /x monitorflow-agent-0.1.0-x64.msi /qn` (or Apps and Features) removes the binary and the service and keeps `%ProgramData%\MonitorFlow`, so a reinstall keeps the same identity. When the service stops on an error, the Application event log has the reason, from the source `MonitorFlowAgent`.
 
-The package does not install the Windows Update service yet (ADR-0050 leaves its place in `AgentHelpers`): add it by hand as in [Windows Update service](#windows-update-service).
+The package does not install the Windows Update service yet[^0050]: add it by hand as in [Windows Update service](#windows-update-service).
 
 ### Install by hand
 
@@ -217,7 +217,7 @@ sc.exe failure MonitorFlowAgent reset= 86400 actions= restart/60000/restart/6000
 icacls $data /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "NT SERVICE\MonitorFlowAgent:(OI)(CI)RX"
 # Identity, sensor configuration, command journal and logs: the service writes.
 icacls "$data\agent" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "NT SERVICE\MonitorFlowAgent:(OI)(CI)M"
-# Scripts (ADR-0048): the same as the configuration, protected on its own.
+# Scripts: the same as the configuration, protected on its own.
 icacls "$data\scripts.d" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "NT SERVICE\MonitorFlowAgent:(OI)(CI)RX"
 ```
 
@@ -225,7 +225,7 @@ icacls "$data\scripts.d" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrat
 
 Start from `deploy/config/agent.windows.example.toml`. Its paths assume `%ProgramData%` is `C:\ProgramData`. Use single-quoted TOML strings for paths, so backslashes are not escapes. `%ProgramFiles%` lets only administrators write by default, which keeps the binary as safe as a root-owned `/usr/bin/monitorflow-agent`. The agent also protects what it writes itself: the private key, the command journal and the directories it creates get a DACL for `SYSTEM`, `Administrators` and their owner only, whatever the parent allows. At start, it logs a warning when the key's DACL allows anyone else.
 
-### Enrolling
+### First connection
 
 A service has no shell to pass `MONITORFLOW_ENROLLMENT_TOKEN` from. Put the token in `agent.toml` for the first start instead, which the MSI's `ENROLLMENT_TOKEN` does: the ACLs above make the file readable only by the service and administrators. Remove the token once the log says `identity loaded`.
 
@@ -236,11 +236,11 @@ Get-Content "$data\agent\logs\agent.log" -Wait
 
 As a service, the agent logs to `<data_dir>\logs\agent.log`. At 16 MiB the file moves to `agent.log.1`, replacing the older one. If the service stops at once, for example because the configuration is invalid, the System event log has the control manager's event 7024 with service-specific error 1, and `agent.log` has the reason when logging had started. `Stop-Service MonitorFlowAgent` stops the agent cleanly. `sc.exe delete MonitorFlowAgent` removes the service.
 
-Enroll and run the agent through the service only. Started from an elevated console, the agent writes its identity as `Administrators`, and the service can then not read it. If that happened, delete `$data\agent\tls` and enroll again with a new token. Without the `service` argument, `monitorflow-agent.exe` runs in the console until Ctrl+C. That is meant for `sensors probe`, for example `monitorflow-agent.exe sensors probe port --param port=3389`.
+Make the first connection and run the agent through the service only. Started from an elevated console, the agent writes its identity as `Administrators`, and the service can then not read it. If that happened, delete `$data\agent\tls` and connect again with a new token. Without the `service` argument, `monitorflow-agent.exe` runs in the console until Ctrl+C. That is meant for `sensors probe`, for example `monitorflow-agent.exe sensors probe port --param port=3389`.
 
 ### Windows Update service
 
-Updates, update reports and self-updates go through a second service, `MonitorFlowUpdate` (ADR-0049, ADR-0053). The MSI installs it; these steps are for a manual install. It is the same binary started as `update-service` under LocalSystem, because the agent's account cannot install updates. It accepts typed requests from the agent only, on the named pipe `\\.\pipe\MonitorFlowUpdate`, whose access list admits `SYSTEM` and `NT SERVICE\MonitorFlowAgent` and nobody else. It reads no configuration file. In the same elevated PowerShell:
+Updates, update reports and self-updates go through a second service, `MonitorFlowUpdate`[^0049][^0053]. The MSI installs it; these steps are for a manual install. It is the same binary started as `update-service` under LocalSystem, because the agent's account cannot install updates. It accepts typed requests from the agent only, on the named pipe `\\.\pipe\MonitorFlowUpdate`, whose access list admits `SYSTEM` and `NT SERVICE\MonitorFlowAgent` and nobody else. It reads no configuration file. In the same elevated PowerShell:
 
 ```powershell
 sc.exe create MonitorFlowUpdate DisplayName= "MonitorFlow update service" start= auto `
@@ -258,11 +258,30 @@ Updates come from the source the machine is configured for: Windows Update, Micr
 
 | Feature | State |
 | --- | --- |
-| Enrollment, certificate renewal, stream, inventory | As on Linux; `os_family` is `windows`, the version comes from the registry, like `Windows Server 2022 Datacenter 21H2 build 20348.2849` |
-| Sensors | `cpu`, `memory`, `disk`, `port`, `script` (PowerShell or a program), `windows_service` and `eventlog` (ADR-0048). `systemd` and `log` are refused as "not supported on this platform" in the agent's configuration acknowledgement |
+| First connection, certificate renewal, stream, inventory | As on Linux; `os_family` is `windows`, the version comes from the registry, like `Windows Server 2022 Datacenter 21H2 build 20348.2849` |
+| Sensors | `cpu`, `memory`, `disk`, `port`, `script` (PowerShell or a program), `windows_service` and `eventlog`[^0048]. `systemd` and `log` are refused as "not supported on this platform" in the agent's configuration acknowledgement |
 | Update reports | Pending and installed software updates by KB number, with title, classification, MSRC severity, size and restart state, plus whether Windows waits for a restart. Needs the update service (above) |
 | `apply_updates`, update campaigns | Through the update service. All pending updates except feature upgrades, `security_only` for the Security Updates classification, or named KB numbers or update IDs (`KB5034441`). Restarts only with `allow_reboot`, one minute after the result. Windows servers may join any campaign: pinned mirror snapshots do not apply to them |
 | `configure_sources`, `revert_sources` | Refused by the API for Windows servers, and by the agent with "package sources are not supported on Windows yet" |
-| `shell` (AI remediation) | Refused even with `commands.shell = true`, so the Windows installer has no `MF_ALLOW_COMMANDS`: the server's risk rules assume `/bin/sh` (ADR-0047), so a remediation on a Windows server escalates at its first command |
+| `shell` (AI remediation) | Refused even with `commands.shell = true`, so the Windows installer has no `MF_ALLOW_COMMANDS`: the server's risk rules assume `/bin/sh`[^0047], so a remediation on a Windows server escalates at its first command |
 
 There are no sudo rules on Windows. The only privileged part is the update service, which accepts typed requests from the agent alone.
+
+[^0007]: [ADR-0007: Enrollment bootstrap](adr/0007-enrollment-bootstrap.md)
+[^0025]: [ADR-0025: Relay forwarding model](adr/0025-relay-forwarding.md)
+[^0031]: [ADR-0031: Command channel, package updates and package reports](adr/0031-command-channel-and-updates.md)
+[^0032]: [ADR-0032: Package source configuration](adr/0032-package-source-configuration.md)
+[^0035]: [ADR-0035: Source configuration commands](adr/0035-source-configuration-commands.md)
+[^0036]: [ADR-0036: Package update helper](adr/0036-package-update-helper.md)
+[^0037]: [ADR-0037: Relay mirror URLs](adr/0037-relay-mirror-urls.md)
+[^0047]: [ADR-0047: Windows agent](adr/0047-windows-agent.md)
+[^0048]: [ADR-0048: Windows sensors](adr/0048-windows-sensors.md)
+[^0049]: [ADR-0049: Windows Update](adr/0049-windows-update.md)
+[^0050]: [ADR-0050: Windows agent MSI](adr/0050-windows-agent-msi.md)
+[^0052]: [ADR-0052: Agent releases and the Linux installer](adr/0052-agent-releases.md)
+[^0053]: [ADR-0053: Signed releases and agent self-update](adr/0053-agent-self-update.md)
+[^0054]: [ADR-0054: Agent install sources](adr/0054-agent-install-sources.md)
+[^0055]: [ADR-0055: Automatic agent and relay updates](adr/0055-automatic-updates.md)
+[^0058]: [ADR-0058: Reusable install keys per site](adr/0058-reusable-install-keys.md)
+[^0063]: [ADR-0063: Agent on any Linux](adr/0063-agent-on-any-linux.md)
+[^0064]: [ADR-0064: AI setup in the interface](adr/0064-ai-setup-in-the-interface.md)

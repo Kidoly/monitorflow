@@ -39,6 +39,7 @@ sqlx checks queries at compile time against `DATABASE_URL` (see `.env.example`).
 - Audit log is append-only. No UPDATE or DELETE on it, ever.
 - Secrets never go in the repository, logs, or AI context. Use the redaction helpers.
 - Comments and identifiers in English. User-facing strings in the web interface in English, i18n later.
+- Words on screen, in installers, CLI output and guides follow `docs/glossary.md`.
 
 ## Workflow
 
