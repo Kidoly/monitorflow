@@ -98,3 +98,10 @@ Everything installable in one line, updatable in two clicks, and usable without 
 - [x] Agent on any Linux: start and monitor on unknown distributions with package features reported as unavailable.
 - [x] Browser certificate without a terminal: ACME when the name is public, otherwise a trust page for the internal CA (ADR, as it is a plaintext listener).
 - [x] Settings page for runtime server settings, and a one-screen "Getting started" at the top of the install guides.
+
+## Phase 9 — Everyday gaps
+
+Limits already recorded in the ADRs that get in the way of daily use. What the first test on a real host finds is added here.
+
+- [ ] Delete a mirror: from the interface, refused or handled while something still uses it, disk space and relay copies reclaimed.
+- [ ] Show whether each server accepts commands: reported by the agent, unknown for agents that do not report it, used wherever a command is offered.
