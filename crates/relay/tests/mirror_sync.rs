@@ -5,7 +5,7 @@
 
 mod mirror_fixture;
 
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
 use mirror_fixture::{entry, Upstream};
@@ -223,6 +223,71 @@ async fn an_interrupted_copy_resumes() {
     );
     assert!(!apt.join("s1/pool/main/p/.p_0_all.deb.part").exists());
     assert!(!staging.exists());
+}
+
+/// `.part` files under `dir`, however deep.
+fn part_files(dir: &Path) -> Vec<String> {
+    let mut parts = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            parts.extend(part_files(&path));
+        } else if path.to_string_lossy().ends_with(".part") {
+            parts.push(path.display().to_string());
+        }
+    }
+    parts
+}
+
+#[tokio::test]
+async fn a_failed_sync_returns_once_its_downloads_have_stopped() {
+    let up = Upstream::start().await;
+    let packages: Vec<(String, Vec<u8>)> = (0..32)
+        .map(|i| (format!("p/p_{i}_all.deb"), vec![i; 100]))
+        .collect();
+    let refs: Vec<(&str, &[u8])> = packages
+        .iter()
+        .map(|(n, c)| (n.as_str(), c.as_slice()))
+        .collect();
+    up.apt("debian", "s1", &refs);
+    let lost = up
+        .snapshot_dir(Family::Apt, "debian", "s1")
+        .join("pool/main/p/p_0_all.deb");
+    std::fs::remove_file(&lost).unwrap();
+    let relay = tempfile::tempdir().unwrap();
+    let sync = syncer(&up, relay.path());
+    let error = sync
+        .sync(&entry(&up.fetcher(), "debian").await)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, SyncError::Missing(_)), "{error}");
+    // Every download finished before the error came back: a next sync
+    // has the staging directory to itself.
+    assert_eq!(part_files(relay.path()), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_read_only_part_file_does_not_stop_a_sync() {
+    let up = Upstream::start().await;
+    up.apt("debian", "s1", &[("a/a_1_all.deb", b"aaa")]);
+    let relay = tempfile::tempdir().unwrap();
+    // A relay stopped between making a download read-only and renaming
+    // it: only a file the sync replaces lets the copy go on.
+    let apt = relay.path().join("apt/debian");
+    let dir = apt.join(".sync-s1/pool/main/a");
+    std::fs::create_dir_all(&dir).unwrap();
+    let part = dir.join(".a_1_all.deb.part");
+    std::fs::write(&part, b"old").unwrap();
+    std::fs::set_permissions(&part, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+    let sync = syncer(&up, relay.path());
+    let outcome = sync.sync(&entry(&up.fetcher(), "debian").await).await;
+    assert!(matches!(outcome, Ok(Outcome::Synced(_))), "{outcome:?}");
+    assert_eq!(
+        std::fs::read(apt.join("current/pool/main/a/a_1_all.deb")).unwrap(),
+        b"aaa"
+    );
+    assert_eq!(part_files(relay.path()), Vec::<String>::new());
 }
 
 #[tokio::test]

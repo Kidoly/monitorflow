@@ -179,6 +179,12 @@ impl Fetcher {
                 .await
                 .map_err(io(parent))?;
         }
+        // A relay stopped just before the rename below leaves it read-only,
+        // which opening it for writing would then refuse on every sync.
+        match tokio::fs::remove_file(&part).await {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(io(&part)(e).into()),
+            _ => {}
+        }
         let mut file = tokio::fs::File::create(&part).await.map_err(io(&part))?;
         let mut size = 0u64;
         while let Some(chunk) = self.chunk(&url, &mut response).await? {
