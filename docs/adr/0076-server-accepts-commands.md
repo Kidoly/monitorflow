@@ -34,7 +34,7 @@ A new `Envelope` variant was rejected: a 0.1.0 relay or server decodes it as an 
 | --- | --- | --- | --- |
 | 0.1.0 | any | new | Unknown |
 | new | 0.1.0 | new | Connects; unknown until the relay updates. Relays decode and encode every envelope, and prost keeps no unknown fields, so the report is lost there and everything else arrives |
-| new | new | 0.1.0 | Connects; the server ignores the field |
+| new | none | 0.1.0 | Connects; the server ignores the field |
 | new | new | new | Reported |
 
 All four rows were run with real 0.1.0 binaries against this version; the tests in `crates/common/tests/hello_compat.rs` keep the wire part from regressing.
