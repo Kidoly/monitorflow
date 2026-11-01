@@ -5,6 +5,7 @@
 use std::io::BufRead;
 use std::path::Path;
 
+use quick_xml::escape::unescape;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
@@ -25,7 +26,7 @@ pub struct Metadata {
 
 /// The files `repomd.xml` lists. Blocking when `reader` is.
 pub fn repomd(reader: impl BufRead) -> Result<Vec<Metadata>, MetaError> {
-    let records = records(REPOMD, reader, b"data", Size::Element)?;
+    let records = records(REPOMD, reader, "data", Size::Element)?;
     Ok(records
         .into_iter()
         .map(|(kind, entry)| Metadata { kind, entry })
@@ -41,7 +42,7 @@ pub fn primary(file: &str, path: &Path) -> Result<Vec<Entry>, MetaError> {
     let records = records(
         file,
         compress::open(file, path)?,
-        b"package",
+        "package",
         Size::Attribute,
     )?;
     Ok(records.into_iter().map(|(_, entry)| entry).collect())
@@ -69,14 +70,17 @@ struct Record {
 fn records(
     file: &str,
     reader: impl BufRead,
-    tag: &[u8],
+    tag: &str,
     size_in: Size,
 ) -> Result<Vec<(String, Entry)>, MetaError> {
     let fail = |reason: String| MetaError::invalid(file, reason);
-    let attr = |e: &BytesStart, name: &[u8]| -> Result<Option<String>, MetaError> {
+    let attr = |e: &BytesStart, name: &str| -> Result<Option<String>, MetaError> {
         match e.try_get_attribute(name).map_err(|e| fail(e.to_string()))? {
+            // Not `normalized_value()`: a path keeps its whitespace as
+            // written, and only the five predefined entities and character
+            // references are resolved.
             Some(a) => Ok(Some(
-                a.unescape_value()
+                unescape(&a.value)
                     .map_err(|e| fail(e.to_string()))?
                     .into_owned(),
             )),
@@ -102,7 +106,7 @@ fn records(
                 if record.is_none() {
                     if name.as_ref() == tag && !empty {
                         record = Some(Record {
-                            kind: attr(e, b"type")?.unwrap_or_default(),
+                            kind: attr(e, "type")?.unwrap_or_default(),
                             ..Record::default()
                         });
                         depth = 0;
@@ -110,21 +114,21 @@ fn records(
                 } else if let Some(r) = record.as_mut() {
                     if depth == 0 {
                         match name.as_ref() {
-                            b"checksum" => {
-                                r.algorithm = attr(e, b"type")?;
+                            "checksum" => {
+                                r.algorithm = attr(e, "type")?;
                                 text_of = (!empty).then_some("checksum");
                             }
-                            b"size" if size_in == Size::Attribute => {
-                                r.size = attr(e, b"package")?;
+                            "size" if size_in == Size::Attribute => {
+                                r.size = attr(e, "package")?;
                             }
-                            b"size" => text_of = (!empty).then_some("size"),
-                            b"location" => {
-                                if attr(e, b"xml:base")?.is_some() {
+                            "size" => text_of = (!empty).then_some("size"),
+                            "location" => {
+                                if attr(e, "xml:base")?.is_some() {
                                     return Err(fail(
                                         "xml:base locations are not supported".into(),
                                     ));
                                 }
-                                r.location = attr(e, b"href")?;
+                                r.location = attr(e, "href")?;
                             }
                             _ => {}
                         }
@@ -136,7 +140,7 @@ fn records(
                 text.clear();
             }
             Event::Text(ref t) if text_of.is_some() => {
-                text.push_str(&t.decode().map_err(|e| fail(e.to_string()))?);
+                text.push_str(t);
             }
             Event::End(_) => {
                 let Some(r) = record.as_mut() else {
@@ -291,5 +295,175 @@ mod tests {
         );
         std::fs::write(&plain, based).unwrap();
         assert!(primary("p.xml", &plain).is_err());
+    }
+
+    /// The path of the `primary` record of `repomd_xml(href)`.
+    fn location(href: &str) -> Result<String, MetaError> {
+        let files = repomd(repomd_xml(href).as_bytes())?;
+        Ok(files[0].entry.path.clone())
+    }
+
+    /// `repomd_xml` with its first `<size>` element replaced.
+    fn size_element(size: &str) -> Result<u64, MetaError> {
+        let xml = repomd_xml("repodata/a.xml").replace("<size>120</size>", size);
+        Ok(repomd(xml.as_bytes())?[0].entry.size)
+    }
+
+    #[test]
+    fn attribute_references_resolve_once_and_only_predefined_ones() {
+        for (href, expected) in [
+            ("a&amp;b", "a&b"),
+            ("a&lt;b&gt;", "a<b>"),
+            ("a&quot;b&apos;", "a\"b'"),
+            ("&#97;&#x62;", "ab"),
+            ("a&amp;amp;b", "a&amp;b"),
+            ("a&amp;#46;b", "a&#46;b"),
+        ] {
+            assert_eq!(location(href).unwrap(), expected, "{href}");
+        }
+        for href in [
+            "&unknown;",
+            "&nbsp;",
+            "a&b",
+            "a&amp",
+            "&#0;",
+            "&#xD800;",
+            "&#x110000;",
+            "&#;",
+            "&#-1;",
+        ] {
+            assert!(location(href).is_err(), "{href}");
+        }
+    }
+
+    #[test]
+    fn attribute_references_do_not_get_past_the_path_check() {
+        for href in [
+            "&#46;&#46;/x",
+            "repodata/&#x2e;&#x2e;/x",
+            "a&#47;&#46;&#46;/x",
+            "&#47;etc/passwd",
+            "a&#92;b",
+            "&amp;#0;/&#46;x",
+        ] {
+            assert!(location(href).is_err(), "{href}");
+        }
+    }
+
+    /// `Attribute::normalized_value` would turn these into spaces: the file
+    /// the relay asks the mirror for must be the one the metadata names.
+    #[test]
+    fn attribute_whitespace_is_kept() {
+        for (href, expected) in [
+            ("a b", "a b"),
+            ("a\tb", "a\tb"),
+            ("a\nb", "a\nb"),
+            ("a\r\nb", "a\r\nb"),
+            ("a&#10;b", "a\nb"),
+            ("a&#13;b", "a\rb"),
+        ] {
+            assert_eq!(location(href).unwrap(), expected, "{href:?}");
+        }
+    }
+
+    #[test]
+    fn duplicate_attributes_keep_the_first_and_xml_base_is_refused_anywhere() {
+        let xml = repomd_xml("a").replace(r#"href="a""#, r#"href="a" href="../b""#);
+        assert_eq!(repomd(xml.as_bytes()).unwrap()[0].entry.path, "a");
+        for attributes in [
+            r#"href="a" xml:base="""#,
+            r#"xml:base="&#46;" href="a""#,
+            r#"href="a" xml:base="x" xml:base="y""#,
+        ] {
+            let xml = repomd_xml("a").replace(r#"href="a""#, attributes);
+            assert!(repomd(xml.as_bytes()).is_err(), "{attributes}");
+        }
+    }
+
+    /// References and CDATA in element text are skipped, not resolved, so
+    /// they never produce a checksum or a size the raw text does not hold.
+    #[test]
+    fn element_text_resolves_nothing() {
+        assert_eq!(size_element("<size>\r\n 7\r\n</size>").unwrap(), 7);
+        assert_eq!(size_element("<size>1&#50;0</size>").unwrap(), 10);
+        assert_eq!(size_element("<size>1&unknown;0</size>").unwrap(), 10);
+        assert!(size_element("<size>&#49;</size>").is_err());
+        assert!(size_element("<size><![CDATA[120]]></size>").is_err());
+        assert!(size_element("<size>1<![CDATA[2]]>x</size>").is_err());
+
+        let referenced = repomd_xml("a").replacen(H1, &format!("&#49;{}", &H1[1..]), 1);
+        assert!(repomd(referenced.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn a_document_type_declares_nothing() {
+        let declared = |xml: String| {
+            xml.replacen(
+                "<repomd ",
+                r#"<!DOCTYPE repomd [<!ENTITY e "repodata/a.xml">]><repomd "#,
+                1,
+            )
+        };
+        assert!(repomd(declared(repomd_xml("&e;")).as_bytes()).is_err());
+
+        let in_text = repomd_xml("a").replace("<size>120</size>", "<size>&e;7</size>");
+        assert_eq!(
+            repomd(declared(in_text).as_bytes()).unwrap()[0].entry.size,
+            7
+        );
+
+        let hidden = format!(
+            r#"<!DOCTYPE repomd [<!ENTITY e "]>"><data type="x"></data>]>{}"#,
+            repomd_xml("a").replace(r#"<?xml version="1.0" encoding="UTF-8"?>"#, "")
+        );
+        assert_eq!(repomd(hidden.as_bytes()).unwrap().len(), 2);
+    }
+
+    /// quick-xml validates every event since 0.42, including those of
+    /// elements we skip, so a bad byte anywhere refuses the whole document.
+    #[test]
+    fn input_must_be_utf8_whatever_it_declares() {
+        let with_byte = |xml: String, at: &str| {
+            let (head, tail) = xml.split_once(at).unwrap();
+            [head.as_bytes(), at.as_bytes(), b"\xe9", tail.as_bytes()].concat()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.xml");
+        std::fs::write(&path, with_byte(primary_xml(), "<name>a")).unwrap();
+        assert!(primary("p.xml", &path).is_err());
+
+        assert!(repomd(&with_byte(repomd_xml("a"), r#"href="a"#)[..]).is_err());
+
+        let utf16: Vec<u8> = [0xff, 0xfe]
+            .into_iter()
+            .chain(repomd_xml("a").encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        assert!(repomd(&utf16[..]).is_err());
+
+        let declared = repomd_xml("a").replace("UTF-8", "ISO-8859-1");
+        assert_eq!(repomd(declared.as_bytes()).unwrap().len(), 2);
+        let bom = format!("\u{feff}{}", repomd_xml("a"));
+        assert_eq!(repomd(bom.as_bytes()).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn multibyte_characters_survive_any_read_size() {
+        let xml = primary_xml().replace("<name>a</name>", "<name>caf\u{e9} \u{1f600}</name>");
+        let xml = xml.replace("Packages/a/a-1-1", "Packages/\u{e9}/\u{e9}-1-1");
+        let reader = std::io::BufReader::with_capacity(1, xml.as_bytes());
+        let records = records("p.xml", reader, "package", Size::Attribute).unwrap();
+        assert_eq!(records[0].1.path, "Packages/\u{e9}/\u{e9}-1-1.x86_64.rpm");
+    }
+
+    #[test]
+    fn malformed_documents_are_refused() {
+        for xml in [
+            repomd_xml("a").replace("</checksum>", "</size>"),
+            repomd_xml("a").replace(r#"href="a""#, r#"href="a"#),
+            repomd_xml("a").replace(r#"href="a""#, "href=a"),
+            repomd_xml("a").replace("</data>", ""),
+        ] {
+            assert!(repomd(xml.as_bytes()).is_err(), "{xml}");
+        }
     }
 }
