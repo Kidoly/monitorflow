@@ -1,7 +1,7 @@
 # ADR-0064: AI setup in the interface
 
 Date: 2026-10-31
-Status: accepted
+Status: accepted; whether a server accepts commands added by ADR-0076
 
 ## Context
 
@@ -31,4 +31,4 @@ Rejected:
 
 - Upgrading changes nothing for servers with `[ai] enabled = true`.
 - A failure to build the loop after enabling, like an unreadable Proxmox secret, is logged and retried at each poll; the page still says AI is on. Proxmox settings stay in `server.toml`.
-- Each server does not yet show whether it accepts commands: that needs the agent to report it, a protocol change left for later.
+- Each server does not yet show whether it accepts commands: that needs the agent to report it, a protocol change left for later. Done in ADR-0076.

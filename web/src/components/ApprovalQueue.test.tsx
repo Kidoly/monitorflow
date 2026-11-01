@@ -38,6 +38,36 @@ describe("ApprovalQueue", () => {
   });
   afterEach(() => vi.useRealTimers());
 
+  it("offers no approval for a command the server would refuse, and says how to change that", async () => {
+    stubFetch({ [LIST]: list(pending({ shell_acceptance: "off" })) });
+    render(<ApprovalQueue />);
+    await review();
+    expect(await screen.findByText(/AI commands are off on web-1/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "How to turn them on" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("tab=commands"),
+    );
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject…" })).toBeInTheDocument();
+  });
+
+  it("says when the server's system cannot run the command", async () => {
+    stubFetch({ [LIST]: list(pending({ shell_acceptance: "unsupported" })) });
+    render(<ApprovalQueue />);
+    await review();
+    expect(await screen.findByText(/its system does not run AI commands yet/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "How to turn them on" })).not.toBeInTheDocument();
+  });
+
+  it.each([null, undefined, "accepted"])("offers approval when the server said %s", async (shell_acceptance) => {
+    stubFetch({ [LIST]: list(pending({ shell_acceptance })) });
+    render(<ApprovalQueue />);
+    await review();
+    expect(await screen.findByRole("button", { name: "Approve" })).toBeInTheDocument();
+  });
+
   it("lists waiting commands with their tier and a deadline counting down", async () => {
     stubFetch({ [LIST]: list(pending(), pending({ id: "p2", hostname: "db-1", tier: "high_impact", command: "apt-get autoremove -y" })) });
     render(<ApprovalQueue />);

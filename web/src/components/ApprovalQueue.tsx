@@ -12,6 +12,7 @@ import {
   describeError,
   isUnauthorized,
 } from "@/lib/api";
+import { acceptance } from "@/lib/commandKinds";
 import { riskWord, snapshotReason, timeLeft } from "@/lib/remediation";
 import { administersEverything, useMe } from "@/lib/me";
 import { AI_SETTINGS_PATH, AUDIT_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
@@ -222,6 +223,9 @@ function ApprovalDetail({
   const reasonId = useId();
   const left = timeLeft(item.deadline, now);
   const rollbackLimited = item.tier !== "read_only" && !item.snapshots.available;
+  const scope = useScope();
+  const shell = acceptance(item.shell_acceptance);
+  const refused = shell === "off" || shell === "unsupported";
 
   async function decide(action: () => Promise<ApprovalDecision>, message: (d: ApprovalDecision) => string) {
     setBusy(true);
@@ -345,7 +349,19 @@ function ApprovalDetail({
         </form>
       ) : (
         <div className={styles.actions}>
-          {item.can_approve && (
+          {refused && (
+            <p className={styles.note}>
+              {shell === "off" ? (
+                <>
+                  AI commands are off on {item.hostname}, so it would refuse this.{" "}
+                  <Link href={scopedHref(serverHref(item.server_id, "commands"), scope)}>How to turn them on</Link>
+                </>
+              ) : (
+                `${item.hostname} would refuse this: its system does not run AI commands yet.`
+              )}
+            </p>
+          )}
+          {item.can_approve && !refused && (
             <>
               <Button
                 variant="k"

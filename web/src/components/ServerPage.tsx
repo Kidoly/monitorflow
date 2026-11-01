@@ -19,10 +19,11 @@ import {
 import { updateAvailable } from "@/lib/agentVersion";
 import { certificateProblem, certificateState } from "@/lib/certificates";
 import { metricsError } from "@/lib/charts";
+import { aiCommands, commandSummary, unsupportedReason } from "@/lib/commandKinds";
 import { isActive } from "@/lib/commands";
 import { formatOs } from "@/lib/format";
 import { administersCustomer, modifiesSite, useMe } from "@/lib/me";
-import { siteHref } from "@/lib/routes";
+import { serverHref, siteHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { type SensorValues, primaryMetric, sensorRows } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
@@ -33,12 +34,13 @@ import { ButtonLink } from "@/components/ui/Button";
 import { FactsBox } from "@/components/ui/FactsBox";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Page } from "@/components/ui/Page";
-import { ErrorState, LoadingBlock, NotFound, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
+import { Banner, ErrorState, LoadingBlock, NotFound, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { TabPanel, Tabs } from "@/components/ui/Tabs";
 import { formatExact } from "@/components/ui/time";
 
+import { AllowCommandsLine } from "./AllowCommands";
 import { MonitoringSettings } from "./MonitoringSettings";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
@@ -196,6 +198,7 @@ export function ServerPage({ id }: { id: string | null }) {
         )}
         {tab === "alerts" && <ServerAlertsTab server={server} />}
         {tab === "updates" && <ServerUpdatesTab server={server} />}
+        {tab === "commands" && !server.revoked_at && aiCommands(server) === "off" && <AllowOnThisServer server={server} />}
         {tab === "commands" && (
           <ServerCommandsTab
             serverId={server.id}
@@ -267,6 +270,60 @@ function UpdateAgent({
   );
 }
 
+/** How to turn on AI commands on this server, or who can. */
+function AllowOnThisServer({ server }: { server: ServerDetail }) {
+  const me = useMe();
+  return (
+    <Banner tone="warn">
+      <strong>AI commands are off on {server.hostname}.</strong>{" "}
+      {administersCustomer(me, server.customer_id) ? (
+        <>
+          AI&apos;s commands are refused here and its incidents go to a person. To allow them, run this once on the server.
+          This page changes by itself when it is done.
+          <AllowCommandsLine />
+        </>
+      ) : (
+        "AI's commands are refused here and its incidents go to a person. An administrator can turn them on from this page."
+      )}
+    </Banner>
+  );
+}
+
+/** Whether the server runs AI's commands, in words, with the way to change it. */
+function AiCommandsFact({ server }: { server: ServerDetail }) {
+  const scope = useScope();
+  const state = aiCommands(server);
+  const lastContact = server.status === "offline" && " As of its last contact.";
+  switch (state) {
+    case "accepted":
+      return (
+        <>
+          <Label tone="ok">On</Label> Runs the commands AI sends.{lastContact}
+        </>
+      );
+    case "off":
+      return (
+        <>
+          <Label tone="warn">Off</Label> Refuses AI&apos;s commands.{lastContact}{" "}
+          <Link href={scopedHref(serverHref(server.id, "commands"), scope)}>How to turn them on</Link>
+        </>
+      );
+    case "unsupported":
+      return (
+        <>
+          <Label tone="neutral">Not available</Label> {unsupportedReason(server.os_family)}
+        </>
+      );
+    case "unknown":
+      return (
+        <>
+          <Label tone="neutral">Not known yet</Label>{" "}
+          {server.via_relay ? "The agent and its relay" : "The agent"} will say once updated, which happens by itself.
+        </>
+      );
+  }
+}
+
 /** "2026-10-19 02:14". */
 const minutes = (iso: string) => formatExact(new Date(iso)).slice(0, 16);
 
@@ -284,6 +341,7 @@ function ServerFacts({
   onChanged: () => void;
 }) {
   const { certificate } = server;
+  const summary = commandSummary(server);
   return (
     <FactsBox
       columns={2}
@@ -322,9 +380,13 @@ function ServerFacts({
         { label: "Added", value: minutes(server.created_at) },
         ...(server.revoked_at
           ? []
-          : [{ label: "Offline alerts", value: <OfflineAlerts kind="servers" target={server} onChanged={onChanged} /> }]),
+          : [
+              { label: "AI commands", value: <AiCommandsFact server={server} /> },
+              { label: "Offline alerts", value: <OfflineAlerts kind="servers" target={server} onChanged={onChanged} /> },
+            ]),
       ]}
       details={[
+        ...(summary ? [{ label: "Commands", value: summary }] : []),
         { label: "Certificate ID", value: server.peer_id, mono: true },
         ...(certificate ? [{ label: "Certificate valid until", value: formatExact(new Date(certificate.not_after)).slice(0, 10) }] : []),
       ]}
