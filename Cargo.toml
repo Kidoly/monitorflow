@@ -68,7 +68,7 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "s
 # Relay mirror sync (ADR-0034): apt `Packages` and dnf primary metadata
 # come plain, gzip, xz, bzip2 or zstd. Pure Rust, no C libraries.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-ruzstd = "0.8"
+ruzstd = "0.9"
 # xz: lzma-rs and lzma-rust2 are the pure-Rust choices; lzma-rust2 has a
 # streaming `Read` decoder, lzma-rs only decodes into a buffer.
 lzma-rust2 = { version = "0.24", default-features = false, features = ["std", "xz"] }
