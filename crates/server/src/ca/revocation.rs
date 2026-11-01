@@ -121,9 +121,9 @@ impl CertificateAuthority {
             crl_number: SerialNumber::from(state.crl_number),
             issuing_distribution_point: None,
             revoked_certs,
-            key_identifier_method: self.issuer.params().key_identifier_method.clone(),
+            key_identifier_method: self.key_id.clone(),
         }
-        .signed_by(&self.issuer, &self.key)
+        .signed_by(&self.issuer)
         .map_err(CaError::signing)?;
         Ok(crl.der().clone())
     }

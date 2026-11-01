@@ -40,7 +40,7 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["fs"] }
 percent-encoding = "2"
 x509-parser = "0.18"
-rcgen = "0.13"
+rcgen = "0.14"
 ring = "0.17"
 time = { version = "0.3", features = ["std"] }
 pem = "4"

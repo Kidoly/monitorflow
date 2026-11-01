@@ -295,22 +295,20 @@ pub(crate) fn verify_cert(
 
 #[cfg(test)]
 mod tests {
-    use rcgen::{BasicConstraints, IsCa, SanType};
+    use rcgen::{BasicConstraints, CertifiedIssuer, IsCa, SanType};
 
     use super::*;
 
     struct Ca {
-        cert: rcgen::Certificate,
-        key: KeyPair,
+        cert: CertifiedIssuer<'static, KeyPair>,
     }
 
     impl Ca {
         fn new() -> Self {
-            let key = KeyPair::generate().unwrap();
             let mut params = CertificateParams::default();
             params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-            let cert = params.self_signed(&key).unwrap();
-            Self { cert, key }
+            let cert = CertifiedIssuer::self_signed(params, KeyPair::generate().unwrap()).unwrap();
+            Self { cert }
         }
 
         fn pin(&self) -> Fingerprint {
@@ -320,7 +318,7 @@ mod tests {
         fn response(&self, key: &KeyPair, uri: &str) -> EnrollResponse {
             let mut params = CertificateParams::default();
             params.subject_alt_names = vec![SanType::URI(uri.try_into().unwrap())];
-            let cert = params.signed_by(key, &self.cert, &self.key).unwrap();
+            let cert = params.signed_by(key, &self.cert).unwrap();
             EnrollResponse {
                 cert_pem: cert.pem(),
                 ca_cert_pem: self.cert.pem(),

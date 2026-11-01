@@ -533,19 +533,16 @@ mod tests {
     }
 
     struct TestCa {
-        cert: rcgen::Certificate,
-        key: rcgen::KeyPair,
+        cert: rcgen::CertifiedIssuer<'static, rcgen::KeyPair>,
     }
 
     /// A CA and a certificate for `role`/`id` with a fresh key.
     fn enrolled(id: &str, role: PeerRole) -> (Enrolled, TestCa) {
-        use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair};
-        let key = KeyPair::generate().unwrap();
+        use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair};
         let mut params = CertificateParams::default();
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         let ca = TestCa {
-            cert: params.self_signed(&key).unwrap(),
-            key,
+            cert: CertifiedIssuer::self_signed(params, KeyPair::generate().unwrap()).unwrap(),
         };
         let (key_pem, cert_pem) = issue(&ca, role, id);
         let enrolled = Enrolled {
@@ -567,7 +564,7 @@ mod tests {
         let mut params = CertificateParams::default();
         let uri = PeerIdentity::new(role, id).unwrap().uri();
         params.subject_alt_names = vec![SanType::URI(uri.try_into().unwrap())];
-        let cert = params.signed_by(&key, &ca.cert, &ca.key).unwrap();
+        let cert = params.signed_by(&key, &ca.cert).unwrap();
         (Secret::new(key.serialize_pem()), cert.pem())
     }
 }

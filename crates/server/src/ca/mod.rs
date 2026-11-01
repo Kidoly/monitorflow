@@ -29,8 +29,8 @@ use std::time::{Duration, SystemTime};
 
 use monitorflow_common::tls::{PeerIdentity, PeerRole};
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, CertificateSigningRequestParams,
-    DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SanType,
+    BasicConstraints, CertificateParams, CertificateSigningRequestParams, DistinguishedName,
+    DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyIdMethod, KeyPair, KeyUsagePurpose, SanType,
     SerialNumber, PKCS_ECDSA_P256_SHA256,
 };
 use ring::rand::{SecureRandom, SystemRandom};
@@ -42,6 +42,8 @@ use rustls::RootCertStore;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::{debug, info};
+use x509_parser::extensions::ParsedExtension;
+use x509_parser::prelude::{FromDer, X509Certificate};
 
 pub use revocation::RevocationReason;
 use revocation::Revocations;
@@ -225,10 +227,13 @@ pub struct CertificateAuthority {
     dir: PathBuf,
     options: CaOptions,
     cert_pem: String,
-    /// Rebuilt from `ca-cert.pem` with the same subject and key identifier;
-    /// rcgen needs it to sign. Its own signature is never published.
-    issuer: Certificate,
-    key: KeyPair,
+    /// The subject, key usages and key identifier of `ca-cert.pem`, with its
+    /// key.
+    issuer: Issuer<'static, KeyPair>,
+    /// The subject key identifier of `ca-cert.pem`, for CRLs.
+    key_id: KeyIdMethod,
+    /// When `ca-cert.pem` expires.
+    not_after: OffsetDateTime,
     /// The same key for ring, which signs commands (ADR-0031).
     command_key: EcdsaKeyPair,
     revocations: Mutex<Revocations>,
@@ -277,21 +282,26 @@ impl CertificateAuthority {
         }
 
         let cert_pem = fs::read_to_string(&cert_path).map_err(|e| CaError::io(&cert_path, e))?;
-        let params = CertificateParams::from_ca_cert_pem(&cert_pem)
+        let cert_der = pem::parse(&cert_pem).map_err(|e| CaError::corrupt(&cert_path, e))?;
+        let (_, cert) = X509Certificate::from_der(cert_der.contents())
             .map_err(|e| CaError::corrupt(&cert_path, e))?;
-        if !matches!(params.is_ca, IsCa::Ca(_)) {
+        let is_ca = cert
+            .basic_constraints()
+            .map_err(|e| CaError::corrupt(&cert_path, e))?
+            .is_some_and(|constraints| constraints.value.ca);
+        if !is_ca {
             return Err(CaError::corrupt(&cert_path, "not a CA certificate"));
         }
-        let cert_der = pem::parse(&cert_pem).map_err(|e| CaError::corrupt(&cert_path, e))?;
         check_key_matches(cert_der.contents(), &key)
             .map_err(|why| CaError::corrupt(&key_path, why))?;
-        let issuer = params.self_signed(&key).map_err(CaError::signing)?;
         let command_key = EcdsaKeyPair::from_pkcs8(
             &ECDSA_P256_SHA256_ASN1_SIGNING,
             &key.serialize_der(),
             &SystemRandom::new(),
         )
         .map_err(|_| CaError::corrupt(&key_path, "cannot load the key for signing"))?;
+        let issuer = Issuer::from_ca_cert_pem(&cert_pem, key)
+            .map_err(|e| CaError::corrupt(&cert_path, e))?;
 
         let revocations = revocation::load(&dir.join(REVOCATIONS_FILE))?;
         Ok(Self {
@@ -299,7 +309,8 @@ impl CertificateAuthority {
             options,
             cert_pem,
             issuer,
-            key,
+            key_id: key_id_of(&cert),
+            not_after: cert.validity().not_after.to_datetime(),
             command_key,
             revocations: Mutex::new(revocations),
         })
@@ -358,7 +369,7 @@ impl CertificateAuthority {
     ) -> Result<IssuedCert, CaError> {
         let invalid = |why: String| CaError::InvalidRequest(why);
         let csr = CertificateSigningRequestParams::from_pem(csr_pem).map_err(|e| match e {
-            rcgen::Error::RingUnspecified => CaError::CsrSignature,
+            rcgen::Error::InvalidCertificationRequestSignature => CaError::CsrSignature,
             other => CaError::InvalidCsr(other.to_string()),
         })?;
 
@@ -393,7 +404,7 @@ impl CertificateAuthority {
         let not_after = time::Duration::try_from(validity)
             .ok()
             .and_then(|v| now.checked_add(v))
-            .filter(|&t| t > now && t <= self.issuer.params().not_after)
+            .filter(|&t| t > now && t <= self.not_after)
             .ok_or_else(|| {
                 invalid(format!(
                     "validity of {validity:?} is zero or ends after the CA certificate"
@@ -423,7 +434,7 @@ impl CertificateAuthority {
             params,
             public_key: csr.public_key,
         }
-        .signed_by(&self.issuer, &self.key)
+        .signed_by(&self.issuer)
         .map_err(CaError::signing)?;
 
         debug!(peer = %identity, %serial, "issued a certificate");
@@ -473,6 +484,19 @@ fn create(dir: &Path, options: &CaOptions) -> Result<(), CaError> {
     // TODO(ca-key-at-rest): encrypt the key before writing it.
     store::write_atomic(&dir.join(KEY_FILE), key.serialize_pem().as_bytes(), 0o600)?;
     store::write_atomic(&dir.join(CERT_FILE), cert.pem().as_bytes(), 0o644)
+}
+
+/// How rcgen names the key of `cert`: the identifier it states, or the hash
+/// of its key if it states none.
+fn key_id_of(cert: &X509Certificate<'_>) -> KeyIdMethod {
+    cert.iter_extensions()
+        .find_map(|ext| match ext.parsed_extension() {
+            ParsedExtension::SubjectKeyIdentifier(id) => {
+                Some(KeyIdMethod::PreSpecified(id.0.to_vec()))
+            }
+            _ => None,
+        })
+        .unwrap_or(KeyIdMethod::Sha256)
 }
 
 /// Checks that `key` is the key of the certificate `cert_der`.

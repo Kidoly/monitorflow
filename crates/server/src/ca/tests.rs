@@ -259,6 +259,20 @@ fn ignores_the_names_a_csr_asks_for() {
 }
 
 #[test]
+fn ignores_the_ca_flag_a_csr_asks_for() {
+    let (_dir, ca) = new_ca();
+    let mut params = CertificateParams::default();
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let (_, csr) = csr_with(params);
+    let issued = ca
+        .issue(&csr, &identity(PeerRole::Agent, "a1"), None, &[])
+        .unwrap();
+    let cert_der = der(&issued.cert_pem);
+    let (_, cert) = X509Certificate::from_der(&cert_der).unwrap();
+    assert!(!cert.basic_constraints().unwrap().unwrap().value.ca);
+}
+
+#[test]
 fn rejects_a_tampered_csr() {
     let (_dir, ca) = new_ca();
     let mut params = CertificateParams::default();
@@ -375,6 +389,11 @@ async fn handshake(server: Arc<ServerConfig>, client: Arc<ClientConfig>) -> Resu
 #[tokio::test]
 async fn revoked_agent_is_rejected_at_the_next_handshake() {
     let (dir, ca) = new_ca();
+    assert_revocation_is_enforced(dir.path(), &ca).await;
+}
+
+/// An agent connects until its certificate is on the CRL of `ca`.
+async fn assert_revocation_is_enforced(dir: &Path, ca: &CertificateAuthority) {
     let (server_key, server_csr) = csr();
     let server_cert = ca
         .issue(
@@ -384,17 +403,17 @@ async fn revoked_agent_is_rejected_at_the_next_handshake() {
             &localhost(),
         )
         .unwrap();
-    let server_dir = dir.path().join("server");
+    let server_dir = dir.join("server");
     fs::create_dir(&server_dir).unwrap();
-    let server = tls_identity(&server_dir, &ca, &server_cert.cert_pem, &server_key);
+    let server = tls_identity(&server_dir, ca, &server_cert.cert_pem, &server_key);
 
     let (agent_key, agent_csr) = csr();
     let agent_cert = ca
         .issue(&agent_csr, &identity(PeerRole::Agent, "agent-1"), None, &[])
         .unwrap();
-    let agent_dir = dir.path().join("agent");
+    let agent_dir = dir.join("agent");
     fs::create_dir(&agent_dir).unwrap();
-    let agent = tls_identity(&agent_dir, &ca, &agent_cert.cert_pem, &agent_key)
+    let agent = tls_identity(&agent_dir, ca, &agent_cert.cert_pem, &agent_key)
         .client_config()
         .unwrap();
 
@@ -445,4 +464,158 @@ fn commands_signed_by_the_ca_verify_against_its_certificate() {
     assert_eq!(command::verify(&cmd, std::slice::from_ref(&ca_der)), Ok(()));
     let (_other_dir, other) = new_ca();
     assert!(command::verify(&cmd, &[der(other.ca_cert_pem())]).is_err());
+}
+
+/// What a v0.2.0 server left on disk and handed out, written by that release
+/// (rcgen 0.13) with a CA of 100 years and `V0_2_0_VALIDITY`, so that this
+/// test outlives both. The key is here on purpose and is no secret: this CA
+/// signs only this fixture and nothing trusts it.
+const V0_2_0_CA_KEY: &str = "\
+-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgfjtCFyy8P+gmVdq6
+1nd9i2xTTz+3iDN4kJK8xzLy5OWhRANCAARCim0GronaZFRAXYzoHS+2qBmuLLYa
+5rjpfxMfvGr5kEP6l3B4Kabrwn85X/KNQ26CSnaUKsI3AMZlux43bgmn
+-----END PRIVATE KEY-----
+";
+const V0_2_0_CA_CERT: &str = "\
+-----BEGIN CERTIFICATE-----
+MIIBkTCCATigAwIBAgIQfmRcSqQQeTh12FzT9yvLnzAKBggqhkjOPQQDAjAmMSQw
+IgYDVQQDDBtNb25pdG9yRmxvdyB0ZXN0IGZpeHR1cmUgQ0EwIBcNMjYxMTAxMjMw
+NTQyWhgPMjEyNjEwMDgyMzEwNDJaMCYxJDAiBgNVBAMMG01vbml0b3JGbG93IHRl
+c3QgZml4dHVyZSBDQTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABEKKbQauidpk
+VEBdjOgdL7aoGa4sthrmuOl/Ex+8avmQQ/qXcHgppuvCfzlf8o1DboJKdpQqwjcA
+xmW7HjduCaejRjBEMA8GA1UdDwEB/wQFAwMHBgAwHQYDVR0OBBYEFPEQcodaU6D+
+cmuwuS/nsyB0TtBPMBIGA1UdEwEB/wQIMAYBAf8CAQAwCgYIKoZIzj0EAwIDRwAw
+RAIgcKx/RGG57HnhAN2kKcnm7605pgiihcZD4YpnkPgIi6wCIBHNbaQYmTWl62YV
+xsTfuBybcG5hKOv2fxEFJc6yBLLS
+-----END CERTIFICATE-----
+";
+const V0_2_0_SERVER_CSR: &str = "\
+-----BEGIN CERTIFICATE REQUEST-----
+MIHYMH8CAQAwHTEbMBkGA1UEAwwSbW9uaXRvcmZsb3ctc2VydmVyMFkwEwYHKoZI
+zj0CAQYIKoZIzj0DAQcDQgAEjU2tbjuimaRAbNUxp0L/fE1EBr8YIC64purVXjqj
+jPqVffJ6CsflQIpFZhYJYMvyZ7y573aUTCU0RaBstbTf0aAAMAoGCCqGSM49BAMC
+A0kAMEYCIQChVJWlBlP5bSCb1fUp/d7DRLGfH08FqNB1tksHUx15+wIhAK+jSCKW
++vUA+j2GfwnysYOHsokaEVrOlPseQmnxvpz9
+-----END CERTIFICATE REQUEST-----
+";
+const V0_2_0_SERVER_CERT: &str = "\
+-----BEGIN CERTIFICATE-----
+MIIB9zCCAZ2gAwIBAgIQa0QQMvPl5mlWjN8LZmB8dTAKBggqhkjOPQQDAjAmMSQw
+IgYDVQQDDBtNb25pdG9yRmxvdyB0ZXN0IGZpeHR1cmUgQ0EwIBcNMjYxMTAxMjMw
+NTQyWhgPMjExNjEwMTAyMzEwNDJaMBIxEDAOBgNVBAMMB2NlbnRyYWwwWTATBgcq
+hkjOPQIBBggqhkjOPQMBBwNCAASNTa1uO6KZpEBs1TGnQv98TUQGvxggLrim6tVe
+OqOM+pV98noKx+VAikVmFglgy/JnvLnvdpRMJTRFoGy1tN/Ro4G+MIG7MB8GA1Ud
+IwQYMBaAFPEQcodaU6D+cmuwuS/nsyB0TtBPMDgGA1UdEQQxMC+GHG1vbml0b3Jm
+bG93Oi8vc2VydmVyL2NlbnRyYWyCCWxvY2FsaG9zdIcEfwAAATAPBgNVHQ8BAf8E
+BQMDB4AAMB0GA1UdJQQWMBQGCCsGAQUFBwMCBggrBgEFBQcDATAdBgNVHQ4EFgQU
+rgyPvUF/vYU4st9CvL8WQh5jmZkwDwYDVR0TAQH/BAUwAwEBADAKBggqhkjOPQQD
+AgNIADBFAiEAmnTTuT5oEKBgKBvawKobSnj1/Le5SVmdwUECmbNxK+MCIFX64X2e
+nyZ1YxGvE3Qj866mtcfCMczQwwO+ZaJuiypi
+-----END CERTIFICATE-----
+";
+const V0_2_0_VALIDITY: Duration = Duration::from_secs(90 * 365 * 86400);
+
+fn v0_2_0_ca() -> (TempDir, CertificateAuthority) {
+    let dir = TempDir::new().unwrap();
+    let ca_dir = dir.path().join("ca");
+    fs::create_dir(&ca_dir).unwrap();
+    fs::write(ca_dir.join(KEY_FILE), V0_2_0_CA_KEY).unwrap();
+    fs::set_permissions(ca_dir.join(KEY_FILE), fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(ca_dir.join(CERT_FILE), V0_2_0_CA_CERT).unwrap();
+    let ca = open(&ca_dir);
+    (dir, ca)
+}
+
+/// Extensions as a peer reads them: their DER may differ, as rcgen 0.14 fixed
+/// the encoding of `keyUsage` and of `basicConstraints` without `cA`.
+fn extensions(cert: &X509Certificate<'_>) -> Vec<String> {
+    cert.extensions()
+        .iter()
+        .map(|e| format!("{} {} {:?}", e.oid, e.critical, e.parsed_extension()))
+        .collect()
+}
+
+#[test]
+fn v0_2_0_ca_keeps_issuing_the_same_certificates() {
+    let (_dir, ca) = v0_2_0_ca();
+    assert_eq!(ca.ca_cert_pem(), V0_2_0_CA_CERT);
+
+    let old_der = der(V0_2_0_SERVER_CERT);
+    assert!(ca.verify_issued(&old_der).is_ok());
+    let old_id = PeerIdentity::from_cert(&old_der).unwrap();
+    assert_eq!(old_id.uri(), "monitorflow://server/central");
+
+    let central = identity(PeerRole::Server, "central");
+    let issued = ca
+        .issue(
+            V0_2_0_SERVER_CSR,
+            &central,
+            Some(V0_2_0_VALIDITY),
+            &localhost(),
+        )
+        .unwrap();
+    let new_der = der(&issued.cert_pem);
+    assert!(chains_to(&ca, &new_der));
+
+    let (_, old) = X509Certificate::from_der(&old_der).unwrap();
+    let (_, new) = X509Certificate::from_der(&new_der).unwrap();
+    assert_eq!(new.version(), old.version());
+    assert_eq!(new.subject().as_raw(), old.subject().as_raw());
+    assert_eq!(new.issuer().as_raw(), old.issuer().as_raw());
+    assert_eq!(new.public_key().raw, old.public_key().raw);
+    assert_eq!(new.signature_algorithm, old.signature_algorithm);
+    let span = |c: &X509Certificate<'_>| {
+        c.validity().not_after.timestamp() - c.validity().not_before.timestamp()
+    };
+    assert_eq!(span(&new), span(&old));
+    assert_eq!(extensions(&new), extensions(&old));
+}
+
+#[tokio::test]
+async fn v0_2_0_ca_keeps_revoking() {
+    let (dir, ca) = v0_2_0_ca();
+    assert_revocation_is_enforced(dir.path(), &ca).await;
+}
+
+/// webpki does not read the identifier, other verifiers of the CRL may.
+#[test]
+fn v0_2_0_ca_names_itself_in_its_crls() {
+    let (_dir, ca) = v0_2_0_ca();
+    let ca_der = der(V0_2_0_CA_CERT);
+    let (_, ca_cert) = X509Certificate::from_der(&ca_der).unwrap();
+    let key_id = ca_cert
+        .iter_extensions()
+        .find_map(|e| match e.parsed_extension() {
+            ParsedExtension::SubjectKeyIdentifier(id) => Some(id.0),
+            _ => None,
+        })
+        .unwrap();
+
+    let crl_der = ca.crl().unwrap();
+    let (_, crl) = CertificateRevocationList::from_der(&crl_der).unwrap();
+    assert_eq!(crl.issuer().as_raw(), ca_cert.subject().as_raw());
+    let authority = crl
+        .extensions()
+        .iter()
+        .find_map(|e| match e.parsed_extension() {
+            ParsedExtension::AuthorityKeyIdentifier(id) => id.key_identifier.as_ref(),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(authority.0, key_id);
+}
+
+#[test]
+fn v0_2_0_ca_keeps_signing_commands() {
+    use monitorflow_common::command;
+    use monitorflow_common::proto::v1::Command;
+
+    let (_dir, ca) = v0_2_0_ca();
+    let mut cmd = Command {
+        command_id: "c1".into(),
+        ..Command::default()
+    };
+    cmd.signature = ca.sign_command(&command::signed_bytes(&cmd)).unwrap();
+    assert_eq!(command::verify(&cmd, &[der(V0_2_0_CA_CERT)]), Ok(()));
 }

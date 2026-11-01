@@ -6,15 +6,14 @@ use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
 use rcgen::{
-    BasicConstraints, CertificateParams, CertificateRevocationListParams, DistinguishedName,
-    DnType, ExtendedKeyUsagePurpose, IsCa, KeyIdMethod, KeyPair, KeyUsagePurpose,
-    RevokedCertParams, SanType, SerialNumber,
+    BasicConstraints, CertificateParams, CertificateRevocationListParams, CertifiedIssuer,
+    DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, KeyIdMethod, KeyPair,
+    KeyUsagePurpose, RevokedCertParams, SanType, SerialNumber,
 };
 use rustls::pki_types::CertificateRevocationListDer;
 
 pub struct Ca {
-    pub cert: rcgen::Certificate,
-    key: KeyPair,
+    pub cert: CertifiedIssuer<'static, KeyPair>,
 }
 
 pub struct Leaf {
@@ -38,9 +37,8 @@ impl Ca {
             KeyUsagePurpose::CrlSign,
             KeyUsagePurpose::DigitalSignature,
         ];
-        let key = KeyPair::generate().unwrap();
-        let cert = params.self_signed(&key).unwrap();
-        Self { cert, key }
+        let cert = CertifiedIssuer::self_signed(params, KeyPair::generate().unwrap()).unwrap();
+        Self { cert }
     }
 
     /// Server certificate for `localhost` and `127.0.0.1`, identity
@@ -93,7 +91,7 @@ impl Ca {
         params.subject_alt_names = sans;
         params.serial_number = Some(SerialNumber::from(serial));
         params.extended_key_usages = vec![eku];
-        let cert = params.signed_by(&key, &self.cert, &self.key).unwrap();
+        let cert = params.signed_by(&key, &self.cert).unwrap();
         Leaf { cert, key }
     }
 
@@ -122,11 +120,7 @@ impl Ca {
                 .collect(),
             key_identifier_method: KeyIdMethod::Sha256,
         };
-        params
-            .signed_by(&self.cert, &self.key)
-            .unwrap()
-            .der()
-            .clone()
+        params.signed_by(&self.cert).unwrap().der().clone()
     }
 }
 

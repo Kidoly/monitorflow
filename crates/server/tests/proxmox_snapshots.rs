@@ -20,7 +20,7 @@ use monitorflow_server::remediation::snapshot::{
     ProxmoxClient, ProxmoxOptions, ProxmoxSnapshotter, SnapshotError, SnapshotHook, SnapshotName,
     SnapshotRequest, Snapshotter, Unsupported, VmRef,
 };
-use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair};
+use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use tokio::net::{TcpListener, TcpStream};
@@ -303,14 +303,13 @@ struct Harness {
 
 impl Harness {
     async fn start() -> Self {
-        let ca_key = KeyPair::generate().unwrap();
         let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
         ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        let ca = ca_params.self_signed(&ca_key).unwrap();
+        let ca = CertifiedIssuer::self_signed(ca_params, KeyPair::generate().unwrap()).unwrap();
         let key = KeyPair::generate().unwrap();
         let cert = CertificateParams::new(vec!["127.0.0.1".to_owned()])
             .unwrap()
-            .signed_by(&key, &ca, &ca_key)
+            .signed_by(&key, &ca)
             .unwrap();
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let tls = rustls::ServerConfig::builder_with_provider(provider)

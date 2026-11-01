@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use monitorflow_common::config::TlsPaths;
 use monitorflow_common::tls::{PeerIdentity, PeerRole};
-use rcgen::{CertificateParams, KeyPair, PKCS_ECDSA_P256_SHA256};
+use rcgen::{CertificateParams, KeyPair, PublicKeyData, PKCS_ECDSA_P256_SHA256};
 use rustls::client::danger::ServerCertVerifier;
 use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::{CertificateDer, UnixTime};
@@ -131,7 +131,7 @@ fn is_current(
     let key_matches = fs::read_to_string(&paths.key)
         .ok()
         .and_then(|pem| KeyPair::from_pem(&pem).ok())
-        .is_some_and(|key| key.public_key_der() == cert.public_key().raw);
+        .is_some_and(|key| key.subject_public_key_info() == cert.public_key().raw);
     Ok(key_matches)
 }
 
