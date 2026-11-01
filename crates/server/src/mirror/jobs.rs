@@ -1,9 +1,11 @@
 //! Syncs and snapshots of one mirror (ADR-0030). [`Mirrors::begin`] takes
 //! the mirror's lock and records a running run; [`Job::execute`] runs the
 //! tools, stores their output as it goes and ends the run. A failing tool
-//! fails the run, never the caller.
+//! fails the run, never the caller. Deleting the mirror stops its job at
+//! the tool it is running (ADR-0075).
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::Utc;
 use sqlx::PgPool;
@@ -14,6 +16,11 @@ use super::model::{self, Family, Invalid, Mirror, Run, RunKind, Trigger};
 use super::runner::{keep_tail, Invocation, Runner, OUTPUT_TAIL};
 use super::store::{self, MirrorLock, StoreError};
 use super::{apt, dnf, signing};
+
+/// How often a running tool looks for its mirror being deleted.
+const WATCH: Duration = Duration::from_secs(5);
+/// Error of a run stopped by deleting its mirror.
+pub const STOPPED: &str = "stopped: this mirror is being removed";
 
 /// What a job does.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +39,8 @@ pub enum JobError {
     Busy,
     #[error("the mirror has no successful sync to snapshot")]
     NotSynced,
+    #[error("this mirror is being removed")]
+    Going,
     #[error(transparent)]
     Invalid(#[from] Invalid),
     #[error("database query failed: {0}")]
@@ -92,6 +101,15 @@ impl Mirrors {
         let mut lock = MirrorLock::try_acquire(&self.pool, mirror.id)
             .await?
             .ok_or(JobError::Busy)?;
+        // After the lock: a deletion from now on is seen by `Job::step`.
+        match store::is_going(&self.pool, mirror.id).await {
+            Ok(false) => {}
+            going => {
+                lock.release().await;
+                going?;
+                return Err(JobError::Going);
+            }
+        }
         if matches!(kind, JobKind::Snapshot(_)) {
             let synced: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM mirror_runs
@@ -119,6 +137,18 @@ impl Mirrors {
             run,
             log: String::new(),
         })
+    }
+}
+
+/// Ends when the mirror `id` is being deleted. Dropping the tool's future
+/// then kills it, here or in the sidecar. A database that does not answer
+/// says nothing, so the job goes on.
+async fn deletion(pool: &PgPool, id: Uuid) {
+    loop {
+        if store::is_going(pool, id).await.unwrap_or(false) {
+            return;
+        }
+        tokio::time::sleep(WATCH).await;
     }
 }
 
@@ -176,7 +206,13 @@ impl Job {
     /// Runs one command, appending it and its output to the log.
     async fn step(&mut self, invocation: Invocation) -> Result<String, Failed> {
         self.log.push_str(&format!("$ {invocation}\n"));
-        let result = self.mirrors.runner.run(&invocation).await;
+        let result = tokio::select! {
+            result = self.mirrors.runner.run(&invocation) => result,
+            () = deletion(&self.mirrors.pool, self.mirror.id) => {
+                self.log.push_str(&format!("{STOPPED}\n"));
+                return Err(Failed(STOPPED.to_owned()));
+            }
+        };
         let output = match &result {
             Ok(output) => Some(output),
             Err(error) => error.output(),

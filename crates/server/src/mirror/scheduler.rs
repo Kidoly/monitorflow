@@ -39,8 +39,8 @@ pub async fn tick(mirrors: &Mirrors, slots: &Arc<Semaphore>) -> Vec<JoinHandle<(
                 job.execute().await;
                 drop(slot);
             })),
-            // Started from elsewhere in the meantime.
-            Err(JobError::Busy) => {}
+            // Started or deleted from elsewhere in the meantime.
+            Err(JobError::Busy | JobError::Going) => {}
             Err(error) => {
                 tracing::warn!(mirror = %mirror.name, %error, "cannot start a scheduled sync")
             }

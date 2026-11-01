@@ -26,7 +26,7 @@ use uuid::Uuid;
 use super::model::{Family, Mirror, Snapshot, SnapshotState};
 use super::runner::{Invocation, RunError};
 use super::store::{self, RetentionLock};
-use super::{apt, layout, Layout, Mirrors};
+use super::{apt, layout, removal, Layout, Mirrors};
 use crate::api::audit::{self, Event};
 
 /// Published snapshots each mirror keeps, in use or not: a week of daily
@@ -89,34 +89,9 @@ impl InUse {
         )
         .fetch_all(&mut *conn)
         .await?;
-        // Each server's commands not ended, the one that last changed its
-        // sources, and the one a campaign would put back (`pin::previous`).
-        // A failure after those changes nothing here: it may have left the
-        // sources alone.
-        let commands: Vec<(String, Vec<u8>)> = sqlx::query_as(
-            "WITH sources AS (
-                 SELECT c.* FROM commands c JOIN servers s ON s.id = c.server_id
-                 WHERE s.revoked_at IS NULL AND c.kind IN ($1, $2)
-             )
-             SELECT kind, payload FROM sources WHERE state IN ('queued', 'sent', 'running')
-             UNION ALL
-             (SELECT DISTINCT ON (server_id) kind, payload FROM sources
-              WHERE state = 'succeeded'
-              ORDER BY server_id, finished_at DESC NULLS LAST, issued_at DESC)
-             UNION ALL
-             (SELECT DISTINCT ON (server_id) kind, payload FROM sources
-              WHERE state = 'succeeded' AND campaign_id IS NULL
-              ORDER BY server_id, finished_at DESC NULLS LAST, issued_at DESC)",
-        )
-        .bind(CONFIGURE_SOURCES)
-        .bind(REVERT_SOURCES)
-        .fetch_all(&mut *conn)
-        .await?;
         let mut servers = HashSet::new();
-        for (kind, payload) in commands {
-            if kind != REVERT_SOURCES {
-                servers.extend(named_snapshots(&ConfigureSources::decode(&*payload)?));
-            }
+        for (_, spec) in source_specs(&mut *conn).await? {
+            servers.extend(named_snapshots(&spec));
         }
         Ok(Self {
             campaigns: campaigns.into_iter().collect(),
@@ -124,6 +99,43 @@ impl InUse {
             relays: relays.into_iter().collect(),
         })
     }
+}
+
+/// `(server, spec)` of what a server is or may go back to being pointed
+/// at: its commands not ended, the one that last changed its sources, and
+/// the one a campaign would put back (`pin::previous`). A failure after
+/// those changes nothing here: it may have left the sources alone.
+/// Removed servers do not count.
+pub(super) async fn source_specs(
+    conn: &mut PgConnection,
+) -> Result<Vec<(Uuid, ConfigureSources)>, RetentionError> {
+    let commands: Vec<(Uuid, String, Vec<u8>)> = sqlx::query_as(
+        "WITH sources AS (
+             SELECT c.* FROM commands c JOIN servers s ON s.id = c.server_id
+             WHERE s.revoked_at IS NULL AND c.kind IN ($1, $2)
+         )
+         SELECT server_id, kind, payload FROM sources
+         WHERE state IN ('queued', 'sent', 'running')
+         UNION ALL
+         (SELECT DISTINCT ON (server_id) server_id, kind, payload FROM sources
+          WHERE state = 'succeeded'
+          ORDER BY server_id, finished_at DESC NULLS LAST, issued_at DESC)
+         UNION ALL
+         (SELECT DISTINCT ON (server_id) server_id, kind, payload FROM sources
+          WHERE state = 'succeeded' AND campaign_id IS NULL
+          ORDER BY server_id, finished_at DESC NULLS LAST, issued_at DESC)",
+    )
+    .bind(CONFIGURE_SOURCES)
+    .bind(REVERT_SOURCES)
+    .fetch_all(conn)
+    .await?;
+    let mut specs = Vec::new();
+    for (server, kind, payload) in commands {
+        if kind != REVERT_SOURCES {
+            specs.push((server, ConfigureSources::decode(&*payload)?));
+        }
+    }
+    Ok(specs)
 }
 
 /// `(mirror, snapshot)` of each repository of `spec`. `current` follows
@@ -215,6 +227,10 @@ async fn plans(
     let uses = InUse::load(&mut *conn).await?;
     let mut plans = Vec::new();
     for mirror in store::list(&mut *conn).await? {
+        // `removal` takes all of it.
+        if mirror.deleting_at.is_some() {
+            continue;
+        }
         let snapshots = store::snapshots(&mut *conn, mirror.id, ALL).await?;
         let link = link(Some(layout), &mirror).await;
         let remove = plan(&mirror.name, &snapshots, link.as_deref(), &uses).remove;
@@ -248,7 +264,7 @@ async fn choose(mirrors: &Mirrors) -> Result<Vec<(Mirror, Vec<Snapshot>)>, Reten
     Ok(chosen)
 }
 
-async fn stdout(mirrors: &Mirrors, invocation: Invocation) -> Result<String, RetentionError> {
+pub(super) async fn stdout(mirrors: &Mirrors, invocation: Invocation) -> Result<String, RetentionError> {
     let output = mirrors.runner().run(&invocation).await?;
     Ok(output.check(&invocation)?.stdout)
 }
@@ -358,17 +374,24 @@ async fn pass(mirrors: &Mirrors) -> Result<usize, RetentionError> {
 }
 
 /// Removes every snapshot nothing needs and frees its disk space, once
-/// the running jobs ended. Returns how many it removed. On failure, what
+/// the running jobs ended, and finishes deleting mirrors (ADR-0075), under
+/// the same lock. Returns how many snapshots it removed. On failure, what
 /// is left stays `pruning` with the error, for its page and the next pass.
 pub async fn prune(mirrors: &Mirrors) -> Result<usize, RetentionError> {
     let mut conn = mirrors.pool().acquire().await?;
-    let nothing = plans(&mut conn, mirrors.layout()).await?.is_empty();
+    let planned = plans(&mut conn, mirrors.layout()).await;
+    let deleting = store::deleting(&mut *conn).await?;
     drop(conn);
-    if nothing {
+    // An unreadable command stops the pass, not a deletion: nothing used
+    // that mirror when it was asked for.
+    if deleting.is_empty() && planned?.is_empty() {
         return Ok(0);
     }
     let lock = RetentionLock::acquire(mirrors.pool()).await?;
     let result = pass(mirrors).await;
+    if let Err(error) = removal::finish(mirrors).await {
+        tracing::warn!(%error, "cannot finish deleting mirrors; will retry");
+    }
     lock.release().await;
     if let Err(error) = &result {
         sqlx::query("UPDATE mirror_snapshots SET error = $1 WHERE state = 'pruning'")

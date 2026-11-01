@@ -1,6 +1,6 @@
 //! Package mirrors (ADR-0030): listing, detail with snapshots and runs,
-//! starting syncs and snapshots, and adding a distribution of the catalog
-//! (ADR-0067). Mirrors are global, so every route needs a global
+//! starting syncs and snapshots, adding a distribution of the catalog
+//! (ADR-0067) and deleting a mirror (ADR-0075). Mirrors are global, so every route needs a global
 //! administrator role.
 
 use axum::extract::rejection::JsonRejection;
@@ -17,6 +17,7 @@ use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
 use crate::mirror::catalog::{self, Disk, CATALOG};
 use crate::mirror::jobs::{self, JobError, JobKind};
+use crate::mirror::removal::{self, RemovalError, Users};
 use crate::mirror::retention::{self, Kept, KEEP_SNAPSHOTS};
 use crate::mirror::{
     signing, store, tools, Family, Mirror, Mirrors, Run, RunKind, RunState, Snapshot, StoreError,
@@ -83,6 +84,8 @@ pub struct MirrorDetail {
     pub snapshots: Vec<SnapshotView>,
     pub keep_snapshots: usize,
     pub runs: Vec<Run>,
+    /// What keeps it from being deleted.
+    pub used_by: Users,
 }
 
 /// A snapshot and why it stays; `null` when the next pass of retention
@@ -320,12 +323,47 @@ pub async fn detail(
         })
         .collect();
     let runs = store::runs(&state.pool, mirror.id, DETAIL_RUNS).await?;
+    let mut conn = state.pool.acquire().await?;
+    // Deleting checks again and refuses in doubt.
+    let used_by = removal::users(&mut conn, &mirror).await.unwrap_or_else(|error| {
+        tracing::warn!(%error, mirror = %mirror.name, "cannot tell what uses a mirror");
+        Users::default()
+    });
+    drop(conn);
     Ok(Json(MirrorDetail {
         mirror: view(&state, mirror).await?,
         snapshots,
         keep_snapshots: KEEP_SNAPSHOTS,
         runs,
+        used_by,
     }))
+}
+
+/// `DELETE /api/mirrors/{id}`: 202 once the mirror is being deleted, which
+/// ends when its detail answers 404; 409 saying what still uses it. Asking
+/// again tries again at once after a failure.
+pub async fn delete(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    require_global_admin(&user)?;
+    let id = parse_id(&id)?;
+    let mirrors = state
+        .mirrors
+        .as_ref()
+        .ok_or_else(|| ApiError::Internal("mirrors are not configured".into()))?;
+    let actor = user.id.to_string();
+    removal::request(&state.pool, id, ("user", &actor))
+        .await
+        .map_err(|e| match e {
+            RemovalError::NotFound => ApiError::NotFound,
+            RemovalError::InUse(_) => ApiError::Conflict(e.to_string()),
+            RemovalError::Check(error) => ApiError::Conflict(error.to_string()),
+            RemovalError::Database(e) => ApiError::Database(e),
+        })?;
+    removal::start(mirrors.clone());
+    Ok(StatusCode::ACCEPTED)
 }
 
 /// `POST /api/mirrors/{id}/sync`: 202 with the started run.
@@ -368,7 +406,9 @@ async fn start(
         .begin(&mirror, kind, Trigger::Manual, Some(&requested_by))
         .await
         .map_err(|e| match e {
-            JobError::Busy | JobError::NotSynced => ApiError::Conflict(e.to_string()),
+            JobError::Busy | JobError::NotSynced | JobError::Going => {
+                ApiError::Conflict(e.to_string())
+            }
             JobError::Invalid(invalid) => ApiError::Invalid(invalid.to_string()),
             JobError::Database(e) => ApiError::Database(e),
         })?;

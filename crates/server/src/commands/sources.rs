@@ -237,6 +237,8 @@ mod tests {
             sync_interval_s: None,
             auto_snapshot: true,
             created_at: Utc::now(),
+            deleting_at: None,
+            delete_error: None,
         }
     }
 

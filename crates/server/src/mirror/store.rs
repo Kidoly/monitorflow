@@ -25,8 +25,8 @@ pub enum StoreError {
     Database(#[from] sqlx::Error),
 }
 
-const MIRROR_COLUMNS: &str = "id, name, family, upstream_url, distribution, components,
-     architectures, sync_interval_s, auto_snapshot, created_at";
+pub(super) const MIRROR_COLUMNS: &str = "id, name, family, upstream_url, distribution, components,
+     architectures, sync_interval_s, auto_snapshot, created_at, deleting_at, delete_error";
 const SNAPSHOT_COLUMNS: &str =
     "id, mirror_id, name, state, size_bytes, error, created_at, published_at";
 const RUN_COLUMNS: &str = "id, mirror_id, kind, trigger, requested_by, state, snapshot_id,
@@ -104,13 +104,33 @@ pub async fn get(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Mirror>, sq
     .await
 }
 
+/// The mirror `name`, unless it is being deleted: nothing new may use it.
 pub async fn by_name(db: impl PgExecutor<'_>, name: &str) -> Result<Option<Mirror>, sqlx::Error> {
     sqlx::query_as(&format!(
-        "SELECT {MIRROR_COLUMNS} FROM mirrors WHERE name = $1"
+        "SELECT {MIRROR_COLUMNS} FROM mirrors WHERE name = $1 AND deleting_at IS NULL"
     ))
     .bind(name)
     .fetch_optional(db)
     .await
+}
+
+/// Mirrors being deleted, by name (ADR-0075).
+pub async fn deleting(db: impl PgExecutor<'_>) -> Result<Vec<Mirror>, sqlx::Error> {
+    sqlx::query_as(&format!(
+        "SELECT {MIRROR_COLUMNS} FROM mirrors WHERE deleting_at IS NOT NULL ORDER BY name"
+    ))
+    .fetch_all(db)
+    .await
+}
+
+/// Whether the mirror `id` is being deleted or is gone.
+pub async fn is_going(db: impl PgExecutor<'_>, id: Uuid) -> Result<bool, sqlx::Error> {
+    let kept: Option<bool> =
+        sqlx::query_scalar("SELECT deleting_at IS NULL FROM mirrors WHERE id = $1")
+            .bind(id)
+            .fetch_optional(db)
+            .await?;
+    Ok(kept != Some(true))
 }
 
 /// Mirrors with an interval whose last sync run started at least that long
@@ -118,7 +138,7 @@ pub async fn by_name(db: impl PgExecutor<'_>, name: &str) -> Result<Option<Mirro
 pub async fn due(db: impl PgExecutor<'_>) -> Result<Vec<Mirror>, sqlx::Error> {
     sqlx::query_as(&format!(
         "SELECT {MIRROR_COLUMNS} FROM mirrors m
-         WHERE sync_interval_s IS NOT NULL
+         WHERE sync_interval_s IS NOT NULL AND deleting_at IS NULL
            AND NOT EXISTS (SELECT 1 FROM mirror_runs r
                            WHERE r.mirror_id = m.id AND r.state = 'running')
            AND COALESCE((SELECT max(started_at) FROM mirror_runs r

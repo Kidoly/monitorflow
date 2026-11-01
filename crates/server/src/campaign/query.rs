@@ -208,11 +208,9 @@ pub async fn pins(
     campaigns: &[Uuid],
 ) -> Result<Vec<(Uuid, PinnedMirror)>, sqlx::Error> {
     let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
-        "SELECT cs.campaign_id, m.name, s.name FROM campaign_snapshots cs
-         JOIN mirrors m ON m.id = cs.mirror_id
-         JOIN mirror_snapshots s ON s.id = cs.snapshot_id
-         WHERE cs.campaign_id = ANY($1)
-         ORDER BY cs.campaign_id, m.name",
+        "SELECT campaign_id, mirror_name, snapshot_name FROM campaign_snapshots
+         WHERE campaign_id = ANY($1)
+         ORDER BY campaign_id, mirror_name",
     )
     .bind(campaigns)
     .fetch_all(pool)

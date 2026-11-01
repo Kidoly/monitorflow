@@ -1,17 +1,22 @@
 //! `/index.json` (ADR-0034): the mirrors a listener publishes, the
 //! snapshot each `current` names and the snapshots pinned by update
 //! campaigns (ADR-0038), built from the served tree so that a relay's
-//! index describes exactly what that relay serves.
+//! index describes exactly what that relay serves. It also names the
+//! mirrors an administrator deleted (ADR-0075): a mirror merely missing
+//! says nothing, as an upstream restored from a backup lists none.
 
 use std::io;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::{is_mirror_name, is_snapshot_name, read_current, Family, Served, PINNED};
+use super::{is_mirror_name, is_snapshot_name, read_current, Family, Served, PINNED, REMOVED};
 
 /// Format version of the index.
 pub const VERSION: u32 = 1;
+
+/// Prefix of a mirror directory on its way out, hidden from the listener.
+const RETIRED: &str = ".removing-";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Index {
@@ -21,6 +26,17 @@ pub struct Index {
     /// (ADR-0053). Absent from older servers' indexes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agent_releases: Vec<String>,
+    /// Mirrors deleted upstream, for relays to delete their copy
+    /// (ADR-0075). Absent from older servers' indexes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<RemovedMirror>,
+}
+
+/// A mirror an administrator deleted, and that is not published again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemovedMirror {
+    pub family: Family,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +108,13 @@ impl Index {
         {
             return Err(IndexError::AgentRelease);
         }
+        if let Some(bad) = index.removed.iter().find(|m| !is_mirror_name(&m.name)) {
+            return Err(IndexError::Entry {
+                family: bad.family,
+                name: bad.name.clone(),
+                reason: "invalid removed mirror name",
+            });
+        }
         for m in &index.mirrors {
             let fail = |reason| IndexError::Entry {
                 family: m.family,
@@ -126,7 +149,8 @@ impl Index {
 
     /// Lists what `served` publishes: every mirror directory with a valid
     /// name whose `current` names an existing snapshot, with the existing
-    /// snapshots its `.pinned` file names. Blocking.
+    /// snapshots its `.pinned` file names, and the mirrors `.removed`
+    /// names that are not published again. Blocking.
     pub fn scan(served: &Served) -> io::Result<Self> {
         let mut mirrors = Vec::new();
         for family in Family::ALL {
@@ -177,6 +201,15 @@ impl Index {
             }
         }
         mirrors.sort_by(|a, b| (a.family, &a.name).cmp(&(b.family, &b.name)));
+        let removed = Family::ALL
+            .into_iter()
+            .flat_map(|family| {
+                read_removed(served.root(family))
+                    .into_iter()
+                    .map(move |name| RemovedMirror { family, name })
+            })
+            .filter(|r| !mirrors.iter().any(|m| m.family == r.family && m.name == r.name))
+            .collect();
         let agent_releases = crate::release::cached_versions(&served.agent)?
             .iter()
             .map(ToString::to_string)
@@ -185,6 +218,7 @@ impl Index {
             version: VERSION,
             mirrors,
             agent_releases,
+            removed,
         })
     }
 }
@@ -216,18 +250,74 @@ pub fn read_pinned(dir: &Path) -> Vec<String> {
 /// Makes `<dir>/.pinned` list `names`, removing it when there are none;
 /// unchanged contents are not rewritten. Blocking.
 pub fn write_pinned(dir: &Path, names: &[String]) -> io::Result<()> {
-    let path = dir.join(PINNED);
+    write_names(&dir.join(PINNED), names)
+}
+
+/// The mirror names in `<root>/.removed`, `root` being a family's
+/// directory, one per line, sorted; invalid lines are skipped and a
+/// missing file is none. Blocking.
+pub fn read_removed(root: &Path) -> Vec<String> {
+    let text = std::fs::read_to_string(root.join(REMOVED)).unwrap_or_default();
+    let mut names: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|n| is_mirror_name(n))
+        .map(str::to_owned)
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Makes `<root>/.removed` list `names`, as [`write_pinned`]. Blocking.
+pub fn write_removed(root: &Path, names: &[String]) -> io::Result<()> {
+    write_names(&root.join(REMOVED), names)
+}
+
+/// Takes `<root>/<name>` out of service at once, whole, with a rename to a
+/// hidden name, then deletes it. Hidden files stop being served and the
+/// disk space comes back; a crash in between leaves what
+/// [`remove_retired`] finishes. Blocking.
+pub fn remove_mirror_dir(root: &Path, name: &str) -> io::Result<()> {
+    let hidden = root.join(format!("{RETIRED}{name}"));
+    match std::fs::remove_dir_all(&hidden) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    match std::fs::rename(root.join(name), &hidden) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+        Ok(()) => std::fs::remove_dir_all(&hidden),
+    }
+}
+
+/// Deletes what [`remove_mirror_dir`] left in `root`. Blocking.
+pub fn remove_retired(root: &Path) -> io::Result<()> {
+    let entries = match std::fs::read_dir(root) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        other => other?,
+    };
+    for entry in entries {
+        let entry = entry?;
+        if entry.file_name().to_string_lossy().starts_with(RETIRED) {
+            std::fs::remove_dir_all(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+fn write_names(path: &Path, names: &[String]) -> io::Result<()> {
     if names.is_empty() {
-        return match std::fs::remove_file(&path) {
+        return match std::fs::remove_file(path) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),
         };
     }
     let text: String = names.iter().map(|n| format!("{n}\n")).collect();
-    if std::fs::read_to_string(&path).ok().as_deref() == Some(text.as_str()) {
+    if std::fs::read_to_string(path).ok().as_deref() == Some(text.as_str()) {
         return Ok(());
     }
-    super::write_atomically(&path, text.as_bytes())
+    super::write_atomically(path, text.as_bytes())
 }
 
 /// Sorted names of the directories in `dir` that are valid names.
