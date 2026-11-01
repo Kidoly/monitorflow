@@ -1,7 +1,7 @@
 # ADR-0020: Server page routing and hand-rolled SVG charts
 
 Date: 2026-10-19
-Status: accepted
+Status: accepted; certificate warning amended by ADR-0070
 
 ## Context
 
