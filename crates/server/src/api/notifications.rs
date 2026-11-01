@@ -88,7 +88,8 @@ fn require_global_admin(user: &CurrentUser) -> Result<(), ApiError> {
 }
 
 async fn view(db: impl PgExecutor<'_>, id: Uuid) -> Result<ChannelView, ApiError> {
-    sqlx::query_as(&format!("{VIEW} WHERE n.id = $1"))
+    // SQL-safe: interpolates only the constant VIEW.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("{VIEW} WHERE n.id = $1")))
         .bind(id)
         .fetch_optional(db)
         .await?
@@ -172,9 +173,12 @@ pub async fn list(
     user: CurrentUser,
 ) -> Result<Json<ChannelList>, ApiError> {
     require_global_admin(&user)?;
-    let channels = sqlx::query_as(&format!("{VIEW} ORDER BY n.created_at, n.id"))
-        .fetch_all(&state.pool)
-        .await?;
+    // SQL-safe: interpolates only the constant VIEW.
+    let channels = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{VIEW} ORDER BY n.created_at, n.id"
+    )))
+    .fetch_all(&state.pool)
+    .await?;
     Ok(Json(ChannelList { channels }))
 }
 

@@ -1193,9 +1193,10 @@ db_tests! {
         let before = |table: &'static str| {
             let pool = pool.clone();
             async move {
-                sqlx::query_scalar::<_, String>(&format!(
+                // SQL-safe: `table` is a literal name from this test.
+                sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
                     "SELECT string_agg(t::text, ',' ORDER BY id) FROM {table} t"
-                ))
+                )))
                 .fetch_one(&pool)
                 .await
                 .unwrap()

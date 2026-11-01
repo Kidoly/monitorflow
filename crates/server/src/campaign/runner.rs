@@ -139,11 +139,12 @@ impl Runner {
     /// are queued whatever its state, and not reported in the step.
     pub async fn advance(&self, id: Uuid, now: DateTime<Utc>) -> Result<Step, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
-        let row: Option<CampaignRow> = sqlx::query_as(&format!(
+        // SQL-safe: interpolates only the constant COLUMNS.
+        let row: Option<CampaignRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM campaigns
              WHERE id = $1 AND (state IN ('scheduled', 'running') OR sources_mode IS NOT NULL)
              FOR UPDATE SKIP LOCKED"
-        ))
+        )))
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?;
@@ -416,20 +417,21 @@ async fn queue(
             campaign_id: Some(row.id),
         };
         let command = CommandStore::enqueue_in(&mut *conn, &new).await?;
-        let column = if kind == CONFIGURE_SOURCES {
+        let update = if kind == CONFIGURE_SOURCES {
             configured += 1;
-            "sources_command_id = $3, restore_command_id = NULL"
+            "UPDATE campaign_targets
+             SET sources_command_id = $3, restore_command_id = NULL
+             WHERE campaign_id = $1 AND server_id = $2"
         } else {
-            "command_id = $3"
+            "UPDATE campaign_targets SET command_id = $3
+             WHERE campaign_id = $1 AND server_id = $2"
         };
-        sqlx::query(&format!(
-            "UPDATE campaign_targets SET {column} WHERE campaign_id = $1 AND server_id = $2"
-        ))
-        .bind(row.id)
-        .bind(target.server_id)
-        .bind(command.id)
-        .execute(&mut *conn)
-        .await?;
+        sqlx::query(update)
+            .bind(row.id)
+            .bind(target.server_id)
+            .bind(command.id)
+            .execute(&mut *conn)
+            .await?;
         peers.push(target.peer_id);
     }
     if peers.is_empty() && skipped == 0 {

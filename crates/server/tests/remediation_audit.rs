@@ -236,7 +236,8 @@ db_tests! {
             assert_eq!(sqlstate(result), INSUFFICIENT_PRIVILEGE, "{sql}");
         }
         for table in ["remediation_incident_events", "remediation_incidents"] {
-            let result = sqlx::query(&format!("TRUNCATE {table} CASCADE")).execute(&pool).await;
+            // SQL-safe: `table` is a literal name from this test.
+            let result = sqlx::query(sqlx::AssertSqlSafe(format!("TRUNCATE {table} CASCADE"))).execute(&pool).await;
             assert_eq!(sqlstate(result), INSUFFICIENT_PRIVILEGE, "{table}");
         }
         // A row that does not follow the head is refused, whatever its hash.

@@ -191,10 +191,13 @@ pub async fn create(
         },
     };
     let created = install_key::create(&state.pool, settings.ca_fingerprint, &key).await?;
-    let view = sqlx::query_as(&format!("{SELECT_KEYS} WHERE k.id = $1"))
-        .bind(created.id)
-        .fetch_one(&state.pool)
-        .await?;
+    // SQL-safe: interpolates only the constant SELECT_KEYS.
+    let view = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT_KEYS} WHERE k.id = $1"
+    )))
+    .bind(created.id)
+    .fetch_one(&state.pool)
+    .await?;
     Ok((
         StatusCode::CREATED,
         Json(CreatedKey {
@@ -219,10 +222,11 @@ pub async fn list(
         return Err(ApiError::Forbidden);
     }
     let (all_sites, sites) = scope.bind();
-    let keys = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant SELECT_KEYS.
+    let keys = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT_KEYS} WHERE $1 OR k.site_id = ANY($2)
          ORDER BY k.created_at DESC, k.id DESC LIMIT $3"
-    ))
+    )))
     .bind(all_sites)
     .bind(&sites)
     .bind(LIST_LIMIT)

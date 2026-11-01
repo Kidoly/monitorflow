@@ -193,10 +193,11 @@ const ENTRY_COLUMNS: &str = "id, site_id, server_id, metric, instance, compariso
 async fn list(state: &ApiState, user: &CurrentUser, owner: Owner) -> Result<EntryList, ApiError> {
     authorize(user, owner.site(&state.pool).await?, false)?;
     let (site_id, server_id) = owner.columns();
-    let entries = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entries = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ENTRY_COLUMNS} FROM thresholds
          WHERE site_id = $1 OR server_id = $2 ORDER BY metric, instance NULLS FIRST"
-    ))
+    )))
     .bind(site_id)
     .bind(server_id)
     .fetch_all(&state.pool)
@@ -298,13 +299,14 @@ async fn create(
     let valid = validate_entry(body(request)?).map_err(ApiError::Invalid)?;
     let (site_id, server_id) = owner.columns();
     let mut tx = state.pool.begin().await?;
-    let entry: Entry = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entry: Entry = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO thresholds
              (site_id, server_id, metric, instance, comparison, warning, critical, duration_s,
               hysteresis, enabled)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING {ENTRY_COLUMNS}"
-    ))
+    )))
     .bind(site_id)
     .bind(server_id)
     .bind(&valid.metric)
@@ -357,9 +359,10 @@ async fn lock_entry(
     user: &CurrentUser,
     id: Uuid,
 ) -> Result<Entry, ApiError> {
-    let entry: Option<Entry> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entry: Option<Entry> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ENTRY_COLUMNS} FROM thresholds WHERE id = $1 FOR UPDATE"
-    ))
+    )))
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?;
@@ -392,13 +395,14 @@ pub async fn update(
     let mut tx = state.pool.begin().await?;
     let before = lock_entry(&mut tx, &user, id).await?;
     let valid = validate_entry(body(request)?).map_err(ApiError::Invalid)?;
-    let entry: Entry = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entry: Entry = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE thresholds
          SET metric = $2, instance = $3, comparison = $4, warning = $5, critical = $6,
              duration_s = $7, hysteresis = $8, enabled = $9, updated_at = now()
          WHERE id = $1
          RETURNING {ENTRY_COLUMNS}"
-    ))
+    )))
     .bind(id)
     .bind(&valid.metric)
     .bind(&valid.instance)
@@ -467,9 +471,10 @@ pub async fn effective(
     .await?;
     let site_id = authorize(&user, server.map(|s| s.0), false)?;
     let (_, revision) = server.ok_or(ApiError::NotFound)?;
-    let entries: Vec<Entry> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entries: Vec<Entry> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ENTRY_COLUMNS} FROM thresholds WHERE site_id = $1 OR server_id = $2"
-    ))
+    )))
     .bind(site_id)
     .bind(server_id)
     .fetch_all(&mut *tx)
@@ -493,9 +498,10 @@ pub async fn effective_site(
 ) -> Result<Json<SiteEffective>, ApiError> {
     let owner = Owner::Site(parse_id(&id)?);
     let site_id = authorize(&user, owner.site(&state.pool).await?, false)?;
-    let entries: Vec<Entry> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entries: Vec<Entry> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ENTRY_COLUMNS} FROM thresholds WHERE site_id = $1"
-    ))
+    )))
     .bind(site_id)
     .fetch_all(&state.pool)
     .await?;

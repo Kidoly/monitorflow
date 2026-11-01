@@ -358,12 +358,13 @@ pub async fn append_in(
     let (head_seq, head_hash) = head.ok_or(AuditError::NotFound)?;
     let (actor_kind, actor_id) = event.actor.columns();
     // The trigger overwrites `hash`; GENESIS only fills the column.
-    let stored = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant EVENT_COLUMNS.
+    let stored = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO remediation_incident_events
              (incident_id, seq, kind, actor_kind, actor_id, payload, prev_hash, hash)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
          RETURNING {EVENT_COLUMNS}"
-    ))
+    )))
     .bind(incident)
     .bind(head_seq + 1)
     .bind(event.kind)
@@ -382,10 +383,11 @@ pub async fn events(
     db: impl PgExecutor<'_>,
     incident: Uuid,
 ) -> Result<Vec<StoredEvent>, AuditError> {
-    Ok(sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant EVENT_COLUMNS.
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {EVENT_COLUMNS} FROM remediation_incident_events
          WHERE incident_id = $1 ORDER BY seq"
-    ))
+    )))
     .bind(incident)
     .fetch_all(db)
     .await?)

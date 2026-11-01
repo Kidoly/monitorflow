@@ -76,9 +76,10 @@ async fn revoke(
         PeerRole::Relay => ("relays", "relay"),
         _ => ("servers", "server"),
     };
-    let row: Option<(String, Uuid)> = sqlx::query_as(&format!(
+    // SQL-safe: `table` is one of two constants, never input.
+    let row: Option<(String, Uuid)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT peer_id, site_id FROM {table} WHERE id = $1"
-    ))
+    )))
     .bind(id)
     .fetch_optional(&state.pool)
     .await?;
@@ -93,10 +94,11 @@ async fn revoke(
         .ok_or_else(|| ApiError::Internal("revocation is not configured".into()))?;
 
     let mut tx = state.pool.begin().await?;
-    let revoked_at: DateTime<Utc> = sqlx::query_scalar(&format!(
+    // SQL-safe: `table` is one of two constants, never input.
+    let revoked_at: DateTime<Utc> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "UPDATE {table} SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL
          RETURNING revoked_at"
-    ))
+    )))
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?

@@ -229,13 +229,14 @@ pub async fn list(
         }
         None => (None, None, None),
     };
-    let mut rows: Vec<Row> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant SELECT_SERVERS.
+    let mut rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT_SERVERS}
          WHERE ($1 OR s.site_id = ANY($2)) AND s.revoked_at IS NULL
            AND ($3::text IS NULL OR (si.name, s.hostname, s.peer_id) > ($3, $4, $5))
          ORDER BY si.name, s.hostname, s.peer_id
          LIMIT $6"
-    ))
+    )))
     .bind(all_sites)
     .bind(&sites)
     .bind(after_site)
@@ -271,10 +272,13 @@ pub async fn detail(
     Path(id): Path<String>,
 ) -> Result<Json<ServerDetail>, ApiError> {
     let id = parse_id(&id)?;
-    let row: Option<Row> = sqlx::query_as(&format!("{SELECT_SERVERS} WHERE s.id = $1"))
-        .bind(id)
-        .fetch_optional(&state.pool)
-        .await?;
+    // SQL-safe: interpolates only the constant SELECT_SERVERS.
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT_SERVERS} WHERE s.id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?;
     authorize(&user, row.as_ref().map(|r| r.site_id), false)?;
     let row = row.ok_or(ApiError::NotFound)?;
     let certificate = latest_certificate(&state.pool, PeerRole::Agent, &row.peer_id).await?;

@@ -182,7 +182,8 @@ pub async fn list(
     });
     // A server or site outside the user's scope matches nothing, as if it
     // had no incidents.
-    let mut rows: Vec<IncidentView> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant SELECT.
+    let mut rows: Vec<IncidentView> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT}
          WHERE ($1 OR si.id = ANY($2))
            AND ($3::text IS NULL OR i.state = $3)
@@ -194,7 +195,7 @@ pub async fn list(
            AND ($9::boolean IS NULL OR (i.state = 'open', i.opened_at, i.id) < ($9, $10, $11))
          ORDER BY i.state = 'open' DESC, i.opened_at DESC, i.id DESC
          LIMIT $12"
-    ))
+    )))
     .bind(all_sites)
     .bind(&sites)
     .bind(state_filter)
@@ -229,10 +230,12 @@ pub async fn detail(
     Path(id): Path<String>,
 ) -> Result<Json<IncidentDetail>, ApiError> {
     let id = parse_id(&id)?;
-    let incident: Option<IncidentView> = sqlx::query_as(&format!("{SELECT} WHERE i.id = $1"))
-        .bind(id)
-        .fetch_optional(&state.pool)
-        .await?;
+    // SQL-safe: interpolates only the constant SELECT.
+    let incident: Option<IncidentView> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE i.id = $1")))
+            .bind(id)
+            .fetch_optional(&state.pool)
+            .await?;
     authorize(&user, incident.as_ref().map(|i| i.site_id), false)?;
     let incident = incident.ok_or(ApiError::NotFound)?;
     // Events are appended as they happen, so their ID is their order.

@@ -127,7 +127,7 @@ fn presented(cert_pem: &str) -> PresentedCert {
     PresentedCert::from_der(&der).unwrap()
 }
 
-async fn count(pool: &PgPool, sql: &str) -> i64 {
+async fn count(pool: &PgPool, sql: &'static str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
 }
 

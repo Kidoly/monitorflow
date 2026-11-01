@@ -66,9 +66,10 @@ const SELECT_SITES: &str = "SELECT si.id, si.name, count(s.id) AS server_count,
 
 /// The site `id`, without access checks.
 pub(super) async fn fetch(state: &ApiState, id: Uuid) -> Result<Option<SiteView>, sqlx::Error> {
-    let site: Option<SiteView> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant SELECT_SITES.
+    let site: Option<SiteView> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT_SITES} WHERE si.id = $1 GROUP BY si.id, c.name"
-    ))
+    )))
     .bind(id)
     .fetch_optional(&state.pool)
     .await?;
@@ -94,12 +95,13 @@ pub async fn list(
         return Err(ApiError::Forbidden);
     }
     let (all_sites, sites) = user.readable_sites().bind();
-    let sites: Vec<SiteView> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant SELECT_SITES.
+    let sites: Vec<SiteView> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT_SITES}
          WHERE $1 OR si.id = ANY($2)
          GROUP BY si.id, c.name
          ORDER BY si.name"
-    ))
+    )))
     .bind(all_sites)
     .bind(&sites)
     .fetch_all(&state.pool)

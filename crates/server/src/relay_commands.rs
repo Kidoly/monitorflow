@@ -64,12 +64,13 @@ pub async fn enqueue_in(
     ttl: Duration,
     requested_by: Option<Uuid>,
 ) -> Result<Option<RelayCommand>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO relay_commands (relay_id, kind, payload, version, expires_at, requested_by)
          VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5), $6)
          ON CONFLICT (relay_id) WHERE state IN ('queued', 'sent', 'running') DO NOTHING
          RETURNING {COLUMNS}"
-    ))
+    )))
     .bind(relay_id)
     .bind(SELF_UPDATE)
     .bind(payload)
@@ -86,10 +87,11 @@ pub async fn recent(
     relay_id: Uuid,
     limit: i64,
 ) -> Result<Vec<RelayCommand>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM relay_commands WHERE relay_id = $1
          ORDER BY issued_at DESC LIMIT $2"
-    ))
+    )))
     .bind(relay_id)
     .bind(limit)
     .fetch_all(pool)
@@ -98,11 +100,12 @@ pub async fn recent(
 
 /// The latest command of each of `relay_ids` that has one.
 pub async fn latest(pool: &PgPool, relay_ids: &[Uuid]) -> Result<Vec<RelayCommand>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT DISTINCT ON (relay_id) {COLUMNS} FROM relay_commands
          WHERE relay_id = ANY($1)
          ORDER BY relay_id, issued_at DESC"
-    ))
+    )))
     .bind(relay_ids)
     .fetch_all(pool)
     .await

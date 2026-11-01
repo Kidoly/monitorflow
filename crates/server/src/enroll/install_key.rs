@@ -292,13 +292,14 @@ async fn new_id(
         let candidate = with_suffix(base, n);
         // Any trace of the ID counts, revoked or pending, in any case:
         // a key never gives a new host an ID that was ever given out.
-        let taken: bool = sqlx::query_scalar(&format!(
+        // SQL-safe: `table` is one of two constants, never input.
+        let taken: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT EXISTS (SELECT 1 FROM {table} WHERE lower(peer_id) = $1)
                  OR EXISTS (SELECT 1 FROM certificates
                             WHERE peer_role = $2 AND lower(peer_id) = $1)
                  OR EXISTS (SELECT 1 FROM enrollment_tokens
                             WHERE role = $2 AND lower(peer_id) = $1)"
-        ))
+        )))
         .bind(&candidate)
         .bind(role)
         .fetch_one(&mut **tx)

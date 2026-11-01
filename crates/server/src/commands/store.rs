@@ -57,11 +57,12 @@ impl CommandStore {
         db: impl PgExecutor<'_>,
         new: &NewCommand,
     ) -> Result<CommandRow, sqlx::Error> {
-        sqlx::query_as(&format!(
+        // SQL-safe: interpolates only the constant COLUMNS.
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "INSERT INTO commands AS c (server_id, kind, payload, expires_at, requested_by, campaign_id)
              VALUES ($1, $2, $3, now() + make_interval(secs => $4), $5, $6)
              RETURNING {COLUMNS}"
-        ))
+        )))
         .bind(new.server_id)
         .bind(&new.kind)
         .bind(&new.payload)
@@ -81,13 +82,14 @@ impl CommandStore {
         limit: i64,
     ) -> Result<Vec<CommandRow>, sqlx::Error> {
         let (before_at, before_id) = before.unzip();
-        sqlx::query_as(&format!(
+        // SQL-safe: interpolates only the constant COLUMNS.
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM commands c
              WHERE c.server_id = $1
                AND ($2::timestamptz IS NULL OR (c.issued_at, c.id) < ($2, $3))
              ORDER BY c.issued_at DESC, c.id DESC
              LIMIT $4"
-        ))
+        )))
         .bind(server_id)
         .bind(before_at)
         .bind(before_id)
@@ -97,16 +99,20 @@ impl CommandStore {
     }
 
     pub async fn get(&self, id: Uuid) -> Result<Option<CommandRow>, sqlx::Error> {
-        sqlx::query_as(&format!("SELECT {COLUMNS} FROM commands c WHERE c.id = $1"))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
+        // SQL-safe: interpolates only the constant COLUMNS.
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLUMNS} FROM commands c WHERE c.id = $1"
+        )))
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
     }
 
     /// What the agent `peer_id` should have now: its command in flight
     /// (`sent` or `running`), else its oldest unexpired queued one.
     pub async fn next(&self, peer_id: &str) -> Result<Option<CommandRow>, sqlx::Error> {
-        sqlx::query_as(&format!(
+        // SQL-safe: interpolates only the constant COLUMNS.
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM commands c
              JOIN servers s ON s.id = c.server_id
              WHERE s.peer_id = $1 AND s.revoked_at IS NULL
@@ -114,7 +120,7 @@ impl CommandStore {
                     OR (c.state = 'queued' AND c.expires_at > now()))
              ORDER BY c.state = 'queued', c.issued_at, c.id
              LIMIT 1"
-        ))
+        )))
         .bind(peer_id)
         .fetch_optional(&self.pool)
         .await
