@@ -205,7 +205,7 @@ fn tell_relays(root: &Path, name: &str) -> std::io::Result<()> {
 }
 
 /// Whether the file or directory `entry` of dnf's cache is `mirror`'s:
-/// `<repo>-<16 hex>/`, `<repo>.solv` or `<repo>-filenames.solvx`, where a
+/// `<repo>-<16 hex>/`, `<repo>.solv` or `<repo>-<kind>.solvx`, where a
 /// mirror named `rocky-9` must not match `mf-rocky-9-baseos`.
 fn in_dnf_cache(entry: &str, mirror: &Mirror) -> bool {
     let Some(rest) = entry.strip_prefix(&dnf::repo_id(mirror)) else {
@@ -214,7 +214,13 @@ fn in_dnf_cache(entry: &str, mirror: &Mirror) -> bool {
     let hash = rest
         .strip_prefix('-')
         .is_some_and(|h| h.len() == 16 && h.bytes().all(|b| b.is_ascii_hexdigit()));
-    hash || rest == ".solv" || rest == "-filenames.solvx"
+    let solv = [
+        ".solv",
+        "-filenames.solvx",
+        "-presto.solvx",
+        "-updateinfo.solvx",
+    ];
+    hash || solv.contains(&rest)
 }
 
 /// Removes the working tree of a dnf mirror and its part of dnf's cache.
