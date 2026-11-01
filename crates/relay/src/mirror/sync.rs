@@ -308,6 +308,7 @@ impl Syncer {
     /// time, and records it in `progress`. Entries missing upstream are
     /// skipped if `optional`, else fail the sync. Fails before fetching
     /// anything if the snapshot would list more than `max_snapshot_bytes`.
+    /// Returns the first failure once no download is running.
     async fn obtain(
         &self,
         run: &Arc<Run>,
@@ -334,11 +335,11 @@ impl Syncer {
                 limit: self.max_snapshot_bytes,
             });
         }
-        let stats = &mut progress.stats;
         let mut tasks = JoinSet::new();
         let mut queue = todo.into_iter();
+        let mut failure = None;
         loop {
-            while tasks.len() < self.max_downloads {
+            while failure.is_none() && tasks.len() < self.max_downloads {
                 let Some(entry) = queue.next() else { break };
                 let run = run.clone();
                 tasks.spawn(async move {
@@ -346,35 +347,51 @@ impl Syncer {
                     (entry, got)
                 });
             }
-            // An error drops `tasks`, which aborts the downloads in flight.
+            // A failure starts nothing new but lets the downloads in flight
+            // finish: aborting one drops it mid-step while the `tokio::fs`
+            // call it waits on goes on, past the end of this sync and into
+            // the staging directory the next one uses.
             let Some(done) = tasks.join_next().await else {
-                return Ok(());
+                return failure.map_or(Ok(()), Err);
             };
-            let (entry, got) = done?;
-            let sha256 = match got? {
-                Got::Kept(sha256) => {
-                    stats.kept += 1;
-                    sha256
-                }
-                Got::Linked(sha256) => {
-                    stats.linked += 1;
-                    sha256
-                }
-                Got::Downloaded(got) => {
-                    stats.downloaded += 1;
-                    stats.bytes += got.size;
-                    got.checksum
-                }
-                Got::Missing if optional => {
-                    progress.listed.remove(&entry.path);
-                    continue;
-                }
-                Got::Missing => return Err(SyncError::Missing(entry.path)),
-            };
-            let stored = Stored::new(&entry, sha256);
-            progress.done.insert(entry.path, stored);
+            if let Err(error) = record(done, optional, progress) {
+                failure.get_or_insert(error);
+            }
         }
     }
+}
+
+/// Records the outcome of one [`Syncer::obtain`] task in `progress`.
+fn record(
+    done: Result<(Entry, Result<Got, SyncError>), tokio::task::JoinError>,
+    optional: bool,
+    progress: &mut Progress,
+) -> Result<(), SyncError> {
+    let (entry, got) = done?;
+    let stats = &mut progress.stats;
+    let sha256 = match got? {
+        Got::Kept(sha256) => {
+            stats.kept += 1;
+            sha256
+        }
+        Got::Linked(sha256) => {
+            stats.linked += 1;
+            sha256
+        }
+        Got::Downloaded(got) => {
+            stats.downloaded += 1;
+            stats.bytes += got.size;
+            got.checksum
+        }
+        Got::Missing if optional => {
+            progress.listed.remove(&entry.path);
+            return Ok(());
+        }
+        Got::Missing => return Err(SyncError::Missing(entry.path)),
+    };
+    let stored = Stored::new(&entry, sha256);
+    progress.done.insert(entry.path, stored);
+    Ok(())
 }
 
 impl Run {
