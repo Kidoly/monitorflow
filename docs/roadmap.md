@@ -105,3 +105,50 @@ Limits already recorded in the ADRs that get in the way of daily use. What the f
 
 - [ ] Delete a mirror: from the interface, refused or handled while something still uses it, disk space and relay copies reclaimed.
 - [ ] Show whether each server accepts commands: reported by the agent, unknown for agents that do not report it, used wherever a command is offered.
+
+## Phase 10 — Notifications
+
+Reach people outside the web interface. Email and webhook channels shipped in Phase 8 (ADR-0060).
+
+- [ ] Slack, Teams and Discord channels.
+- [ ] Routing per customer and site.
+- [ ] Silences.
+- [ ] Alert grouping.
+- [ ] Escalation.
+- [ ] PagerDuty-style on-call.
+
+## Phase 11 — Windows parity
+
+Bring Windows to the level of Linux after Phase 6. The Windows updates list already shows on a server's page (ADR-0049).
+
+- [ ] AI remediation on Windows, where `shell` commands are refused today (ADR-0047).
+- [ ] The file log sensor on Windows, following file IDs through rotation (ADR-0048).
+- [ ] The configured update source in the inventory: WSUS URL or Windows Update (ADR-0049).
+
+## Phase 12 — Production hardening
+
+Needed before real customers. Daily backups and restore shipped in Phase 8 (ADR-0058).
+
+- [ ] High availability for the server.
+- [ ] CA key rotation.
+- [ ] TLS between the server and VictoriaMetrics and VictoriaLogs (ADR-0051).
+- [ ] Load test on about 1,000 agents.
+
+## Phase 13 — Monitoring depth
+
+Mostly follow-ups that the ADRs postponed.
+
+- [ ] journald and log forwarding.
+- [ ] Disk I/O.
+- [ ] Proxmox containers (ADR-0044).
+- [ ] LVM and ZFS snapshots.
+- [ ] Automatic discovery of Proxmox servers instead of mapping each one by hand (ADR-0044).
+- [ ] Custom dashboards.
+
+## Phase 14 — Commercial
+
+The open questions in `docs/product.md`.
+
+- [ ] Subscription tiers and licensing.
+- [ ] Billing.
+- [ ] Final product name.
