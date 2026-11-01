@@ -183,6 +183,30 @@ check "a dnf mirror keeps upstream groups" keeps_groups
 check "apt verifies and installs from the mirror" apt_installs
 check "dnf verifies and installs from the mirror" dnf_installs
 
+# Retention (ADR-0074), with the real tools: upstream replaces the package,
+# and once the snapshots holding the old one are past the seven kept, a
+# pass deletes it for good while clients still install from `current`.
+mirrors=/var/lib/monitorflow/server/mirrors
+in_mirror() { compose exec -T mirror sh -c "$1"; }
+old_packages() { in_mirror "find $mirrors/aptly/pool $mirrors/dnf -name '*mf-fixture?1.0*' | wc -l"; }
+disk_kib() { in_mirror "du -sk $mirrors/aptly $mirrors/dnf | awk '{ total += \$1 } END { print total }'"; }
+snapshot_count() { get "mirrors/$(get mirrors | jq -r --arg n "$1" '.mirrors[] | select(.name == $n) | .id')" | jq '[.snapshots[] | select(.state == "published")] | length'; }
+docker exec "$fixture" sh -c 'rm -rf /srv/apt /srv/dnf && mv /srv/next/apt /srv/next/dnf /srv/'
+for _ in 1 2 3 4 5 6 7 8; do
+    check "a sync publishes the upgraded apt upstream" synced fixture-apt
+    check "a sync publishes the upgraded dnf upstream" synced fixture-dnf
+done
+check "old snapshots still hold the old packages" test "$(old_packages)" -gt 0
+disk_before=$(disk_kib)
+check "retention removes old snapshots" compose exec -T server monitorflow-server mirror prune
+disk_after=$(disk_kib)
+check "their packages are gone from the disk" test "$(old_packages)" = 0
+check "and the disk use went down ($disk_before to $disk_after KiB)" test "$disk_after" -lt "$disk_before"
+check "seven apt snapshots stay" test "$(snapshot_count fixture-apt)" = 7
+check "seven dnf snapshots stay" test "$(snapshot_count fixture-dnf)" = 7
+check "apt still installs from the mirror" apt_installs
+check "dnf still installs from the mirror" dnf_installs
+
 if [ "$failed" -ne 0 ]; then
     for out in "$work"/s_client.*; do
         [ -e "$out" ] && { echo "== $out"; head -40 "$out"; }
