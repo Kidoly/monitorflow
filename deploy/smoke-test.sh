@@ -138,7 +138,9 @@ until_true() {
 check "the fixture upstream starts" until_true 60 fixture_up
 docker exec "$fixture" cat /srv/upstream-key.gpg | compose exec -T mirror gpg --batch --quiet \
     --no-default-keyring --keyring /var/lib/monitorflow/server/mirrors/upstream-keyring.gpg --import
-add() { compose exec -T server monitorflow-server mirror add "$@" >/dev/null; }
+# Manual: the scheduler syncs a new mirror at its next poll, and the sync
+# below is then refused as busy if it starts in that moment.
+add() { compose exec -T server monitorflow-server mirror add --interval manual "$@" >/dev/null; }
 add --name fixture-apt --family apt --url http://fixture:8000/apt --distribution fixture \
     --component main --component empty --arch amd64
 # With an architecture: the noarch package must still come.
@@ -152,7 +154,7 @@ synced() {
     local id code
     id=$(get mirrors | jq -r --arg n "$1" '.mirrors[] | select(.name == $n) | .id')
     code=$(post "mirrors/$id/sync" '')
-    [ "$code" = 202 ] || { echo "sync refused: $(cat "$work/answer")" >&2; return 1; }
+    [ "$code" = 202 ] || { echo "$1: sync refused ($code): $(cat "$work/answer")" >>"$work/refused"; return 1; }
     until_true 180 run_ended "$id" "$1" || return 1
     jq -e '.last_run.state == "succeeded" and .current_snapshot != null' "$work/mirror-$1" >/dev/null
 }
@@ -233,6 +235,7 @@ if [ "$failed" -ne 0 ]; then
         [ -e "$out" ] && { echo "== $out"; head -40 "$out"; }
     done
     compose logs --tail 50 server web postgres mirror
+    [ -e "$work/refused" ] && cat "$work/refused"
     for out in "$work"/mirror-*; do
         [ -e "$out" ] && { echo "== $out"; jq -r '.runs[0].output // .' "$out" | tail -40; }
     done
