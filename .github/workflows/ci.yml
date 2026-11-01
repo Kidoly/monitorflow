@@ -69,19 +69,19 @@ jobs:
           deploy/windows/smoke-test.ps1 -Msi $msi -UpgradeMsi target\msi-upgrade\monitorflow-agent-255.0.0-x64.msi
       - name: Upload the MSI logs
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: msi-smoke-test-logs
           path: |
             ${{ runner.temp }}/monitorflow-msi
             C:/ProgramData/MonitorFlow/agent/logs
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: monitorflow-agent-windows-x86_64
           path: target/release/monitorflow-agent.exe
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: monitorflow-agent-windows-x86_64-msi
           path: target/msi/*.msi

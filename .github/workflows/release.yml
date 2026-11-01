@@ -93,7 +93,7 @@ jobs:
         run: |
           test "$(dist/monitorflow-agent-linux-x86_64 --version)" = "monitorflow-agent ${{ needs.version.outputs.version }}"
           test "$(dist/monitorflow-relay-linux-x86_64 --version)" = "monitorflow-relay ${{ needs.version.outputs.version }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-${{ matrix.arch }}
           path: dist/
@@ -117,7 +117,7 @@ jobs:
           New-Item -ItemType Directory dist | Out-Null
           Copy-Item target\release\monitorflow-agent.exe dist\monitorflow-agent-windows-x86_64.exe
           Copy-Item (Get-ChildItem target\msi\*.msi).FullName dist\monitorflow-agent-windows-x86_64.msi
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-x86_64
           path: dist/
@@ -161,7 +161,7 @@ jobs:
       - run: |
           mkdir digests
           echo "${{ steps.build.outputs.digest }}" >"digests/${{ matrix.image }}-${{ matrix.platform }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digest-${{ matrix.image }}-${{ matrix.platform }}
           path: digests/
@@ -212,7 +212,7 @@ jobs:
           jq -n --arg version "$VERSION" --argjson images "$images" \
             '{version: $version, images: $images}' >dist/images.json
           cat dist/images.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: images-json
           path: dist/
@@ -263,7 +263,7 @@ jobs:
           fi
           MF_SIGNING_KEY=$key deploy/release-files.sh dist
           rm -f "$key"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-files
           path: dist/
