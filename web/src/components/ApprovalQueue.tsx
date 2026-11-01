@@ -14,7 +14,7 @@ import {
 } from "@/lib/api";
 import { riskWord, snapshotReason, timeLeft } from "@/lib/remediation";
 import { administersEverything, useMe } from "@/lib/me";
-import { AI_SETTINGS_PATH, AUDIT_PATH, auditHref, serverHref } from "@/lib/routes";
+import { AI_SETTINGS_PATH, AUDIT_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { seriesTitle } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
@@ -22,7 +22,7 @@ import { useUrlParams } from "@/lib/urlState";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
-import { FilterBar } from "@/components/ui/FilterBar";
+import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
 import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
@@ -136,9 +136,18 @@ export function ApprovalQueue() {
       {!data && error !== null && !isUnauthorized(error) ? (
         <ErrorState what="the approval queue" error={describeError(error)} onRetry={refresh} />
       ) : data && shown.length === 0 ? (
-        <EmptyState title="Nothing waiting for approval">
-          {tier ? "No command of this tier is waiting." : "Commands the risk rules hold for a human appear here."}
-        </EmptyState>
+        tier ? (
+          <NoMatches names={["tier"]} title="Nothing waiting for approval">
+            No command of this tier is waiting.
+          </NoMatches>
+        ) : (
+          <EmptyState
+            title="Nothing waiting for approval"
+            actions={<ButtonLink href={scopedHref(incidentsHref(), scope)}>Open incidents</ButtonLink>}
+          >
+            Commands the risk rules hold for a person appear here.
+          </EmptyState>
+        )
       ) : (
         <div className={styles.page}>
           <DataTable

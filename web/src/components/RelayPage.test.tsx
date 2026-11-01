@@ -123,7 +123,6 @@ describe("RelayPage", () => {
     render(<RelayPage id={ID} me={siteAdmin} />);
     expect(await screen.findByRole("heading", { level: 1, name: "relay-1" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Relays/relay-1");
-    expect(screen.getByText("Expires in 5 days")).toBeInTheDocument();
     expect(screen.getByText("Site").nextElementSibling).toHaveTextContent("paris · acme");
     expect(screen.getByText("Certificate serial").nextElementSibling).toHaveTextContent("0a1b2c");
 
@@ -136,7 +135,7 @@ describe("RelayPage", () => {
     const [, web, db] = within(attached).getAllByRole("row");
     // The worst open incident of the server, with how many more are open.
     expect(web).toHaveTextContent(/web-1\s*Debian 12 · agent 0\.4\.2\s*Online\s*Critical\s+CPU usage\s*92%\s*· 1 more/);
-    expect(db).toHaveTextContent(/db-1\s*Debian 12 · agent 0\.4\.1\s*Offline\s*No heartbeat since 2026-10-20 22:05/);
+    expect(db).toHaveTextContent(/db-1\s*Debian 12 · agent 0\.4\.1\s*Offline\s*Last contact 2026-10-20 22:05/);
     // A site administrator cannot remove.
     expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
   });

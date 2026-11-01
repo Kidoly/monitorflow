@@ -249,7 +249,7 @@ export function IncidentPage({ id }: { id: string | null }) {
           <FactsBox
             title="Rule"
             facts={[
-              { label: "Opens", value: `after ${formatSeconds(OFFLINE_AFTER_S)} without a heartbeat` },
+              { label: "Opens", value: `after ${formatSeconds(OFFLINE_AFTER_S)} without contact` },
               { label: "Resolves when", value: "it connects again, or is muted or removed" },
               { label: "Mute", value: <>Offline alerts on {host}, or for its site in Administration › Sites</> },
             ]}
@@ -290,7 +290,7 @@ function thresholdFacts(threshold: ThresholdSnapshot, format: (v: number) => str
       ),
     },
     {
-      label: "Hysteresis",
+      label: "Recovery margin",
       value: (
         <>
           {format(threshold.hysteresis)} <span className={styles.muted}>{above ? "below" : "above"} the threshold before resolving</span>

@@ -214,7 +214,7 @@ export const CHECK_TYPES: CheckType[] = [
     os: null,
     fields: [
       { key: "port", label: "Port", placeholder: "443", check: portNumber },
-      { key: "host", label: "Host", placeholder: "127.0.0.1", initial: "127.0.0.1", hint: "Where the agent connects: this server by default." },
+      { key: "host", label: "Address", placeholder: "127.0.0.1", initial: "127.0.0.1", hint: "Where the agent connects: this server by default." },
     ],
     nameFrom: "port",
     severity: "critical",

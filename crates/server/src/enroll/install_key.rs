@@ -54,7 +54,7 @@ impl KeyRequest {
         let relay = self.role == PeerRole::Relay;
         if self.role == PeerRole::Server {
             return Err(TokenError::Invalid(
-                "install keys enroll agents and relays".into(),
+                "install commands are for agents and relays".into(),
             ));
         }
         if relay && (self.max_hosts != Some(1) || self.require_approval) {

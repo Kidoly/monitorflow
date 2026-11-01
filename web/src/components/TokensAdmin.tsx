@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 
-import { Button, fieldClass } from "@/components/ui/Button";
+import { Button, ButtonLink, fieldClass } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { type Column, DataTable } from "@/components/ui/DataTable";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
@@ -39,7 +39,7 @@ import { administersCustomer, administersEverything } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
 
 import { AdminLayout } from "./AdminLayout";
-import { SERVER_UPDATE_PATH } from "@/lib/routes";
+import { SERVER_UPDATE_PATH, SITES_PATH } from "@/lib/routes";
 import styles from "./AdminPages.module.css";
 import { CreateInstallKey, InstallKeyTable, PendingHosts } from "./InstallKeys";
 
@@ -79,7 +79,7 @@ export function TokensAdmin({ me }: { me: Me }) {
 
   if (!allowed) {
     return (
-      <NoPermission title="Enrollment tokens need a customer administrator role.">
+      <NoPermission title="Adding servers needs a customer administrator role.">
         An administrator role on a whole customer is needed; a site administrator role is not enough.
       </NoPermission>
     );
@@ -89,17 +89,19 @@ export function TokensAdmin({ me }: { me: Me }) {
     <div className={styles.page}>
       <PageHeader
         title="Add servers"
-        meta="Paste one command on each host: the agent installs, enrolls and appears under the host's name."
+        meta="Paste one command on each server: the agent installs, connects and appears under the server's name."
       />
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
       )}
       {!data && error ? (
-        <ErrorState what="enrollment tokens" error={describeError(error)} onRetry={refresh} />
+        <ErrorState what="install commands" error={describeError(error)} onRetry={refresh} />
       ) : (
         <>
           {data && administered.length === 0 ? (
-            <EmptyState title="No site to enroll into yet">Create one under Sites first.</EmptyState>
+            <EmptyState title="No site to add servers to yet" actions={<ButtonLink variant="k" href={SITES_PATH}>Create a site</ButtonLink>}>
+              Servers belong to a site. Create one, then come back here.
+            </EmptyState>
           ) : createdKey ? (
             <NewInstallKey
               installKey={createdKey}
@@ -230,13 +232,13 @@ function CreateToken({
           </div>
         </fieldset>
         <label className={styles.field}>
-          Peer ID
+          Name
           <input
             ref={peerRef}
             className={cx(fieldClass, styles.mono)}
             value={peerId}
             onChange={(e) => setPeerId(e.target.value)}
-            placeholder="hostname or ID"
+            placeholder="server name"
             required
             pattern="[A-Za-z0-9._\-]{1,64}"
             title="1 to 64 letters, digits, dots, dashes or underscores"
@@ -267,7 +269,7 @@ function CreateToken({
       </div>
       <label className={styles.field}>
         <span>
-          Server names{" "}
+          Addresses{" "}
           <span className={styles.fieldNote}>— relays only; the DNS names or IPs agents use to reach it</span>
         </span>
         <input
@@ -394,7 +396,7 @@ export function NewInstallKey({
       </div>
       <Banner tone="warn" role="alert">
         <strong>This command will not be shown again.</strong> Copy it now and keep it with your notes or deployment
-        scripts. It works on {key.max_hosts === null ? "any number of hosts" : `up to ${key.max_hosts} hosts`}
+        scripts. It works on {key.max_hosts === null ? "any number of servers" : `up to ${key.max_hosts} servers`}
         {key.require_approval ? ", which wait for your approval below" : ""}. If you lose it, create a new one.
       </Banner>
       <ServerAddress value={address} editable={editable} onChange={setAddress} />
@@ -430,8 +432,8 @@ export function NewRelayKey({
         </h2>
       </div>
       <Banner tone="warn" role="alert">
-        <strong>This command will not be shown again and works on one host.</strong> Paste it on the relay&apos;s host;
-        the relay then appears on this page, and you confirm its names.
+        <strong>This command will not be shown again and works on one server.</strong> Paste it on the relay&apos;s server;
+        the relay then appears on this page, and you confirm its addresses.
       </Banner>
       <ServerAddress value={address} editable={editable} onChange={setAddress} />
       <RelayInstallCommand target={key} />
@@ -495,7 +497,7 @@ export function ServerAddress({
   return (
     <div className={styles.field}>
       <span id={labelId}>
-        Hosts reach this server at{" "}
+        Agents reach this server at{" "}
         <span className={styles.fieldNote}>{note}</span>
       </span>
       {editable ? (
@@ -554,7 +556,7 @@ export function ServerAddress({
       )}
       {!value.certified && (
         <Banner tone="warn">
-          <strong>Hosts will refuse to connect to {value.address}:</strong> the server&apos;s certificate is not issued
+          <strong>Agents will refuse to connect to {value.address}:</strong> the server&apos;s certificate is not issued
           for it{value.names.length > 0 && <> (its names: {value.names.join(", ")})</>}. Pick one of its names, or add{" "}
           {value.address} to <code>SERVER_NAMES</code> in the server&apos;s <code>.env</code> (
           <code>server_names</code> in <code>server.toml</code>) and restart the server, which then issues itself a new
@@ -638,7 +640,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
       </fieldset>
       {source === "central" && central && !shared && (
         <p className={styles.fieldNote}>
-          Release {central.version} from this server. The commands check its checksums, so hosts need not trust this
+          Release {central.version} from this server. The commands check its checksums, so servers need not trust this
           site&apos;s certificate.
         </p>
       )}
@@ -658,7 +660,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
       </label>
       {!valid && (
         <p className={styles.formError} role="alert">
-          Enter a host name or IP address, with an optional port; IPv6 addresses in brackets.
+          Enter a name or IP address, with an optional port; IPv6 addresses in brackets.
         </p>
       )}
       {shared ? (
@@ -700,13 +702,13 @@ function RelayInstallCommand({ target }: { target: InstallTarget }) {
       </fieldset>
       {source === "central" && central && "text" in command && (
         <p className={styles.fieldNote}>
-          Release {central.version} from this server. The command checks its checksums, so the host need not trust this
+          Release {central.version} from this server. The command checks its checksums, so the relay need not trust this
           site&apos;s certificate.
         </p>
       )}
       <label className={styles.check}>
         <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} /> Serve the package
-        mirrors and agent releases to this site&apos;s hosts{" "}
+        mirrors and agent releases to this site&apos;s servers{" "}
         <span className={styles.fieldNote}>
           — the relay copies every mirror added under Mirrors, 50 to 400 GiB per distribution
         </span>
@@ -879,7 +881,7 @@ function TokenTable({
   const columns: Column<EnrollmentToken>[] = [
     {
       key: "peer",
-      header: "Peer",
+      header: "Name",
       cell: (token) => <span className={token.state === "pending" ? styles.peer : styles.mono}>{token.peer_id}</span>,
     },
     { key: "role", header: "Role", cell: (token) => ROLE_WORDS[token.role] },
@@ -929,7 +931,7 @@ function TokenTable({
       ) : (
         <DataTable
           bare
-          label="Enrollment tokens"
+          label="Single-use tokens"
           columns={columns}
           rows={rows}
           rowKey={(token) => token.id}
@@ -943,7 +945,7 @@ function TokenTable({
                 triggerVariant="default"
                 triggerName={`Revoke the token for ${token.peer_id}`}
                 title="Revoke this token?"
-                consequence={`${token.peer_id} will not be able to enroll with it.`}
+                consequence={`${token.peer_id} will not be able to connect with it.`}
                 confirmLabel="Revoke token"
                 pendingLabel="Revoking…"
                 onConfirm={async () => {

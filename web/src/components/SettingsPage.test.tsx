@@ -96,7 +96,7 @@ describe("SettingsPage", () => {
     expect(screen.getByText(/default 12 hours/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Sign out when idle/)).toHaveValue(30);
     expect(screen.getByLabelText(/Keep metrics/)).toHaveValue(90);
-    expect(screen.getByLabelText(/Hosts reach this server at/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Agents reach this server at/)).toBeInTheDocument();
     for (const label of ["AI", "Notifications", "Automatic updates", "Backups", "Server update", "Users and roles"]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }

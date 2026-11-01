@@ -190,7 +190,7 @@ describe("ServerUpdatePage", () => {
     await user.upload(screen.getByLabelText("Release files"), [new File(["1"], "VERSION"), new File(["2"], "SHA256SUMS")]);
     await user.click(screen.getByRole("button", { name: "Import" }));
     expect(await screen.findByText(/Release 0.3.0 is on this server/)).toHaveTextContent(
-      "Without install.sh, Linux hosts cannot install from this server.",
+      "Without install.sh, Linux servers cannot install from this server.",
     );
     expect(await screen.findByText(/It holds 0.3.0/)).toBeInTheDocument();
 

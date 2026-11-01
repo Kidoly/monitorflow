@@ -12,10 +12,11 @@
 #   MF_SERVER        host:port (or https URL) of the upstream, server or
 #                    relay. Required on the first install; port 7443 by
 #                    default. IPv6 addresses in brackets: [2001:db8::1]:7443
-#   MF_TOKEN         the site's install key (agents, ADR-0058) or a one-time
-#                    enrollment token. Required unless enrolled.
-#   MF_ENROLL        host:port (or https URL) of the server's enrollment
-#                    listener. Defaults to MF_SERVER's host on port 7445;
+#   MF_TOKEN         the token of the site's install command (agents,
+#                    ADR-0058) or a single-use token. Required on the first
+#                    install.
+#   MF_ENROLL        host:port (or https URL) where the central server takes
+#                    first connections. Defaults to MF_SERVER's host on port 7445;
 #                    set it when MF_SERVER is a relay.
 #   MF_MIRROR_URL    relay only: the http(s) URL this relay's agents reach
 #                    its mirror listener at, like http://relay1.example.com:7480;
@@ -30,7 +31,7 @@
 #                    of the central server (ADR-0054). Every file is then
 #                    checked against it, so downloads do not check the
 #                    certificate (still HTTPS only).
-#   MF_TIMEOUT       seconds to wait for the enrollment; 120 by default.
+#   MF_TIMEOUT       seconds to wait for the first connection; 120 by default.
 #   MF_REQUIRE_SIGNATURE=1  fail when OpenSSL 3 is missing and the
 #                    release signature cannot be checked.
 #   MF_ALLOW_UNSIGNED=1  install a release without SHA256SUMS.sig, like
@@ -278,12 +279,12 @@ wait_for_enrollment() {
             systemctl stop "$SERVICE" || true
             rm -f "$ENV_FILE"
             if [ "$waited" -ge "$MF_TIMEOUT" ]; then
-                say "the $MF_ROLE did not enroll within $MF_TIMEOUT seconds"
+                say "the $MF_ROLE did not connect within $MF_TIMEOUT seconds"
             else
-                say "the $MF_ROLE stopped before it enrolled"
+                say "the $MF_ROLE stopped before it connected"
             fi
             journalctl -u "$SERVICE" -n 15 --no-pager >&2 || true
-            die "enrollment failed; see journalctl -u $SERVICE. Check MF_SERVER, MF_ENROLL and that the token or install command is still valid, then run the installer again"
+            die "connecting failed; see journalctl -u $SERVICE. Check MF_SERVER, MF_ENROLL and that the install command is still valid, then run the installer again"
         fi
         sleep 1
         waited=$((waited + 1))
@@ -306,7 +307,7 @@ for tool in awk install sha256sum systemctl useradd; do
     command -v "$tool" >/dev/null 2>&1 || die "this installer needs $tool: install it with your package manager and run the installer again"
 done
 for dir in /usr/bin /etc/systemd/system; do
-    [ -w "$dir" ] || die "$dir is read-only on this host, as on image-based systems, and the $MF_ROLE installs there"
+    [ -w "$dir" ] || die "$dir is read-only on this machine, as on image-based systems, and the $MF_ROLE installs there"
 done
 
 case $(uname -m) in
@@ -355,13 +356,13 @@ esac
 
 # Check every input before changing anything.
 if enrolled; then
-    [ -z "$MF_TOKEN" ] || say "already enrolled: MF_TOKEN is not used. If this host was removed in the web interface, run the uninstall command it shows, then this one again"
+    [ -z "$MF_TOKEN" ] || say "already connected: MF_TOKEN is not used. If this machine was removed in the web interface, run the uninstall command it shows, then this one again"
 else
     [ -n "$MF_TOKEN" ] || die "MF_TOKEN is required: copy the command from the web interface (Administration › Add servers)"
     case $MF_TOKEN in
-        *[!A-Za-z0-9._-]* | *.*.*.*) die "MF_TOKEN is not an enrollment token (mfe1.…)" ;;
+        *[!A-Za-z0-9._-]* | *.*.*.*) die "MF_TOKEN is not a MonitorFlow token (mfe1.…)" ;;
         mfe1.?*.?*) ;;
-        *) die "MF_TOKEN is not an enrollment token (mfe1.…)" ;;
+        *) die "MF_TOKEN is not a MonitorFlow token (mfe1.…)" ;;
     esac
 fi
 upstream_url=
@@ -392,7 +393,7 @@ for file in "$asset" "$SERVICE.service" "$SERVICE-sudoers"; do
     verify "$file"
 done
 chmod 0755 "$tmp/$asset"
-version=$("$tmp/$asset" --version) || die "the downloaded $MF_ROLE does not run on this host"
+version=$("$tmp/$asset" --version) || die "the downloaded $MF_ROLE does not run on this machine"
 
 create_user
 install -d -o "$RUN_USER" -g "$RUN_USER" -m 0700 "$DATA_DIR"
@@ -435,8 +436,8 @@ else
         printf 'MONITORFLOW_ENROLLMENT_TOKEN=%s\n' "$MF_TOKEN" >"$ENV_FILE"
     )
     systemctl restart "$SERVICE"
-    say "enrolling…"
+    say "connecting…"
     wait_for_enrollment
-    say "$version installed and enrolled"
+    say "$version installed and connected"
 fi
 say "status: systemctl status $SERVICE, logs: journalctl -u $SERVICE"

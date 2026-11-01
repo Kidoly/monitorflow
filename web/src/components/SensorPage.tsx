@@ -239,7 +239,7 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
           title="Configuration"
           facts={[
             { label: "Kind", value: effective?.kind ?? "unknown" },
-            { label: "Instance", value: instance || effective?.instance || "—", mono: Boolean(instance || effective?.instance) },
+            { label: "Watches", value: instance || effective?.instance || "—", mono: Boolean(instance || effective?.instance) },
             { label: "Interval", value: effective ? formatSeconds(effective.interval_ms / 1000) : "—" },
             {
               label: "Timeout",
@@ -253,7 +253,11 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
             ...(effective && Object.keys(effective.params).length > 0
               ? [{ label: "Parameters", value: Object.entries(effective.params).map(([k, v]) => `${k}=${v}`).join(" "), mono: true }]
               : []),
-            ...(config && effective ? originFacts(config, effective.origin, rule) : []),
+            ...(config ? [configurationFact(config)] : []),
+          ]}
+          details={[
+            ...(rule ? [marginFact(rule, format)] : []),
+            ...(config && effective ? [setByFact(effective.origin, rule)] : []),
           ]}
         />
         <TableBox
@@ -278,51 +282,45 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
 
 function thresholdFacts(rule: EffectiveThreshold | undefined, format: (v: number) => string, failed: boolean) {
   if (!rule) return [{ label: "Thresholds", value: failed ? "could not be read" : "none: this sensor never opens incidents" }];
-  const above = rule.comparison === ">" || rule.comparison === ">=";
   return [
     { label: "Warning", value: rule.warning === null ? "none" : `${rule.comparison} ${format(rule.warning)}` },
     { label: "Critical", value: rule.critical === null ? "none" : `${rule.comparison} ${format(rule.critical)}` },
     { label: "Duration", value: <>{formatSeconds(rule.duration_s)} <span className={styles.muted}>past the threshold before opening</span></> },
-    {
-      label: "Hysteresis",
-      value: (
-        <>
-          {format(rule.hysteresis)} <span className={styles.muted}>{above ? "below" : "above"} the threshold before resolving</span>
-        </>
-      ),
-    },
   ];
+}
+
+function marginFact(rule: EffectiveThreshold, format: (v: number) => string) {
+  const above = rule.comparison === ">" || rule.comparison === ">=";
+  return {
+    label: "Recovery margin",
+    value: (
+      <>
+        {format(rule.hysteresis)} <span className={styles.muted}>{above ? "below" : "above"} the threshold before resolving</span>
+      </>
+    ),
+  };
 }
 
 const ORIGINS = { default: "Built-in default", site: "The site", server: "This server" } as const;
 
-function originFacts(config: EffectiveSensors, origin: keyof typeof ORIGINS, rule: EffectiveThreshold | undefined) {
-  return [
-    {
-      label: "Origin",
-      value: (
-        <>
-          {ORIGINS[origin]}{" "}
-          <span className={styles.muted}>
-            · revision {config.revision}
-            {rule && ` · thresholds from ${ORIGINS[rule.origin].toLowerCase()}`}
-          </span>
-        </>
-      ),
-    },
-    {
-      label: "Agent runs",
-      value:
-        config.applied_revision === null ? (
-          <Label tone="neutral">Not applied</Label>
-        ) : (
-          <>
-            <Label tone={config.in_sync ? "ok" : "warn"}>Revision {config.applied_revision}</Label>{" "}
-            <span className={styles.muted}>{config.in_sync ? "in sync" : "configuration out of date"}</span>
-          </>
-        ),
-    },
-  ];
+function setByFact(origin: keyof typeof ORIGINS, rule: EffectiveThreshold | undefined) {
+  return {
+    label: "Set by",
+    value: (
+      <>
+        {ORIGINS[origin]}
+        {rule && <span className={styles.muted}> · thresholds from {ORIGINS[rule.origin].toLowerCase()}</span>}
+      </>
+    ),
+  };
+}
+
+function configurationFact(config: EffectiveSensors) {
+  if (config.applied_revision === null) return { label: "Configuration", value: <Label tone="neutral">Waiting for the agent</Label> };
+  return {
+    label: "Configuration",
+    value: <Label tone={config.in_sync ? "ok" : "warn"}>{config.in_sync ? "Up to date" : "Out of date"}</Label>,
+  };
 }
 
 function SensorIncidents({ incidents, now, format }: { incidents: Incident[]; now: Date; format: (v: number) => string }) {

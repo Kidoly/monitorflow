@@ -167,8 +167,8 @@ export function planWaves(targets: string[], specs: WaveSpec[]): { waves: string
   for (const [index, spec] of specs.entries()) {
     if (!("servers" in spec)) continue;
     for (const server of spec.servers) {
-      if (!known.has(server)) return { error: `a server of wave ${index + 1} is not a target of the campaign` };
-      if (placed.has(server)) return { error: "a server is in more than one wave" };
+      if (!known.has(server)) return { error: `a server of batch ${index + 1} is not a target of the campaign` };
+      if (placed.has(server)) return { error: "a server is in more than one batch" };
       placed.add(server);
     }
   }
@@ -181,14 +181,14 @@ export function planWaves(targets: string[], specs: WaveSpec[]): { waves: string
     } else if ("size" in spec) {
       wave = pool.splice(0, spec.size);
     } else {
-      if (!(spec.percent >= 1 && spec.percent <= 100)) return { error: "a wave percentage is 1 to 100" };
+      if (!(spec.percent >= 1 && spec.percent <= 100)) return { error: "a batch percentage is 1 to 100" };
       wave = pool.splice(0, Math.ceil((targets.length * spec.percent) / 100));
     }
-    if (wave.length === 0) return { error: `wave ${index + 1} would be empty` };
+    if (wave.length === 0) return { error: `batch ${index + 1} would be empty` };
     waves.push(wave);
   }
   if (pool.length > 0) waves.push(pool);
-  if (waves.length > MAX_WAVES) return { error: `at most ${MAX_WAVES} waves` };
+  if (waves.length > MAX_WAVES) return { error: `at most ${MAX_WAVES} batches` };
   return { waves };
 }
 
@@ -262,12 +262,12 @@ export function validateCampaign(request: CampaignRequest, targets: string[]): s
     errors.push(`At most ${MAX_TARGETS} servers.`);
   }
   if (request.waves.some((w) => "size" in w && !isCount(w.size, MAX_TARGETS))) {
-    errors.push("A wave size is a whole number of servers.");
+    errors.push("A batch size is a whole number of servers.");
   } else if (request.waves.some((w) => "percent" in w && !Number.isInteger(w.percent))) {
-    errors.push("A wave percentage is a whole number from 1 to 100.");
+    errors.push("A batch percentage is a whole number from 1 to 100.");
   } else if (targets.length > 0) {
     const plan = planWaves(targets, request.waves);
-    if ("error" in plan) errors.push(`Waves: ${plan.error}.`);
+    if ("error" in plan) errors.push(`Batches: ${plan.error}.`);
   }
   return errors;
 }
@@ -300,9 +300,9 @@ export function describeUpdate(spec: UpdateSpec, agentVersion: string | null = n
 }
 
 export function describeThreshold({ value, unit }: FailureThreshold): string {
-  if (unit === "percent") return `more than ${value}% of a wave fails`;
+  if (unit === "percent") return `more than ${value}% of a batch fails`;
   if (value === 0) return "first failure";
-  return `more than ${value} server${value === 1 ? "" : "s"} of a wave fail`;
+  return `more than ${value} server${value === 1 ? "" : "s"} of a batch fail`;
 }
 
 export function describeWindow(window: CampaignWindow): string {
@@ -341,14 +341,14 @@ export function describeSources(pin: SourcesPin): string {
   return pin.mirrors.map((m) => `${m.name}/${m.snapshot}`).join(", ");
 }
 
-/** The grey line under a campaign's name: "2 waves · snapshot debian-12/s1 · security only · reboot allowed". */
+/** The grey line under a campaign's name: "2 batches · snapshot debian-12/s1 · security only · reboot allowed". */
 export function campaignSubline(campaign: Pick<Campaign, "wave_count" | "sources" | "spec" | "agent_version">): string {
   const { spec } = campaign;
   if (campaign.agent_version) {
-    return `${campaign.wave_count} wave${campaign.wave_count === 1 ? "" : "s"} · agent ${campaign.agent_version}`;
+    return `${campaign.wave_count} ${campaign.wave_count === 1 ? "batch" : "batches"} · agent ${campaign.agent_version}`;
   }
   return [
-    `${campaign.wave_count} wave${campaign.wave_count === 1 ? "" : "s"}`,
+    `${campaign.wave_count} ${campaign.wave_count === 1 ? "batch" : "batches"}`,
     campaign.sources && `snapshot${campaign.sources.mirrors.length === 1 ? "" : "s"} ${describeSources(campaign.sources)}`,
     spec.packages.length > 0
       ? `${spec.packages.length} package${spec.packages.length === 1 ? "" : "s"}`

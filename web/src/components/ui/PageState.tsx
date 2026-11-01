@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { Button, ButtonLink } from "./Button";
 import { cx } from "./cx";
 import styles from "./PageState.module.css";
 import { toneClass } from "./StatusLabel";
@@ -96,7 +97,7 @@ export function LoadingBlock({ label = "Loading" }: { label?: string }) {
   );
 }
 
-/** Nothing to list yet: a title, one sentence, and usually the action that fixes it. */
+/** Nothing to list yet: a title, one sentence, and the action that comes next. */
 export function EmptyState({ title, children, actions }: { title?: string; children?: ReactNode; actions?: ReactNode }) {
   return (
     <div className={cx(styles.empty, !title && styles.compactEmpty)}>
@@ -113,9 +114,10 @@ export function ErrorState({ what, error, onRetry }: { what: string; error: stri
     <>
       <Banner tone="bad">
         <strong>Could not load {what}:</strong> {error} Retrying automatically.
-        <Retry onRetry={onRetry} />
       </Banner>
-      <EmptyState>Nothing to show until the first successful load.</EmptyState>
+      <EmptyState actions={onRetry && <Button onClick={onRetry}>Retry now</Button>}>
+        Nothing to show until the first successful load.
+      </EmptyState>
     </>
   );
 }
@@ -158,5 +160,9 @@ export function NotFound({ title, actions, children }: { title: string; actions?
 
 /** A page the user's roles do not open; reached only by a direct link. */
 export function NoPermission({ title, children }: { title: string; children?: ReactNode }) {
-  return <EmptyState title={title}>{children}</EmptyState>;
+  return (
+    <EmptyState title={title} actions={<ButtonLink href="/">Back to the fleet</ButtonLink>}>
+      {children}
+    </EmptyState>
+  );
 }

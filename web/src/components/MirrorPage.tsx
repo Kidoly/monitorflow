@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { ApiError, type MirrorDetail, type MirrorRun, type MirrorSnapshot, api, describeError } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
@@ -85,6 +85,14 @@ export function MirrorPage({ id }: { id: string | null }) {
       return next;
     });
 
+  // A snapshot needs a sync first, and a mirror publishing its own needs nothing else.
+  const snapshotNext = mirror.runs.length > 0 && !mirror.auto_snapshot;
+  const emptyAction = (
+    <Button variant="k" disabled={disabled} onClick={() => void jobs.start(mirror, snapshotNext ? "snapshot" : "sync")}>
+      {snapshotNext ? "Create snapshot" : "Sync now"}
+    </Button>
+  );
+
   return (
     <div className={styles.page}>
       <Breadcrumb parents={[{ label: "Mirrors", href: MIRRORS_PATH }]} current={mirror.name} />
@@ -119,16 +127,16 @@ export function MirrorPage({ id }: { id: string | null }) {
           { label: "Next sync", value: nextSyncText(mirror, lastSync, updatedAt), tone: "neutral" },
         ]}
       />
-      <Snapshots mirror={mirror} />
-      <Runs mirror={mirror} open={open} onToggle={toggle} />
+      <Snapshots mirror={mirror} action={emptyAction} />
+      <Runs mirror={mirror} open={open} onToggle={toggle} action={emptyAction} />
     </div>
   );
 }
 
-function Snapshots({ mirror }: { mirror: MirrorDetail }) {
+function Snapshots({ mirror, action }: { mirror: MirrorDetail; action: ReactNode }) {
   if (mirror.snapshots.length === 0) {
     return (
-      <EmptyState title="No snapshots yet">
+      <EmptyState title="No snapshots yet" actions={action}>
         {mirror.auto_snapshot ? "A snapshot is published after each successful sync." : "Create one after a sync."}
       </EmptyState>
     );
@@ -153,9 +161,20 @@ function Snapshots({ mirror }: { mirror: MirrorDetail }) {
   return <DataTable dense label="Snapshots" columns={columns} rows={mirror.snapshots} rowKey={(s) => s.id} />;
 }
 
-function Runs({ mirror, open, onToggle }: { mirror: MirrorDetail; open: Set<string>; onToggle: (id: string) => void }) {
+function Runs({
+  mirror,
+  open,
+  onToggle,
+  action,
+}: {
+  mirror: MirrorDetail;
+  open: Set<string>;
+  onToggle: (id: string) => void;
+  action: ReactNode;
+}) {
   if (mirror.runs.length === 0) {
-    return <EmptyState>No runs yet.</EmptyState>;
+    // Without snapshots either, the empty state above has the same button.
+    return mirror.snapshots.length === 0 ? null : <EmptyState actions={action}>No runs yet.</EmptyState>;
   }
   const snapshotName = (id: string | null) => mirror.snapshots.find((s) => s.id === id)?.name;
   const summary = (run: MirrorRun) => {

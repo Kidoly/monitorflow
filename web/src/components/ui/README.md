@@ -16,7 +16,7 @@ The shared pieces of the design handoff (`docs/design/`). Each file has a doc co
 | `InlineConfirm` | In-place confirmation with a reason and a danger button naming the target. |
 | `SecretField` | A secret shown once, with Copy. |
 | `RelativeTime` | `<time>` reading "12 s ago", exact time in the title. `time.ts` also has `formatDuration` ("2 h 52 min") and `formatDay` ("10:12 today"). |
-| `Banner`, `LoadingBlock`, `EmptyState`, `ErrorState`, `StaleBanner`, `NotFound`, `NoPermission` | Page states (`09-page-states.html`). |
+| `Banner`, `LoadingBlock`, `EmptyState`, `ErrorState`, `StaleBanner`, `NotFound`, `NoPermission` | Page states (`09-page-states.html`). Every empty state names its next action as a button; `NoMatches` in `FilterBar.tsx` is the one for filtered lists. |
 | `Page` | The 20 px column of a page's blocks inside `<main>`. |
 | `TimeChart` | SVG line chart with thresholds, markers, band, keyboard cursor and legend toggles. |
 

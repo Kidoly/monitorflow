@@ -6,13 +6,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { type Incident, type Server, type Site, api, describeError, isUnauthorized } from "@/lib/api";
 import { type IncidentFilters, apiQuery, filtersFromQuery, incidentTitle, isOffline } from "@/lib/incidents";
-import { incidentHref, incidentPeerHref } from "@/lib/routes";
+import { administersEverything, useMe } from "@/lib/me";
+import { NOTIFICATIONS_PATH, incidentHref, incidentPeerHref } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
 import { replaceParams } from "@/lib/urlState";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
-import { FilterBar } from "@/components/ui/FilterBar";
+import { ButtonLink } from "@/components/ui/Button";
+import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
 import { EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { StatusLabel } from "@/components/ui/StatusLabel";
@@ -76,6 +78,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
   );
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher);
 
+  const me = useMe();
   const inScope = scopeSites(scope, sites);
   const visible = (i: Incident) => !inScope || inScope.has(i.site_id);
   const incidents = data?.incidents.filter(visible) ?? [];
@@ -188,7 +191,21 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
       {!data && error !== null && !isUnauthorized(error) ? (
         <ErrorState what="incidents" error={describeError(error)} onRetry={refresh} />
       ) : data && incidents.length === 0 ? (
-        <EmptyState>{filtered ? "No incidents match these filters." : "No incidents. No threshold has fired and every server and relay is reporting."}</EmptyState>
+        filtered ? (
+          <NoMatches names={["state", "severity", "server", ...(scope.siteId ? [] : ["site"])]}>No incidents match these filters.</NoMatches>
+        ) : (
+          <EmptyState
+            actions={
+              administersEverything(me) ? (
+                <ButtonLink href={NOTIFICATIONS_PATH}>Set up notifications</ButtonLink>
+              ) : (
+                <ButtonLink href={scopedHref("/", scope)}>Back to the fleet</ButtonLink>
+              )
+            }
+          >
+            No incidents. No threshold has fired and every server and relay is reporting.
+          </EmptyState>
+        )
       ) : (
         <DataTable
           label="Incidents"

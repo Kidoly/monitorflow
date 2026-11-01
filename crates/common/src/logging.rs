@@ -37,6 +37,20 @@ pub fn init(log: &LogConfig) {
     }
 }
 
+/// For one-shot commands: warnings and errors on stderr, whatever the
+/// configuration says, so that stdout holds only the command's result.
+pub fn init_cli() {
+    let no_color = std::env::var_os("NO_COLOR");
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_ansi(ansi_enabled(
+            std::io::stderr().is_terminal(),
+            no_color.as_deref(),
+        ))
+        .with_writer(std::io::stderr)
+        .init();
+}
+
 /// Like [`init`], into `path` through a [`RotatingFile`], never colored:
 /// for a Windows service, which has no console and no journald.
 pub fn init_file(log: &LogConfig, path: &Path) -> io::Result<()> {

@@ -274,7 +274,7 @@ function MirrorSection({ settings, onSaved }: { settings: ServerSettings; onSave
   return (
     <Section
       title="Package address"
-      note="Where hosts download packages and agent updates from this server. Change it when they reach it through another name or port."
+      note="Where servers download packages and agent updates from this server. Change it when they reach it through another name or port."
     >
       <form className={styles.sectionBody} onSubmit={submit}>
         <label className={styles.field}>

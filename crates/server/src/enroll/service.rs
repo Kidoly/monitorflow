@@ -65,10 +65,10 @@ impl From<EnrollError> for Status {
                 Status::invalid_argument("invalid CSR: expected a signed PKCS#10 request in PEM")
             }
             EnrollError::NoHostname => Status::invalid_argument(
-                "install keys need a host name, which older agents and relays do not send: use a single-use token, or update them",
+                "install commands need a machine name, which older agents and relays do not send: use a single-use token, or update them",
             ),
             EnrollError::Busy => {
-                Status::resource_exhausted("too many enrollments with this install key; retry later")
+                Status::resource_exhausted("too many connections with this install command; retry later")
             }
             EnrollError::Internal(_) => Status::internal("enrollment failed"),
         }
@@ -389,7 +389,7 @@ impl EnrollService for Enroller {
         let key = source.unwrap_or(UNKNOWN_SOURCE);
         if self.limiter.is_blocked(key) {
             return Err(Status::resource_exhausted(
-                "too many failed enrollment attempts; retry later",
+                "too many failed attempts; retry later",
             ));
         }
         let request = request.into_inner();

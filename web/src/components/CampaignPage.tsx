@@ -220,9 +220,9 @@ const SERVER_COLUMNS: Column<CampaignServer>[] = [
 
 const WAVE_STATES = { pending: ["Pending", "neutral"], running: ["Running", "info"], done: ["Done", "ok"] } as const;
 
-/** A wave as a `<details>` block: state, a `<progress>` with its percentage, then its servers. */
+/** A batch as a `<details>` block: state, a `<progress>` with its percentage, then its servers. */
 function Wave({ wave, current }: { wave: CampaignWave; current: boolean }) {
-  const title = `Wave ${wave.index + 1}`;
+  const title = `Batch ${wave.index + 1}`;
   const { total, succeeded, failed, cancelled } = wave.progress;
   const done = succeeded + failed + cancelled;
   const percent = total ? Math.round((done * 100) / total) : 0;

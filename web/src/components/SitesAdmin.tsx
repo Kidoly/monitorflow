@@ -78,7 +78,7 @@ export function SitesAdmin({ me }: { me: Me }) {
       </Banner>
       <Banner tone="info">
         Agents and relays update themselves to each new release, a canary per site first. A site whose
-        hosts must not change on their own sets &quot;Automatic updates&quot; to Off; &quot;Server default&quot;
+        servers must not change on their own sets &quot;Automatic updates&quot; to Off; &quot;Server default&quot;
         follows the server-wide setting under Updates › Automatic updates.
       </Banner>
       {stale && updatedAt && (

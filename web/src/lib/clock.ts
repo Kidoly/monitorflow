@@ -29,7 +29,3 @@ export function formatWhen(date: Date, now: Date): string {
   return formatMinute(date);
 }
 
-/** Whole days from `now` until `date`, rounded up: 4.2 days left gives 5. */
-export function daysUntil(date: Date, now: Date): number {
-  return Math.ceil((date.getTime() - now.getTime()) / 86_400_000);
-}

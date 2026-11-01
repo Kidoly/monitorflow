@@ -135,13 +135,17 @@ describe("ServerPage", () => {
     expect(facts).toHaveTextContent(/OS\s*Debian 12/);
     expect(facts).toHaveTextContent(/Connected since\s*2026-10-19 02:14/);
     expect(facts).toHaveTextContent(/Agent\s*0\.2\.0 · via relay-paris-1/);
-    expect(facts).toHaveTextContent(/Certificate\s*Valid until 2026-12/);
-    expect(facts).toHaveTextContent(/Enrolled\s*2026-05-03 09:12/);
-    expect(facts).toHaveTextContent(/Certificate ID\s*agent-1/);
+    expect(facts).toHaveTextContent(/Certificate\s*Valid, renews automatically/);
+    expect(facts).toHaveTextContent(/Added\s*2026-05-03 09:12/);
+    expect(facts).not.toHaveTextContent("Certificate ID");
+    const details = screen.getByText("Details").closest("details")!;
+    expect(details).not.toHaveAttribute("open");
+    expect(details).toHaveTextContent(/Certificate ID\s*agent-1/);
+    expect(details).toHaveTextContent(/Certificate valid until\s*2026-12/);
 
     expect(screen.getByRole("tab", { name: "Sensors · 3" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Commands · 1 running" })).toBeInTheDocument();
-    expect(screen.getByText("In sync").parentElement).toHaveTextContent(/the agent runs revision 7, applied 3 min ago/);
+    expect(screen.getByText("Configuration up to date").parentElement).toHaveTextContent(/applied 3 min ago/);
     const rows = within(screen.getByRole("table", { name: "Sensors" })).getAllByRole("row").slice(1);
     expect(rows.map((r) => r.textContent)).toEqual([
       "Disk used /vardisk · /var · every 30 s · timeout 10 sCritical94.2% · since 11:40, 2 h 52 min",
@@ -158,12 +162,12 @@ describe("ServerPage", () => {
     stubFetch(routes({ [`GET /api/servers/${ID}/sensors`]: ok(config({ applied_revision: 6, in_sync: false })) }));
     const { unmount } = render(<ServerPage id={ID} />);
     expect(await screen.findByText("Configuration out of date")).toBeInTheDocument();
-    expect(screen.getByText(/the agent runs revision 6, the current one is 7/)).toBeInTheDocument();
+    expect(screen.getByText(/a connected agent gets the new one/)).toBeInTheDocument();
     unmount();
 
     stubFetch(routes({ [`GET /api/servers/${ID}/sensors`]: ok(config({ applied_revision: null, applied_at: null, in_sync: false, sensors: [] })) }));
     const again = render(<ServerPage id={ID} />);
-    expect(await screen.findByText("Not applied")).toBeInTheDocument();
+    expect(await screen.findByText("Waiting for the agent")).toBeInTheDocument();
     expect(screen.getByText(/No sensors: every default is turned off/)).toBeInTheDocument();
     again.unmount();
 
@@ -221,12 +225,12 @@ describe("ServerPage", () => {
   });
 
   it("says in plain words when the host takes no package updates", async () => {
-    const server = { ...web1, os_family: "linux", os_version: "alpine 3.20", package_updates: false };
+    const server = { ...web1, os_family: "linux", os_version: "Alpine 3.20", package_updates: false };
     stubFetch(routes({ [`GET /api/servers/${ID}`]: ok(server) }));
     render(<ServerPage id={ID} />);
     await heading();
     expect(screen.getByText("Package updates aren't available on this system; monitoring works normally")).toBeInTheDocument();
-    expect(screen.getByText("alpine 3.20")).toBeInTheDocument();
+    expect(screen.getByText("Alpine 3.20")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "Updates" }));
     expect(await screen.findByText(/update web-1 with\s+its own tools/)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open campaigns" })).not.toBeInTheDocument();
@@ -351,12 +355,12 @@ describe("ServerPage", () => {
     restore();
   });
 
-  it("warns about an expiring or revoked certificate", async () => {
-    const certificate = { ...web1.certificate!, not_after: inDays(3.5) };
+  it("warns about late renewal or a revoked certificate, not a healthy one", async () => {
+    const certificate = { ...web1.certificate!, not_after: inDays(1.4) };
     stubFetch(routes({ [`GET /api/servers/${ID}`]: ok({ ...web1, certificate }) }));
     const { unmount } = render(<ServerPage id={ID} />);
     await heading();
-    expect(screen.getByText("Expires in 4 days")).toBeInTheDocument();
+    expect(screen.getByText("Renewal late, expires in 1 day")).toBeInTheDocument();
     unmount();
 
     const revoked = { ...certificate, revoked: true, revoked_at: "2026-10-19T08:00:00", revocation_reason: "key_compromise" };

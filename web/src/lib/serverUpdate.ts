@@ -57,8 +57,8 @@ export function releasesPage(source: string): string | null {
 /** What a partial import cannot do, in plain words. */
 export function importNotes({ missing }: ReleaseImported): string[] {
   const lines: string[] = [];
-  if (missing.includes("install.sh")) lines.push("Without install.sh, Linux hosts cannot install from this server.");
-  if (missing.some((name) => name.endsWith(".msi"))) lines.push("Without the MSI, Windows hosts cannot install from this server.");
+  if (missing.includes("install.sh")) lines.push("Without install.sh, Linux servers cannot install from this server.");
+  if (missing.some((name) => name.endsWith(".msi"))) lines.push("Without the MSI, Windows servers cannot install from this server.");
   return lines;
 }
 

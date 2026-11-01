@@ -323,7 +323,7 @@ check_ports() {
     for setting in HTTPS_PORT:443 HTTP_PORT:80 GRPC_PORT:7443 ENROLL_PORT:7445 MIRROR_PORT:7480; do
         port=$(env_get "${setting%:*}" "${setting#*:}")
         if printf '%s\n' "$listening" | grep -q ":$port\$"; then
-            die "port $port is already in use on this host (see: ss -ltnp): free it, or set ${setting%:*} in $ENV_FILE, then run this again"
+            die "port $port is already in use on this machine (see: ss -ltnp): free it, or set ${setting%:*} in $ENV_FILE, then run this again"
         fi
     done
 }
@@ -335,12 +335,12 @@ pull_images() {
     grep -E '^[A-Z]+_IMAGE=' "$ENV_FILE" | cut -d = -f 2- | while read -r reference; do
         docker pull -q "$reference" >/dev/null 2>"$tmp/pull.log" || {
             cat "$tmp/pull.log" >&2
-            die "cannot pull $reference: check that this host reaches its registry"
+            die "cannot pull $reference: check that this machine reaches its registry"
         }
     done
     compose pull --quiet --ignore-buildable >"$tmp/pull.log" 2>&1 || {
         cat "$tmp/pull.log" >&2
-        die "cannot pull the database images: check that this host reaches Docker Hub"
+        die "cannot pull the database images: check that this machine reaches Docker Hub"
     }
 }
 
@@ -354,7 +354,7 @@ pin_new_images() {
         say "pulling the $image image, new in this release"
         docker pull -q "$reference" >/dev/null 2>"$tmp/pull.log" || {
             cat "$tmp/pull.log" >&2
-            die "cannot pull $reference: check that this host reaches its registry"
+            die "cannot pull $reference: check that this machine reaches its registry"
         }
         printf '%s=%s\n' "$key" "$reference" >>"$ENV_FILE"
     done
@@ -478,7 +478,7 @@ settle_certificate() {
         start
         wait_for_web && return
     fi
-    say "warning: the web interface does not answer on this host yet; see: cd $ROOT && docker compose -f deploy/docker-compose.yml logs web"
+    say "warning: the web interface does not answer on this machine yet; see: cd $ROOT && docker compose -f deploy/docker-compose.yml logs web"
 }
 
 # The fingerprint of the internal CA, as the web service wrote it, which
@@ -525,7 +525,7 @@ report() {
 
 uninstall() {
     [ -d "$ROOT" ] || { command -v docker >/dev/null 2>&1 && data_exists; } \
-        || die "MonitorFlow is not installed on this host"
+        || die "MonitorFlow is not installed on this machine"
     if [ "$purge" != 1 ] && has_tty; then
         [ "$(ask "Delete the data too: database, metrics, logs, backups and the agents' CA? Type delete, or press Enter to keep it: ")" != delete ] || purge=1
     fi
@@ -610,7 +610,7 @@ if [ -f "$ENV_FILE" ]; then
     say "already installed: settings and secrets in $ENV_FILE are kept"
     [ -z "$MF_PUBLIC_NAME" ] || say "MF_PUBLIC_NAME is not used: edit DOMAIN and SERVER_NAMES in $ENV_FILE to change the name"
 else
-    data_exists && die "this host has MonitorFlow data in Docker volumes but no $ENV_FILE, which holds its database password. To start over and delete that data, run this with --uninstall --purge"
+    data_exists && die "this machine has MonitorFlow data in Docker volumes but no $ENV_FILE, which holds its database password. To start over and delete that data, run this with --uninstall --purge"
     choose_name
     say "installing MonitorFlow $version in $DEPLOY"
     install_bundle

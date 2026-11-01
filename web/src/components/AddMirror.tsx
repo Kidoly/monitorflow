@@ -71,7 +71,7 @@ export function AddMirror({ onAdded, onClose }: { onAdded: (name: string) => voi
       {header}
       {!data.tools.available && (
         <Banner tone="bad">
-          <strong>The mirror tools are not running.</strong> Start them on the server host with{" "}
+          <strong>The mirror tools are not running.</strong> Start them on the central server with{" "}
           <code>docker compose -f deploy/docker-compose.yml up -d mirror</code>, then retry.
           {data.tools.problem && <span className={styles.dim}> ({data.tools.problem})</span>}
         </Banner>

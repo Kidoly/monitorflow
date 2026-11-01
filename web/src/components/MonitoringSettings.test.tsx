@@ -155,7 +155,7 @@ describe("MonitoringSettings", () => {
     const form = screen.getByRole("form", { name: "Add a check" });
     // A site can mix systems, so every kind is offered.
     expect(within(form).getAllByRole("option")).toHaveLength(6);
-    expect(within(form).getByLabelText("Host")).toHaveValue("127.0.0.1");
+    expect(within(form).getByLabelText("Address")).toHaveValue("127.0.0.1");
     await user.click(within(form).getByRole("button", { name: "Add check" }));
     expect(within(form).getByRole("alert")).toHaveTextContent("Enter the port.");
 

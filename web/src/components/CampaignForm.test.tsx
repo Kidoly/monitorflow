@@ -63,8 +63,8 @@ describe("CampaignForm", () => {
     await user.type(within(form).getByLabelText("Name"), "October updates");
     await user.selectOptions(within(form).getByLabelText("Every server of the site"), "site-1");
     expect(screen.getByText("2 servers targeted.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Add wave" }));
-    expect(screen.getByText(/Servers per wave: wave 1: 1, wave 2: 1/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add batch" }));
+    expect(screen.getByText(/Servers per batch: batch 1: 1, batch 2: 1/)).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "Security updates only" }));
     await user.click(screen.getByRole("button", { name: "Add weekly window" }));
     const window = screen.getByRole("group", { name: "Window 1" });

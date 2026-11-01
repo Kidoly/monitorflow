@@ -6,6 +6,7 @@ import { sensorHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { type SensorRow, formatSensorValue, primaryMetric, sensorFacts } from "@/lib/sensors";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
+import { ButtonLink } from "@/components/ui/Button";
 import { Banner, EmptyState } from "@/components/ui/PageState";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
@@ -57,9 +58,8 @@ export function ServerSensorsTab({
         <Banner tone="warn">Open incidents could not be read: statuses show OK or Unknown until they load.</Banner>
       )}
       {rows.length === 0 ? (
-        <EmptyState>
-          No sensors: every default is turned off for this server.{" "}
-          <Link href={scopedHref(serverHref(server.id, "alerts"), scope)}>Add a check</Link>.
+        <EmptyState actions={<ButtonLink href={scopedHref(serverHref(server.id, "alerts"), scope)}>Add a check</ButtonLink>}>
+          No sensors: every default is turned off for this server.
         </EmptyState>
       ) : (
         <DataTable label="Sensors" columns={columns} rows={rows} rowKey={(row) => row.key} dense />
@@ -90,39 +90,32 @@ function LastValue({ row, now }: { row: SensorRow; now: Date }) {
   );
 }
 
-/** Whether the agent acknowledged the current revision (ADR-0016). */
+/** Whether the agent confirmed the current configuration (ADR-0016). */
 function Drift({ config, now }: { config: EffectiveSensors; now: Date }) {
   if (config.applied_revision === null) {
     return (
       <p className={styles.drift}>
-        <Label tone="neutral">Not applied</Label>
-        <span>the agent never acknowledged a configuration; the current revision is {config.revision}.</span>
+        <Label tone="neutral">Waiting for the agent</Label>
+        <span>it has not confirmed a configuration yet.</span>
       </p>
     );
   }
   if (config.in_sync) {
     return (
       <p className={styles.drift}>
-        <Label tone="ok">In sync</Label>
-        <span>
-          the agent runs revision {config.revision}
-          {config.applied_at && (
-            <>
-              , applied <RelativeTime value={config.applied_at} now={now} />
-            </>
-          )}
-          .
-        </span>
+        <Label tone="ok">Configuration up to date</Label>
+        {config.applied_at && (
+          <span>
+            applied <RelativeTime value={config.applied_at} now={now} />.
+          </span>
+        )}
       </p>
     );
   }
   return (
     <p className={styles.drift}>
       <Label tone="warn">Configuration out of date</Label>
-      <span>
-        the agent runs revision {config.applied_revision}, the current one is {config.revision}. A connected agent gets it
-        within about 10 seconds.
-      </span>
+      <span>a connected agent gets the new one within about 10 seconds.</span>
     </p>
   );
 }

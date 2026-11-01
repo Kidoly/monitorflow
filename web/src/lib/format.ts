@@ -1,10 +1,27 @@
-const OS_NAMES: Record<string, string> = { debian: "Debian", rhel: "RHEL", windows: "Windows", linux: "Linux" };
+const OS_NAMES: Record<string, string> = {
+  almalinux: "AlmaLinux",
+  arch: "Arch Linux",
+  centos: "CentOS",
+  debian: "Debian",
+  linux: "Linux",
+  opensuse: "openSUSE",
+  rhel: "RHEL",
+  rocky: "Rocky Linux",
+  windows: "Windows",
+};
 
-/** `debian` + `12` gives `Debian 12`. A Windows version, or that of a distribution outside the families, names the system already. */
+const osName = (id: string) => OS_NAMES[id] ?? id.charAt(0).toUpperCase() + id.slice(1);
+
+/**
+ * `debian` + `12` gives `Debian 12`. Agents send the distribution first, so
+ * `debian` + `debian 12` does too, and `rhel` + `rocky 9.4` gives
+ * `Rocky Linux 9.4`. A Windows version names the system already.
+ */
 export function formatOs(family: string, version: string | null): string {
-  const name = OS_NAMES[family] ?? family;
-  if ((family === "windows" || family === "linux") && version) return version;
-  return version ? `${name} ${version}` : name;
+  if (!version) return osName(family);
+  if (family === "windows") return version;
+  const [first = "", ...rest] = version.split(" ");
+  return /^\d/.test(first) ? `${osName(family)} ${version}` : [osName(first), ...rest].join(" ");
 }
 
 const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });

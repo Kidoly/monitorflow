@@ -74,11 +74,11 @@ impl TokenRequest {
     fn validate(&self) -> Result<(), TokenError> {
         let invalid = |message: String| Err(TokenError::Invalid(message));
         if self.role == PeerRole::Server {
-            return invalid("tokens enroll agents and relays, not servers".into());
+            return invalid("single-use tokens are for agents and relays".into());
         }
-        validate_id(&self.peer_id).or_else(|e| invalid(format!("invalid peer ID: {e}")))?;
+        validate_id(&self.peer_id).or_else(|e| invalid(format!("invalid name: {e}")))?;
         if self.role != PeerRole::Relay && !self.server_names.is_empty() {
-            return invalid("server names are for relay tokens only".into());
+            return invalid("addresses are for relay tokens only".into());
         }
         if self.role != PeerRole::Relay && self.parent_relay.is_some() {
             return invalid("a parent relay is for relay tokens only".into());
@@ -87,7 +87,7 @@ impl TokenRequest {
             return invalid("a relay cannot be its own parent".into());
         }
         if self.server_names.len() > MAX_SERVER_NAMES {
-            return invalid(format!("at most {MAX_SERVER_NAMES} server names"));
+            return invalid(format!("at most {MAX_SERVER_NAMES} addresses"));
         }
         for name in &self.server_names {
             let valid = name.parse::<std::net::IpAddr>().is_ok()
@@ -172,7 +172,7 @@ pub async fn create(
                 .await?
                 .ok_or_else(|| {
                     TokenError::Invalid(format!(
-                        "parent relay `{}` is not enrolled or is revoked",
+                        "parent relay `{}` does not exist or was removed",
                         parent.escape_debug()
                     ))
                 })?,
