@@ -31,6 +31,10 @@ npm run build      # static files in web/out
 
 `npm run dev` forwards `/api` to the server's API listener (`MONITORFLOW_API_URL`, default `http://127.0.0.1:7444`), so the session cookie stays same-origin. Over plain HTTP, set `api_cookie_secure = false` in the server configuration for development, and create a user with `monitorflow-server user add --username admin --role admin`. In production, a TLS reverse proxy serves `web/out` and forwards `/api`; see `deploy/caddy/Caddyfile`.
 
+## Security
+
+To report a vulnerability, see `SECURITY.md`. Please do not open a public issue.
+
 ## Licence
 
 AGPL-3.0-or-later. See `LICENSE`. Contributions require signing the CLA (see `CONTRIBUTING.md`).
