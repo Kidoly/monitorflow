@@ -80,11 +80,12 @@ The web image's Caddy forwards `/agent/*` to the server like `/api/*`. With a re
 
 ## Browser certificate
 
-With a public DNS name in `DOMAIN`, Caddy gets a certificate by ACME, which needs ports 80 and 443 reachable from the internet. With an IP address or an internal name, Caddy issues one from its own CA. To trust it, import its root certificate in browsers:
+The installer chooses from the name, says which it chose, and needs nothing from you (ADR-0068):
 
-```
-docker compose -f deploy/docker-compose.yml exec web cat /data/caddy/pki/authorities/local/root.crt > monitorflow-web-ca.crt
-```
+- **A name that resolves to a public address** gets a public certificate by ACME, which needs ports 80 and 443 reachable from the internet. If no certificate comes within two minutes, the installer says so and uses the server's own CA for now. Open the ports and run it again.
+- **An IP address, an internal name like `.lan`, or a name with no public address** gets a certificate from the server's own CA. Open `http://<name>/trust/` once on each device: the page has the certificate and the steps for each system. It arrives unencrypted, so check that it shows the fingerprint the installer printed.
+
+The choice is `WEB_CERTIFICATE` in `deploy/.env`. Running the installer again chooses again, so a name that gets public DNS later moves to ACME. Port 80 serves the ACME challenge and that page, and sends everything else to HTTPS.
 
 ## Data and backups
 
@@ -97,7 +98,7 @@ Volumes are prefixed with the project name, like `monitorflow_serverdata`.
 | `pgdata` | Inventory, configuration, campaigns, incidents, audit log |
 | `vmdata`, `vldata` | Metrics and logs |
 | `dbcerts` | Certificates of the database link, created again when the volume is empty |
-| `caddydata` | Caddy's certificates and CA |
+| `caddydata` | Caddy's certificates and CA. Not in backups: after a restore on a new host, devices trust the new CA from `/trust/` |
 | `backups` | Backups: daily, on request and before each update, the 7 newest kept; `BACKUP_DIR` in `deploy/.env` puts them in a host directory instead |
 | `update`, `updater` | Update requests and status, and the updater's own state |
 

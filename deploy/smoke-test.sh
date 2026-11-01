@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Starts deploy/docker-compose.yml under its own project name and ports,
 # checks that each part answers and that the server's database link uses TLS
-# (ADR-0051) and that package mirrors work (ADR-0067), then removes
-# everything it created. Needs docker with compose, curl, jq and openssl. CI
+# (ADR-0051), what port 80 serves (ADR-0068) and that package mirrors work
+# (ADR-0067), then removes everything it created. Needs docker with compose, curl, jq and openssl. CI
 # runs it on every pull request.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 # An IP address as DOMAIN: clients send no SNI to it, the harder case.
-export DOMAIN=127.0.0.1 SERVER_NAMES=localhost
+export DOMAIN=127.0.0.1 SERVER_NAMES=localhost WEB_CERTIFICATE=internal
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
 export POSTGRES_PASSWORD
 export HTTPS_PORT=18443 HTTP_PORT=18080 GRPC_PORT=17443 ENROLL_PORT=17445 MIRROR_PORT=17480
@@ -61,6 +61,34 @@ not_published() {
 
 check "API ready behind Caddy" curl -fsk "https://127.0.0.1:$HTTPS_PORT/api/health/ready"
 check "web interface served" curl -fsk -o /dev/null "https://127.0.0.1:$HTTPS_PORT/"
+
+# Port 80 sends $1 to HTTPS with its content unseen.
+plain=http://127.0.0.1:$HTTP_PORT
+redirected() {
+    case $(curl --path-as-is -s -o "$work/plain" -X "${2:-GET}" -w '%{http_code} %{redirect_url}' "$plain$1") in
+        "308 https://127.0.0.1:$HTTPS_PORT/"*) ! grep -q . "$work/plain" ;;
+        *) return 1 ;;
+    esac
+}
+for _ in $(seq 30); do curl -fs -o /dev/null "$plain/trust/" && break; sleep 1; done
+curl -fs -o "$work/ca.crt" "$plain/trust/monitorflow-ca.crt" || true
+fingerprint=$(openssl x509 -in "$work/ca.crt" -noout -fingerprint -sha256 | cut -d = -f 2) || true
+# The headers of the page and of the certificate.
+trust_header() { curl -fsI "$plain$1" | grep -qi "^$2"; }
+# A response of the HTTPS site that has no HSTS: it would close port 80.
+no_hsts() { ! curl -fsIk "https://127.0.0.1:$HTTPS_PORT/" | grep -qi '^strict-transport-security'; }
+
+check "trust page shows the CA's fingerprint" grep -qF "$fingerprint" <(curl -fs "$plain/trust/")
+check "trust page has a Content-Security-Policy" trust_header /trust/ content-security-policy
+check "the CA certificate installs in browsers" trust_header /trust/monitorflow-ca.crt 'content-type: application/x-x509-ca-cert'
+check "the page's certificate verifies HTTPS" curl -fs --cacert "$work/ca.crt" "https://127.0.0.1:$HTTPS_PORT/api/health/ready"
+check "and so does the page, over HTTPS" curl -fs --cacert "$work/ca.crt" "https://127.0.0.1:$HTTPS_PORT/trust/"
+check "no HSTS with the internal CA" no_hsts
+for path in / /login/ /setup/ /_next/x.js /api/health/ready /api/setup /api/auth/me /agent/latest/install.sh \
+    /trust/x /trust/../api/health/ready /ca-fingerprint /public/trust/index.html; do
+    check "port 80: $path goes to HTTPS" redirected "$path"
+done
+check "port 80: POST /api/auth/login too" redirected /api/auth/login POST
 check "enrollment listener: certificate" cert_names_localhost "$ENROLL_PORT"
 check "gRPC listener: certificate" cert_names_localhost "$GRPC_PORT"
 check "database connections use TLS" db_link_uses_tls

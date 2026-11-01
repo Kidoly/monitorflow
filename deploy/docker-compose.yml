@@ -126,6 +126,9 @@ services:
     environment:
       MONITORFLOW_DOMAIN: ${DOMAIN:?set DOMAIN in .env}
       MONITORFLOW_API_UPSTREAM: server:7444
+      # acme or internal, chosen by the installer (ADR-0068).
+      MONITORFLOW_CERTIFICATE: ${WEB_CERTIFICATE:-acme}
+      MONITORFLOW_HTTPS_PORT: ${HTTPS_PORT:-443}
     volumes: ["caddydata:/data"]
     networks: [front]
     ports:
