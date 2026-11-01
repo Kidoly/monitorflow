@@ -226,6 +226,9 @@ key = "{data}/tls/key.pem"
     assert_eq!(online["os_family"], "debian");
     assert_eq!(online["os_version"], "debian 12");
     assert_eq!(online["site_name"], SITE);
+    // Off until the host allows it, and agent updates always go (ADR-0076).
+    assert_eq!(online["command_kinds"]["shell"], "off");
+    assert_eq!(online["command_kinds"]["self_update"], "accepted");
     assert!(
         agent_dir.join("tls/cert.pem").is_file(),
         "identity not stored"
@@ -247,9 +250,13 @@ key = "{data}/tls/key.pem"
     // It also comes back on a distribution outside the families (ADR-0063).
     std::fs::write(&os_release, "ID=arch\n").unwrap();
     std::fs::write(&agent_config, agent_toml(None)).unwrap();
+    // The installer's MF_ALLOW_COMMANDS=1 sets this variable: the restart
+    // that applies it shows at once (ADR-0076).
+    let mut restarted = agent_command(&agent_config);
+    restarted.env("MONITORFLOW_COMMANDS_SHELL", "true");
     let mut agent = Process::spawn(
         "agent (restart)",
-        agent_command(&agent_config),
+        restarted,
         &dir.path().join("agent-2.log"),
         &logs,
     );
@@ -261,6 +268,8 @@ key = "{data}/tls/key.pem"
     assert_eq!(back["os_family"], "linux");
     assert_eq!(back["os_version"], "arch");
     assert_eq!(back["package_updates"], false);
+    assert_eq!(back["command_kinds"]["shell"], "accepted");
+    assert_eq!(back["command_kinds"]["apply_updates"], "unsupported");
 
     // A relay for the site, then a second agent behind it (ADR-0025).
     let (relay_listen, relay_mirrors) = (free_addr(), free_addr());
@@ -309,6 +318,7 @@ key = "{data}/tls/key.pem"
     );
     relay.assert_running();
     assert_eq!(through["via_relay"], RELAY_ID);
+    assert_eq!(through["command_kinds"]["shell"], "off");
     assert_eq!(through["site_name"], SITE);
 
     // Without its relay the agent goes offline.

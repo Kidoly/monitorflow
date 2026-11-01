@@ -364,7 +364,8 @@ impl Agent {
             })
     }
 
-    fn hello(&self) -> Hello {
+    /// The `Hello` of a new connection.
+    pub fn hello(&self) -> Hello {
         Hello {
             agent_id: self.identity.peer_id().to_owned(),
             protocol_version: PROTOCOL_VERSION.into(),

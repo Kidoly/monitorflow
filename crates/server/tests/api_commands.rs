@@ -334,6 +334,42 @@ db_tests! {
         assert_eq!(releases, json!({"versions": ["0.3.0"], "latest": "0.3.0"}));
     }
 
+    /// ADR-0076: `null` until the agent reports, then its words, for those
+    /// who may read the server and nobody else.
+    #[sqlx::test]
+    async fn servers_show_what_their_agent_said_about_commands(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let viewer = h.login("viewer", Role::Viewer, GrantScope::Customer(h.customer)).await;
+        let uri = format!("/api/servers/{}", h.server);
+        let (status, server) = h.send("GET", &uri, &viewer, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(server["command_kinds"], Value::Null);
+        let (_, list) = h.send("GET", "/api/servers", &viewer, None).await;
+        assert_eq!(list["servers"][0]["command_kinds"], Value::Null);
+
+        let kinds = json!({"apply_updates": "accepted", "shell": "off"});
+        sqlx::query("UPDATE servers SET command_kinds = $2 WHERE id = $1")
+            .bind(h.server)
+            .bind(&kinds)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (_, server) = h.send("GET", &uri, &viewer, None).await;
+        assert_eq!(server["command_kinds"], kinds);
+        let (_, list) = h.send("GET", "/api/servers", &viewer, None).await;
+        assert_eq!(list["servers"][0]["command_kinds"], kinds);
+
+        let other: Uuid = sqlx::query_scalar("INSERT INTO customers (name) VALUES ('globex') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let outsider = h.login("outsider", Role::Administrator, GrantScope::Customer(other)).await;
+        let (status, _) = h.send("GET", &uri, &outsider, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (_, list) = h.send("GET", "/api/servers", &outsider, None).await;
+        assert_eq!(list["servers"], json!([]));
+    }
+
     #[sqlx::test]
     async fn hosts_without_a_package_manager_take_no_updates_or_sources(pool: PgPool) {
         let h = Harness::new(&pool).await;
