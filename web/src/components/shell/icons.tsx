@@ -50,6 +50,13 @@ const PATHS = {
   ai: <path d="M8 2l1.5 4.5L14 8l-4.5 1.5L8 14l-1.5-4.5L2 8l4.5-1.5z" />,
   bell: <path d="M4 11V7a4 4 0 0 1 8 0v4l1 1H3zM7 14h2" />,
   backups: <path d="M3 4h10v3H3zM4 7v6h8V7M7 10h2" />,
+  settings: (
+    <>
+      <path d="M2 4.5h7M12 4.5h2M2 11.5h2M7 11.5h7" />
+      <circle cx="10.5" cy="4.5" r="1.5" />
+      <circle cx="5.5" cy="11.5" r="1.5" />
+    </>
+  ),
   chevron: <path d="M4 6l4 4 4-4" />,
   scope: (
     <>

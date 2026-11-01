@@ -390,7 +390,7 @@ pub async fn create(
 /// 409 unless the server can build `configure_sources` commands, as
 /// `POST /api/servers/{id}/sources` (ADR-0035).
 async fn check_sources(state: &ApiState) -> Result<(), ApiError> {
-    if state.settings.mirror_public_url.is_none() {
+    if state.settings.live.mirror_public_url().is_none() {
         return Err(ApiError::Conflict(
             "mirror_public_url is not configured".into(),
         ));

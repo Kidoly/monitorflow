@@ -102,6 +102,9 @@
 //! | GET | `/agent/{version}/{file}`, `/agent/latest/{file}` | none | A file of a cached agent release, for installs (ADR-0054); 404 with a plain-text reason |
 //! | GET | `/api/settings/agent-install` | customer administrator | [`settings::AgentInstall`]: default install source, custom URL, what the configuration sets, the release `central` installs (ADR-0054) |
 //! | PUT | `/api/settings/agent-install` | global administrator | body [`settings::AgentInstallRequest`]; 200 [`settings::AgentInstall`]; 409 against the configuration; audited |
+//! | GET | `/api/settings/server` | global administrator | [`server_settings::ServerSettings`]: session lifetimes, the mirror address and retention, each with its default and whether the configuration locks it (ADR-0069) |
+//! | PUT | `/api/settings/server` | global administrator | body [`server_settings::SetRequest`]; 200 [`server_settings::ServerSettings`]; 400 out of range; 409 against the configuration; audited |
+//! | PUT | `/api/settings/retention` | global administrator | body [`server_settings::RetentionBody`]; 202 [`server_settings::ServerSettings`], the updater applies it; 409 without a running updater, during a change or against `.env`; audited |
 //! | GET | `/api/agent-releases` | any role | [`commands::AgentReleases`]: cached agent versions and the latest (ADR-0053) |
 //! | POST | `/api/agent-releases/import` | global administrator | multipart release files; 200 [`release_import::ImportResult`]; 400 when they do not verify; 409 during another import; audited (ADR-0061) |
 //! | POST | `/api/agent-releases/import-url` | global administrator | body [`release_import::UrlRequest`]; as above, from a directory of release files |
@@ -516,6 +519,7 @@ pub mod remediation_incidents;
 pub mod revoke;
 pub mod roles;
 pub mod sensors;
+pub mod server_settings;
 pub mod server_update;
 pub mod servers;
 pub mod session;
@@ -530,7 +534,6 @@ pub mod users;
 
 use std::future::Future;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::extract::DefaultBodyLimit;
 use axum::middleware;
@@ -545,6 +548,7 @@ use crate::campaign::Runner;
 use crate::commands::Commands;
 use crate::crl::CrlPublisher;
 use crate::grpc::Registry;
+use crate::live_settings::Live;
 use crate::mirror::Mirrors;
 use crate::relay_commands::RelayCommands;
 use crate::vm_query::VmQuery;
@@ -562,11 +566,9 @@ const BODY_LIMIT: usize = 64 * 1024;
 #[derive(Debug, Clone)]
 pub struct ApiSettings {
     pub cookie_secure: bool,
-    pub session_lifetime: Duration,
-    pub session_idle_timeout: Duration,
-    /// Base URL of the mirrors in agents' sources (ADR-0035); `None`
-    /// refuses source configuration.
-    pub mirror_public_url: Option<String>,
+    /// Session lifetimes and the mirror URL, which change at runtime
+    /// (ADR-0069). Shared with `agent_releases`.
+    pub live: Live,
     /// Whether `[proxmox]` is on, and its cluster names (ADR-0044).
     pub proxmox_enabled: bool,
     pub proxmox_clusters: Vec<String>,
@@ -588,12 +590,11 @@ pub struct ApiSettings {
 
 impl ApiSettings {
     pub fn from_config(config: &ServerConfig) -> Self {
+        let agent_releases = agent_releases::Sources::from_config(config);
         Self {
             cookie_secure: config.api_cookie_secure,
-            session_lifetime: Duration::from_secs(config.api_session_lifetime),
-            session_idle_timeout: Duration::from_secs(config.api_session_idle_timeout),
-            mirror_public_url: config.mirror_public_url.clone(),
-            agent_releases: agent_releases::Sources::from_config(config),
+            live: agent_releases.live.clone(),
+            agent_releases,
             server_update: server_update::ServerUpdateSettings::from_config(config),
             agent_install: settings::InstallConfig::from_config(config),
             auto_update_enabled: config.auto_update.enabled,
@@ -898,6 +899,14 @@ pub fn router(state: ApiState) -> Router {
             get(ai::get).put(ai::set).delete(ai::remove_key),
         )
         .route("/api/settings/ai/test", post(ai::test))
+        .route(
+            "/api/settings/server",
+            get(server_settings::get).put(server_settings::set),
+        )
+        .route(
+            "/api/settings/retention",
+            put(server_settings::set_retention),
+        )
         .route("/api/remediation/classify", post(remediation::classify))
         .route(
             "/api/notifications/channels",

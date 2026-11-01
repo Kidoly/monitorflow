@@ -217,6 +217,16 @@ check "and the server still runs $NEXT" test "$(server_version)" = "monitorflow-
 
 echo "backing up and restoring"
 # The mirror signing key lives in its own volume and must stay in backups.
+# Retention from the Settings page goes through the updater (ADR-0069).
+code=$(curl -sSk -b "$work/cookies" -H 'content-type: application/json' -H 'x-monitorflow-csrf: 1' -o "$work/answer" \
+    -w '%{http_code}' -X PUT -d '{"metrics_days": 45, "logs_days": null}' "$api/settings/retention")
+check "retention is accepted" test "$code" = 202
+metrics_flag() { docker inspect --format '{{json .Config.Cmd}}' "$(compose ps -q victoriametrics)" | grep -q 'retentionPeriod=45d'; }
+check "the store restarts with the new retention" until_true 120 metrics_flag
+retention_reported() { get settings/server | jq -e '.retention.metrics.value == "45d" and (.retention.applying | not)'; }
+check "the page reports it" until_true 30 retention_reported
+check "it is in .env" grep -qx 'UI_METRICS_RETENTION=45d' "$work/deploy/.env"
+
 compose exec -T server monitorflow-server mirror key generate >/dev/null
 backup_now() {
     [ "$(post backups '')" = 202 ] || return 1

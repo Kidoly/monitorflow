@@ -12,6 +12,7 @@ use monitorflow_server::api::users::{self, GrantScope};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::commands::PackageStore;
 use monitorflow_server::grpc::Registry;
+use monitorflow_server::live_settings::Live;
 use prost::Message;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -290,7 +291,7 @@ db_tests! {
         let settings = || {
             let mut settings = ApiSettings::default();
             settings.agent_releases.cache = ReleaseCache::in_mirror_dir(mirrors.path());
-            settings.agent_releases.mirror_public_url = Some("http://mf.example:7480".into());
+            settings.agent_releases.live = Live::default().with_mirror_url(Some("http://mf.example:7480"));
             settings
         };
 

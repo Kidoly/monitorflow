@@ -51,14 +51,15 @@ services:
 
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.154.1
-    command: ["-storageDataPath=/storage", "-retentionPeriod=${METRICS_RETENTION:-90d}"]
+    # UI_*: set by the updater for Administration > Settings (ADR-0069).
+    command: ["-storageDataPath=/storage", "-retentionPeriod=${METRICS_RETENTION:-${UI_METRICS_RETENTION:-90d}}"]
     volumes: ["vmdata:/storage"]
     networks: [storage]
     restart: unless-stopped
 
   victorialogs:
     image: victoriametrics/victoria-logs:v1.53.0
-    command: ["-storageDataPath=/storage", "-retentionPeriod=${LOGS_RETENTION:-30d}"]
+    command: ["-storageDataPath=/storage", "-retentionPeriod=${LOGS_RETENTION:-${UI_LOGS_RETENTION:-30d}}"]
     volumes: ["vldata:/storage"]
     networks: [storage]
     restart: unless-stopped
@@ -88,8 +89,14 @@ services:
       # The ports published below, for the install commands of new tokens.
       MONITORFLOW_GRPC_PUBLIC_PORT: ${GRPC_PORT:-7443}
       MONITORFLOW_ENROLL_PUBLIC_PORT: ${ENROLL_PORT:-7445}
-      # What agents and relays download packages from (ADR-0067).
-      MONITORFLOW_MIRROR_PUBLIC_URL: ${MIRROR_PUBLIC_URL:-http://${DOMAIN}:${MIRROR_PORT:-7480}}
+      # What agents and relays download packages from (ADR-0067): the
+      # default of Administration > Settings, which MIRROR_PUBLIC_URL locks
+      # (ADR-0069).
+      MONITORFLOW_MIRROR_DEFAULT_URL: http://${DOMAIN}:${MIRROR_PORT:-7480}
+      MONITORFLOW_MIRROR_PUBLIC_URL: ${MIRROR_PUBLIC_URL:-}
+      # Unset: chosen in Administration > Settings (ADR-0069).
+      MONITORFLOW_API_SESSION_LIFETIME: ${SESSION_LIFETIME:-}
+      MONITORFLOW_API_SESSION_IDLE_TIMEOUT: ${SESSION_IDLE_TIMEOUT:-}
     volumes:
       - serverdata:/var/lib/monitorflow/server
       - mirrors:/var/lib/monitorflow/server/mirrors

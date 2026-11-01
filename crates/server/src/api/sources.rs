@@ -89,7 +89,7 @@ pub async fn configure(
     }
     let relay = relays::for_server(&mut *state.pool.acquire().await?, target.id).await?;
     let base = sources::base_url(
-        state.settings.mirror_public_url.as_deref(),
+        state.settings.live.mirror_public_url().as_deref(),
         relay.as_ref(),
         &selected,
     )

@@ -77,8 +77,8 @@ fn defaults_apply() {
     assert_eq!(server.grpc_listen_addr.port(), 7443);
     assert_eq!(server.api_listen_addr, "127.0.0.1:7444".parse().unwrap());
     assert!(server.api_cookie_secure);
-    assert_eq!(server.api_session_lifetime, 12 * 60 * 60);
-    assert_eq!(server.api_session_idle_timeout, 30 * 60);
+    assert_eq!(server.api_session_lifetime, None);
+    assert_eq!(server.api_session_idle_timeout, None);
     assert_eq!(server.enroll_listen_addr, "0.0.0.0:7445".parse().unwrap());
     assert_eq!(server.victoriametrics_url, "http://localhost:8428");
     assert_eq!(server.data_dir, Path::new("/var/lib/monitorflow/server"));
@@ -374,6 +374,15 @@ fn server_mirror_public_url() {
         assert!(msg.contains("mirror_public_url"), "{bad}: {msg}");
     }
     assert!(valid_mirror_url("https://mf.example/base/"));
+    let vars = env(&[("MONITORFLOW_MIRROR_DEFAULT_URL", "http://mf.example:7480")]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert_eq!(server.mirror_public_url, None);
+    assert_eq!(
+        server.mirror_default_url.as_deref(),
+        Some("http://mf.example:7480")
+    );
+    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_MIRROR_DEFAULT_URL", "ftp://x")]);
+    assert!(msg.contains("mirror_default_url"), "{msg}");
 }
 
 #[test]
@@ -606,7 +615,7 @@ fn api_settings_can_be_overridden_and_must_be_positive() {
     let text = format!("{SERVER_MIN}\napi_cookie_secure = false\napi_session_lifetime = 3600");
     let server: ServerConfig = parse(&text).unwrap();
     assert!(!server.api_cookie_secure);
-    assert_eq!(server.api_session_lifetime, 3600);
+    assert_eq!(server.api_session_lifetime, Some(3600));
     let vars = env(&[("MONITORFLOW_API_COOKIE_SECURE", "true")]);
     let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
     assert!(server.api_cookie_secure);

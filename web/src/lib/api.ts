@@ -1008,6 +1008,41 @@ export interface AgentInstall {
   central: CentralRelease | null;
 }
 
+/** A setting of `GET /api/settings/server`; `locked`: the server's configuration sets it. */
+export interface Setting<T> {
+  value: T;
+  default: T;
+  locked: boolean;
+}
+
+/** How long one store keeps data, as its flag says: `90d`. */
+export interface KeptData {
+  value: string;
+  locked: boolean;
+}
+
+/** `retention` of the server settings; the updater applies changes (ADR-0069). */
+export interface RetentionSettings {
+  metrics: KeptData;
+  logs: KeptData;
+  default_metrics: string;
+  default_logs: string;
+  max_days: number;
+  updater_alive: boolean;
+  applying: boolean;
+  error: string | null;
+}
+
+/** `GET /api/settings/server` (ADR-0069). */
+export interface ServerSettings {
+  /** Seconds. */
+  session_lifetime: Setting<number>;
+  session_idle_timeout: Setting<number>;
+  mirror_public_url: Setting<string | null>;
+  /** `null` without an updater reporting it. */
+  retention: RetentionSettings | null;
+}
+
 export type CampaignState = "draft" | "scheduled" | "running" | "paused" | "stopped" | "completed" | "failed";
 export type CampaignAction = "start" | "pause" | "resume" | "stop";
 
@@ -1669,6 +1704,14 @@ export const api = {
     request<PublicAddress>("/api/settings/public-address", { method: "PUT", body }),
 
   /** Whether AI is on, and its model; never the key (ADR-0064). */
+  serverSettings: (signal?: AbortSignal) => request<ServerSettings>("/api/settings/server", { signal }),
+  setServerSettings: (body: {
+    session_lifetime: number | null;
+    session_idle_timeout: number | null;
+    mirror_public_url: string | null;
+  }) => request<ServerSettings>("/api/settings/server", { method: "PUT", body }),
+  setRetention: (body: { metrics_days: number | null; logs_days: number | null }) =>
+    request<ServerSettings>("/api/settings/retention", { method: "PUT", body }),
   aiSettings: (signal?: AbortSignal) => request<AiSettings>("/api/settings/ai", { signal }),
 
   /** Saves the AI settings, testing them when they turn AI on; global administrators only, audited. An empty key keeps the stored one. */

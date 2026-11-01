@@ -417,14 +417,20 @@ async fn main() -> anyhow::Result<()> {
     offline::spawn(pool.clone(), registry.clone(), OfflineSettings::default());
     // Relays' own self-updates (ADR-0055).
     let relay_commands = RelayCommands::spawn(pool.clone(), registry.clone(), ca.clone());
+    // Settings of the web interface that apply without a restart (ADR-0069).
+    let api_settings = ApiSettings::from_config(&config);
+    api_settings
+        .live
+        .refresh(&pool)
+        .await
+        .context("reading the server settings")?;
+    api_settings.live.clone().spawn(pool.clone());
     // Update campaigns (ADR-0033) queue through the same dispatcher, and
     // pin snapshots with the mirrors' key and public URL (ADR-0038).
     let campaigns = Runner::new(pool.clone())
         .with_commands(commands.clone())
-        .with_sources(config.mirror_public_url.clone(), mirrors.clone())
-        .with_agent_releases(monitorflow_server::agent_releases::Sources::from_config(
-            &config,
-        ));
+        .with_sources(api_settings.live.clone(), mirrors.clone())
+        .with_agent_releases(api_settings.agent_releases.clone());
     let service = AgentStreamService::new(
         registry.clone(),
         Arc::new(DbRelayPolicy::new(pool.clone())),
@@ -439,14 +445,11 @@ async fn main() -> anyhow::Result<()> {
         metrics: Some(metrics.queue()),
         events: Some(events.queue()),
     });
-    let auto_update = AutoUpdate::new(
-        pool.clone(),
-        monitorflow_server::agent_releases::Sources::from_config(&config),
-    )
-    .with_enabled_override(config.auto_update.enabled)
-    .with_registry(registry.clone())
-    .with_relay_commands(relay_commands.clone());
-    let api_state = ApiState::new(pool.clone(), registry, ApiSettings::from_config(&config))
+    let auto_update = AutoUpdate::new(pool.clone(), api_settings.agent_releases.clone())
+        .with_enabled_override(config.auto_update.enabled)
+        .with_registry(registry.clone())
+        .with_relay_commands(relay_commands.clone());
+    let api_state = ApiState::new(pool.clone(), registry, api_settings)
         .with_metrics(
             VmQuery::new(&config.victoriametrics_url).context("VictoriaMetrics query client")?,
         )

@@ -251,6 +251,7 @@ fn states_and_status_round_trip() {
             finished_at: None,
         }),
         backups: backup::Backups::default(),
+        retention: None,
     };
     let json = serde_json::to_string(&status).unwrap();
     assert!(json.contains(r#""state":"caching_agents""#), "{json}");

@@ -44,6 +44,9 @@ export const MIRRORS_PATH = "/admin/mirrors/";
 /** Automatic agent and relay updates (ADR-0055). */
 export const AUTO_UPDATE_PATH = "/admin/updates/";
 
+/** Settings of the server, and the way to the other settings pages (ADR-0069). */
+export const SETTINGS_PATH = "/admin/settings/";
+
 /** Email and webhook notifications (ADR-0060). */
 export const NOTIFICATIONS_PATH = "/admin/notifications/";
 /** AI setup, global administrators only (ADR-0064). */

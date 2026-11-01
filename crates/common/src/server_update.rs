@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::release::{self, PublicKey, Release, ReleaseError, Version};
 
 pub mod backup;
+pub mod retention;
 
 /// The release file naming the images, listed in `SHA256SUMS`.
 pub const IMAGES_FILE: &str = "images.json";
@@ -326,6 +327,10 @@ pub struct Status {
     /// Backups (ADR-0058).
     #[serde(default)]
     pub backups: backup::Backups,
+    /// How long the stores keep data (ADR-0069); missing in the status of
+    /// an updater older than that setting.
+    #[serde(default)]
+    pub retention: Option<retention::Retention>,
 }
 
 /// How often the updater rewrites its status.

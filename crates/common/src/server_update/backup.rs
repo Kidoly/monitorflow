@@ -67,19 +67,23 @@ pub struct BackupRequest {
 impl BackupRequest {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let request: Self = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-        let id_ok = (1..=64).contains(&request.id.len())
-            && request
-                .id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-');
-        if !id_ok {
-            return Err("invalid request id".into());
-        }
-        if request.requested_by.len() > 128 || request.requested_by.chars().any(char::is_control) {
-            return Err("invalid requested_by".into());
-        }
+        check_request(&request.id, &request.requested_by)?;
         Ok(request)
     }
+}
+
+/// What every request of the inbox checks. `id`: 1 to 64 of a-z, A-Z, 0-9
+/// and `-`.
+pub(super) fn check_request(id: &str, requested_by: &str) -> Result<(), String> {
+    let id_ok =
+        (1..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    if !id_ok {
+        return Err("invalid request id".into());
+    }
+    if requested_by.len() > 128 || requested_by.chars().any(char::is_control) {
+        return Err("invalid requested_by".into());
+    }
+    Ok(())
 }
 
 /// The backups part of `status.json`. Missing in the status of an updater

@@ -17,6 +17,8 @@ use monitorflow_common::proto::v1::SelfUpdate;
 use monitorflow_common::release::{self, Platform, PublicKey, ReleaseError, Version};
 use prost::Message;
 
+use crate::live_settings::Live;
+
 /// Directory under `mirror_dir`, and the URL path of the mirror listener.
 pub const DIR: &str = monitorflow_common::mirror::serve::AGENT_DIR;
 
@@ -242,8 +244,8 @@ pub fn latest(versions: &[Version]) -> Option<&Version> {
 #[derive(Debug, Clone)]
 pub struct Sources {
     pub cache: ReleaseCache,
-    pub mirror_public_url: Option<String>,
-    pub agent_download_url: String,
+    /// The mirror URL and where releases are downloaded from (ADR-0069).
+    pub live: Live,
     /// The keys built into the server, which [`ReleaseCache::central`]
     /// checks the cache with; empty in a build without any.
     pub keys: Vec<PublicKey>,
@@ -253,8 +255,7 @@ impl Sources {
     pub fn from_config(config: &ServerConfig) -> Self {
         Self {
             cache: ReleaseCache::in_mirror_dir(&config.mirror_dir()),
-            mirror_public_url: config.mirror_public_url.clone(),
-            agent_download_url: config.agent_download_url.clone(),
+            live: Live::from_config(config),
             keys: release::trusted_keys().unwrap_or_default().to_vec(),
         }
     }
@@ -287,8 +288,8 @@ impl Sources {
         base_urls.extend(sources(
             version,
             self.cache.has(version),
-            self.mirror_public_url.as_deref(),
-            &self.agent_download_url,
+            self.live.mirror_public_url().as_deref(),
+            &self.live.agent_download_url(),
         ));
         SelfUpdate {
             version: version.to_string(),
@@ -546,8 +547,11 @@ mod tests {
     fn agents_behind_a_relay_try_it_first() {
         let sources = Sources {
             cache: ReleaseCache::in_mirror_dir(Path::new("/nonexistent")),
-            mirror_public_url: Some("http://mf.example:7480".into()),
-            agent_download_url: "https://files.example/mf/".into(),
+            live: Live::from_config(&ServerConfig {
+                mirror_public_url: Some("http://mf.example:7480".into()),
+                agent_download_url: "https://files.example/mf/".into(),
+                ..ServerConfig::default()
+            }),
             keys: Vec::new(),
         };
         let payload = sources.payload(&v("0.3.0"), Some("http://relay1:7480/"), true, 60);

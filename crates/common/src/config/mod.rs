@@ -44,6 +44,12 @@ pub const DEFAULT_HEARTBEAT_INTERVAL: u64 = 30;
 /// Port of the server's enrollment listener unless configured otherwise.
 pub const DEFAULT_ENROLL_PORT: u16 = 7445;
 /// Default `agent_download_url`: the files of the latest GitHub release.
+/// Seconds a session lasts when neither the configuration nor the web
+/// interface says otherwise: 12 hours.
+pub const DEFAULT_SESSION_LIFETIME: u64 = 12 * 60 * 60;
+/// Seconds without a request before a session ends, likewise: 30 minutes.
+pub const DEFAULT_SESSION_IDLE_TIMEOUT: u64 = 30 * 60;
+
 pub const DEFAULT_AGENT_DOWNLOAD_URL: &str =
     "https://github.com/Kidoly/monitorflow/releases/latest/download";
 
@@ -966,10 +972,12 @@ pub struct ServerConfig {
     /// Mark the session cookie `Secure`. Only turn off for local development
     /// over plain HTTP without a proxy.
     pub api_cookie_secure: bool,
-    /// Seconds a session lasts after login, whatever its activity.
-    pub api_session_lifetime: u64,
-    /// Seconds without a request after which a session expires.
-    pub api_session_idle_timeout: u64,
+    /// Seconds a session lasts after login, whatever its activity. Set, it
+    /// locks the setting in the web interface (ADR-0069).
+    pub api_session_lifetime: Option<u64>,
+    /// Seconds without a request after which a session expires; locks the
+    /// web interface like `api_session_lifetime`.
+    pub api_session_idle_timeout: Option<u64>,
     pub database_url: DatabaseUrl,
     pub victoriametrics_url: String,
     pub victorialogs_url: String,
@@ -998,6 +1006,10 @@ pub struct ServerConfig {
     /// the server sends them (ADR-0035). Unset refuses source
     /// configuration commands.
     pub mirror_public_url: Option<String>,
+    /// What the web interface offers as the default of that URL, unlocked,
+    /// when `mirror_public_url` is unset (ADR-0069). The compose file sets
+    /// it from `DOMAIN`.
+    pub mirror_default_url: Option<String>,
     /// https URL of the directory holding the agent release files, put in
     /// the install commands the web interface shows with a new token
     /// (ADR-0052). The latest GitHub release by default.
@@ -1095,8 +1107,8 @@ impl Default for ServerConfig {
             enroll_public_port: None,
             api_listen_addr: SocketAddr::from(([127, 0, 0, 1], 7444)),
             api_cookie_secure: true,
-            api_session_lifetime: 12 * 60 * 60,
-            api_session_idle_timeout: 30 * 60,
+            api_session_lifetime: None,
+            api_session_idle_timeout: None,
             database_url: DatabaseUrl::default(),
             victoriametrics_url: "http://localhost:8428".into(),
             victorialogs_url: "http://localhost:9428".into(),
@@ -1111,6 +1123,7 @@ impl Default for ServerConfig {
             mirror_listen_addr: SocketAddr::from(([0, 0, 0, 0], 7480)),
             mirror_dir: None,
             mirror_public_url: None,
+            mirror_default_url: None,
             agent_download_url: DEFAULT_AGENT_DOWNLOAD_URL.into(),
             release_url: None,
             server_update_dir: None,
@@ -1526,8 +1539,8 @@ impl LoadConfig for ServerConfig {
         env.set_opt("enroll_public_port", &mut self.enroll_public_port)?;
         env.set("api_listen_addr", &mut self.api_listen_addr)?;
         env.set("api_cookie_secure", &mut self.api_cookie_secure)?;
-        env.set("api_session_lifetime", &mut self.api_session_lifetime)?;
-        env.set(
+        env.set_opt("api_session_lifetime", &mut self.api_session_lifetime)?;
+        env.set_opt(
             "api_session_idle_timeout",
             &mut self.api_session_idle_timeout,
         )?;
@@ -1545,6 +1558,7 @@ impl LoadConfig for ServerConfig {
         env.set("mirror_listen_addr", &mut self.mirror_listen_addr)?;
         env.set_opt("mirror_dir", &mut self.mirror_dir)?;
         env.set_opt("mirror_public_url", &mut self.mirror_public_url)?;
+        env.set_opt("mirror_default_url", &mut self.mirror_default_url)?;
         env.set("agent_download_url", &mut self.agent_download_url)?;
         env.set_opt("release_url", &mut self.release_url)?;
         env.set_opt("server_update_dir", &mut self.server_update_dir)?;
@@ -1566,10 +1580,13 @@ impl LoadConfig for ServerConfig {
         self.proxmox.validate(check)?;
         self.remediation.validate(check)?;
         self.auto_update.validate(check)?;
-        if let Some(url) = &self.mirror_public_url {
-            if !valid_mirror_url(url) {
+        for (key, url) in [
+            ("mirror_public_url", &self.mirror_public_url),
+            ("mirror_default_url", &self.mirror_default_url),
+        ] {
+            if url.as_deref().is_some_and(|url| !valid_mirror_url(url)) {
                 return Err(check.fail(
-                    "mirror_public_url",
+                    key,
                     "must be an http or https URL without user, query or fragment",
                 ));
             }
@@ -1612,8 +1629,14 @@ impl LoadConfig for ServerConfig {
                 "must list at least one DNS name or IP address, none empty",
             ));
         }
-        check.positive("api_session_lifetime", self.api_session_lifetime)?;
-        check.positive("api_session_idle_timeout", self.api_session_idle_timeout)?;
+        check.positive(
+            "api_session_lifetime",
+            self.api_session_lifetime.unwrap_or(1),
+        )?;
+        check.positive(
+            "api_session_idle_timeout",
+            self.api_session_idle_timeout.unwrap_or(1),
+        )?;
         let db = self.database_url.expose();
         check.required("database_url", db)?;
         // The value is never echoed: it may hold a password.

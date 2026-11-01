@@ -14,6 +14,7 @@ use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::grpc::Registry;
+use monitorflow_server::live_settings::Live;
 use monitorflow_server::mirror::{Invocation, Layout, Mirrors, Output, RunError, Runner};
 use prost::Message;
 use serde_json::{json, Value};
@@ -138,7 +139,7 @@ impl Harness {
 
     fn state(&self, public_url: Option<&str>) -> ApiState {
         let settings = ApiSettings {
-            mirror_public_url: public_url.map(str::to_owned),
+            live: Live::default().with_mirror_url(public_url),
             ..ApiSettings::default()
         };
         ApiState::new(self.pool.clone(), Registry::default(), settings)
@@ -325,7 +326,7 @@ db_tests! {
         let no_url = h.state(None);
         assert_eq!(h.send_to(no_url, "POST", &deb, &admin, Some(body.clone())).await.0, StatusCode::CONFLICT);
         let no_mirrors = ApiState::new(pool.clone(), Registry::default(), ApiSettings {
-            mirror_public_url: Some("http://mf.example".into()),
+            live: Live::default().with_mirror_url(Some("http://mf.example")),
             ..ApiSettings::default()
         });
         assert_eq!(h.send_to(no_mirrors, "POST", &deb, &admin, Some(body.clone())).await.0, StatusCode::CONFLICT);

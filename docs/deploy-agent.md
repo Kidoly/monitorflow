@@ -1,17 +1,24 @@
 # Installing the agent
 
-How to install the agent on a Linux server, with the installer or by hand, until there are packages. The installer and the packages do the same steps as the manual sections below. Background is in architecture §4 (least privilege) and §7 (packages), and in ADR-0031, ADR-0032, ADR-0035 and ADR-0036. For Windows, see [Windows](#windows) at the end.
+## Getting started
+
+1. In the web interface, open Administration › Add servers and choose the site.
+2. Copy the install command it shows. It looks like this:
+
+   ```
+   curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
+     | sudo MF_SERVER=monitorflow.example.com:7443 MF_TOKEN=mfe1.… sh
+   ```
+
+3. Paste it on each Linux host; the same command serves every host of the site. On Windows, the page shows a PowerShell line instead.
+
+The host appears in the fleet within seconds, under its own host name. To remove it, use Remove on its page, which shows the uninstall command.
+
+The rest of this page is reference. Background is in architecture §4 (least privilege) and §7 (packages), and in ADR-0031, ADR-0032, ADR-0035 and ADR-0036. For Windows, see [Windows](#windows) at the end.
 
 ## Quick install
 
-With the install command from the web interface (Administration › Add servers), on any Linux distribution with systemd, x86_64 or aarch64:
-
-```
-curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh \
-  | sudo MF_SERVER=monitorflow.example.com:7443 MF_TOKEN=mfe1.… sh
-```
-
-The installer (ADR-0052) downloads the static agent for the host's architecture and `SHA256SUMS` from the same place, verifies the release signature `SHA256SUMS.sig` against the release keys it carries (ADR-0053, with OpenSSL 3; without it, it warns and checks checksums only), checks the checksum before it changes anything, and then does every step of [Binary and user](#binary-and-user) and [Sudo rules](#sudo-rules): binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface shows this command filled in, and the Windows one, once a site's install command is created, from the source you pick there ([Install sources](#install-sources)); give it the relay's address there if the agent connects through one.
+The command works on any Linux distribution with systemd, x86_64 or aarch64. The installer (ADR-0052) downloads the static agent for the host's architecture and `SHA256SUMS` from the same place, verifies the release signature `SHA256SUMS.sig` against the release keys it carries (ADR-0053, with OpenSSL 3; without it, it warns and checks checksums only), checks the checksum before it changes anything, and then installs the binary, user, directories, `agent.toml`, sudo rules checked with `visudo`, and the systemd unit `monitorflow-agent`. It hands the token to the first start only, and waits until the agent has its identity. The web interface builds the command from the source you pick there ([Install sources](#install-sources)); give it the relay's address there if the agent connects through one.
 
 The agent monitors any distribution (ADR-0063). Updates and package sources need the Debian or RHEL family with apt or dnf present; on any other host the server page says "Package updates aren't available on this system; monitoring works normally", and campaigns leave the host out.
 
@@ -48,47 +55,11 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
 
 **Upgrades.** Running the same command again on an enrolled host installs the new binary, unit and sudo rules and restarts the agent; `agent.toml` and the identity are kept, and `MF_SERVER`, `MF_ENROLL` and `MF_TOKEN` are not needed. Edit `/etc/monitorflow/agent.toml` to change the upstream later.
 
-**Ansible.** One token per host, created on the server host as needed, with a short validity. Here the server runs with the production compose (deploy-server.md) on the inventory host `monitorflow`:
-
-```yaml
-- hosts: monitored
-  become: true
-  vars:
-    mf_server: monitorflow.example.com:7443
-    mf_site: main
-  tasks:
-    - name: Check whether the agent is enrolled
-      ansible.builtin.stat:
-        path: /var/lib/monitorflow/agent/tls/cert.pem
-      register: mf_identity
-
-    - name: Create an enrollment token
-      ansible.builtin.command:
-        argv: [docker, compose, -f, /opt/monitorflow/deploy/docker-compose.yml, exec, -T, server,
-               monitorflow-server, token, create, --role, agent, --id, "{{ inventory_hostname_short }}",
-               --site, "{{ mf_site }}", --ttl, 15m]
-      delegate_to: monitorflow
-      register: mf_token
-      when: not mf_identity.stat.exists
-      no_log: true
-
-    - name: Install, enroll or upgrade the agent
-      ansible.builtin.shell: >
-        set -o pipefail &&
-        curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install.sh | sh
-      args:
-        executable: /bin/bash
-      environment:
-        MF_SERVER: "{{ mf_server }}"
-        MF_TOKEN: "{{ mf_token.stdout | default('') }}"
-      no_log: true
-```
-
-`environment` keeps the token off the command line. Without the first two tasks, the same play upgrades every agent.
+**Ansible and other tools.** Run the site's install command as it is on every host: it enrolls new hosts and upgrades enrolled ones.
 
 ## Install sources
 
-The token page offers the commands from three sources (ADR-0054). A global administrator picks the default under Admin › Enrollment tokens › Default install source; any command can use another. The configuration can fix the default instead: `agent_install_source` (`AGENT_INSTALL_SOURCE` in the compose `.env`), and `agent_download_url` (`AGENT_DOWNLOAD_URL`) for the custom URL.
+The token page offers the commands from three sources (ADR-0054). A global administrator picks the default under Administration › Settings; any command can use another. The configuration can fix the default instead: `agent_install_source` (`AGENT_INSTALL_SOURCE` in the compose `.env`), and `agent_download_url` (`AGENT_DOWNLOAD_URL`) for the custom URL.
 
 | Source | Hosts download from | Hosts need |
 | --- | --- | --- |
@@ -122,11 +93,11 @@ curl -fsSL https://files.example.net/monitorflow/0.2.0/install.sh \
   | sudo MF_DOWNLOAD_URL=https://files.example.net/monitorflow/0.2.0 MF_SERVER=… MF_TOKEN=… sh
 ```
 
-Keep one directory per version: `MF_DOWNLOAD_URL` names the version, and `MF_VERSION` applies to GitHub only. The installer accepts only HTTPS; the host must trust the web server's certificate. The signature makes the copy safe to serve from anywhere: an installer fetched from GitHub refuses files that the project did not sign. Set this URL as the custom URL of the token page, or as the server's `agent_download_url`, and the web interface's commands use it.
+Keep one directory per version: `MF_DOWNLOAD_URL` names the version, and `MF_VERSION` applies to GitHub only. The installer accepts only HTTPS; the host must trust the web server's certificate. The signature makes the copy safe to serve from anywhere: an installer fetched from GitHub refuses files that the project did not sign. Set this URL as the custom URL under Administration › Settings, or as the server's `agent_download_url`, and the web interface's commands and agents' self-updates use it.
 
-## Binary and user
+## Without systemd
 
-The agent runs as the unprivileged system user `monitorflow`. Sudo runs it as root only for its package and source helpers, and the sudoers rules name it by its full path, so it must be installed at exactly `/usr/bin/monitorflow-agent`, owned by root and writable by no one else:
+The installer needs systemd. On another init system, install the same files by hand, with the release's `monitorflow-agent-linux-<arch>`, renamed, and `monitorflow-agent-sudoers`. Sudo runs the agent as root only for its package and source helpers and the rules name it by its full path, so it must be at exactly `/usr/bin/monitorflow-agent`, owned by root:
 
 ```
 install -o root -g root -m 0755 monitorflow-agent /usr/bin/monitorflow-agent
@@ -134,33 +105,17 @@ useradd --system --home-dir /var/lib/monitorflow/agent --shell /usr/sbin/nologin
 install -d -o monitorflow -g monitorflow -m 0700 /var/lib/monitorflow/agent
 install -d -o root -g root -m 0755 /etc/monitorflow
 install -o root -g monitorflow -m 0640 agent.toml /etc/monitorflow/agent.toml
-```
-
-Start from `deploy/config/agent.example.toml`. `data_dir` belongs to the agent user. The source backup lives in `/var/lib/monitorflow/sources-backup/` and belongs to root with mode 0700 (ADR-0032). The helper creates it on its first apply and refuses it when root does not own it, so do not create it as `monitorflow`.
-
-Run the agent as `monitorflow`, for example with a systemd unit:
-
-```
-[Service]
-User=monitorflow
-ExecStart=/usr/bin/monitorflow-agent --config /etc/monitorflow/agent.toml
-Restart=on-failure
-```
-
-On the first start, pass the enrollment token with `MONITORFLOW_ENROLLMENT_TOKEN` so it never stays on disk (ADR-0007).
-
-Without systemd, start the same command as `monitorflow` from your init system, with the token in its environment the first time. Everything works but the `systemd` sensor and self-updates, which fail and leave the running version in place: update with a new binary at the same path, then restart it.
-
-## Sudo rules
-
-Package updates and source configuration need root. The agent runs them with `sudo -n` and fixed command lines, and `deploy/sudoers/monitorflow-agent` allows those exact lines and nothing else:
-
-```
-install -o root -g root -m 0440 deploy/sudoers/monitorflow-agent /etc/sudoers.d/monitorflow-agent
+install -o root -g root -m 0440 monitorflow-agent-sudoers /etc/sudoers.d/monitorflow-agent
 visudo -cf /etc/sudoers.d/monitorflow-agent
 ```
 
-The file name must stay free of dots, or sudo skips the file. Without these rules, privileged commands fail with sudo's "a password is required", and the command shows as failed in the API.
+Start from `deploy/config/agent.example.toml`. The file name in `/etc/sudoers.d` must stay free of dots, or sudo skips it. Do not create `/var/lib/monitorflow/sources-backup/`: the helper does, as root (ADR-0032).
+
+From your init system, run `monitorflow-agent --config /etc/monitorflow/agent.toml` as `monitorflow`, with `MONITORFLOW_ENROLLMENT_TOKEN` in its environment the first time, so the token never stays on disk (ADR-0007). Everything works but the `systemd` sensor and self-updates, which fail and leave the running version in place: update with a new binary at the same path, then restart it.
+
+## Sudo rules
+
+Package updates and source configuration need root. The agent runs them with `sudo -n` and fixed command lines, and the rules the installer writes to `/etc/sudoers.d/monitorflow-agent` allow those exact lines and nothing else. Without them, privileged commands fail with sudo's "a password is required", and the command shows as failed.
 
 What the rules allow:
 
@@ -172,8 +127,6 @@ What the rules allow:
 | `monitorflow-agent self-update` | `self_update`: installs a signed agent release (below) |
 
 There are no wildcards. The agent never runs `apt-get` or `dnf` through sudo: the `packages update` helper reads the kind of update and the package names on stdin, refuses names that are not package names (options, paths, shell characters), and runs `apt-get update` and the upgrade, or `dnf upgrade`, itself (ADR-0036). Security-only updates use `dnf upgrade --security` on dnf, and on apt the packages whose candidate comes from a `-security` suite.
-
-Hosts set up with an earlier version of this file, which allowed `apt-get` and `dnf` lines and no `packages update`, need the new file: until then every update fails with "a password is required". Remove any wildcard rule added for named updates at the same time; it is no longer used.
 
 ## Self-update
 
