@@ -33,7 +33,7 @@ a small team can keep up to date.
   styles scoped per component. Tailwind was set aside to keep the
   dependency list short.
 - **Tests.** Vitest, Testing Library and jsdom, with `fetch` mocked.
-- **Node.** Version 22 LTS, pinned in `web/.nvmrc` and `engines`; CI reads
+- **Node.** Version 26 LTS, pinned in `web/.nvmrc` and `engines`; CI reads
   `.nvmrc`.
 
 ## Consequences

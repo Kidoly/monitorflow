@@ -34,6 +34,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # typescript-eslint does not support TypeScript 7.0, whose compiler API
+    # comes with 7.1. Remove this once a stable release does.
+    ignore:
+      - dependency-name: typescript
+        versions: [">=7"]
     groups:
       minor-and-patch:
         applies-to: version-updates
