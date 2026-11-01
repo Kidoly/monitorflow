@@ -96,6 +96,8 @@ const TRUSTED_SIDS: [&str; 3] = [
 const ACCESS_ALLOWED: u8 = 0;
 /// `ACCESS_DENIED_ACE_TYPE` and its object and callback variants.
 const ACCESS_DENIED: [u8; 4] = [1, 6, 10, 12];
+/// Where the access mask ends in an ACE: a 4-byte header, then the mask.
+const ACE_MASK_END: usize = 8;
 
 /// Closes a handle when dropped.
 struct Owned(HANDLE);
@@ -133,6 +135,21 @@ unsafe fn sid_string(sid: PSID) -> io::Result<String> {
     let text = Local(text);
     // SAFETY: the API returns a NUL-terminated string.
     Ok(unsafe { from_wide_ptr(text.0) })
+}
+
+/// The header and access mask of the ACE at `ace`. Its type is not known
+/// yet, so the mask is `None` for an entry too short to hold one.
+///
+/// # Safety
+///
+/// `ace` points to a whole ACE, as `GetAce` returns.
+unsafe fn read_ace(ace: *const u8) -> (ACE_HEADER, Option<u32>) {
+    // SAFETY: every ACE starts with an ACE_HEADER.
+    let header = unsafe { *ace.cast::<ACE_HEADER>() };
+    // SAFETY: `AceSize` covers the mask, which follows the header.
+    let mask = (usize::from(header.AceSize) >= ACE_MASK_END)
+        .then(|| unsafe { ace.add(ACE_MASK_END - 4).cast::<u32>().read_unaligned() });
+    (header, mask)
 }
 
 /// The SID of the account this process runs as.
@@ -211,12 +228,13 @@ pub fn check_writers(path: &Path, agent: &str) -> Result<(), String> {
         if unsafe { GetAce(dacl, index, &mut ace) } == 0 {
             return Err(fail(io::Error::last_os_error()));
         }
-        // SAFETY: every ACE starts with an ACE_HEADER and then, for the
-        // standard allow and deny types, a u32 access mask.
-        let (header, mask) = unsafe {
-            let header = *ace.cast::<ACE_HEADER>();
-            let mask = ace.cast::<u8>().add(4).cast::<u32>().read_unaligned();
-            (header, mask)
+        // SAFETY: `GetAce` succeeded, so `ace` is a whole entry of the ACL.
+        let (header, mask) = unsafe { read_ace(ace.cast()) };
+        let Some(mask) = mask else {
+            return Err(format!(
+                "{} has an access entry too short to check",
+                path.display()
+            ));
         };
         if u32::from(header.AceFlags) & INHERIT_ONLY_ACE != 0
             || ACCESS_DENIED.contains(&header.AceType)
@@ -265,6 +283,20 @@ mod tests {
         assert_eq!(plain(r"\\?\UNC\h\s".into()), PathBuf::from(r"\\?\UNC\h\s"));
         assert_eq!(plain(r"C:\a".into()), PathBuf::from(r"C:\a"));
         assert!(system_dir().unwrap().join("kernel32.dll").is_file());
+    }
+
+    #[test]
+    fn ace_masks_stay_inside_the_entry() {
+        // Type, flags and a little-endian size of 8, then the mask.
+        let ace = [u32::from_le_bytes([0, 0, 8, 0]), 0x1234];
+        // SAFETY: a whole 8-byte entry.
+        let (header, mask) = unsafe { read_ace(ace.as_ptr().cast()) };
+        assert_eq!((header.AceType, mask), (0, Some(0x1234)));
+        // Just a header, of a type the agent does not know.
+        let short = [u32::from_le_bytes([0x7f, 0, 4, 0])];
+        // SAFETY: a whole 4-byte entry.
+        let (header, mask) = unsafe { read_ace(short.as_ptr().cast()) };
+        assert_eq!((header.AceType, mask), (0x7f, None));
     }
 
     #[test]
