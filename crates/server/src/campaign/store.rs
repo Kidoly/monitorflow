@@ -469,7 +469,18 @@ async fn pinned_snapshots(
         let invalid = |message: String| CampaignError::Invalid(message);
         let (mirror, family, snapshot) =
             found.ok_or_else(|| invalid(format!("no mirror named `{}`", m.name.escape_debug())))?;
-        let snapshot = snapshot.ok_or_else(|| {
+        // The row lock makes retention wait for this campaign, or this
+        // campaign see what retention chose (ADR-0074).
+        let snapshot = match snapshot {
+            Some(id) => sqlx::query_scalar(
+                "SELECT id FROM mirror_snapshots WHERE id = $1 AND state = 'published' FOR SHARE",
+            )
+            .bind(id)
+            .fetch_optional(&mut *conn)
+            .await?,
+            None => None,
+        };
+        let snapshot: Uuid = snapshot.ok_or_else(|| {
             invalid(format!(
                 "mirror `{}` has no published snapshot `{}`",
                 m.name,

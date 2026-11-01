@@ -17,8 +17,8 @@ use super::auth::CurrentUser;
 use super::commands::{queue, ttl, CommandDetail, Target};
 use super::sensors::body;
 use super::{ApiError, ApiState};
-use crate::commands::sources::{self, KeyLookupError, CURRENT, MAX_MIRRORS};
-use crate::mirror::relays;
+use crate::commands::sources::{self, ArchiveKey, KeyLookupError, CURRENT, MAX_MIRRORS};
+use crate::mirror::{relays, Mirrors};
 
 /// Body of `POST /api/servers/{id}/sources`.
 #[derive(Debug, Deserialize)]
@@ -62,6 +62,16 @@ impl From<ModeChoice> for Mode {
     }
 }
 
+/// The mirror signing key, as commands carry it.
+pub(super) async fn signing_key(mirrors: &Mirrors) -> Result<ArchiveKey, ApiError> {
+    sources::archive_key(mirrors.runner(), mirrors.layout())
+        .await
+        .map_err(|error| match error {
+            KeyLookupError::Key(key) => ApiError::Conflict(key.to_string()),
+            other => ApiError::Internal(other.to_string()),
+        })
+}
+
 /// `POST /api/servers/{id}/sources`: 201 with the queued command.
 pub async fn configure(
     State(state): State<ApiState>,
@@ -94,12 +104,7 @@ pub async fn configure(
         &selected,
     )
     .ok_or_else(|| ApiError::Conflict("mirror_public_url is not configured".into()))?;
-    let key = sources::archive_key(mirrors.runner(), mirrors.layout())
-        .await
-        .map_err(|error| match error {
-            KeyLookupError::Key(key) => ApiError::Conflict(key.to_string()),
-            other => ApiError::Internal(other.to_string()),
-        })?;
+    let key = signing_key(mirrors).await?;
     let spec = sources::build(
         &base,
         request.mode.into(),

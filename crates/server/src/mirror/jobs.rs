@@ -28,7 +28,7 @@ pub enum JobKind {
 
 #[derive(Debug, thiserror::Error)]
 pub enum JobError {
-    #[error("another sync or snapshot of this mirror is running")]
+    #[error("this mirror is busy with another sync or snapshot, or old snapshots are being removed; try again in a few minutes")]
     Busy,
     #[error("the mirror has no successful sync to snapshot")]
     NotSynced,

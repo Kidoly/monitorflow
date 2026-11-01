@@ -507,6 +507,7 @@ pub mod mirrors;
 pub mod notifications;
 pub mod offline_alerts;
 mod one_time;
+pub mod package_sources;
 pub mod packages;
 pub mod password;
 pub mod proxmox;
@@ -866,7 +867,21 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/backups/{name}", get(backups::download))
         .route(
             "/api/servers/{id}/sources",
-            post(sources::configure).delete(sources::revert),
+            get(package_sources::server)
+                .post(sources::configure)
+                .delete(sources::revert),
+        )
+        .route(
+            "/api/servers/{id}/sources/use-mirror",
+            post(package_sources::use_mirror),
+        )
+        .route(
+            "/api/sites/{id}/sources",
+            get(package_sources::site).delete(package_sources::site_back),
+        )
+        .route(
+            "/api/sites/{id}/sources/use-mirror",
+            post(package_sources::site_use_mirror),
         )
         .route(
             "/api/campaigns",
