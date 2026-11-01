@@ -1,17 +1,19 @@
 "use client";
 
-import { type FormEvent, useCallback, useState } from "react";
+import Link from "next/link";
+import { type FormEvent, Fragment, useCallback, useState } from "react";
 
-import { type AiSettings, type ChannelTestResult, ApiError, api, describeError } from "@/lib/api";
-import { allowCommandsCommand } from "@/lib/install";
+import { type AiSettings, type ChannelTestResult, type Server, ApiError, api, describeError } from "@/lib/api";
+import { type Acceptance, aiCommands } from "@/lib/commandKinds";
 import { administersEverything, useMe } from "@/lib/me";
+import { serverHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
 import styles from "./AdminPages.module.css";
+import { AllowCommandsLine } from "./AllowCommands";
 import { Button, fieldClass } from "./ui/Button";
 import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
-import { CopyButton } from "./ui/SecretField";
 import { Label } from "./ui/StatusLabel";
 
 /** `/admin/ai/`: global administrators only, like the API (ADR-0064). */
@@ -223,14 +225,10 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
   );
 }
 
-/** The agent-side opt-in, which stays on each server (architecture §8). */
+/** The agent-side opt-in, which stays on each server (architecture §8), and where each server stands. */
 function AllowCommands() {
-  const fetcher = useCallback(
-    (signal: AbortSignal) => Promise.all([api.agentInstall(signal), api.publicAddress(signal)]),
-    [],
-  );
+  const fetcher = useCallback((signal: AbortSignal) => api.servers(signal), []);
   const { data } = usePolledData(fetcher);
-  const command = data && allowCommandsCommand(data[0], data[1], window.location.origin);
   return (
     <section className={styles.panel} aria-label="Let AI run commands">
       <h2 className={styles.sectionTitle}>Let AI run commands on a server</h2>
@@ -238,15 +236,40 @@ function AllowCommands() {
         Each server decides for itself. Run this once on every Linux server AI may work on; elsewhere AI&apos;s commands are
         refused and the incident is handed to a person. Windows servers do not run AI commands yet.
       </p>
-      {command && "text" in command && (
-        <div className={styles.snippet}>
-          <pre className={styles.code} aria-label="Command that allows AI commands">
-            {command.text}
-          </pre>
-          <CopyButton text={command.text} name="Copy the command" size="small" className={styles.snippetCopy} />
-        </div>
-      )}
-      {command && "unavailable" in command && <Banner tone="warn">{command.unavailable}</Banner>}
+      {data && data.servers.length > 0 && <ServersAccepting servers={data.servers} />}
+      <AllowCommandsLine />
     </section>
+  );
+}
+
+/** Which servers run AI's commands now, and what stops the others. */
+function ServersAccepting({ servers }: { servers: Server[] }) {
+  const named = (state: Acceptance) => servers.filter((s) => aiCommands(s) === state);
+  const groups: [string, Server[]][] = [
+    ["Off, run the line below on them:", named("off")],
+    ["Not known yet, they say once updated, which happens by itself:", named("unknown")],
+    ["Their system does not run AI commands yet:", named("unsupported")],
+  ];
+  return (
+    <>
+      <p className={styles.footnote}>
+        <strong>
+          {named("accepted").length} of {servers.length} {servers.length === 1 ? "server accepts" : "servers accept"} AI commands.
+        </strong>
+      </p>
+      {groups
+        .filter(([, list]) => list.length > 0)
+        .map(([title, list]) => (
+          <p key={title} className={styles.footnote}>
+            {title}{" "}
+            {list.map((server, i) => (
+              <Fragment key={server.id}>
+                {i > 0 && ", "}
+                <Link href={serverHref(server.id, "commands")}>{server.hostname}</Link>
+              </Fragment>
+            ))}
+          </p>
+        ))}
+    </>
   );
 }

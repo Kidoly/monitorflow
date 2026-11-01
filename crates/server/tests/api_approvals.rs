@@ -505,6 +505,66 @@ db_tests! {
         assert_eq!(status, StatusCode::FORBIDDEN);
     }
 
+    /// ADR-0076: nobody approves what the agent said it would refuse, and
+    /// the approval goes through once it stops refusing. Unknown is no
+    /// reason to stop anyone.
+    #[sqlx::test]
+    async fn approvals_stop_at_what_the_agent_refuses(pool: PgPool) {
+        let acme = tenant(&pool, "acme").await;
+        let admin = session(&pool, "admin", Role::Administrator, None, None).await;
+        let server = acme.servers[0];
+        let (incident, pending) = park(&pool, server, LOW, HOUR).await;
+        let report = |shell: Option<&'static str>| {
+            let (pool, shell) = (pool.clone(), shell.map(|s| json!({ "shell": s })));
+            async move {
+                sqlx::query("UPDATE servers SET command_kinds = $2 WHERE id = $1")
+                    .bind(server)
+                    .bind(shell)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        let (_, body) = get(&pool, &admin, "/api/remediation/approvals").await;
+        assert_eq!(body["approvals"][0]["shell_acceptance"], Value::Null);
+
+        report(Some("off")).await;
+        let (_, body) = get(&pool, &admin, "/api/remediation/approvals").await;
+        assert_eq!(body["approvals"][0]["shell_acceptance"], "off");
+        let (status, body) = post(&pool, &admin, &approve_uri(pending), json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body["error"].as_str().unwrap().contains("MF_ALLOW_COMMANDS=1"), "{body}");
+        report(Some("unsupported")).await;
+        let (status, body) = post(&pool, &admin, &approve_uri(pending), json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "this server's system does not run AI commands yet");
+        assert_eq!(states(&pool, incident).await, ("awaiting_approval".into(), "pending".into()));
+
+        // Rejecting stays possible on a refusing server.
+        let (other_incident, other) = park(&pool, acme.servers[1], LOW, HOUR).await;
+        sqlx::query("UPDATE servers SET command_kinds = '{\"shell\": \"off\"}' WHERE id = $1")
+            .bind(acme.servers[1])
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, _) = post(&pool, &admin, &reject_uri(other), json!({ "reason": "no" })).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(states(&pool, other_incident).await.1, "rejected");
+
+        report(Some("accepted")).await;
+        let (status, body) = post(&pool, &admin, &approve_uri(pending), json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    #[sqlx::test]
+    async fn an_unknown_server_can_still_be_approved(pool: PgPool) {
+        let acme = tenant(&pool, "acme").await;
+        let admin = session(&pool, "admin", Role::Administrator, None, None).await;
+        let (_, pending) = park(&pool, acme.servers[0], LOW, HOUR).await;
+        let (status, body) = post(&pool, &admin, &approve_uri(pending), json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
     #[sqlx::test]
     async fn decisions_after_the_deadline_or_the_incident_conflict(pool: PgPool) {
         let acme = tenant(&pool, "acme").await;

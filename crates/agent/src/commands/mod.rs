@@ -42,7 +42,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use monitorflow_common::command;
-use monitorflow_common::proto::v1::{Command, CommandResult, CommandStatus};
+use monitorflow_common::proto::v1::{
+    Command, CommandAcceptance, CommandKindState, CommandResult, CommandStatus,
+};
 use rustls::pki_types::CertificateDer;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -102,6 +104,13 @@ impl Output {
 pub trait Handler: Send + Sync + 'static {
     async fn run(&self, payload: &[u8]) -> Output;
 
+    /// What this handler does with a command that arrives now, for the
+    /// report in `Hello` (ADR-0076). A handler that refuses overrides it,
+    /// from the same state [`Self::run`] checks.
+    fn acceptance(&self) -> CommandAcceptance {
+        CommandAcceptance::Accepted
+    }
+
     /// [`Self::run`], for handlers that also need the command's ID.
     async fn run_command(&self, command_id: &str, payload: &[u8]) -> Output {
         let _ = command_id;
@@ -136,6 +145,22 @@ impl Handlers {
 
     pub fn kinds(&self) -> impl Iterator<Item = &str> {
         self.by_kind.keys().map(String::as_str)
+    }
+
+    /// What each registered handler does with its kind, sorted by kind.
+    /// Read from the handlers themselves, so the report cannot differ from
+    /// what the dispatcher does (ADR-0076).
+    pub fn report(&self) -> Vec<CommandKindState> {
+        let mut states: Vec<_> = self
+            .by_kind
+            .iter()
+            .map(|(kind, handler)| CommandKindState {
+                kind: kind.clone(),
+                acceptance: handler.acceptance().into(),
+            })
+            .collect();
+        states.sort_by(|a, b| a.kind.cmp(&b.kind));
+        states
     }
 }
 

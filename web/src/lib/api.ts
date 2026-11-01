@@ -47,6 +47,8 @@ export interface Server {
   os_version: string | null;
   /** False when the host takes no package updates or sources (ADR-0063); absent is true. */
   package_updates?: boolean;
+  /** `accepted`, `off` or `unsupported` by command kind (ADR-0076); null, absent or a missing kind is unknown. */
+  command_kinds?: Record<string, string> | null;
   agent_version: string | null;
   created_at: string;
   revoked_at: string | null;
@@ -842,6 +844,8 @@ export interface PendingApproval {
   can_approve: boolean;
   can_reject: boolean;
   snapshots: { available: boolean; reason: SnapshotUnsupported | null };
+  /** `accepted`, `off` or `unsupported`; null or absent is unknown. Approving is refused when off or unsupported (ADR-0076). */
+  shell_acceptance?: string | null;
 }
 
 export interface PendingApprovalList {

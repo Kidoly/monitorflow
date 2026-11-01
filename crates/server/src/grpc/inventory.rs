@@ -10,6 +10,7 @@ use tonic::async_trait;
 use uuid::Uuid;
 
 use crate::api::audit::{self, Event};
+use crate::commands::acceptance;
 use crate::mirror::relays;
 
 #[derive(Debug, thiserror::Error)]
@@ -223,6 +224,9 @@ async fn agent_hello(
     );
     // The family alone says so too, should an older relay drop the flag.
     let package_updates = !hello.no_package_manager && hello.os_family != "linux";
+    // Replaced, also by nothing: an agent that went back to an older version
+    // or behind an older relay stays unknown rather than keep an old answer.
+    let command_kinds = acceptance::from_hello(hello).map(sqlx::types::Json);
 
     match existing {
         // A removed server enrolled again, until its approval restores it.
@@ -239,7 +243,7 @@ async fn agent_hello(
             sqlx::query(
                 "UPDATE servers SET hostname = $2, os_family = $3, os_version = $4,
                         agent_version = $5, relay_id = $6, package_updates = $7,
-                        last_seen_at = now()
+                        command_kinds = $8, last_seen_at = now()
                  WHERE id = $1",
             )
             .bind(server_id)
@@ -249,6 +253,7 @@ async fn agent_hello(
             .bind(&agent_version)
             .bind(relay_id)
             .bind(package_updates)
+            .bind(&command_kinds)
             .execute(&mut **tx)
             .await?;
             site_name(tx, site_id).await
@@ -268,8 +273,8 @@ async fn agent_hello(
             let server_id: Uuid = sqlx::query_scalar(
                 "INSERT INTO servers (peer_id, site_id, relay_id, hostname, os_family,
                                       os_version, agent_version, package_updates,
-                                      last_seen_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+                                      command_kinds, last_seen_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
                  RETURNING id",
             )
             .bind(id)
@@ -280,6 +285,7 @@ async fn agent_hello(
             .bind(&os_version)
             .bind(&agent_version)
             .bind(package_updates)
+            .bind(&command_kinds)
             .fetch_one(&mut **tx)
             .await?;
             let actor = accepted.peer.uri();

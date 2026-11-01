@@ -6,15 +6,21 @@
 
 mod support;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use monitorflow_agent::backoff::Backoff;
+use monitorflow_agent::commands::shell::ShellHandler;
+use monitorflow_agent::commands::unsupported::Unsupported;
+use monitorflow_agent::commands::Handlers;
 use monitorflow_agent::enroll::ensure_identity;
 use monitorflow_agent::identity::AgentIdentity;
 use monitorflow_agent::os::{HostInfo, OsFamily};
 use monitorflow_agent::shutdown::{self, Trigger};
 use monitorflow_agent::stream::{Agent, Failure, StreamSettings};
+use monitorflow_common::command;
 use monitorflow_common::config::AgentConfig;
+use monitorflow_common::proto::v1::{CommandAcceptance, CommandKindState};
 use monitorflow_common::tls::PeerRole;
 use monitorflow_server::ca::RevocationReason;
 use monitorflow_server::grpc::{self, Registry};
@@ -133,6 +139,44 @@ async fn hello_then_heartbeats_then_clean_shutdown() {
         registry.get("web-01").is_none()
     })
     .await;
+}
+
+/// The report comes from the handlers, through the same `Handlers` the
+/// dispatcher runs (ADR-0076).
+#[tokio::test]
+async fn hello_says_what_each_handler_does() {
+    let s = setup(server_settings()).await;
+    let (identity, _) = s.pki.agent_identity(&s.config, "web-01");
+    let mut handlers = Handlers::default();
+    handlers
+        .register(command::SHELL, Arc::new(ShellHandler::new(false)))
+        .register(
+            command::CONFIGURE_SOURCES,
+            Arc::new(Unsupported::new("package sources", "Windows")),
+        );
+    let silent = Agent::new(settings(&s.config), identity.clone(), host());
+    assert!(silent.hello().command_kinds.is_empty());
+    let agent = Agent::new(settings(&s.config), identity.clone(), host())
+        .with_command_kinds(handlers.report());
+    let state = |kind: &str, acceptance: CommandAcceptance| CommandKindState {
+        kind: kind.into(),
+        acceptance: acceptance.into(),
+    };
+    assert_eq!(
+        agent.hello().command_kinds,
+        [
+            state("configure_sources", CommandAcceptance::Unsupported),
+            state("shell", CommandAcceptance::Disabled),
+        ]
+    );
+
+    handlers.register(command::SHELL, Arc::new(ShellHandler::new(true)));
+    let agent =
+        Agent::new(settings(&s.config), identity, host()).with_command_kinds(handlers.report());
+    assert_eq!(
+        agent.hello().command_kinds[1],
+        state("shell", CommandAcceptance::Accepted)
+    );
 }
 
 #[tokio::test]

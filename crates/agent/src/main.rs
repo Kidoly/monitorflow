@@ -263,6 +263,7 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     let sensors = tokio::spawn(sensors.run(sensors_end, stop.clone()));
     let mut handlers = Handlers::default();
     let latest_report = platform_handlers(&config, &host, &mut handlers, &stop);
+    let command_kinds = handlers.report();
     let (commands_stream, commands_end) = commands::link();
     let ca_certs =
         tls::load_certs(&config.tls_paths().ca_cert).context("loading the CA certificate")?;
@@ -293,7 +294,8 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         .follow(updates)
         .with_sensors(stream_end)
         .with_upload(uplink)
-        .with_commands(commands_stream);
+        .with_commands(commands_stream)
+        .with_command_kinds(command_kinds);
     if let Some(reports) = latest_report {
         agent = agent.with_reports(reports);
     }

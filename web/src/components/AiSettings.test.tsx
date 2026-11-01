@@ -93,6 +93,47 @@ describe("AiSettingsPage", () => {
     expect(await screen.findByLabelText("Command that allows AI commands")).toHaveTextContent("sudo MF_ALLOW_COMMANDS=1 sh");
   });
 
+  it("shows where each server stands, with a link to act on it", async () => {
+    const server = (id: string, command_kinds: Record<string, string> | null) => ({ id, hostname: `web-${id}`, command_kinds });
+    stubFetch({
+      [`GET ${AI}`]: ok(settings({ enabled: true, has_key: true })),
+      "GET /api/settings/agent-install": install,
+      "GET /api/settings/public-address": address,
+      "GET /api/servers": {
+        status: 200,
+        body: {
+          servers: [
+            server("1", { shell: "accepted" }),
+            server("2", { shell: "off" }),
+            server("3", null),
+            server("4", { shell: "unsupported" }),
+            server("5", { apply_updates: "accepted" }),
+          ],
+          next_cursor: null,
+        },
+      },
+    });
+    page();
+    expect(await screen.findByText("1 of 5 servers accept AI commands.")).toBeInTheDocument();
+    expect(screen.getByText(/^Off, run the line below/)).toHaveTextContent(/web-2$/);
+    expect(screen.getByRole("link", { name: "web-2" })).toHaveAttribute("href", expect.stringContaining("id=2&tab=commands"));
+    // Not reporting is its own group, even from an agent that reports other kinds.
+    expect(screen.getByText(/^Not known yet/)).toHaveTextContent(/web-3, web-5$/);
+    expect(screen.getByText(/^Their system does not run/)).toHaveTextContent(/web-4$/);
+  });
+
+  it("still gives the line when the servers cannot be read", async () => {
+    stubFetch({
+      [`GET ${AI}`]: ok(settings({ enabled: true, has_key: true })),
+      "GET /api/settings/agent-install": install,
+      "GET /api/settings/public-address": address,
+      "GET /api/servers": { status: 500, body: { error: "database unavailable" } },
+    });
+    page();
+    expect(await screen.findByLabelText("Command that allows AI commands")).toBeInTheDocument();
+    expect(screen.queryByText(/accept AI commands\./)).not.toBeInTheDocument();
+  });
+
   it("shows why enabling failed", async () => {
     const user = userEvent.setup();
     stubFetch({

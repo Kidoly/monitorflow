@@ -12,8 +12,8 @@ use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
-    Command, Envelope, Heartbeat, Hello, RelayMirrors, Sample, SampleBatch, SensorConfigAck,
-    ServedMirror,
+    Command, CommandAcceptance, CommandKindState, Envelope, Heartbeat, Hello, RelayMirrors, Sample,
+    SampleBatch, SensorConfigAck, ServedMirror,
 };
 use monitorflow_common::tls::{self, Identity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
@@ -179,6 +179,7 @@ fn hello_v(agent_id: &str, version: &str) -> Envelope {
             os_family: "debian".into(),
             os_version: "debian 12".into(),
             no_package_manager: false,
+            command_kinds: Vec::new(),
         })),
     }
 }
@@ -806,6 +807,59 @@ db_tests! {
         let linux = with_hello("agent-1", |hello| hello.os_family = "linux".into());
         let _peer = h.open(&h.ca.client("agent-1", 13), linux).await.unwrap();
         assert!(!package_updates().await);
+    }
+
+    /// ADR-0076: each Hello replaces the report, and no report is unknown.
+    #[sqlx::test]
+    async fn stores_what_the_agent_says_about_commands(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        enrolled(&pool, "agent-1", paris).await;
+        let h = db_harness(&pool, settings()).await;
+        let stored = || async {
+            let stored: Option<serde_json::Value> =
+                sqlx::query_scalar("SELECT command_kinds FROM servers WHERE peer_id = 'agent-1'")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            stored
+        };
+        let reporting = |shell: CommandAcceptance| {
+            with_hello("agent-1", move |hello| {
+                hello.command_kinds = vec![CommandKindState {
+                    kind: "shell".into(),
+                    acceptance: shell.into(),
+                }];
+            })
+        };
+
+        // A 0.1.0 agent creates its row without a report.
+        let _peer = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
+        assert_eq!(stored().await, None);
+
+        // It updated, with the opt-in off.
+        let off = reporting(CommandAcceptance::Disabled);
+        let _peer = h.open(&h.ca.client("agent-1", 11), off).await.unwrap();
+        assert_eq!(stored().await, Some(serde_json::json!({"shell": "off"})));
+
+        // The administrator allowed commands: the agent restarted and said so.
+        let on = reporting(CommandAcceptance::Accepted);
+        let _peer = h.open(&h.ca.client("agent-1", 12), on).await.unwrap();
+        assert_eq!(stored().await, Some(serde_json::json!({"shell": "accepted"})));
+
+        // Behind an old relay, or back on an old agent, it is unknown again,
+        // not what it last said.
+        let _peer = h.open(&h.ca.client("agent-1", 13), hello("agent-1")).await.unwrap();
+        assert_eq!(stored().await, None);
+
+        // Nothing this server knows: a report, but unknown for every kind.
+        let future = with_hello("agent-1", |hello| {
+            hello.command_kinds = vec![CommandKindState {
+                kind: "reboot".into(),
+                acceptance: 7,
+            }];
+        });
+        let _peer = h.open(&h.ca.client("agent-1", 14), future).await.unwrap();
+        assert_eq!(stored().await, Some(serde_json::json!({})));
     }
 
     #[sqlx::test]

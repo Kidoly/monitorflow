@@ -193,6 +193,7 @@ impl Harness {
                 os_family: "debian".into(),
                 os_version: "debian 12".into(),
                 no_package_manager: false,
+                command_kinds: Vec::new(),
             })),
         })
         .await
@@ -916,6 +917,27 @@ db_tests! {
             "detail": "proxmox snapshot of VM 101",
         })]);
         assert_eq!(of_kind(&events, "command_queued")[1]["command"], "systemctl restart rsyslog");
+    }
+
+    /// ADR-0076: a person is told why, and neither a snapshot nor a command
+    /// is spent on a server that said it would refuse.
+    #[sqlx::test]
+    async fn a_server_that_refuses_commands_escalates_before_anything_runs(pool: PgPool) {
+        let h = Harness::start(&pool, &[]).await;
+        low_impact_auto(&h).await;
+        sqlx::query("UPDATE servers SET command_kinds = '{\"shell\": \"off\"}'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ai = Arc::new(MockProvider::new([Step::run("stuck", "systemctl restart rsyslog", "restart")]));
+        let stub = StubHook::new(HookMode::Fail);
+        let running = h.remediation_with(&ai, settings(), stub.clone());
+        h.wait_state("escalated").await;
+        running.stop().await;
+        assert!(stub.calls().is_empty());
+        assert!(of_kind(&h.events().await, "command_queued").is_empty());
+        assert!(h.agent.seen().is_empty());
+        assert!(last_escalation(&h).await.contains("MF_ALLOW_COMMANDS=1"));
     }
 
     #[sqlx::test]

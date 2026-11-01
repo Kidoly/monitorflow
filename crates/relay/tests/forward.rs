@@ -4,14 +4,17 @@
 
 mod support;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Command, Envelope, Heartbeat};
+use monitorflow_common::proto::v1::{
+    Command, CommandAcceptance, CommandKindState, Envelope, Heartbeat, Hello,
+};
 use monitorflow_common::tls::{PeerIdentity, PeerRole};
 use monitorflow_server::ca::RevocationReason;
 use monitorflow_server::grpc::{
-    AgentStreamService, AllowAllRelayedAgents, DenyRelayedAgents, Registry, RelayPolicy,
+    AcceptedHello, AgentStreamService, AllowAllRelayedAgents, DenyRelayedAgents, Inventory,
+    InventoryError, Registry, RelayPolicy,
 };
 use support::{hello, open, samples, server_settings, BufferOptions, Captured, Pki, Relay};
 use tonic::Code;
@@ -360,7 +363,7 @@ async fn records_of_agents_the_upstream_refuses_are_dropped() {
 /// Routes the server's policy was asked about: relays from the connecting
 /// one down, then the origin.
 #[derive(Clone, Default)]
-struct Routes(Arc<std::sync::Mutex<Vec<Route>>>);
+struct Routes(Arc<Mutex<Vec<Route>>>);
 
 type Route = (Vec<String>, String);
 
@@ -435,4 +438,111 @@ async fn batches_from_behind_a_downstream_relay_replay_with_their_path() {
         routes.contains(&(vec!["a".to_owned(), "b".to_owned()], "web-01".to_owned())),
         "{routes:?}"
     );
+}
+
+/// Every `Hello` the server accepted.
+#[derive(Clone, Default)]
+struct Hellos(Arc<Mutex<Vec<Hello>>>);
+
+#[tonic::async_trait]
+impl Inventory for Hellos {
+    async fn hello(&self, hello: AcceptedHello<'_>) -> Result<String, InventoryError> {
+        self.0.lock().unwrap().push(hello.hello.clone());
+        Ok(String::new())
+    }
+
+    async fn seen(&self, _role: PeerRole, _id: &str) -> Result<(), InventoryError> {
+        Ok(())
+    }
+}
+
+impl Hellos {
+    /// The latest report of `agent_id`, once its `Hello` arrived.
+    fn of(&self, agent_id: &str) -> Option<Vec<CommandKindState>> {
+        let hellos = self.0.lock().unwrap();
+        let last = hellos.iter().rfind(|h| h.agent_id == agent_id)?;
+        Some(last.command_kinds.clone())
+    }
+
+    fn clear(&self) {
+        self.0.lock().unwrap().clear();
+    }
+}
+
+fn recording(
+    captured: &Captured,
+    routes: &Routes,
+    hellos: &Hellos,
+) -> impl FnOnce(Registry) -> AgentStreamService {
+    let serve = routing(captured, routes);
+    let hellos = Arc::new(hellos.clone());
+    move |registry| serve(registry).with_inventory(hellos)
+}
+
+fn report() -> Vec<CommandKindState> {
+    vec![
+        CommandKindState {
+            kind: "self_update".into(),
+            acceptance: CommandAcceptance::Accepted.into(),
+        },
+        CommandKindState {
+            kind: "shell".into(),
+            acceptance: CommandAcceptance::Disabled.into(),
+        },
+    ]
+}
+
+fn reporting_hello(agent_id: &str) -> Envelope {
+    let mut envelope = hello(agent_id);
+    if let Some(Payload::Hello(hello)) = &mut envelope.payload {
+        hello.command_kinds = report();
+    }
+    envelope
+}
+
+/// ADR-0076: live and from the buffer, directly and through a chain.
+#[tokio::test]
+async fn the_command_report_passes_through_relays_and_their_buffer() {
+    let pki = Pki::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let (captured, routes, hellos) = (Captured::default(), Routes::default(), Hellos::default());
+    let mut upstream = pki.serve(recording(&captured, &routes, &hellos)).await;
+    let a_options = || BufferOptions::at(dir.path(), 1 << 30);
+    let a = Relay::start_with(pki.relay("a"), &upstream.url, a_options()).await;
+    let up = a.up.clone();
+    support::wait_until("a's stream open", || *up.borrow()).await;
+    let b = Relay::start(pki.relay("b"), &a.url).await;
+
+    let direct = open(&a.url, &pki.agent("web-02"), reporting_hello("web-02"))
+        .await
+        .unwrap();
+    let chained = open(&b.url, &pki.agent("web-01"), reporting_hello("web-01"))
+        .await
+        .unwrap();
+    upstream
+        .wait_until("both agents up", |r| {
+            r.get("web-01").is_some() && r.get("web-02").is_some()
+        })
+        .await;
+    assert_eq!(hellos.of("web-02"), Some(report()));
+    assert_eq!(hellos.of("web-01"), Some(report()));
+    // The relays' own Hellos say nothing.
+    assert_eq!(hellos.of("b"), Some(Vec::new()));
+
+    // Written to disk during an outage, replayed with neither relay b nor
+    // the agents left.
+    drop(direct);
+    stop(&mut upstream, &a).await;
+    chained.send(2, samples(1.0)).await;
+    appended(&a, 1).await;
+    drop(chained);
+    drop(b);
+    a.stop().await;
+    hellos.clear();
+    let upstream = pki
+        .serve_at(upstream.addr, recording(&captured, &routes, &hellos), None)
+        .await;
+    let _a = Relay::start_with(pki.relay("a"), &upstream.url, a_options()).await;
+    support::wait_until("replayed", || captured.values("web-01") == [1.0]).await;
+    assert_eq!(hellos.of("web-01"), Some(report()));
 }

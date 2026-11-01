@@ -246,6 +246,99 @@ describe("ServerPage", () => {
     expect(screen.queryByRole("link", { name: "Open campaigns" })).not.toBeInTheDocument();
   });
 
+  describe("AI commands", () => {
+    const install = {
+      "GET /api/settings/agent-install": ok({
+        source: "github",
+        custom_url: null,
+        source_from_config: false,
+        custom_url_from_config: false,
+        github_url: "https://github.com/Kidoly/monitorflow/releases/latest/download",
+        central: null,
+      }),
+      "GET /api/settings/public-address": ok({
+        address: "mf.example",
+        default: "mf.example",
+        names: ["mf.example"],
+        certified: true,
+        upstream_url: "https://mf.example:7443",
+        enroll_url: "https://mf.example:7445",
+      }),
+    };
+    const off = { apply_updates: "accepted", configure_sources: "accepted", revert_sources: "accepted", self_update: "accepted", shell: "off" };
+    const reporting = (command_kinds: ServerDetail["command_kinds"], more: Partial<ServerDetail> = {}) =>
+      ok({ ...web1, command_kinds, ...more });
+
+    it("is not known yet for an agent that does not report, whatever else it says", async () => {
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: ok(web1) }));
+      render(<ServerPage id={ID} />);
+      await heading();
+      expect(screen.getByText("Not known yet")).toBeInTheDocument();
+      expect(screen.getByText(/The agent and its relay will say once updated/)).toBeInTheDocument();
+      expect(screen.queryByText(/Runs the commands AI sends/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Refuses AI/)).not.toBeInTheDocument();
+    });
+
+    it("says it is on", async () => {
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting({ ...off, shell: "accepted" }) }));
+      render(<ServerPage id={ID} />);
+      await heading();
+      expect(screen.getByText(/Runs the commands AI sends/)).toHaveTextContent(/^On Runs/);
+      expect(screen.queryByRole("link", { name: "How to turn them on" })).not.toBeInTheDocument();
+    });
+
+    it("says it is off, and gives administrators the line to run", async () => {
+      setUrl(`/servers/view/?id=${ID}&tab=commands`);
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting(off), ...install }));
+      render(
+        <As user={customerAdmin}>
+          <ServerPage id={ID} />
+        </As>,
+      );
+      await heading();
+      expect(screen.getByText("Off")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "How to turn them on" })).toHaveAttribute(
+        "href",
+        expect.stringContaining("tab=commands"),
+      );
+      expect(await screen.findByLabelText("Command that allows AI commands")).toHaveTextContent("MF_ALLOW_COMMANDS=1");
+      expect(screen.getByText(/AI commands are off on web-1/)).toBeInTheDocument();
+    });
+
+    it("sends other people to an administrator", async () => {
+      setUrl(`/servers/view/?id=${ID}&tab=commands`);
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting(off) }));
+      render(
+        <As user={me({ role: "viewer", customer_id: null, site_id: null })}>
+          <ServerPage id={ID} />
+        </As>,
+      );
+      await heading();
+      expect(screen.getByText(/An administrator can turn them on/)).toBeInTheDocument();
+      expect(screen.queryByLabelText("Command that allows AI commands")).not.toBeInTheDocument();
+    });
+
+    it("says what Windows cannot do, with nothing to turn on", async () => {
+      setUrl(`/servers/view/?id=${ID}&tab=commands`);
+      const windows = { ...off, shell: "unsupported", configure_sources: "unsupported", revert_sources: "unsupported" };
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting(windows, { os_family: "windows" }) }));
+      render(<ServerPage id={ID} />);
+      await heading();
+      expect(screen.getByText("Not available")).toBeInTheDocument();
+      expect(screen.getByText(/Windows servers do not run AI commands yet/)).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "How to turn them on" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/AI commands are off/)).not.toBeInTheDocument();
+    });
+
+    it("dates what an offline server last said, and lists every kind under Details", async () => {
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting(off, { status: "offline" }) }));
+      render(<ServerPage id={ID} />);
+      await heading();
+      expect(screen.getByText(/As of its last contact/)).toBeInTheDocument();
+      expect(screen.getByText("Accepts package updates, package sources, agent updates. Refuses AI commands.")).toBeInTheDocument();
+    });
+  });
+
   it("switches tabs through the URL", async () => {
     stubFetch(routes());
     render(<ServerPage id={ID} />);

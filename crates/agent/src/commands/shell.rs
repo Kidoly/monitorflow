@@ -10,7 +10,7 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use monitorflow_common::proto::v1::ShellCommand;
+use monitorflow_common::proto::v1::{CommandAcceptance, ShellCommand};
 use prost::Message;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
@@ -40,6 +40,14 @@ impl ShellHandler {
 
 #[async_trait::async_trait]
 impl Handler for ShellHandler {
+    fn acceptance(&self) -> CommandAcceptance {
+        if self.enabled {
+            CommandAcceptance::Accepted
+        } else {
+            CommandAcceptance::Disabled
+        }
+    }
+
     async fn run(&self, payload: &[u8]) -> Output {
         if !self.enabled {
             return Output::rejected(
@@ -169,6 +177,16 @@ mod tests {
         let output = handler.run(&payload("ls /nonexistent-dir", 0)).await;
         assert_ne!(output.exit_code, 0);
         assert!(!output.stderr.is_empty());
+    }
+
+    /// The report is true of what the handler then does (ADR-0076).
+    #[tokio::test]
+    async fn reports_what_it_does() {
+        let (on, off) = (ShellHandler::new(true), ShellHandler::new(false));
+        assert_eq!(on.acceptance(), CommandAcceptance::Accepted);
+        assert!(!on.run(&payload("true", 0)).await.rejected);
+        assert_eq!(off.acceptance(), CommandAcceptance::Disabled);
+        assert!(off.run(&payload("true", 0)).await.rejected);
     }
 
     #[tokio::test]

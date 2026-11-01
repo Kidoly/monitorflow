@@ -179,6 +179,7 @@ impl Harness {
             os_family: "debian".into(),
             os_version: "debian 12".into(),
             no_package_manager: false,
+            command_kinds: Vec::new(),
         };
         tx.send(Envelope {
             sequence: 1,

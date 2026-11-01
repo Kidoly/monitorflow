@@ -87,7 +87,7 @@
 //! | GET | `/api/remediation/incidents` | any role | [`remediation_incidents::IncidentList`], see below |
 //! | GET | `/api/remediation/incidents/{id}` | read | [`remediation_incidents::IncidentDetail`]: the incident, its `events` and `chain` |
 //! | GET | `/api/remediation/approvals` | any role | [`approvals::PendingList`], see below |
-//! | POST | `/api/remediation/approvals/{id}/approve` | approver, see below | body `{"command"?}`; 200 [`approvals::DecisionView`]; 409 once decided or past the deadline |
+//! | POST | `/api/remediation/approvals/{id}/approve` | approver, see below | body `{"command"?}`; 200 [`approvals::DecisionView`]; 409 once decided, past the deadline, or when the server refuses these commands (ADR-0076) |
 //! | POST | `/api/remediation/approvals/{id}/reject` | approver | body `{"reason"}`; 200 [`approvals::DecisionView`]; 409 as for approve |
 //! | GET | `/api/remediation/events` | any role | [`remediation_events::EventList`], see below |
 //! | GET | `/api/servers/{id}/thresholds/effective` | read | [`thresholds::Effective`]: thresholds in force, muted ones and origins |
@@ -458,6 +458,7 @@
 //!   "site_id": "uuid", "site_name": "paris",
 //!   "customer_id": "uuid", "customer_name": "default", "relay_id": null,
 //!   "os_family": "debian", "os_version": "12", "package_updates": true,
+//!   "command_kinds": {"apply_updates": "accepted", "shell": "off"},
 //!   "agent_version": "0.1.0",
 //!   "created_at": "2026-10-18T12:00:00Z", "revoked_at": null,
 //!   "status": "online",
@@ -477,6 +478,9 @@
 //! Servers come from the database only; a connected agent without a row is
 //! not listed. See [`ServerView`] for each field. `cert_not_after` is the
 //! latest expiry among the agent's unrevoked certificates, `null` if none.
+//! `command_kinds` says what the agent does with each kind of command,
+//! `accepted`, `off` or `unsupported`; `null` or a missing kind is unknown,
+//! neither accepted nor refused (ADR-0076).
 //!
 //! # `GET /api/servers/{id}`
 //!
