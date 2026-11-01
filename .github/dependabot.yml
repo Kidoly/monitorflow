@@ -1,0 +1,72 @@
+# Weekly version updates. Minor and patch updates of an ecosystem share one
+# pull request, major updates get their own, and a person merges all of them.
+# The groups apply to version updates only, so security updates stay single
+# pull requests, outside the limits below.
+version: 2
+updates:
+  # Actions are pinned to commit SHAs with the version in a comment, which
+  # Dependabot updates together. `/` covers .github/workflows only: add each
+  # composite action with external `uses:` lines here.
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/build-agent-linux
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+  # Any file name holding "dockerfile" counts, so *.Dockerfile is found.
+  - package-ecosystem: docker
+    directories:
+      - /deploy/docker
+      - /deploy/mirror-fixture
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # The rust image follows rust-toolchain.toml and RUSTUP_TOOLCHAIN, bumped
+    # together in a dedicated pull request (ADR-0005).
+    ignore:
+      - dependency-name: rust
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+  # Both compose files in deploy/. Dependabot reads the default of
+  # ${SERVER_IMAGE:-monitorflow-server:local} as an image; ours are built here.
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: monitorflow-*
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
