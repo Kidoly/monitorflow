@@ -14,6 +14,8 @@ export function mirror(overrides: Partial<Mirror> = {}): Mirror {
     sync_interval_s: 43_200,
     auto_snapshot: true,
     created_at: "2026-10-01T10:00:00Z",
+    deleting_at: null,
+    delete_error: null,
     current_snapshot: "20261022T143000Z",
     last_run: {
       id: "r1",
@@ -63,5 +65,12 @@ export function run(overrides: Partial<MirrorRun> = {}): MirrorRun {
 }
 
 export function mirrorDetail(overrides: Partial<MirrorDetail> = {}): MirrorDetail {
-  return { ...mirror(), snapshots: [snapshot()], keep_snapshots: 7, runs: [run()], ...overrides };
+  return {
+    ...mirror(),
+    snapshots: [snapshot()],
+    keep_snapshots: 7,
+    runs: [run()],
+    used_by: { campaigns: [], servers: [] },
+    ...overrides,
+  };
 }

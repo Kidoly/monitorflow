@@ -8,14 +8,18 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use monitorflow_common::proto::v1::configure_sources::DnfRepository;
+use monitorflow_common::proto::v1::ConfigureSources;
 use monitorflow_common::redact::Secret;
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
+use monitorflow_server::commands::{CommandStore, NewCommand};
 use monitorflow_server::grpc::Registry;
 use monitorflow_server::mirror::{
     store, Family, Invocation, Layout, MirrorSpec, Mirrors, Output, RunError, Runner,
 };
+use prost::Message;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -329,10 +333,110 @@ db_tests! {
                 ("GET", path.clone(), None),
                 ("POST", format!("{path}/sync"), None),
                 ("POST", format!("{path}/snapshots"), Some(json!({}))),
+                ("DELETE", path.clone(), None),
             ] {
                 assert_eq!(h.call(method, &uri, cookie, body).await.0, StatusCode::FORBIDDEN, "{method} {uri}");
             }
         }
         assert!(store::runs(&pool, mirror.id, 10).await.unwrap().is_empty());
+        assert!(store::get(&pool, mirror.id).await.unwrap().unwrap().deleting_at.is_none());
+    }
+
+    #[sqlx::test]
+    async fn a_global_administrator_deletes_a_mirror_nothing_uses(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let admin = h.user("root", Role::Administrator, GrantScope::Global).await;
+        let mirror = store::create(&pool, &dnf("rocky"), ("system", "test")).await.unwrap();
+        let path = format!("/api/mirrors/{}", mirror.id);
+
+        let (status, detail) = h.call("GET", &path, &admin, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(detail["deleting_at"], Value::Null);
+        assert_eq!(detail["used_by"], json!({ "campaigns": [], "servers": [] }));
+
+        let (status, answer) = h.call("DELETE", &path, &admin, None).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert!(answer["deleting_at"].is_string(), "{answer}");
+        for _ in 0..500 {
+            if h.call("GET", &path, &admin, None).await.0 == StatusCode::NOT_FOUND {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(h.call("GET", &path, &admin, None).await.0, StatusCode::NOT_FOUND);
+        assert_eq!(h.call("DELETE", &path, &admin, None).await.0, StatusCode::NOT_FOUND);
+        let (status, list) = h.call("GET", "/api/mirrors", &admin, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(list["mirrors"], json!([]));
+    }
+
+    #[sqlx::test]
+    async fn a_mirror_being_deleted_says_so_and_starts_no_job(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let admin = h.user("root", Role::Administrator, GrantScope::Global).await;
+        let mirror = store::create(&pool, &dnf("rocky"), ("system", "test")).await.unwrap();
+        let path = format!("/api/mirrors/{}", mirror.id);
+        // A running job keeps the deletion waiting.
+        h.tools.hold.store(true, Ordering::SeqCst);
+        assert_eq!(h.call("POST", &format!("{path}/sync"), &admin, None).await.0, StatusCode::ACCEPTED);
+
+        assert_eq!(h.call("DELETE", &path, &admin, None).await.0, StatusCode::ACCEPTED);
+        let (status, list) = h.call("GET", "/api/mirrors", &admin, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(list["mirrors"][0]["deleting_at"].is_string());
+        let (status, body) = h.call("POST", &format!("{path}/sync"), &admin, None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+
+        // The job ends by the watch, not by its tool, and the rest follows.
+        for _ in 0..1000 {
+            if store::get(&pool, mirror.id).await.unwrap().is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(store::get(&pool, mirror.id).await.unwrap(), None);
+    }
+
+    #[sqlx::test]
+    async fn a_mirror_in_use_is_refused_with_what_uses_it(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let admin = h.user("root", Role::Administrator, GrantScope::Global).await;
+        let mirror = store::create(&pool, &dnf("rocky"), ("system", "test")).await.unwrap();
+        let path = format!("/api/mirrors/{}", mirror.id);
+        let customer: Uuid = sqlx::query_scalar("INSERT INTO customers (name) VALUES ('c') RETURNING id")
+            .fetch_one(&pool).await.unwrap();
+        let site: Uuid = sqlx::query_scalar("INSERT INTO sites (name, customer_id) VALUES ('s', $1) RETURNING id")
+            .bind(customer).fetch_one(&pool).await.unwrap();
+        let server: Uuid = sqlx::query_scalar(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family)
+             VALUES ('web-01', $1, 'web-01', 'rhel') RETURNING id",
+        )
+        .bind(site).fetch_one(&pool).await.unwrap();
+        let spec = ConfigureSources {
+            dnf: vec![DnfRepository {
+                mirror: "rocky".into(),
+                snapshot: "current".into(),
+                ..DnfRepository::default()
+            }],
+            ..ConfigureSources::default()
+        };
+        CommandStore::enqueue_in(&pool, &NewCommand {
+            server_id: server,
+            kind: "configure_sources".into(),
+            payload: spec.encode_to_vec(),
+            ttl: Duration::from_secs(3600),
+            requested_by: None,
+            campaign_id: None,
+        })
+        .await
+        .unwrap();
+
+        let (status, body) = h.call("DELETE", &path, &admin, None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "rocky is still used by 1 server (web-01)", "{body}");
+        let (_, detail) = h.call("GET", &path, &admin, None).await;
+        assert_eq!(detail["deleting_at"], Value::Null);
+        assert_eq!(detail["used_by"]["servers"][0]["hostname"], "web-01");
+        assert_eq!(detail["used_by"]["servers"][0]["id"], server.to_string());
     }
 }

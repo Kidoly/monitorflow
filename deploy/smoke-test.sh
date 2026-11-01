@@ -207,6 +207,27 @@ check "seven dnf snapshots stay" test "$(snapshot_count fixture-dnf)" = 7
 check "apt still installs from the mirror" apt_installs
 check "dnf still installs from the mirror" dnf_installs
 
+# Deleting a mirror (ADR-0075), with the real tools.
+in_aptly() { compose exec -T mirror aptly "$@" -config="$mirrors/aptly.conf" -raw; }
+index_says_removed() { curl -fsS "$mirror/index.json" | jq -e --arg n "$1" 'any(.removed[]; .name == $n)' >/dev/null; }
+mirror_gone() { [ "$(curl -sSk -b "$work/cookies" -o /dev/null -w '%{http_code}' "$api/mirrors/$1")" = 404 ]; }
+deleted() {
+    local id code
+    id=$(get mirrors | jq -r --arg n "$1" '.mirrors[] | select(.name == $n) | .id')
+    code=$(curl -sSk -b "$work/cookies" -H 'x-monitorflow-csrf: 1' -X DELETE -o "$work/answer" -w '%{http_code}' "$api/mirrors/$id")
+    [ "$code" = 202 ] || { echo "delete refused: $(cat "$work/answer")" >&2; return 1; }
+    until_true 120 mirror_gone "$id"
+}
+disk_before=$(disk_kib)
+check "an apt mirror is deleted" deleted fixture-apt
+check "a dnf mirror is deleted" deleted fixture-dnf
+disk_after=$(disk_kib)
+check "their disk space came back ($disk_before to $disk_after KiB)" test "$disk_after" -lt "$disk_before"
+check "no package is left" test "$(in_mirror "find $mirrors/aptly/pool $mirrors/dnf $mirrors/dnf-work -name 'mf-fixture?[0-9]*' | wc -l")" = 0
+check "aptly holds nothing of them" test -z "$(in_aptly mirror list; in_aptly snapshot list; in_aptly publish list)"
+check "nothing is served any more" test "$(curl -s -o /dev/null -w '%{http_code}' "$mirror/apt/fixture-apt/current/dists/fixture/Release")" = 404
+check "the index tells relays" index_says_removed fixture-dnf
+
 if [ "$failed" -ne 0 ]; then
     for out in "$work"/s_client.*; do
         [ -e "$out" ] && { echo "== $out"; head -40 "$out"; }

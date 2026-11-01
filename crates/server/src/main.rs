@@ -123,6 +123,12 @@ enum MirrorCommand {
     /// Remove the snapshots nothing needs now and free their disk space.
     /// The server does this by itself every hour.
     Prune,
+    /// Delete a mirror and its packages, here and on relays. Refused while
+    /// an update campaign or a server uses it.
+    Delete {
+        #[arg(long)]
+        name: String,
+    },
     /// Manage the key signing published repositories.
     #[command(subcommand)]
     Key(KeyCommand),
@@ -863,6 +869,20 @@ async fn mirror_command(
         MirrorCommand::Prune => {
             let removed = mirror::retention::prune(&mirrors).await?;
             println!("removed {removed} snapshots");
+            return Ok(());
+        }
+        MirrorCommand::Delete { name } => {
+            let mirror = find(name).await?;
+            mirror::removal::request(&pool, mirror.id, ("system", "cli")).await?;
+            mirror::retention::prune(&mirrors).await?;
+            match mirror::store::get(&pool, mirror.id).await? {
+                None => println!("deleted mirror {}", mirror.name),
+                Some(left) => anyhow::bail!(
+                    "mirror {} is not fully deleted, the server retries within the hour: {}",
+                    left.name,
+                    left.delete_error.as_deref().unwrap_or("unknown error")
+                ),
+            }
             return Ok(());
         }
         MirrorCommand::Sync { name } => (find(name).await?, JobKind::Sync),

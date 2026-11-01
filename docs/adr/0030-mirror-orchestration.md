@@ -1,7 +1,7 @@
 # ADR-0030: Mirror orchestration and serving
 
 Date: 2026-10-23
-Status: accepted; the tools run in a sidecar and some command lines changed in ADR-0067
+Status: accepted; the tools run in a sidecar and some command lines changed in ADR-0067; retention in ADR-0074; mirrors can be deleted since ADR-0075
 
 ## Context
 
@@ -17,7 +17,7 @@ Architecture §7: the central server hosts full apt and dnf mirrors, with snapsh
 - `mirror_snapshots (id, mirror_id, name, state creating|published|failed, size_bytes, error, created_at, published_at)`, `UNIQUE (mirror_id, name)`. `name` is 1 to 64 of `[A-Za-z0-9._-]`, not starting with a dot and not `current`; it defaults to the UTC time `YYYYMMDDTHHMMSSZ`. `size_bytes` is the apparent size of the published tree, counted while walking it anyway; files shared by hardlinks count in every snapshot.
 - `mirror_runs (id, mirror_id, kind sync|snapshot, trigger schedule|manual, requested_by, state running|succeeded|failed, snapshot_id, output, error, started_at, finished_at)`. One table for both kinds, as both run tools under the same lock and are what an administrator looks at when something fails. `output` is the commands and their combined stdout and stderr, at most the last 64 KiB; `error` one line. A partial unique index allows one `running` run per mirror.
 
-Mirrors are not deleted for now: removing published content that agents or a campaign still use needs the campaign model first.
+Mirrors are not deleted for now: removing published content that agents or a campaign still use needs the campaign model first. ADR-0075 adds it.
 
 **One job per mirror at a time**, across processes. A run takes a PostgreSQL session advisory lock on the mirror (`pg_try_advisory_lock`) on a connection it holds until it ends; a busy mirror answers "busy" at once (409 in the API) rather than queueing. A process that dies releases its lock with its connection, so a `running` row found by the next holder of the lock is stale and is marked `failed` ("interrupted") before the new run starts. Snapshots take the same lock as syncs: a dnf snapshot hardlinks the working tree, which must not change under it.
 
@@ -50,7 +50,7 @@ No directory listings, and any path segment starting with a dot is 404, which hi
 ## Consequences
 
 - An install with mirrors needs `aptly`, `dnf-plugins-core` (`reposync`), `createrepo_c` and `gpg` on the server host, and the disk for full mirrors; the server image gains them in packaging.
-- Snapshots accumulate: retention, and deleting snapshots or mirrors, wait for campaigns, which know which snapshots are in use.
+- Snapshots accumulate: retention, and deleting snapshots or mirrors, wait for campaigns, which know which snapshots are in use. Retention came with ADR-0074, deleting a mirror with ADR-0075.
 - The plain listener exposes which packages a host downloads to the network path; a TLS proxy in front fixes that when it matters.
 - Tool invocations are tested against fake binaries only: the command lines follow the tools' documentation and need a check against real `aptly` and `reposync` before the first release.
 - Relays sync from the same URLs, so the layout above cannot change without a new ADR.

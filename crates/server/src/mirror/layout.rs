@@ -78,6 +78,11 @@ impl Layout {
         self.root.join("dnf-work").join(&mirror.name)
     }
 
+    /// dnf's cache of upstream metadata in the sidecar (`reposync.sh`).
+    pub fn dnf_cache(&self) -> PathBuf {
+        self.root.join("dnf-work").join(".cache")
+    }
+
     /// Creates the directories and writes aptly's configuration. Blocking.
     pub fn prepare(&self) -> io::Result<()> {
         for dir in [

@@ -1,7 +1,9 @@
 //! The relay's mirror sync loop (ADR-0034): at start and then every
 //! `mirror.sync_interval`, copy the public key, read the upstream's
 //! `/index.json` and sync each listed mirror in turn, copy the snapshots
-//! campaigns pin (ADR-0038), then prune its old snapshots. After each
+//! campaigns pin (ADR-0038), then prune its old snapshots. A mirror the
+//! index says was deleted goes first (ADR-0075): this loop is the only
+//! writer of the tree, so no sync of it can be running. After each
 //! mirror it reports what the relay serves to the control stream
 //! (ADR-0037). Failures are logged with the time of the last success and
 //! retried at the next cycle; they never stop the relay. A shutdown
@@ -14,7 +16,8 @@ use std::time::{Duration, Instant};
 use monitorflow_common::client::shutdown::Shutdown;
 use monitorflow_common::config::RelayConfig;
 use monitorflow_common::mirror::{
-    write_atomically, write_pinned, Family, Index, IndexMirror, Served,
+    remove_mirror_dir, remove_retired, write_atomically, write_pinned, write_removed, Family,
+    Index, IndexMirror, Served,
 };
 use monitorflow_common::proto::v1::RelayMirrors;
 use monitorflow_common::release::{self, ReleaseError};
@@ -66,6 +69,8 @@ pub struct Report {
     /// Set when the index could not be read; nothing was synced.
     pub index_error: Option<String>,
     pub mirrors: Vec<(IndexMirror, Result<Outcome, String>)>,
+    /// Copies of mirrors deleted upstream that were removed.
+    pub removed: Vec<(Family, String)>,
     /// Agent releases copied (ADR-0053), and why the others were not.
     pub agent_releases: Vec<String>,
     pub agent_error: Option<String>,
@@ -145,7 +150,10 @@ impl MirrorTask {
                 };
             }
         };
-        let mut report = Report::default();
+        let mut report = Report {
+            removed: self.remove_deleted(&index).await,
+            ..Report::default()
+        };
         for mirror in index.mirrors {
             if !self.settings.mirrors.is_empty() && !self.settings.mirrors.contains(&mirror.name) {
                 continue;
@@ -159,6 +167,70 @@ impl MirrorTask {
             Err(error) => report.agent_error = Some(error),
         }
         report
+    }
+
+    /// Deletes the copies of mirrors the upstream says were deleted,
+    /// whatever `mirror.mirrors` narrows to, and passes the list on to
+    /// chained relays. Returns those that were here. A failure is logged
+    /// and the next cycle tries again, as the upstream keeps listing them.
+    async fn remove_deleted(&mut self, index: &Index) -> Vec<(Family, String)> {
+        let served = self.served.clone();
+        let listed: Vec<_> = index
+            .removed
+            .iter()
+            .filter(|r| {
+                !index
+                    .mirrors
+                    .iter()
+                    .any(|m| m.family == r.family && m.name == r.name)
+            })
+            .map(|r| (r.family, r.name.clone()))
+            .collect();
+        let removed = tokio::task::spawn_blocking(move || {
+            let mut gone = Vec::new();
+            for family in Family::ALL {
+                let root = served.root(family);
+                let mut names: Vec<String> = listed
+                    .iter()
+                    .filter(|(f, _)| *f == family)
+                    .map(|(_, name)| name.clone())
+                    .collect();
+                names.sort();
+                if !names.is_empty() {
+                    std::fs::create_dir_all(root)?;
+                }
+                write_removed(root, &names)?;
+                for name in names {
+                    let here = root.join(&name).exists();
+                    remove_mirror_dir(root, &name)?;
+                    if here {
+                        gone.push((family, name));
+                    }
+                }
+                remove_retired(root)?;
+            }
+            Ok::<_, std::io::Error>(gone)
+        })
+        .await;
+        let gone = match removed {
+            Ok(Ok(gone)) => gone,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "cannot remove a mirror deleted upstream; will retry");
+                return Vec::new();
+            }
+            Err(error) => {
+                tracing::warn!(%error, "mirror removal task failed");
+                return Vec::new();
+            }
+        };
+        for (family, name) in &gone {
+            tracing::info!(%family, mirror = %name, "mirror deleted upstream, copy removed");
+            self.last_success.remove(&(*family, name.clone()));
+        }
+        if !gone.is_empty() {
+            self.report().await;
+        }
+        gone
     }
 
     /// Copies the newest agent releases the upstream lists (ADR-0053).

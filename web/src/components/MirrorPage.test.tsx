@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { stubFetch } from "@/test/fetch";
-import { MIRROR_ID, mirrorDetail, run, snapshot } from "@/test/mirrors";
+import { MIRROR_ID, mirror, mirrorDetail, run, snapshot } from "@/test/mirrors";
 
 import { MirrorPage } from "./MirrorPage";
 
@@ -116,6 +116,96 @@ describe("MirrorPage", () => {
         "Each mirror keeps its 7 newest snapshots. Older ones are removed by themselves and their disk space is freed, unless something still needs them: the current snapshot, a snapshot an update campaign is pinned to, or one a relay or a server is still using.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("removes a mirror after a confirmation that says what happens", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      [PATH]: [
+        { status: 200, body: mirrorDetail() },
+        { status: 200, body: mirrorDetail({ deleting_at: "2026-10-22T15:00:00Z", snapshots: [], current_snapshot: null }) },
+        { status: 404, body: { error: "not found" } },
+      ],
+      [`DELETE /api/mirrors/${MIRROR_ID}`]: { status: 202, body: mirror({ deleting_at: "2026-10-22T15:00:00Z" }) },
+    });
+    render(<MirrorPage id={MIRROR_ID} />);
+
+    await user.click(await screen.findByRole("button", { name: "Remove debian-bookworm…" }));
+    expect(screen.getByText(/Its snapshots and packages are deleted from this server/)).toHaveTextContent(
+      "Relays delete their copy at their next sync. This can't be undone",
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(`/api/mirrors/${MIRROR_ID}`, expect.objectContaining({ method: "DELETE" }));
+    await user.click(screen.getByRole("button", { name: "Remove debian-bookworm" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(`/api/mirrors/${MIRROR_ID}`, expect.objectContaining({ method: "DELETE" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Removing this mirror.");
+    expect(screen.getByText("Being removed")).toBeInTheDocument();
+    for (const button of screen.getAllByRole("button", { name: "Sync now" })) expect(button).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /^Remove/ })).not.toBeInTheDocument();
+  });
+
+  it("warns that removing stops a running sync", async () => {
+    const user = userEvent.setup();
+    stubFetch({
+      [PATH]: { status: 200, body: mirrorDetail({ last_run: { ...mirrorDetail().last_run!, state: "running", finished_at: null } }) },
+    });
+    render(<MirrorPage id={MIRROR_ID} />);
+    await user.click(await screen.findByRole("button", { name: "Remove debian-bookworm…" }));
+    expect(screen.getByText(/The run going now is stopped\./)).toBeInTheDocument();
+  });
+
+  it("says what uses a mirror and offers no way to remove it", async () => {
+    stubFetch({
+      [PATH]: {
+        status: 200,
+        body: mirrorDetail({
+          used_by: {
+            campaigns: [{ id: "c1", name: "March updates" }],
+            servers: [{ id: "s1", hostname: "web-01" }],
+          },
+        }),
+      },
+    });
+    render(<MirrorPage id={MIRROR_ID} />);
+    const section = await screen.findByRole("region", { name: "Remove this mirror" });
+    expect(section).toHaveTextContent("debian-bookworm can't be removed yet, because it is in use.");
+    expect(within(section).getByRole("link", { name: "March updates" })).toHaveAttribute("href", expect.stringContaining("c1"));
+    expect(within(section).getByRole("link", { name: "web-01" })).toHaveAttribute("href", expect.stringContaining("s1"));
+    expect(screen.queryByRole("button", { name: /^Remove/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps the confirmation open with the server's reason", async () => {
+    const user = userEvent.setup();
+    stubFetch({
+      [PATH]: { status: 200, body: mirrorDetail() },
+      [`DELETE /api/mirrors/${MIRROR_ID}`]: { status: 409, body: { error: "debian-bookworm is still used by 1 server (web-01)" } },
+    });
+    render(<MirrorPage id={MIRROR_ID} />);
+    await user.click(await screen.findByRole("button", { name: "Remove debian-bookworm…" }));
+    await user.click(screen.getByRole("button", { name: "Remove debian-bookworm" }));
+    expect(await screen.findByText("Not removed: debian-bookworm is still used by 1 server (web-01).")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove debian-bookworm" })).toBeInTheDocument();
+  });
+
+  it("shows why a removal failed and tries again on request", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      [PATH]: [
+        {
+          status: 200,
+          body: mirrorDetail({ deleting_at: "2026-10-22T15:00:00Z", delete_error: "the mirror tools are not running" }),
+        },
+        { status: 404, body: { error: "not found" } },
+      ],
+      [`DELETE /api/mirrors/${MIRROR_ID}`]: { status: 202, body: mirror({ deleting_at: "2026-10-22T15:00:00Z" }) },
+    });
+    render(<MirrorPage id={MIRROR_ID} />);
+    expect(await screen.findByText(/could not be fully removed: the mirror tools are not running/)).toBeInTheDocument();
+    expect(screen.getByText("Removal failed")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Try again now" }));
+    expect(fetchMock).toHaveBeenCalledWith(`/api/mirrors/${MIRROR_ID}`, expect.objectContaining({ method: "DELETE" }));
+    // Once it ends, the page says so rather than "not found".
+    expect(await screen.findByText("Mirror removed")).toBeInTheDocument();
   });
 
   it("does not tell a missing mirror from a bad ID", async () => {

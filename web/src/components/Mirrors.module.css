@@ -35,6 +35,22 @@
   font-family: var(--mono);
 }
 
+.inUse {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.inUse p,
+.inUse ul {
+  margin: 0 0 6px;
+}
+
+.inUse ul {
+  padding-left: 18px;
+}
+
 /* Width 0 then 100 %: long lines scroll inside instead of widening the table. */
 .log {
   width: 0;

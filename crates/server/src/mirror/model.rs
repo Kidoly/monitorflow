@@ -211,6 +211,10 @@ pub struct Mirror {
     pub sync_interval_s: Option<i32>,
     pub auto_snapshot: bool,
     pub created_at: DateTime<Utc>,
+    /// Being deleted since then (ADR-0075).
+    pub deleting_at: Option<DateTime<Utc>>,
+    /// Why deleting it has not finished yet.
+    pub delete_error: Option<String>,
 }
 
 /// State of a snapshot; only `published` ones are served under their name.

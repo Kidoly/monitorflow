@@ -1,7 +1,7 @@
 # ADR-0038: Campaigns pinned to mirror snapshots
 
 Date: 2026-10-25
-Status: accepted
+Status: accepted; amended by ADR-0075 on `campaign_snapshots`
 
 ## Context
 

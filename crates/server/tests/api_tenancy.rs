@@ -822,6 +822,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         | ("POST", "/api/mirrors")
         | ("GET", "/api/mirrors/catalog")
         | ("GET", "/api/mirrors/{id}")
+        | ("DELETE", "/api/mirrors/{id}")
         | ("POST", "/api/mirrors/{id}/sync")
         | ("POST", "/api/mirrors/{id}/snapshots") => {
             let uri = path.replace("{id}", &ctx.mirror.to_string());

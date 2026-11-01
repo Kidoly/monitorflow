@@ -219,13 +219,22 @@ impl CampaignStore {
         .fetch_one(&mut *tx)
         .await?;
         let (mirror_ids, snapshot_ids): (Vec<Uuid>, Vec<Uuid>) = pinned.into_iter().unzip();
+        let (mirror_names, snapshot_names): (Vec<&str>, Vec<&str>) = new
+            .sources
+            .iter()
+            .flat_map(|pin| &pin.mirrors)
+            .map(|m| (m.name.as_str(), m.snapshot.as_str()))
+            .unzip();
         sqlx::query(
-            "INSERT INTO campaign_snapshots (campaign_id, mirror_id, snapshot_id)
-             SELECT $1, * FROM unnest($2::uuid[], $3::uuid[])",
+            "INSERT INTO campaign_snapshots
+                 (campaign_id, mirror_id, snapshot_id, mirror_name, snapshot_name)
+             SELECT $1, * FROM unnest($2::uuid[], $3::uuid[], $4::text[], $5::text[])",
         )
         .bind(row.id)
         .bind(&mirror_ids)
         .bind(&snapshot_ids)
+        .bind(&mirror_names)
+        .bind(&snapshot_names)
         .execute(&mut *tx)
         .await?;
         let (servers, positions): (Vec<Uuid>, Vec<i32>) = waves
@@ -460,7 +469,7 @@ async fn pinned_snapshots(
             "SELECT m.id, m.family, s.id FROM mirrors m
              LEFT JOIN mirror_snapshots s
                  ON s.mirror_id = m.id AND s.name = $2 AND s.state = 'published'
-             WHERE m.name = $1",
+             WHERE m.name = $1 AND m.deleting_at IS NULL",
         )
         .bind(&m.name)
         .bind(&m.snapshot)

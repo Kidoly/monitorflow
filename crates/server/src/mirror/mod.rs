@@ -12,7 +12,8 @@
 //! copies relays serve (ADR-0037). [`tools`] reaches the tools in their
 //! sidecar container and [`catalog`] lists the distributions an
 //! administrator can add in one click (ADR-0067). [`retention`] removes
-//! the snapshots nothing needs (ADR-0074).
+//! the snapshots nothing needs (ADR-0074), and with them what [`removal`]
+//! was asked to delete (ADR-0075).
 
 pub mod apt;
 pub mod catalog;
@@ -22,6 +23,7 @@ pub mod jobs;
 pub mod layout;
 pub mod model;
 pub mod relays;
+pub mod removal;
 pub mod retention;
 pub mod runner;
 pub mod scheduler;

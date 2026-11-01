@@ -73,7 +73,8 @@
 //! | GET | `/api/mirrors` | global administrator | [`mirrors::MirrorList`], see below |
 //! | POST | `/api/mirrors` | global administrator | body `{"distribution"}`, an `id` of the catalog; 201 [`mirrors::MirrorList`] of the mirrors created; 409 when the mirror tools are not running, the disk is too small or it is already added |
 //! | GET | `/api/mirrors/catalog` | global administrator | [`mirrors::Catalog`]: the distributions with their size estimate, the free disk space and whether the mirror tools answer |
-//! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots`, each with why it stays, and the last `runs` |
+//! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots`, each with why it stays, the last `runs`, and `used_by`, what keeps it from being deleted |
+//! | DELETE | `/api/mirrors/{id}` | global administrator | 202 with the listing item once the mirror is being deleted, in the background, until its detail answers 404; 409 saying what still uses it (ADR-0075) |
 //! | POST | `/api/mirrors/{id}/sync` | global administrator | 202 [`mirrors::RunSummary`] of the started sync; 409 while busy |
 //! | POST | `/api/mirrors/{id}/snapshots` | global administrator | body `{"name"?}`; 202 [`mirrors::RunSummary`]; 409 while busy or never synced |
 //! | GET | `/api/servers/{id}/sources` | a role on the site | [`package_sources::SourcesStatus`]: where the server's packages come from, and why it cannot use a mirror |
@@ -242,7 +243,7 @@
 //! global administrator role; anyone else gets 403. A listing item is the
 //! mirror (`id`, `name`, `family`, `upstream_url`, `distribution`,
 //! `components`, `architectures`, `sync_interval_s`, `auto_snapshot`,
-//! `created_at`) plus `current_snapshot` (the newest published one's name,
+//! `created_at`, `deleting_at`, `delete_error`) plus `current_snapshot` (the newest published one's name,
 //! served at `/<family>/<name>/current/` on the mirror listener) and
 //! `last_run`. Snapshots have `id`, `name`, `state` (`creating`,
 //! `published`, `failed`), `size_bytes`, `error`, `created_at` and
@@ -252,7 +253,7 @@
 //! `finished_at`, and in the detail `output`, the last 64 KiB of the
 //! commands and what they printed. Starting a job answers at once with
 //! the running run; poll the detail for its end. Requests are audited
-//! (`mirror.sync`, `mirror.snapshot`). The catalog's distributions are
+//! (`mirror.sync`, `mirror.snapshot`, `mirror.delete`). The catalog's distributions are
 //! added from the interface (ADR-0067), any other mirror with the CLI.
 //!
 //! # Sensor configuration
@@ -788,7 +789,10 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/mirrors", get(mirrors::list).post(mirrors::add))
         .route("/api/mirrors/catalog", get(mirrors::catalog))
-        .route("/api/mirrors/{id}", get(mirrors::detail))
+        .route(
+            "/api/mirrors/{id}",
+            get(mirrors::detail).delete(mirrors::delete),
+        )
         .route("/api/mirrors/{id}/sync", post(mirrors::sync))
         .route("/api/mirrors/{id}/snapshots", post(mirrors::snapshot))
         .route("/api/incidents", get(incidents::list))

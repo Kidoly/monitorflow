@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
@@ -7,15 +8,16 @@ import { ApiError, type MirrorDetail, type MirrorRun, type MirrorSnapshot, api, 
 import { formatBytes } from "@/lib/format";
 import { administersEverything, useMe } from "@/lib/me";
 import { describeMirror, durationText, intervalText, minuteText, retentionText } from "@/lib/mirrors";
-import { MIRRORS_PATH } from "@/lib/routes";
+import { MIRRORS_PATH, campaignHref, serverHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 import { UUID } from "@/lib/uuid";
 
-import { nextSyncText, useMirrorJobs } from "./MirrorList";
+import { RemovalLabel, nextSyncText, useMirrorJobs } from "./MirrorList";
 import styles from "./Mirrors.module.css";
 import { Breadcrumb } from "./ui/Breadcrumb";
 import { Button, ButtonLink } from "./ui/Button";
 import { type Column, DataTable } from "./ui/DataTable";
+import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, EmptyState, ErrorState, LoadingBlock, NoPermission, NotFound, PageHeader, StaleBanner } from "./ui/PageState";
 import { StatTiles } from "./ui/StatTiles";
 import { Label, StatusLabel, statusWord } from "./ui/StatusLabel";
@@ -67,6 +69,12 @@ const notFound = (
   </NotFound>
 );
 
+const removed = (
+  <NotFound title="Mirror removed" actions={<ButtonLink href={MIRRORS_PATH}>Back to mirrors</ButtonLink>}>
+    Its packages are gone from this server and the disk space is free. Relays delete their copy at their next sync.
+  </NotFound>
+);
+
 export function MirrorPage({ id }: { id: string | null }) {
   const valid = id !== null && UUID.test(id);
   const fetcher = useCallback((signal: AbortSignal) => api.mirror(id ?? "", signal), [id]);
@@ -78,7 +86,7 @@ export function MirrorPage({ id }: { id: string | null }) {
     if (data) document.title = `${data.name} · MonitorFlow`;
   }, [data]);
 
-  if (!valid || (error instanceof ApiError && error.status === 404)) return notFound;
+  if (!valid || (error instanceof ApiError && error.status === 404)) return data?.deleting_at ? removed : notFound;
   if (!data || !updatedAt) {
     return error ? <ErrorState what="the mirror" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />;
   }
@@ -87,7 +95,7 @@ export function MirrorPage({ id }: { id: string | null }) {
   const running = mirror.last_run?.state === "running";
   const [word, tone] = LAST_RUN[mirror.last_run?.state ?? "never"];
   const lastSync = mirror.runs.find((r) => r.kind === "sync") ?? (mirror.runs.length === 0 ? null : undefined);
-  const disabled = jobs.busy !== null || running;
+  const disabled = jobs.busy !== null || running || mirror.deleting_at !== null;
   const toggle = (runId: string) =>
     setOpen((current) => {
       const next = new Set(current);
@@ -109,7 +117,7 @@ export function MirrorPage({ id }: { id: string | null }) {
       <PageHeader
         detail
         title={mirror.name}
-        status={<Label tone={tone}>{word}</Label>}
+        status={mirror.deleting_at ? <RemovalLabel mirror={mirror} /> : <Label tone={tone}>{word}</Label>}
         meta={`${describeMirror(mirror, { distribution: true })} · ${intervalText(mirror.sync_interval_s)}`}
         actions={
           <>
@@ -124,6 +132,7 @@ export function MirrorPage({ id }: { id: string | null }) {
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       {jobs.error && <Banner tone="bad">{jobs.error}</Banner>}
+      {mirror.deleting_at && <Removing mirror={mirror} onRetried={refresh} />}
       <StatTiles
         dense
         label="Summary"
@@ -139,7 +148,106 @@ export function MirrorPage({ id }: { id: string | null }) {
       />
       <Snapshots mirror={mirror} action={emptyAction} />
       <Runs mirror={mirror} open={open} onToggle={toggle} action={emptyAction} />
+      {!mirror.deleting_at && <RemoveMirror mirror={mirror} onRemoving={refresh} />}
     </div>
+  );
+}
+
+/** What a refusal to remove a mirror says, in the server's words when it has a reason. */
+function notRemoved(error: unknown): string {
+  return error instanceof ApiError && error.status === 409 ? `Not removed: ${error.message}.` : `Not removed. ${describeError(error)}`;
+}
+
+/** The way to remove a mirror, or what has to happen first. */
+function RemoveMirror({ mirror, onRemoving }: { mirror: MirrorDetail; onRemoving: () => void }) {
+  const { campaigns, servers } = mirror.used_by;
+  if (campaigns.length > 0 || servers.length > 0) {
+    return (
+      <section className={styles.inUse} aria-label="Remove this mirror">
+        <p>
+          <strong>{mirror.name} can&apos;t be removed yet</strong>, because it is in use.
+        </p>
+        {campaigns.length > 0 && (
+          <>
+            <p>Wait until these update campaigns finish, or stop them:</p>
+            <ul>
+              {campaigns.map((c) => (
+                <li key={c.id}>
+                  <Link href={campaignHref(c.id)}>{c.name}</Link>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {servers.length > 0 && (
+          <>
+            <p>Send these servers back to their own package sources, on their Updates tab:</p>
+            <ul>
+              {servers.map((s) => (
+                <li key={s.id}>
+                  <Link href={serverHref(s.id, "updates")}>{s.hostname}</Link>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
+    );
+  }
+  const stopped = mirror.last_run?.state === "running" ? "The run going now is stopped. " : "";
+  return (
+    <div>
+      <InlineConfirm
+        trigger={`Remove ${mirror.name}…`}
+        title={`Remove ${mirror.name}?`}
+        consequence={
+          `${stopped}Its snapshots and packages are deleted from this server, and the disk space comes back. ` +
+          "Relays delete their copy at their next sync. This can't be undone: adding the mirror again downloads everything again."
+        }
+        confirmLabel={`Remove ${mirror.name}`}
+        pendingLabel="Removing…"
+        onConfirm={async () => {
+          await api.deleteMirror(mirror.id);
+          onRemoving();
+        }}
+        describeError={notRemoved}
+      />
+    </div>
+  );
+}
+
+/** Where a removal stands, with the way to try again after a failure. */
+function Removing({ mirror, onRetried }: { mirror: MirrorDetail; onRetried: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const retry = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deleteMirror(mirror.id);
+      onRetried();
+    } catch (e) {
+      setError(notRemoved(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!mirror.delete_error) {
+    return (
+      <Banner tone="info" role="status">
+        Removing this mirror. Nothing can use it any more. It finishes by itself once the syncs running now have ended, so
+        you can leave this page.
+      </Banner>
+    );
+  }
+  return (
+    <Banner tone="bad">
+      The mirror could not be fully removed: {mirror.delete_error}. MonitorFlow tries again every hour.{" "}
+      {error && `${error} `}
+      <Button size="small" disabled={busy} onClick={() => void retry()}>
+        Try again now
+      </Button>
+    </Banner>
   );
 }
 

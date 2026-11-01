@@ -87,18 +87,57 @@ pub fn snapshot(layout: &Layout, mirror: &Mirror, component: &str, snapshot: &st
 /// Drops what a failed attempt at `snapshot` may have left; failures of
 /// these commands are expected and ignored.
 pub fn cleanup(layout: &Layout, mirror: &Mirror, snapshot: &str) -> Vec<Invocation> {
-    let mut drop_publish = aptly(layout, ["publish", "drop"]);
-    drop_publish.push("-force-drop".into());
-    drop_publish.push(mirror.distribution.clone().into());
-    drop_publish.push(prefix(mirror, snapshot).into());
-    let mut commands = vec![Invocation::new(Tool::Aptly, drop_publish)];
+    let mut commands = vec![drop_published(
+        layout,
+        &mirror.distribution,
+        &prefix(mirror, snapshot),
+    )];
     for component in &mirror.components {
-        let mut args = aptly(layout, ["snapshot", "drop"]);
-        args.push("-force".into());
-        args.push(snapshot_name(mirror, component, snapshot).into());
-        commands.push(Invocation::new(Tool::Aptly, args));
+        commands.push(drop_snapshot(
+            layout,
+            &snapshot_name(mirror, component, snapshot),
+        ));
     }
     commands
+}
+
+/// `aptly publish drop` of the publication at `prefix`.
+pub fn drop_published(layout: &Layout, distribution: &str, prefix: &str) -> Invocation {
+    let mut args = aptly(layout, ["publish", "drop"]);
+    args.push("-force-drop".into());
+    args.push(distribution.into());
+    args.push(prefix.into());
+    Invocation::new(Tool::Aptly, args)
+}
+
+/// `aptly snapshot drop` of an aptly snapshot, by its full name.
+pub fn drop_snapshot(layout: &Layout, name: &str) -> Invocation {
+    let mut args = aptly(layout, ["snapshot", "drop"]);
+    args.push("-force".into());
+    args.push(name.into());
+    Invocation::new(Tool::Aptly, args)
+}
+
+/// `aptly mirror drop` of an aptly mirror, by its full name.
+pub fn drop_mirror(layout: &Layout, name: &str) -> Invocation {
+    let mut args = aptly(layout, ["mirror", "drop"]);
+    args.push("-force".into());
+    args.push(name.into());
+    Invocation::new(Tool::Aptly, args)
+}
+
+/// Whether a line of [`list`] or [`list_snapshots`] is an object of
+/// `mirror`, of any component or snapshot.
+pub fn lists_object(line: &str, mirror: &Mirror) -> bool {
+    line.starts_with(&format!("mf:{}:", mirror.name))
+}
+
+/// `(prefix, distribution)` of a line of [`list_published`] that is a
+/// publication of `mirror`.
+pub fn published_of<'a>(line: &'a str, mirror: &Mirror) -> Option<(&'a str, &'a str)> {
+    let (prefix, distribution) = line.split_once(char::is_whitespace)?;
+    let owner = prefix.split('/').next()?;
+    (owner == mirror.name).then_some((prefix, distribution.trim()))
 }
 
 /// `aptly snapshot list -raw`: one aptly snapshot name per line.
@@ -190,6 +229,8 @@ pub(crate) mod tests {
             sync_interval_s: None,
             auto_snapshot: true,
             created_at: Utc::now(),
+            deleting_at: None,
+            delete_error: None,
         }
     }
 
@@ -247,5 +288,16 @@ pub(crate) mod tests {
         assert!(!lists_snapshot("mf:m:contrib:s11", &m, "s1"));
         assert!(lists_published("m/s1 bookworm", &m, "s1"));
         assert!(!lists_published("m/s11 bookworm", &m, "s1"));
+        assert_eq!(
+            drop_mirror(&layout, "mf:m:main").to_string(),
+            format!("aptly mirror drop {c} -force mf:m:main")
+        );
+        assert!(lists_object("mf:m:contrib", &m) && lists_object("mf:m:main:s1", &m));
+        assert!(!lists_object("mf:m-updates:main", &m));
+        assert_eq!(
+            published_of("m/s1 bookworm", &m),
+            Some(("m/s1", "bookworm"))
+        );
+        assert_eq!(published_of("m-updates/s1 bookworm", &m), None);
     }
 }

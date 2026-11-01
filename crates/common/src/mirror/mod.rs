@@ -17,7 +17,10 @@ pub mod index;
 pub mod serve;
 
 #[cfg(feature = "mirror")]
-pub use index::{read_pinned, write_pinned, Index, IndexMirror, PinnedSnapshot};
+pub use index::{
+    read_pinned, read_removed, remove_mirror_dir, remove_retired, write_pinned, write_removed,
+    Index, IndexMirror, PinnedSnapshot, RemovedMirror,
+};
 #[cfg(feature = "mirror")]
 pub use serve::Served;
 
@@ -30,6 +33,10 @@ pub const PUBLIC_KEY: &str = "monitorflow-archive.asc";
 /// File in a mirror's directory naming, one per line, the snapshots
 /// pinned by update campaigns (ADR-0038); hidden from the listener.
 pub const PINNED: &str = ".pinned";
+
+/// File in a family's directory naming, one per line, the mirrors deleted
+/// by an administrator (ADR-0075); hidden from the listener.
+pub const REMOVED: &str = ".removed";
 
 /// URL path of the index.
 pub const INDEX_PATH: &str = "/index.json";
