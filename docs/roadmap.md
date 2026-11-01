@@ -103,7 +103,7 @@ Everything installable in one line, updatable in two clicks, and usable without 
 
 Limits already recorded in the ADRs that get in the way of daily use. What the first test on a real host finds is added here.
 
-- [ ] Delete a mirror: from the interface, refused or handled while something still uses it, disk space and relay copies reclaimed.
+- [x] Delete a mirror: from the interface, refused or handled while something still uses it, disk space and relay copies reclaimed.
 - [ ] Show whether each server accepts commands: reported by the agent, unknown for agents that do not report it, used wherever a command is offered.
 
 ## Phase 10 — Notifications
