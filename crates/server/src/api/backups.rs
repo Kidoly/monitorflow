@@ -20,7 +20,7 @@ use uuid::Uuid;
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::server_update::{alive, read_state, require_global_admin, INBOX};
-use super::{ApiError, ApiState};
+use super::{is_missing_file, ApiError, ApiState};
 
 /// Body of `GET /api/backups`.
 #[derive(Debug, Serialize)]
@@ -163,7 +163,14 @@ pub async fn download(
     let mut response = ServeFile::new(path)
         .try_call(request)
         .await
-        .map_err(|e| ApiError::Internal(format!("serving the backup: {e}")))?
+        .map_err(|e| {
+            // Rotation can remove the file after the check above.
+            if is_missing_file(&e) {
+                ApiError::NotFound
+            } else {
+                ApiError::Internal(format!("serving the backup: {e}"))
+            }
+        })?
         .map(Body::new);
     let headers = response.headers_mut();
     headers.insert(

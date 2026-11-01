@@ -18,7 +18,7 @@ use axum::response::{IntoResponse, Response};
 use monitorflow_common::release::Version;
 use tower_http::services::ServeFile;
 
-use super::ApiState;
+use super::{is_missing_file, ApiState};
 use crate::agent_releases::{self, ReleaseCache};
 
 /// The version segment that names the newest release.
@@ -80,20 +80,19 @@ pub async fn file(
         Ok(Found::Unknown) => return not_found("This server holds no such agent release.\n"),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    match ServeFile::new(dir.join(name)).try_call(request).await {
-        Ok(response) => {
-            let mut response = response.map(Body::new);
-            // `latest` moves, and an import may replace a version.
-            response
-                .headers_mut()
-                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
-            response
-        }
+    let mut response = match ServeFile::new(dir.join(name)).try_call(request).await {
+        Ok(response) => response.map(Body::new),
+        Err(error) if is_missing_file(&error) => not_found("This release has no such file.\n"),
         Err(error) => {
             tracing::warn!(%error, "cannot serve an agent release file");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-    }
+    };
+    // `latest` moves, and an import may replace a version.
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    response
 }
 
 #[cfg(test)]
