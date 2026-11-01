@@ -329,6 +329,9 @@ fn parse_role(s: &str) -> Result<Role, String> {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let config: ServerConfig = config::load(&cli.config)?;
+    if cli.command.is_some() {
+        logging::init_cli();
+    }
     match cli.command {
         Some(Command::Token(TokenCommand::Create(args))) => {
             return create_token(&config, args).await
@@ -336,13 +339,14 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::AgentRelease(command)) => return agent_release_command(&config, command),
         Some(
             Command::User { .. } | Command::Customer(_) | Command::Mirror(_) | Command::SetupLink,
-        )
-        | None => {}
+        ) => {}
+        None => {
+            logging::init(&config.log);
+            tracing::info!(config = %cli.config.display(), protocol = monitorflow_common::PROTOCOL_VERSION, "starting server");
+            // Secrets are redacted by their Debug impls.
+            tracing::info!(effective = ?config, "configuration loaded");
+        }
     }
-    logging::init(&config.log);
-    tracing::info!(config = %cli.config.display(), protocol = monitorflow_common::PROTOCOL_VERSION, "starting server");
-    // Secrets are redacted by their Debug impls.
-    tracing::info!(effective = ?config, "configuration loaded");
 
     let pool = db::connect(&config.database_url).await?;
     db::migrate(&pool).await?;
