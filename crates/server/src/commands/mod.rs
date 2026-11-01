@@ -6,6 +6,7 @@
 //! `cancelled`. At most one command per server is `sent` or `running`.
 //! Package reports from agents are stored here too.
 
+pub mod acceptance;
 mod dispatcher;
 mod packages;
 pub mod sources;

@@ -16,6 +16,7 @@ use super::hook::Change;
 use super::progress::{self, head, Next, Progress};
 use super::store::{self, Incident};
 use super::{prompt, DriveError, Shared};
+use crate::commands::acceptance;
 use crate::commands::{CommandRow, CommandStore, NewCommand, State};
 use crate::remediation::audit::{self, Actor, IncidentState, NewEvent};
 use crate::remediation::context::{self, Trigger};
@@ -347,6 +348,16 @@ async fn run(
             decision.reason
         );
         return finish(shared, incident, IncidentState::Escalated, &reason).await;
+    }
+    // Before any snapshot: the agent would refuse the command anyway.
+    if let Some(refusal) = acceptance::shell_refusal(&shared.pool, incident.server_id).await? {
+        return finish(
+            shared,
+            incident,
+            IncidentState::Escalated,
+            refusal.message(),
+        )
+        .await;
     }
     if decision.tier != Tier::ReadOnly && !snapshot_done {
         let change = Change {

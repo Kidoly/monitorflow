@@ -5,6 +5,8 @@
 //! Pages are keyset-paginated on the sort key, so a server added or
 //! removed between two pages neither repeats nor skips the others.
 
+use std::collections::BTreeMap;
+
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::Json;
@@ -96,6 +98,10 @@ pub struct ServerView {
     pub os_version: Option<String>,
     /// Whether the host can take package updates and sources (ADR-0063).
     pub package_updates: bool,
+    /// What its agent last said it does with each command kind: `accepted`,
+    /// `off` or `unsupported` (ADR-0076). `null`, or a kind missing here, is
+    /// unknown: its agent or a relay on the way does not report yet.
+    pub command_kinds: Option<BTreeMap<String, String>>,
     /// Version reported by the live stream, else the one last stored.
     pub agent_version: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -171,8 +177,8 @@ impl From<CertificateRow> for CertificateView {
 /// Columns of [`Row`]; callers add the `WHERE` clause.
 const SELECT_SERVERS: &str = "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name,
             si.customer_id, c.name AS customer_name, s.relay_id,
-            s.os_family, s.os_version, s.package_updates, s.agent_version, s.created_at,
-            s.last_seen_at,
+            s.os_family, s.os_version, s.package_updates, s.command_kinds, s.agent_version,
+            s.created_at, s.last_seen_at,
             s.revoked_at, s.offline_alerts, si.offline_alerts AS site_offline_alerts,
             -- One probe of the partial unique index on open incidents.
             (SELECT count(*) FROM incidents i
@@ -198,6 +204,7 @@ struct Row {
     os_family: String,
     os_version: Option<String>,
     package_updates: bool,
+    command_kinds: Option<sqlx::types::Json<BTreeMap<String, String>>>,
     agent_version: Option<String>,
     created_at: DateTime<Utc>,
     last_seen_at: Option<DateTime<Utc>>,
@@ -338,6 +345,7 @@ impl ServerView {
             os_family: row.os_family,
             os_version: row.os_version,
             package_updates: row.package_updates,
+            command_kinds: row.command_kinds.map(|kinds| kinds.0),
             agent_version: row.agent_version,
             created_at: row.created_at,
             revoked_at: row.revoked_at,

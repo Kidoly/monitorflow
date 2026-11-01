@@ -35,7 +35,8 @@ use monitorflow_common::config::AgentConfig;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
-    CommandResult, Envelope, Heartbeat, Hello, PackageReport, SampleBatch, SensorConfigAck,
+    CommandKindState, CommandResult, Envelope, Heartbeat, Hello, PackageReport, SampleBatch,
+    SensorConfigAck,
 };
 use monitorflow_common::tls::{self, error_chain, TlsError};
 use monitorflow_common::PROTOCOL_VERSION;
@@ -101,6 +102,7 @@ pub struct Agent {
     sensors: Option<StreamEnd>,
     uplink: Option<Uplink>,
     commands: Option<commands::StreamEnd>,
+    command_kinds: Vec<CommandKindState>,
     reports: Option<watch::Receiver<Option<PackageReport>>>,
     on_open: Option<Arc<dyn Fn() + Send + Sync>>,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
@@ -118,6 +120,7 @@ impl Agent {
             sensors: None,
             uplink: None,
             commands: None,
+            command_kinds: Vec::new(),
             reports: None,
             on_open: None,
             sequence: 0,
@@ -141,6 +144,14 @@ impl Agent {
     /// upstream; without it commands are ignored.
     pub fn with_commands(mut self, commands: commands::StreamEnd) -> Self {
         self.commands = Some(commands);
+        self
+    }
+
+    /// Says in every `Hello` what happens to each kind of command
+    /// (ADR-0076). The configuration behind it is read once at start, so a
+    /// change restarts the agent, which says so again on connecting.
+    pub fn with_command_kinds(mut self, kinds: Vec<CommandKindState>) -> Self {
+        self.command_kinds = kinds;
         self
     }
 
@@ -362,6 +373,7 @@ impl Agent {
             os_family: self.host.os_family.as_str().into(),
             os_version: self.host.os_version.clone(),
             no_package_manager: !self.host.package_manager,
+            command_kinds: self.command_kinds.clone(),
         }
     }
 

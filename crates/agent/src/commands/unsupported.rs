@@ -2,6 +2,8 @@
 //! (ADR-0047): refused without running anything, with a reason the API
 //! shows, rather than the dispatcher's "unknown kind".
 
+use monitorflow_common::proto::v1::CommandAcceptance;
+
 use super::{Handler, Output};
 
 pub struct Unsupported {
@@ -19,6 +21,10 @@ impl Unsupported {
 
 #[async_trait::async_trait]
 impl Handler for Unsupported {
+    fn acceptance(&self) -> CommandAcceptance {
+        CommandAcceptance::Unsupported
+    }
+
     async fn run(&self, _payload: &[u8]) -> Output {
         Output::rejected(self.reason.clone())
     }
@@ -30,9 +36,9 @@ mod tests {
 
     #[tokio::test]
     async fn refuses_with_its_reason() {
-        let output = Unsupported::new("package updates", "Windows")
-            .run(b"anything")
-            .await;
+        let handler = Unsupported::new("package updates", "Windows");
+        assert_eq!(handler.acceptance(), CommandAcceptance::Unsupported);
+        let output = handler.run(b"anything").await;
         assert!(output.rejected);
         assert_eq!(
             output.error.as_deref(),

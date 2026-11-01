@@ -51,6 +51,11 @@ message Hello {
   // family: updates and sources are unavailable. Agents before ADR-0063
   // leave it false, and they all have one.
   bool no_package_manager = 7;
+  // What the agent does with each kind of command, from the handlers it
+  // runs (ADR-0076). Empty means not reported: agents before ADR-0076, or
+  // a relay before it on the way, which drops this field. It says nothing
+  // about whether the agent would accept a command.
+  repeated CommandKindState command_kinds = 8;
 }
 
 message Heartbeat {
@@ -139,6 +144,23 @@ message Command {
   int64 expires_at_unix_ms = 6;
   // The agent the command is for; agents refuse another agent's command.
   string agent_id = 7;
+}
+
+// What an agent does when a command of one kind arrives (ADR-0076).
+enum CommandAcceptance {
+  // A value this server does not know: not reported, not a refusal.
+  COMMAND_ACCEPTANCE_UNSPECIFIED = 0;
+  COMMAND_ACCEPTANCE_ACCEPTED = 1;
+  // Refused until the host's administrator allows it, like `commands.shell`.
+  COMMAND_ACCEPTANCE_DISABLED = 2;
+  // Refused whatever the configuration: this system cannot run the kind.
+  COMMAND_ACCEPTANCE_UNSUPPORTED = 3;
+}
+
+message CommandKindState {
+  // `Command.kind`, like "shell".
+  string kind = 1;
+  CommandAcceptance acceptance = 2;
 }
 
 enum CommandStatus {
