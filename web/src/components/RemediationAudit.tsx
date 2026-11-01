@@ -24,13 +24,13 @@ import {
   eventKindLabel,
   eventSummary,
 } from "@/lib/remediation";
-import { APPROVALS_PATH, auditHref, serverHref } from "@/lib/routes";
+import { APPROVALS_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { seriesTitle } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
 import { ButtonLink } from "@/components/ui/Button";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
-import { FilterBar } from "@/components/ui/FilterBar";
+import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
 import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { formatDay, formatExact } from "@/components/ui/time";
@@ -182,7 +182,13 @@ export function RemediationAudit({ filters }: { filters: AuditFilters }) {
       {!data && error !== null && !isUnauthorized(error) ? (
         <ErrorState what="the audit log" error={describeError(error)} onRetry={refresh} />
       ) : data && data.events.length === 0 ? (
-        <EmptyState>{filtered ? "No events match these filters." : "No remediation has run yet."}</EmptyState>
+        filtered ? (
+          <NoMatches names={["incident", "server", "kind", "actor"]}>No events match these filters.</NoMatches>
+        ) : (
+          <EmptyState actions={<ButtonLink href={scopedHref(incidentsHref(), scope)}>Open incidents</ButtonLink>}>
+            No remediation has run yet.
+          </EmptyState>
+        )
       ) : (
         <div className={styles.page}>
           <DataTable

@@ -12,6 +12,14 @@ vi.mock("next/navigation", () => import("@/test/navigation"));
 const PATH = `GET /api/mirrors/${MIRROR_ID}`;
 
 describe("MirrorPage", () => {
+  it("offers one next step on a mirror that never ran", async () => {
+    stubFetch({ [PATH]: { status: 200, body: mirrorDetail({ runs: [], snapshots: [], last_run: null }) } });
+    render(<MirrorPage id={MIRROR_ID} />);
+    expect(await screen.findByText("No snapshots yet")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Sync now" })).toHaveLength(2);
+    expect(screen.queryByText("No runs yet.")).not.toBeInTheDocument();
+  });
+
   it("shows the mirror, its snapshots and its runs", async () => {
     stubFetch({
       [PATH]: {

@@ -1,10 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 
-import { Button } from "@/components/ui/Button";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { type Fact, FactsBox } from "@/components/ui/FactsBox";
@@ -49,7 +48,7 @@ const REASONS: { value: RevocationReason; label: string }[] = [
   { value: "cessation_of_operation", label: "Decommissioned" },
   { value: "key_compromise", label: "Key compromised" },
   { value: "affiliation_changed", label: "Moved to another organisation" },
-  { value: "superseded", label: "Replaced by a new enrollment" },
+  { value: "superseded", label: "Replaced by a new install" },
   { value: "unspecified", label: "Unspecified" },
 ];
 
@@ -217,7 +216,7 @@ function Problem({ row, now }: { row: Row; now: Date }) {
     const last = row.server?.last_heartbeat;
     return (
       <span className={styles.dim}>
-        {last ? `No heartbeat since ${formatWhen(new Date(last), now)}` : "Never connected"}
+        {last ? `Last contact ${formatWhen(new Date(last), now)}` : "Never connected"}
       </span>
     );
   }
@@ -234,7 +233,7 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
     return (
       <div className={styles.page}>
         {crumb("Not found")}
-        <NotFound title="Relay not found" actions={<Link href={RELAYS_PATH}>Back to relays</Link>} />
+        <NotFound title="Relay not found" actions={<ButtonLink href={RELAYS_PATH}>Back to relays</ButtonLink>} />
       </div>
     );
   }
@@ -269,17 +268,19 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
           <CertificateCell notAfter={relay.cert_not_after} now={now} /> {formatDay(new Date(relay.cert_not_after))}
         </>
       ) : (
-        <CertificateCell notAfter={relay.cert_not_after} now={now} />
+        <>
+          <CertificateCell notAfter={relay.cert_not_after} now={now} />
+          {relay.cert_not_after && ", renews automatically"}
+        </>
       ),
     },
     { label: "Version", value: relay.relay_version ?? "—" },
     ...(relay.last_update ? [{ label: "Self-update", value: updateText(relay.last_update) }] : []),
     {
-      label: "Server names",
+      label: "Addresses",
       value: relay.pending_names ? "Waiting for confirmation" : relay.server_names.join(", ") || "—",
     },
-    ...(certificate ? [{ label: "Certificate serial", value: certificate.serial, mono: true }] : []),
-    { label: "Enrolled", value: formatMinute(new Date(relay.created_at)) },
+    { label: "Added", value: formatMinute(new Date(relay.created_at)) },
     ...(relay.revoked_at
       ? []
       : [{ label: "Offline alerts", value: <OfflineAlerts kind="relays" target={relay} onChanged={refresh} /> }]),
@@ -296,13 +297,17 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
         ]
       : []),
   ];
+  const details: Fact[] = [
+    ...(certificate ? [{ label: "Certificate serial", value: certificate.serial, mono: true }] : []),
+    ...(relay.cert_not_after ? [{ label: "Certificate valid until", value: formatDay(new Date(relay.cert_not_after)) }] : []),
+  ];
 
   const connected = rows.filter((row) => row.status === "online").length;
   const canAdminister = !relay.revoked_at && administersCustomer(me, relay.customer_id);
   const columns: Column<Row>[] = [
     {
       key: "host",
-      header: "Host",
+      header: "Server",
       cell: (row) => (
         <PrimaryCell
           title={row.hostname}
@@ -357,7 +362,7 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
         />
       )}
       {relay.pending_names && canAdminister && <ConfirmRelayNames relay={relay} onConfirmed={refresh} />}
-      <FactsBox columns={2} facts={facts} />
+      <FactsBox columns={2} facts={facts} details={details} />
       <section className={styles.section} aria-labelledby="attached-title">
         <div className={styles.sectionHead}>
           <h2 id="attached-title" className={styles.sectionTitle}>
@@ -373,7 +378,7 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
         {rows.length === 0 ? (
           <p className={styles.sectionNote}>
             {relay.pending_names
-              ? "Agents can connect through this relay once its names are confirmed."
+              ? "Agents can connect through this relay once its addresses are confirmed."
               : "No agent has connected through this relay yet."}
           </p>
         ) : (

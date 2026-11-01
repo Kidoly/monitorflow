@@ -86,7 +86,7 @@ describe("IncidentPage", () => {
 
     const threshold = screen.getByRole("region", { name: "Threshold when it opened" });
     expect(threshold).toHaveTextContent(/Comparison\s*>\s*Warning\s*85%\s*Critical\s*95%\s*Duration\s*5 min/);
-    expect(threshold).toHaveTextContent(/Hysteresis\s*2% below the threshold before resolving/);
+    expect(threshold).toHaveTextContent(/Recovery margin\s*2% below the threshold before resolving/);
     expect(threshold).toHaveTextContent(/Resolves when\s*the value is at or below 83%/);
 
     const timeline = within(screen.getByRole("region", { name: "Timeline" })).getAllByRole("row").slice(1);

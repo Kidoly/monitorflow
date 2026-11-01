@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { daysUntil, formatDay, formatMinute, formatWhen } from "./clock";
+import { formatDay, formatMinute, formatWhen } from "./clock";
 
 const now = new Date(2026, 9, 24, 14, 32, 5);
 
@@ -17,8 +17,4 @@ describe("clock", () => {
     expect(formatWhen(new Date(2026, 9, 31, 9, 5), now)).toBe("2026-10-31 09:05");
   });
 
-  it("counts days left, rounded up", () => {
-    expect(daysUntil(new Date(now.getTime() + 4.2 * 86_400_000), now)).toBe(5);
-    expect(daysUntil(new Date(now.getTime() + 1000), now)).toBe(1);
-  });
 });

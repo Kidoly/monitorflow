@@ -32,15 +32,15 @@ describe("planWaves", () => {
   });
 
   it("refuses what the server refuses", () => {
-    expect(planWaves(ids(2), [{ size: 2 }, { size: 1 }])).toEqual({ error: "wave 2 would be empty" });
+    expect(planWaves(ids(2), [{ size: 2 }, { size: 1 }])).toEqual({ error: "batch 2 would be empty" });
     expect(planWaves(ids(2), [{ servers: ["s1"] }, { servers: ["s1"] }])).toEqual({
-      error: "a server is in more than one wave",
+      error: "a server is in more than one batch",
     });
     expect(planWaves(ids(2), [{ servers: ["x"] }])).toEqual({
-      error: "a server of wave 1 is not a target of the campaign",
+      error: "a server of batch 1 is not a target of the campaign",
     });
-    expect(planWaves(ids(2), [{ percent: 0 }])).toEqual({ error: "a wave percentage is 1 to 100" });
-    expect(planWaves(ids(200), Array(101).fill({ size: 1 }))).toEqual({ error: "at most 100 waves" });
+    expect(planWaves(ids(2), [{ percent: 0 }])).toEqual({ error: "a batch percentage is 1 to 100" });
+    expect(planWaves(ids(200), Array(101).fill({ size: 1 }))).toEqual({ error: "at most 100 batches" });
   });
 });
 
@@ -61,7 +61,7 @@ describe("validateCampaign", () => {
     expect(validateCampaign(valid({ failure_threshold: { value: 1.5, unit: "count" } }), ["s1"])).toHaveLength(1);
     expect(validateCampaign(valid({ command_ttl_s: 30 }), ["s1"])).toHaveLength(1);
     expect(validateCampaign(valid({ waves: [{ size: 1 }, { size: 1 }] }), ["s1"])).toEqual([
-      "Waves: wave 2 would be empty.",
+      "Batches: batch 2 would be empty.",
     ]);
   });
 
@@ -157,14 +157,14 @@ describe("campaign states and labels", () => {
     );
     expect(describeUpdate({ packages: ["curl"], security_only: false, allow_reboot: false })).toBe("Packages: curl");
     expect(describeThreshold({ value: 0, unit: "count" })).toBe("first failure");
-    expect(describeThreshold({ value: 10, unit: "percent" })).toBe("more than 10% of a wave fails");
+    expect(describeThreshold({ value: 10, unit: "percent" })).toBe("more than 10% of a batch fails");
     expect(
       describeWindow({ kind: "weekly", weekdays: [6, 7], start: "22:00", end: "04:00", timezone: "Europe/Paris" }),
     ).toBe("Sat, Sun 22:00–04:00 (Europe/Paris)");
   });
 
   it("sums a campaign up on one line and windows in a cell", () => {
-    expect(campaignSubline(campaign())).toBe("2 waves · security only");
+    expect(campaignSubline(campaign())).toBe("2 batches · security only");
     expect(
       campaignSubline(
         campaign({
@@ -173,7 +173,7 @@ describe("campaign states and labels", () => {
           sources: { mode: "replace", mirrors: [{ name: "debian-12", snapshot: "s1" }] },
         }),
       ),
-    ).toBe("1 wave · snapshot debian-12/s1 · all packages · reboot allowed");
+    ).toBe("1 batch · snapshot debian-12/s1 · all packages · reboot allowed");
     expect(shortWindow({ kind: "weekly", weekdays: [6, 7], start: "22:00", end: "04:00", timezone: "UTC" })).toBe(
       "Sat, Sun 22:00–04:00",
     );
@@ -192,6 +192,6 @@ describe("agent update campaigns", () => {
     expect(describeUpdate({ packages: [], security_only: false, allow_reboot: false }, "0.3.0")).toBe("Agent update to 0.3.0");
     expect(
       campaignSubline({ wave_count: 2, sources: null, spec: { packages: [], security_only: false, allow_reboot: false }, agent_version: "0.3.0" }),
-    ).toBe("2 waves · agent 0.3.0");
+    ).toBe("2 batches · agent 0.3.0");
   });
 });

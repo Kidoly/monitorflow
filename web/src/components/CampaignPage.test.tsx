@@ -13,7 +13,7 @@ import { REFRESH_MS } from "./FleetOverview";
 const PATH = `/api/campaigns/${CAMPAIGN_ID}`;
 
 describe("CampaignPage", () => {
-  it("shows progress per wave and per server", async () => {
+  it("shows progress per batch and per server", async () => {
     const waves = detail().waves;
     waves[0]!.servers[0] = { ...waves[0]!.servers[0]!, status: "failed", exit_code: 100, error: "dpkg lock" };
     stubFetch({ [`GET ${PATH}`]: { status: 200, body: detail({ waves }) } });
@@ -21,14 +21,14 @@ describe("CampaignPage", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "October updates" })).toBeInTheDocument();
     expect(screen.getByText("Security updates")).toBeInTheDocument();
     expect(screen.getByText("Sat, Sun 22:00–04:00 (Europe/Paris)")).toBeInTheDocument();
-    const first = screen.getByRole("region", { name: "Wave 1" });
+    const first = screen.getByRole("region", { name: "Batch 1" });
     const row = within(first).getByRole("link", { name: "web-1" }).closest("tr")!;
     expect(within(row).getByRole("link")).toHaveAttribute("href", expect.stringContaining(`id=${WEB1}`));
     expect(row).toHaveTextContent("Failed");
     expect(row).toHaveTextContent("100");
     expect(row).toHaveTextContent("dpkg lock");
-    expect(within(screen.getByRole("region", { name: "Wave 2" })).getByText("Pending", { selector: "td span" })).toBeInTheDocument();
-    expect(within(first).getByRole("progressbar", { name: "Wave 1 progress" })).toHaveAttribute("value", "0");
+    expect(within(screen.getByRole("region", { name: "Batch 2" })).getByText("Pending", { selector: "td span" })).toBeInTheDocument();
+    expect(within(first).getByRole("progressbar", { name: "Batch 1 progress" })).toHaveAttribute("value", "0");
     expect(screen.getByRole("group", { name: "Servers by status" })).toHaveTextContent("In progress1");
   });
 

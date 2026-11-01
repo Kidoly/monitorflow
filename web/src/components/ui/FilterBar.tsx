@@ -4,9 +4,10 @@ import { type ReactNode, useState } from "react";
 
 import { type ParamChanges, useUrlParams } from "@/lib/urlState";
 
-import { buttonClass, fieldClass } from "./Button";
+import { Button, buttonClass, fieldClass } from "./Button";
 import { cx } from "./cx";
 import styles from "./FilterBar.module.css";
+import { EmptyState } from "./PageState";
 
 /** A 36 px control backed by a native `<select>`; the empty choice is "any". */
 export interface SelectFilter {
@@ -61,7 +62,14 @@ export function FilterBar({
   const keys = [...(search ? [search.name] : []), ...filters.map((f) => f.name)];
   // The input keeps its own state: Next applies replaceState to
   // useSearchParams in a transition, which would lag behind typing.
-  const [text, setText] = useState(() => (search && params.get(search.name)) ?? "");
+  const urlText = (search && params.get(search.name)) ?? "";
+  const [text, setText] = useState(urlText);
+  // Emptied from outside, by `NoMatches`.
+  const [lastUrlText, setLastUrlText] = useState(urlText);
+  if (urlText !== lastUrlText) {
+    setLastUrlText(urlText);
+    if (urlText === "") setText("");
+  }
   const anySet = text !== "" || filters.some((f) => params.get(f.name));
 
   function update(changes: ParamChanges) {
@@ -130,5 +138,19 @@ export function FilterBar({
       )}
       {trailing && <span className={styles.trailing}>{trailing}</span>}
     </form>
+  );
+}
+
+/**
+ * The empty state of a list whose filters hide everything. `names` are the
+ * query parameters to clear; leave out those of the scope.
+ */
+export function NoMatches({ names, title, children }: { names: string[]; title?: string; children: ReactNode }) {
+  const [, setParams] = useUrlParams();
+  const clear = () => setParams(Object.fromEntries(names.map((name) => [name, null])));
+  return (
+    <EmptyState title={title} actions={<Button onClick={clear}>Clear filters</Button>}>
+      {children}
+    </EmptyState>
   );
 }

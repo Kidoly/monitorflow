@@ -36,7 +36,7 @@ export function RemovePeer({
       consequence={
         `It stops connecting${kind === "relays" ? ", with the agents it forwards," : ""} and leaves every list. ` +
         "Its open incidents close and its history is kept. You can add it back later with the install command. " +
-        "The next screen shows how to uninstall it from the host."
+        "The next screen shows how to uninstall it from the machine."
       }
       confirmLabel={`Remove ${name}`}
       pendingLabel="Removing…"
@@ -107,8 +107,8 @@ export function RemovedPanel({
           )}
           <p>
             To add it back, uninstall it first, then run the install command from{" "}
-            <Link href={TOKENS_PATH}>{kind === "relay" ? "Enrollment tokens" : "Add servers"}</Link> on the host
-            {kind === "relay" && ` with the ID ${name}`}. It returns in the same site, with its history.
+            <Link href={TOKENS_PATH}>Add servers</Link> on the machine
+            {kind === "relay" && ` with the name ${name}`}. It returns in the same site, with its history.
           </p>
         </>
       )}

@@ -305,7 +305,7 @@ function LastUpdate({ run, requested, loadedAt }: { run: ServerUpdateRun; reques
           <p>
             {run.error}. The new version had already migrated the database, and migrations are forward-only: the previous
             version cannot use it. Restore the backup taken before the update: download it from{" "}
-            <Link href={BACKUPS_PATH}>Backups</Link>, then run on the server host:
+            <Link href={BACKUPS_PATH}>Backups</Link>, then run on the central server:
           </p>
           <pre className={styles.commands}>{restoreCommand(run.backup ?? "<backup>")}</pre>
           <p>Data written since the backup is lost.</p>

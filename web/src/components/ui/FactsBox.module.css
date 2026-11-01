@@ -33,6 +33,15 @@
   column-gap: 28px;
 }
 
+.details summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.details[open] summary {
+  margin-bottom: 8px;
+}
+
 .mono {
   font-family: var(--mono);
   font-size: 13px;

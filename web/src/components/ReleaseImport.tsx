@@ -64,7 +64,7 @@ export function ReleaseImport({ source }: { source: string }) {
         </h2>
       </div>
       <p className={styles.note}>
-        Hosts without Internet access install and update from this server.{" "}
+        Servers without Internet access install and update from this server.{" "}
         {held.data &&
           (versions.length > 0
             ? `It holds ${versions.join(", ")}.`

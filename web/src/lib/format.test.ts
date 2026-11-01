@@ -25,12 +25,16 @@ describe("format", () => {
   it("names operating systems", () => {
     expect(formatOs("debian", "12")).toBe("Debian 12");
     expect(formatOs("rhel", null)).toBe("RHEL");
-    expect(formatOs("arch", "rolling")).toBe("arch rolling");
+    expect(formatOs("debian", "debian 12")).toBe("Debian 12");
+    expect(formatOs("debian", "ubuntu 24.04")).toBe("Ubuntu 24.04");
+    expect(formatOs("rhel", "rocky 9.4")).toBe("Rocky Linux 9.4");
+    expect(formatOs("rhel", "rhel 9.4")).toBe("RHEL 9.4");
     expect(formatOs("windows", "Windows Server 2022 Datacenter 21H2 build 20348.2849")).toBe(
       "Windows Server 2022 Datacenter 21H2 build 20348.2849",
     );
     expect(formatOs("windows", null)).toBe("Windows");
-    expect(formatOs("linux", "alpine 3.20")).toBe("alpine 3.20");
+    expect(formatOs("linux", "Alpine 3.20")).toBe("Alpine 3.20");
+    expect(formatOs("linux", "arch")).toBe("Arch Linux");
     expect(formatOs("linux", null)).toBe("Linux");
   });
 

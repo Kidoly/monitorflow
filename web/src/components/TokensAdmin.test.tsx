@@ -154,7 +154,7 @@ describe("TokensAdmin", () => {
       "POST /api/install-keys": { status: 201, body: createdKey },
     });
     render(<TokensAdmin me={customerAdmin} />);
-    expect(await screen.findByText("None yet: create one above, then paste it on your hosts.")).toBeInTheDocument();
+    expect(await screen.findByText("None yet: create one above, then paste it on your servers.")).toBeInTheDocument();
     // Single-use tokens wait under Advanced.
     expect(screen.queryByRole("form", { name: "New token" })).not.toBeInTheDocument();
     const form = screen.getByRole("form", { name: "Install command" });
@@ -164,7 +164,7 @@ describe("TokensAdmin", () => {
 
     const panel = await screen.findByRole("region", { name: /^Install command for paris · works until/ });
     expect(within(panel).getByRole("alert")).toHaveTextContent(
-      "This command will not be shown again. Copy it now and keep it with your notes or deployment scripts. It works on any number of hosts.",
+      "This command will not be shown again. Copy it now and keep it with your notes or deployment scripts. It works on any number of servers.",
     );
     const commands = within(panel).getByRole("group", { name: "Install the agent" });
     expect(within(commands).getByLabelText(/^Linux/)).toHaveTextContent(
@@ -182,7 +182,7 @@ describe("TokensAdmin", () => {
     await user.click(within(panel).getByRole("button", { name: "Done" }));
     expect(document.body.textContent).not.toContain(SECRET);
     const row = await screen.findByRole("row", { name: /acme › paris/ });
-    expect(row).toHaveTextContent(/0 hosts\s*Active/);
+    expect(row).toHaveTextContent(/0 servers\s*Active/);
     expect(screen.getByRole("form", { name: "Install command" })).toBeInTheDocument();
   });
 
@@ -199,7 +199,7 @@ describe("TokensAdmin", () => {
     await within(within(form).getByLabelText("Site")).findByRole("option");
     await user.selectOptions(within(form).getByLabelText("Works for"), "604800");
     await user.type(within(form).getByLabelText(/^Up to/), "10");
-    await user.click(within(form).getByRole("checkbox", { name: "Approve new hosts before they appear" }));
+    await user.click(within(form).getByRole("checkbox", { name: "Approve new servers before they appear" }));
     await user.click(within(form).getByRole("button", { name: "Create install command" }));
     expect(await within(form).findByRole("alert")).toHaveTextContent("Creating the install command failed.");
     const post = fetchMock.mock.calls.findIndex(([, init]) => init?.method === "POST");
@@ -234,14 +234,14 @@ describe("TokensAdmin", () => {
     expect(web).toHaveTextContent(/web-01 · named web-01-2\s*paris\s*192\.0\.2\.7/);
     await user.click(within(web).getByRole("button", { name: "Approve web-01" }));
     await screen.findByRole("button", { name: "Reject db-1" }).then((b) => user.click(b));
-    const confirm = screen.getByRole("form", { name: "Reject this host?" });
+    const confirm = screen.getByRole("form", { name: "Reject this server?" });
     expect(confirm).toHaveTextContent("it can never connect as db-1");
-    await user.click(within(confirm).getByRole("button", { name: "Reject host" }));
+    await user.click(within(confirm).getByRole("button", { name: "Reject server" }));
     await screen.findByRole("region", { name: "Install commands" });
     expect(screen.queryByRole("region", { name: "Waiting for approval" })).not.toBeInTheDocument();
 
     const row = screen.getByRole("row", { name: /acme › paris/ });
-    expect(row).toHaveTextContent("2 of 5 hosts · with approval");
+    expect(row).toHaveTextContent("2 of 5 servers · with approval");
     await user.click(within(row).getByRole("button", { name: "Revoke the install command of paris" }));
     await user.click(within(row).getByRole("button", { name: "Revoke command" }));
     expect(await screen.findByText("Revoked")).toBeInTheDocument();
@@ -256,10 +256,10 @@ describe("TokensAdmin", () => {
   });
 
   it("words host counts", () => {
-    expect(hostsWords({ host_count: 0, max_hosts: null })).toBe("0 hosts");
-    expect(hostsWords({ host_count: 1, max_hosts: null })).toBe("1 host");
-    expect(hostsWords({ host_count: 1, max_hosts: 1 })).toBe("1 of 1 host");
-    expect(hostsWords({ host_count: 3, max_hosts: 10 })).toBe("3 of 10 hosts");
+    expect(hostsWords({ host_count: 0, max_hosts: null })).toBe("0 servers");
+    expect(hostsWords({ host_count: 1, max_hosts: null })).toBe("1 server");
+    expect(hostsWords({ host_count: 1, max_hosts: 1 })).toBe("1 of 1 server");
+    expect(hostsWords({ host_count: 3, max_hosts: 10 })).toBe("3 of 10 servers");
   });
 
   it("creates a relay token and shows it once with its configuration", async () => {
@@ -281,11 +281,11 @@ describe("TokensAdmin", () => {
     await within(site).findByRole("option");
     expect(within(site).getAllByRole("option").map((o) => o.textContent)).toEqual(["acme › paris"]);
     // Server names are for relays only.
-    expect(within(form).getByLabelText(/Server names/)).toBeDisabled();
+    expect(within(form).getByLabelText(/Addresses/)).toBeDisabled();
     await user.click(within(form).getByRole("radio", { name: "Relay" }));
-    await user.type(within(form).getByLabelText("Peer ID"), "relay-1");
+    await user.type(within(form).getByLabelText("Name"), "relay-1");
     await user.selectOptions(within(form).getByLabelText("Expires in"), "86400");
-    await user.type(within(form).getByLabelText(/Server names/), "relay1.example, 10.0.0.5");
+    await user.type(within(form).getByLabelText(/Addresses/), "relay1.example, 10.0.0.5");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
 
     const panel = await screen.findByRole("region", { name: /^Token for relay-1 · expires/ });
@@ -343,7 +343,7 @@ describe("TokensAdmin", () => {
     render(<TokensAdmin me={customerAdmin} />);
     const form = await newTokenForm(user);
     await within(within(form).getByLabelText("Site")).findByRole("option");
-    await user.type(within(form).getByLabelText("Peer ID"), "web-03");
+    await user.type(within(form).getByLabelText("Name"), "web-03");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
 
     const install = await screen.findByRole("group", { name: "Install the agent" });
@@ -360,7 +360,7 @@ describe("TokensAdmin", () => {
     expect(linux).toHaveTextContent("MF_SERVER=relay1.paris.example:7443 MF_ENROLL=mf.example:7445");
     await user.type(relay, "; id");
     expect(relay).toHaveAttribute("aria-invalid", "true");
-    expect(within(install).getByRole("alert")).toHaveTextContent("Enter a host name or IP address");
+    expect(within(install).getByRole("alert")).toHaveTextContent("Enter a name or IP address");
     expect(linux).toHaveTextContent("MF_SERVER=mf.example:7443 MF_TOKEN");
     expect(linux).not.toHaveTextContent("; id");
   });
@@ -396,11 +396,11 @@ describe("TokensAdmin", () => {
     render(<TokensAdmin me={globalAdmin} />);
     const form = await newTokenForm(user);
     await within(within(form).getByLabelText("Site")).findAllByRole("option");
-    await user.type(within(form).getByLabelText("Peer ID"), "web-06");
+    await user.type(within(form).getByLabelText("Name"), "web-06");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
 
     const panel = await screen.findByRole("region", { name: /^Token for web-06/ });
-    const picker = within(panel).getByRole("combobox", { name: /Hosts reach this server at/ });
+    const picker = within(panel).getByRole("combobox", { name: /Agents reach this server at/ });
     // The certificate's names; this page's host, mf.example, is one of them.
     expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual([
       "mf.example (default)",
@@ -423,7 +423,7 @@ describe("TokensAdmin", () => {
     await user.selectOptions(picker, "Other address…");
     await user.type(within(panel).getByRole("textbox", { name: "Other address" }), "monitor.lan");
     await user.click(within(panel).getByRole("button", { name: "Use this address" }));
-    expect(await within(panel).findByText(/Hosts will refuse to connect to monitor\.lan/)).toBeInTheDocument();
+    expect(await within(panel).findByText(/Agents will refuse to connect to monitor\.lan/)).toBeInTheDocument();
     expect(panel).toHaveTextContent("its names: mf.example, 10.0.0.2");
     expect(linux).toHaveTextContent("MF_SERVER=monitor.lan:7443");
     expect(picker).toHaveValue("monitor.lan");
@@ -446,12 +446,12 @@ describe("TokensAdmin", () => {
     render(<TokensAdmin me={customerAdmin} />);
     const form = await newTokenForm(user);
     await within(within(form).getByLabelText("Site")).findByRole("option");
-    await user.type(within(form).getByLabelText("Peer ID"), "web-07");
+    await user.type(within(form).getByLabelText("Name"), "web-07");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
     const panel = await screen.findByRole("region", { name: /^Token for web-07/ });
-    expect(within(panel).queryByRole("combobox", { name: /Hosts reach/ })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("combobox", { name: /Agents reach/ })).not.toBeInTheDocument();
     expect(panel).toHaveTextContent("monitor.lan. A global administrator changes it.");
-    expect(panel).toHaveTextContent("Hosts will refuse to connect to monitor.lan");
+    expect(panel).toHaveTextContent("Agents will refuse to connect to monitor.lan");
   });
 
   it("follows the chosen source, preselected with the default", async () => {
@@ -470,7 +470,7 @@ describe("TokensAdmin", () => {
     render(<TokensAdmin me={customerAdmin} />);
     const form = await newTokenForm(user);
     await within(within(form).getByLabelText("Site")).findByRole("option");
-    await user.type(within(form).getByLabelText("Peer ID"), "web-04");
+    await user.type(within(form).getByLabelText("Name"), "web-04");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
 
     const group = await screen.findByRole("group", { name: "Install the agent" });
@@ -510,7 +510,7 @@ describe("TokensAdmin", () => {
     render(<TokensAdmin me={customerAdmin} />);
     const form = await newTokenForm(user);
     await within(within(form).getByLabelText("Site")).findByRole("option");
-    await user.type(within(form).getByLabelText("Peer ID"), "web-05");
+    await user.type(within(form).getByLabelText("Name"), "web-05");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
     const group = await screen.findByRole("group", { name: "Install the agent" });
     expect(group).toHaveTextContent(
@@ -582,8 +582,8 @@ describe("TokensAdmin", () => {
     const form = await newTokenForm(user);
     await within(within(form).getByLabelText("Site")).findByRole("option");
     await user.click(within(form).getByRole("radio", { name: "Relay" }));
-    await user.type(within(form).getByLabelText("Peer ID"), "relay-1");
-    await user.type(within(form).getByLabelText(/Server names/), "relay1.example");
+    await user.type(within(form).getByLabelText("Name"), "relay-1");
+    await user.type(within(form).getByLabelText(/Addresses/), "relay1.example");
     await user.click(within(form).getByRole("button", { name: "Create token" }));
     await screen.findByRole("region", { name: /^Token for relay-1/ });
     expect(screen.queryByRole("group", { name: "Install the agent" })).not.toBeInTheDocument();
@@ -620,7 +620,7 @@ describe("TokensAdmin", () => {
 
     await user.click(within(pending).getByRole("button", { name: "Revoke the token for web-01" }));
     const confirm = within(pending).getByRole("form", { name: "Revoke this token?" });
-    expect(confirm).toHaveTextContent("web-01 will not be able to enroll with it.");
+    expect(confirm).toHaveTextContent("web-01 will not be able to connect with it.");
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
     await user.click(within(confirm).getByRole("button", { name: "Revoke token" }));
     expect(await screen.findByText("No tokens yet.")).toBeInTheDocument();

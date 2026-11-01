@@ -6,12 +6,12 @@ import { useEffect, useState } from "react";
 import { type Command, type CommandDetail, api, describeError } from "@/lib/api";
 import { commandLog, describeCommand, lastStepAt } from "@/lib/commands";
 import { useMe } from "@/lib/me";
-import { campaignHref } from "@/lib/routes";
+import { campaignHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { useUrlParams } from "@/lib/urlState";
-import { Button } from "@/components/ui/Button";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
-import { FilterBar } from "@/components/ui/FilterBar";
+import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Banner, EmptyState } from "@/components/ui/PageState";
 import { StatusLabel } from "@/components/ui/StatusLabel";
 import { StatTiles } from "@/components/ui/StatTiles";
@@ -32,11 +32,13 @@ function matchesState(command: Command, state: string | null): boolean {
 
 /** The Commands tab: counters, filters and the server's commands, with their output under the row. */
 export function ServerCommandsTab({
+  serverId,
   commands,
   now,
   onLoadMore,
   canLoadMore,
 }: {
+  serverId: string;
   commands: { commands: Command[]; nextCursor: string | null } | { error: string };
   now: Date;
   onLoadMore: () => void;
@@ -182,9 +184,11 @@ export function ServerCommandsTab({
         search={{ name: "q", label: "Search commands", placeholder: "Command", width: 200 }}
       />
       {list.length === 0 ? (
-        <EmptyState>No commands yet. Updates applied to this server show here with their output.</EmptyState>
+        <EmptyState actions={<ButtonLink href={scopedHref(serverHref(serverId, "updates"), scope)}>Open updates</ButtonLink>}>
+          No commands yet. Updates applied to this server show here with their output.
+        </EmptyState>
       ) : shown.length === 0 ? (
-        <EmptyState>No commands match these filters.</EmptyState>
+        <NoMatches names={["state", "period", "q"]}>No commands match these filters.</NoMatches>
       ) : (
         <DataTable
           label="Commands"

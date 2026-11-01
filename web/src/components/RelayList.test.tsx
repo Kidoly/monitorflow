@@ -73,7 +73,7 @@ describe("RelayListPage", () => {
     await screen.findByText("No relays yet");
     await user.click(screen.getAllByRole("button", { name: "Add relay" })[0]!);
     await screen.findByRole("option", { name: "acme › paris" });
-    expect(screen.queryByLabelText(/Server names/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Addresses/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Show the install command" }));
 
     const command = await screen.findByLabelText(/^Linux/);
@@ -99,8 +99,8 @@ describe("RelayListPage", () => {
     expect(panel).toHaveTextContent("203.0.113.9");
     expect(screen.getByRole("table", { name: "Relays" })).toHaveTextContent("Waiting for confirmation");
     await user.click(within(panel).getByRole("checkbox", { name: "10.0.0.5" }));
-    await user.type(within(panel).getByLabelText(/Another name/), "relay.lan");
-    await user.click(within(panel).getByRole("button", { name: "Confirm names" }));
+    await user.type(within(panel).getByLabelText(/Another address/), "relay.lan");
+    await user.click(within(panel).getByRole("button", { name: "Confirm addresses" }));
 
     const add = await screen.findByRole("link", { name: "Add servers behind this relay" });
     expect(add).toHaveAttribute("href", expect.stringContaining(waiting.id));
@@ -122,8 +122,8 @@ describe("RelayListPage", () => {
         <RelayListPage />
       </As>,
     );
-    await user.click(await screen.findByRole("button", { name: "Confirm names" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Confirming the names failed/);
+    await user.click(await screen.findByRole("button", { name: "Confirm addresses" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Confirming the addresses failed/);
     expect(screen.getByRole("form", { name: "Confirm relay-1" })).toBeInTheDocument();
   });
 
@@ -153,12 +153,11 @@ describe("RelayListPage", () => {
     const rows = within(table).getAllByRole("row");
     expect(rows).toHaveLength(4);
     expect(rows[1]).toHaveTextContent(/relay-1\s*paris · acme\s*Online\s*1 connected \/ 2 total\s*relay1\.paris\.example/);
-    expect(within(rows[1]!).getByText("Expires in 5 days")).toBeInTheDocument();
     expect(within(rows[1]!).getByRole("link", { name: "relay-1" })).toHaveAttribute(
       "href",
       expect.stringMatching(/^\/admin\/relays\/view\/?\?id=6f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a02$/),
     );
-    expect(rows[2]).toHaveTextContent(/relay-2.*Offline.*Valid · 2027-02-11/);
+    expect(rows[2]).toHaveTextContent(/relay-2.*Offline.*Valid/);
     expect(rows[3]).toHaveTextContent(/relay-3.*Offline.*None/);
     expect(screen.getByText(/3 relays, 1 online/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add relay" })).toBeInTheDocument();

@@ -35,8 +35,8 @@ describe("CampaignListPage", () => {
     const table = await screen.findByRole("table", { name: "Campaigns" });
     const row = within(table).getByRole("link", { name: "October updates" }).closest("tr")!;
     expect(within(row).getByRole("link")).toHaveAttribute("href", expect.stringContaining(`id=${CAMPAIGN_ID}`));
-    expect(row).toHaveTextContent("2 waves · security only");
-    expect(row).toHaveTextContent("Running wave 1 of 2");
+    expect(row).toHaveTextContent("2 batches · security only");
+    expect(row).toHaveTextContent("Running batch 1 of 2");
     expect(row).toHaveTextContent("0 / 2 · 1 in progress");
     expect(row).toHaveTextContent("Sat, Sun 22:00–04:00");
     expect(within(table).getByRole("link", { name: "Draft" }).closest("tr")).toHaveTextContent("Draft");
@@ -95,6 +95,7 @@ describe("CampaignListPage", () => {
       </As>,
     );
     expect(await screen.findByText("No campaigns yet")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "New campaign" })).toHaveLength(2);
   });
 
   it("hides creation from readers and refuses site-only roles", async () => {
@@ -106,6 +107,7 @@ describe("CampaignListPage", () => {
     );
     expect(await screen.findByText("No campaigns yet")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "New campaign" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to the fleet" })).toBeInTheDocument();
     unmount();
 
     render(
@@ -117,7 +119,7 @@ describe("CampaignListPage", () => {
   });
 
   it("names the current wave once queued", () => {
-    expect(waveText({ current_wave: null, wave_count: 1 })).toBe("1 wave");
-    expect(waveText({ current_wave: 2, wave_count: 3 })).toBe("Wave 3 of 3");
+    expect(waveText({ current_wave: null, wave_count: 1 })).toBe("1 batch");
+    expect(waveText({ current_wave: 2, wave_count: 3 })).toBe("Batch 3 of 3");
   });
 });

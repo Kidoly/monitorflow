@@ -50,7 +50,7 @@ const db1 = server({
   connected_at: null,
   last_heartbeat: new Date(2026, 9, 22, 13, 51).toISOString(),
 });
-const mail = server({ id: "s4", hostname: "mail-1", cert_not_after: new Date(NOW.getTime() + 5.5 * 86_400_000).toISOString() });
+const mail = server({ id: "s4", hostname: "mail-1", cert_not_after: new Date(NOW.getTime() + 1.4 * 86_400_000).toISOString() });
 const disk = incident({ server_id: "s1", opened_at: new Date(NOW.getTime() - (4 * 3600 + 20 * 60) * 1000).toISOString(), last_value: 0.968 });
 
 const SERVERS = "GET /api/servers";
@@ -75,8 +75,8 @@ describe("FleetOverview", () => {
     render(<FleetOverview />);
     const [first, second, third] = await rows();
     expect(first).toHaveTextContent(/web-1Debian 12 · agent 0\.1\.0 · via relay-paris-1\s*Online\s*Critical\s+Disk used \/var 96\.8% · 4 h 20 min\s*paris\s*12 s ago/);
-    expect(second).toHaveTextContent(/db-1RHEL 9 · agent unknown\s*Offline\s*No heartbeat since 13:51/);
-    expect(third).toHaveTextContent(/mail-1.*Online\s*Warning\s+Certificate expires in 6 days/);
+    expect(second).toHaveTextContent(/db-1RHEL 9 · agent unknown\s*Offline\s*Last contact 13:51/);
+    expect(third).toHaveTextContent(/mail-1.*Online\s*Warning\s+Certificate: Renewal late, expires in 1 day/);
     expect(within(first!).getByRole("link", { name: "web-1" })).toHaveAttribute("href", expect.stringMatching(/^\/servers\/view\/?\?id=s1$/));
     expect(screen.getByText(/3 servers, 2 online · Updated 14:32:05, refreshes every 15 seconds/)).toBeInTheDocument();
 
@@ -142,7 +142,7 @@ describe("FleetOverview", () => {
     expect(screen.getByRole("button", { name: "Fold healthy servers" })).toBeInTheDocument();
 
     // A sort shows every row, in the order asked.
-    await userEvent.click(screen.getByRole("button", { name: "Host" }));
+    await userEvent.click(screen.getByRole("button", { name: "Server" }));
     expect(window.location.search).toBe("?sort=host");
     expect((await rows())[0]).toHaveTextContent("ok-1");
     await userEvent.click(screen.getByRole("button", { name: "Problems first" }));

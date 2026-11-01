@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setUrl } from "@/test/navigation";
 
-import { FilterBar } from "./FilterBar";
+import { FilterBar, NoMatches } from "./FilterBar";
 
 vi.mock("next/navigation", () => import("@/test/navigation"));
 
@@ -80,5 +80,24 @@ describe("FilterBar", () => {
     expect(window.location.pathname).toBe("/servers/view/");
     expect(screen.getByRole("searchbox", { name: "Search" })).toHaveValue("");
     expect(screen.queryByRole("button", { name: "Clear" })).not.toBeInTheDocument();
+  });
+});
+
+describe("NoMatches", () => {
+  beforeEach(() => setUrl("/?customer=acme&status=online&q=web"));
+
+  it("clears the filters it names, the search box too, and keeps the scope", async () => {
+    render(
+      <>
+        <FilterBar filters={[]} search={{ name: "q", label: "Search" }} />
+        <NoMatches names={["status", "q"]}>No servers match these filters.</NoMatches>
+      </>,
+    );
+    expect(screen.getByLabelText("Search")).toHaveValue("web");
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    expect(query()).toEqual({ customer: "acme" });
+    expect(screen.getByLabelText("Search")).toHaveValue("");
   });
 });

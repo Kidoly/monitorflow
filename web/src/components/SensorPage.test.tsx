@@ -99,11 +99,11 @@ describe("SensorPage", () => {
     expect(rangeCalls(fetchMock)[0]).toMatchObject({ metric: "monitorflow_disk_used_ratio", instance: "/var", step: "120" });
 
     const configuration = screen.getByRole("region", { name: "Configuration" });
-    expect(configuration).toHaveTextContent(/Kind\s*disk\s*Instance\s*\/var\s*Interval\s*30 s\s*Timeout\s*10 s/);
+    expect(configuration).toHaveTextContent(/Kind\s*disk\s*Watches\s*\/var\s*Interval\s*30 s\s*Timeout\s*10 s/);
     expect(configuration).toHaveTextContent(/Warning\s*> 80%\s*Critical\s*> 90%\s*Duration\s*5 min/);
-    expect(configuration).toHaveTextContent(/Hysteresis\s*2% below the threshold before resolving/);
-    expect(configuration).toHaveTextContent(/Origin\s*This server · revision 7 · thresholds from the site/);
-    expect(configuration).toHaveTextContent(/Agent runs\s*Revision 6 configuration out of date/);
+    expect(configuration).toHaveTextContent(/Recovery margin\s*2% below the threshold before resolving/);
+    expect(configuration).toHaveTextContent(/Set by\s*This server · thresholds from the site/);
+    expect(configuration).toHaveTextContent(/Configuration\s*Out of date/);
 
     const incidents = screen.getByRole("region", { name: "Incidents on this sensor" });
     expect(incidents).toHaveTextContent("1 open · 2 in 30 days");

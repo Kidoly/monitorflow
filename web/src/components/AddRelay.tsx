@@ -61,7 +61,7 @@ export function AddRelay({ me, onDone }: { me: Me; onDone: () => void }) {
       ) : (
         <>
           <p className={styles.sectionNote}>
-            One command on one host of the site. The relay finds its own names and appears here for you to confirm them.
+            One command on one server of the site. The relay finds its own addresses and appears here for you to confirm them.
           </p>
           <label className={styles.field}>
             Site
@@ -115,7 +115,7 @@ export function ConfirmRelayNames({ relay, onConfirmed }: { relay: Relay; onConf
       await api.confirmRelayNames(relay.id, names);
       onConfirmed();
     } catch (e) {
-      setError(`Confirming the names failed. ${describeError(e)}`);
+      setError(`Confirming the addresses failed. ${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -134,7 +134,7 @@ export function ConfirmRelayNames({ relay, onConfirmed }: { relay: Relay; onConf
             from <code>{relay.pending_source}</code>
           </>
         )}
-        . If you did not install it, <Link href={relayHref(relay.id)}>remove it</Link>. Keep the names servers reach it
+        . If you did not install it, <Link href={relayHref(relay.id)}>remove it</Link>. Keep the addresses servers reach it
         at: the first one goes in their install command. Until you confirm, it carries no server.
       </p>
       {reported.map((name) => (
@@ -149,7 +149,7 @@ export function ConfirmRelayNames({ relay, onConfirmed }: { relay: Relay; onConf
       ))}
       <label className={styles.field}>
         <span>
-          {reported.length === 0 ? "Names" : "Another name"}{" "}
+          {reported.length === 0 ? "Addresses" : "Another address"}{" "}
           <span className={styles.fieldNote}>— only if servers reach it some other way</span>
         </span>
         <input
@@ -163,7 +163,7 @@ export function ConfirmRelayNames({ relay, onConfirmed }: { relay: Relay; onConf
       </label>
       <div className={styles.formFoot}>
         <Button variant="k" type="submit" disabled={busy || names.length === 0}>
-          Confirm names
+          Confirm addresses
         </Button>
       </div>
       {error && (

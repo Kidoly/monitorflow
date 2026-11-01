@@ -13,7 +13,7 @@ import { AddMirror } from "./AddMirror";
 import styles from "./Mirrors.module.css";
 import { Button } from "./ui/Button";
 import { type Column, DataTable, PrimaryCell, useUrlSort } from "./ui/DataTable";
-import { FilterBar } from "./ui/FilterBar";
+import { FilterBar, NoMatches } from "./ui/FilterBar";
 import { Banner, EmptyState, ErrorState, LoadingBlock, NoPermission, PageHeader, RefreshLine, StaleBanner } from "./ui/PageState";
 import { RelativeTime } from "./ui/RelativeTime";
 import { StatTiles } from "./ui/StatTiles";
@@ -256,7 +256,7 @@ function MirrorList() {
           mirrors copy it for their sites.
         </EmptyState>
       ) : rows.length === 0 ? (
-        <EmptyState>No mirror matches these filters.</EmptyState>
+        <NoMatches names={["family", "run", "q"]}>No mirror matches these filters.</NoMatches>
       ) : (
         <DataTable
           dense

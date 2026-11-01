@@ -10,7 +10,8 @@ import { CAMPAIGNS_PATH } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
 import { type Column, DataTable, PrimaryCell, useUrlSort } from "./ui/DataTable";
-import { FilterBar } from "./ui/FilterBar";
+import { Button } from "./ui/Button";
+import { FilterBar, NoMatches } from "./ui/FilterBar";
 import { EmptyState, ErrorState, LoadingBlock, StaleBanner } from "./ui/PageState";
 import { RelativeTime } from "./ui/RelativeTime";
 import { StatTiles } from "./ui/StatTiles";
@@ -135,7 +136,7 @@ export function ServerUpdates({ serverId }: { serverId: string }) {
     <div className={styles.tab}>
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       {data.reported_at === null ? (
-        <EmptyState title="No package report yet">
+        <EmptyState title="No package report yet" actions={<Button onClick={refresh}>Check again</Button>}>
           The agent sends one when it starts, after each update and every 6 hours.
         </EmptyState>
       ) : (
@@ -195,7 +196,7 @@ export function ServerUpdates({ serverId }: { serverId: string }) {
             }}
           />
           {rows.length === 0 ? (
-            <EmptyState>No package matches these filters.</EmptyState>
+            <NoMatches names={[STATUS_PARAM, SEARCH_PARAM]}>No package matches these filters.</NoMatches>
           ) : (
             <DataTable
               key={`${filter}-${search}`}

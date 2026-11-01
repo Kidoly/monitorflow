@@ -17,7 +17,7 @@ import {
   isAbortError,
 } from "@/lib/api";
 import { updateAvailable } from "@/lib/agentVersion";
-import { certificateState } from "@/lib/certificates";
+import { certificateProblem, certificateState } from "@/lib/certificates";
 import { metricsError } from "@/lib/charts";
 import { isActive } from "@/lib/commands";
 import { formatOs } from "@/lib/format";
@@ -198,6 +198,7 @@ export function ServerPage({ id }: { id: string | null }) {
         {tab === "updates" && <ServerUpdatesTab server={server} />}
         {tab === "commands" && (
           <ServerCommandsTab
+            serverId={server.id}
             commands={commands}
             now={updatedAt}
             onLoadMore={() => setCommandLimit((n) => Math.min(MAX_LIMIT, n + COMMANDS_PAGE))}
@@ -318,11 +319,14 @@ function ServerFacts({
         ...(server.package_updates === false
           ? [{ label: "Package updates", value: "Package updates aren't available on this system; monitoring works normally" }]
           : []),
-        { label: "Enrolled", value: minutes(server.created_at) },
-        { label: "Certificate ID", value: server.peer_id, mono: true },
+        { label: "Added", value: minutes(server.created_at) },
         ...(server.revoked_at
           ? []
           : [{ label: "Offline alerts", value: <OfflineAlerts kind="servers" target={server} onChanged={onChanged} /> }]),
+      ]}
+      details={[
+        { label: "Certificate ID", value: server.peer_id, mono: true },
+        ...(certificate ? [{ label: "Certificate valid until", value: formatExact(new Date(certificate.not_after)).slice(0, 10) }] : []),
       ]}
     />
   );
@@ -339,15 +343,11 @@ function CertificateFact({ certificate, now }: { certificate: NonNullable<Server
       </>
     );
   }
-  const state = certificateState(certificate.not_after, now);
-  if (state === "valid") return <>Valid until {date}</>;
-  const days = Math.round(Math.abs(Date.parse(certificate.not_after) - now.getTime()) / 86_400_000);
+  const problem = certificateProblem(certificate.not_after, now);
+  if (!problem) return <>Valid, renews automatically</>;
   return (
     <>
-      <Label tone={state === "expired" ? "bad" : "warn"}>
-        {state === "expired" ? `Expired ${days} ${days === 1 ? "day" : "days"} ago` : `Expires in ${days} ${days === 1 ? "day" : "days"}`}
-      </Label>{" "}
-      {date}
+      <Label tone={certificateState(certificate.not_after, now) === "failed" ? "bad" : "warn"}>{problem}</Label> {date}
     </>
   );
 }

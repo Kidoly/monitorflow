@@ -25,7 +25,7 @@ const VALIDITY: [number, string][] = [
 
 /** "3 of 10 hosts", or "3 hosts" without a limit. */
 export function hostsWords(key: Pick<InstallKey, "host_count" | "max_hosts">): string {
-  const unit = (key.max_hosts ?? key.host_count) === 1 ? "host" : "hosts";
+  const unit = (key.max_hosts ?? key.host_count) === 1 ? "server" : "servers";
   return key.max_hosts === null ? `${key.host_count} ${unit}` : `${key.host_count} of ${key.max_hosts} ${unit}`;
 }
 
@@ -75,7 +75,7 @@ export function CreateInstallKey({
         Install command
       </h2>
       <p className={styles.sectionNote}>
-        One command for all the hosts of a site, Linux or Windows. Each host appears under its own name.
+        One command for all the servers of a site, Linux or Windows. Each server appears under its own name.
       </p>
       <div className={styles.formGrid}>
         <label className={styles.field}>
@@ -100,7 +100,7 @@ export function CreateInstallKey({
         </label>
         <label className={styles.field}>
           <span>
-            Up to <span className={styles.fieldNote}>— hosts; empty for any number</span>
+            Up to <span className={styles.fieldNote}>— servers; empty for any number</span>
           </span>
           <input
             className={fieldClass}
@@ -114,7 +114,7 @@ export function CreateInstallKey({
         </label>
       </div>
       <label className={styles.check}>
-        <input type="checkbox" checked={approval} onChange={(e) => setApproval(e.target.checked)} /> Approve new hosts
+        <input type="checkbox" checked={approval} onChange={(e) => setApproval(e.target.checked)} /> Approve new servers
         before they appear
       </label>
       <div className={styles.formFoot}>
@@ -151,7 +151,7 @@ export function PendingHosts({ hosts, now, onChange }: { hosts: PendingHost[]; n
   const columns: Column<PendingHost>[] = [
     {
       key: "host",
-      header: "Host",
+      header: "Server",
       cell: (host) => (
         <>
           <span className={styles.peer}>{host.hostname}</span>
@@ -172,11 +172,11 @@ export function PendingHosts({ hosts, now, onChange }: { hosts: PendingHost[]; n
         <span className={styles.dim}>{hosts.length}</span>
       </div>
       <p className={styles.sectionNote}>
-        These hosts ran an install command that asks for approval. They appear under Servers once approved.
+        These servers ran an install command that asks for approval. They appear under Servers once approved.
       </p>
       <DataTable
         bare
-        label="Hosts waiting for approval"
+        label="Servers waiting for approval"
         columns={columns}
         rows={hosts}
         rowKey={(host) => host.peer_id}
@@ -190,15 +190,15 @@ export function PendingHosts({ hosts, now, onChange }: { hosts: PendingHost[]; n
               trigger="Reject"
               triggerVariant="default"
               triggerName={`Reject ${host.hostname}`}
-              title="Reject this host?"
+              title="Reject this server?"
               consequence={`Its certificate is revoked: it can never connect as ${host.peer_id}.`}
-              confirmLabel="Reject host"
+              confirmLabel="Reject server"
               pendingLabel="Rejecting…"
               onConfirm={async () => {
                 await api.decidePendingHost(host.peer_id, "reject");
                 onChange();
               }}
-              describeError={(e) => `Rejecting the host failed. ${describeError(e)}`}
+              describeError={(e) => `Rejecting the server failed. ${describeError(e)}`}
             />
           </div>
         )}
@@ -271,7 +271,7 @@ export function InstallKeyTable({
         <span className={styles.dim}>{keys?.filter((key) => key.state === "active").length ?? 0} active</span>
       </div>
       {keys && keys.length === 0 ? (
-        <p className={styles.sectionNote}>None yet: create one above, then paste it on your hosts.</p>
+        <p className={styles.sectionNote}>None yet: create one above, then paste it on your servers.</p>
       ) : (
         <DataTable
           bare
@@ -289,7 +289,7 @@ export function InstallKeyTable({
                 triggerVariant="default"
                 triggerName={`Revoke the install command of ${key.site_name}`}
                 title="Revoke this install command?"
-                consequence="No new host can install with it. Hosts already installed keep working."
+                consequence="No new server can install with it. Servers already installed keep working."
                 confirmLabel="Revoke command"
                 pendingLabel="Revoking…"
                 onConfirm={async () => {

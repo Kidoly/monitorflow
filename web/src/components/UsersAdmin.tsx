@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, type RefObject, useId, useRef, useState } from "react";
 
 import { Button, fieldClass } from "@/components/ui/Button";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
@@ -157,7 +157,7 @@ function LinkPanel({ username, link, invite }: { username: string; link: Passwor
   );
 }
 
-function InviteForm({ names, onInvited }: { names: Names; onInvited: () => void }) {
+function InviteForm({ names, onInvited, inputRef }: { names: Names; onInvited: () => void; inputRef: RefObject<HTMLInputElement | null> }) {
   const titleId = useId();
   const [username, setUsername] = useState("");
   const [role, setRole] = useState<Role>("viewer");
@@ -205,6 +205,7 @@ function InviteForm({ names, onInvited }: { names: Names; onInvited: () => void 
           <label className={styles.field}>
             Username
             <input
+              ref={inputRef}
               className={fieldClass}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -265,6 +266,7 @@ type Open = { id: string; kind: "role" } | { id: string; kind: "link"; link: Pas
 export function UsersAdmin({ me }: { me: Me }) {
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(load);
   const [open, setOpen] = useState<Open | null>(null);
+  const invite = useRef<HTMLInputElement>(null);
   const [rowError, setRowError] = useState<{ id: string; text: string } | null>(null);
 
   async function act(user: UserAccount, action: () => Promise<unknown>) {
@@ -354,7 +356,7 @@ export function UsersAdmin({ me }: { me: Me }) {
       {!data && !error && <LoadingBlock label="Loading users" />}
       {data && (
         <>
-          <InviteForm names={data} onInvited={refresh} />
+          <InviteForm names={data} onInvited={refresh} inputRef={invite} />
           <DataTable
             dense
             label="Users"
@@ -431,8 +433,11 @@ export function UsersAdmin({ me }: { me: Me }) {
             )}
           />
           {others === 0 && (
-            <EmptyState title="Only you so far">
-              Invite a colleague above. They get a link to choose their password, with the role you pick.
+            <EmptyState
+              title="Only you so far"
+              actions={<Button variant="k" onClick={() => invite.current?.focus()}>Invite a colleague</Button>}
+            >
+              They get a link to choose their password, with the role you pick.
             </EmptyState>
           )}
         </>

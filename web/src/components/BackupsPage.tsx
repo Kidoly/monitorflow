@@ -132,7 +132,7 @@ function Backups() {
       ) : (
         !data.updater_alive && (
           <Banner tone="bad">
-            The updater is not running, so no backup is taken. On the server host:{" "}
+            The updater is not running, so no backup is taken. On the central server:{" "}
             <code>docker compose -f deploy/docker-compose.yml up -d updater</code>
           </Banner>
         )
@@ -172,7 +172,7 @@ function Backups() {
           Restore
         </h2>
         <p className={styles.note}>
-          Download a backup, copy it to the server host, and run there, on this server or a fresh install:
+          Download a backup, copy it to the central server, and run there, on this one or a fresh install:
         </p>
         <pre className={styles.commands}>{restoreCommand(data.files[0]?.name ?? "<backup file>")}</pre>
         <p className={styles.note}>

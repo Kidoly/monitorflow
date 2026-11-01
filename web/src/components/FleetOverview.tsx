@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useState } from "react";
 
 import { type Incident, type Server, api, describeError, isUnauthorized, isAbortError } from "@/lib/api";
-import { certificateState } from "@/lib/certificates";
+import { certificateProblem, certificateState } from "@/lib/certificates";
 import { formatOs } from "@/lib/format";
 import { incidentTitle, isOffline } from "@/lib/incidents";
 import { administersCustomer, useMe } from "@/lib/me";
@@ -15,7 +15,7 @@ import { REFRESH_MS, usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { type Column, DataTable, PrimaryCell, useUrlSort } from "@/components/ui/DataTable";
-import { FilterBar } from "@/components/ui/FilterBar";
+import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
 import { EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { problemRank } from "@/components/ui/problemsFirst";
@@ -134,7 +134,7 @@ export function FleetOverview() {
   const columns: Column<Row>[] = [
     {
       key: "host",
-      header: "Host",
+      header: "Server",
       cell: (r) => (
         <PrimaryCell
           title={r.server.hostname}
@@ -191,7 +191,7 @@ export function FleetOverview() {
         <ErrorState what="servers" error={describeError(error)} onRetry={refresh} />
       ) : data && all.length === 0 ? (
         <EmptyState title="No servers yet" actions={enroll}>
-          Paste one install command on your hosts: each appears here under its name as soon as it connects.
+          Paste one install command on your servers: each appears here under its name as soon as it connects.
         </EmptyState>
       ) : (
         <>
@@ -220,7 +220,7 @@ export function FleetOverview() {
             ]}
           />
           <FilterBar
-            search={{ name: "q", label: "Search", placeholder: "Search hosts…", width: 240 }}
+            search={{ name: "q", label: "Search", placeholder: "Search servers…", width: 240 }}
             filters={[
               {
                 name: "status",
@@ -241,7 +241,9 @@ export function FleetOverview() {
             }
           />
           {data && filtered.length === 0 ? (
-            <EmptyState>No servers match these filters.</EmptyState>
+            <NoMatches names={["q", "status", "os", "incidents", ...(scope.siteId ? [] : ["site"])]}>
+              No servers match these filters.
+            </NoMatches>
           ) : (
             <DataTable
               label="Servers"
@@ -300,19 +302,17 @@ function Problem({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
     if (!server.last_heartbeat) return <span className={styles.muted}>Never connected</span>;
     return (
       <span className={styles.muted}>
-        No heartbeat since {formatSince(new Date(server.last_heartbeat), now).replace(/^Yesterday/, "yesterday")}
+        Last contact {formatSince(new Date(server.last_heartbeat), now).replace(/^Yesterday/, "yesterday")}
       </span>
     );
   }
-  if (server.cert_not_after && certificateState(server.cert_not_after, now) !== "valid") {
-    const expiry = new Date(server.cert_not_after);
-    const expired = expiry <= now;
-    const days = Math.round(Math.abs(expiry.getTime() - now.getTime()) / 86_400_000);
+  const certificate = server.cert_not_after && certificateProblem(server.cert_not_after, now);
+  if (server.cert_not_after && certificate) {
+    const failed = certificateState(server.cert_not_after, now) === "failed";
     return (
       <span className={styles.problem}>
-        <Label tone={expired ? "bad" : "warn"}>{expired ? "Critical" : "Warning"}</Label>
-        &nbsp; {expired ? `Certificate expired ${days} ${days === 1 ? "day" : "days"} ago` : `Certificate expires in ${days} ${days === 1 ? "day" : "days"}`}{" "}
-        <span>{formatExact(expiry).slice(0, 10)}</span>
+        <Label tone={failed ? "bad" : "warn"}>{failed ? "Critical" : "Warning"}</Label>
+        &nbsp; Certificate: {certificate} <span>{formatExact(new Date(server.cert_not_after)).slice(0, 10)}</span>
       </span>
     );
   }

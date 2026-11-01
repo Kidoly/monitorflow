@@ -22,7 +22,7 @@ import { CAMPAIGNS_PATH, campaignHref } from "@/lib/routes";
 
 import own from "./Campaigns.module.css";
 import { Breadcrumb } from "./ui/Breadcrumb";
-import { Button, fieldClass } from "./ui/Button";
+import { Button, ButtonLink, fieldClass } from "./ui/Button";
 import { Banner, EmptyState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
 
 /** Command validity choices; the API takes 60 s to 7 days. */
@@ -92,7 +92,11 @@ export function CampaignForm({ me }: { me: Me }) {
     return error ? <Banner tone="bad">{error}</Banner> : <LoadingBlock label="Loading servers" />;
   }
   if (inventory.customers.length === 0) {
-    return <EmptyState>You administer no customer to update.</EmptyState>;
+    return (
+      <EmptyState actions={<ButtonLink href={CAMPAIGNS_PATH}>Back to campaigns</ButtonLink>}>
+        You administer no customer to update.
+      </EmptyState>
+    );
   }
 
   const sites = inventory.sites.filter((s) => s.customer_id === draft.customerId);
@@ -191,7 +195,7 @@ export function CampaignForm({ me }: { me: Me }) {
           </p>
         </Fieldset>
 
-        <Fieldset legend="Waves">
+        <Fieldset legend="Batches">
           {draft.waves.map((wave, i) => (
             <WaveRow
               key={i}
@@ -204,7 +208,7 @@ export function CampaignForm({ me }: { me: Me }) {
           ))}
           <div className={own.row}>
             <Button onClick={() => set({ waves: [...draft.waves, { kind: "size", value: "1", servers: [] }] })}>
-              Add wave
+              Add batch
             </Button>
           </div>
           <WavePlan draft={draft} targets={targets} />
@@ -312,8 +316,8 @@ export function CampaignForm({ me }: { me: Me }) {
                 value={draft.thresholdUnit}
                 onChange={(e) => set({ thresholdUnit: e.target.value as CampaignDraft["thresholdUnit"] })}
               >
-                <option value="count">servers of a wave fail</option>
-                <option value="percent">percent of a wave fail</option>
+                <option value="count">servers of a batch fail</option>
+                <option value="percent">percent of a batch fail</option>
               </select>
             </label>
           </div>
@@ -353,7 +357,7 @@ function WaveRow({
   onChange: (wave: WaveDraft) => void;
   onRemove: () => void;
 }) {
-  const label = `Wave ${index + 1}`;
+  const label = `Batch ${index + 1}`;
   return (
     <div className={own.row} role="group" aria-label={label}>
       <label className={own.fld}>
@@ -408,10 +412,10 @@ function WavePlan({ draft, targets }: { draft: CampaignDraft; targets: Server[] 
     toRequest(draft).waves,
   );
   if ("error" in plan) return <p className={own.note}>Waves cannot be planned: {plan.error}.</p>;
-  const sizes = plan.waves.map((w, i) => `wave ${i + 1}: ${w.length}`).join(", ");
+  const sizes = plan.waves.map((w, i) => `batch ${i + 1}: ${w.length}`).join(", ");
   return (
     <p className={own.note}>
-      Servers per wave: {sizes}. Servers not placed by a wave form the last one.
+      Servers per batch: {sizes}. Servers not placed by a batch form the last one.
     </p>
   );
 }

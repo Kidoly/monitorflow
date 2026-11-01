@@ -18,23 +18,23 @@ import { CAMPAIGN_STATES, SERVER_STATUSES, campaignSubline, canAct, isFinal, sho
 import { administersCustomer, readsCustomers, useMe } from "@/lib/me";
 import { shortTime } from "@/lib/mirrors";
 import { NEW_CAMPAIGN_PATH, campaignHref, serverHref } from "@/lib/routes";
-import { useScope } from "@/lib/scope";
+import { scopedHref, useScope } from "@/lib/scope";
 import { usePolledData } from "@/lib/usePolledData";
 
 import own from "./Campaigns.module.css";
 import { Button, ButtonLink } from "./ui/Button";
 import { type Column, DataTable, PrimaryCell, useUrlSort } from "./ui/DataTable";
-import { FilterBar } from "./ui/FilterBar";
+import { FilterBar, NoMatches } from "./ui/FilterBar";
 import { Banner, EmptyState, ErrorState, LoadingBlock, NoPermission, PageHeader, RefreshLine, StaleBanner } from "./ui/PageState";
 import { StatTiles } from "./ui/StatTiles";
 import { Label } from "./ui/StatusLabel";
 
 const DAY_MS = 86_400_000;
 
-/** "Wave 2 of 3", or how many waves before the first is queued. */
+/** "Batch 2 of 3", or how many waves before the first is queued. */
 export function waveText(campaign: Pick<Campaign, "current_wave" | "wave_count">): string {
-  const waves = `${campaign.wave_count} wave${campaign.wave_count === 1 ? "" : "s"}`;
-  return campaign.current_wave === null ? waves : `Wave ${campaign.current_wave + 1} of ${campaign.wave_count}`;
+  const waves = `${campaign.wave_count} ${campaign.wave_count === 1 ? "batch" : "batches"}`;
+  return campaign.current_wave === null ? waves : `Batch ${campaign.current_wave + 1} of ${campaign.wave_count}`;
 }
 
 /** A campaign state as a tinted word. */
@@ -141,17 +141,16 @@ function CampaignList() {
     [refresh],
   );
 
+  const newCampaign = administersCustomer(me) && (
+    <ButtonLink variant="k" href={NEW_CAMPAIGN_PATH}>
+      New campaign
+    </ButtonLink>
+  );
   const header = (
     <PageHeader
       title="Update campaigns"
       meta={updatedAt !== null || error !== null ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : undefined}
-      actions={
-        administersCustomer(me) && (
-          <ButtonLink variant="k" href={NEW_CAMPAIGN_PATH}>
-            New campaign
-          </ButtonLink>
-        )
-      }
+      actions={newCampaign}
     />
   );
   if (!data || !updatedAt) {
@@ -260,11 +259,14 @@ function CampaignList() {
         search={{ name: "q", label: "Search", placeholder: "Campaign name", width: 200 }}
       />
       {inScope.length === 0 ? (
-        <EmptyState title="No campaigns yet">
-          A campaign updates a site or chosen servers in waves, inside maintenance windows.
+        <EmptyState
+          title="No campaigns yet"
+          actions={newCampaign || <ButtonLink href={scopedHref("/", scope)}>Back to the fleet</ButtonLink>}
+        >
+          A campaign updates a site or chosen servers in batches, inside maintenance windows.
         </EmptyState>
       ) : rows.length === 0 ? (
-        <EmptyState>No campaign matches these filters.</EmptyState>
+        <NoMatches names={["state", "q"]}>No campaign matches these filters.</NoMatches>
       ) : (
         <DataTable
           dense
@@ -317,7 +319,7 @@ function RunningServers({ campaign, sites, now }: { campaign: CampaignDetail; si
         />
       ),
     },
-    { key: "wave", header: "Wave", cell: (s) => `${s.wave + 1} of ${campaign.wave_count}` },
+    { key: "wave", header: "Batch", cell: (s) => `${s.wave + 1} of ${campaign.wave_count}` },
     {
       key: "state",
       header: "State",
