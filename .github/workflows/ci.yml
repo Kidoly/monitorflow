@@ -23,6 +23,7 @@ jobs:
       SQLX_OFFLINE: "true"
     steps:
       - uses: actions/checkout@v4
+      - run: scripts/check-numbers.sh
       # Installs the toolchain and components named in rust-toolchain.toml,
       # the single source of truth for the Rust version.
       - name: Install Rust toolchain
