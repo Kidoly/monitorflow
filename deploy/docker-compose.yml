@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.154.1
+    image: victoriametrics/victoria-metrics:v1.155.0
     # UI_*: set by the updater for Administration > Settings (ADR-0069).
     command: ["-storageDataPath=/storage", "-retentionPeriod=${METRICS_RETENTION:-${UI_METRICS_RETENTION:-90d}}"]
     volumes: ["vmdata:/storage"]
