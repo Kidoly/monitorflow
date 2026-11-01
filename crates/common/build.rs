@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proto_root = "../../proto";
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_server(true)
         .build_client(true)
         .compile_protos(
@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format!("{proto_root}/monitorflow/v1/sources.proto"),
                 format!("{proto_root}/monitorflow/v1/release.proto"),
             ],
-            &[proto_root],
+            &[proto_root.to_owned()],
         )?;
     println!("cargo:rerun-if-changed={proto_root}");
     println!("cargo:rerun-if-env-changed=MONITORFLOW_BUILD_VERSION");
