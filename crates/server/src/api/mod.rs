@@ -74,7 +74,7 @@
 //! | POST | `/api/mirrors` | global administrator | body `{"distribution"}`, an `id` of the catalog; 201 [`mirrors::MirrorList`] of the mirrors created; 409 when the mirror tools are not running, the disk is too small or it is already added |
 //! | GET | `/api/mirrors/catalog` | global administrator | [`mirrors::Catalog`]: the distributions with their size estimate, the free disk space and whether the mirror tools answer |
 //! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots`, each with why it stays, the last `runs`, and `used_by`, what keeps it from being deleted |
-//! | DELETE | `/api/mirrors/{id}` | global administrator | 202 once the mirror is being deleted, in the background, until its detail answers 404; 409 saying what still uses it (ADR-0075) |
+//! | DELETE | `/api/mirrors/{id}` | global administrator | 202 with the listing item once the mirror is being deleted, in the background, until its detail answers 404; 409 saying what still uses it (ADR-0075) |
 //! | POST | `/api/mirrors/{id}/sync` | global administrator | 202 [`mirrors::RunSummary`] of the started sync; 409 while busy |
 //! | POST | `/api/mirrors/{id}/snapshots` | global administrator | body `{"name"?}`; 202 [`mirrors::RunSummary`]; 409 while busy or never synced |
 //! | GET | `/api/servers/{id}/sources` | a role on the site | [`package_sources::SourcesStatus`]: where the server's packages come from, and why it cannot use a mirror |

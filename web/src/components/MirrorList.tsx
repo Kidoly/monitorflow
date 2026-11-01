@@ -27,6 +27,11 @@ const runOf = (m: Mirror): RunFilter => m.last_run?.state ?? "never";
 const RANK: Record<RunFilter, number> = { failed: 0, running: 1, never: 2, succeeded: 3 };
 const problemsFirst = (a: Mirror, b: Mirror) => RANK[runOf(a)] - RANK[runOf(b)] || a.name.localeCompare(b.name);
 
+/** A mirror being removed, in the place of its last run. */
+export function RemovalLabel({ mirror }: { mirror: Mirror }) {
+  return mirror.delete_error ? <Label tone="bad">Removal failed</Label> : <Label tone="info">Being removed</Label>;
+}
+
 /** The last run as a status word and when, or "Never run". */
 export function LastRun({ run, now }: { run: MirrorRunSummary | null; now: Date }) {
   if (!run) return <Label tone="neutral">Never run</Label>;
@@ -176,7 +181,7 @@ function MirrorList() {
       sortValue: (m) => m.name,
       cell: (m) => <PrimaryCell title={m.name} href={mirrorHref(m.id)} sub={describeMirror(m)} />,
     },
-    { key: "run", header: "Last run", sortValue: (m) => RANK[runOf(m)], cell: (m) => <LastRun run={m.last_run} now={now} /> },
+    { key: "run", header: "Last run", sortValue: (m) => RANK[runOf(m)], cell: (m) => (m.deleting_at ? <RemovalLabel mirror={m} /> : <LastRun run={m.last_run} now={now} />) },
     {
       key: "distribution",
       header: "Distribution",
@@ -280,7 +285,7 @@ function MirrorList() {
 
 /** Sync now and Snapshot of a row, disabled while a run of the mirror is going. */
 function MirrorButtons({ mirror, jobs }: { mirror: Mirror; jobs: ReturnType<typeof useMirrorJobs> }) {
-  const disabled = jobs.busy !== null || mirror.last_run?.state === "running";
+  const disabled = jobs.busy !== null || mirror.last_run?.state === "running" || mirror.deleting_at !== null;
   return (
     <>
       <Button size="small" disabled={disabled} onClick={() => void jobs.start(mirror, "sync")}>

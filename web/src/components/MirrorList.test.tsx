@@ -204,6 +204,23 @@ describe("MirrorListPage", () => {
     });
   });
 
+  it("marks a mirror being removed and starts nothing on it", async () => {
+    stubFetch({
+      "GET /api/mirrors": {
+        status: 200,
+        body: { mirrors: [mirror({ deleting_at: "2026-10-22T15:00:00Z" })], keep_snapshots: 7 },
+      },
+    });
+    render(
+      <As user={globalAdmin}>
+        <MirrorListPage />
+      </As>,
+    );
+    const row = (await screen.findByText("Being removed")).closest("tr")!;
+    expect(within(row).getByRole("button", { name: "Sync now debian-bookworm" })).toBeDisabled();
+    expect(within(row).getByRole("button", { name: "Snapshot debian-bookworm" })).toBeDisabled();
+  });
+
   it("is for global administrators only", () => {
     render(
       <As user={customerAdmin}>

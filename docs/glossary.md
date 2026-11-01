@@ -20,7 +20,7 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Recovery margin | How far past the threshold a value must return before the incident resolves; under Details | hysteresis | `hysteresis` |
 | Set by | Where a setting comes from; under Details | origin | `origin` |
 | Batch | Part of the servers of a campaign, updated together | wave | `waves` |
-| Remove | Revoke a server or relay and hide it from lists | | `revoked_at` |
+| Remove | Revoke a server or relay and hide it from lists; for a mirror, delete it and its packages | delete | `revoked_at`, `deleting_at` |
 | Revoke | Stop an install command, a token or a role from working | | |
 
 Keep the technical word when it is the thing being asked for, such as a certificate, a mirror or a sudo rule, and put the rest under a "Details" disclosure. Certificate warnings speak of renewal, and appear only when it is late (under 2 days left) or failed.

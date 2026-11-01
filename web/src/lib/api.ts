@@ -1250,6 +1250,10 @@ export interface Mirror {
   sync_interval_s: number | null;
   auto_snapshot: boolean;
   created_at: string;
+  /** Set while the mirror is being removed (ADR-0075). */
+  deleting_at: string | null;
+  /** Why removing it has not finished yet. */
+  delete_error: string | null;
   /** Name of the newest published snapshot. */
   current_snapshot: string | null;
   last_run: MirrorRunSummary | null;
@@ -1297,6 +1301,11 @@ export interface MirrorDetail extends Mirror {
   snapshots: MirrorSnapshot[];
   keep_snapshots: number;
   runs: MirrorRun[];
+  /** What keeps it from being removed; relays are not here, their copy goes with it. */
+  used_by: {
+    campaigns: { id: string; name: string }[];
+    servers: { id: string; hostname: string }[];
+  };
 }
 
 /** `GET /api/servers/{id}/sources` (ADR-0074). */
@@ -1889,6 +1898,9 @@ export const api = {
 
   mirror: (id: string, signal?: AbortSignal) =>
     request<MirrorDetail>(`/api/mirrors/${encodeURIComponent(id)}`, { signal }),
+
+  /** Starts removing a mirror, also to try again; 409 says what still uses it. */
+  deleteMirror: (id: string) => request<Mirror>(`/api/mirrors/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** Starts a sync; 409 while another run of the mirror is going. */
   syncMirror: (id: string) =>

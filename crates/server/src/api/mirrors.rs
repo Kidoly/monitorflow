@@ -341,14 +341,14 @@ pub async fn detail(
     }))
 }
 
-/// `DELETE /api/mirrors/{id}`: 202 once the mirror is being deleted, which
-/// ends when its detail answers 404; 409 saying what still uses it. Asking
-/// again tries again at once after a failure.
+/// `DELETE /api/mirrors/{id}`: 202 with the mirror once it is being
+/// deleted, which ends when its detail answers 404; 409 saying what still
+/// uses it. Asking again tries again at once after a failure.
 pub async fn delete(
     State(state): State<ApiState>,
     user: CurrentUser,
     Path(id): Path<String>,
-) -> Result<StatusCode, ApiError> {
+) -> Result<(StatusCode, Json<MirrorView>), ApiError> {
     require_global_admin(&user)?;
     let id = parse_id(&id)?;
     let mirrors = state
@@ -356,7 +356,7 @@ pub async fn delete(
         .as_ref()
         .ok_or_else(|| ApiError::Internal("mirrors are not configured".into()))?;
     let actor = user.id.to_string();
-    removal::request(&state.pool, id, ("user", &actor))
+    let mirror = removal::request(&state.pool, id, ("user", &actor))
         .await
         .map_err(|e| match e {
             RemovalError::NotFound => ApiError::NotFound,
@@ -365,7 +365,7 @@ pub async fn delete(
             RemovalError::Database(e) => ApiError::Database(e),
         })?;
     removal::start(mirrors.clone());
-    Ok(StatusCode::ACCEPTED)
+    Ok((StatusCode::ACCEPTED, Json(view(&state, mirror).await?)))
 }
 
 /// `POST /api/mirrors/{id}/sync`: 202 with the started run.

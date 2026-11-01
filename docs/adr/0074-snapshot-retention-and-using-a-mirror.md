@@ -1,7 +1,7 @@
 # ADR-0074: Snapshot retention, and using a mirror without a campaign
 
 Date: 2026-11-01
-Status: accepted; amends ADR-0030, ADR-0035 and ADR-0067
+Status: accepted; amends ADR-0030, ADR-0035 and ADR-0067; the pass also finishes deleting mirrors, ADR-0075
 
 ## Context
 

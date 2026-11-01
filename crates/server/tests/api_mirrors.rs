@@ -354,7 +354,9 @@ db_tests! {
         assert_eq!(detail["deleting_at"], Value::Null);
         assert_eq!(detail["used_by"], json!({ "campaigns": [], "servers": [] }));
 
-        assert_eq!(h.call("DELETE", &path, &admin, None).await.0, StatusCode::ACCEPTED);
+        let (status, answer) = h.call("DELETE", &path, &admin, None).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert!(answer["deleting_at"].is_string(), "{answer}");
         for _ in 0..500 {
             if h.call("GET", &path, &admin, None).await.0 == StatusCode::NOT_FOUND {
                 break;
