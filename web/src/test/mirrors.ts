@@ -40,6 +40,7 @@ export function snapshot(overrides: Partial<MirrorSnapshot> = {}): MirrorSnapsho
     error: null,
     created_at: "2026-10-22T14:30:00Z",
     published_at: "2026-10-22T14:41:00Z",
+    kept: "current",
     ...overrides,
   };
 }
@@ -62,5 +63,5 @@ export function run(overrides: Partial<MirrorRun> = {}): MirrorRun {
 }
 
 export function mirrorDetail(overrides: Partial<MirrorDetail> = {}): MirrorDetail {
-  return { ...mirror(), snapshots: [snapshot()], runs: [run()], ...overrides };
+  return { ...mirror(), snapshots: [snapshot()], keep_snapshots: 7, runs: [run()], ...overrides };
 }

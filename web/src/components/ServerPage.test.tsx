@@ -108,6 +108,16 @@ function routes(overrides: Record<string, unknown> = {}) {
     }),
     [`GET /api/servers/${ID}/commands?limit=${COMMANDS_PAGE}`]: ok({ commands: [command({}), failed], next_cursor: null }),
     "GET /api/agent-releases": ok({ versions: ["0.2.0"], latest: "0.2.0" }),
+    [`GET /api/servers/${ID}/sources`]: ok({
+      using: "own",
+      mirrors: [],
+      changing_to: null,
+      failed: null,
+      campaign: false,
+      distribution: null,
+      problem: "MonitorFlow has no mirror for debian 11. It keeps its own package sources.",
+      add_mirror: false,
+    }),
     ...overrides,
   } as Parameters<typeof stubFetch>[0];
 }

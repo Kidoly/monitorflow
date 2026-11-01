@@ -91,6 +91,33 @@ describe("MirrorPage", () => {
     expect(screen.getByRole("button", { name: "Create snapshot" })).toBeDisabled();
   });
 
+  it("says why each snapshot stays and what retention keeps", async () => {
+    stubFetch({
+      [PATH]: {
+        status: 200,
+        body: mirrorDetail({
+          snapshots: [
+            snapshot({ id: "a", name: "new" }),
+            snapshot({ id: "b", name: "pinned", kept: "campaign" }),
+            snapshot({ id: "c", name: "old", kept: null }),
+            snapshot({ id: "d", name: "going", state: "pruning", kept: null, published_at: null, error: "aptly failed" }),
+          ],
+        }),
+      },
+    });
+    render(<MirrorPage id={MIRROR_ID} />);
+    const table = await screen.findByRole("table", { name: "Snapshots" });
+    expect(within(table).getByText("new").closest("tr")).toHaveTextContent("The current snapshot");
+    expect(within(table).getByText("pinned").closest("tr")).toHaveTextContent("An update campaign is pinned to it");
+    expect(within(table).getByText("old").closest("tr")).toHaveTextContent("Removed at the next cleanup");
+    expect(within(table).getByText("going").closest("tr")).toHaveTextContent("Being removed aptly failed");
+    expect(
+      screen.getByText(
+        "Each mirror keeps its 7 newest snapshots. Older ones are removed by themselves and their disk space is freed, unless something still needs them: the current snapshot, a snapshot an update campaign is pinned to, or one a relay or a server is still using.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("does not tell a missing mirror from a bad ID", async () => {
     stubFetch({ [PATH]: { status: 404, body: { error: "not found" } } });
     const { unmount } = render(<MirrorPage id={MIRROR_ID} />);

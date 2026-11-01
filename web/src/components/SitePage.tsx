@@ -14,6 +14,7 @@ import { Page } from "@/components/ui/Page";
 import { ErrorState, LoadingBlock, NotFound, PageHeader } from "@/components/ui/PageState";
 
 import { MonitoringSettings } from "./MonitoringSettings";
+import { SiteSources } from "./PackageSources";
 
 /** The site page for the `id` query parameter. */
 export function SiteView() {
@@ -63,6 +64,7 @@ export function SitePage({ id }: { id: string | null }) {
         actions={<ButtonLink href={fleet}>Show its {servers}</ButtonLink>}
       />
       <MonitoringSettings target={target} canEdit={modifiesSite(me, site.customer_id, site.id)} />
+      <SiteSources site={site} />
     </Page>
   );
 }

@@ -29,6 +29,7 @@ describe("SitePage", () => {
       [`GET /api/sites/${ID}/thresholds/effective`]: { status: 200, body: { site_id: ID, thresholds: [] } },
       [`GET /api/sites/${ID}/sensors`]: { status: 200, body: { site_id: ID, sensors: [] } },
       [`GET /api/sites/${ID}/sensor_configs`]: { status: 200, body: { entries: [] } },
+      [`GET /api/sites/${ID}/sources`]: { status: 200, body: { servers: [] } },
     });
     render(
       <As user={viewer}>

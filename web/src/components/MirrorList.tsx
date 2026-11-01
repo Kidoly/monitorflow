@@ -5,7 +5,7 @@ import { useCallback, useState } from "react";
 
 import { ApiError, type Mirror, type MirrorRunSummary, api, describeError } from "@/lib/api";
 import { administersEverything, useMe } from "@/lib/me";
-import { describeMirror, intervalText, nextSync, shortTime } from "@/lib/mirrors";
+import { describeMirror, intervalText, nextSync, retentionText, shortTime } from "@/lib/mirrors";
 import { mirrorHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -273,6 +273,7 @@ function MirrorList() {
       <p className={styles.note}>
         Open a mirror for its snapshots and run history. Relays set to serve mirrors copy all of them.
       </p>
+      <p className={styles.note}>{retentionText(data.keep_snapshots)}</p>
     </div>
   );
 }

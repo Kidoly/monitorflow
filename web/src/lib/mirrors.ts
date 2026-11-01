@@ -7,6 +7,15 @@ export function upstreamText(url: string): string {
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 }
 
+/** What retention keeps (ADR-0074), for the Mirrors pages. */
+export function retentionText(keep: number): string {
+  return (
+    `Each mirror keeps its ${keep} newest snapshots. Older ones are removed by themselves and their disk space is freed, ` +
+    "unless something still needs them: the current snapshot, a snapshot an update campaign is pinned to, " +
+    "or one a relay or a server is still using."
+  );
+}
+
 /** "every 12 h", "every 15 min"; null is manual syncs only. */
 export function intervalText(seconds: number | null): string {
   if (seconds === null) return "manual syncs only";

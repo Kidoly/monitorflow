@@ -73,9 +73,14 @@
 //! | GET | `/api/mirrors` | global administrator | [`mirrors::MirrorList`], see below |
 //! | POST | `/api/mirrors` | global administrator | body `{"distribution"}`, an `id` of the catalog; 201 [`mirrors::MirrorList`] of the mirrors created; 409 when the mirror tools are not running, the disk is too small or it is already added |
 //! | GET | `/api/mirrors/catalog` | global administrator | [`mirrors::Catalog`]: the distributions with their size estimate, the free disk space and whether the mirror tools answer |
-//! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots` and the last `runs` |
+//! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots`, each with why it stays, and the last `runs` |
 //! | POST | `/api/mirrors/{id}/sync` | global administrator | 202 [`mirrors::RunSummary`] of the started sync; 409 while busy |
 //! | POST | `/api/mirrors/{id}/snapshots` | global administrator | body `{"name"?}`; 202 [`mirrors::RunSummary`]; 409 while busy or never synced |
+//! | GET | `/api/servers/{id}/sources` | a role on the site | [`package_sources::SourcesStatus`]: where the server's packages come from, and why it cannot use a mirror |
+//! | POST | `/api/servers/{id}/sources/use-mirror` | administrator of the customer | 201 with the command pointing the server at the mirrors of its distribution; 409 saying why not |
+//! | GET | `/api/sites/{id}/sources` | a role on the site | [`package_sources::SiteSources`] |
+//! | POST | `/api/sites/{id}/sources/use-mirror` | administrator of the customer | [`package_sources::SiteChange`]: the servers sent the change, those skipped and why |
+//! | DELETE | `/api/sites/{id}/sources` | administrator of the customer | [`package_sources::SiteChange`], for `revert_sources` on the servers using a mirror |
 //! | GET | `/api/incidents` | any role | [`incidents::IncidentList`], see below |
 //! | GET | `/api/incidents/{id}` | read | [`incidents::IncidentDetail`]: the incident and its `events` |
 //! | GET | `/api/remediation/incidents` | any role | [`remediation_incidents::IncidentList`], see below |
