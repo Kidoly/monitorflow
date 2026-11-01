@@ -779,7 +779,9 @@ async fn old_backups_and_dumps_are_pruned_but_a_needed_one_is_kept() {
         Signer::new().public(),
     );
     let legacy = "monitorflow-0.1.0-to-0.2.0-20260101T000000Z.dump";
-    let old = |days: i64| file_name(Utc::now() - chrono::Duration::days(days), BackupKind::Daily);
+    // One clock reading: names have seconds, and the test may cross one.
+    let now = Utc::now();
+    let old = |days: i64| file_name(now - chrono::Duration::days(days), BackupKind::Daily);
     std::fs::write(volumes.backups.join(legacy), "PGDMP").unwrap();
     std::fs::File::options()
         .write(true)
