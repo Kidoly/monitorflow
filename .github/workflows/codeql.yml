@@ -1,0 +1,47 @@
+# Code scanning with CodeQL, default query suite, results on the Security
+# tab and on pull requests. Rust is analyzed without a build, but
+# rust-analyzer still runs the build scripts, so that job needs the pinned
+# toolchain and protoc to resolve the generated gRPC code.
+name: CodeQL
+on:
+  push:
+    branches: [main]
+  # Docs-only pull requests are skipped, and so report no check: remove this
+  # filter if an `analyze` check ever becomes required, or they will wait for
+  # it forever. Pushes to main stay unfiltered, so every pull request has an
+  # analysis of its base commit to compare with.
+  pull_request:
+    paths-ignore:
+      - docs/**
+      - "**/*.md"
+  schedule:
+    - cron: "27 4 * * 1"
+permissions:
+  contents: read
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, javascript-typescript, rust]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        if: matrix.language == 'rust'
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.language == 'rust'
+      - if: matrix.language == 'rust'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
