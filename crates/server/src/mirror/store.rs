@@ -130,14 +130,15 @@ pub async fn due(db: impl PgExecutor<'_>) -> Result<Vec<Mirror>, sqlx::Error> {
     .await
 }
 
-/// The mirror's snapshots, newest first.
+/// The mirror's snapshots still on disk, newest first.
 pub async fn snapshots(
     db: impl PgExecutor<'_>,
     mirror_id: Uuid,
     limit: i64,
 ) -> Result<Vec<Snapshot>, sqlx::Error> {
     sqlx::query_as(&format!(
-        "SELECT {SNAPSHOT_COLUMNS} FROM mirror_snapshots WHERE mirror_id = $1
+        "SELECT {SNAPSHOT_COLUMNS} FROM mirror_snapshots
+         WHERE mirror_id = $1 AND state <> 'pruned'
          ORDER BY created_at DESC, name DESC LIMIT $2"
     ))
     .bind(mirror_id)
@@ -205,16 +206,23 @@ impl std::fmt::Debug for MirrorLock {
 
 /// The advisory lock key of a mirror, from its ID.
 const LOCK_KEY: &str = "hashtextextended('monitorflow.mirror:' || $1::text, 0)";
+/// The advisory lock every job shares and retention holds alone, as
+/// `aptly db cleanup` deletes what a running `aptly mirror update` has
+/// downloaded but not recorded yet (ADR-0074).
+const ALL_MIRRORS_KEY: &str = "hashtextextended('monitorflow.mirrors', 0)";
 
 impl MirrorLock {
-    /// The lock of `mirror_id`, or `None` while another session holds it.
+    /// The lock of `mirror_id`, or `None` while another session holds it
+    /// or retention runs or waits to run.
     pub async fn try_acquire(pool: &PgPool, mirror_id: Uuid) -> Result<Option<Self>, sqlx::Error> {
         let mut conn = pool.acquire().await?;
         conn.close_on_drop();
-        let locked: bool = sqlx::query_scalar(&format!("SELECT pg_try_advisory_lock({LOCK_KEY})"))
-            .bind(mirror_id)
-            .fetch_one(&mut *conn)
-            .await?;
+        let locked: bool = sqlx::query_scalar(&format!(
+            "SELECT pg_try_advisory_lock_shared({ALL_MIRRORS_KEY}) AND pg_try_advisory_lock({LOCK_KEY})"
+        ))
+        .bind(mirror_id)
+        .fetch_one(&mut *conn)
+        .await?;
         Ok(locked.then_some(Self { conn, mirror_id }))
     }
 
@@ -260,14 +268,41 @@ impl MirrorLock {
 
     /// Unlocks and closes the connection.
     pub async fn release(mut self) {
-        let unlocked = sqlx::query(&format!("SELECT pg_advisory_unlock({LOCK_KEY})"))
-            .bind(self.mirror_id)
-            .execute(&mut *self.conn)
-            .await;
+        let unlocked = sqlx::query(&format!(
+            "SELECT pg_advisory_unlock({LOCK_KEY}), pg_advisory_unlock_shared({ALL_MIRRORS_KEY})"
+        ))
+        .bind(self.mirror_id)
+        .execute(&mut *self.conn)
+        .await;
         if let Err(error) = unlocked {
             // Closing the connection below releases it anyway.
             tracing::warn!(%error, mirror_id = %self.mirror_id, "cannot release the mirror lock");
         }
+        let _ = self.conn.close().await;
+    }
+}
+
+/// Proof that no mirror job runs, and that none starts until this is
+/// dropped. Closed like a [`MirrorLock`].
+pub struct RetentionLock {
+    conn: PoolConnection<Postgres>,
+}
+
+impl RetentionLock {
+    /// Waits for the running jobs to end. Postgres queues new shared
+    /// requests behind this one, so jobs started meanwhile get `None` from
+    /// [`MirrorLock::try_acquire`] and the wait is bounded by the jobs
+    /// running now.
+    pub async fn acquire(pool: &PgPool) -> Result<Self, sqlx::Error> {
+        let mut conn = pool.acquire().await?;
+        conn.close_on_drop();
+        sqlx::query(&format!("SELECT pg_advisory_lock({ALL_MIRRORS_KEY})"))
+            .execute(&mut *conn)
+            .await?;
+        Ok(Self { conn })
+    }
+
+    pub async fn release(self) {
         let _ = self.conn.close().await;
     }
 }
@@ -309,15 +344,15 @@ pub async fn finish_run(
     .await
 }
 
-/// Inserts a snapshot in state `creating`, or takes over a failed one of
-/// the same name for a retry. Needs the mirror's lock.
+/// Inserts a snapshot in state `creating`, or takes over a failed or
+/// removed one of the same name. Needs the mirror's lock.
 pub async fn insert_snapshot(lock: &mut MirrorLock, name: &str) -> Result<Snapshot, StoreError> {
     super::model::validate_snapshot_name(name)?;
     let row: Option<Snapshot> = sqlx::query_as(&format!(
         "INSERT INTO mirror_snapshots (mirror_id, name) VALUES ($1, $2)
          ON CONFLICT (mirror_id, name) DO UPDATE
              SET state = 'creating', error = NULL, size_bytes = NULL, created_at = now()
-             WHERE mirror_snapshots.state = 'failed'
+             WHERE mirror_snapshots.state IN ('failed', 'pruned')
          RETURNING {SNAPSHOT_COLUMNS}"
     ))
     .bind(lock.mirror_id)

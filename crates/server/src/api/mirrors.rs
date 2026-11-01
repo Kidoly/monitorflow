@@ -17,6 +17,7 @@ use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
 use crate::mirror::catalog::{self, Disk, CATALOG};
 use crate::mirror::jobs::{self, JobError, JobKind};
+use crate::mirror::retention::{self, Kept, KEEP_SNAPSHOTS};
 use crate::mirror::{
     signing, store, tools, Family, Mirror, Mirrors, Run, RunKind, RunState, Snapshot, StoreError,
     Trigger,
@@ -69,6 +70,8 @@ pub struct MirrorView {
 #[derive(Debug, Serialize)]
 pub struct MirrorList {
     pub mirrors: Vec<MirrorView>,
+    /// Published snapshots each mirror keeps, on top of those in use.
+    pub keep_snapshots: usize,
 }
 
 /// Body of `GET /api/mirrors/{id}`: the newest snapshots and runs first,
@@ -77,8 +80,18 @@ pub struct MirrorList {
 pub struct MirrorDetail {
     #[serde(flatten)]
     pub mirror: MirrorView,
-    pub snapshots: Vec<Snapshot>,
+    pub snapshots: Vec<SnapshotView>,
+    pub keep_snapshots: usize,
     pub runs: Vec<Run>,
+}
+
+/// A snapshot and why it stays; `null` when the next pass of retention
+/// removes it, or while it is created.
+#[derive(Debug, Serialize)]
+pub struct SnapshotView {
+    #[serde(flatten)]
+    pub snapshot: Snapshot,
+    pub kept: Option<Kept>,
 }
 
 /// Body of `POST /api/mirrors/{id}/snapshots`.
@@ -158,7 +171,10 @@ pub async fn list(
     for mirror in store::list(&state.pool).await? {
         mirrors.push(view(&state, mirror).await?);
     }
-    Ok(Json(MirrorList { mirrors }))
+    Ok(Json(MirrorList {
+        mirrors,
+        keep_snapshots: KEEP_SNAPSHOTS,
+    }))
 }
 
 async fn tools_status(mirrors: Option<&Mirrors>) -> ToolsStatus {
@@ -271,7 +287,13 @@ pub async fn add(
         }
     }
     tracing::info!(user = %user.id, %id, mirrors = created.len(), "distribution added to the mirrors");
-    Ok((StatusCode::CREATED, Json(MirrorList { mirrors: created })))
+    Ok((
+        StatusCode::CREATED,
+        Json(MirrorList {
+            mirrors: created,
+            keep_snapshots: KEEP_SNAPSHOTS,
+        }),
+    ))
 }
 
 /// `GET /api/mirrors/{id}`.
@@ -283,10 +305,25 @@ pub async fn detail(
     require_global_admin(&user)?;
     let mirror = find(&state, &id).await?;
     let snapshots = store::snapshots(&state.pool, mirror.id, DETAIL_SNAPSHOTS).await?;
+    let layout = state.mirrors.as_ref().map(Mirrors::layout);
+    let kept = retention::kept(&state.pool, layout, &mirror)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, mirror = %mirror.name, "cannot tell why snapshots are kept");
+            Default::default()
+        });
+    let snapshots = snapshots
+        .into_iter()
+        .map(|snapshot| SnapshotView {
+            kept: kept.get(&snapshot.id).copied(),
+            snapshot,
+        })
+        .collect();
     let runs = store::runs(&state.pool, mirror.id, DETAIL_RUNS).await?;
     Ok(Json(MirrorDetail {
         mirror: view(&state, mirror).await?,
         snapshots,
+        keep_snapshots: KEEP_SNAPSHOTS,
         runs,
     }))
 }

@@ -92,6 +92,7 @@ Everything installable in one line, updatable in two clicks, and usable without 
 - [x] Update available everywhere: daily background release check with a banner and a notification; release import from the interface for servers without Internet.
 - [x] AI setup in the interface: API key, model, test and enable in Settings; `MF_ALLOW_COMMANDS=1` in the agent installer for the shell opt-in; approvals say when AI is off.
 - [x] Mirrors that work in the production compose: mirror tools sidecar image, add a mirror from a list of distributions with a size estimate.
+- [x] Snapshot retention without a setting, and using a mirror from a server's or a site's page (ADR-0074).
 - [x] Plain-language pass: rename jargon on screen, certificate expiry warning only when renewal is late or failed, quiet CLI output, an action button in every empty state.
 - [x] Remove a server end to end: revoke, hide from lists, show the uninstall command, re-enroll the same host later.
 - [x] Agent on any Linux: start and monitor on unknown distributions with package features reported as unavailable.

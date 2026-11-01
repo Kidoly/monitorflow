@@ -1,7 +1,7 @@
 # ADR-0067: Mirrors in the production compose
 
 Date: 2026-10-31
-Status: accepted; amends ADR-0030, ADR-0034, ADR-0056 and ADR-0065
+Status: accepted; amends ADR-0030, ADR-0034, ADR-0056 and ADR-0065; amended by ADR-0074 on retention
 
 ## Context
 
@@ -76,6 +76,6 @@ Everything else is done by the first add. The signing key is created if there is
 - Mirrors work out of the box: three clicks in the interface, and no step on the host. The CI compose job proves it with a small signed upstream, real tools, and real apt and dnf clients installing from the result. The catalog's URLs and sizes are checked by hand, not in CI: a real sync takes hours and hundreds of GiB.
 - The compose file gains a service, a volume and a published port. As ADR-0056 says, a release that needs another compose file must say so: this one's notes must. Until the installer has run again, the server works as before and "Add a mirror" says the tools are not running.
 - An operator who runs from a checkout rather than the installer takes the new compose file by hand: `git pull`, then `up -d --build`, or `MIRROR_IMAGE` from `images.json`. Agent releases are cached again at the next update.
-- Snapshots accumulate, as ADR-0030 said: without contents indexes a published snapshot costs tens of MiB of metadata and hardlinks a day, and packages removed upstream stay in the pool. Retention needs the list of snapshots in use and is still to do. Meanwhile the free space shown when adding a mirror is what an administrator has to watch.
+- Snapshots accumulate, as ADR-0030 said: without contents indexes a published snapshot costs tens of MiB of metadata and hardlinks a day, and packages removed upstream stay in the pool. Retention came with ADR-0074.
 - The size estimates age. They are rounded up, and the check is against them, not against the real need, so a disk can still fill up during a sync; the run then fails with the tool's error.
 - Only amd64 is in the catalog. arm64 hosts need `mirror add`.

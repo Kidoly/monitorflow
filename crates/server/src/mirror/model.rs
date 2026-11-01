@@ -221,6 +221,10 @@ pub enum SnapshotState {
     Creating,
     Published,
     Failed,
+    /// Chosen by retention, its files on their way out (ADR-0074).
+    Pruning,
+    /// Removed; the row stays for the runs and campaigns that name it.
+    Pruned,
 }
 
 /// A `mirror_snapshots` row.

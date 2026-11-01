@@ -213,7 +213,20 @@ pub fn find(id: &str) -> Option<&'static Distribution> {
     CATALOG.iter().find(|d| d.id == id)
 }
 
+/// The distribution a server's `os_version` names, like `debian 12` or
+/// `rocky 9.4`: an exact release first, then its major version.
+pub fn for_os_version(os_version: &str) -> Option<&'static Distribution> {
+    let (name, version) = os_version.split_once(' ')?;
+    let major = version.split('.').next()?;
+    find(&format!("{name}-{version}")).or_else(|| find(&format!("{name}-{major}")))
+}
+
 impl Distribution {
+    /// The mirrors of the distribution, as [`Self::specs`] names them.
+    pub fn mirror_names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.repositories.iter().map(|repository| repository.name)
+    }
+
     /// The mirrors of this distribution, snapshotted after every sync.
     pub fn specs(&self) -> Vec<MirrorSpec> {
         self.repositories
@@ -291,6 +304,21 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), total);
         assert!(find("debian-1").is_none());
+    }
+
+    #[test]
+    fn servers_find_their_distribution() {
+        for (os, id) in [
+            ("debian 12", "debian-12"),
+            ("ubuntu 24.04", "ubuntu-24.04"),
+            ("rocky 9.4", "rocky-9"),
+            ("almalinux 10.0", "almalinux-10"),
+        ] {
+            assert_eq!(for_os_version(os).map(|d| d.id), Some(id), "{os}");
+        }
+        for os in ["debian 11", "ubuntu 24.10", "rhel 9.4", "debian", ""] {
+            assert!(for_os_version(os).is_none(), "{os}");
+        }
     }
 
     #[test]

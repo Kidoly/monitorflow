@@ -4,6 +4,9 @@ import { CAMPAIGNS_PATH, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/PageState";
+import { Page } from "@/components/ui/Page";
+
+import { PackageSources } from "./PackageSources";
 
 /**
  * The Updates tab. The server page had no updates section before the
@@ -22,12 +25,15 @@ export function ServerUpdatesTab({ server }: { server: ServerDetail }) {
     );
   }
   return (
-    <EmptyState
-      actions={
-        readsCustomers(me) ? <ButtonLink href={scopedHref(CAMPAIGNS_PATH, scope)}>Open campaigns</ButtonLink> : sensors
-      }
-    >
-      Updates for {server.hostname} are applied through update campaigns for now.
-    </EmptyState>
+    <Page>
+      <PackageSources server={server} />
+      <EmptyState
+        actions={
+          readsCustomers(me) ? <ButtonLink href={scopedHref(CAMPAIGNS_PATH, scope)}>Open campaigns</ButtonLink> : sensors
+        }
+      >
+        Updates for {server.hostname} are applied through update campaigns for now.
+      </EmptyState>
+    </Page>
   );
 }

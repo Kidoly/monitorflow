@@ -34,7 +34,7 @@ describe("MirrorListPage", () => {
   beforeEach(() => setUrl("/admin/mirrors/"));
 
   it("lists mirrors problems first with their last run and counters", async () => {
-    stubFetch({ "GET /api/mirrors": { status: 200, body: { mirrors: mirrors() } } });
+    stubFetch({ "GET /api/mirrors": { status: 200, body: { mirrors: mirrors(), keep_snapshots: 7 } } });
     render(
       <As user={globalAdmin}>
         <MirrorListPage />
@@ -60,7 +60,7 @@ describe("MirrorListPage", () => {
 
   it("filters by family in the URL", async () => {
     const user = userEvent.setup();
-    stubFetch({ "GET /api/mirrors": { status: 200, body: { mirrors: mirrors() } } });
+    stubFetch({ "GET /api/mirrors": { status: 200, body: { mirrors: mirrors(), keep_snapshots: 7 } } });
     render(
       <As user={globalAdmin}>
         <MirrorListPage />
@@ -75,7 +75,7 @@ describe("MirrorListPage", () => {
   it("starts a sync and says why one is refused", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({
-      "GET /api/mirrors": { status: 200, body: { mirrors: mirrors() } },
+      "GET /api/mirrors": { status: 200, body: { mirrors: mirrors(), keep_snapshots: 7 } },
       [`POST /api/mirrors/${MIRROR_ID}/sync`]: [
         { status: 202, body: mirror().last_run },
         { status: 409, body: { error: "a job of this mirror is already running" } },
@@ -165,7 +165,7 @@ describe("MirrorListPage", () => {
     it("says what to do when the tools are not running", async () => {
       const user = userEvent.setup();
       stubFetch({
-        "GET /api/mirrors": { status: 200, body: { mirrors: mirrors() } },
+        "GET /api/mirrors": { status: 200, body: { mirrors: mirrors(), keep_snapshots: 7 } },
         "GET /api/mirrors/catalog": {
           status: 200,
           body: catalog({ tools: { available: false, problem: "the mirror tools are not running: refused" } }),
@@ -184,7 +184,7 @@ describe("MirrorListPage", () => {
     it("shows a refusal of the server in its own words", async () => {
       const user = userEvent.setup();
       stubFetch({
-        "GET /api/mirrors": { status: 200, body: { mirrors: mirrors() } },
+        "GET /api/mirrors": { status: 200, body: { mirrors: mirrors(), keep_snapshots: 7 } },
         "GET /api/mirrors/catalog": { status: 200, body: catalog() },
         "POST /api/mirrors": {
           status: 409,

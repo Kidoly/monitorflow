@@ -6,7 +6,7 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { ApiError, type MirrorDetail, type MirrorRun, type MirrorSnapshot, api, describeError } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { administersEverything, useMe } from "@/lib/me";
-import { describeMirror, durationText, intervalText, minuteText } from "@/lib/mirrors";
+import { describeMirror, durationText, intervalText, minuteText, retentionText } from "@/lib/mirrors";
 import { MIRRORS_PATH } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 import { UUID } from "@/lib/uuid";
@@ -25,6 +25,16 @@ const SNAPSHOT_STATES: Record<MirrorSnapshot["state"], [string, Tone]> = {
   creating: ["Creating", "info"],
   published: ["Published", "ok"],
   failed: ["Failed", "bad"],
+  pruning: ["Being removed", "info"],
+  pruned: ["Removed", "neutral"],
+};
+
+const KEPT: Record<NonNullable<MirrorSnapshot["kept"]>, string> = {
+  current: "The current snapshot",
+  campaign: "An update campaign is pinned to it",
+  server: "A server uses it",
+  relay: "A relay uses it",
+  newest: "Among the newest",
 };
 
 const LAST_RUN: Record<MirrorRun["state"] | "never", [string, Tone]> = {
@@ -157,8 +167,21 @@ function Snapshots({ mirror, action }: { mirror: MirrorDetail; action: ReactNode
     { key: "size", header: "Size", cell: (s) => (s.size_bytes === null ? <Dash /> : formatBytes(s.size_bytes)) },
     { key: "created", header: "Created", cell: (s) => minuteText(s.created_at) },
     { key: "published", header: "Published", cell: (s) => (s.published_at ? minuteText(s.published_at) : <Dash />) },
+    {
+      key: "kept",
+      header: "Kept because",
+      cell: (s) => {
+        if (s.kept) return KEPT[s.kept];
+        return s.state === "published" ? <span className={styles.dim}>Removed at the next cleanup</span> : <Dash />;
+      },
+    },
   ];
-  return <DataTable dense label="Snapshots" columns={columns} rows={mirror.snapshots} rowKey={(s) => s.id} />;
+  return (
+    <>
+      <DataTable dense label="Snapshots" columns={columns} rows={mirror.snapshots} rowKey={(s) => s.id} />
+      <p className={styles.note}>{retentionText(mirror.keep_snapshots)}</p>
+    </>
+  );
 }
 
 function Runs({

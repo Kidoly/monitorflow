@@ -1257,6 +1257,8 @@ export interface Mirror {
 
 export interface MirrorList {
   mirrors: Mirror[];
+  /** Published snapshots each mirror keeps, on top of those in use. */
+  keep_snapshots: number;
 }
 
 /** One distribution of `GET /api/mirrors/catalog` (ADR-0067). */
@@ -1280,17 +1282,50 @@ export interface MirrorSnapshot {
   id: string;
   mirror_id: string;
   name: string;
-  state: "creating" | "published" | "failed";
+  /** `pruning` while retention removes it; `pruned` ones are not listed. */
+  state: "creating" | "published" | "failed" | "pruning" | "pruned";
   size_bytes: number | null;
   error: string | null;
   created_at: string;
   published_at: string | null;
+  /** Why it stays; null when the next cleanup removes it (ADR-0074). */
+  kept: "current" | "campaign" | "server" | "relay" | "newest" | null;
 }
 
 /** `GET /api/mirrors/{id}`: the newest 100 snapshots and 10 runs first. */
 export interface MirrorDetail extends Mirror {
   snapshots: MirrorSnapshot[];
+  keep_snapshots: number;
   runs: MirrorRun[];
+}
+
+/** `GET /api/servers/{id}/sources` (ADR-0074). */
+export interface SourcesStatus {
+  using: "mirror" | "own";
+  mirrors: { name: string; snapshot: string }[];
+  /** A change on its way to the server. */
+  changing_to: "mirror" | "own" | null;
+  /** Why the last change failed, when nothing succeeded or started since. */
+  failed: string | null;
+  /** An update campaign has the sources for now. */
+  campaign: boolean;
+  /** The catalog's name for what the server runs. */
+  distribution: string | null;
+  /** Why the server cannot use a mirror, in a sentence. */
+  problem: string | null;
+  /** The fix is adding `distribution` on the Mirrors page. */
+  add_mirror: boolean;
+}
+
+/** `GET /api/sites/{id}/sources`, by host name. */
+export interface SiteSourcesList {
+  servers: (SourcesStatus & { id: string; hostname: string })[];
+}
+
+/** What a change of a whole site did. */
+export interface SiteSourcesChange {
+  queued: string[];
+  skipped: { id: string; hostname: string; reason: string }[];
 }
 
 export interface Health {
@@ -1862,6 +1897,27 @@ export const api = {
   /** Starts a snapshot named after the time; 409 while busy or before the first sync. */
   snapshotMirror: (id: string) =>
     request<MirrorRunSummary>(`/api/mirrors/${encodeURIComponent(id)}/snapshots`, { method: "POST", body: {} }),
+
+  /** Where the server's packages come from, and what can change that. */
+  serverSources: (id: string, signal?: AbortSignal) =>
+    request<SourcesStatus>(`/api/servers/${encodeURIComponent(id)}/sources`, { signal }),
+
+  /** Points the server at the mirrors of its distribution; 409 says why not. */
+  useMirror: (id: string) =>
+    request<CommandDetail>(`/api/servers/${encodeURIComponent(id)}/sources/use-mirror`, { method: "POST" }),
+
+  /** Puts the server's own sources back. */
+  revertSources: (id: string) =>
+    request<CommandDetail>(`/api/servers/${encodeURIComponent(id)}/sources`, { method: "DELETE" }),
+
+  siteSources: (id: string, signal?: AbortSignal) =>
+    request<SiteSourcesList>(`/api/sites/${encodeURIComponent(id)}/sources`, { signal }),
+
+  useMirrorOnSite: (id: string) =>
+    request<SiteSourcesChange>(`/api/sites/${encodeURIComponent(id)}/sources/use-mirror`, { method: "POST" }),
+
+  revertSiteSources: (id: string) =>
+    request<SiteSourcesChange>(`/api/sites/${encodeURIComponent(id)}/sources`, { method: "DELETE" }),
 
   /** One page of the server's commands, newest first. */
   serverCommands: (serverId: string, query: { limit?: number; cursor?: string } = {}, signal?: AbortSignal) => {

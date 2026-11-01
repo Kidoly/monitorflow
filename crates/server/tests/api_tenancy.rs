@@ -573,6 +573,26 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .unwrap();
             assert_eq!(queued, 1, "only B's own fixture command");
         }
+        ("GET", "/api/servers/{id}/sources")
+        | ("POST", "/api/servers/{id}/sources/use-mirror")
+        | ("GET", "/api/sites/{id}/sources")
+        | ("POST", "/api/sites/{id}/sources/use-mirror")
+        | ("DELETE", "/api/sites/{id}/sources") => {
+            let id = if path.starts_with("/api/sites") {
+                b.site
+            } else {
+                b.server
+            };
+            let uri = path.replace("{id}", &id.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+            let queued: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM commands WHERE server_id = $1")
+                    .bind(b.server)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(queued, 1, "only B's own fixture command");
+        }
         ("GET", "/api/commands/{id}") => {
             let uri = format!("/api/commands/{}", b.command);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);

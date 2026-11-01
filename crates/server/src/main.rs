@@ -120,6 +120,9 @@ enum MirrorCommand {
         #[arg(long)]
         snapshot: Option<String>,
     },
+    /// Remove the snapshots nothing needs now and free their disk space.
+    /// The server does this by itself every hour.
+    Prune,
     /// Manage the key signing published repositories.
     #[command(subcommand)]
     Key(KeyCommand),
@@ -538,6 +541,11 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         },
         async {
+            mirror::retention::run(mirrors.clone(), mirror::retention::EVERY, until_stopped())
+                .await;
+            Ok(())
+        },
+        async {
             campaigns.clone().run(campaign::POLL, until_stopped()).await;
             Ok(())
         },
@@ -850,6 +858,11 @@ async fn mirror_command(
                 "signing key {key}; public key at {}",
                 mirrors.layout().public_key().display()
             );
+            return Ok(());
+        }
+        MirrorCommand::Prune => {
+            let removed = mirror::retention::prune(&mirrors).await?;
+            println!("removed {removed} snapshots");
             return Ok(());
         }
         MirrorCommand::Sync { name } => (find(name).await?, JobKind::Sync),

@@ -101,6 +101,40 @@ pub fn cleanup(layout: &Layout, mirror: &Mirror, snapshot: &str) -> Vec<Invocati
     commands
 }
 
+/// `aptly snapshot list -raw`: one aptly snapshot name per line.
+pub fn list_snapshots(layout: &Layout) -> Invocation {
+    let mut args = aptly(layout, ["snapshot", "list"]);
+    args.push("-raw".into());
+    Invocation::new(Tool::Aptly, args)
+}
+
+/// `aptly publish list -raw`: `<prefix> <distribution>` per line.
+pub fn list_published(layout: &Layout) -> Invocation {
+    let mut args = aptly(layout, ["publish", "list"]);
+    args.push("-raw".into());
+    Invocation::new(Tool::Aptly, args)
+}
+
+/// Removes every package and pool file that no aptly mirror or snapshot
+/// refers to, which is what frees the disk. Needs a
+/// [`super::store::RetentionLock`].
+pub fn db_cleanup(layout: &Layout) -> Invocation {
+    Invocation::new(Tool::Aptly, aptly(layout, ["db", "cleanup"]))
+}
+
+/// Whether a line of [`list_snapshots`] is one of `snapshot`'s.
+pub fn lists_snapshot(line: &str, mirror: &Mirror, snapshot: &str) -> bool {
+    mirror
+        .components
+        .iter()
+        .any(|component| line == snapshot_name(mirror, component, snapshot))
+}
+
+/// Whether a line of [`list_published`] is `snapshot`'s.
+pub fn lists_published(line: &str, mirror: &Mirror, snapshot: &str) -> bool {
+    line.split_whitespace().next() == Some(prefix(mirror, snapshot).as_str())
+}
+
 fn prefix(mirror: &Mirror, snapshot: &str) -> String {
     format!("{}/{snapshot}", mirror.name)
 }
@@ -197,5 +231,21 @@ pub(crate) mod tests {
                 format!("aptly snapshot drop {c} -force mf:m:contrib:s1"),
             ]
         );
+        assert_eq!(
+            list_snapshots(&layout).to_string(),
+            format!("aptly snapshot list {c} -raw")
+        );
+        assert_eq!(
+            list_published(&layout).to_string(),
+            format!("aptly publish list {c} -raw")
+        );
+        assert_eq!(
+            db_cleanup(&layout).to_string(),
+            format!("aptly db cleanup {c}")
+        );
+        assert!(lists_snapshot("mf:m:contrib:s1", &m, "s1"));
+        assert!(!lists_snapshot("mf:m:contrib:s11", &m, "s1"));
+        assert!(lists_published("m/s1 bookworm", &m, "s1"));
+        assert!(!lists_published("m/s11 bookworm", &m, "s1"));
     }
 }
