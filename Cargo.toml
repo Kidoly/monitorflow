@@ -26,7 +26,7 @@ monitorflow-ai = { path = "crates/ai" }
 
 tokio = { version = "1", features = ["full"] }
 tonic = { version = "0.13", features = ["tls-ring"] }
-prost = "0.13"
+prost = "0.14"
 prost-types = "0.13"
 tonic-build = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
