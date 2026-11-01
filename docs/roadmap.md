@@ -95,5 +95,5 @@ Everything installable in one line, updatable in two clicks, and usable without 
 - [ ] Plain-language pass: rename jargon on screen, certificate expiry warning only when renewal is late or failed, quiet CLI output, an action button in every empty state.
 - [x] Remove a server end to end: revoke, hide from lists, show the uninstall command, re-enroll the same host later.
 - [x] Agent on any Linux: start and monitor on unknown distributions with package features reported as unavailable.
-- [ ] Browser certificate without a terminal: ACME when the name is public, otherwise a trust page for the internal CA (ADR, as it is a plaintext listener).
-- [ ] Settings page for runtime server settings, and a one-screen "Getting started" at the top of the install guides.
+- [x] Browser certificate without a terminal: ACME when the name is public, otherwise a trust page for the internal CA (ADR, as it is a plaintext listener).
+- [x] Settings page for runtime server settings, and a one-screen "Getting started" at the top of the install guides.
