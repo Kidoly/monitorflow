@@ -901,7 +901,7 @@ db_tests! {
         retention::prune(&f.mirrors).await.unwrap();
         let row = store::get(&pool, mirror.id).await.unwrap().unwrap();
         assert!(row.delete_error.unwrap().contains("db cleanup failed"));
-        assert_eq!(row.deleting_at.is_some(), true);
+        assert!(row.deleting_at.is_some());
 
         // Asking again changes nothing and is not audited twice.
         removal::request(&pool, mirror.id, ("user", "someone")).await.unwrap();
