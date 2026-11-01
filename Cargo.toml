@@ -71,7 +71,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 ruzstd = "0.8"
 # xz: lzma-rs and lzma-rust2 are the pure-Rust choices; lzma-rust2 has a
 # streaming `Read` decoder, lzma-rs only decodes into a buffer.
-lzma-rust2 = { version = "0.23", default-features = false, features = ["std", "xz"] }
+lzma-rust2 = { version = "0.24", default-features = false, features = ["std", "xz"] }
 # bzip2 on libbz2-rs-sys, its default pure-Rust port of libbzip2.
 bzip2 = "0.6"
 quick-xml = "0.38"
