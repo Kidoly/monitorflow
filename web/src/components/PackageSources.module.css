@@ -1,8 +1,13 @@
-.line {
+.body {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 20px;
+}
+
+.note {
+  margin: 0;
+  color: var(--muted);
 }
 
 .actions {

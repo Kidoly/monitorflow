@@ -59,59 +59,61 @@ export function PackageSources({ server }: { server: ServerDetail }) {
   const settled = status.changing_to === null && !status.campaign;
   return (
     <section className={admin.section} aria-labelledby="sources-title">
-      <div className={styles.line}>
+      <div className={admin.sectionHead}>
         <h2 id="sources-title" className={admin.sectionTitle}>
           Package sources
         </h2>
         <Label tone={tone}>{word}</Label>
       </div>
-      {status.failed && (
-        <Banner tone="bad">
-          The last change didn&apos;t work: {status.failed} {FAILED}
-        </Banner>
-      )}
-      <p className={admin.sectionNote}>
-        {status.using === "mirror"
-          ? `${server.hostname} gets its packages from ${mirrorsText(status)}.`
-          : `${server.hostname} gets its packages from the sources it came with.`}{" "}
-        {status.changing_to && "The change reaches it at its next contact."}
-        {status.campaign && "An update campaign has its sources for now and puts them back when it is done."}
-      </p>
-      {status.using === "own" && status.problem && <Problem status={status} />}
-      {canChange && settled && status.using === "own" && !status.problem && (
-        <div className={styles.actions}>
-          <InlineConfirm
-            trigger={`Use the ${status.distribution} mirror…`}
-            triggerVariant="k"
-            title={`Use the mirror on ${server.hostname}?`}
-            consequence={USE_CONSEQUENCE}
-            confirmLabel={`Use the mirror on ${server.hostname}`}
-            pendingLabel="Sending…"
-            onConfirm={async () => {
-              await api.useMirror(id);
-              refresh();
-            }}
-            describeError={(e) => `Nothing changed. ${describeError(e)}`}
-          />
-        </div>
-      )}
-      {canChange && settled && status.using === "mirror" && (
-        <div className={styles.actions}>
-          <InlineConfirm
-            trigger="Go back to its own sources…"
-            triggerVariant="default"
-            title={`Put back the own sources of ${server.hostname}?`}
-            consequence={BACK_CONSEQUENCE}
-            confirmLabel={`Go back on ${server.hostname}`}
-            pendingLabel="Sending…"
-            onConfirm={async () => {
-              await api.revertSources(id);
-              refresh();
-            }}
-            describeError={(e) => `Nothing changed. ${describeError(e)}`}
-          />
-        </div>
-      )}
+      <div className={styles.body}>
+        {status.failed && (
+          <Banner tone="bad">
+            The last change didn&apos;t work: {status.failed} {FAILED}
+          </Banner>
+        )}
+        <p className={styles.note}>
+          {status.using === "mirror"
+            ? `${server.hostname} gets its packages from ${mirrorsText(status)}.`
+            : `${server.hostname} gets its packages from the sources it came with.`}{" "}
+          {status.changing_to && "The change reaches it at its next contact."}
+          {status.campaign && "An update campaign has its sources for now and puts them back when it is done."}
+        </p>
+        {status.using === "own" && status.problem && <Problem status={status} />}
+        {canChange && settled && status.using === "own" && !status.problem && (
+          <div className={styles.actions}>
+            <InlineConfirm
+              trigger={`Use the ${status.distribution} mirror…`}
+              triggerVariant="k"
+              title={`Use the mirror on ${server.hostname}?`}
+              consequence={USE_CONSEQUENCE}
+              confirmLabel={`Use the mirror on ${server.hostname}`}
+              pendingLabel="Sending…"
+              onConfirm={async () => {
+                await api.useMirror(id);
+                refresh();
+              }}
+              describeError={(e) => `Nothing changed. ${describeError(e)}`}
+            />
+          </div>
+        )}
+        {canChange && settled && status.using === "mirror" && (
+          <div className={styles.actions}>
+            <InlineConfirm
+              trigger="Go back to its own sources…"
+              triggerVariant="default"
+              title={`Put back the own sources of ${server.hostname}?`}
+              consequence={BACK_CONSEQUENCE}
+              confirmLabel={`Go back on ${server.hostname}`}
+              pendingLabel="Sending…"
+              onConfirm={async () => {
+                await api.revertSources(id);
+                refresh();
+              }}
+              describeError={(e) => `Nothing changed. ${describeError(e)}`}
+            />
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -128,7 +130,7 @@ function Problem({ status }: { status: SourcesStatus }) {
             <ButtonLink href={MIRRORS_PATH}>Add {status.distribution} on the Mirrors page</ButtonLink>
           </div>
         ) : (
-          <p className={admin.sectionNote}>A global administrator can add it on the Mirrors page.</p>
+          <p className={styles.note}>A global administrator can add it on the Mirrors page.</p>
         ))}
     </>
   );
@@ -211,49 +213,53 @@ export function SiteSources({ site }: { site: Site }) {
   ];
   return (
     <section className={admin.section} aria-labelledby="site-sources-title">
-      <h2 id="site-sources-title" className={admin.sectionTitle}>
-        Package sources
-      </h2>
-      <p className={admin.sectionNote}>
-        Point the servers of {site.name} at the mirror of their own distribution, or back at the sources they came with.
-        A server whose distribution has no mirror is left as it is.
-      </p>
-      {change && <ChangeResult change={change} />}
-      <DataTable dense label="Package sources of the site's servers" columns={columns} rows={data.servers} rowKey={(s) => s.id} />
-      {canChange && (canUse > 0 || canGoBack > 0) && (
-        <div className={styles.actions}>
-          {canUse > 0 && (
-            <InlineConfirm
-              trigger={`Use mirrors on ${count(canUse)}…`}
-              triggerVariant="k"
-              title={`Use mirrors on ${count(canUse)} of ${site.name}?`}
-              consequence={USE_SITE_CONSEQUENCE}
-              confirmLabel={`Use mirrors on ${count(canUse)}`}
-              pendingLabel="Sending…"
-              onConfirm={async () => {
-                setChange(await api.useMirrorOnSite(id));
-                refresh();
-              }}
-              describeError={(e) => `Nothing changed. ${describeError(e)}`}
-            />
-          )}
-          {canGoBack > 0 && (
-            <InlineConfirm
-              trigger={`Go back on ${count(canGoBack)}…`}
-              triggerVariant="default"
-              title={`Put back the own sources of ${count(canGoBack)}?`}
-              consequence="Their original package sources are put back exactly as they were."
-              confirmLabel={`Go back on ${count(canGoBack)}`}
-              pendingLabel="Sending…"
-              onConfirm={async () => {
-                setChange(await api.revertSiteSources(id));
-                refresh();
-              }}
-              describeError={(e) => `Nothing changed. ${describeError(e)}`}
-            />
-          )}
-        </div>
-      )}
+      <div className={admin.sectionHead}>
+        <h2 id="site-sources-title" className={admin.sectionTitle}>
+          Package sources
+        </h2>
+      </div>
+      <div className={styles.body}>
+        <p className={styles.note}>
+          Point the servers of {site.name} at the mirror of their own distribution, or back at the sources they came with.
+          A server whose distribution has no mirror is left as it is.
+        </p>
+        {change && <ChangeResult change={change} />}
+        <DataTable dense label="Package sources of the site's servers" columns={columns} rows={data.servers} rowKey={(s) => s.id} />
+        {canChange && (canUse > 0 || canGoBack > 0) && (
+          <div className={styles.actions}>
+            {canUse > 0 && (
+              <InlineConfirm
+                trigger={`Use mirrors on ${count(canUse)}…`}
+                triggerVariant="k"
+                title={`Use mirrors on ${count(canUse)} of ${site.name}?`}
+                consequence={USE_SITE_CONSEQUENCE}
+                confirmLabel={`Use mirrors on ${count(canUse)}`}
+                pendingLabel="Sending…"
+                onConfirm={async () => {
+                  setChange(await api.useMirrorOnSite(id));
+                  refresh();
+                }}
+                describeError={(e) => `Nothing changed. ${describeError(e)}`}
+              />
+            )}
+            {canGoBack > 0 && (
+              <InlineConfirm
+                trigger={`Go back on ${count(canGoBack)}…`}
+                triggerVariant="default"
+                title={`Put back the own sources of ${count(canGoBack)}?`}
+                consequence="Their original package sources are put back exactly as they were."
+                confirmLabel={`Go back on ${count(canGoBack)}`}
+                pendingLabel="Sending…"
+                onConfirm={async () => {
+                  setChange(await api.revertSiteSources(id));
+                  refresh();
+                }}
+                describeError={(e) => `Nothing changed. ${describeError(e)}`}
+              />
+            )}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
