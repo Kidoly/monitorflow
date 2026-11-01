@@ -45,11 +45,12 @@ pub async fn create(
 ) -> Result<Mirror, StoreError> {
     spec.validate()?;
     let mut tx = pool.begin().await?;
-    let mirror: Mirror = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant MIRROR_COLUMNS.
+    let mirror: Mirror = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO mirrors (name, family, upstream_url, distribution, components,
                               architectures, sync_interval_s, auto_snapshot)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING {MIRROR_COLUMNS}"
-    ))
+    )))
     .bind(&spec.name)
     .bind(spec.family)
     .bind(&spec.upstream_url)
@@ -88,17 +89,19 @@ pub async fn create(
 
 /// Every mirror, by name.
 pub async fn list(db: impl PgExecutor<'_>) -> Result<Vec<Mirror>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant MIRROR_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {MIRROR_COLUMNS} FROM mirrors ORDER BY name"
-    ))
+    )))
     .fetch_all(db)
     .await
 }
 
 pub async fn get(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Mirror>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant MIRROR_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {MIRROR_COLUMNS} FROM mirrors WHERE id = $1"
-    ))
+    )))
     .bind(id)
     .fetch_optional(db)
     .await
@@ -106,9 +109,10 @@ pub async fn get(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Mirror>, sq
 
 /// The mirror `name`, unless it is being deleted: nothing new may use it.
 pub async fn by_name(db: impl PgExecutor<'_>, name: &str) -> Result<Option<Mirror>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant MIRROR_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {MIRROR_COLUMNS} FROM mirrors WHERE name = $1 AND deleting_at IS NULL"
-    ))
+    )))
     .bind(name)
     .fetch_optional(db)
     .await
@@ -116,9 +120,10 @@ pub async fn by_name(db: impl PgExecutor<'_>, name: &str) -> Result<Option<Mirro
 
 /// Mirrors being deleted, by name (ADR-0075).
 pub async fn deleting(db: impl PgExecutor<'_>) -> Result<Vec<Mirror>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant MIRROR_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {MIRROR_COLUMNS} FROM mirrors WHERE deleting_at IS NOT NULL ORDER BY name"
-    ))
+    )))
     .fetch_all(db)
     .await
 }
@@ -136,7 +141,8 @@ pub async fn is_going(db: impl PgExecutor<'_>, id: Uuid) -> Result<bool, sqlx::E
 /// Mirrors with an interval whose last sync run started at least that long
 /// ago, or never ran, and that have nothing running.
 pub async fn due(db: impl PgExecutor<'_>) -> Result<Vec<Mirror>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant MIRROR_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {MIRROR_COLUMNS} FROM mirrors m
          WHERE sync_interval_s IS NOT NULL AND deleting_at IS NULL
            AND NOT EXISTS (SELECT 1 FROM mirror_runs r
@@ -145,7 +151,7 @@ pub async fn due(db: impl PgExecutor<'_>) -> Result<Vec<Mirror>, sqlx::Error> {
                          WHERE r.mirror_id = m.id AND r.kind = 'sync'), '-infinity')
                <= now() - make_interval(secs => sync_interval_s)
          ORDER BY name"
-    ))
+    )))
     .fetch_all(db)
     .await
 }
@@ -156,11 +162,12 @@ pub async fn snapshots(
     mirror_id: Uuid,
     limit: i64,
 ) -> Result<Vec<Snapshot>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant SNAPSHOT_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SNAPSHOT_COLUMNS} FROM mirror_snapshots
          WHERE mirror_id = $1 AND state <> 'pruned'
          ORDER BY created_at DESC, name DESC LIMIT $2"
-    ))
+    )))
     .bind(mirror_id)
     .bind(limit)
     .fetch_all(db)
@@ -172,11 +179,12 @@ pub async fn latest_published(
     db: impl PgExecutor<'_>,
     mirror_id: Uuid,
 ) -> Result<Option<Snapshot>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant SNAPSHOT_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SNAPSHOT_COLUMNS} FROM mirror_snapshots
          WHERE mirror_id = $1 AND state = 'published'
          ORDER BY published_at DESC LIMIT 1"
-    ))
+    )))
     .bind(mirror_id)
     .fetch_optional(db)
     .await
@@ -188,10 +196,11 @@ pub async fn runs(
     mirror_id: Uuid,
     limit: i64,
 ) -> Result<Vec<Run>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant RUN_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {RUN_COLUMNS} FROM mirror_runs WHERE mirror_id = $1
          ORDER BY started_at DESC LIMIT $2"
-    ))
+    )))
     .bind(mirror_id)
     .bind(limit)
     .fetch_all(db)
@@ -199,9 +208,10 @@ pub async fn runs(
 }
 
 pub async fn run(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Run>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant RUN_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {RUN_COLUMNS} FROM mirror_runs WHERE id = $1"
-    ))
+    )))
     .bind(id)
     .fetch_optional(db)
     .await
@@ -237,9 +247,10 @@ impl MirrorLock {
     pub async fn try_acquire(pool: &PgPool, mirror_id: Uuid) -> Result<Option<Self>, sqlx::Error> {
         let mut conn = pool.acquire().await?;
         conn.close_on_drop();
-        let locked: bool = sqlx::query_scalar(&format!(
+        // SQL-safe: interpolates only the constants ALL_MIRRORS_KEY and LOCK_KEY.
+        let locked: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT pg_try_advisory_lock_shared({ALL_MIRRORS_KEY}) AND pg_try_advisory_lock({LOCK_KEY})"
-        ))
+        )))
         .bind(mirror_id)
         .fetch_one(&mut *conn)
         .await?;
@@ -274,10 +285,11 @@ impl MirrorLock {
         .bind(INTERRUPTED)
         .execute(&mut *self.conn)
         .await?;
-        sqlx::query_as(&format!(
+        // SQL-safe: interpolates only the constant RUN_COLUMNS.
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "INSERT INTO mirror_runs (mirror_id, kind, trigger, requested_by)
              VALUES ($1, $2, $3, $4) RETURNING {RUN_COLUMNS}"
-        ))
+        )))
         .bind(self.mirror_id)
         .bind(kind)
         .bind(trigger)
@@ -288,9 +300,10 @@ impl MirrorLock {
 
     /// Unlocks and closes the connection.
     pub async fn release(mut self) {
-        let unlocked = sqlx::query(&format!(
+        // SQL-safe: interpolates only the constants LOCK_KEY and ALL_MIRRORS_KEY.
+        let unlocked = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT pg_advisory_unlock({LOCK_KEY}), pg_advisory_unlock_shared({ALL_MIRRORS_KEY})"
-        ))
+        )))
         .bind(self.mirror_id)
         .execute(&mut *self.conn)
         .await;
@@ -316,9 +329,12 @@ impl RetentionLock {
     pub async fn acquire(pool: &PgPool) -> Result<Self, sqlx::Error> {
         let mut conn = pool.acquire().await?;
         conn.close_on_drop();
-        sqlx::query(&format!("SELECT pg_advisory_lock({ALL_MIRRORS_KEY})"))
-            .execute(&mut *conn)
-            .await?;
+        // SQL-safe: interpolates only the constant ALL_MIRRORS_KEY.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT pg_advisory_lock({ALL_MIRRORS_KEY})"
+        )))
+        .execute(&mut *conn)
+        .await?;
         Ok(Self { conn })
     }
 
@@ -349,13 +365,14 @@ pub async fn finish_run(
     error: Option<&str>,
     snapshot_id: Option<Uuid>,
 ) -> Result<Run, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant RUN_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE mirror_runs
          SET state = CASE WHEN $3::text IS NULL THEN 'succeeded' ELSE 'failed' END,
              output = $2, error = $3, snapshot_id = COALESCE($4, snapshot_id),
              finished_at = now()
          WHERE id = $1 RETURNING {RUN_COLUMNS}"
-    ))
+    )))
     .bind(run_id)
     .bind(output)
     .bind(error)
@@ -368,13 +385,14 @@ pub async fn finish_run(
 /// removed one of the same name. Needs the mirror's lock.
 pub async fn insert_snapshot(lock: &mut MirrorLock, name: &str) -> Result<Snapshot, StoreError> {
     super::model::validate_snapshot_name(name)?;
-    let row: Option<Snapshot> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant SNAPSHOT_COLUMNS.
+    let row: Option<Snapshot> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO mirror_snapshots (mirror_id, name) VALUES ($1, $2)
          ON CONFLICT (mirror_id, name) DO UPDATE
              SET state = 'creating', error = NULL, size_bytes = NULL, created_at = now()
              WHERE mirror_snapshots.state IN ('failed', 'pruned')
          RETURNING {SNAPSHOT_COLUMNS}"
-    ))
+    )))
     .bind(lock.mirror_id)
     .bind(name)
     .fetch_optional(&mut *lock.conn)
@@ -387,10 +405,11 @@ pub async fn publish_snapshot(
     id: Uuid,
     size_bytes: Option<i64>,
 ) -> Result<Snapshot, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant SNAPSHOT_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE mirror_snapshots SET state = 'published', size_bytes = $2, published_at = now()
          WHERE id = $1 RETURNING {SNAPSHOT_COLUMNS}"
-    ))
+    )))
     .bind(id)
     .bind(size_bytes)
     .fetch_one(db)

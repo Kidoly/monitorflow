@@ -37,7 +37,7 @@ macro_rules! db_tests {
 
 const PASSWORD: &str = "correct horse battery staple";
 
-async fn insert(pool: &PgPool, sql: &str, binds: &[&str]) -> Uuid {
+async fn insert(pool: &PgPool, sql: &'static str, binds: &[&str]) -> Uuid {
     let mut query = sqlx::query_scalar::<_, Uuid>(sql);
     for bind in binds {
         query = query.bind(*bind);

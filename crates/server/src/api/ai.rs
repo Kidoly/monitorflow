@@ -120,11 +120,12 @@ fn view(config: &AiConfig, stored: &Stored) -> AiView {
 }
 
 async fn stored(db: impl PgExecutor<'_>, lock: bool) -> Result<Stored, ApiError> {
-    let query = format!(
-        "SELECT ai_enabled, ai_api_key, ai_model FROM server_settings{}",
-        if lock { " FOR UPDATE" } else { "" }
-    );
-    Ok(sqlx::query_as(&query)
+    let query = if lock {
+        "SELECT ai_enabled, ai_api_key, ai_model FROM server_settings FOR UPDATE"
+    } else {
+        "SELECT ai_enabled, ai_api_key, ai_model FROM server_settings"
+    };
+    Ok(sqlx::query_as(query)
         .fetch_optional(db)
         .await?
         .unwrap_or_default())

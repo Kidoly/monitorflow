@@ -215,9 +215,10 @@ impl Harness {
     }
 
     async fn revoked_rows(&self, table: &str) -> bool {
-        sqlx::query_scalar(&format!(
+        // SQL-safe: `table` is a literal name from this test.
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT bool_or(revoked_at IS NOT NULL) FROM {table}"
-        ))
+        )))
         .fetch_one(&self.pool)
         .await
         .unwrap()

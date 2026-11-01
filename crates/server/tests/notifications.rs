@@ -464,7 +464,8 @@ db_tests! {
     async fn offline_servers_and_relays_notify_with_the_right_ending(pool: PgPool) {
         let (customer, _, relay) = place(&pool, "acme").await;
         for table in ["servers", "relays"] {
-            sqlx::query(&format!("UPDATE {table} SET last_seen_at = now() - interval '1 hour'"))
+            // SQL-safe: `table` is a literal name from this test.
+            sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE {table} SET last_seen_at = now() - interval '1 hour'")))
                 .execute(&pool)
                 .await
                 .unwrap();

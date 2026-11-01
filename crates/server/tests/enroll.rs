@@ -148,7 +148,7 @@ fn identity_of(cert_pem: &str) -> PeerIdentity {
     PeerIdentity::from_cert(&der).unwrap()
 }
 
-async fn count(pool: &PgPool, sql: &str) -> i64 {
+async fn count(pool: &PgPool, sql: impl sqlx::SqlSafeStr) -> i64 {
     sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
 }
 
@@ -561,7 +561,9 @@ db_tests! {
         enroll_as(&pki, &pool, PeerRole::Agent, "web-01", "paris").await.unwrap();
         enroll_as(&pki, &pool, PeerRole::Relay, "relay-1", "paris").await.unwrap();
         for table in ["servers", "relays"] {
-            let live = count(&pool, &format!("SELECT count(*) FROM {table} WHERE revoked_at IS NULL")).await;
+            // SQL-safe: `table` is a literal name from this test.
+            let sql = sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table} WHERE revoked_at IS NULL"));
+            let live = count(&pool, sql).await;
             assert_eq!(live, 1, "{table}");
         }
         assert_eq!(count(&pool, "SELECT count(*) FROM audit_log WHERE action IN ('server.restore', 'relay.restore')").await, 2);

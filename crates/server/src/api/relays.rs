@@ -175,13 +175,14 @@ pub async fn list(
     let after: Option<(String, String)> =
         params.cursor.as_deref().map(decode_cursor).transpose()?;
     let (after_site, after_peer) = after.unzip();
-    let mut rows: Vec<Row> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant SELECT_RELAYS.
+    let mut rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT_RELAYS}
          WHERE ($1 OR r.site_id = ANY($2)) AND r.revoked_at IS NULL
            AND ($3::text IS NULL OR (si.name, r.peer_id) > ($3, $4))
          ORDER BY si.name, r.peer_id
          LIMIT $5"
-    ))
+    )))
     .bind(all_sites)
     .bind(&sites)
     .bind(after_site)
@@ -224,10 +225,13 @@ pub async fn detail(
     Path(id): Path<String>,
 ) -> Result<Json<RelayDetail>, ApiError> {
     let id = parse_id(&id)?;
-    let row: Option<Row> = sqlx::query_as(&format!("{SELECT_RELAYS} WHERE r.id = $1"))
-        .bind(id)
-        .fetch_optional(&state.pool)
-        .await?;
+    // SQL-safe: interpolates only the constant SELECT_RELAYS.
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT_RELAYS} WHERE r.id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?;
     authorize(&user, row.as_ref().map(|r| r.site_id), false)?;
     let row = row.ok_or(ApiError::NotFound)?;
     let certificate = latest_certificate(&state.pool, PeerRole::Relay, &row.peer_id).await?;

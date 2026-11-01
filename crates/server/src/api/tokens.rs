@@ -228,11 +228,14 @@ async fn site_of_token(state: &ApiState, id: Uuid) -> Result<Option<Uuid>, ApiEr
 }
 
 async fn fetch(state: &ApiState, id: Uuid) -> Result<TokenView, ApiError> {
-    sqlx::query_as(&format!("{SELECT_TOKENS} WHERE t.id = $1"))
-        .bind(id)
-        .fetch_optional(&state.pool)
-        .await?
-        .ok_or(ApiError::NotFound)
+    // SQL-safe: interpolates only the constant SELECT_TOKENS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT_TOKENS} WHERE t.id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(ApiError::NotFound)
 }
 
 /// `POST /api/tokens`: administrators of the site's customer. A site the
@@ -299,10 +302,11 @@ async fn refuse_removed_elsewhere(
         PeerRole::Relay => "relays",
         _ => "servers",
     };
-    let elsewhere: Option<String> = sqlx::query_scalar(&format!(
+    // SQL-safe: `table` is one of two constants, never input.
+    let elsewhere: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT si.name FROM {table} p JOIN sites si ON si.id = p.site_id
          WHERE p.peer_id = $1 AND p.revoked_at IS NOT NULL AND p.site_id <> $2"
-    ))
+    )))
     .bind(&request.peer_id)
     .bind(site_id)
     .fetch_optional(&state.pool)
@@ -334,14 +338,15 @@ pub async fn list(
     let after: Option<(DateTime<Utc>, Uuid)> =
         params.cursor.as_deref().map(decode_cursor).transpose()?;
     let (after_time, after_id) = after.unzip();
-    let mut tokens: Vec<TokenView> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant SELECT_TOKENS.
+    let mut tokens: Vec<TokenView> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT * FROM ({SELECT_TOKENS}
                         WHERE ($1 OR t.site_id = ANY($2)) AND t.install_key_id IS NULL
                           AND ($3::timestamptz IS NULL OR (t.created_at, t.id) < ($3, $4))) x
          WHERE $5::text IS NULL OR x.state = $5
          ORDER BY x.created_at DESC, x.id DESC
          LIMIT $6"
-    ))
+    )))
     .bind(all_sites)
     .bind(&sites)
     .bind(after_time)

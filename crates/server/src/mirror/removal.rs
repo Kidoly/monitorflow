@@ -134,10 +134,11 @@ pub async fn users(conn: &mut PgConnection, mirror: &Mirror) -> Result<Users, Re
 /// commits before [`users`] reads, or finds it no longer published.
 pub async fn request(pool: &PgPool, id: Uuid, actor: (&str, &str)) -> Result<Mirror, RemovalError> {
     let mut tx = pool.begin().await?;
-    let mirror: Mirror = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant MIRROR_COLUMNS.
+    let mirror: Mirror = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {} FROM mirrors WHERE id = $1 FOR UPDATE",
         super::store::MIRROR_COLUMNS
-    ))
+    )))
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?
@@ -163,11 +164,12 @@ pub async fn request(pool: &PgPool, id: Uuid, actor: (&str, &str)) -> Result<Mir
     .bind(id)
     .execute(&mut *tx)
     .await?;
-    let mirror: Mirror = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant MIRROR_COLUMNS.
+    let mirror: Mirror = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE mirrors SET deleting_at = now(), delete_error = NULL
          WHERE id = $1 RETURNING {}",
         super::store::MIRROR_COLUMNS
-    ))
+    )))
     .bind(id)
     .fetch_one(&mut *tx)
     .await?;

@@ -400,9 +400,10 @@ impl<'a> Fit<'a> {
 }
 
 async fn find_host(state: &ApiState, id: Uuid) -> Result<Option<Host>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant HOST_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {HOST_COLUMNS} FROM servers WHERE id = $1 AND revoked_at IS NULL"
-    ))
+    )))
     .bind(id)
     .fetch_optional(&state.pool)
     .await
@@ -457,10 +458,11 @@ pub async fn use_mirror(
 }
 
 async fn site_hosts(state: &ApiState, site: Uuid) -> Result<Vec<Host>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant HOST_COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {HOST_COLUMNS} FROM servers
          WHERE site_id = $1 AND revoked_at IS NULL ORDER BY hostname, peer_id"
-    ))
+    )))
     .bind(site)
     .fetch_all(&state.pool)
     .await

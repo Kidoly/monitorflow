@@ -257,10 +257,11 @@ impl Owner {
 async fn list(state: &ApiState, user: &CurrentUser, owner: Owner) -> Result<EntryList, ApiError> {
     authorize(user, owner.site(&state.pool).await?, false)?;
     let (site_id, server_id) = owner.columns();
-    let entries = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entries = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ENTRY_COLUMNS} FROM sensor_configs
          WHERE site_id = $1 OR server_id = $2 ORDER BY name, instance"
-    ))
+    )))
     .bind(site_id)
     .bind(server_id)
     .fetch_all(&state.pool)
@@ -361,12 +362,13 @@ async fn create(
     let valid = validate_entry(body(request)?).map_err(ApiError::Invalid)?;
     let (site_id, server_id) = owner.columns();
     let mut tx = state.pool.begin().await?;
-    let entry: Entry = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entry: Entry = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO sensor_configs
              (site_id, server_id, kind, name, instance, interval_ms, timeout_ms, params, enabled)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING {ENTRY_COLUMNS}"
-    ))
+    )))
     .bind(site_id)
     .bind(server_id)
     .bind(&valid.kind)
@@ -418,9 +420,10 @@ async fn lock_entry(
     user: &CurrentUser,
     id: Uuid,
 ) -> Result<Entry, ApiError> {
-    let entry: Option<Entry> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entry: Option<Entry> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ENTRY_COLUMNS} FROM sensor_configs WHERE id = $1 FOR UPDATE"
-    ))
+    )))
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?;
@@ -453,13 +456,14 @@ pub async fn update(
     let mut tx = state.pool.begin().await?;
     let before = lock_entry(&mut tx, &user, id).await?;
     let valid = validate_entry(body(request)?).map_err(ApiError::Invalid)?;
-    let entry: Entry = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entry: Entry = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE sensor_configs
          SET kind = $2, name = $3, instance = $4, interval_ms = $5, timeout_ms = $6,
              params = $7, enabled = $8, updated_at = now()
          WHERE id = $1
          RETURNING {ENTRY_COLUMNS}"
-    ))
+    )))
     .bind(id)
     .bind(&valid.kind)
     .bind(&valid.name)
@@ -529,9 +533,10 @@ pub async fn effective(
     .await?;
     let site_id = authorize(&user, server.map(|s| s.0), false)?;
     let (_, revision, applied_revision, applied_at) = server.ok_or(ApiError::NotFound)?;
-    let entries: Vec<Entry> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entries: Vec<Entry> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ENTRY_COLUMNS} FROM sensor_configs WHERE site_id = $1 OR server_id = $2"
-    ))
+    )))
     .bind(site_id)
     .bind(server_id)
     .fetch_all(&mut *tx)
@@ -557,9 +562,10 @@ pub async fn effective_site(
 ) -> Result<Json<SiteEffective>, ApiError> {
     let owner = Owner::Site(parse_id(&id)?);
     let site_id = authorize(&user, owner.site(&state.pool).await?, false)?;
-    let entries: Vec<Entry> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entries: Vec<Entry> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ENTRY_COLUMNS} FROM sensor_configs WHERE site_id = $1"
-    ))
+    )))
     .bind(site_id)
     .fetch_all(&state.pool)
     .await?;

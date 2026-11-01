@@ -197,13 +197,14 @@ impl CampaignStore {
             None => Vec::new(),
         };
 
-        let row: CampaignRow = sqlx::query_as(&format!(
+        // SQL-safe: interpolates only the constant COLUMNS.
+        let row: CampaignRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "INSERT INTO campaigns (customer_id, name, site_id, packages, security_only,
                  allow_reboot, command_ttl_s, failure_threshold, failure_threshold_unit, created_by,
                  sources_mode, agent_version)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              RETURNING {COLUMNS}"
-        ))
+        )))
         .bind(new.customer_id)
         .bind(&new.name)
         .bind(new.site_id)
@@ -289,10 +290,13 @@ impl CampaignStore {
     }
 
     pub async fn get(&self, id: Uuid) -> Result<Option<CampaignRow>, sqlx::Error> {
-        sqlx::query_as(&format!("SELECT {COLUMNS} FROM campaigns WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
+        // SQL-safe: interpolates only the constant COLUMNS.
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLUMNS} FROM campaigns WHERE id = $1"
+        )))
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
     }
 
     /// The campaign's windows, in the order they were given.
@@ -333,14 +337,15 @@ impl CampaignStore {
             }
             Action::Start | Action::Resume => Vec::new(),
         };
-        let row: CampaignRow = sqlx::query_as(&format!(
+        // SQL-safe: interpolates only the constant COLUMNS.
+        let row: CampaignRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "UPDATE campaigns SET state = $2,
                  started_at = COALESCE(started_at, now()),
                  finished_at = CASE WHEN $3 THEN now() END,
                  error = CASE WHEN $3 THEN $4 ELSE error END
              WHERE id = $1
              RETURNING {COLUMNS}"
-        ))
+        )))
         .bind(id)
         .bind(next)
         .bind(next.is_final())
@@ -372,9 +377,10 @@ pub(super) async fn lock(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<CampaignRow>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM campaigns WHERE id = $1 FOR UPDATE"
-    ))
+    )))
     .bind(id)
     .fetch_optional(conn)
     .await

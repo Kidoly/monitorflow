@@ -159,13 +159,14 @@ pub async fn list(
     customer_id: Option<Uuid>,
     site_id: Option<Uuid>,
 ) -> Result<Vec<StoredRule>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM remediation_rules
          WHERE ($1 OR customer_id = ANY($2))
            AND ($3::uuid IS NULL OR customer_id = $3)
            AND ($4::uuid IS NULL OR site_id = $4)
          ORDER BY customer_id, site_id NULLS FIRST, kind, pattern"
-    ))
+    )))
     .bind(customers.0)
     .bind(&customers.1)
     .bind(customer_id)
@@ -175,9 +176,10 @@ pub async fn list(
 }
 
 pub async fn get(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<StoredRule>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM remediation_rules WHERE id = $1"
-    ))
+    )))
     .bind(id)
     .fetch_optional(db)
     .await
@@ -190,12 +192,13 @@ pub async fn insert(
     pattern: &str,
     created_by: Option<Uuid>,
 ) -> Result<StoredRule, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO remediation_rules
              (customer_id, site_id, kind, pattern, tier, description, created_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING {COLUMNS}"
-    ))
+    )))
     .bind(rule.customer_id)
     .bind(rule.site_id)
     .bind(rule.kind.as_str())
@@ -225,11 +228,12 @@ pub async fn rule_set(
     customer: Uuid,
     site: Option<Uuid>,
 ) -> Result<RuleSet, sqlx::Error> {
-    let rows: Vec<StoredRule> = sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant COLUMNS.
+    let rows: Vec<StoredRule> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM remediation_rules
          WHERE customer_id = $1 AND (site_id IS NULL OR site_id = $2)
          ORDER BY created_at, id"
-    ))
+    )))
     .bind(customer)
     .bind(site)
     .fetch_all(db)

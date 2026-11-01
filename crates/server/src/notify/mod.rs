@@ -201,9 +201,10 @@ fn channel(row: &sqlx::postgres::PgRow) -> Result<Channel, sqlx::Error> {
 
 /// Every channel.
 pub async fn channels(db: impl PgExecutor<'_>) -> Result<Vec<Channel>, sqlx::Error> {
-    sqlx::query(&format!(
+    // SQL-safe: interpolates only the constant CHANNEL_COLUMNS.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {CHANNEL_COLUMNS} FROM notification_channels ORDER BY created_at, id"
-    ))
+    )))
     .fetch_all(db)
     .await?
     .iter()
@@ -213,9 +214,10 @@ pub async fn channels(db: impl PgExecutor<'_>) -> Result<Vec<Channel>, sqlx::Err
 
 /// One channel, `None` when it does not exist.
 pub async fn load(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Channel>, sqlx::Error> {
-    sqlx::query(&format!(
+    // SQL-safe: interpolates only the constant CHANNEL_COLUMNS.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {CHANNEL_COLUMNS} FROM notification_channels WHERE id = $1"
-    ))
+    )))
     .bind(id)
     .fetch_optional(db)
     .await?

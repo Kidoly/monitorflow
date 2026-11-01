@@ -233,7 +233,8 @@ fn run_sql(url: &str, sql: &str) -> Result<(), sqlx::Error> {
         .expect("tokio runtime");
     runtime.block_on(async {
         let mut conn = sqlx::PgConnection::connect(url).await?;
-        conn.execute(sql).await?;
+        // SQL-safe: the test harness builds it, quoting its own database name.
+        conn.execute(sqlx::AssertSqlSafe(sql)).await?;
         conn.close().await
     })
 }

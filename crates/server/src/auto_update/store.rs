@@ -196,9 +196,10 @@ impl Rollout {
         kind: Kind,
         version: &Version,
     ) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as(&format!(
+        // SQL-safe: interpolates only the constant COLUMNS.
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM auto_rollouts WHERE kind = $1 AND version = $2"
-        ))
+        )))
         .bind(kind)
         .bind(version.to_string())
         .fetch_optional(pool)
@@ -207,10 +208,11 @@ impl Rollout {
 
     /// The newest rollouts first.
     pub async fn recent(pool: &PgPool, kind: Kind, limit: i64) -> Result<Vec<Self>, sqlx::Error> {
-        sqlx::query_as(&format!(
+        // SQL-safe: interpolates only the constant COLUMNS.
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM auto_rollouts WHERE kind = $1
              ORDER BY started_at DESC, version DESC LIMIT $2"
-        ))
+        )))
         .bind(kind)
         .bind(limit)
         .fetch_all(pool)
@@ -299,12 +301,13 @@ impl Rollout {
         kind: Kind,
         version: &str,
     ) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as(&format!(
+        // SQL-safe: interpolates only the constant COLUMNS.
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "UPDATE auto_rollouts
              SET state = 'rolling', halted_at = NULL, reason = NULL, counted_from = now()
              WHERE kind = $1 AND version = $2 AND state = 'halted'
              RETURNING {COLUMNS}"
-        ))
+        )))
         .bind(kind)
         .bind(version)
         .fetch_optional(&mut *tx)

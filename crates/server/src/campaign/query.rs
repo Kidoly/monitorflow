@@ -85,7 +85,8 @@ impl TargetRow {
 
 pub async fn list(pool: &PgPool, filter: &ListFilter) -> Result<Vec<Listed>, sqlx::Error> {
     let (before_at, before_id) = filter.before.unzip();
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT c.*, cu.name AS customer_name
          FROM (SELECT {COLUMNS} FROM campaigns) c JOIN customers cu ON cu.id = c.customer_id
          WHERE ($1 OR c.customer_id = ANY($2))
@@ -94,7 +95,7 @@ pub async fn list(pool: &PgPool, filter: &ListFilter) -> Result<Vec<Listed>, sql
            AND ($5::timestamptz IS NULL OR (c.created_at, c.id) < ($5, $6))
          ORDER BY c.created_at DESC, c.id DESC
          LIMIT $7"
-    ))
+    )))
     .bind(filter.customers.0)
     .bind(&filter.customers.1)
     .bind(filter.customer_id)
@@ -107,11 +108,12 @@ pub async fn list(pool: &PgPool, filter: &ListFilter) -> Result<Vec<Listed>, sql
 }
 
 pub async fn get(pool: &PgPool, id: Uuid) -> Result<Option<Listed>, sqlx::Error> {
-    sqlx::query_as(&format!(
+    // SQL-safe: interpolates only the constant COLUMNS.
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT c.*, cu.name AS customer_name
          FROM (SELECT {COLUMNS} FROM campaigns WHERE id = $1) c
          JOIN customers cu ON cu.id = c.customer_id"
-    ))
+    )))
     .bind(id)
     .fetch_optional(pool)
     .await
