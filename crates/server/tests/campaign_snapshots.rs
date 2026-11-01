@@ -24,6 +24,7 @@ use monitorflow_server::campaign::{
 };
 use monitorflow_server::commands::{CommandStore, NewCommand, State};
 use monitorflow_server::grpc::Registry;
+use monitorflow_server::live_settings::Live;
 use monitorflow_server::mirror::{
     Family, Invocation, Layout, Mirrors, Output, RunError, Runner as Tool,
 };
@@ -156,7 +157,10 @@ impl Fleet {
     }
 
     fn runner(&self) -> Runner {
-        Runner::new(self.pool.clone()).with_sources(Some(URL.into()), self.mirrors.clone())
+        Runner::new(self.pool.clone()).with_sources(
+            Live::default().with_mirror_url(Some(URL)),
+            self.mirrors.clone(),
+        )
     }
 
     fn campaign(&self, waves: Vec<WaveSpec>) -> NewCampaign {
@@ -253,7 +257,7 @@ impl Fleet {
         .await
         .ok();
         let settings = ApiSettings {
-            mirror_public_url: public_url.map(str::to_owned),
+            live: Live::default().with_mirror_url(public_url),
             ..ApiSettings::default()
         };
         let state = ApiState::new(self.pool.clone(), Registry::default(), settings)

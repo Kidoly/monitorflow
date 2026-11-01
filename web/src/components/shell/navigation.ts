@@ -11,6 +11,7 @@ import {
   NOTIFICATIONS_PATH,
   RELAYS_PATH,
   SERVER_UPDATE_PATH,
+  SETTINGS_PATH,
   SITES_PATH,
   TOKENS_PATH,
   USERS_PATH,
@@ -72,6 +73,7 @@ export const NAVIGATION: NavSection[] = [
   {
     heading: "Administration",
     items: [
+      { label: "Settings", href: SETTINGS_PATH, icon: "settings", iconWhenCollapsed: true, visible: administersEverything },
       { label: "Relays", href: RELAYS_PATH, icon: "relays", iconWhenCollapsed: true },
       { label: "Sites", href: SITES_PATH, icon: "sites", iconWhenCollapsed: true },
       { label: "Add servers", href: TOKENS_PATH, icon: "tokens", iconWhenCollapsed: true },

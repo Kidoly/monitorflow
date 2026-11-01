@@ -25,7 +25,9 @@
 # development over plain HTTP.
 # api_cookie_secure = true
 
-# Session lifetime and idle timeout, in seconds (12 hours, 30 minutes).
+# Session lifetime and idle timeout, in seconds (12 hours, 30 minutes). Most
+# servers set these in the web interface (Administration > Settings, no
+# restart, ADR-0069). Set here, they win and lock that page.
 # api_session_lifetime = 43200
 # api_session_idle_timeout = 1800
 
@@ -58,8 +60,11 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # mirror_listen_addr = "0.0.0.0:7480"
 # mirror_dir = "/var/lib/monitorflow/server/mirrors"
 # URL agents reach the listener above at, written into their package sources
-# by source configuration commands (ADR-0035); unset refuses those commands.
+# by source configuration commands (ADR-0035); unset refuses those commands
+# unless Administration > Settings names one. Set here, it locks that page.
 # mirror_public_url = "http://mirror.example.net:7480"
+# What that page offers as the default.
+# mirror_default_url = "http://mirror.example.net:7480"
 
 # https URL of a directory holding the agent release files (install.sh,
 # SHA256SUMS, the binaries), used in the install commands the web interface

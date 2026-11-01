@@ -457,14 +457,16 @@ function pageHost(): string | null {
  * The address the snippet and commands connect to: one of the certificate's
  * names, this page's host or a typed one. Choosing a name applies it at once.
  */
-function ServerAddress({
+export function ServerAddress({
   value,
   editable,
   onChange,
+  note = "— used by the configuration snippet and every command below",
 }: {
   value: PublicAddress;
   editable: boolean;
   onChange: (address: PublicAddress) => void;
+  note?: string;
 }) {
   const labelId = useId();
   const [typing, setTyping] = useState(false);
@@ -494,7 +496,7 @@ function ServerAddress({
     <div className={styles.field}>
       <span id={labelId}>
         Hosts reach this server at{" "}
-        <span className={styles.fieldNote}>— used by the configuration snippet and every command below</span>
+        <span className={styles.fieldNote}>{note}</span>
       </span>
       {editable ? (
         <div className={styles.buttons}>
@@ -723,7 +725,7 @@ function RelayInstallCommand({ target }: { target: InstallTarget }) {
 }
 
 /** The server-wide default source (ADR-0054); global administrators change it. */
-function DefaultInstallSource({ editable }: { editable: boolean }) {
+export function DefaultInstallSource({ editable }: { editable: boolean }) {
   const titleId = useId();
   const sourceName = useId();
   const [current, setCurrent] = useState<AgentInstall | null>(null);
@@ -804,7 +806,7 @@ function DefaultInstallSource({ editable }: { editable: boolean }) {
               <span className={styles.fieldNote}>
                 {current.custom_url_from_config
                   ? "— set in the server configuration (agent_download_url)"
-                  : "— https directory holding the release files"}
+                  : "— https directory holding the release files; agents also update from it"}
               </span>
             </span>
             <input

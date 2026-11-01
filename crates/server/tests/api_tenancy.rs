@@ -829,6 +829,9 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         ("GET", "/api/auto-update")
         | ("GET", "/api/settings/auto-update")
         | ("PUT", "/api/settings/auto-update")
+        | ("GET", "/api/settings/server")
+        | ("PUT", "/api/settings/server")
+        | ("PUT", "/api/settings/retention")
         | ("POST", "/api/auto-update/rollouts/{kind}/{version}/resume") => {
             let uri = path
                 .replace("{kind}", "agent")

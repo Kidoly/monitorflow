@@ -34,6 +34,7 @@ use super::store::{cancel_queued, close_waves, Actor, CampaignRow, COLUMNS};
 use crate::agent_releases;
 use crate::api::audit::{self, Event};
 use crate::commands::{CommandStore, Commands, NewCommand};
+use crate::live_settings::Live;
 use crate::mirror::{relays, Mirrors};
 
 /// How often active campaigns are looked at.
@@ -89,13 +90,10 @@ impl Runner {
     }
 
     /// Builds `configure_sources` commands for pinned campaigns with the
-    /// signing key and layout of `mirrors` and `public_url`, and keeps
+    /// signing key and layout of `mirrors` and `live`'s URL, and keeps
     /// the `.pinned` files of its mirrors (ADR-0038).
-    pub fn with_sources(mut self, public_url: Option<String>, mirrors: Mirrors) -> Self {
-        self.sources = Some(PinSources {
-            public_url,
-            mirrors,
-        });
+    pub fn with_sources(mut self, live: Live, mirrors: Mirrors) -> Self {
+        self.sources = Some(PinSources { live, mirrors });
         self
     }
 

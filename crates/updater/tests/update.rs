@@ -11,6 +11,7 @@ use monitorflow_common::release::{sha256, PublicKey, Version};
 use monitorflow_common::server_update::backup::{
     file_name, BackupKind, BackupState, Manifest, BACKUP_REQUEST_FILE, KEEP,
 };
+use monitorflow_common::server_update::retention::RetentionRequest;
 use monitorflow_common::server_update::{
     ImageRef, Request, Status, UpdateState, REQUEST_FILE, STATUS_FILE,
 };
@@ -115,6 +116,8 @@ struct HostState {
     hangs: bool,
     /// `pg_dump` fails.
     dump_fails: bool,
+    /// The next recreation of the stores fails.
+    stores_fail: bool,
     /// What a restore loaded, and what it stopped and started.
     restored: Option<Vec<u8>>,
     calls: Vec<&'static str>,
@@ -216,6 +219,15 @@ impl Host for FakeHost {
 
     async fn start_all(&self) -> Result<(), HostError> {
         self.state().calls.push("start");
+        Ok(())
+    }
+
+    async fn recreate_stores(&self) -> Result<(), HostError> {
+        let mut state = self.state();
+        state.calls.push("stores");
+        if std::mem::take(&mut state.stores_fail) {
+            return Err(HostError("the stores did not start".into()));
+        }
         Ok(())
     }
 }
@@ -862,4 +874,41 @@ fn an_interrupted_backup_is_marked_failed_on_restart() {
     let last = volumes.status().backups.last.unwrap();
     assert_eq!(last.state, BackupState::Failed);
     assert!(volumes.backups().is_empty());
+}
+
+#[tokio::test]
+async fn retention_changes_reach_the_env_file_and_failures_undo_them() {
+    let volumes = Volumes::new();
+    let host = FakeHost::new(&volumes.env, "0.2.0");
+    let source = dir_source(&TempDir::new().unwrap(), Signer::new().public());
+    let mut updater = volumes.updater(&host, &source);
+    let change = |metrics_days, logs_days| RetentionRequest {
+        id: "r1".into(),
+        metrics_days,
+        logs_days,
+        requested_by: "alice".into(),
+        requested_at: Utc::now(),
+    };
+    updater.read_retention();
+    let status = |updater: &Updater<'_>| updater.reporter.status.retention.clone().unwrap();
+    assert_eq!(status(&updater).metrics.value, "90d");
+
+    updater.set_retention(&change(Some(60), None)).await;
+    let retention = status(&updater);
+    assert_eq!(retention.metrics.value, "60d");
+    assert_eq!(retention.logs.value, "30d");
+    assert!(!retention.applying);
+    assert_eq!(retention.error, None);
+    assert_eq!(host.state().calls, ["stores"]);
+
+    host.state().stores_fail = true;
+    updater.set_retention(&change(Some(7), Some(7))).await;
+    let retention = status(&updater);
+    assert_eq!(retention.metrics.value, "60d", "the old value is back");
+    assert_eq!(retention.logs.value, "30d");
+    assert!(retention.error.unwrap().contains("did not start"));
+    assert_eq!(host.state().calls, ["stores", "stores", "stores"]);
+    let written = std::fs::read_to_string(&volumes.env).unwrap();
+    assert!(written.contains("UI_METRICS_RETENTION=60d\n"), "{written}");
+    assert!(!written.contains("UI_LOGS_RETENTION"), "{written}");
 }

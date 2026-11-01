@@ -166,6 +166,23 @@
   align-items: center;
 }
 
+/* A form or control under a section's note. */
+.sectionBody {
+  padding: 0 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.linkList {
+  margin: 0;
+  padding: 14px 20px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .formFoot {
   display: flex;
   gap: 12px;

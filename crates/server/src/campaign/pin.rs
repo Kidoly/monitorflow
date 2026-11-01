@@ -33,6 +33,7 @@ use super::store::CampaignRow;
 use crate::api::commands::MAX_TTL_S;
 use crate::commands::sources::{self, os_family, ArchiveKey, Selected};
 use crate::commands::{CommandStore, NewCommand, State};
+use crate::live_settings::Live;
 use crate::mirror::{relays, store, Family, Layout, Mirrors};
 
 /// Time to live of a restore: the longest a command may have, as putting
@@ -43,14 +44,15 @@ pub const RESTORE_TTL: Duration = Duration::from_secs(MAX_TTL_S);
 /// mirrors at and the mirror signing key.
 #[derive(Clone)]
 pub struct PinSources {
-    pub public_url: Option<String>,
+    /// Holds the mirror URL, read when a campaign takes it (ADR-0069).
+    pub live: Live,
     pub mirrors: Mirrors,
 }
 
 impl fmt::Debug for PinSources {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PinSources")
-            .field("public_url", &self.public_url)
+            .field("public_url", &self.live.mirror_public_url())
             .finish_non_exhaustive()
     }
 }
@@ -150,7 +152,7 @@ impl Configurer {
         };
         Ok(Self {
             mode,
-            public_url: context.and_then(|c| c.public_url.clone()),
+            public_url: context.and_then(|c| c.live.mirror_public_url()),
             key,
             pinned,
         })

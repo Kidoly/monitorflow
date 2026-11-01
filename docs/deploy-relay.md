@@ -1,18 +1,22 @@
 # Installing a relay
 
-A relay forwards the streams of the agents of a site to the central server, buffers their samples while the server is unreachable, and can serve them copies of the package mirrors and of the agent releases (ADR-0025, ADR-0027, ADR-0034). How to install one on a Linux host with systemd, with the installer or by hand; the installer does exactly the steps of [By hand](#by-hand).
+A relay forwards the streams of the agents of a site to the central server, buffers their samples while the server is unreachable, and can serve them copies of the package mirrors and of the agent releases (ADR-0025, ADR-0027, ADR-0034).
 
-## Before you start
+## Getting started
 
-- A host with systemd, x86_64 or aarch64, that the site's agents reach on port 7443 (and 7480 if it serves mirrors), and that reaches the server on 7443 and 7445.
+You need a host with systemd, x86_64 or aarch64, that the site's agents reach on port 7443 (and 7480 if it serves mirrors), and that reaches the server on 7443 and 7445.
 
-## Quick install
-
-Under Relays, choose **Add relay**, pick the site and paste the command on the relay's host. It installs the relay, which finds its host name and addresses and appears on the same page. Tick the names agents reach it at, then **Confirm names**: the relay collects its certificate and starts accepting agents within seconds (ADR-0066). Its page then offers **Add servers behind this relay**, with the install command already pointing at it.
+1. Under Administration › Relays, choose **Add relay**, pick the site and paste the command on the relay's host. The relay appears on the same page, with the host names and addresses it found.
+2. Tick the names agents reach it at, then **Confirm names**. Within seconds it accepts agents (ADR-0066).
+3. On its page, choose **Add servers behind this relay**: the install command already points at it.
 
 The checkbox in the panel turns on [mirrors](#mirrors). The command works on one host, for a day.
 
-The other way is a relay token, for scripts, a chosen ID or a relay behind another relay: under Add servers › Advanced in the web interface, or on the server:
+The rest of this page is reference.
+
+## Quick install
+
+A relay token is the other way, for scripts, a chosen ID or a relay behind another relay: under Add servers › Advanced in the web interface, or on the server:
 
 ```
 docker compose exec server monitorflow-server token create --role relay --id relay1-paris \
@@ -48,43 +52,7 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
   | sudo MF_SERVER=relay1.paris.example:7443 MF_ENROLL=monitorflow.example.com:7445 MF_TOKEN=mfe1.… sh
 ```
 
-## By hand
-
-With the files of a release (`monitorflow-relay-linux-<arch>`, `monitorflow-relay.service`, `monitorflow-relay-sudoers`), checked against `SHA256SUMS` (`sha256sum -c --ignore-missing SHA256SUMS`) once its signature verifies, as [docs/releasing.md](releasing.md) shows:
-
-```
-useradd --system --user-group --home-dir /var/lib/monitorflow/relay --no-create-home \
-  --shell /usr/sbin/nologin monitorflow-relay
-install -d -o monitorflow-relay -g monitorflow-relay -m 0700 /var/lib/monitorflow/relay
-install -d -o root -g root -m 0755 /etc/monitorflow
-install -o root -g root -m 0755 monitorflow-relay-linux-x86_64 /usr/bin/monitorflow-relay
-install -o root -g root -m 0440 monitorflow-relay-sudoers /etc/sudoers.d/monitorflow-relay
-visudo -cf /etc/sudoers.d/monitorflow-relay
-install -o root -g root -m 0644 monitorflow-relay.service /etc/systemd/system/monitorflow-relay.service
-```
-
-`/etc/monitorflow/relay.toml`, owner `root`, group `monitorflow-relay`, mode 0640; every key and its default are in `deploy/config/relay.example.toml`:
-
-```
-upstream_url = "https://monitorflow.example.com:7443"
-# Only when the enrollment listener is not the upstream's host on 7445:
-# enroll_url = "https://monitorflow.example.com:7445"
-
-# Only to serve mirrors:
-# [mirror]
-# enabled = true
-# public_url = "http://relay1.paris.example:7480"
-```
-
-Then the first start, with the token in a root-only file that systemd reads and that is deleted once the relay is enrolled (ADR-0007):
-
-```
-(umask 077; printf 'MONITORFLOW_ENROLLMENT_TOKEN=%s\n' 'mfe1.…' >/etc/monitorflow/relay-enroll.env)
-systemctl daemon-reload
-systemctl enable --now monitorflow-relay
-# Once /var/lib/monitorflow/relay/tls/cert.pem exists:
-rm /etc/monitorflow/relay-enroll.env
-```
+## What runs
 
 The relay runs as `monitorflow-relay` and needs root for one thing only: replacing its own binary. `sudo -n /usr/bin/monitorflow-relay self-update` is the one line the sudo rule allows; the helper installs only a release the project's key signed (ADR-0053, ADR-0055). Without the rule, self-updates fail with "a password is required" and nothing changes.
 

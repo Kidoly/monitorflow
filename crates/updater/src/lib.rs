@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use monitorflow_common::server_update::backup::{BackupKind, BackupRequest, BACKUP_REQUEST_FILE};
+use monitorflow_common::server_update::retention::{RetentionRequest, RETENTION_REQUEST_FILE};
 use monitorflow_common::server_update::{
     read_small, Request, HEARTBEAT, MAX_STATE_FILE, REQUEST_FILE,
 };
@@ -172,6 +173,18 @@ pub fn take_backup_request(update_dir: &Path) -> Option<Result<BackupRequest, St
     Some(bytes.and_then(|bytes| BackupRequest::parse(&bytes)))
 }
 
+/// Takes a change of retention out of the inbox, if it is there.
+pub fn take_retention_request(update_dir: &Path) -> Option<Result<RetentionRequest, String>> {
+    let path = update_dir.join(INBOX).join(RETENTION_REQUEST_FILE);
+    let bytes = match read_small(&path, MAX_STATE_FILE) {
+        Ok(None) => return None,
+        Ok(Some(bytes)) => Ok(bytes),
+        Err(e) => Err(format!("cannot read the retention request: {e}")),
+    };
+    let _ = std::fs::remove_file(&path);
+    Some(bytes.and_then(|bytes| RetentionRequest::parse(&bytes)))
+}
+
 /// Serves requests and takes the daily backup until `stop` resolves.
 pub async fn serve(
     updater: &mut Updater<'_>,
@@ -187,6 +200,7 @@ pub async fn serve(
         updater.recover_backup();
     }
     let started = Utc::now();
+    updater.read_retention();
     let running = updater.running().await;
     updater.reporter.set_running(running);
     let (mut last_beat, mut last_running) = (Instant::now(), Instant::now());
@@ -212,6 +226,14 @@ pub async fn serve(
             }
             Some(Ok(request)) => Some((BackupKind::Manual, request.id, request.requested_by)),
         };
+        match take_retention_request(&settings.update_dir) {
+            None => {}
+            Some(Err(error)) => tracing::warn!(%error, "retention request refused"),
+            Some(Ok(request)) => match Lock::acquire(&settings.state_dir) {
+                Ok(_lock) => updater.set_retention(&request).await,
+                Err(e) => tracing::error!(error = %e, "cannot lock the state volume"),
+            },
+        }
         let next = updater.next_backup(started);
         updater.reporter.status.backups.next_at = Some(next);
         let job = asked.or_else(|| {
@@ -231,6 +253,7 @@ pub async fn serve(
             }
         }
         if last_running.elapsed() >= RUNNING_REFRESH {
+            updater.read_retention();
             let running = updater.running().await;
             updater.reporter.set_running(running);
             (last_beat, last_running) = (Instant::now(), Instant::now());

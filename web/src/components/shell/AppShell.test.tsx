@@ -103,6 +103,7 @@ describe("AppShell", () => {
       "Campaigns",
       "Approvals",
       "Audit log",
+      "Settings",
       "Relays",
       "Sites",
       "Add servers",

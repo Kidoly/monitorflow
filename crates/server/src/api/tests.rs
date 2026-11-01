@@ -66,8 +66,14 @@ async fn unknown_route_is_json_404() {
 fn settings_follow_config() {
     let settings = ApiSettings::default();
     assert!(settings.cookie_secure);
-    assert_eq!(settings.session_lifetime, Duration::from_secs(12 * 60 * 60));
-    assert_eq!(settings.session_idle_timeout, Duration::from_secs(30 * 60));
+    assert_eq!(
+        settings.live.session_lifetime(),
+        Duration::from_secs(12 * 60 * 60)
+    );
+    assert_eq!(
+        settings.live.session_idle_timeout(),
+        Duration::from_secs(30 * 60)
+    );
 }
 
 fn post(uri: &str) -> axum::http::request::Builder {

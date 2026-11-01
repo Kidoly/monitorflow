@@ -1,11 +1,13 @@
 //! The image pins in the compose project's `.env` (ADR-0056):
 //! `SERVER_IMAGE`, `WEB_IMAGE`, `UPDATER_IMAGE` and `MIRROR_IMAGE`. Every
-//! other line is kept as it is.
+//! other line is kept as it is, but for the retention the web interface
+//! sets (ADR-0069).
 
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use monitorflow_common::server_update::retention::{Kept, DEFAULT_LOGS, DEFAULT_METRICS};
 use monitorflow_common::server_update::{write_atomic, Images};
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +15,12 @@ pub const SERVER: &str = "SERVER_IMAGE";
 pub const WEB: &str = "WEB_IMAGE";
 pub const UPDATER: &str = "UPDATER_IMAGE";
 pub const MIRROR: &str = "MIRROR_IMAGE";
+/// Set by hand, they win over the web interface's, and lock it.
+pub const METRICS_RETENTION: &str = "METRICS_RETENTION";
+pub const LOGS_RETENTION: &str = "LOGS_RETENTION";
+/// Written by the updater for the web interface.
+pub const UI_METRICS_RETENTION: &str = "UI_METRICS_RETENTION";
+pub const UI_LOGS_RETENTION: &str = "UI_LOGS_RETENTION";
 
 /// The pins; `None` is no line, the compose file's local build.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,10 +90,39 @@ impl EnvFile {
     /// keeps the file's mode and owner.
     pub fn set_pins(&self, pins: &Pins) -> io::Result<()> {
         let text = std::fs::read_to_string(&self.path)?;
-        let updated = with_pins(&text, pins);
+        self.write(&with_pins(&text, pins))
+    }
+
+    /// The retention of the metrics and the logs, as the compose file
+    /// resolves it.
+    pub fn retention(&self) -> io::Result<(Kept, Kept)> {
+        let text = self.text()?;
+        let kept = |key, ui_key, default: &str| match value(&text, key) {
+            Some(value) => Kept {
+                value,
+                locked: true,
+            },
+            None => Kept {
+                value: value_or(&text, ui_key, default),
+                locked: false,
+            },
+        };
+        Ok((
+            kept(METRICS_RETENTION, UI_METRICS_RETENTION, DEFAULT_METRICS),
+            kept(LOGS_RETENTION, UI_LOGS_RETENTION, DEFAULT_LOGS),
+        ))
+    }
+
+    /// The whole file, to put back with [`Self::write`].
+    pub fn text(&self) -> io::Result<String> {
+        std::fs::read_to_string(&self.path)
+    }
+
+    /// Replaces the file, keeping its mode and owner.
+    pub fn write(&self, text: &str) -> io::Result<()> {
         let metadata = std::fs::metadata(&self.path)?;
         let (dir, name) = self.dir_and_name()?;
-        write_atomic(dir, name, updated.as_bytes(), metadata.mode() & 0o7777)?;
+        write_atomic(dir, name, text.as_bytes(), metadata.mode() & 0o7777)?;
         std::os::unix::fs::chown(&self.path, Some(metadata.uid()), Some(metadata.gid()))
     }
 
@@ -106,6 +143,41 @@ fn assignment(line: &str) -> Option<(&str, &str)> {
     let line = line.strip_prefix("export ").unwrap_or(line);
     let (key, value) = line.split_once('=')?;
     Some((key.trim(), value.trim()))
+}
+
+/// The last non-empty value of `key` in `text`, as compose reads it.
+fn value(text: &str, key: &str) -> Option<String> {
+    text.lines()
+        .filter_map(assignment)
+        .filter(|(k, _)| *k == key)
+        .map(|(_, value)| unquote(value).to_owned())
+        .next_back()
+        .filter(|value| !value.is_empty())
+}
+
+fn value_or(text: &str, key: &str, default: &str) -> String {
+    value(text, key).unwrap_or_else(|| default.to_owned())
+}
+
+/// `text` with the line of `key` set to `value`, appended if missing.
+pub fn with_line(text: &str, key: &str, value: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 64);
+    let mut written = false;
+    for line in text.lines() {
+        if assignment(line).is_some_and(|(k, _)| k == key) {
+            if !written {
+                out.push_str(&format!("{key}={value}\n"));
+            }
+            written = true;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !written {
+        out.push_str(&format!("{key}={value}\n"));
+    }
+    out
 }
 
 fn unquote(value: &str) -> &str {
@@ -195,6 +267,38 @@ mod tests {
         let text = "export SERVER_IMAGE=\"old\"\nSERVER_IMAGE=older\n  WEB_IMAGE = x\nSERVER_IMAGE_X=keep\n";
         let out = with_pins(text, &pins(Some("s@2"), None, None));
         assert_eq!(out, "SERVER_IMAGE=s@2\nSERVER_IMAGE_X=keep\n");
+    }
+
+    #[test]
+    fn retention_follows_the_compose_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join(".env");
+        let env = EnvFile::new(path.clone());
+        let kept = |value: &str, locked| Kept {
+            value: value.into(),
+            locked,
+        };
+        std::fs::write(&path, "DOMAIN=mf.example\nMETRICS_RETENTION=\n").unwrap();
+        assert_eq!(
+            env.retention().unwrap(),
+            (kept("90d", false), kept("30d", false))
+        );
+        let text = with_line(&env.text().unwrap(), UI_METRICS_RETENTION, "60d");
+        let text = with_line(&text, UI_LOGS_RETENTION, "7d");
+        env.write(&text).unwrap();
+        assert_eq!(
+            env.retention().unwrap(),
+            (kept("60d", false), kept("7d", false))
+        );
+        // Replaced in place, and by hand wins.
+        let text = with_line(&env.text().unwrap(), UI_METRICS_RETENTION, "45d");
+        assert_eq!(text.matches("UI_METRICS_RETENTION").count(), 1);
+        env.write(&format!("{text}LOGS_RETENTION=\"1y\"\n"))
+            .unwrap();
+        assert_eq!(
+            env.retention().unwrap(),
+            (kept("45d", false), kept("1y", true))
+        );
     }
 
     #[test]

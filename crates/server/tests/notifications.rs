@@ -255,6 +255,7 @@ fn failed_backup(dir: &std::path::Path, last_success: Option<chrono::DateTime<Ut
         heartbeat_at: Utc::now(),
         running: None,
         update: None,
+        retention: None,
         backups: Backups {
             last: Some(BackupRun {
                 id: Uuid::new_v4().to_string(),

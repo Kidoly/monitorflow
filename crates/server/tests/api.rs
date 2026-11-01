@@ -13,6 +13,7 @@ use monitorflow_server::api::session;
 use monitorflow_server::api::users::{self, CreateUserError};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::grpc::{Counters, PeerInfo, Registry};
+use monitorflow_server::live_settings::Live;
 use serde_json::json;
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -285,7 +286,7 @@ db_tests! {
         assert_eq!(session::prune(&pool, &settings).await.unwrap(), 1);
 
         let short = ApiSettings {
-            session_lifetime: std::time::Duration::from_millis(50),
+            live: Live::default().with_session_lifetime(std::time::Duration::from_millis(50)),
             ..ApiSettings::default()
         };
         let expired = session::create(&pool, id, &short).await.unwrap();

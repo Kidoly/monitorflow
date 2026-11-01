@@ -336,6 +336,7 @@ mod tests {
             running: None,
             update: None,
             backups: Default::default(),
+            retention: None,
         }
     }
 

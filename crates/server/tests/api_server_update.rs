@@ -146,6 +146,7 @@ impl Harness {
             }),
             update,
             backups,
+            retention: None,
         };
         std::fs::write(
             self.dir().join("status.json"),

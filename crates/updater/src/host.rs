@@ -22,6 +22,8 @@ pub const SERVICES: [&str; 2] = ["server", "web"];
 /// Recreated with them when the compose file has it: one from before
 /// ADR-0067 does not.
 pub const MIRROR_SERVICE: &str = "mirror";
+/// The services holding metrics and logs.
+const STORES: [&str; 2] = ["victoriametrics", "victorialogs"];
 /// Where the update volume is mounted in the server container too.
 pub const SERVER_UPDATE_DIR: &str = "/var/lib/monitorflow/update";
 
@@ -58,6 +60,9 @@ pub trait Host: Send + Sync {
     async fn restore_database(&self, dump: &Path) -> Result<(), HostError>;
     /// Starts every service and waits until they are healthy.
     async fn start_all(&self) -> Result<(), HostError>;
+    /// Recreates the metrics and log stores whose settings in `.env`
+    /// changed; their data stays in their volumes (ADR-0069).
+    async fn recreate_stores(&self) -> Result<(), HostError>;
 }
 
 /// The Docker CLI and its compose plugin, on the project of [`Project`].
@@ -371,6 +376,28 @@ impl Host for Compose {
         .await
         .map(drop)
     }
+
+    async fn recreate_stores(&self) -> Result<(), HostError> {
+        let timeout = self.timeout.as_secs().to_string();
+        let args = stores_up_args(&timeout);
+        self.output(true, &args).await.map(drop)
+    }
+}
+
+fn stores_up_args(timeout: &str) -> Vec<&str> {
+    let mut args = vec![
+        "up",
+        "--detach",
+        "--no-deps",
+        "--no-build",
+        "--pull",
+        "never",
+        "--wait",
+        "--wait-timeout",
+        timeout,
+    ];
+    args.extend(STORES);
+    args
 }
 
 /// What `replace-self` runs, from the one-off container.
@@ -407,6 +434,14 @@ mod tests {
         assert!(parse_version("bash: not found").is_err());
         let message = failure(&["up", "--detach", "--no-deps", "x"], b"a\n\nb\nc\n");
         assert_eq!(message, "docker up --detach --no-deps failed: a / b / c");
+    }
+
+    #[test]
+    fn only_the_stores_are_recreated_for_retention() {
+        let args = stores_up_args("300");
+        assert_eq!(&args[..3], ["up", "--detach", "--no-deps"]);
+        assert_eq!(&args[args.len() - 2..], STORES);
+        assert!(args.contains(&"--no-build"));
     }
 
     #[test]

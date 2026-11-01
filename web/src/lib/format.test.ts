@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatBytes,
+  formatDuration,
   formatOs,
   formatPercent,
   formatRelative,
@@ -9,6 +10,16 @@ import {
   formatValue,
   unitOf,
 } from "./format";
+
+describe("formatDuration", () => {
+  it("uses the largest unit that fits exactly", () => {
+    expect(formatDuration(43_200)).toBe("12 hours");
+    expect(formatDuration(1_800)).toBe("30 minutes");
+    expect(formatDuration(5_400)).toBe("90 minutes");
+    expect(formatDuration(86_400)).toBe("1 day");
+    expect(formatDuration(90)).toBe("90 seconds");
+  });
+});
 
 describe("format", () => {
   it("names operating systems", () => {

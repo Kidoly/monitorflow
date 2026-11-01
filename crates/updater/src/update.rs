@@ -12,8 +12,9 @@ use monitorflow_common::server_update::{
 use serde::{Deserialize, Serialize};
 
 use monitorflow_common::server_update::backup::BackupKind;
+use monitorflow_common::server_update::retention::{Retention, RetentionRequest};
 
-use crate::env_file::{EnvFile, Pins};
+use crate::env_file::{self, EnvFile, Pins};
 use crate::host::Host;
 use crate::source::Source;
 
@@ -63,6 +64,7 @@ impl Reporter {
                 running: None,
                 update,
                 backups,
+                retention: None,
             },
         }
     }
@@ -149,6 +151,70 @@ pub struct Updater<'a> {
 }
 
 impl Updater<'_> {
+    /// Reports the retention `.env` sets, keeping the last failure.
+    pub fn read_retention(&mut self) {
+        let error = self
+            .reporter
+            .status
+            .retention
+            .take()
+            .and_then(|retention| retention.error);
+        match self.env.retention() {
+            Ok((metrics, logs)) => {
+                self.reporter.status.retention = Some(Retention {
+                    metrics,
+                    logs,
+                    applying: false,
+                    error,
+                });
+            }
+            Err(e) => tracing::warn!(error = %e, "cannot read the retention in .env"),
+        }
+    }
+
+    /// Applies a change from the web interface (ADR-0069): the new values
+    /// in `.env`, then the stores recreated with them. A failure puts
+    /// `.env` and the stores back and is reported.
+    pub async fn set_retention(&mut self, request: &RetentionRequest) {
+        tracing::info!(id = %request.id, by = %request.requested_by, "retention change requested");
+        if let Some(retention) = &mut self.reporter.status.retention {
+            retention.applying = true;
+            retention.error = None;
+        }
+        self.reporter.write();
+        let result = self.apply_retention(request).await;
+        if let Err(error) = &result {
+            tracing::error!(%error, "retention change failed");
+        }
+        self.read_retention();
+        if let Some(retention) = &mut self.reporter.status.retention {
+            retention.error = result.err();
+        }
+        self.reporter.write();
+    }
+
+    async fn apply_retention(&self, request: &RetentionRequest) -> Result<(), String> {
+        let before = self.env.text().map_err(|e| e.to_string())?;
+        let mut text = before.clone();
+        for (key, days) in [
+            (env_file::UI_METRICS_RETENTION, request.metrics_days),
+            (env_file::UI_LOGS_RETENTION, request.logs_days),
+        ] {
+            if let Some(days) = days {
+                text = env_file::with_line(&text, key, &format!("{days}d"));
+            }
+        }
+        self.env.write(&text).map_err(|e| e.to_string())?;
+        let Err(error) = self.host.recreate_stores().await else {
+            return Ok(());
+        };
+        self.env.write(&before).map_err(|e| e.to_string())?;
+        if let Err(e) = self.host.recreate_stores().await {
+            tracing::error!(error = %e, "cannot restart the stores with the old retention");
+        }
+        Err(error.to_string())
+    }
+
     /// The running server, for the status.
     pub async fn running(&self) -> Option<Running> {
         let version = self.host.server_version().await.ok()?;

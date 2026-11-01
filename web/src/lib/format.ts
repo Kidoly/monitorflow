@@ -89,3 +89,12 @@ export function formatValue(value: number | null | undefined, unit: Unit): strin
       return formatNumber(value);
   }
 }
+
+/** A duration in plain words, in the largest unit it fits exactly: `12 hours`, `90 minutes`. */
+export function formatDuration(seconds: number): string {
+  const words = (count: number, unit: string) => `${count} ${unit}${count === 1 ? "" : "s"}`;
+  if (seconds >= 86_400 && seconds % 86_400 === 0) return words(seconds / 86_400, "day");
+  if (seconds >= 3_600 && seconds % 3_600 === 0) return words(seconds / 3_600, "hour");
+  if (seconds >= 60 && seconds % 60 === 0) return words(seconds / 60, "minute");
+  return words(seconds, "second");
+}

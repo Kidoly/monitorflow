@@ -82,7 +82,11 @@ fn cookie(settings: &ApiSettings, value: &str, max_age: u64) -> HeaderValue {
 
 /// `Set-Cookie` value that stores `token` for the session lifetime.
 pub fn set_cookie(settings: &ApiSettings, token: &SessionToken) -> HeaderValue {
-    cookie(settings, &token.0, settings.session_lifetime.as_secs())
+    cookie(
+        settings,
+        &token.0,
+        settings.live.session_lifetime().as_secs(),
+    )
 }
 
 /// `Set-Cookie` value that removes the session cookie.
@@ -116,7 +120,7 @@ pub async fn create(
     )
     .bind(token.hash())
     .bind(user_id)
-    .bind(settings.session_lifetime.as_secs_f64())
+    .bind(settings.live.session_lifetime().as_secs_f64())
     .execute(db)
     .await?;
     Ok(token)
@@ -138,7 +142,7 @@ pub async fn resolve(
          RETURNING s.user_id",
     )
     .bind(token.hash())
-    .bind(settings.session_idle_timeout.as_secs_f64())
+    .bind(settings.live.session_idle_timeout().as_secs_f64())
     .fetch_optional(pool)
     .await
 }
@@ -158,7 +162,7 @@ pub async fn prune(db: impl PgExecutor<'_>, settings: &ApiSettings) -> Result<u6
         "DELETE FROM sessions
          WHERE expires_at <= now() OR last_seen_at <= now() - make_interval(secs => $1)",
     )
-    .bind(settings.session_idle_timeout.as_secs_f64())
+    .bind(settings.live.session_idle_timeout().as_secs_f64())
     .execute(db)
     .await?;
     Ok(done.rows_affected())
