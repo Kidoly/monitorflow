@@ -599,7 +599,8 @@ db_tests! {
         let mirrors = fixture.mirrors.clone();
         let pass = tokio::spawn(async move { retention::prune(&mirrors).await });
         let waiting = || async {
-            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted")
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_locks l JOIN pg_database d ON d.oid = l.database
+                 WHERE l.locktype = 'advisory' AND NOT l.granted AND d.datname = current_database()")
                 .fetch_one(&pool)
                 .await
                 .unwrap()
@@ -754,7 +755,7 @@ db_tests! {
 
         // Back on their own sources, they let go.
         for server in [web.server, queued.server] {
-            sqlx::query("UPDATE commands SET state = 'failed' WHERE server_id = $1 AND state = 'queued'")
+            sqlx::query("UPDATE commands SET state = 'cancelled', finished_at = now() WHERE server_id = $1 AND state = 'queued'")
                 .bind(server)
                 .execute(&pool)
                 .await
