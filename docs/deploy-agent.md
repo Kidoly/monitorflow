@@ -180,7 +180,7 @@ The Windows agent is the same binary built for `x86_64-pc-windows-msvc`[^0047]. 
 The package[^0050] does every manual step below: binary, service, failure actions, folders and ACLs, and it registers the `MonitorFlowAgent` event source. In an elevated PowerShell, with a token from the web interface:
 
 ```powershell
-msiexec /i monitorflow-agent-0.1.0-x64.msi /qn /l*v install.log `
+msiexec /i monitorflow-agent-0.2.0-x64.msi /qn /l*v install.log `
   UPSTREAM_URL=https://relay.example.com:7443 ENROLLMENT_TOKEN=mfe1.…
 ```
 
@@ -193,7 +193,7 @@ msiexec /i monitorflow-agent-0.1.0-x64.msi /qn /l*v install.log `
 
 An invalid URL makes the install fail and roll back; `install.log` has the custom action `WriteAgentConfig` failing. The package is not signed yet, so Windows shows an unknown publisher.
 
-Installing a newer package upgrades in place: the service restarts with the new binary, and `agent.toml` and the identity are kept. `msiexec /x monitorflow-agent-0.1.0-x64.msi /qn` (or Apps and Features) removes the binary and the service and keeps `%ProgramData%\MonitorFlow`, so a reinstall keeps the same identity. When the service stops on an error, the Application event log has the reason, from the source `MonitorFlowAgent`.
+Installing a newer package upgrades in place: the service restarts with the new binary, and `agent.toml` and the identity are kept. `msiexec /x monitorflow-agent-0.2.0-x64.msi /qn` (or Apps and Features) removes the binary and the service and keeps `%ProgramData%\MonitorFlow`, so a reinstall keeps the same identity. When the service stops on an error, the Application event log has the reason, from the source `MonitorFlowAgent`.
 
 The package does not install the Windows Update service yet[^0050]: add it by hand as in [Windows Update service](#windows-update-service).
 
