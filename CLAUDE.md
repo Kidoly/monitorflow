@@ -34,7 +34,7 @@ sqlx checks queries at compile time against `DATABASE_URL` (see `.env.example`).
 - Logging with `tracing`; never `println!` outside tests and CLI output.
 - Async with `tokio`; no blocking calls on the runtime, use `spawn_blocking`.
 - All new code has unit tests. Network and database code has an integration test under `tests/`.
-- Every link is mTLS, including in development. One exception: the mirror content listeners of the server and relays, and relays' fetches from them, are plain HTTP (ADR-0030, ADR-0034), as they carry only public GPG-signed packages, read-only, without credentials or monitoring data. Never add any other plaintext listener.
+- Every link is mTLS, including in development. Two exceptions: the mirror content listeners of the server and relays, and relays' fetches from them, are plain HTTP (ADR-0030, ADR-0034), as they carry only public GPG-signed packages, read-only, without credentials or monitoring data; and port 80 of the web service, which serves only the ACME challenge, the `/trust/` page and the public CA certificate, and redirects the rest to HTTPS (ADR-0068). Never add any other plaintext listener or route.
 - Commands sent to agents are signed and risk-classified by rules; the AI's output is untrusted text.
 - Audit log is append-only. No UPDATE or DELETE on it, ever.
 - Secrets never go in the repository, logs, or AI context. Use the redaction helpers.

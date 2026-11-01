@@ -2,7 +2,8 @@
 # Installs, repairs, upgrades, restores or removes the MonitorFlow central
 # server on a Linux host (ADR-0065): Docker if missing, the compose files of
 # a signed release in /opt/monitorflow/deploy, its images by digest, and a
-# printed setup link. Nothing to clone and nothing to build:
+# printed setup link, with a browser certificate that needs no terminal
+# (ADR-0068). Nothing to clone and nothing to build:
 #
 #   curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install-server.sh | sudo sh
 #
@@ -173,20 +174,52 @@ primary_ip() {
     printf '%s' "$ip"
 }
 
+# Whether a public CA could ever issue for the name $1: not for an address,
+# a single label, or a name reserved for private networks, whatever it
+# resolves to here.
+acme_name() {
+    lower=$(printf '%s' "${1%.}" | tr '[:upper:]' '[:lower:]')
+    case $lower in
+        *[!0-9.]*) ;;
+        *) return 1 ;;
+    esac
+    case $lower in
+        *.*) ;;
+        *) return 1 ;;
+    esac
+    case $lower in
+        *.lan | *.local | *.localdomain | *.localhost | *.internal | *.intranet | *.home | *.corp \
+            | *.home.arpa | *.test | *.example | *.invalid) return 1 ;;
+    esac
+}
+
+# Whether an address of the name $1 is on the internet. Only a DNS view from
+# this host: whether port 80 answers from outside shows when ACME runs.
+resolves_publicly() {
+    for addr in $(getent ahosts "$1" 2>/dev/null | awk '{ print $1 }' | sort -u); do
+        case $addr in
+            *:*)
+                case $addr in 2* | 3*) return 0 ;; esac
+                ;;
+            0.* | 10.* | 127.* | 169.254.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].* \
+                | 100.6[4-9].* | 100.[7-9][0-9].* | 100.1[01][0-9].* | 100.12[0-7].*) ;;
+            *) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+public_name() { acme_name "$1" && resolves_publicly "$1"; }
+
 # The host's full name if it resolves to a public address, where Caddy can
 # get a certificate by ACME; else its IP address, which always works, with
 # a certificate from Caddy's own CA.
 guess_name() {
     fqdn=$(hostname -f 2>/dev/null) || fqdn=
-    addr=$(getent ahostsv4 "$fqdn" 2>/dev/null | awk 'NR == 1 { print $1 }') || addr=
-    case $fqdn in *.*) ;; *) addr= ;; esac
-    case $addr in
-        '' | 10.* | 127.* | 169.254.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].*) ;;
-        *)
-            printf '%s' "$fqdn"
-            return
-            ;;
-    esac
+    if public_name "$fqdn"; then
+        printf '%s' "$fqdn"
+        return
+    fi
     ip=$(primary_ip)
     if [ -n "$ip" ]; then printf '%s' "$ip"; else hostname; fi
 }
@@ -248,6 +281,38 @@ write_env() {
 env_get() {
     value=$(sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1)
     printf '%s' "${value:-$2}"
+}
+
+# Sets $1 to $2 in .env, which stays private.
+env_set() {
+    (
+        umask 077
+        { grep -v "^$1=" "$ENV_FILE" || true; printf '%s=%s\n' "$1" "$2"; } >"$ENV_FILE.new"
+    )
+    mv -f "$ENV_FILE.new" "$ENV_FILE"
+}
+
+# WEB_CERTIFICATE follows the name each time, so a name that gets public DNS
+# or open ports moves to ACME by running this again (ADR-0068). A name that
+# only stopped resolving keeps its setting: a DNS failure must not replace a
+# certificate that works. $1 is the setting for a server without one.
+choose_certificate() {
+    domain=$(env_get DOMAIN '')
+    if public_name "$domain"; then
+        certificate=acme
+    elif acme_name "$domain"; then
+        certificate=$(env_get WEB_CERTIFICATE "$1")
+    else
+        certificate=internal
+    fi
+    [ "$(env_get WEB_CERTIFICATE '')" = "$certificate" ] || env_set WEB_CERTIFICATE "$certificate"
+    if [ "$certificate" = acme ]; then
+        say "browser certificate: a public one by ACME, as $domain resolves publicly"
+    elif acme_name "$domain"; then
+        say "browser certificate: this server's own CA, as $domain does not resolve to a public address"
+    else
+        say "browser certificate: this server's own CA, as public CAs do not issue for $domain"
+    fi
 }
 
 # A message that names the port, before compose fails with less to say.
@@ -383,20 +448,63 @@ restore_backup() {
     "$DEPLOY/restore.sh" "$backup" || die "the restore failed; the updater says why above"
 }
 
+# Asks the web interface on this host; $1 is what curl needs to succeed.
+web_request() {
+    port=$(env_get HTTPS_PORT 443)
+    curl "$1" --max-time 5 --connect-to "::127.0.0.1:$port" -o /dev/null \
+        "https://$(env_get DOMAIN ''):$port/api/health/ready"
+}
+
 # Caddy may still be fetching its certificate when compose is done.
 wait_for_web() {
-    command -v curl >/dev/null 2>&1 || return 0
-    port=$(env_get HTTPS_PORT 443)
     waited=0
-    until curl -fsk --max-time 5 --connect-to "::127.0.0.1:$port" -o /dev/null \
-        "https://$(env_get DOMAIN ''):$port/api/health/ready"; do
-        if [ "$waited" -ge 60 ]; then
-            say "warning: the web interface does not answer on this host yet. A public DNS name needs ports 80 and 443 open to the internet for its certificate; see: cd $ROOT && docker compose -f deploy/docker-compose.yml logs web"
-            return
-        fi
+    until web_request -fsk; do
+        [ "$waited" -lt 120 ] || return 1
         sleep 3
         waited=$((waited + 3))
     done
+}
+
+# ACME fails if port 80 or 443 is closed to the internet, which nothing here
+# can see beforehand. A server with no certificate at all is what must not
+# happen: its own CA works now, and a later run tries ACME again. Once there
+# is a certificate, Caddy renews it and this does not apply.
+settle_certificate() {
+    command -v curl >/dev/null 2>&1 || return 0
+    wait_for_web && return
+    if [ "$(env_get WEB_CERTIFICATE '')" = acme ] && ! web_request -sk; then
+        say "warning: no certificate from a public CA after two minutes. Ports 80 and 443 must be open to the internet for that. Using this server's own CA for now; once they are open, run this installer again"
+        env_set WEB_CERTIFICATE internal
+        start
+        wait_for_web && return
+    fi
+    say "warning: the web interface does not answer on this host yet; see: cd $ROOT && docker compose -f deploy/docker-compose.yml logs web"
+}
+
+# The fingerprint of the internal CA, as the web service wrote it, which
+# happens just after Caddy creates the CA.
+ca_fingerprint() {
+    waited=0
+    until compose exec -T web cat /srv/monitorflow/ca-fingerprint 2>/dev/null; do
+        [ "$waited" -lt 15 ] || return 0
+        sleep 1
+        waited=$((waited + 1))
+    done
+}
+
+# With the internal CA: the page that makes browsers accept it, and what an
+# administrator compares that page with (ADR-0068).
+report_trust() {
+    say "open this page once on each computer, so that browsers trust this server:"
+    http_port=$(env_get HTTP_PORT 80)
+    trust=http://$domain/trust/
+    [ "$http_port" = 80 ] || trust=http://$domain:$http_port/trust/
+    printf '\n    %s\n\n' "$trust"
+    fingerprint=$(ca_fingerprint)
+    if [ -n "$fingerprint" ]; then
+        say "that page arrives unencrypted: it is genuine only if it shows this fingerprint (SHA-256):"
+        printf '\n    %s\n\n' "$fingerprint"
+    fi
 }
 
 report() {
@@ -407,14 +515,11 @@ report() {
     link=$(compose exec -T server monitorflow-server setup-link 2>/dev/null \
         | grep -o 'https://[^ "]*/setup/#[^ "]*' | tail -n 1) || link=
     say "MonitorFlow $(running_version) is running at $url"
+    [ "$(env_get WEB_CERTIFICATE '')" != internal ] || report_trust
     if [ -n "$link" ]; then
         say "create the administrator with this link, once, within 24 hours:"
         printf '\n    %s\n\n' "$link"
     fi
-    case $domain in
-        *[!0-9.]* | '') ;;
-        *) say "browsers warn about the certificate of an IP address, which comes from this server's own CA: continue past the warning" ;;
-    esac
     say "settings are in $ENV_FILE; run this installer again after a change, or to upgrade"
 }
 
@@ -511,6 +616,8 @@ else
     install_bundle
     write_env
 fi
+# Before this setting existed Caddy tried ACME for such a name by itself.
+if [ "$installed" = 1 ]; then choose_certificate acme; else choose_certificate internal; fi
 
 if [ "$mode" = restore ]; then
     [ -f "$DEPLOY/docker-compose.yml" ] || install_bundle
@@ -524,5 +631,5 @@ else
     pull_images
     start
 fi
-wait_for_web
+settle_certificate
 report

@@ -1,0 +1,124 @@
+<!doctype html>
+<!-- Filled in by deploy/docker/web-start.sh. One file on purpose: this page
+     can arrive over plain HTTP, where nothing of the application is served
+     (ADR-0068). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trust this MonitorFlow server</title>
+<style>
+:root{--bg:#fff;--text:#0a0a0a;--muted:#666;--border:#eaeaea;--hl:#f5f5f5;--ok-bg:#dff3e6;--ok:#0b5c27;--warn-bg:#fff0c2;--warn:#6d4e00}
+@media (prefers-color-scheme:dark){:root{--bg:#0a0a0a;--text:#ededed;--muted:#a1a1a1;--border:#262626;--hl:#171717;--ok-bg:#0f2e1c;--ok:#7ee2a0;--warn-bg:#3a2a08;--warn:#ffd37a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:680px;margin:0 auto;padding:40px 20px 64px}
+h1{font-size:24px;line-height:1.25;margin:0 0 8px}
+h2{font-size:16px;margin:32px 0 8px}
+p{margin:8px 0}
+a{color:inherit}
+code,.fingerprint{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.fingerprint{display:block;padding:10px 12px;border-radius:6px;background:var(--hl);font-size:13px;overflow-wrap:anywhere}
+.button{display:inline-block;padding:8px 16px;border:1px solid var(--text);border-radius:6px;background:var(--text);color:var(--bg);text-decoration:none;font-weight:600}
+.status{margin:16px 0;padding:10px 12px;border-radius:6px;background:var(--warn-bg);color:var(--warn)}
+.status.ok{background:var(--ok-bg);color:var(--ok)}
+details{border:1px solid var(--border);border-radius:6px;margin:8px 0;padding:0 12px}
+summary{cursor:pointer;padding:10px 0;font-weight:600}
+ol{margin:0 0 12px;padding-left:22px}
+li{margin:4px 0}
+.muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<h1>Trust this MonitorFlow server</h1>
+<p>No public certificate company vouches for the MonitorFlow server at <strong>@DOMAIN@</strong>, so it vouches for itself, with its own certificate authority (CA). Your device does not know that CA yet, which is why browsers show a warning. Do this once on each device and the warning goes away.</p>
+
+<p id="status" class="status" hidden></p>
+
+<h2>1. Download the certificate</h2>
+<p><a class="button" href="/trust/monitorflow-ca.crt" download="monitorflow-ca.crt">Download the certificate</a></p>
+<p>This file is public: it holds no password or secret. Your device will show it as <em>Caddy Local Authority</em>, the name of the web server MonitorFlow uses.</p>
+
+<h2>2. Check that it is the right one</h2>
+<p>Its fingerprint, a kind of checksum:</p>
+<p class="fingerprint">@FINGERPRINT@</p>
+<p>The person who installed MonitorFlow saw a fingerprint at the end of the installation. <strong>The two must be identical.</strong> If they differ, stop here and tell them: this page may have been altered on its way to you. It arrived without encryption, so until you compare, you are only trusting your network.</p>
+
+<h2>3. Install it on this device</h2>
+<details id="windows"><summary>Windows, with Chrome or Edge</summary>
+<ol>
+<li>Open the downloaded file and choose <strong>Install Certificate</strong>.</li>
+<li>Choose <strong>Current User</strong>, then <strong>Next</strong>.</li>
+<li>Choose <strong>Place all certificates in the following store</strong>, then <strong>Browse</strong>, and pick <strong>Trusted Root Certification Authorities</strong>.</li>
+<li>Choose <strong>Next</strong>, <strong>Finish</strong>, and <strong>Yes</strong> at the security warning.</li>
+</ol></details>
+<details id="mac"><summary>macOS, with Safari or Chrome</summary>
+<ol>
+<li>Open the downloaded file. Keychain Access opens and adds it; pick the <strong>login</strong> keychain if asked.</li>
+<li>In Keychain Access, double-click <strong>Caddy Local Authority</strong>.</li>
+<li>Open <strong>Trust</strong>, and set <strong>When using this certificate</strong> to <strong>Always Trust</strong>.</li>
+<li>Close the window and confirm with your password.</li>
+</ol></details>
+<details id="iphone"><summary>iPhone and iPad</summary>
+<ol>
+<li>In Safari, tap the download button above, then <strong>Allow</strong>.</li>
+<li>Open <strong>Settings</strong>, tap <strong>Profile Downloaded</strong>, then <strong>Install</strong>.</li>
+<li>Go to <strong>Settings › General › About › Certificate Trust Settings</strong> and turn on <strong>Caddy Local Authority</strong>.</li>
+</ol></details>
+<details id="android"><summary>Android</summary>
+<ol>
+<li>Tap the download button above.</li>
+<li>Open <strong>Settings</strong> and search for <strong>CA certificate</strong>.</li>
+<li>Choose <strong>Install anyway</strong>, then pick the downloaded file.</li>
+</ol></details>
+<details id="linux"><summary>Linux, with Chrome or Chromium</summary>
+<ol>
+<li>Open the browser's <strong>Settings › Privacy and security › Security › Manage certificates</strong>.</li>
+<li>Under the certificates you installed yourself, open <strong>Trusted Certificates</strong> (or <strong>Authorities</strong>) and choose <strong>Import</strong>.</li>
+<li>Pick the downloaded file and, if asked, tick <strong>Trust this certificate for identifying websites</strong>.</li>
+</ol></details>
+<details id="firefox"><summary>Firefox, on any system</summary>
+<p>Firefox keeps its own list, so do this even if you did the steps for your system.</p>
+<ol>
+<li>Click the download button above. Firefox asks whether to trust the certificate.</li>
+<li>Tick <strong>Trust this CA to identify websites</strong>, then <strong>OK</strong>.</li>
+</ol></details>
+
+<h2>4. Open MonitorFlow</h2>
+<p>Close and reopen your browser, then continue. There must be no warning this time.</p>
+<p><a class="button" href="@URL@/">Open MonitorFlow</a></p>
+<p>Setting up a new server? Open the one-time setup link that the installer printed, to create the administrator. Otherwise, sign in as usual.</p>
+<p class="muted">To be fully sure, click the padlock or the site settings icon next to the address, open the certificate details and select the top certificate of the chain. Its SHA-256 fingerprint must be the one the installer printed. Unlike this page, your browser cannot have been altered on the way.</p>
+</main>
+<script>
+// Opens the steps for this device. The others stay one click away.
+(function () {
+  var agent = navigator.userAgent;
+  var touchMac = /Macintosh/.test(agent) && navigator.maxTouchPoints > 1;
+  var id = /Firefox/.test(agent) ? "firefox"
+    : /iPhone|iPad/.test(agent) || touchMac ? "iphone"
+    : /Android/.test(agent) ? "android"
+    : /Windows/.test(agent) ? "windows"
+    : /Macintosh/.test(agent) ? "mac"
+    : /Linux|CrOS/.test(agent) ? "linux" : "";
+  if (id) document.getElementById(id).open = true;
+
+  // A request that fails is one the browser refused the certificate of.
+  var status = document.getElementById("status");
+  function check() {
+    fetch("@URL@/api/health/ready", { mode: "no-cors", cache: "no-store" }).then(function () {
+      status.hidden = false;
+      status.className = "status ok";
+      status.textContent = "This browser trusts the server. You can open MonitorFlow.";
+    }, function () {
+      status.hidden = false;
+      status.textContent = "This browser does not trust the server yet. This line changes by itself once it does.";
+      setTimeout(check, 3000);
+    });
+  }
+  check();
+})();
+</script>
+</body>
+</html>

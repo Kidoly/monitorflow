@@ -11,8 +11,17 @@
 #
 # Checks: tampered and foreign releases change nothing; the one-liner run
 # without a terminal; the setup link; a re-run; an upgrade through the
-# updater, from an install older than the mirror tools; --uninstall, with and without the data; MF_PUBLIC_NAME; --restore
-# on a new install, with the public name typed on a terminal.
+# updater, from an install older than the mirror tools; --uninstall, with and without the data; MF_PUBLIC_NAME; the browser certificate;
+# --restore on a new install, with the public name typed on a terminal.
+#
+# The browser certificate (ADR-0068): the internal CA is tested for real,
+# from the installer's output to a verified HTTPS request. No public name
+# exists here, so for ACME a Pebble server in the host's network namespace
+# plays the public CA, and validates port 80 of the host for real. Two
+# stand-ins, neither of them in production: the name resolves publicly only
+# through the host's /etc/hosts, and the test release's web image is the
+# release's with two lines more in its Caddyfile, the ACME directory and its
+# root. What this cannot show is a real public CA reaching a real host.
 #
 # The images must exist and trust MF_TEST_SIGNING_KEY, as for
 # deploy/update-test.sh, which CI runs first:
@@ -32,7 +41,7 @@ files=https://localhost:8444
 work=$(mktemp -d)
 
 cleanup() {
-    docker rm -f "$host-registry" "$host-files" >/dev/null 2>&1 || true
+    docker rm -f "$host-registry" "$host-files" "$host-pebble" >/dev/null 2>&1 || true
     docker rm -fv "$host" >/dev/null 2>&1 || true
     rm -rf "$work"
 }
@@ -160,6 +169,22 @@ mirror_runs() {
     [ "$(in_host docker inspect --format '{{.Config.Image}} {{.State.Health.Status}}' "$id")" = "$1 healthy" ] \
         && api mirrors/catalog | jq -e '.tools.available'
 }
+# The fingerprint in the output $1 of the installer.
+printed_fingerprint() { grep -Eo '([0-9A-F]{2}:){31}[0-9A-F]{2}' "$1" | tail -n 1; }
+# The fingerprint of the certificate $1 of the host, computed here.
+fingerprint_of() { in_host cat "$1" | openssl x509 -noout -fingerprint -sha256 | cut -d = -f 2; }
+# Downloads the CA from the page at the address $1 for the host's curl.
+trust_ca() { in_host curl -fs -o /tmp/ca.crt "http://$1/trust/monitorflow-ca.crt"; }
+# An HTTPS request for the name $1 on this host, verified against $2.
+verified() { in_host curl -fs --cacert "$2" --connect-to ::127.0.0.1 -o /dev/null "https://$1/api/health/ready"; }
+# Port 80 of the host sends /trust/ to HTTPS: no trust page.
+no_trust_page() {
+    [ "$(in_host curl -s -o /dev/null -w '%{http_code}' -H "host: $1" http://127.0.0.1/trust/)" = 308 ]
+}
+hsts() { in_host curl -fsI --cacert "$2" --connect-to ::127.0.0.1 "https://$1/" | grep -qi '^strict-transport-security'; }
+served_serial() {
+    in_host sh -c "openssl s_client -connect 127.0.0.1:443 -servername $1 </dev/null 2>/dev/null | openssl x509 -noout -serial"
+}
 # deploy/ as an install from before the mirror tools has it: a compose file
 # without them, and no pin for their image.
 older_install() {
@@ -167,12 +192,29 @@ older_install() {
     in_host cat /opt/monitorflow/deploy/docker-compose.yml | awk '
         /^  mirror:$/ && !seen { seen = 1; skip = 1 }
         skip { if (/restart: unless-stopped/) skip = 0; next }
-        !/mirrors:\/(var|serverdata)|MIRROR_P|:7480"/ { print }' \
+        !/mirrors:\/(var|serverdata)|MIRROR_P|:7480"|MONITORFLOW_CERTIFICATE|MONITORFLOW_HTTPS_PORT/ { print }' \
         | in_host sh -c 'cat >/tmp/old.yml && mv /tmp/old.yml /opt/monitorflow/deploy/docker-compose.yml'
-    in_host sed -i '/^MIRROR_IMAGE=/d' /opt/monitorflow/deploy/.env
+    in_host sed -i '/^MIRROR_IMAGE=/d; /^WEB_CERTIFICATE=/d' /opt/monitorflow/deploy/.env
     compose up -d --no-build --wait --wait-timeout 300 >/dev/null
 }
 report_cleanly() { grep -q 'is running at https://' "$1" && ! grep -q 'error:' "$1"; }
+
+echo "== which names can have a public certificate"
+in_host sh -c 'cat >>/etc/hosts' <<'EOF'
+203.0.113.10 monitor.example.com public.lan single
+10.1.2.3 private.example.com
+100.100.1.1 tailnet.example.com
+EOF
+functions=$(sed -n '/^acme_name()/,/^}/p; /^resolves_publicly()/,/^}/p; /^public_name()/p' "$repo/deploy/install-server.sh")
+# shellcheck disable=SC2016 # expanded on the host
+public_name() { in_host sh -c "$functions"$'\n''public_name "$1"' sh "$1"; }
+not_public_name() { ! public_name "$1"; }
+check "public address: public" public_name monitor.example.com
+check "whatever the case" public_name Monitor.Example.COM
+for name in 203.0.113.10 10.1.2.3 public.lan PUBLIC.LAN public.lan. single private.example.com \
+    tailnet.example.com unresolved.example.invalid; do
+    check "$name: not public" not_public_name "$name"
+done
 
 echo "== refused releases"
 check "a checksum mismatch is refused" refuses tampered
@@ -205,13 +247,27 @@ compose exec -T server monitorflow-server token create --role agent --id ci --si
 check "the page's command works in /opt/monitorflow" compose exec -T server monitorflow-server setup-link
 check "the mirror tools run after an install" mirror_runs "$base_mirror"
 serverdata_ca=$(ca)
+fingerprint=$(printed_fingerprint "$work/install.log")
+trust_ca "$guessed"
+check "it chose the internal CA and says why" grep -q "this server's own CA, as public CAs do not issue for $guessed" "$work/install.log"
+check "and remembers it" test "$(env_value WEB_CERTIFICATE)" = internal
+check "it prints the trust page" grep -q "http://$guessed/trust/" "$work/install.log"
+check "the trust page comes before the setup link" bash -c \
+    "grep -n -e /trust/ -e /setup/ '$work/install.log' | head -n 1 | grep -q /trust/"
+check "the printed fingerprint is the CA's" test "$(fingerprint_of /tmp/ca.crt)" = "$fingerprint"
+check "the page shows the same one" grep -qF "$fingerprint" <<<"$(in_host curl -fs "http://$guessed/trust/")"
+check "HTTPS verifies against the page's certificate" verified "$guessed" /tmp/ca.crt
+check "with no HSTS" bash -c "! docker exec $host curl -fsI --cacert /tmp/ca.crt https://$guessed/ | grep -qi strict-transport"
 
 echo "== second run"
 server_id=$(compose ps -q server)
+web_id=$(compose ps -q web)
 installer base | tee "$work/rerun.log"
 check "it reports the URL" report_cleanly "$work/rerun.log"
 check "it keeps the secrets" test "$(env_value POSTGRES_PASSWORD)" = "$password"
 check "the server was not recreated" test "$(compose ps -q server)" = "$server_id"
+check "nor the web interface" test "$(compose ps -q web)" = "$web_id"
+check "the same CA, the same fingerprint" test "$(printed_fingerprint "$work/rerun.log")" = "$fingerprint"
 check "no setup link once a user exists" bash -c "! grep -q /setup/ '$work/rerun.log'"
 check "the session and the data are kept" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
 
@@ -223,6 +279,8 @@ check "the server runs $NEXT" test "$(server_version)" = "monitorflow-server $NE
 check ".env pins the new images" test "$(env_value SERVER_IMAGE)" = "$next_server"
 check ".env pins the mirror image" test "$(env_value MIRROR_IMAGE)" = "$next_mirror"
 check "the mirror tools run after an upgrade" mirror_runs "$next_mirror"
+check "the certificate setting is added" test "$(env_value WEB_CERTIFICATE)" = internal
+check "the same CA, the same fingerprint" test "$(printed_fingerprint "$work/upgrade.log")" = "$fingerprint"
 check "it keeps the secrets" test "$(env_value POSTGRES_PASSWORD)" = "$password"
 check "the data is kept" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
 check "the updater was replaced" test "$(in_host docker inspect --format '{{.Config.Image}}' "$(compose ps -q updater)")" = "$next_updater"
@@ -261,7 +319,73 @@ VARS=MF_PUBLIC_NAME=monitor.internal installer next | tee "$work/named.log"
 check "it is the public name" test "$(env_value DOMAIN)" = monitor.internal
 check "agents can use it or the address" test "$(env_value SERVER_NAMES)" = "monitor.internal,$guessed"
 check "the setup link names it" grep -q 'https://monitor.internal/setup/#' "$work/named.log"
+check "an internal name gets the internal CA" test "$(env_value WEB_CERTIFICATE)" = internal
+check "without trying ACME" bash -c "! grep -q acme_client <<<\"\$1\"" sh "$(compose logs web)"
+trust_ca "$guessed"
+check "HTTPS verifies against the page's certificate" verified monitor.internal /tmp/ca.crt
 installer next --uninstall --purge >/dev/null
+
+echo "== ACME, against a local ACME server"
+public=monitor.example.com
+acme=$work/acme
+mkdir "$acme"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=pebble \
+    -addext "subjectAltName=IP:$guessed" -keyout "$acme/key.pem" -out "$acme/pebble.pem" 2>/dev/null
+printf '127.0.0.1 localhost %s\n' "$public" >"$acme/hosts"
+jq -n '{pebble: {listenAddress: "0.0.0.0:14000", managementListenAddress: "0.0.0.0:15000",
+    certificate: "/acme/pebble.pem", privateKey: "/acme/key.pem", httpPort: 80, tlsPort: 443}}' >"$acme/pebble.json"
+chmod -R a+rX "$acme"
+docker run -d --name "$host-pebble" --network "container:$host" -e PEBBLE_VA_NOSLEEP=1 -v "$acme:/acme:ro" \
+    -v "$acme/hosts:/etc/hosts:ro" ghcr.io/letsencrypt/pebble:2.10.1 -config /acme/pebble.json >/dev/null
+pebble_ready() { for _ in $(seq 30); do in_host curl -fsk -o /dev/null https://127.0.0.1:14000/dir && break; sleep 1; done; }
+pebble_ready
+docker run --rm --entrypoint cat monitorflow-web:e2e-base /etc/caddy/Caddyfile \
+    | sed "/default_sni/a\\\tacme_ca https://$guessed:14000/dir\n\tacme_ca_root /etc/caddy/pebble.pem" >"$acme/Caddyfile"
+printf 'FROM monitorflow-web:e2e-base\nCOPY Caddyfile pebble.pem /etc/caddy/\n' >"$acme/Dockerfile"
+DOCKER_BUILDKIT=0 docker build -q -t monitorflow-web:e2e-acme "$acme" >/dev/null
+release acme "$NEXT" "$next_server" "$(push monitorflow-web:e2e-acme monitorflow-web acme)" "$next_updater" "$next_mirror"
+chmod -R a+rX "$work/serve"
+# The root of what Pebble issues, new at each of its starts.
+acme_root() { in_host sh -c 'curl -fsk https://127.0.0.1:15000/roots/0 >/tmp/acme-root.pem'; }
+
+VARS=MF_PUBLIC_NAME=$public installer acme | tee "$work/acme.log"
+acme_root
+check "it reports the URL" report_cleanly "$work/acme.log"
+check "it chose ACME and says why" grep -q "a public one by ACME, as $public resolves publicly" "$work/acme.log"
+check "and remembers it" test "$(env_value WEB_CERTIFICATE)" = acme
+check "no trust page to open" bash -c "! grep -q -e /trust/ -e fingerprint '$work/acme.log'"
+check "the challenge came through port 80" grep -q 'served key authentication' <<<"$(compose logs web)"
+check "HTTPS verifies against the ACME CA" verified "$public" /tmp/acme-root.pem
+check "with HSTS" hsts "$public" /tmp/acme-root.pem
+check "port 80 has no trust page" no_trust_page "$public"
+serial=$(served_serial "$public")
+installer acme | tee "$work/acme-rerun.log"
+check "a re-run keeps the certificate" test "$(served_serial "$public")" = "$serial"
+in_host sh -c "grep -v $public /etc/hosts >/tmp/hosts && cat /tmp/hosts >/etc/hosts"
+installer acme | tee "$work/acme-dns.log"
+check "a name that stops resolving stays on ACME" test "$(env_value WEB_CERTIFICATE)" = acme
+check "with the same certificate" test "$(served_serial "$public")" = "$serial"
+in_host sh -c "echo '203.0.113.10 $public' >>/etc/hosts"
+installer acme --uninstall --purge >/dev/null
+
+echo "== ACME that fails"
+docker stop "$host-pebble" >/dev/null
+VARS=MF_PUBLIC_NAME=$public installer acme | tee "$work/acme-failed.log"
+check "it reports the URL" report_cleanly "$work/acme-failed.log"
+check "it says so" grep -q 'no certificate from a public CA' "$work/acme-failed.log"
+check "it falls back to the internal CA" test "$(env_value WEB_CERTIFICATE)" = internal
+trust_ca "$guessed"
+check "it prints the trust page" grep -q "http://$public/trust/" "$work/acme-failed.log"
+check "the printed fingerprint is the CA's" test "$(fingerprint_of /tmp/ca.crt)" = "$(printed_fingerprint "$work/acme-failed.log")"
+check "HTTPS verifies against the page's certificate" verified "$public" /tmp/ca.crt
+docker start "$host-pebble" >/dev/null
+pebble_ready
+installer acme | tee "$work/acme-again.log"
+acme_root
+check "the next run moves to ACME" test "$(env_value WEB_CERTIFICATE)" = acme
+check "and HTTPS verifies against the ACME CA" verified "$public" /tmp/acme-root.pem
+installer acme --uninstall --purge >/dev/null
+docker rm -f "$host-pebble" >/dev/null
 
 echo "== --restore on a new install, on a terminal"
 in_host curl -fsSL -o /root/install-server.sh "$files/base/install-server.sh"
@@ -275,7 +399,7 @@ check "the server runs $NEXT" test "$(server_version)" = "monitorflow-server $NE
 
 if [ "$failed" -ne 0 ]; then
     compose ps -a || true
-    compose logs --tail 40 server updater mirror || true
+    compose logs --tail 40 server web updater mirror || true
     exit 1
 fi
 echo "server install test passed"

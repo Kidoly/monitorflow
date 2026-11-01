@@ -3,8 +3,10 @@
 # forwards /api to the server's plain-HTTP API listener on loopback.
 #
 # Set MONITORFLOW_DOMAIN to the public name; Caddy gets a certificate for it
-# with ACME. With the default, localhost, Caddy issues one from its own local
-# CA instead (run `caddy trust` once to make browsers accept it).
+# with ACME. MONITORFLOW_CERTIFICATE=internal uses Caddy's own CA instead, for
+# names ACME cannot reach, and browsers trust that CA from the /trust/ page of
+# the web image (ADR-0068). With the default name, localhost, Caddy uses its CA
+# as well (run `caddy trust` once to make browsers accept it).
 #
 # /agent/* goes to the API listener too: the agent release files the server
 # holds, which hosts install from (ADR-0054).
@@ -14,14 +16,51 @@
 # deploy/docker-compose.yml, where the web image ships this file.
 #
 # Run: MONITORFLOW_DOMAIN=monitor.example.com caddy run --config deploy/caddy/Caddyfile
-
 {
 	# Clients connecting to an IP address send no SNI: give them the site's
 	# certificate, which Caddy could not pick otherwise.
 	default_sni {$MONITORFLOW_DOMAIN:localhost}
+	# Port 80 is the site at the end of this file, not a blanket redirect.
+	auto_https disable_redirects
+	# A container has no trust store that matters: the trust page does this.
+	skip_install_trust
+}
+
+(certificate-acme) {
+	# Only here: a browser that saw this header refuses plain HTTP for a year,
+	# so the trust page, and any way past a CA that changed (ADR-0068).
+	header Strict-Transport-Security "max-age=31536000"
+}
+
+(certificate-internal) {
+	tls internal
+}
+
+# What web-start.sh publishes when the CA is Caddy's, and nothing else: a page
+# and a public certificate. Without them these paths are like any other.
+(trust) {
+	redir /trust /trust/ 308
+
+	@trust {
+		path /trust/ /trust/monitorflow-ca.crt
+		file {
+			root /srv/monitorflow/public
+			try_files {path} {path}index.html
+		}
+	}
+	handle @trust {
+		root * /srv/monitorflow/public
+		header Cache-Control no-cache
+		# Lets a phone or Firefox offer to install it, not only to save it.
+		header /trust/monitorflow-ca.crt Content-Type application/x-x509-ca-cert
+		file_server
+	}
 }
 
 {$MONITORFLOW_DOMAIN:localhost} {
+	import certificate-{$MONITORFLOW_CERTIFICATE:acme}
+	import trust
+
 	encode zstd gzip
 
 	# The API sets its own cookies and errors; pass requests through as is.
@@ -49,7 +88,6 @@
 	}
 
 	header {
-		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
 		# Next's static export uses inline scripts, hence 'unsafe-inline'
@@ -61,4 +99,25 @@
 	# Hashed build assets never change; HTML must always be revalidated.
 	@assets path /_next/static/*
 	header @assets Cache-Control "public, max-age=31536000, immutable"
+}
+
+# The only plaintext listener of the web interface (ADR-0068). Caddy answers
+# ACME challenges before these routes; then the trust page; then HTTPS for all
+# the rest. Never add a route here: no session, API or setup path may be
+# served over plain HTTP.
+http:// {
+	import trust
+
+	handle {
+		redir https://{$MONITORFLOW_DOMAIN:localhost}:{$MONITORFLOW_HTTPS_PORT:443}{uri} 308
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		# The trust page is one file with its script and style inline; all it
+		# reaches is the HTTPS site, to tell when this browser trusts it.
+		Content-Security-Policy "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://{$MONITORFLOW_DOMAIN:localhost}:{$MONITORFLOW_HTTPS_PORT:443}; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+		-Server
+	}
 }
