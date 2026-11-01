@@ -39,7 +39,7 @@ Each release pushes `ghcr.io/kidoly/monitorflow-server`, `monitorflow-web`, `mon
 
 Servers install a release's images by those digests only, after checking the signature (ADR-0056); the version tags are for people. The `release` job publishes nothing when an image fails to build, so a release always has its images.
 
-GHCR creates each package as private on its first push. After the first release, make the three packages public, once: on GitHub, Packages, each `monitorflow-*` package, Package settings, Change visibility, Public. Until then servers cannot pull them without credentials, and their updates fail at the pull, with nothing changed.
+GHCR creates each package as private on its first push. After the first release, make the four packages public, once: on GitHub, Packages, each `monitorflow-*` package, Package settings, Change visibility, Public. Until then servers cannot pull them without credentials, and their updates fail at the pull, with nothing changed.
 
 A run without a tag builds the images for both platforms without pushing them, and its `images.json` names the amd64 builds, which no registry holds.
 
