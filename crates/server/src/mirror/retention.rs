@@ -264,7 +264,10 @@ async fn choose(mirrors: &Mirrors) -> Result<Vec<(Mirror, Vec<Snapshot>)>, Reten
     Ok(chosen)
 }
 
-pub(super) async fn stdout(mirrors: &Mirrors, invocation: Invocation) -> Result<String, RetentionError> {
+pub(super) async fn stdout(
+    mirrors: &Mirrors,
+    invocation: Invocation,
+) -> Result<String, RetentionError> {
     let output = mirrors.runner().run(&invocation).await?;
     Ok(output.check(&invocation)?.stdout)
 }

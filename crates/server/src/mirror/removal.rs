@@ -12,9 +12,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use monitorflow_common::mirror::{
-    read_removed, remove_mirror_dir, remove_retired, write_removed,
-};
+use monitorflow_common::mirror::{read_removed, remove_mirror_dir, remove_retired, write_removed};
 use monitorflow_common::proto::v1::ConfigureSources;
 use serde::Serialize;
 use serde_json::json;
@@ -121,12 +119,11 @@ pub async fn users(conn: &mut PgConnection, mirror: &Mirror) -> Result<Users, Re
         .filter(|(_, spec)| points_at(spec, &mirror.name))
         .map(|(server, _)| server)
         .collect();
-    let servers = sqlx::query_as(
-        "SELECT id, hostname FROM servers WHERE id = ANY($1) ORDER BY hostname, id",
-    )
-    .bind(ids.into_iter().collect::<Vec<_>>())
-    .fetch_all(&mut *conn)
-    .await?;
+    let servers =
+        sqlx::query_as("SELECT id, hostname FROM servers WHERE id = ANY($1) ORDER BY hostname, id")
+            .bind(ids.into_iter().collect::<Vec<_>>())
+            .fetch_all(&mut *conn)
+            .await?;
     Ok(Users { campaigns, servers })
 }
 
@@ -135,11 +132,7 @@ pub async fn users(conn: &mut PgConnection, mirror: &Mirror) -> Result<Users, Re
 /// it. Asking again changes nothing: the next pass retries. The row locks
 /// come first, as in retention: a campaign pinning a snapshot right now
 /// commits before [`users`] reads, or finds it no longer published.
-pub async fn request(
-    pool: &PgPool,
-    id: Uuid,
-    actor: (&str, &str),
-) -> Result<Mirror, RemovalError> {
+pub async fn request(pool: &PgPool, id: Uuid, actor: (&str, &str)) -> Result<Mirror, RemovalError> {
     let mut tx = pool.begin().await?;
     let mirror: Mirror = sqlx::query_as(&format!(
         "SELECT {} FROM mirrors WHERE id = $1 FOR UPDATE",
@@ -235,7 +228,11 @@ fn remove_dnf_work(layout: &Layout, mirror: &Mirror) -> std::io::Result<()> {
     };
     for entry in entries {
         let entry = entry?;
-        if !entry.file_name().to_str().is_some_and(|n| in_dnf_cache(n, mirror)) {
+        if !entry
+            .file_name()
+            .to_str()
+            .is_some_and(|n| in_dnf_cache(n, mirror))
+        {
             continue;
         }
         if entry.file_type()?.is_dir() {

@@ -10,10 +10,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use monitorflow_common::config::MirrorConfig;
+use monitorflow_common::mirror::{Family as IndexFamily, Index, RemovedMirror, Served};
 use monitorflow_common::proto::v1::configure_sources::{AptRepository, DnfRepository};
 use monitorflow_common::proto::v1::{ConfigureSources, RevertSources};
 use monitorflow_sensors::testing::write_executable;
 use monitorflow_server::commands::{CommandStore, NewCommand};
+use monitorflow_server::mirror::jobs::STOPPED;
+use monitorflow_server::mirror::removal::{self, RemovalError};
 use monitorflow_server::mirror::retention::{self, KEEP_SNAPSHOTS};
 use monitorflow_server::mirror::{
     store, CommandRunner, Family, JobKind, Layout, Mirror, MirrorLock, MirrorSpec, Mirrors,
@@ -50,6 +53,7 @@ name() { for a; do case "$a" in -*) ;; *) echo "$a"; return ;; esac; done; }
 case "$1 $2" in
 "mirror list") cat "$state/mirrors" ;;
 "mirror create") shift 2; name "$@" >> "$state/mirrors" ;;
+"mirror drop") shift 2; n=$(name "$@"); sed -i "\|^$n\$|d" "$state/mirrors"; : > "$state/mirror-holds" ;;
 "mirror update") v=$(cat "$state/version"); mkdir -p "@ROOT@/aptly/pool"
     head -c @BYTES@ /dev/zero | tr '\0' "$((v % 10))" > "@ROOT@/aptly/pool/pkg-$v.deb"
     echo "$v" > "$state/mirror-holds" ;;
@@ -83,6 +87,7 @@ esac
 
 /// What `reposync --delete` does: the working tree holds one version.
 const REPOSYNC: &str = r#"
+[ -e @STATE@/hang ] && { touch @STATE@/hanging; sleep 25; }
 for a; do case "$a" in --download-path=*) dir="${a#--download-path=}" ;; esac; done
 v=$(cat @STATE@/version); mkdir -p "$dir/Packages"; rm -f "$dir"/Packages/*
 head -c @BYTES@ /dev/zero | tr '\0' "$((v % 10))" > "$dir/Packages/a-$v-1.x86_64.rpm"
@@ -202,8 +207,12 @@ fn disk_use(dir: &Path) -> u64 {
 }
 
 async fn create(pool: &PgPool, family: Family) -> Mirror {
+    create_named(pool, "m", family).await
+}
+
+async fn create_named(pool: &PgPool, name: &str, family: Family) -> Mirror {
     let spec = MirrorSpec {
-        name: "m".into(),
+        name: name.into(),
         family,
         upstream_url: "https://up.example/os".into(),
         distribution: if family == Family::Apt {
@@ -457,12 +466,15 @@ db_tests! {
             .await
             .unwrap();
             sqlx::query(
-                "INSERT INTO campaign_snapshots (campaign_id, mirror_id, snapshot_id)
-                 VALUES ($1, $2, $3)",
+                "INSERT INTO campaign_snapshots
+                     (campaign_id, mirror_id, snapshot_id, mirror_name, snapshot_name)
+                 VALUES ($1, $2, $3, $4, $5)",
             )
             .bind(campaign)
             .bind(mirror.id)
             .bind(snapshot_id(snapshot).await.unwrap())
+            .bind(&mirror.name)
+            .bind(snapshot)
             .execute(&pool)
             .await
             .unwrap();
@@ -609,5 +621,312 @@ db_tests! {
         assert_eq!(pass.await.unwrap().unwrap(), 1);
         assert!(!fixture.served(&mirror, "s00").exists());
         assert!(MirrorLock::try_acquire(&pool, mirror.id).await.unwrap().is_some());
+    }
+
+    #[sqlx::test]
+    async fn deleting_an_apt_mirror_leaves_nothing_and_frees_the_disk(pool: PgPool) {
+        let f = Fixture::new(&pool);
+        let gone = create_named(&pool, "gone", Family::Apt).await;
+        let other = create_named(&pool, "gone-too-not", Family::Apt).await;
+        f.snapshots(&gone, 1..3).await;
+        f.snapshots(&other, 3..4).await;
+        let before = disk_use(&f.root);
+
+        removal::request(&pool, gone.id, ("user", "someone")).await.unwrap();
+        // Nothing new can use it from here on.
+        assert_eq!(store::by_name(&pool, "gone").await.unwrap(), None);
+        assert_eq!(
+            store::latest_published(&pool, gone.id).await.unwrap(),
+            None
+        );
+        retention::prune(&f.mirrors).await.unwrap();
+
+        assert_eq!(store::get(&pool, gone.id).await.unwrap(), None);
+        let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM mirror_runs WHERE mirror_id = $1")
+            .bind(gone.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(runs, 0);
+        assert!(states(&pool, &gone).await.is_empty());
+        let layout = f.mirrors.layout();
+        assert!(!layout.mirror_dir(&gone).exists());
+        for object in ["mirrors", "snapshots", "published"] {
+            let listed = std::fs::read_to_string(f.state.join(object)).unwrap();
+            assert!(!listed.contains("gone/") && !listed.contains("mf:gone:"), "{listed}");
+            assert!(listed.contains("gone-too-not"), "{listed}");
+        }
+        // Only the other mirror's package is left.
+        assert_eq!(std::fs::read_dir(f.root.join("aptly/pool")).unwrap().count(), 1);
+        assert!(f.served(&other, "s03").is_dir());
+        assert!(disk_use(&f.root) < before - PACKAGE_BYTES);
+
+        let actions: Vec<(String, String)> = sqlx::query_as(
+            "SELECT actor_kind, action FROM audit_log
+             WHERE target_kind = 'mirror' AND target_id = $1 AND action LIKE 'mirror.delete%'
+             ORDER BY id",
+        )
+        .bind(gone.id.to_string())
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            actions,
+            [
+                ("user".to_owned(), "mirror.delete".to_owned()),
+                ("system".to_owned(), "mirror.deleted".to_owned()),
+            ]
+        );
+    }
+
+    #[sqlx::test]
+    async fn relays_learn_of_a_deletion_until_the_name_is_published_again(pool: PgPool) {
+        let f = Fixture::new(&pool);
+        let mirror = create_named(&pool, "rocky", Family::Dnf).await;
+        f.snapshots(&mirror, 1..3).await;
+        let layout = f.mirrors.layout();
+        let served = Served {
+            apt: layout.served(Family::Apt),
+            dnf: layout.served(Family::Dnf),
+            public_key: layout.public_key(),
+            agent: f.root.join("agent"),
+        };
+        let cache = layout.dnf_cache();
+        std::fs::create_dir_all(cache.join("mf-rocky-0123456789abcdef")).unwrap();
+        std::fs::create_dir_all(cache.join("mf-rocky-9-0123456789abcdef")).unwrap();
+        assert_eq!(Index::scan(&served).unwrap().mirrors.len(), 1);
+        assert!(Index::scan(&served).unwrap().removed.is_empty());
+        let before = disk_use(&f.root);
+
+        removal::request(&pool, mirror.id, ("user", "someone")).await.unwrap();
+        retention::prune(&f.mirrors).await.unwrap();
+
+        let index = Index::scan(&served).unwrap();
+        assert!(index.mirrors.is_empty());
+        assert_eq!(
+            index.removed,
+            [RemovedMirror { family: IndexFamily::Dnf, name: "rocky".into() }]
+        );
+        assert!(!layout.dnf_work(&mirror).exists());
+        assert!(!cache.join("mf-rocky-0123456789abcdef").exists());
+        assert!(cache.join("mf-rocky-9-0123456789abcdef").exists(), "another mirror's");
+        assert!(disk_use(&f.root) < before - PACKAGE_BYTES);
+
+        // Added again: it is announced as removed until it is published.
+        let again = create_named(&pool, "rocky", Family::Dnf).await;
+        assert_eq!(Index::scan(&served).unwrap().removed.len(), 1);
+        f.snapshots(&again, 3..4).await;
+        let index = Index::scan(&served).unwrap();
+        assert!(index.removed.is_empty());
+        assert_eq!(index.mirrors[0].current, "s03");
+    }
+
+    #[sqlx::test]
+    async fn what_uses_a_mirror_refuses_its_deletion(pool: PgPool) {
+        let f = Fixture::new(&pool);
+        let mirror = create(&pool, Family::Apt).await;
+        f.snapshots(&mirror, 1..3).await;
+        let refused = |text: &str, error: RemovalError| match error {
+            RemovalError::InUse(sentence) => assert_eq!(sentence, text),
+            other => panic!("{other:?}"),
+        };
+
+        // A server following `current` holds no snapshot, but it uses the mirror.
+        let web = host(&pool, "web-01").await;
+        command(&pool, web.server, CONFIGURE, pointed_at("m", "current"), "succeeded", 0).await;
+        // A later failure changed nothing.
+        command(&pool, web.server, REVERT, RevertSources {}.encode_to_vec(), "failed", -5).await;
+        // A command on its way.
+        let queued = host(&pool, "web-02").await;
+        command(&pool, queued.server, CONFIGURE, pointed_at("m", "s01"), "queued", 0).await;
+        // Another mirror's user, and a removed server, do not count.
+        let elsewhere = host(&pool, "web-03").await;
+        command(&pool, elsewhere.server, CONFIGURE, pointed_at("m-updates", "current"), "succeeded", 0).await;
+        let removed = host(&pool, "old").await;
+        command(&pool, removed.server, CONFIGURE, pointed_at("m", "current"), "succeeded", 0).await;
+        sqlx::query("UPDATE servers SET revoked_at = now() WHERE id = $1")
+            .bind(removed.server)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let error = removal::request(&pool, mirror.id, ("user", "someone")).await.unwrap_err();
+        refused("m is still used by 2 servers (web-01, web-02)", error);
+
+        // Back on their own sources, they let go.
+        for server in [web.server, queued.server] {
+            sqlx::query("UPDATE commands SET state = 'failed' WHERE server_id = $1 AND state = 'queued'")
+                .bind(server)
+                .execute(&pool)
+                .await
+                .unwrap();
+            command(&pool, server, REVERT, RevertSources {}.encode_to_vec(), "succeeded", -10).await;
+        }
+
+        // A draft holds it like a running campaign, a finished one does not.
+        let customer: Uuid = sqlx::query_scalar("INSERT INTO customers (name) VALUES ('acme') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let mut campaigns = Vec::new();
+        for (name, state) in [("april", "draft"), ("march", "completed")] {
+            let campaign: Uuid = sqlx::query_scalar(
+                "INSERT INTO campaigns (customer_id, name, state, sources_mode, started_at, finished_at)
+                 VALUES ($1, $2, $3, 'replace', now(),
+                         CASE WHEN $3 = 'completed' THEN now() END) RETURNING id",
+            )
+            .bind(customer)
+            .bind(name)
+            .bind(state)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO campaign_snapshots
+                     (campaign_id, mirror_id, snapshot_id, mirror_name, snapshot_name)
+                 SELECT $1, mirror_id, id, 'm', name FROM mirror_snapshots
+                 WHERE mirror_id = $2 AND name = 's01'",
+            )
+            .bind(campaign)
+            .bind(mirror.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+            campaigns.push(campaign);
+        }
+        let error = removal::request(&pool, mirror.id, ("user", "someone")).await.unwrap_err();
+        refused("m is still used by 1 update campaign (april)", error);
+        assert!(store::get(&pool, mirror.id).await.unwrap().unwrap().deleting_at.is_none());
+        assert_eq!(left(&pool, &mirror).await, ["s01", "s02"]);
+
+        sqlx::query("UPDATE campaigns SET state = 'stopped', finished_at = now() WHERE id = $1")
+            .bind(campaigns[0])
+            .execute(&pool)
+            .await
+            .unwrap();
+        removal::request(&pool, mirror.id, ("user", "someone")).await.unwrap();
+        retention::prune(&f.mirrors).await.unwrap();
+        assert_eq!(store::get(&pool, mirror.id).await.unwrap(), None);
+
+        // A finished campaign still says what it pinned.
+        let pins = monitorflow_server::campaign::query::pins(&pool, &campaigns).await.unwrap();
+        assert_eq!(pins.len(), 2);
+        assert_eq!(pins[0].1.name, "m");
+        assert_eq!(pins[0].1.snapshot, "s01");
+    }
+
+    #[sqlx::test]
+    async fn a_source_command_that_cannot_be_read_refuses_a_deletion(pool: PgPool) {
+        let f = Fixture::new(&pool);
+        let mirror = create(&pool, Family::Apt).await;
+        f.snapshots(&mirror, 1..2).await;
+        let server = host(&pool, "web-01").await;
+        command(&pool, server.server, CONFIGURE, vec![0xff, 0xff], "succeeded", 0).await;
+        let error = removal::request(&pool, mirror.id, ("user", "someone")).await.unwrap_err();
+        assert!(matches!(error, RemovalError::Check(_)), "{error:?}");
+        assert!(store::get(&pool, mirror.id).await.unwrap().unwrap().deleting_at.is_none());
+    }
+
+    #[sqlx::test]
+    async fn deleting_stops_the_running_sync(pool: PgPool) {
+        let f = Fixture::new(&pool);
+        let mirror = create(&pool, Family::Dnf).await;
+        f.snapshots(&mirror, 1..2).await;
+        f.switch("hang", true);
+        let job = f.mirrors.begin(&mirror, JobKind::Sync, Trigger::Manual, None).await.unwrap();
+        let running = tokio::spawn(job.execute());
+        for _ in 0..500 {
+            if f.state.join("hanging").exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(f.state.join("hanging").exists());
+
+        removal::request(&pool, mirror.id, ("user", "someone")).await.unwrap();
+        // The pass waits for the job, which stops at once rather than
+        // after its tool's 25 seconds.
+        let started = std::time::Instant::now();
+        tokio::time::timeout(Duration::from_secs(15), retention::prune(&f.mirrors))
+            .await
+            .expect("the job stopped")
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(15));
+        assert_eq!(running.await.unwrap().error.as_deref(), Some(STOPPED));
+        assert_eq!(store::get(&pool, mirror.id).await.unwrap(), None);
+        assert!(!f.mirrors.layout().mirror_dir(&mirror).exists());
+        assert!(!f.mirrors.layout().dnf_work(&mirror).exists());
+    }
+
+    #[sqlx::test]
+    async fn no_job_starts_on_a_mirror_being_deleted(pool: PgPool) {
+        let f = Fixture::new(&pool);
+        let mirror = store::create(
+            &pool,
+            &MirrorSpec {
+                sync_interval_s: Some(900),
+                ..MirrorSpec {
+                    name: "m".into(),
+                    family: Family::Dnf,
+                    upstream_url: "https://up.example/os".into(),
+                    distribution: String::new(),
+                    components: Vec::new(),
+                    architectures: Vec::new(),
+                    sync_interval_s: None,
+                    auto_snapshot: false,
+                }
+            },
+            ("system", "test"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(store::due(&pool).await.unwrap().len(), 1);
+        removal::request(&pool, mirror.id, ("user", "someone")).await.unwrap();
+        assert!(store::due(&pool).await.unwrap().is_empty());
+        let refused = f.mirrors.begin(&mirror, JobKind::Sync, Trigger::Manual, None).await;
+        assert!(matches!(refused, Err(monitorflow_server::mirror::JobError::Going)));
+        // The lock is free again.
+        let lock = MirrorLock::try_acquire(&pool, mirror.id).await.unwrap();
+        lock.unwrap().release().await;
+    }
+
+    #[sqlx::test]
+    async fn a_failed_deletion_says_why_and_the_next_pass_finishes_it(pool: PgPool) {
+        let f = Fixture::new(&pool);
+        let mirror = create(&pool, Family::Apt).await;
+        f.snapshots(&mirror, 1..2).await;
+        removal::request(&pool, mirror.id, ("user", "someone")).await.unwrap();
+
+        f.switch("fail-db-cleanup", true);
+        retention::prune(&f.mirrors).await.unwrap();
+        let row = store::get(&pool, mirror.id).await.unwrap().unwrap();
+        assert!(row.delete_error.unwrap().contains("db cleanup failed"));
+        assert_eq!(row.deleting_at.is_some(), true);
+
+        // Asking again changes nothing and is not audited twice.
+        removal::request(&pool, mirror.id, ("user", "someone")).await.unwrap();
+        f.switch("fail-db-cleanup", false);
+        retention::prune(&f.mirrors).await.unwrap();
+        assert_eq!(store::get(&pool, mirror.id).await.unwrap(), None);
+        assert_eq!(std::fs::read_dir(f.root.join("aptly/pool")).unwrap().count(), 0);
+        let requests: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log WHERE action = 'mirror.delete' AND target_id = $1",
+        )
+        .bind(mirror.id.to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(requests, 1);
+    }
+
+    #[sqlx::test]
+    async fn retention_leaves_a_mirror_being_deleted_alone(pool: PgPool) {
+        let f = Fixture::new(&pool);
+        let mirror = create(&pool, Family::Apt).await;
+        f.snapshots(&mirror, 1..2).await;
+        removal::request(&pool, mirror.id, ("user", "someone")).await.unwrap();
+        // A pass cannot finish: the snapshots are not counted as pruned.
+        f.switch("fail-db-cleanup", true);
+        assert_eq!(retention::prune(&f.mirrors).await.unwrap(), 0);
+        assert!(states(&pool, &mirror).await.iter().all(|(_, s)| *s == SnapshotState::Pruning));
     }
 }

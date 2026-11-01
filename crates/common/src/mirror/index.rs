@@ -208,7 +208,11 @@ impl Index {
                     .into_iter()
                     .map(move |name| RemovedMirror { family, name })
             })
-            .filter(|r| !mirrors.iter().any(|m| m.family == r.family && m.name == r.name))
+            .filter(|r| {
+                !mirrors
+                    .iter()
+                    .any(|m| m.family == r.family && m.name == r.name)
+            })
             .collect();
         let agent_releases = crate::release::cached_versions(&served.agent)?
             .iter()
@@ -423,6 +427,67 @@ mod tests {
         assert!(Index::parse(old).unwrap().agent_releases.is_empty());
         let bad = br#"{"version":1,"mirrors":[],"agent_releases":["../x"]}"#;
         assert!(matches!(Index::parse(bad), Err(IndexError::AgentRelease)));
+    }
+
+    #[test]
+    fn removed_mirrors_are_listed_until_published_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let served = Served::under(dir.path());
+        let dnf = served.root(Family::Dnf);
+        std::fs::create_dir_all(dnf.join("rocky/s1")).unwrap();
+        write_removed(dnf, &["alma".into(), "rocky".into(), "Bad/name".into()]).unwrap();
+        // Hidden from the listener by its dot, and no mirror name.
+        assert_eq!(read_removed(dnf), ["alma", "rocky"]);
+
+        // `rocky` has no `current`, so it is not published.
+        let index = Index::scan(&served).unwrap();
+        let removed = |name: &str| RemovedMirror {
+            family: Family::Dnf,
+            name: name.into(),
+        };
+        assert_eq!(index.removed, [removed("alma"), removed("rocky")]);
+        let json = serde_json::to_vec(&index).unwrap();
+        assert_eq!(Index::parse(&json).unwrap(), index);
+
+        swap_current(&dnf.join("rocky"), "s1").unwrap();
+        assert_eq!(Index::scan(&served).unwrap().removed, [removed("alma")]);
+
+        // Absent from older indexes, and left out when empty.
+        let old = br#"{"version":1,"mirrors":[]}"#;
+        assert!(Index::parse(old).unwrap().removed.is_empty());
+        write_removed(dnf, &[]).unwrap();
+        let json = serde_json::to_string(&Index::scan(&served).unwrap()).unwrap();
+        assert!(!json.contains("removed"), "{json}");
+
+        for bad in ["../x", "a/b", ".hidden", ""] {
+            let json = format!(
+                r#"{{"version":1,"mirrors":[],"removed":[{{"family":"dnf","name":"{bad}"}}]}}"#
+            );
+            assert!(Index::parse(json.as_bytes()).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_mirror_directory_goes_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("rocky/s1/Packages")).unwrap();
+        std::fs::write(root.join("rocky/s1/Packages/a.rpm"), "rpm").unwrap();
+        // A crash left these behind.
+        std::fs::create_dir_all(root.join(".removing-rocky/s0")).unwrap();
+        std::fs::create_dir_all(root.join(".removing-alma/s0")).unwrap();
+        std::fs::create_dir_all(root.join("keep")).unwrap();
+
+        remove_mirror_dir(root, "rocky").unwrap();
+        remove_mirror_dir(root, "rocky").unwrap();
+        remove_mirror_dir(root, "never-here").unwrap();
+        assert!(!root.join("rocky").exists());
+        assert!(!root.join(".removing-rocky").exists());
+        remove_retired(root).unwrap();
+        let left: Vec<_> = std::fs::read_dir(root).unwrap().collect();
+        assert_eq!(left.len(), 1);
+        assert!(root.join("keep").is_dir());
+        remove_retired(&root.join("missing")).unwrap();
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! The relay's mirror sync loop (ADR-0034): the key and the index,
 //! narrowing to configured mirrors, retention, an upstream that is down,
-//! and a chained relay syncing from its parent's listener.
+//! a chained relay syncing from its parent's listener, and mirrors deleted
+//! upstream.
 
 mod mirror_fixture;
 
@@ -8,7 +9,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use mirror_fixture::Upstream;
-use monitorflow_common::mirror::{read_current, read_pinned, write_pinned, Family};
+use monitorflow_common::mirror::{
+    read_current, read_pinned, read_removed, write_pinned, write_removed, Family,
+};
 use monitorflow_relay::mirror::sync::Outcome;
 use monitorflow_relay::mirror::task::{MirrorSettings, MirrorTask};
 
@@ -235,4 +238,130 @@ async fn pinned_snapshots_are_copied_kept_and_passed_down() {
     let apt = parent_listener.served.root(Family::Apt).join("debian");
     assert!(!apt.join("s1").exists());
     assert!(read_pinned(&apt).is_empty());
+}
+
+/// Deletes `name` upstream as the server does: the name goes in `.removed`,
+/// then the tree goes.
+fn delete_upstream(up: &Upstream, family: Family, name: &str) {
+    let root = up.served.root(family);
+    let mut names = read_removed(root);
+    names.push(name.to_owned());
+    write_removed(root, &names).unwrap();
+    std::fs::remove_dir_all(root.join(name)).unwrap();
+}
+
+#[tokio::test]
+async fn a_mirror_deleted_upstream_goes_down_the_chain() {
+    let up = Upstream::start().await;
+    up.apt("debian", "s1", &[("a/a_1_all.deb", b"a1")]);
+    up.dnf("rocky", "s1", &[("a/a-1.rpm", b"r1")]);
+    up.dnf("alma", "s1", &[("a/a-1.rpm", b"r2")]);
+
+    let parent_dir = tempfile::tempdir().unwrap();
+    let parent_root = parent_dir.path().to_owned();
+    let mut parent = MirrorTask::new(settings(&up.base, &parent_root)).unwrap();
+    parent.cycle().await;
+    let parent_listener = Upstream::serve(parent_dir).await;
+    let child_dir = tempfile::tempdir().unwrap();
+    let mut child = MirrorTask::new(settings(&parent_listener.base, child_dir.path())).unwrap();
+    child.cycle().await;
+    assert!(child_dir.path().join("dnf/rocky/current").exists());
+
+    delete_upstream(&up, Family::Dnf, "rocky");
+    delete_upstream(&up, Family::Apt, "debian");
+
+    let report = parent.cycle().await;
+    assert_eq!(
+        report.removed,
+        [
+            (Family::Apt, "debian".to_owned()),
+            (Family::Dnf, "rocky".to_owned())
+        ]
+    );
+    assert!(!parent_root.join("dnf/rocky").exists());
+    assert!(!parent_root.join("apt/debian").exists());
+    assert_eq!(report.mirrors.len(), 1, "alma stays");
+
+    // The parent passes the news on: the child has it from its listener.
+    let report = child.cycle().await;
+    assert_eq!(report.removed.len(), 2);
+    assert!(!child_dir.path().join("dnf/rocky").exists());
+    assert!(!child_dir.path().join("apt/debian").exists());
+    assert_eq!(
+        read_current(&child_dir.path().join("dnf/alma")).as_deref(),
+        Some("s1")
+    );
+
+    // Nothing brings it back, and nothing is removed twice.
+    assert!(child.cycle().await.removed.is_empty());
+    assert!(!child_dir.path().join("dnf/rocky").exists());
+}
+
+#[tokio::test]
+async fn a_mirror_merely_missing_upstream_stays() {
+    // What a server restored from a backup looks like: its index lists
+    // nothing, and agents behind the relay still need the copy.
+    let up = Upstream::start().await;
+    up.dnf("rocky", "s1", &[("a/a-1.rpm", b"r1")]);
+    let dir = tempfile::tempdir().unwrap();
+    let mut task = MirrorTask::new(settings(&up.base, dir.path())).unwrap();
+    task.cycle().await;
+
+    std::fs::remove_dir_all(up.served.root(Family::Dnf).join("rocky")).unwrap();
+    let report = task.cycle().await;
+    assert!(report.index_error.is_none() && report.mirrors.is_empty());
+    assert!(report.removed.is_empty());
+    assert!(dir
+        .path()
+        .join("dnf/rocky/current/Packages/a/a-1.rpm")
+        .exists());
+}
+
+#[tokio::test]
+async fn a_deletion_reaches_a_relay_outside_its_narrowed_list_and_its_stale_staging() {
+    let up = Upstream::start().await;
+    up.dnf("rocky", "s1", &[("a/a-1.rpm", b"r1")]);
+    up.dnf("alma", "s1", &[("a/a-1.rpm", b"r2")]);
+    let dir = tempfile::tempdir().unwrap();
+    let mut wide = MirrorTask::new(settings(&up.base, dir.path())).unwrap();
+    wide.cycle().await;
+
+    let narrowed = MirrorSettings {
+        mirrors: vec!["alma".to_owned()],
+        ..settings(&up.base, dir.path())
+    };
+    let mut task = MirrorTask::new(narrowed).unwrap();
+    // A sync cut short by the deletion, as files vanish under it upstream.
+    std::fs::create_dir_all(dir.path().join("dnf/rocky/.sync-s2/repodata")).unwrap();
+    // A crash in the middle of an earlier removal.
+    std::fs::create_dir_all(dir.path().join("dnf/.removing-old/s1")).unwrap();
+
+    delete_upstream(&up, Family::Dnf, "rocky");
+    let report = task.cycle().await;
+    assert_eq!(report.removed, [(Family::Dnf, "rocky".to_owned())]);
+    assert!(!dir.path().join("dnf/rocky").exists());
+    assert!(!dir.path().join("dnf/.removing-old").exists());
+    assert_eq!(read_removed(&dir.path().join("dnf")), ["rocky"]);
+}
+
+#[tokio::test]
+async fn a_mirror_added_again_comes_back() {
+    let up = Upstream::start().await;
+    up.dnf("rocky", "s1", &[("a/a-1.rpm", b"r1")]);
+    let dir = tempfile::tempdir().unwrap();
+    let mut task = MirrorTask::new(settings(&up.base, dir.path())).unwrap();
+    task.cycle().await;
+    delete_upstream(&up, Family::Dnf, "rocky");
+    assert_eq!(task.cycle().await.removed.len(), 1);
+
+    // The server overrides `.removed` by publishing the name.
+    up.dnf("rocky", "s2", &[("a/a-1.rpm", b"r3")]);
+    let report = task.cycle().await;
+    assert!(report.removed.is_empty());
+    assert_eq!(report.mirrors.len(), 1);
+    assert!(read_removed(&dir.path().join("dnf")).is_empty());
+    assert_eq!(
+        std::fs::read(dir.path().join("dnf/rocky/current/Packages/a/a-1.rpm")).unwrap(),
+        b"r3"
+    );
 }

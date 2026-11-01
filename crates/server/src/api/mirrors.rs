@@ -325,10 +325,12 @@ pub async fn detail(
     let runs = store::runs(&state.pool, mirror.id, DETAIL_RUNS).await?;
     let mut conn = state.pool.acquire().await?;
     // Deleting checks again and refuses in doubt.
-    let used_by = removal::users(&mut conn, &mirror).await.unwrap_or_else(|error| {
-        tracing::warn!(%error, mirror = %mirror.name, "cannot tell what uses a mirror");
-        Users::default()
-    });
+    let used_by = removal::users(&mut conn, &mirror)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, mirror = %mirror.name, "cannot tell what uses a mirror");
+            Users::default()
+        });
     drop(conn);
     Ok(Json(MirrorDetail {
         mirror: view(&state, mirror).await?,
