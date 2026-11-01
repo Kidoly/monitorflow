@@ -565,6 +565,7 @@ use crate::relay_commands::RelayCommands;
 use crate::vm_query::VmQuery;
 
 pub use auth::{CurrentUser, Me};
+use error::is_missing_file;
 pub use error::ApiError;
 pub use roles::{Role, RoleGrant};
 pub use servers::{CertificateView, ServerDetail, ServerList, ServerView};

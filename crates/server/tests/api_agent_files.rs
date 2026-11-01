@@ -96,6 +96,14 @@ async fn serves_cached_release_files_without_a_session() {
             "{uri}"
         );
     }
+    // Missing from a listed release: answered here, for GET and HEAD alike,
+    // and not to be cached, as an import may add it.
+    for method in ["GET", "HEAD"] {
+        let uri = "/agent/latest/monitorflow-agent-windows-x86_64.msi";
+        let (status, cache_control, _) = get(&mirror, method, uri).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method}");
+        assert_eq!(cache_control.as_deref(), Some("no-cache"), "{method}");
+    }
     // Read-only: the CSRF guard or the router refuses anything else.
     for method in ["POST", "PUT", "DELETE"] {
         let (status, _, _) = get(&mirror, method, "/agent/latest/install.sh").await;

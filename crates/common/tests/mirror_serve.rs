@@ -3,9 +3,12 @@
 
 use std::path::Path;
 
+use axum::body::Body;
+use axum::http::Request;
 use monitorflow_common::mirror::{serve, swap_current, Family, Index, Served};
 use reqwest::{Method, StatusCode};
 use tokio::net::TcpListener;
+use tower::ServiceExt;
 
 fn write(path: &Path, text: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -96,4 +99,71 @@ async fn serves_the_layout_and_its_index() {
         .await
         .unwrap();
     assert_eq!(post.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+/// Through the router rather than a client: `reqwest` normalizes `..` and
+/// `%2E%2E` away, and the listener must refuse them as sent.
+async fn raw(served: &Served, method: &str, uri: &str) -> (u16, String) {
+    let response = serve::router(served)
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, String::from_utf8_lossy(&body).into_owned())
+}
+
+#[tokio::test]
+async fn missing_files_directories_and_bad_paths_are_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let served = Served::under(dir.path());
+    let apt = served.root(Family::Apt).join("debian");
+    write(&apt.join("s1/dists/bookworm/InRelease"), "signed release");
+    write(&dir.path().join("status.json"), "private");
+    // No public key and no `dnf` or `agent` directory: a relay before its
+    // first sync.
+
+    assert_eq!(
+        raw(&served, "GET", "/apt/debian/s1/dists/bookworm/InRelease").await,
+        (200, "signed release".to_owned())
+    );
+
+    for uri in [
+        // Missing, under roots that exist or not.
+        "/apt/debian/s1/missing",
+        "/apt/missing/s1/InRelease",
+        "/dnf/rocky/s1/repodata/repomd.xml",
+        "/agent/0.3.0/install.sh",
+        "/keys/monitorflow-archive.asc",
+        // A file used as a directory.
+        "/apt/debian/s1/dists/bookworm/InRelease/child",
+        "/apt/debian/s1/dists/bookworm/InRelease/",
+        // Directories: no listing and no redirect, with or without a slash.
+        "/apt/",
+        "/apt/debian",
+        "/apt/debian/",
+        "/apt/debian/s1/dists",
+        "/apt/debian/s1/dists/",
+        // Out of the root, plain and encoded.
+        "/apt/../status.json",
+        "/apt/%2E%2E/status.json",
+        "/apt/%2e%2e%2fstatus.json",
+        "/apt/debian/..%2f..%2f..%2fstatus.json",
+        "/apt/..%5cstatus.json",
+        "/apt/%2Fetc%2Fpasswd",
+    ] {
+        for method in ["GET", "HEAD"] {
+            let (status, body) = raw(&served, method, uri).await;
+            assert_eq!(status, 404, "{method} {uri}");
+            assert_eq!(body, "", "{method} {uri}");
+        }
+    }
 }
