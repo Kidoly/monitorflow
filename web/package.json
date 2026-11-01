@@ -33,5 +33,8 @@
     "jsdom": "30.1.3",
     "typescript": "5.9.3",
     "vitest": "5.0.5"
+  },
+  "overrides": {
+    "minimatch": "11.0.3"
   }
 }
