@@ -42,7 +42,7 @@ jobs:
       publish: ${{ steps.version.outputs.publish }}
       registry: ${{ steps.version.outputs.registry }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # A tag must name the version in Cargo.toml: v0.2.0 for 0.2.0.
       - id: version
         run: |
@@ -69,7 +69,7 @@ jobs:
       matrix:
         arch: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: build
         uses: ./.github/actions/build-agent-linux
         with:
@@ -93,7 +93,7 @@ jobs:
         run: |
           test "$(dist/monitorflow-agent-linux-x86_64 --version)" = "monitorflow-agent ${{ needs.version.outputs.version }}"
           test "$(dist/monitorflow-relay-linux-x86_64 --version)" = "monitorflow-relay ${{ needs.version.outputs.version }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-${{ matrix.arch }}
           path: dist/
@@ -104,10 +104,10 @@ jobs:
     env:
       SQLX_OFFLINE: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc --version
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: choco install protoc --no-progress -y
       - run: cargo build --release --locked -p monitorflow-agent
       - name: Build the MSI
@@ -117,7 +117,7 @@ jobs:
           New-Item -ItemType Directory dist | Out-Null
           Copy-Item target\release\monitorflow-agent.exe dist\monitorflow-agent-windows-x86_64.exe
           Copy-Item (Get-ChildItem target\msi\*.msi).FullName dist\monitorflow-agent-windows-x86_64.msi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-x86_64
           path: dist/
@@ -136,16 +136,16 @@ jobs:
         image: [server, web, updater, mirror]
         platform: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - if: needs.version.outputs.publish == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: deploy/docker/${{ matrix.image }}.Dockerfile
@@ -161,7 +161,7 @@ jobs:
       - run: |
           mkdir digests
           echo "${{ steps.build.outputs.digest }}" >"digests/${{ matrix.image }}-${{ matrix.platform }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: digest-${{ matrix.image }}-${{ matrix.platform }}
           path: digests/
@@ -177,14 +177,14 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - if: needs.version.outputs.publish == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: digests
           pattern: digest-*
@@ -212,7 +212,7 @@ jobs:
           jq -n --arg version "$VERSION" --argjson images "$images" \
             '{version: $version, images: $images}' >dist/images.json
           cat dist/images.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: images-json
           path: dist/
@@ -223,19 +223,19 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # The release files only, not the image digests.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           pattern: linux-*
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           pattern: windows-*
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           name: images-json
@@ -263,7 +263,7 @@ jobs:
           fi
           MF_SIGNING_KEY=$key deploy/release-files.sh dist
           rm -f "$key"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-files
           path: dist/

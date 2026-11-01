@@ -24,13 +24,13 @@ jobs:
     env:
       SQLX_OFFLINE: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: scripts/check-numbers.sh
       # Installs the toolchain and components named in rust-toolchain.toml,
       # the single source of truth for the Rust version.
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc --version
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -46,10 +46,10 @@ jobs:
     env:
       SQLX_OFFLINE: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc --version
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: choco install protoc --no-progress -y
       - run: cargo clippy -p monitorflow-agent -p monitorflow-sensors -p monitorflow-common --all-targets -- -D warnings
       - run: cargo test --no-fail-fast -p monitorflow-agent -p monitorflow-sensors -p monitorflow-common
@@ -69,19 +69,19 @@ jobs:
           deploy/windows/smoke-test.ps1 -Msi $msi -UpgradeMsi target\msi-upgrade\monitorflow-agent-255.0.0-x64.msi
       - name: Upload the MSI logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: msi-smoke-test-logs
           path: |
             ${{ runner.temp }}/monitorflow-msi
             C:/ProgramData/MonitorFlow/agent/logs
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: monitorflow-agent-windows-x86_64
           path: target/release/monitorflow-agent.exe
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: monitorflow-agent-windows-x86_64-msi
           path: target/msi/*.msi
@@ -92,8 +92,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: web/.nvmrc
           cache: npm
@@ -111,7 +111,7 @@ jobs:
   compose:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: deploy/smoke-test.sh
       # Both agents trust a throwaway release key, so the test can sign
       # releases they accept (ADR-0053).
@@ -166,7 +166,7 @@ jobs:
   server-update:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Throwaway release key
         run: |
           openssl genpkey -algorithm ed25519 -out "$RUNNER_TEMP/e2e-signing.pem"
@@ -182,5 +182,5 @@ jobs:
   shellcheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: shellcheck --version && shellcheck deploy/*.sh deploy/docker/*.sh deploy/mirror-fixture/*.sh scripts/*.sh
