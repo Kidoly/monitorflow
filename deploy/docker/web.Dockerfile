@@ -4,7 +4,7 @@
 # repository root:
 #   docker build -f deploy/docker/web.Dockerfile -t monitorflow-web .
 
-FROM node:22-trixie-slim AS build
+FROM node:26-trixie-slim AS build
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
