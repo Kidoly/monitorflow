@@ -1,7 +1,8 @@
-# ADR-0057: First-run setup in the browser
+# ADR-0071: First-run setup in the browser
 
 Date: 2026-10-28
 Status: accepted
+Note: numbered ADR-0057 until 2026-11-01, as in PR #175 and the migrations.
 
 ## Context
 

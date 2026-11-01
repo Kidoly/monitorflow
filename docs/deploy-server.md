@@ -41,7 +41,7 @@ On the first start the server creates its CA and its own certificate for `SERVER
 
 ## Setup link
 
-The installer prints the one-time setup link, and so does the server in its log while no user exists[^0057]. It works once and for 24 hours. To print a new one, run the installer again or, from `/opt/monitorflow`:
+The installer prints the one-time setup link, and so does the server in its log while no user exists[^0071]. It works once and for 24 hours. To print a new one, run the installer again or, from `/opt/monitorflow`:
 
 ```
 docker compose -f deploy/docker-compose.yml exec server monitorflow-server setup-link
@@ -190,7 +190,7 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 [^0053]: [ADR-0053: Signed releases and agent self-update](adr/0053-agent-self-update.md)
 [^0054]: [ADR-0054: Agent install sources](adr/0054-agent-install-sources.md)
 [^0056]: [ADR-0056: Updating the central server from the web interface](adr/0056-server-update.md)
-[^0057]: [ADR-0057: First-run setup in the browser](adr/0057-first-run-setup.md)
 [^0058]: [ADR-0058: Daily backups and restore](adr/0058-backups.md)
 [^0068]: [ADR-0068: Browser certificate without a terminal](adr/0068-browser-certificate.md)
 [^0069]: [ADR-0069: Settings page](adr/0069-settings-page.md)
+[^0071]: [ADR-0071: First-run setup in the browser](adr/0071-first-run-setup.md)

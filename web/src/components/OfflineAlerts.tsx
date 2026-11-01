@@ -27,7 +27,7 @@ interface Target {
 
 /**
  * Whether a site, server or relay opens an incident when it stops
- * reporting (ADR-0057), with Mute and Turn on for operators of its site.
+ * reporting (ADR-0072), with Mute and Turn on for operators of its site.
  */
 export function OfflineAlerts({ kind, target, onChanged }: { kind: Kind; target: Target; onChanged: () => void }) {
   const me = useMe();

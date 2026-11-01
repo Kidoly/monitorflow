@@ -1,4 +1,4 @@
-//! Reusable install keys (ADR-0058): one key per site enrolls many agents,
+//! Reusable install keys (ADR-0073): one key per site enrolls many agents,
 //! each under its own host name, until it expires, reaches its host limit
 //! or is revoked. A key has the token format of ADR-0007, so installers
 //! take it where they take a token; only the SHA-256 of its secret is

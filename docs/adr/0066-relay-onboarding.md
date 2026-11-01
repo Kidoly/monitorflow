@@ -11,7 +11,7 @@ ADR-0025 made one rule the basis of a relay's certificate: "the names come from 
 
 - **Posing as the server.** With the server's name on it, a relay could accept the agents of every site.
 - **Posing as another relay.** With the name of a relay of another site or customer, it could accept that relay's agents, if it can intercept their traffic.
-- **Speaking for agents.** ADR-0058 kept install keys away from relays for a reason that reporting names does not touch: a relay certificate may forge samples for all the agents of its site (architecture §4), so a leaked reusable key would hand that out.
+- **Speaking for agents.** ADR-0073 kept install keys away from relays for a reason that reporting names does not touch: a relay certificate may forge samples for all the agents of its site (architecture §4), so a leaked reusable key would hand that out.
 - **Wildcards and local names.** `*.example.com`, or `localhost`, would make one certificate match too much.
 
 Administrators can also be careless, and an administrator of one customer must not be able to reach into another's agents, even on purpose.
@@ -20,7 +20,7 @@ Administrators can also be careless, and an administrator of one customer must n
 
 **Relays › Add relay.** The administrator picks a site and gets the relay's one-line command (ADR-0055) at the public address setting. No ID, no names. The command is the only thing to paste.
 
-**An install key for one relay.** `install_keys` gets a `role`. A `relay` key has the format, storage, audit, revocation and limiter of ADR-0058, and takes the ID from the host name the same way, in the namespace of relays; a removed relay of the same name in the same site comes back (ADR-0062). The difference is its scope: one host, no approval, which a database constraint keeps so, and a day by default. Keys fit better than tokens because the ID must come from the host; a reusable key does not fit because relays are few and each one matters, so there is no use for it and the risk above.
+**An install key for one relay.** `install_keys` gets a `role`. A `relay` key has the format, storage, audit, revocation and limiter of ADR-0073, and takes the ID from the host name the same way, in the namespace of relays; a removed relay of the same name in the same site comes back (ADR-0062). The difference is its scope: one host, no approval, which a database constraint keeps so, and a day by default. Keys fit better than tokens because the ID must come from the host; a reusable key does not fit because relays are few and each one matters, so there is no use for it and the risk above.
 
 **The relay reports, and nothing else follows from it.** `EnrollRequest.server_names` (field 4, additive) carries the relay's host name, if it is a full DNS name, then the addresses of its interfaces without loopback, link-local and container bridges, then a bare host name. The server treats them as untrusted: it bounds them, drops what could not be used, and stores them in `relays.pending_names` with the address the request came from. They are not written on the certificate: the CA issues a client certificate as for an agent, with no name and no `serverAuth`.
 
@@ -41,7 +41,7 @@ Administrators can also be careless, and an administrator of one customer must n
 
 **Mirroring is a checkbox.** `MF_MIRROR=1` writes `[mirror] enabled = true`. With no `mirror.public_url`, the relay reports `http://<first name>:<mirror port>`, which is known once its names are confirmed. The interface drops its mirror URL field; `MF_MIRROR_URL` stays for scripts and for a URL that differs. Choosing what to mirror stays under Mirrors.
 
-**"Add servers behind this relay".** The relay's page offers it once the relay has names: one click creates a key of the site with the defaults of ADR-0058 and shows the command with the relay's first name in "Connect through a relay", still editable. Confirming on the relays page links to it.
+**"Add servers behind this relay".** The relay's page offers it once the relay has names: one click creates a key of the site with the defaults of ADR-0073 and shows the command with the relay's first name in "Connect through a relay", still editable. Confirming on the relays page links to it.
 
 ## Alternatives rejected
 

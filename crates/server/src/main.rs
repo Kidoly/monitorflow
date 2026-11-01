@@ -416,7 +416,7 @@ async fn main() -> anyhow::Result<()> {
         ca.clone(),
         DispatcherSettings::default(),
     );
-    // Servers and relays that stop reporting open incidents (ADR-0057).
+    // Servers and relays that stop reporting open incidents (ADR-0072).
     offline::spawn(pool.clone(), registry.clone(), OfflineSettings::default());
     // Relays' own self-updates (ADR-0055).
     let relay_commands = RelayCommands::spawn(pool.clone(), registry.clone(), ca.clone());
@@ -686,7 +686,7 @@ async fn user_command(pool: &sqlx::PgPool, command: UserCommand) -> anyhow::Resu
                 .await?;
             println!("created user {username} ({id}) with role {}", grant.role);
             // Like the setup page, so the first administrator can add
-            // servers at once (ADR-0057).
+            // servers at once (ADR-0071).
             if grant.role == Role::Administrator && scope == GrantScope::Global {
                 let mut tx = pool.begin().await?;
                 if setup::ensure_default_site(&mut tx, ("system", "cli"))
@@ -713,11 +713,11 @@ async fn user_command(pool: &sqlx::PgPool, command: UserCommand) -> anyhow::Resu
     Ok(())
 }
 
-/// While no user exists, logs a fresh setup link at startup (ADR-0057).
+/// While no user exists, logs a fresh setup link at startup (ADR-0071).
 async fn announce_setup(config: &ServerConfig, pool: &sqlx::PgPool) -> anyhow::Result<()> {
     if let Some(token) = setup::issue(pool).await.context("issuing the setup link")? {
         // The one secret the server logs: single use, short-lived, and it
-        // grants nothing once an account exists (ADR-0057).
+        // grants nothing once an account exists (ADR-0071).
         tracing::warn!(
             setup_url = %token.setup_url(&config.web_base_url()),
             valid_hours = setup::TTL.as_secs() / 3600,

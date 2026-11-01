@@ -151,7 +151,7 @@ struct Tenant {
     relay: Uuid,
     token: Uuid,
     /// An install key with a host, `pending-<name>`, waiting for approval
-    /// (ADR-0058).
+    /// (ADR-0073).
     install_key: Uuid,
     command: Uuid,
     /// A draft campaign of one wave with the server (ADR-0033).
@@ -435,7 +435,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(status, StatusCode::OK);
             assert!(!Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site));
         }
-        // First-run setup (ADR-0057): users exist, so it is done and says
+        // First-run setup (ADR-0071): users exist, so it is done and says
         // nothing else.
         ("GET", "/api/setup") => {
             let (status, body) = ctx.call(method, path, None).await;

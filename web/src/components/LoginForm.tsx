@@ -36,7 +36,7 @@ export function LoginForm() {
   const [setupPending, setSetupPending] = useState(false);
   const waiting = failure?.kind === "unreachable";
 
-  // Without any account, sign-in cannot work: say how to create the first one (ADR-0057).
+  // Without any account, sign-in cannot work: say how to create the first one (ADR-0071).
   useEffect(() => {
     const controller = new AbortController();
     api.setupStatus(controller.signal).then(

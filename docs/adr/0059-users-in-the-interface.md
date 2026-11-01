@@ -11,7 +11,7 @@ Users, grants and customers could only be created with `monitorflow-server user 
 
 **Who.** Administrators of everything (a global administrator grant) manage every account and create and rename customers. Customer and site administrators keep managing sites and install tokens, not people: users are not owned by a customer, so a customer administrator changing them could reach other customers.
 
-**One-time password links.** An administrator never types or sees anyone's password. Inviting a user creates the account with its first role and **no password**, and returns a link `<web origin>/welcome/#<secret>`. The person opening it chooses a password and is signed in. The same link, issued for an existing user, is the password reset. The mechanism is the setup link's (ADR-0057): a 256-bit secret in the URL fragment, only its SHA-256 stored in `password_links`, deleted as it is used so two requests cannot both succeed. Differences:
+**One-time password links.** An administrator never types or sees anyone's password. Inviting a user creates the account with its first role and **no password**, and returns a link `<web origin>/welcome/#<secret>`. The person opening it chooses a password and is signed in. The same link, issued for an existing user, is the password reset. The mechanism is the setup link's (ADR-0071): a 256-bit secret in the URL fragment, only its SHA-256 stored in `password_links`, deleted as it is used so two requests cannot both succeed. Differences:
 
 - one live link per user, replacing the previous one;
 - valid 7 days, so an invitation survives a weekend;

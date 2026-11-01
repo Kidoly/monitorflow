@@ -11,7 +11,7 @@ use crate::shutdown::Shutdown;
 
 /// Loads the agent identity, enrolling first when there is none. The host
 /// name goes with the request: an install key makes it the agent's ID
-/// (ADR-0058).
+/// (ADR-0073).
 pub async fn ensure_identity(
     config: &AgentConfig,
     backoff: Backoff,

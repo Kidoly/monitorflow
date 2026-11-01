@@ -1,5 +1,5 @@
 //! `PUT /api/{sites,servers,relays}/{id}/offline-alerts`: turns offline
-//! incidents (ADR-0057) off or back on for a site, a server or a relay.
+//! incidents (ADR-0072) off or back on for a site, a server or a relay.
 //! Operators of the site may; audited. Open incidents of a muted peer
 //! resolve at the next check.
 

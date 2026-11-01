@@ -1,4 +1,4 @@
-//! Reusable install keys from the web interface (ADR-0058): `POST
+//! Reusable install keys from the web interface (ADR-0073): `POST
 //! /api/install-keys` returns the key once with what the install commands
 //! need, `GET /api/install-keys` lists keys and the hosts waiting for
 //! approval, `DELETE /api/install-keys/{id}` revokes a key, and

@@ -19,7 +19,7 @@ cargo build --workspace                 # build everything
 cargo test --workspace                  # unit and integration tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
-scripts/check.sh                        # fmt + clippy + test, what CI runs
+scripts/check.sh                        # ADR and migration numbers + fmt + clippy + test, what CI runs
 docker compose -f deploy/docker-compose.dev.yml up -d   # postgres, victoriametrics, victorialogs
 ```
 

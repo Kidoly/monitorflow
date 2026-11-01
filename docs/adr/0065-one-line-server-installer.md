@@ -5,7 +5,7 @@ Status: accepted
 
 ## Context
 
-Installing the central server took 11 steps: Docker with two plugins, `git clone`, a `.env` by hand, and minutes of compiling (simplicity audit, B1). Since ADR-0056 a release has images, and since ADR-0057 and ADR-0058 the first administrator and restoring need no terminal work. What was missing is the path that joins them. The audit's target is two steps: one command, then one link.
+Installing the central server took 11 steps: Docker with two plugins, `git clone`, a `.env` by hand, and minutes of compiling (simplicity audit, B1). Since ADR-0056 a release has images, and since ADR-0071 and ADR-0058 the first administrator and restoring need no terminal work. What was missing is the path that joins them. The audit's target is two steps: one command, then one link.
 
 ## Decision
 
@@ -58,7 +58,7 @@ Rejected:
 
 - **A skip-verification or local-images flag for tests.** A flag that disables checks would exist in production too.
 - **`get.monitorflow.dev`.** Needs a domain nobody has chosen. A release asset has a stable URL and needs no host of ours.
-- **Asking for the admin password in the installer.** The setup link already does this in the browser (ADR-0057).
+- **Asking for the admin password in the installer.** The setup link already does this in the browser (ADR-0071).
 - **Pinning the new images in `.env` on an upgrade.** Simple, but it would skip the backup and the rollback.
 - **`--port` and similar options.** Ports are in `.env`; the installer names a taken port and the setting, and a re-run applies it.
 

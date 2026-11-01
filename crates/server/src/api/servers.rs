@@ -110,7 +110,7 @@ pub struct ServerView {
     pub via_relay: Option<String>,
     /// Threshold and offline incidents currently open on this server.
     pub open_incidents: i64,
-    /// Whether it opens an incident when offline (ADR-0057); muted when
+    /// Whether it opens an incident when offline (ADR-0072); muted when
     /// this or `site_offline_alerts` is `false`.
     pub offline_alerts: bool,
     pub site_offline_alerts: bool,

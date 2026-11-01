@@ -19,7 +19,7 @@
 //! | GET | `/api/health/ready` | none | `{"status": "ready"}`, or 503 `{"status": "unavailable"}` when PostgreSQL is unreachable |
 //! | POST | `/api/auth/login` | none | body `{"username", "password"}`; 200 [`Me`] and the session cookie, or 401 |
 //! | POST | `/api/auth/logout` | session | 204, clears the cookie |
-//! | GET | `/api/setup` | none | [`setup::Status`]: `{"pending"}`, true while no user exists (ADR-0057) |
+//! | GET | `/api/setup` | none | [`setup::Status`]: `{"pending"}`, true while no user exists (ADR-0071) |
 //! | POST | `/api/setup` | setup link | body `{"token", "username", "password"}`; 200 [`Me`] and the session cookie; 400 for a bad username or password, 410 for a used, replaced or expired link, 409 once a user exists |
 //! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}]}` |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
@@ -39,7 +39,7 @@
 //! | GET | `/api/tokens` | customer administrator | [`tokens::TokenList`]: enrollment tokens without secrets, see below |
 //! | POST | `/api/tokens` | customer administrator | body [`tokens::CreateRequest`]; 201 [`tokens::CreatedToken`], the only time the token is returned |
 //! | DELETE | `/api/tokens/{id}` | customer administrator | 204; 409 once used |
-//! | GET | `/api/install-keys` | customer administrator | [`install_keys::KeyList`]: install keys without secrets and the hosts waiting for approval (ADR-0058) |
+//! | GET | `/api/install-keys` | customer administrator | [`install_keys::KeyList`]: install keys without secrets and the hosts waiting for approval (ADR-0073) |
 //! | POST | `/api/install-keys` | customer administrator | body [`install_keys::CreateRequest`]; 201 [`install_keys::CreatedKey`], the only time the key is returned; audited |
 //! | DELETE | `/api/install-keys/{id}` | customer administrator | 204, the key enrolls no more hosts; 409 if already revoked; audited |
 //! | POST | `/api/pending-hosts/{peer_id}/approve`, `/api/pending-hosts/{peer_id}/reject` | customer administrator | 204; reject revokes the host's certificates; 409 once decided; audited |
@@ -57,7 +57,7 @@
 //! | POST | `/api/password-link` | password link | body `{"token"}`; [`user_admin::LinkOwner`] `{"username", "invited"}`; 410 for a dead link |
 //! | POST | `/api/password-link/use` | password link | body `{"token", "password"}`; 200 [`Me`] and the session cookie; 400 for a short password, 410 for a dead link |
 //! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled": true, false or null}`; [`sites::SiteView`]; audited (ADR-0055) |
-//! | PUT | `/api/sites/{id}/offline-alerts`, `/api/servers/{id}/offline-alerts`, `/api/relays/{id}/offline-alerts` | modify | body and answer `{"enabled": bool}`: offline incidents on or muted; audited (ADR-0057) |
+//! | PUT | `/api/sites/{id}/offline-alerts`, `/api/servers/{id}/offline-alerts`, `/api/relays/{id}/offline-alerts` | modify | body and answer `{"enabled": bool}`: offline incidents on or muted; audited (ADR-0072) |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | POST | `/api/relays/{id}/names` | customer administrator | body [`relays::ConfirmNames`]; 204; 409 if it is not waiting, or a name is the server's or another site's relay's; audited (ADR-0066) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
@@ -282,7 +282,7 @@
 //! Read-only: the threshold engine owns incidents and their events
 //! (ADR-0019), and the offline rule those with `metric` `offline`, where a
 //! relay's has `relay_id` set, `server_id` null and the relay's name as
-//! `hostname` (ADR-0057). `GET /api/incidents` takes optional `state` (`open`,
+//! `hostname` (ADR-0072). `GET /api/incidents` takes optional `state` (`open`,
 //! `resolved`), `severity` (`warning`, `critical`), `server_id`,
 //! `site_id`, `from` and `to` (RFC 3339; incidents active at some point of
 //! the range), `limit` (1 to 500, default 100) and `cursor`. Open incidents

@@ -13,7 +13,7 @@ import styles from "./LoginForm.module.css";
 type Failure = { kind: "link" } | { kind: "mismatch" } | { kind: "other"; message: string };
 
 /**
- * First-run setup (ADR-0057): the one-time link `/setup/#<token>` creates the
+ * First-run setup (ADR-0071): the one-time link `/setup/#<token>` creates the
  * first administrator. Once an account exists the page sends the user to
  * sign in.
  */
