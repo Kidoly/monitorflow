@@ -11,9 +11,6 @@
 //! The server checks the list against the relays' parents in its database,
 //! which bounds what a compromised relay can claim to its own subtree.
 
-// Every check here ends as the `Status` tonic returns by value.
-#![allow(clippy::result_large_err)]
-
 use std::fmt;
 
 use tonic::metadata::{MetadataMap, MetadataValue};

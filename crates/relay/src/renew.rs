@@ -12,9 +12,6 @@
 //! what is below them with `RenewForwarded`; the relay passes those on
 //! with the path of the call (ADR-0028), like streams.
 
-// Every check here ends as the `Status` tonic returns by value.
-#![allow(clippy::result_large_err)]
-
 use std::sync::Arc;
 use std::time::Duration;
 
