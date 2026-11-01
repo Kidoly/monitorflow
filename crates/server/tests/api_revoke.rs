@@ -247,7 +247,7 @@ db_tests! {
     #[sqlx::test]
     async fn rejecting_a_pending_host_revokes_its_certificates(pool: PgPool) {
         let h = Harness::new(&pool).await;
-        // agent-1 enrolled through a key that asks for approval (ADR-0058).
+        // agent-1 enrolled through a key that asks for approval (ADR-0073).
         sqlx::query("DELETE FROM servers").execute(&pool).await.unwrap();
         sqlx::query(
             "WITH k AS (INSERT INTO install_keys (key_hash, site_id, expires_at, require_approval)

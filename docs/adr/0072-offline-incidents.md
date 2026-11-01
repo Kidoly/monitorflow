@@ -1,7 +1,8 @@
-# ADR-0057: Offline incidents for servers and relays
+# ADR-0072: Offline incidents for servers and relays
 
 Date: 2026-10-28
 Status: accepted
+Note: numbered ADR-0057 until 2026-11-01, as in PR #176 and the migrations.
 
 ## Context
 

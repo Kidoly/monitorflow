@@ -60,7 +60,7 @@ pub struct EnrollSettings {
     pub token: Option<Secret>,
     pub enroll_url: String,
     /// The host's name: with an install key it becomes the peer's ID
-    /// (ADR-0058, ADR-0066).
+    /// (ADR-0073, ADR-0066).
     pub hostname: String,
     /// Names a relay found on its host, for an administrator to confirm
     /// (ADR-0066). Empty for agents.

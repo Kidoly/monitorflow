@@ -1,4 +1,4 @@
-//! Offline incidents (ADR-0057) against a real PostgreSQL: the rule opens
+//! Offline incidents (ADR-0072) against a real PostgreSQL: the rule opens
 //! one incident per silent server or relay, none for servers behind a
 //! down relay, resolves on reconnect and on mute, and the API lists them
 //! and sets the mutes. Ignored without `DATABASE_URL`.

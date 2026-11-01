@@ -61,7 +61,7 @@ export interface Server {
   open_incidents: number;
   /** Latest expiry among the agent's unrevoked certificates; null when it has none. */
   cert_not_after: string | null;
-  /** Offline incidents of this one (ADR-0057); absent is on. Muted when this or `site_offline_alerts` is false. */
+  /** Offline incidents of this one (ADR-0072); absent is on. Muted when this or `site_offline_alerts` is false. */
   offline_alerts?: boolean;
   site_offline_alerts?: boolean;
 }
@@ -263,7 +263,7 @@ export interface Site {
   agent_auto_update: boolean | null;
   /** Whether automatic updates apply to the site's agents and relays. */
   agent_auto_update_effective: boolean;
-  /** Whether its servers and relays open incidents when offline (ADR-0057); absent is on. */
+  /** Whether its servers and relays open incidents when offline (ADR-0072); absent is on. */
   offline_alerts?: boolean;
 }
 
@@ -386,7 +386,7 @@ export interface Relay {
   relay_version?: string | null;
   /** Its latest self-update. */
   last_update?: RelayCommand | null;
-  /** Offline incidents of this one (ADR-0057); absent is on. Muted when this or `site_offline_alerts` is false. */
+  /** Offline incidents of this one (ADR-0072); absent is on. Muted when this or `site_offline_alerts` is false. */
   offline_alerts?: boolean;
   site_offline_alerts?: boolean;
 }
@@ -467,14 +467,14 @@ export interface Incident {
   id: string;
   /** Null for a relay's offline incident. */
   server_id: string | null;
-  /** Set for a relay's offline incident (ADR-0057). */
+  /** Set for a relay's offline incident (ADR-0072). */
   relay_id?: string | null;
   /** The server's hostname, or the relay's name. */
   hostname: string;
   site_id: string;
   site_name: string;
   customer_id?: string;
-  /** `offline` when the server or relay stopped reporting (ADR-0057). */
+  /** `offline` when the server or relay stopped reporting (ADR-0072). */
   metric: string;
   /** `""` for a series without an instance. */
   instance: string;
@@ -908,7 +908,7 @@ export interface CreatedToken extends EnrollmentToken {
 
 export type InstallKeyState = "active" | "expired" | "used_up" | "revoked";
 
-/** One install key of `GET /api/install-keys`, never with its secret (ADR-0058). */
+/** One install key of `GET /api/install-keys`, never with its secret (ADR-0073). */
 export interface InstallKey {
   id: string;
   role: TokenRole;
@@ -1297,7 +1297,7 @@ export interface Health {
   status: "ok";
 }
 
-/** `GET /api/setup` (ADR-0057). */
+/** `GET /api/setup` (ADR-0071). */
 export interface SetupStatus {
   /** No account exists yet: sign-in cannot work until the setup link is used. */
   pending: boolean;
@@ -1656,7 +1656,7 @@ export const api = {
   usePasswordLink: (token: string, password: string) =>
     request<Me>("/api/password-link/use", { method: "POST", body: { token, password }, redirectOn401: false }),
 
-  /** Turns offline incidents on or off for a site, server or relay; operators of the site (ADR-0057). */
+  /** Turns offline incidents on or off for a site, server or relay; operators of the site (ADR-0072). */
   setOfflineAlerts: (kind: "sites" | "servers" | "relays", id: string, enabled: boolean) =>
     request<{ enabled: boolean }>(`/api/${kind}/${encodeURIComponent(id)}/offline-alerts`, {
       method: "PUT",
@@ -1741,7 +1741,7 @@ export const api = {
   /** Sends a test now; 200 with `ok` false and the reason when it does not go through. */
   testNotificationChannel: (id: string) =>
     request<ChannelTestResult>(`/api/notifications/channels/${encodeURIComponent(id)}/test`, { method: "POST" }),
-  /** Install keys and hosts waiting for approval, of the customers the user administers (ADR-0058). */
+  /** Install keys and hosts waiting for approval, of the customers the user administers (ADR-0073). */
   installKeys: (signal?: AbortSignal) => request<InstallKeyList>("/api/install-keys", { signal }),
 
   createInstallKey: (body: InstallKeyRequest) =>

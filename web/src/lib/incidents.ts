@@ -2,7 +2,7 @@ import type { Incident, IncidentQuery, IncidentSeverity, IncidentState, Threshol
 import { seriesTitle } from "./sensors";
 import { UUID } from "./uuid";
 
-/** Silence before a server or relay opens an offline incident, the server's built-in rule (ADR-0057). */
+/** Silence before a server or relay opens an offline incident, the server's built-in rule (ADR-0072). */
 export const OFFLINE_AFTER_S = 300;
 
 /** Whether the server or relay stopped reporting, rather than a threshold firing. */

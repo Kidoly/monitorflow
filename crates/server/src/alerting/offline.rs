@@ -1,4 +1,4 @@
-//! Offline incidents (ADR-0057): a built-in rule on the registry's
+//! Offline incidents (ADR-0072): a built-in rule on the registry's
 //! liveness. A server or relay that has had no stream for
 //! [`OfflineSettings::after`] opens a critical incident with the reserved
 //! metric [`OFFLINE_METRIC`]; it resolves when the peer reconnects or is

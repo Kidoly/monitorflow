@@ -13,7 +13,7 @@
 #                    relay. Required on the first install; port 7443 by
 #                    default. IPv6 addresses in brackets: [2001:db8::1]:7443
 #   MF_TOKEN         the token of the site's install command (agents,
-#                    ADR-0058) or a single-use token. Required on the first
+#                    ADR-0073) or a single-use token. Required on the first
 #                    install.
 #   MF_ENROLL        host:port (or https URL) where the central server takes
 #                    first connections. Defaults to MF_SERVER's host on port 7445;

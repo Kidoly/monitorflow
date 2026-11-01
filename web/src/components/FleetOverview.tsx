@@ -97,7 +97,7 @@ export function FleetOverview() {
 
   const now = updatedAt ?? new Date();
   const all = data ? toRows({ ...data, servers: data.servers.filter((s) => inScope(s, scope)) }, now) : [];
-  // Servers' and relays' incidents: a relay offline counts too (ADR-0057).
+  // Servers' and relays' incidents: a relay offline counts too (ADR-0072).
   const ids = new Set(all.map((r) => r.server.id));
   const incidents = data?.incidents?.filter((i) => (i.server_id ? ids.has(i.server_id) : inScope(i, scope))) ?? [];
   const online = all.filter((r) => r.server.status === "online").length;

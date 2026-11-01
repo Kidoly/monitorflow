@@ -114,7 +114,7 @@ fn incident_text(event: &str, details: &Value) -> String {
     if event == "incident.resolved" && str_at(incident, &["reason"]) == Some("revoked") {
         return format!("Resolved: {place} was removed");
     }
-    // Offline incidents (ADR-0057's 'offline' metric) read as a state.
+    // Offline incidents (ADR-0072's 'offline' metric) read as a state.
     if str_at(incident, &["metric"]) == Some("offline") {
         return match event {
             "incident.resolved" => match str_at(incident, &["reason"]) {

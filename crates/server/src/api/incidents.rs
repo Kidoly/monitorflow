@@ -1,5 +1,5 @@
 //! Incident endpoints (ADR-0017, ADR-0019): read-only views of what the
-//! threshold engine and the offline rule (ADR-0057) opened and resolved.
+//! threshold engine and the offline rule (ADR-0072) opened and resolved.
 //!
 //! They own `incidents` and `incident_events`; nothing here writes them. Every role reads the incidents of the servers of its sites, and
 //! an incident outside them is not found.
@@ -64,14 +64,14 @@ pub struct IncidentView {
     pub id: Uuid,
     /// `null` for a relay's offline incident.
     pub server_id: Option<Uuid>,
-    /// Set for a relay's offline incident only (ADR-0057).
+    /// Set for a relay's offline incident only (ADR-0072).
     pub relay_id: Option<Uuid>,
     /// The server's hostname, or the relay's name.
     pub hostname: String,
     pub site_id: Uuid,
     pub site_name: String,
     pub customer_id: Uuid,
-    /// `offline` when the server or relay stopped reporting (ADR-0057).
+    /// `offline` when the server or relay stopped reporting (ADR-0072).
     pub metric: String,
     /// `""` for a series without an instance.
     pub instance: String,

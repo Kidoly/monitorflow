@@ -40,7 +40,7 @@ pub enum EnrollError {
     Refused,
     #[error("invalid CSR")]
     InvalidCsr,
-    /// An install key needs the host name a peer sends (ADR-0058).
+    /// An install key needs the host name a peer sends (ADR-0073).
     #[error("no host name with an install key")]
     NoHostname,
     /// The install key's per-minute allowance is spent; not a failure of
@@ -127,7 +127,7 @@ impl Enroller {
     /// Consumes `token` and signs the key of `csr_pem` for the identity the
     /// token names. A single-use token is tried first; otherwise `token`
     /// may be an install key, which enrolls an agent under an ID made from
-    /// `hostname` (ADR-0058). A relay enrolled by a key, or by a token
+    /// `hostname` (ADR-0073). A relay enrolled by a key, or by a token
     /// without server names, waits for an administrator to confirm
     /// `reported`, and its certificate names nothing until then (ADR-0066).
     /// Token use, certificate record and

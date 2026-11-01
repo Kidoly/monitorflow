@@ -18,7 +18,7 @@ pub enum InventoryError {
     Revoked { role: PeerRole, id: String },
     #[error("{role} {id} is not enrolled")]
     NotEnrolled { role: PeerRole, id: String },
-    /// Enrolled by an install key that asks for approval (ADR-0058).
+    /// Enrolled by an install key that asks for approval (ADR-0073).
     #[error("waiting for an administrator to approve this host in the web interface")]
     AwaitingApproval,
     #[error("inventory database error: {0}")]

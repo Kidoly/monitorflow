@@ -1,4 +1,4 @@
-//! First-run setup (ADR-0057): the setup link creates the first
+//! First-run setup (ADR-0071): the setup link creates the first
 //! administrator and the default site once, and dies with the first user.
 //! Ignored without `DATABASE_URL`.
 

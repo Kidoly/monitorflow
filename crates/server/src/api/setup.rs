@@ -1,4 +1,4 @@
-//! First-run setup in the browser (ADR-0057). While no user exists, the
+//! First-run setup in the browser (ADR-0071). While no user exists, the
 //! server issues a one-time setup link, `<web_url>/setup/#<secret>`, and
 //! logs it. `POST /api/setup` with the secret creates the first global
 //! administrator, the default site `main` when there is no site yet, and

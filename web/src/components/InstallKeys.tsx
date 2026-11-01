@@ -29,7 +29,7 @@ export function hostsWords(key: Pick<InstallKey, "host_count" | "max_hosts">): s
   return key.max_hosts === null ? `${key.host_count} ${unit}` : `${key.host_count} of ${key.max_hosts} ${unit}`;
 }
 
-/** The form that creates a site's install command (ADR-0058); every field has a default. */
+/** The form that creates a site's install command (ADR-0073); every field has a default. */
 export function CreateInstallKey({
   sites,
   username,

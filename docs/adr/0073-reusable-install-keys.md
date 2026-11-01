@@ -1,7 +1,8 @@
-# ADR-0058: Reusable install keys per site
+# ADR-0073: Reusable install keys per site
 
 Date: 2026-10-29
 Status: accepted; relays use install keys too since ADR-0066
+Note: numbered ADR-0058 until 2026-11-01, as in PR #180 and the migrations.
 
 ## Context
 

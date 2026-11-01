@@ -989,7 +989,7 @@ pub struct ServerConfig {
     /// environment override is a comma-separated list.
     pub server_names: Vec<String>,
     /// https URL browsers open the web interface at, like
-    /// `https://monitor.example.net`, for the setup link (ADR-0057).
+    /// `https://monitor.example.net`, for the setup link (ADR-0071).
     /// Unset, `https://` and the first of `server_names`.
     pub web_url: Option<String>,
     pub ingest: IngestConfig,

@@ -22,7 +22,7 @@ The command works on any Linux distribution with systemd, x86_64 or aarch64. The
 
 The agent monitors any distribution[^0063]. Updates and package sources need the Debian or RHEL family with apt or dnf present; on any other server the server page says "Package updates aren't available on this system; monitoring works normally", and campaigns leave the server out.
 
-One command serves every server of a site, for 30 days by default[^0058]. Each server connects under its own name, made unique with `-2`, `-3`… when another server already has it. When the command was created with "Approve new servers before they appear", new servers wait under Waiting for approval on the same page until an administrator approves them. Revoking the command stops new installs; servers already installed keep working. For one server under a name you choose, and for relays, single-use tokens remain under Advanced.
+One command serves every server of a site, for 30 days by default[^0073]. Each server connects under its own name, made unique with `-2`, `-3`… when another server already has it. When the command was created with "Approve new servers before they appear", new servers wait under Waiting for approval on the same page until an administrator approves them. Revoking the command stops new installs; servers already installed keep working. For one server under a name you choose, and for relays, single-use tokens remain under Advanced.
 
 | Variable | Meaning |
 | --- | --- |
@@ -282,6 +282,6 @@ There are no sudo rules on Windows. The only privileged part is the update servi
 [^0053]: [ADR-0053: Signed releases and agent self-update](adr/0053-agent-self-update.md)
 [^0054]: [ADR-0054: Agent install sources](adr/0054-agent-install-sources.md)
 [^0055]: [ADR-0055: Automatic agent and relay updates](adr/0055-automatic-updates.md)
-[^0058]: [ADR-0058: Reusable install keys per site](adr/0058-reusable-install-keys.md)
 [^0063]: [ADR-0063: Agent on any Linux](adr/0063-agent-on-any-linux.md)
 [^0064]: [ADR-0064: AI setup in the interface](adr/0064-ai-setup-in-the-interface.md)
+[^0073]: [ADR-0073: Reusable install keys per site](adr/0073-reusable-install-keys.md)

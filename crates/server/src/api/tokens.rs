@@ -318,7 +318,7 @@ async fn refuse_removed_elsewhere(
 
 /// `GET /api/tokens`: tokens of the sites whose customer the user
 /// administers, newest first, without the records of install key
-/// enrollments (ADR-0058). 403 without such a grant.
+/// enrollments (ADR-0073). 403 without such a grant.
 pub async fn list(
     State(state): State<ApiState>,
     user: CurrentUser,

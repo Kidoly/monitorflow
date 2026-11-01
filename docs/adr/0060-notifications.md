@@ -7,7 +7,7 @@ Status: accepted; `update.available` added by ADR-0061
 
 `docs/product.md` listed alert notification channels (email, webhook, chat) as a non-goal of the first version, and the threshold engine kept a `Notifier` trait whose only implementation logs. An incident therefore only shows while someone has the web interface open (simplicity audit, B4). For a monitoring product, being told is the expectation a novice takes for granted, and the audit's walk shows it is the first thing missing once the fleet is installed.
 
-Incidents are not the only thing worth a message: a command the AI proposed waits for approval until its deadline, and a failed update or a halted rollout stops progress without anyone looking. Incidents are also opened from more than one place: the threshold engine and the offline check (ADR-0057), maybe more later. Backups, the newest thing that can fail unseen (ADR-0058, backups), report only in the updater's `status.json`.
+Incidents are not the only thing worth a message: a command the AI proposed waits for approval until its deadline, and a failed update or a halted rollout stops progress without anyone looking. Incidents are also opened from more than one place: the threshold engine and the offline check (ADR-0072), maybe more later. Backups, the newest thing that can fail unseen (ADR-0058, backups), report only in the updater's `status.json`.
 
 ## Decision
 
@@ -63,7 +63,7 @@ The body, version 1 (fields are only ever added):
 }
 ```
 
-`text` is the event in one line, which Slack and Mattermost incoming webhooks show as is. `url` opens the page that shows the event, under the web interface's URL (`web_url`, ADR-0057). Each event adds one object:
+`text` is the event in one line, which Slack and Mattermost incoming webhooks show as is. `url` opens the page that shows the event, under the web interface's URL (`web_url`, ADR-0071). Each event adds one object:
 
 - `incident`: as above; `severity` is the new one, or the last one when resolved. `reason` is why it changed when the writer says so, like `back_online`, `revoked` or `muted` for a resolved offline incident, `null` otherwise.
 - `approval`: `id`, `remediation_incident_id`, `incident_id`, `metric`, `command`, `tier` (`low_impact` or `high_impact`). The command is the AI's proposal: untrusted text.

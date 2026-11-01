@@ -55,7 +55,7 @@ const ROLE_WORDS: Record<TokenRole, string> = { agent: "Agent", relay: "Relay" }
 
 /**
  * `/admin/tokens/`: the site's reusable install command first, with hosts
- * waiting for approval (ADR-0058); single-use tokens under Advanced
+ * waiting for approval (ADR-0073); single-use tokens under Advanced
  * (ADR-0029).
  */
 export function TokensAdminPage() {
@@ -603,7 +603,7 @@ function SourceRadios({
 
 /**
  * Ready-to-paste install commands for an agent token or install key
- * (ADR-0052, ADR-0058), from a chosen source (ADR-0054), through `initialRelay` if given.
+ * (ADR-0052, ADR-0073), from a chosen source (ADR-0054), through `initialRelay` if given.
  */
 function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTarget; relay?: string }) {
   const titleId = useId();

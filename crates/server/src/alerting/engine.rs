@@ -238,7 +238,7 @@ struct Tracked {
 }
 
 // An agent that stops reporting keeps its series' open incidents
-// (ADR-0017, no data); `offline` opens one for the silence (ADR-0057).
+// (ADR-0017, no data); `offline` opens one for the silence (ADR-0072).
 struct Engine {
     settings: EngineSettings,
     /// Thresholds per agent ID; `None` for peers without a `servers` row.

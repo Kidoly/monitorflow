@@ -32,7 +32,7 @@ pub struct SiteView {
     /// server-wide setting (ADR-0055).
     pub agent_auto_update: Option<bool>,
     /// Whether servers and relays of the site open incidents when offline
-    /// (ADR-0057).
+    /// (ADR-0072).
     pub offline_alerts: bool,
     /// Whether automatic updates apply to the site, override or not.
     #[sqlx(skip)]
