@@ -1594,6 +1594,96 @@ export type NotificationChannelRequest = (
   site_id: string | null;
 };
 
+/** Why the person on call cannot be told: that period is a gap (ADR-0081). */
+export type OnCallProblem = "nobody" | "removed" | "disabled" | "no_access" | "no_contact" | "no_mail_server";
+
+/** One period with one person on call. */
+export interface OnCallTurn {
+  starts_at: string;
+  ends_at: string;
+  /** Null for a removed user's turn or a schedule without people. */
+  user_id: string | null;
+  username: string | null;
+  /** Set when someone covers instead of the rotation. */
+  override_id: string | null;
+  problem: OnCallProblem | null;
+}
+
+export interface OnCallOverride {
+  id: string;
+  user_id: string;
+  username: string | null;
+  starts_at: string;
+  ends_at: string;
+}
+
+/** A schedule of `GET /api/on-call/schedules`. */
+export interface OnCallSchedule {
+  id: string;
+  name: string;
+  /** The customer it covers, or the site's; null with `site_id` too: everything. */
+  customer_id: string | null;
+  customer_name: string | null;
+  site_id: string | null;
+  site_name: string | null;
+  /** An IANA name, like Europe/Paris: hand-offs happen in it. */
+  time_zone: string;
+  rotation: "daily" | "weekly";
+  /** "09:00", in `time_zone`. */
+  handoff_time: string;
+  /** 1 for Monday to 7 for Sunday; null when daily. */
+  handoff_day: number | null;
+  members: { user_id: string | null; username: string | null; problem: OnCallProblem | null }[];
+  overrides: OnCallOverride[];
+  now: OnCallTurn | null;
+  next: OnCallTurn | null;
+  /** From now to four weeks ahead. */
+  turns: OnCallTurn[];
+  /** Who is told during a gap; empty when nobody can be. Empty too for members who do not manage it. */
+  fallback: string[];
+  /** The mail server email to people goes through; null when none. */
+  mail_host: string | null;
+  can_manage: boolean;
+}
+
+export interface OnCallScheduleRequest {
+  name: string;
+  customer_id: string | null;
+  site_id: string | null;
+  time_zone: string;
+  rotation: "daily" | "weekly";
+  handoff_time: string;
+  handoff_day: number | null;
+  /** In order of their turns. */
+  members: string[];
+}
+
+/** Someone the user may put on a schedule. */
+export interface OnCallPerson {
+  id: string;
+  username: string;
+  has_contact: boolean;
+}
+
+/** The signed-in user's own contact; the chat URL never leaves the server. */
+export interface Contact {
+  email: string | null;
+  kind: "webhook" | ChatKind | null;
+  settings: { name?: string; host?: string; url?: string } | null;
+  has_secret: boolean;
+  last_sent_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+}
+
+export interface ContactRequest {
+  email: string | null;
+  kind: "webhook" | ChatKind | null;
+  settings: { name?: string; url?: string } | null;
+  /** Empty keeps the stored one. */
+  secret?: string | null;
+}
+
 /** Result of "Send test": the error says why in plain words. */
 export interface ChannelTestResult {
   ok: boolean;
@@ -1984,6 +2074,41 @@ export const api = {
       method: "POST",
       body,
     }),
+
+  /** Schedules the user manages or is on, with who is on call now and next (ADR-0081). */
+  onCallSchedules: (signal?: AbortSignal) => request<{ schedules: OnCallSchedule[] }>("/api/on-call/schedules", { signal }),
+
+  createOnCallSchedule: (body: OnCallScheduleRequest) =>
+    request<OnCallSchedule>("/api/on-call/schedules", { method: "POST", body }),
+
+  updateOnCallSchedule: (id: string, body: OnCallScheduleRequest) =>
+    request<OnCallSchedule>(`/api/on-call/schedules/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteOnCallSchedule: (id: string) =>
+    request<void>(`/api/on-call/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Puts `user_id` on call instead of the rotation for a while. */
+  addOnCallOverride: (id: string, body: { user_id: string; starts_at?: string; ends_at: string }) =>
+    request<OnCallSchedule>(`/api/on-call/schedules/${encodeURIComponent(id)}/overrides`, { method: "POST", body }),
+
+  deleteOnCallOverride: (id: string) => request<void>(`/api/on-call/overrides/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Who the user may put on a schedule covering this. */
+  onCallPeople: (scope: { customer_id: string | null; site_id: string | null }, signal?: AbortSignal) => {
+    const query = new URLSearchParams();
+    if (scope.customer_id) query.set("customer_id", scope.customer_id);
+    if (scope.site_id) query.set("site_id", scope.site_id);
+    const text = query.toString();
+    return request<{ people: OnCallPerson[] }>(`/api/on-call/people${text ? `?${text}` : ""}`, { signal });
+  },
+
+  contact: (signal?: AbortSignal) => request<Contact>("/api/on-call/contact", { signal }),
+
+  setContact: (body: ContactRequest) => request<Contact>("/api/on-call/contact", { method: "PUT", body }),
+
+  /** Sends a test to each of the user's own destinations. */
+  testContact: () =>
+    request<{ results: { kind: string; ok: boolean; error: string | null }[] }>("/api/on-call/contact/test", { method: "POST" }),
 
   /** Notification channels of what the user administers, without secrets (ADR-0060, ADR-0078). */
   notificationChannels: (signal?: AbortSignal) =>

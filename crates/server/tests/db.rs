@@ -160,6 +160,9 @@ db_tests! {
                 "notification_channels",
                 "notification_groups",
                 "notification_outbox",
+                "on_call_members",
+                "on_call_overrides",
+                "on_call_schedules",
                 "password_links",
                 "pending_hosts",
                 "proxmox_snapshots",
@@ -184,6 +187,7 @@ db_tests! {
                 "silences",
                 "sites",
                 "thresholds",
+                "user_contacts",
                 "user_roles",
                 "users"
             ]

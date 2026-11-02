@@ -31,6 +31,12 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Everything | For a channel or a silence: all customers and sites, plus news about the central server: failed backups, automatic updates, new versions | global, all customers | both columns null; a silence with no target |
 | Silence | Stop notifications about a server, relay, site, customer or everything for a while, whatever channel they go to. Incidents still open and show; what is still open at the end is sent | mute, snooze, maintenance mode, downtime | `silences` |
 | Sent together | Incidents told in one notification: the same check on several machines, the rest of a site, or what a silence held back. Each incident still has its own page | group, batch, digest, bundle, aggregate | `notification_groups`, `?group=` |
+| On call | Who is told of each alert of a place in person, besides the channels, in turns. A page under Monitoring | pager, duty, rota (on screen) | `on_call_schedules` |
+| Schedule | The people who take turns being on call for everything, a customer or a site, and when they hand off | rotation, layer, policy | `on_call_schedules`, `on_call_members` |
+| Hand-off | The moment one person's turn ends and the next one's starts: every day or every week, at a local time in the schedule's time zone | shift change, rollover | `handoff_time`, `anchor_date` |
+| Cover | Someone else is on call for a period, for a holiday or a swap: "alice covers bob" | override (on screen), substitute | `on_call_overrides` |
+| Gap | A period when the person on call cannot be told: no email or chat, disabled, removed, or no longer sees the place. The nearest administrators are told instead | hole, uncovered | `problem` |
+| How you are reached | A person's own email address and optional chat or webhook, used when they are on call. Each person sets their own | contact method, notification rule | `user_contacts` |
 | Turn off | Stop watching: no more alerts of a threshold, or offline incidents of a machine, until turned back on | mute | `offline_alerts`, `muted`, `enabled` |
 
 Keep the technical word when it is the thing being asked for, such as a certificate, a mirror or a sudo rule, and put the rest under a "Details" disclosure. Certificate warnings speak of renewal, and appear only when it is late (under 2 days left) or failed.

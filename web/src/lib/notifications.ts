@@ -39,8 +39,11 @@ function siteScope(id: string, name: string, customer: string, named: boolean): 
   };
 }
 
-/** The choice a saved channel holds. */
-export function scopeValue(channel: NotificationChannel): string {
+/** What a saved channel or schedule covers. */
+type Covered = Pick<NotificationChannel, "customer_id" | "customer_name" | "site_id" | "site_name">;
+
+/** The choice a saved channel or schedule holds. */
+export function scopeValue(channel: Covered): string {
   if (channel.site_id) return `site:${channel.site_id}`;
   return channel.customer_id ? `customer:${channel.customer_id}` : EVERYTHING.value;
 }
@@ -64,7 +67,7 @@ export function channelScopes(
   me: Me | null,
   customers: Customer[],
   sites: Site[],
-  current?: NotificationChannel,
+  current?: Covered,
 ): ChannelScope[] {
   const global = administersEverything(me);
   const several = customers.length > 1;

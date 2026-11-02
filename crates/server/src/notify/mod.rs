@@ -4,13 +4,15 @@
 //! a new version appears. The [`dispatcher`] delivers each event to every
 //! channel whose [`Coverage`] includes it (ADR-0078), unless a [`silence`]
 //! holds it back (ADR-0079), and sends related incidents as one [`group`]
-//! (ADR-0080).
+//! (ADR-0080). Whoever is [`on_call`] for the place hears of it in person
+//! too, grouped the same way (ADR-0081).
 
 pub mod backup;
 pub mod chat;
 pub mod dispatcher;
 pub mod group;
 pub mod message;
+pub mod on_call;
 pub mod send;
 pub mod silence;
 
@@ -145,7 +147,7 @@ impl Destination {
     }
 
     /// The settings column: the fields without the kind.
-    fn settings(&self) -> Value {
+    pub(crate) fn settings(&self) -> Value {
         let mut value = serde_json::to_value(self).unwrap_or_default();
         if let Some(object) = value.as_object_mut() {
             object.remove("kind");
@@ -153,7 +155,7 @@ impl Destination {
         value
     }
 
-    fn from_row(kind: &str, mut settings: Value) -> Result<Self, serde_json::Error> {
+    pub(crate) fn from_row(kind: &str, mut settings: Value) -> Result<Self, serde_json::Error> {
         if let Some(object) = settings.as_object_mut() {
             object.insert("kind".into(), kind.into());
         }
@@ -297,6 +299,9 @@ pub struct Channel {
     /// Delivered only to public addresses: someone other than a global
     /// administrator chose the destination (ADR-0078).
     pub public_only: bool,
+    /// A person's own destination (ADR-0081): `id` is the user's, and the
+    /// outcome is recorded on their contact.
+    pub person: bool,
 }
 
 const CHANNEL_COLUMNS: &str = "id, kind, settings, secret, customer_id, site_id, public_only";
@@ -312,6 +317,7 @@ fn channel(row: &sqlx::postgres::PgRow) -> Result<Channel, sqlx::Error> {
         coverage: Coverage::from_columns(row.try_get("customer_id")?, row.try_get("site_id")?)
             .ok_or_else(|| sqlx::Error::Decode("a channel with two scopes".into()))?,
         public_only: row.try_get("public_only")?,
+        person: false,
     })
 }
 
@@ -410,19 +416,28 @@ pub async fn update(
     Ok(done.rows_affected() == 1)
 }
 
-/// Records the outcome of a delivery or test: `None` for success.
+/// Records the outcome of a delivery or test to `channel`: `None` for
+/// success.
 pub async fn record_outcome(
     db: impl PgExecutor<'_>,
-    id: Uuid,
+    channel: &Channel,
     error: Option<&str>,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE notification_channels
+    let id = channel.id;
+    let table = if channel.person {
+        "user_contacts"
+    } else {
+        "notification_channels"
+    };
+    let key = if channel.person { "user_id" } else { "id" };
+    // SQL-safe: interpolates only the constant table and column names above.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE {table}
          SET last_sent_at = CASE WHEN $2::text IS NULL THEN now() ELSE last_sent_at END,
              last_error = $2,
              last_error_at = CASE WHEN $2::text IS NULL THEN NULL ELSE now() END
-         WHERE id = $1",
-    )
+         WHERE {key} = $1"
+    )))
     .bind(id)
     .bind(error)
     .execute(db)

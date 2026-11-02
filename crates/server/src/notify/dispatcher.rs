@@ -3,7 +3,8 @@
 //! once: a claimed event is not sent again after a restart. What a silence
 //! covers is held back instead of claimed (ADR-0079). A customer's events
 //! are claimed together, at most once a [`WINDOW`], and grouped into a few
-//! messages per channel (ADR-0080).
+//! messages per channel (ADR-0080). Whoever is on call for an event's place
+//! gets the same messages in person (ADR-0081).
 
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
@@ -19,9 +20,10 @@ use super::backup;
 use super::chat::gather;
 use super::group::{self, render_group, Group, Outgoing};
 use super::message::{render, Event, Message};
+use super::on_call;
 use super::send::{deliver, http_client, public_http_client, SendError};
 use super::silence::{self, Budget};
-use super::{channels, record_outcome, Channel, Destination};
+use super::{channels, record_outcome, Channel, Destination, Service};
 
 /// Time between two looks at the outbox.
 pub const POLL: Duration = Duration::from_secs(5);
@@ -42,6 +44,19 @@ pub const WAIT: Duration = Duration::from_secs(10);
 /// long after, so that a customer gets at most one round of messages per
 /// window. With [`POLL`], the most an event waits for grouping.
 pub const WINDOW: Duration = Duration::from_secs(60);
+
+/// Events of a pass copied for one channel or one person, by event ID.
+#[derive(Debug, Default)]
+struct Targets {
+    channels: HashMap<i64, Uuid>,
+    people: HashMap<i64, Uuid>,
+}
+
+impl Targets {
+    fn contains(&self, id: i64) -> bool {
+        self.channels.contains_key(&id) || self.people.contains_key(&id)
+    }
+}
 
 #[derive(Clone)]
 pub struct Dispatcher {
@@ -140,35 +155,35 @@ impl Dispatcher {
     /// Claims pending events that are due and that a silence does not
     /// hold, and writes them as sent. In one transaction, so a held event
     /// is never lost and nothing slips past a silence between looking and
-    /// claiming. Also returns the events copied for one channel
-    /// ([`silence::requeue`]), by ID.
+    /// claiming. Also returns the events copied for one channel or one
+    /// person ([`silence::requeue`]), by ID.
     ///
     /// A customer's events are due together (ADR-0080): when the oldest has
     /// waited [`WAIT`], or, if some were claimed within the last
     /// [`WINDOW`], once the window since that claim is over. What was
     /// already written at a claim is due with it, for a claim that did not
-    /// take everything. Events of no customer, and copies for one channel,
-    /// are due at once.
-    async fn claim(&self) -> Result<(Vec<Event>, HashMap<i64, Uuid>), sqlx::Error> {
+    /// take everything. Events of no customer, and copies for one channel
+    /// or person, are due at once.
+    async fn claim(&self) -> Result<(Vec<Event>, Targets), sqlx::Error> {
         let now = chrono::Utc::now();
         let mut tx = self.pool.begin().await?;
         let pending: Vec<Event> = sqlx::query_as(
             "WITH last AS (
                  SELECT customer_id, max(sent_at) AS at FROM notification_outbox
                  WHERE sent_at > now() - make_interval(secs => $2) AND held_at IS NULL
-                   AND channel_id IS NULL AND customer_id IS NOT NULL
+                   AND channel_id IS NULL AND user_id IS NULL AND customer_id IS NOT NULL
                  GROUP BY customer_id),
              first AS (
                  SELECT customer_id, min(created_at) AS at FROM notification_outbox
                  WHERE sent_at IS NULL AND held_at IS NULL
-                   AND channel_id IS NULL AND customer_id IS NOT NULL
+                   AND channel_id IS NULL AND user_id IS NULL AND customer_id IS NOT NULL
                  GROUP BY customer_id)
              SELECT o.id, o.event, o.customer_id, o.site_id, o.details, o.created_at
              FROM notification_outbox o
              LEFT JOIN last l ON l.customer_id = o.customer_id
              LEFT JOIN first f ON f.customer_id = o.customer_id
              WHERE o.sent_at IS NULL AND o.held_at IS NULL
-               AND (o.customer_id IS NULL OR o.channel_id IS NOT NULL
+               AND (o.customer_id IS NULL OR o.channel_id IS NOT NULL OR o.user_id IS NOT NULL
                     OR (l.at IS NOT NULL AND o.created_at <= l.at)
                     OR (l.at IS NULL AND f.at <= now() - make_interval(secs => $3)))
              ORDER BY o.id LIMIT $1 FOR UPDATE OF o SKIP LOCKED",
@@ -179,25 +194,32 @@ impl Dispatcher {
         .fetch_all(&mut *tx)
         .await?;
         let Some(oldest) = pending.iter().map(|e| e.created_at).min() else {
-            return Ok((Vec::new(), HashMap::new()));
+            return Ok((Vec::new(), Targets::default()));
         };
         let ids: Vec<i64> = pending.iter().map(|e| e.id).collect();
-        let targets: HashMap<i64, Uuid> = sqlx::query_as(
-            "SELECT id, channel_id FROM notification_outbox
-             WHERE id = ANY($1) AND channel_id IS NOT NULL",
+        let copies: Vec<(i64, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
+            "SELECT id, channel_id, user_id FROM notification_outbox
+             WHERE id = ANY($1) AND (channel_id IS NOT NULL OR user_id IS NOT NULL)",
         )
         .bind(&ids)
         .fetch_all(&mut *tx)
-        .await?
-        .into_iter()
-        .collect();
+        .await?;
+        let mut targets = Targets::default();
+        for (id, channel, user) in copies {
+            if let Some(channel) = channel {
+                targets.channels.insert(id, channel);
+            }
+            if let Some(user) = user {
+                targets.people.insert(id, user);
+            }
+        }
         let silences = silence::load(&mut *tx, now, oldest).await?;
         let held = silence::held_incidents(&mut *tx).await?;
         let mut events = Vec::with_capacity(pending.len());
         for event in pending {
-            // A copy for one channel was settled already.
+            // A copy for one channel or person was settled already.
             let covering = silences.iter().find(|s| s.holds(&event, now));
-            if !targets.contains_key(&event.id) && silence::waits(&event, covering, &held) {
+            if !targets.contains(event.id) && silence::waits(&event, covering, &held) {
                 silence::hold(&mut tx, &event, covering.map(|s| s.id), now).await?;
             } else {
                 events.push(event);
@@ -215,14 +237,22 @@ impl Dispatcher {
     /// Claims and delivers pending events; returns how many were claimed.
     /// What a silence released is sent by the next pass, once this one has
     /// also held what was pending, so a release sees all of an incident.
-    /// A release fits in the narrowest chat channel's pass.
+    /// A release fits in the narrowest chat channel's pass, personal ones
+    /// included.
     pub async fn pass(&self) -> Result<usize, sqlx::Error> {
         let (events, targets) = self.claim().await?;
         let channels = channels(&self.pool).await?;
+        let personal: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT kind FROM user_contacts WHERE kind IN ('slack', 'teams', 'discord')",
+        )
+        .fetch_all(&self.pool)
+        .await?;
         let budget = channels
             .iter()
             .filter_map(|c| c.destination.chat())
-            .map(|(service, _)| Budget {
+            .map(|(service, _)| service)
+            .chain(personal.iter().filter_map(|kind| Service::parse(kind)))
+            .map(|service| Budget {
                 messages: service.burst() - 1,
                 lines: service.group_lines(),
             })
@@ -247,17 +277,47 @@ impl Dispatcher {
         if let Err(error) = count_behind_relays(&self.pool, &mut fresh).await {
             tracing::warn!(%error, "could not count the servers behind an offline relay");
         }
+        // The person on call is whoever it is now, as this pass sends:
+        // every event of the pass goes to the same people.
+        let now = chrono::Utc::now();
+        let mut conn = self.pool.acquire().await?;
+        let directory = on_call::Directory::load(&mut conn).await?;
+        let schedules = on_call::schedules(&mut conn, now, None).await?;
+        drop(conn);
+        let people = on_call::deliveries(
+            &schedules,
+            &directory,
+            &channels,
+            &fresh,
+            &targets.channels,
+            &targets.people,
+            now,
+        );
         let mut groups = Groups::default();
         let mut work = Vec::new();
         for channel in channels {
             let events: Vec<&Event> = fresh
                 .iter()
                 .filter(|e| channel.coverage.includes(e.customer_id, e.site_id))
-                .filter(|e| targets.get(&e.id).is_none_or(|only| *only == channel.id))
+                .filter(|e| !targets.people.contains_key(&e.id))
+                .filter(|e| {
+                    targets
+                        .channels
+                        .get(&e.id)
+                        .is_none_or(|only| *only == channel.id)
+                })
                 .collect();
             if events.is_empty() {
                 continue;
             }
+            let messages = self.messages(&channel, &events, &mut groups);
+            work.push((channel, messages));
+        }
+        // People on call get what a channel of their schedule's place gets:
+        // the same groups, with the same IDs, or one request per event to a
+        // webhook.
+        for (channel, ids) in people {
+            let events: Vec<&Event> = fresh.iter().filter(|e| ids.contains(&e.id)).collect();
             let messages = self.messages(&channel, &events, &mut groups);
             work.push((channel, messages));
         }
@@ -336,7 +396,7 @@ impl Dispatcher {
             tracing::info!(channel = %channel.id, sent, failed = messages.len() - sent, "notifications delivered");
         }
         let error = last.err().map(|e| e.message);
-        if let Err(db) = record_outcome(&self.pool, channel.id, error.as_deref()).await {
+        if let Err(db) = record_outcome(&self.pool, channel, error.as_deref()).await {
             tracing::warn!(channel = %channel.id, error = %db, "could not record a notification outcome");
         }
     }
@@ -351,7 +411,7 @@ impl Dispatcher {
         if ids.is_empty() {
             return;
         }
-        match silence::requeue(&self.pool, &ids, channel.id).await {
+        match silence::requeue(&self.pool, &ids, channel.id, channel.person).await {
             Ok(copied) => {
                 tracing::info!(channel = %channel.id, copied, "kept what a silence held back for the next pass")
             }
@@ -393,7 +453,7 @@ impl Dispatcher {
         let test = render(&Event::test(), &self.web_url);
         let result = deliver(channel, &test, self.client(channel)).await;
         let error = result.as_ref().err().map(|e| e.message.as_str());
-        record_outcome(&self.pool, channel.id, error).await?;
+        record_outcome(&self.pool, channel, error).await?;
         Ok(result)
     }
 

@@ -387,21 +387,27 @@ pub async fn release(
     Ok(send.len())
 }
 
-/// Owed rows `ids` again, for `channel` only: it was still limiting when
-/// their turn came. A copy keeps the time of its release, so a channel
-/// limiting for a whole day loses it like any event that old (ADR-0060).
+/// Owed rows `ids` again, for `channel` only, or for the person `channel`
+/// when `person` (ADR-0081): it was still limiting when their turn came. A
+/// copy keeps the time of its release, so a channel limiting for a whole
+/// day loses it like any event that old (ADR-0060).
 pub async fn requeue(
     db: impl PgExecutor<'_>,
     ids: &[i64],
     channel: Uuid,
+    person: bool,
 ) -> Result<u64, sqlx::Error> {
     Ok(sqlx::query(
-        "INSERT INTO notification_outbox (event, customer_id, details, created_at, channel_id)
-         SELECT event, customer_id, details, created_at, $2 FROM notification_outbox
+        "INSERT INTO notification_outbox
+             (event, customer_id, details, created_at, channel_id, user_id)
+         SELECT event, customer_id, details, created_at,
+                CASE WHEN $3 THEN NULL ELSE $2::uuid END, CASE WHEN $3 THEN $2::uuid END
+         FROM notification_outbox
          WHERE id = ANY($1) ORDER BY id",
     )
     .bind(ids)
     .bind(channel)
+    .bind(person)
     .execute(db)
     .await?
     .rows_affected())

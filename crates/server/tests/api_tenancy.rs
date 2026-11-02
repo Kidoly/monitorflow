@@ -163,6 +163,11 @@ struct Tenant {
     silence: Uuid,
     /// An active silence of the whole customer.
     customer_silence: Uuid,
+    /// A viewer of the customer with a contact, on its on-call schedule
+    /// (ADR-0081), which has an override.
+    member: Uuid,
+    schedule: Uuid,
+    on_call_override: Uuid,
 }
 
 async fn tenant(pool: &PgPool, name: &str) -> Tenant {
@@ -330,7 +335,44 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
         .fetch_one(pool)
         .await
         .unwrap();
+    let member = one(
+        "WITH u AS (INSERT INTO users (username) VALUES ($1) RETURNING id),
+              r AS (INSERT INTO user_roles (user_id, role, customer_id)
+                    SELECT id, 'viewer', $2 FROM u),
+              c AS (INSERT INTO user_contacts (user_id, email) SELECT id, $1 || '@x.example' FROM u)
+         SELECT id FROM u",
+    )
+    .bind(format!("member-{name}"))
+    .bind(customer)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let schedule = one(
+        "WITH s AS (INSERT INTO on_call_schedules (name, customer_id, time_zone, rotation,
+                                                   handoff_time, anchor_date)
+                    VALUES ('Ops', $1, 'UTC', 'weekly', '09:00', '2026-11-02') RETURNING id),
+              m AS (INSERT INTO on_call_members (schedule_id, position, user_id)
+                    SELECT id, 0, $2 FROM s)
+         SELECT id FROM s",
+    )
+    .bind(customer)
+    .bind(member)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let on_call_override = one(
+        "INSERT INTO on_call_overrides (schedule_id, user_id, starts_at, ends_at)
+         VALUES ($1, $2, now() + interval '1 day', now() + interval '2 days') RETURNING id",
+    )
+    .bind(schedule)
+    .bind(member)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     Tenant {
+        member,
+        schedule,
+        on_call_override,
         silence,
         customer_silence,
         remediation,
@@ -1143,6 +1185,108 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 ctx.status(method, path, Some(body)).await,
                 StatusCode::FORBIDDEN
             );
+        }
+        // On call (ADR-0081): B's schedules, overrides and people do not
+        // exist for A's administrator, and none of them can be put on A's.
+        ("GET", "/api/on-call/schedules") => {
+            let body = ctx.call(method, path, None).await.1;
+            assert!(Ctx::mentions(&body, a.schedule), "{body}");
+            for id in [b.schedule, b.member, b.on_call_override] {
+                assert!(!Ctx::mentions(&body, id), "{body}");
+            }
+        }
+        ("POST", "/api/on-call/schedules") => {
+            let ask = |field: &str, id: Option<Uuid>, member: Uuid| {
+                let mut ask = json!({
+                    "name": "x", "time_zone": "UTC", "rotation": "daily",
+                    "handoff_time": "09:00", "members": [member],
+                });
+                if let Some(id) = id {
+                    ask[field] = json!(id);
+                }
+                ask
+            };
+            for ask in [
+                ask("customer_id", Some(b.customer), b.member),
+                ask("site_id", Some(b.site), b.member),
+                ask("customer_id", None, a.member),
+            ] {
+                assert_eq!(
+                    ctx.status(method, path, Some(ask)).await,
+                    StatusCode::FORBIDDEN
+                );
+            }
+            let theirs = ask("customer_id", Some(a.customer), b.member);
+            assert_eq!(
+                ctx.status(method, path, Some(theirs)).await,
+                StatusCode::BAD_REQUEST
+            );
+        }
+        ("PUT", "/api/on-call/schedules/{id}")
+        | ("DELETE", "/api/on-call/schedules/{id}")
+        | ("POST", "/api/on-call/schedules/{id}/overrides") => {
+            let body = match (method, path.ends_with("overrides")) {
+                ("PUT", _) => Some(json!({
+                    "name": "x", "customer_id": b.customer, "time_zone": "UTC",
+                    "rotation": "daily", "handoff_time": "09:00", "members": [b.member],
+                })),
+                (_, true) => Some(json!({
+                    "user_id": b.member, "ends_at": chrono::Utc::now() + chrono::TimeDelta::hours(1),
+                })),
+                _ => None,
+            };
+            let uri = path.replace("{id}", &b.schedule.to_string());
+            assert_eq!(ctx.status(method, &uri, body.clone()).await, not_found);
+            // B's people cannot cover A's schedule, nor A's be handed to B.
+            if method == "POST" {
+                let uri = path.replace("{id}", &a.schedule.to_string());
+                assert_eq!(
+                    ctx.status(method, &uri, body).await,
+                    StatusCode::BAD_REQUEST
+                );
+            } else if method == "PUT" {
+                let uri = path.replace("{id}", &a.schedule.to_string());
+                assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
+            }
+        }
+        ("DELETE", "/api/on-call/overrides/{id}") => {
+            let uri = path.replace("{id}", &b.on_call_override.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("GET", "/api/on-call/people") => {
+            for query in [
+                format!("customer_id={}", b.customer),
+                format!("site_id={}", b.site),
+                String::new(),
+            ] {
+                let uri = format!("{path}?{query}");
+                assert_eq!(
+                    ctx.status(method, &uri, None).await,
+                    StatusCode::FORBIDDEN,
+                    "{uri}"
+                );
+            }
+            let uri = format!("{path}?site_id={}", a.site);
+            let body = ctx.call(method, &uri, None).await.1;
+            assert!(
+                Ctx::mentions(&body, a.member) && !Ctx::mentions(&body, b.member),
+                "{body}"
+            );
+        }
+        // One's own contact: nothing of B's is read or written.
+        ("GET", "/api/on-call/contact")
+        | ("PUT", "/api/on-call/contact")
+        | ("POST", "/api/on-call/contact/test") => {
+            let body = (method == "PUT").then(|| json!({ "email": "admin-a@x.example" }));
+            let (_, answer) = ctx.call(method, path, body).await;
+            assert!(!answer.to_string().contains("member-b"), "{answer}");
+            let theirs: String =
+                sqlx::query_scalar("SELECT email FROM user_contacts WHERE user_id = $1")
+                    .bind(b.member)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(theirs, "member-b@x.example");
         }
         ("POST", "/api/silences/{id}/end") => {
             for id in [b.silence, b.customer_silence] {

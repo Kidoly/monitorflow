@@ -40,6 +40,7 @@ rpassword.workspace = true
 sqlx.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+chrono-tz.workspace = true
 # CSR parsing and signature verification need rcgen's x509-parser feature.
 rcgen = { workspace = true, features = ["x509-parser"] }
 ring.workspace = true

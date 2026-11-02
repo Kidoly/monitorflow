@@ -9,6 +9,7 @@ import {
   CAMPAIGNS_PATH,
   MIRRORS_PATH,
   NOTIFICATIONS_PATH,
+  ON_CALL_PATH,
   RELAYS_PATH,
   SERVER_UPDATE_PATH,
   SETTINGS_PATH,
@@ -53,6 +54,7 @@ export const NAVIGATION: NavSection[] = [
       { label: "Fleet", href: "/", icon: "fleet", alsoCurrent: ["/servers/"] },
       { label: "Incidents", href: "/incidents/", icon: "incidents", incidentCount: true },
       { label: "Silences", href: SILENCES_PATH, icon: "bell" },
+      { label: "On call", href: ON_CALL_PATH, icon: "users" },
     ],
   },
   {

@@ -49,7 +49,7 @@ export function NotificationsPage() {
 type Kind = NotificationChannel["kind"];
 
 /** What each chat service needs on screen: the URL lives in that service, so the form says where. */
-const CHAT: Record<
+export const CHAT: Record<
   ChatKind,
   { name: string; placeholder: string; help: string }
 > = {

@@ -54,6 +54,16 @@ pub struct CheckedUrl {
 }
 
 impl Service {
+    /// The service of a channel kind, `None` for email and webhooks.
+    pub fn parse(kind: &str) -> Option<Self> {
+        match kind {
+            "slack" => Some(Self::Slack),
+            "teams" => Some(Self::Teams),
+            "discord" => Some(Self::Discord),
+            _ => None,
+        }
+    }
+
     /// The name on screen.
     pub fn name(self) -> &'static str {
         match self {

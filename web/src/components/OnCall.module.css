@@ -1,0 +1,134 @@
+/* The On call page (ADR-0081). */
+
+.intro {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--muted);
+}
+
+.body {
+  padding: 14px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 720px;
+}
+
+.contactLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.ok {
+  margin: 0;
+  color: var(--ok);
+}
+
+.bad {
+  margin: 0;
+  color: var(--bad);
+}
+
+/* "On call now" and "Next", side by side, stacked on phones. */
+.nowNext {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 40px;
+}
+
+.nowNext > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nowNext strong {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.turns {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  /* Scrolls inside the section on phones rather than widening the page. */
+  display: block;
+  overflow-x: auto;
+}
+
+.turns th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 6px 14px 6px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.turns td {
+  padding: 6px 14px 6px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.overrides {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.people {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.people legend {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.order {
+  margin: 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.order li span {
+  display: inline-block;
+  min-width: 140px;
+  margin-right: 8px;
+}
+
+.order li button {
+  margin-right: 4px;
+}

@@ -99,6 +99,7 @@ describe("AppShell", () => {
       "Fleet",
       "Incidents",
       "Silences",
+      "On call",
       "Mirrors",
       "Automatic updates",
       "Campaigns",

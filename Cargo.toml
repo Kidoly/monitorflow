@@ -60,6 +60,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 clap = { version = "4", features = ["derive", "env"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+# On-call hand-offs in the schedule's time zone (ADR-0081): the IANA
+# database compiled in, so the answer does not depend on the host.
+chrono-tz = "0.10"
 async-trait = "0.1"
 # rustls on ring, like the rest of the workspace; no OpenSSL.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
