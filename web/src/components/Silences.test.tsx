@@ -236,6 +236,7 @@ describe("SilencesPage", () => {
     await userEvent.click(await screen.findByRole("button", { name: "New silence" }));
     const what = await screen.findByRole("combobox", { name: "What" });
     await screen.findByRole("option", { name: "Customer acme" });
+    expect(what).toHaveValue("");
     expect(within(what).queryByRole("option", { name: "Everything" })).not.toBeInTheDocument();
     expect(within(what).queryByRole("option", { name: "Customer globex" })).not.toBeInTheDocument();
     await userEvent.selectOptions(what, "Site paris");
