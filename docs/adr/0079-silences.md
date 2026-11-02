@@ -1,7 +1,7 @@
 # ADR-0079: Silences
 
 Date: 2026-11-02
-Status: accepted
+Status: accepted; what a silence held back is sent together, and a release counts messages, not rows (ADR-0080)
 
 ## Context
 

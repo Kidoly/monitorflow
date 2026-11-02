@@ -21,9 +21,11 @@ export interface IncidentFilters {
   severity: IncidentSeverity | null;
   siteId: string | null;
   serverId: string | null;
+  /** The incidents one notification sent together (ADR-0080). */
+  groupId: string | null;
 }
 
-export const NO_FILTERS: IncidentFilters = { state: "all", severity: null, siteId: null, serverId: null };
+export const NO_FILTERS: IncidentFilters = { state: "all", severity: null, siteId: null, serverId: null, groupId: null };
 
 const STATES = ["open", "resolved", "all"] as const;
 const SEVERITIES = ["warning", "critical"] as const;
@@ -46,6 +48,7 @@ export function filtersFromQuery(params: URLSearchParams): IncidentFilters {
     severity: oneOf(SEVERITIES, params.get("severity")),
     siteId: uuid(params.get("site")),
     serverId: uuid(params.get("server")),
+    groupId: uuid(params.get("group")),
   };
 }
 
@@ -56,6 +59,7 @@ export function filtersToQuery(filters: IncidentFilters): string {
   if (filters.severity) params.set("severity", filters.severity);
   if (filters.siteId) params.set("site", filters.siteId);
   if (filters.serverId) params.set("server", filters.serverId);
+  if (filters.groupId) params.set("group", filters.groupId);
   return params.toString();
 }
 
@@ -66,6 +70,7 @@ export function apiQuery(filters: IncidentFilters): IncidentQuery {
     ...(filters.severity && { severity: filters.severity }),
     ...(filters.serverId && { server_id: filters.serverId }),
     ...(filters.siteId && { site_id: filters.siteId }),
+    ...(filters.groupId && { group: filters.groupId }),
   };
 }
 

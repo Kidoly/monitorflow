@@ -9,7 +9,7 @@ Status: draft, 2026-10-18.
 - Host full apt and dnf mirrors and run scheduled update campaigns.
 - Alert on sensor thresholds and let an AI propose or run shell remediation, with approval, audit and rollback.
 - Ship a web interface from the first version, with graphs and a live view of the fleet.
-- Notify by email, Slack, Teams, Discord and webhook when incidents open or resolve, approvals wait and updates fail, for everything, one customer or one site (ADR-0060, ADR-0077, ADR-0078), and silence notifications for planned work (ADR-0079).
+- Notify by email, Slack, Teams, Discord and webhook when incidents open or resolve, approvals wait and updates fail, for everything, one customer or one site (ADR-0060, ADR-0077, ADR-0078), and silence notifications for planned work (ADR-0079). When many things break at once, related incidents are sent together, at most once a minute per customer (ADR-0080).
 
 ## Non-goals for the first version
 

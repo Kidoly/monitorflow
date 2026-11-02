@@ -1,7 +1,7 @@
 # ADR-0072: Offline incidents for servers and relays
 
 Date: 2026-10-28
-Status: accepted; on screen, muting is now "turning off", and a silence covers short absences (ADR-0079)
+Status: accepted; on screen, muting is now "turning off", and a silence covers short absences (ADR-0079); servers behind a relay that comes back get 5 minutes to reconnect (ADR-0080)
 Note: numbered ADR-0057 until 2026-11-01, as in PR #176 and the migrations.
 
 ## Context
