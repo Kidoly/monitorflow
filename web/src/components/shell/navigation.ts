@@ -83,7 +83,6 @@ export const NAVIGATION: NavSection[] = [
         href: NOTIFICATIONS_PATH,
         icon: "bell",
         iconWhenCollapsed: true,
-        visible: administersEverything,
       },
       {
         label: "AI",

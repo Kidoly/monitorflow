@@ -102,6 +102,11 @@ impl Access {
         self.grants.is_empty()
     }
 
+    /// Whether any grant, of any reach, has a role passing `allowed`.
+    pub fn any(&self, allowed: impl Fn(Role) -> bool) -> bool {
+        self.grants.iter().any(|(role, _)| allowed(*role))
+    }
+
     /// Sites reached by the grants whose role passes `allowed`.
     pub fn sites(&self, allowed: impl Fn(Role) -> bool) -> Scope {
         let mut sites = BTreeSet::new();
@@ -167,6 +172,12 @@ impl CurrentUser {
     /// Sites where the user holds `role` or a role above it, by any grant.
     pub fn sites_with(&self, role: Role) -> Scope {
         self.access.sites(|r| r >= role)
+    }
+
+    /// Whether the user administers anything: everything, a customer or a
+    /// site.
+    pub fn is_administrator(&self) -> bool {
+        self.access.any(|role| role == Role::Administrator)
     }
 
     /// Customers granted to the user as a whole, by any role. Customers of
@@ -324,6 +335,16 @@ mod tests {
             authorize(&nobody, Some(site(1)), false),
             Err(ApiError::Forbidden)
         ));
+    }
+
+    #[test]
+    fn an_administrator_grant_of_any_reach_counts() {
+        let user =
+            |grants: &[(Role, Option<Uuid>, Option<Uuid>)]| CurrentUser::for_tests(access(grants));
+        assert!(user(&[(Role::Administrator, None, Some(site(1)))]).is_administrator());
+        assert!(user(&[(Role::Administrator, Some(C2), None)]).is_administrator());
+        assert!(!user(&[(Role::Operator, None, None)]).is_administrator());
+        assert!(!user(&[]).is_administrator());
     }
 
     #[test]

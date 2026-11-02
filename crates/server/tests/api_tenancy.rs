@@ -398,6 +398,19 @@ impl Ctx {
         self.call(method, uri, body).await.0
     }
 
+    /// A webhook channel of `customer`, or for everything when `null`.
+    async fn channel(&self, customer: Value) -> Uuid {
+        let customer = customer.as_str().map(|id| id.parse::<Uuid>().unwrap());
+        sqlx::query_scalar(
+            r#"INSERT INTO notification_channels (kind, settings, customer_id)
+               VALUES ('webhook', '{"url": "https://x.example/"}', $1) RETURNING id"#,
+        )
+        .bind(customer)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap()
+    }
+
     /// The last query string VictoriaMetrics received.
     fn vm_seen_last(&self) -> String {
         self.vm.seen().pop().unwrap_or_default()
@@ -875,17 +888,55 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             };
             assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
         }
-        // Notification channels may cover every customer: global
-        // administrators only (ADR-0060).
-        ("GET", "/api/notifications/channels")
-        | ("POST", "/api/notifications/channels")
-        | ("PUT", "/api/notifications/channels/{id}")
+        // Channels (ADR-0078): those of other customers do not exist for
+        // this administrator, and nothing it writes reaches outside A.
+        ("GET", "/api/notifications/channels") => {
+            let other = ctx.channel(json!(b.customer)).await;
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!body.to_string().contains(&other.to_string()), "{body}");
+        }
+        ("POST", "/api/notifications/channels") => {
+            let hook = json!({ "kind": "webhook", "settings": { "url": "https://x.example/" } });
+            let mut asks = vec![hook.clone()];
+            for (field, id) in [("customer_id", b.customer), ("site_id", b.site)] {
+                let mut ask = hook.clone();
+                ask[field] = json!(id);
+                asks.push(ask);
+            }
+            for ask in asks {
+                assert_eq!(
+                    ctx.status(method, path, Some(ask)).await,
+                    StatusCode::FORBIDDEN
+                );
+            }
+        }
+        ("PUT", "/api/notifications/channels/{id}")
         | ("DELETE", "/api/notifications/channels/{id}")
         | ("POST", "/api/notifications/channels/{id}/test") => {
-            let uri = path.replace("{id}", &Uuid::new_v4().to_string());
-            let body = matches!(method, "POST" | "PUT")
-                .then(|| json!({ "kind": "webhook", "settings": { "url": "https://x.example/" } }));
-            assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
+            let hook = json!({ "kind": "webhook", "settings": { "url": "https://x.example/" } });
+            let body = (method == "PUT").then(|| hook.clone());
+            for owner in [json!(b.customer), Value::Null] {
+                let id = ctx.channel(owner).await.to_string();
+                let uri = path.replace("{id}", &id);
+                assert_eq!(
+                    ctx.status(method, &uri, body.clone()).await,
+                    StatusCode::NOT_FOUND
+                );
+            }
+            // Its own channel cannot be handed to B or to everything.
+            if method == "PUT" {
+                let id = ctx.channel(json!(a.customer)).await.to_string();
+                let uri = path.replace("{id}", &id);
+                let mut to_b = hook.clone();
+                to_b["customer_id"] = json!(b.customer);
+                for body in [hook, to_b] {
+                    assert_eq!(
+                        ctx.status(method, &uri, Some(body)).await,
+                        StatusCode::FORBIDDEN
+                    );
+                }
+            }
         }
         // Creation: a customer admin cannot create customers, nor sites of B.
         ("POST", "/api/customers") => {

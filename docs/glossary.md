@@ -24,6 +24,9 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Batch | Part of the servers of a campaign, updated together | wave | `waves` |
 | Remove | Revoke a server or relay and hide it from lists; for a mirror, delete it and its packages | delete | `revoked_at`, `deleting_at` |
 | Revoke | Stop an install command, a token or a role from working | | |
+| Channel | Where notifications go: an email or a webhook | destination, target | `notification_channels` |
+| Notify about | What a channel hears of: Everything, All of a customer, or one site | scope, coverage, routing | `customer_id`, `site_id`, `Coverage` |
+| Everything | A channel for all alerts, plus news about the central server: failed backups, automatic updates, new versions | global, all customers | both columns null |
 
 Keep the technical word when it is the thing being asked for, such as a certificate, a mirror or a sudo rule, and put the rest under a "Details" disclosure. Certificate warnings speak of renewal, and appear only when it is late (under 2 days left) or failed.
 

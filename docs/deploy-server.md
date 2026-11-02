@@ -99,7 +99,7 @@ To restore one, on a fresh install or on this one: `deploy/restore.sh <file>`.
 
 ### From the web interface
 
-The server looks for a new release once a day. When it finds one, global administrators see a line above every page that leads to this update, and channels for all customers get one notification. On a server without Internet access nothing happens and nothing complains.
+The server looks for a new release once a day. When it finds one, global administrators see a line above every page that leads to this update, and channels that cover everything get one notification. On a server without Internet access nothing happens and nothing complains.
 
 In **Administration, Server update** (global administrators):
 

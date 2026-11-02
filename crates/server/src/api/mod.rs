@@ -133,11 +133,11 @@
 //! | GET | `/api/servers/{id}/proxmox` | customer administrator | [`proxmox::ProxmoxView`], see below |
 //! | PUT | `/api/servers/{id}/proxmox` | customer administrator | body [`proxmox::MappingRequest`]; 200 [`proxmox::ProxmoxView`] |
 //! | DELETE | `/api/servers/{id}/proxmox` | customer administrator | 204; 404 without a mapping |
-//! | GET | `/api/notifications/channels` | global administrator | [`notifications::ChannelList`]: channels without secrets, `has_secret` and the last error (ADR-0060) |
-//! | POST | `/api/notifications/channels` | global administrator | body [`notifications::ChannelRequest`]; 201 [`notifications::ChannelView`]; audited |
-//! | PUT | `/api/notifications/channels/{id}` | global administrator | body [`notifications::ChannelRequest`], an empty secret keeps the stored one; 200 [`notifications::ChannelView`]; audited |
-//! | DELETE | `/api/notifications/channels/{id}` | global administrator | 204; audited |
-//! | POST | `/api/notifications/channels/{id}/test` | global administrator | sends a test now; 200 [`notifications::TestResult`] `{"ok", "error"}` |
+//! | GET | `/api/notifications/channels` | any administrator | [`notifications::ChannelList`]: the channels of what the user administers, without secrets, with `has_secret` and the last error (ADR-0060, ADR-0078) |
+//! | POST | `/api/notifications/channels` | administrator of what it covers | body [`notifications::ChannelRequest`]; 201 [`notifications::ChannelView`]; 403 for anything else; audited |
+//! | PUT | `/api/notifications/channels/{id}` | administrator of what it covers | body [`notifications::ChannelRequest`], an empty secret keeps the stored one unless the destination changes; 200 [`notifications::ChannelView`]; 404 for a channel the user does not manage, 403 for a coverage they do not; audited |
+//! | DELETE | `/api/notifications/channels/{id}` | administrator of what it covers | 204; 404 for a channel the user does not manage; audited |
+//! | POST | `/api/notifications/channels/{id}/test` | administrator of what it covers | sends a test now; 200 [`notifications::TestResult`] `{"ok", "error"}`; 404 for a channel the user does not manage |
 //!
 //! # Authentication
 //!
