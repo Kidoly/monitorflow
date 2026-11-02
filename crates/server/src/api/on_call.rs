@@ -607,7 +607,7 @@ pub async fn list(
     }
     let mut conn = state.pool.acquire().await?;
     let mut schedules = views(&mut conn, &user, None).await?;
-    schedules.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    schedules.sort_by_key(|s| s.name.to_lowercase());
     Ok(Json(ScheduleList { schedules }))
 }
 

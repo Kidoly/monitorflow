@@ -136,10 +136,10 @@ impl Rota {
         if rotation == Rotation::Weekly {
             let back =
                 (7 + date.weekday().num_days_from_monday() - weekday.num_days_from_monday()) % 7;
-            date = date - TimeDelta::days(back.into());
+            date -= TimeDelta::days(back.into());
         }
         if local_instant(time_zone, date.and_time(handoff)) > now {
-            date = date - TimeDelta::days(rotation.days());
+            date -= TimeDelta::days(rotation.days());
         }
         date
     }
@@ -422,7 +422,7 @@ impl Directory {
             let mut found: Vec<Uuid> = self
                 .people
                 .values()
-                .filter(|p| p.grants.iter().any(|g| *g == (true, level.0, level.1)))
+                .filter(|p| p.grants.contains(&(true, level.0, level.1)))
                 .filter(|p| self.problem(Some(p.id), coverage, mail).is_none())
                 .map(|p| p.id)
                 .collect();
@@ -461,6 +461,16 @@ pub fn mail_channel<'a>(
         .max_by_key(|c| narrowness(c.coverage))
 }
 
+/// `(schedule, id, user, starts_at, ends_at, created_at)`.
+type OverrideRow = (
+    Uuid,
+    Uuid,
+    Uuid,
+    DateTime<Utc>,
+    DateTime<Utc>,
+    DateTime<Utc>,
+);
+
 /// Every schedule, or only `only`, with the overrides that end after
 /// `from`.
 pub async fn schedules(
@@ -486,14 +496,7 @@ pub async fn schedules(
         members.entry(schedule).or_default().push(user);
     }
     let mut overrides: HashMap<Uuid, Vec<Override>> = HashMap::new();
-    let rows_o: Vec<(
-        Uuid,
-        Uuid,
-        Uuid,
-        DateTime<Utc>,
-        DateTime<Utc>,
-        DateTime<Utc>,
-    )> = sqlx::query_as(
+    let rows_o: Vec<OverrideRow> = sqlx::query_as(
         "SELECT schedule_id, id, user_id, starts_at, ends_at, created_at
              FROM on_call_overrides WHERE ends_at > $1 ORDER BY starts_at, id",
     )

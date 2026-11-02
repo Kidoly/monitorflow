@@ -23,7 +23,7 @@ use super::message::{render, Event, Message};
 use super::on_call;
 use super::send::{deliver, http_client, public_http_client, SendError};
 use super::silence::{self, Budget};
-use super::{channels, record_outcome, Channel, Destination};
+use super::{channels, record_outcome, Channel, Destination, Service};
 
 /// Time between two looks at the outbox.
 pub const POLL: Duration = Duration::from_secs(5);
@@ -242,15 +242,17 @@ impl Dispatcher {
     pub async fn pass(&self) -> Result<usize, sqlx::Error> {
         let (events, targets) = self.claim().await?;
         let channels = channels(&self.pool).await?;
-        let mut conn = self.pool.acquire().await?;
-        let directory = on_call::Directory::load(&mut conn).await?;
-        let personal = directory.people.values().filter_map(|p| p.chat.as_ref());
+        let personal: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT kind FROM user_contacts WHERE kind IN ('slack', 'teams', 'discord')",
+        )
+        .fetch_all(&self.pool)
+        .await?;
         let budget = channels
             .iter()
-            .map(|c| &c.destination)
-            .chain(personal.map(|(destination, _, _)| destination))
-            .filter_map(Destination::chat)
-            .map(|(service, _)| Budget {
+            .filter_map(|c| c.destination.chat())
+            .map(|(service, _)| service)
+            .chain(personal.iter().filter_map(|kind| Service::parse(kind)))
+            .map(|service| Budget {
                 messages: service.burst() - 1,
                 lines: service.group_lines(),
             })
@@ -278,6 +280,8 @@ impl Dispatcher {
         // The person on call is whoever it is now, as this pass sends:
         // every event of the pass goes to the same people.
         let now = chrono::Utc::now();
+        let mut conn = self.pool.acquire().await?;
+        let directory = on_call::Directory::load(&mut conn).await?;
         let schedules = on_call::schedules(&mut conn, now, None).await?;
         drop(conn);
         let people = on_call::deliveries(
