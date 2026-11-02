@@ -1,7 +1,7 @@
 # ADR-0034: Relay mirror sync
 
 Date: 2026-10-24
-Status: accepted; amended by ADR-0075 on what relays delete
+Status: accepted; amended by ADR-0075 on what relays delete, and by ADR-0083 on limits and required signatures
 
 ## Context
 

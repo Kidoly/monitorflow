@@ -11,7 +11,7 @@ use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use reqwest::StatusCode;
 use tokio::io::AsyncWriteExt;
 
-use super::meta::{Algorithm, Checksum, Digests, Entry};
+use super::meta::{size, Algorithm, Checksum, Digests, Entry};
 
 /// Characters kept as they are in a URL path segment.
 const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
@@ -32,7 +32,7 @@ pub enum FetchError {
     Status { url: String, status: StatusCode },
     #[error("GET {url}: no progress for {timeout:?}")]
     Timeout { url: String, timeout: Duration },
-    #[error("GET {url}: larger than {limit} bytes")]
+    #[error("GET {url}: larger than the {} expected", size(*limit))]
     TooLarge { url: String, limit: u64 },
     #[error("GET {url}: {got} does not match the metadata's {expected}")]
     Mismatch {
@@ -102,8 +102,15 @@ impl Fetcher {
         url
     }
 
-    /// The response to a GET of `path`; `None` for 404.
-    async fn get(&self, path: &str) -> Result<Option<(String, reqwest::Response)>, FetchError> {
+    /// The response to a GET of `path`; `None` for 404. A response whose
+    /// `Content-Length` is over `limit` is refused before its body is
+    /// read; the body is still counted as it arrives, since the header may
+    /// be absent or lie.
+    async fn get(
+        &self,
+        path: &str,
+        limit: u64,
+    ) -> Result<Option<(String, reqwest::Response)>, FetchError> {
         let url = self.url(path);
         let sent = tokio::time::timeout(self.timeout, self.client.get(&url).send()).await;
         let response = match sent {
@@ -117,6 +124,9 @@ impl Fetcher {
             Ok(Ok(response)) => response,
         };
         match response.status() {
+            StatusCode::OK if response.content_length().is_some_and(|n| n > limit) => {
+                Err(FetchError::TooLarge { url, limit })
+            }
             StatusCode::OK => Ok(Some((url, response))),
             StatusCode::NOT_FOUND => Ok(None),
             status => Err(FetchError::Status { url, status }),
@@ -143,7 +153,7 @@ impl Fetcher {
 
     /// The body of `path`, at most `limit` bytes; `None` for 404.
     pub async fn bytes(&self, path: &str, limit: u64) -> Result<Option<Vec<u8>>, FetchError> {
-        let Some((url, mut response)) = self.get(path).await? else {
+        let Some((url, mut response)) = self.get(path, limit).await? else {
             return Ok(None);
         };
         let mut body = Vec::new();
@@ -166,12 +176,12 @@ impl Fetcher {
         dest: &Path,
         expect: Expect<'_>,
     ) -> Result<Option<Entry>, FetchError> {
-        let Some((url, mut response)) = self.get(path).await? else {
-            return Ok(None);
-        };
         let (limit, mut digests) = match expect {
             Expect::Entry(e) => (e.size, Digests::new(e.checksum.algorithm)),
             Expect::AtMost(limit) => (limit, Digests::new(Algorithm::Sha256)),
+        };
+        let Some((url, mut response)) = self.get(path, limit).await? else {
+            return Ok(None);
         };
         let part = part_path(dest);
         if let Some(parent) = dest.parent() {
