@@ -96,7 +96,8 @@ pub struct ScheduleView {
     pub now: Option<TurnView>,
     /// The next one who takes over.
     pub next: Option<TurnView>,
-    /// From now to [`HORIZON_DAYS`] ahead.
+    /// The turns that start within [`HORIZON_DAYS`], the one running now
+    /// first.
     pub turns: Vec<TurnView>,
     /// Who is told during a gap; empty when nobody can be, and for members
     /// who do not manage it.
@@ -272,10 +273,22 @@ fn view(
         },
         problem: problem(span.user, span.source),
     };
-    // From far enough back that the turn running now shows its start.
+    // From far enough back that the turn running now shows its start, to
+    // the end of the turn running at the horizon.
     let back = now - TimeDelta::days(MAX_OVERRIDE_DAYS + 7);
-    let spans = schedule.spans(back, now + TimeDelta::days(HORIZON_DAYS));
-    let turns: Vec<TurnView> = spans.iter().filter(|s| s.ends_at > now).map(turn).collect();
+    let horizon = now + TimeDelta::days(HORIZON_DAYS);
+    let rota = &schedule.rota;
+    let to = if rota.members.is_empty() {
+        horizon
+    } else {
+        rota.handoff(rota.turn_at(horizon) + 1)
+    };
+    let spans = schedule.spans(back, to);
+    let turns: Vec<TurnView> = spans
+        .iter()
+        .filter(|s| s.ends_at > now && s.starts_at < horizon)
+        .map(turn)
+        .collect();
     let current = turns.first().cloned();
     let next = current.as_ref().and_then(|c| {
         turns
@@ -299,7 +312,6 @@ fn view(
         (Vec::new(), None)
     };
     let (_, site_id) = coverage.columns();
-    let rota = &schedule.rota;
     ScheduleView {
         id: schedule.id,
         name: names.name.clone(),
@@ -1167,9 +1179,10 @@ mod tests {
             ]
         );
         assert_eq!(view.members[2].problem, Some(Problem::Removed));
+        // The last turn ends when it really does, past the horizon.
         assert_eq!(
             view.turns.last().unwrap().ends_at,
-            now + TimeDelta::days(HORIZON_DAYS)
+            utc("2026-12-07T08:00:00Z")
         );
         // No administrator can be told: nobody but the channels.
         assert!(view.fallback.is_empty() && view.mail_host.is_none());

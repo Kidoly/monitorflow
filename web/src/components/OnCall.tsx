@@ -301,6 +301,11 @@ async function loadPlaces(signal: AbortSignal) {
   return { customers, sites };
 }
 
+/** "acme" for "All of acme", "everything" for "Everything": a place in a sentence. */
+function placeOf(label: string): string {
+  return label === "Everything" ? "everything" : label.replace(/^All of /, "");
+}
+
 /** Creating or editing a schedule: what it covers, who, in which order, and when hand-offs happen. */
 function ScheduleForm({
   schedule,
@@ -314,7 +319,7 @@ function ScheduleForm({
   const me = useMe();
   const { data: places } = usePolledData(loadPlaces);
   const scopes = channelScopes(me, places?.customers ?? [], places?.sites ?? [], schedule);
-  const [name, setName] = useState(schedule?.name ?? "On call");
+  const [name, setName] = useState(schedule?.name ?? "");
   const [scope, setScope] = useState(schedule ? scopeValue(schedule) : "");
   const chosen = scopes.find((s) => s.value === scope) ?? (scopes.length === 1 ? scopes[0] : undefined);
   const [members, setMembers] = useState<{ id: string; username: string }[]>(
@@ -342,7 +347,7 @@ function ScheduleForm({
     setBusy(true);
     setError(null);
     const body: OnCallScheduleRequest = {
-      name,
+      name: name.trim() || placeOf(chosen.label),
       customer_id: chosen.customer_id,
       site_id: chosen.site_id,
       time_zone: zone,
@@ -367,7 +372,13 @@ function ScheduleForm({
       <div className={admin.formGrid}>
         <label className={admin.field}>
           Name
-          <input className={fieldClass} required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
+          <input
+            className={fieldClass}
+            maxLength={80}
+            value={name}
+            placeholder={chosen ? placeOf(chosen.label) : "Ops team"}
+            onChange={(e) => setName(e.target.value)}
+          />
         </label>
         {scopes.length > 1 && (
           <label className={admin.field}>
@@ -382,7 +393,7 @@ function ScheduleForm({
                 </option>
               ))}
             </select>
-            {chosen && <span className={admin.fieldNote}>Whoever is on call is told of every alert of {chosen.label === "Everything" ? "everything" : chosen.label}.</span>}
+            {chosen && <span className={admin.fieldNote}>Whoever is on call is told of every alert of {placeOf(chosen.label)}.</span>}
           </label>
         )}
       </div>
@@ -704,11 +715,13 @@ export function OnCallPage() {
       {!data && error !== null && !isUnauthorized(error) ? (
         <ErrorState what="on-call schedules" error={describeError(error)} onRetry={refresh} />
       ) : data && schedules.length === 0 ? (
+        !adding && (
         <EmptyState>
           {canCreate
             ? "No schedule yet. Alerts go to the channels only. Create one to tell whoever is on call."
             : "You are on no schedule. Administrators put people on call."}
-        </EmptyState>
+          </EmptyState>
+        )
       ) : (
         schedules.map((s) => <ScheduleCard key={s.id} schedule={s} several={several} onChanged={refresh} />)
       )}

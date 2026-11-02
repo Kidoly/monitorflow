@@ -18,8 +18,11 @@ function turn(username: string | null, from: number, to: number, overrides: Part
   return { starts_at: at(from), ends_at: at(to), user_id: username && `id-${username}`, username, override_id: null, problem: null, ...overrides };
 }
 
+const NOW_TURN = turn("alice", -24, 144);
+const NEXT_TURN = turn("bob", 144, 312);
+
 function schedule(overrides: Partial<OnCallSchedule> = {}): OnCallSchedule {
-  const turns = [turn("alice", -24, 144), turn("bob", 144, 312)];
+  const turns = [NOW_TURN, NEXT_TURN];
   return {
     id: "s1",
     name: "Ops",
@@ -36,8 +39,8 @@ function schedule(overrides: Partial<OnCallSchedule> = {}): OnCallSchedule {
       { user_id: "id-bob", username: "bob", problem: null },
     ],
     overrides: [],
-    now: turns[0],
-    next: turns[1],
+    now: NOW_TURN,
+    next: NEXT_TURN,
     turns,
     fallback: ["boss"],
     mail_host: "smtp.example.com",
@@ -83,7 +86,7 @@ describe("OnCallPage", () => {
     expect(within(card).getByText("All of acme · Hands off every Monday at 09:00, Europe/Paris time")).toBeInTheDocument();
     expect(within(card).getByText("On call now").nextSibling).toHaveTextContent("alice");
     expect(within(card).getByText("Next").nextSibling).toHaveTextContent("bob");
-    expect(within(card).getByText(`from ${formatWhen(new Date(schedule().turns[1].starts_at))}`)).toBeInTheDocument();
+    expect(within(card).getByText(`from ${formatWhen(new Date(NEXT_TURN.starts_at))}`)).toBeInTheDocument();
     const table = within(card).getByRole("table", { name: "Coming weeks of Ops" });
     expect(within(table).getAllByRole("row")).toHaveLength(3);
     expect(within(table).getByText("Now")).toBeInTheDocument();
@@ -121,7 +124,7 @@ describe("OnCallPage", () => {
         <OnCallPage />
       </As>,
     );
-    const next = schedule().turns[1];
+    const next = NEXT_TURN;
     await userEvent.click(await screen.findByRole("button", { name: `Someone else covers bob from ${formatWhen(new Date(next.starts_at))}` }));
     const form = screen.getByRole("form", { name: "Someone else covers" });
     expect(within(form).getByText("Instead of bob.")).toBeInTheDocument();
