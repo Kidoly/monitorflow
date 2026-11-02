@@ -56,6 +56,9 @@ pub struct Message {
     pub body: String,
     /// The webhook's JSON body.
     pub payload: Value,
+    /// One line per notification a group or a gathered message names, for
+    /// chat cards; empty otherwise.
+    pub lines: Vec<String>,
 }
 
 pub(super) fn str_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
@@ -71,19 +74,23 @@ fn number(value: f64) -> String {
     text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
+/// "acme / paris": the site, and the customer when not the default one.
+pub(super) fn site_place(details: &Value) -> Option<String> {
+    let site = str_at(details, &["site", "name"]);
+    let customer = str_at(details, &["customer", "name"]).filter(|&c| c != "default");
+    match (customer, site) {
+        (Some(c), Some(s)) => Some(format!("{c} / {s}")),
+        (c, s) => c.or(s).map(str::to_owned),
+    }
+}
+
 /// "web-1 (acme / paris)": the server or relay, and where it is; the
 /// customer only when not the default one.
 fn place(details: &Value) -> String {
     let peer = str_at(details, &["server", "name"])
         .map(str::to_owned)
         .or_else(|| str_at(details, &["relay", "name"]).map(|r| format!("relay {r}")));
-    let site = str_at(details, &["site", "name"]);
-    let customer = str_at(details, &["customer", "name"]).filter(|&c| c != "default");
-    let at = match (customer, site) {
-        (Some(c), Some(s)) => Some(format!("{c} / {s}")),
-        (c, s) => c.or(s).map(str::to_owned),
-    };
-    match (peer, at) {
+    match (peer, site_place(details)) {
         (Some(p), Some(a)) => format!("{p} ({a})"),
         (Some(p), None) => p,
         (None, Some(a)) => a,
@@ -92,7 +99,7 @@ fn place(details: &Value) -> String {
 }
 
 /// The sensor of an incident, like `disk_used_percent /var`.
-fn sensor(incident: &Value) -> String {
+pub(super) fn sensor(incident: &Value) -> String {
     let metric = str_at(incident, &["metric"]).unwrap_or("a sensor");
     let metric = metric.strip_prefix("monitorflow_").unwrap_or(metric);
     match str_at(incident, &["instance"]) {
@@ -124,7 +131,19 @@ fn incident_text(event: &str, details: &Value) -> String {
                 Some("muted") => format!("Resolved: offline alerts for {place} were turned off"),
                 _ => format!("Resolved: {place} is back online"),
             },
-            _ => format!("{}: {place} is offline", capitalized(severity)),
+            // The dispatcher counts the servers behind a relay (ADR-0080):
+            // they cannot report while it is down, and have no incident.
+            _ => match details["relay"]["servers"].as_u64().filter(|&n| n > 0) {
+                Some(1) => format!(
+                    "{}: {place} is offline; the server behind it cannot report",
+                    capitalized(severity)
+                ),
+                Some(n) => format!(
+                    "{}: {place} is offline; the {n} servers behind it cannot report",
+                    capitalized(severity)
+                ),
+                None => format!("{}: {place} is offline", capitalized(severity)),
+            },
         };
     }
     let sensor = sensor(incident);
@@ -202,10 +221,10 @@ fn path(event: &Event) -> String {
     }
 }
 
-/// Renders `event` with links under `web_url` (no trailing slash).
-pub fn render(event: &Event, web_url: &str) -> Message {
+/// The event in one line, without what a silence adds.
+pub(super) fn event_text(event: &Event) -> String {
     let d = &event.details;
-    let text = match event.event.as_str() {
+    match event.event.as_str() {
         "test" => "Test notification from MonitorFlow: this channel works.".to_owned(),
         "approval.waiting" => {
             let tier = match str_at(d, &["approval", "tier"]) {
@@ -229,7 +248,49 @@ pub fn render(event: &Event, web_url: &str) -> Message {
             str_at(d, &["release", "running_version"]).unwrap_or("an older one")
         ),
         e => incident_text(e, d),
-    };
+    }
+}
+
+/// The plain-text email body: `text`, the link, `lines`, the place and
+/// where to change the settings.
+pub(super) fn email_body(
+    text: &str,
+    url: &str,
+    lines: &[String],
+    details: &Value,
+    web_url: &str,
+) -> String {
+    let mut body = format!("{text}\n\n{url}\n");
+    if !lines.is_empty() {
+        body.push('\n');
+        for line in lines {
+            body.push_str(&format!("- {line}\n"));
+        }
+    }
+    let facts = [
+        ("Customer", str_at(details, &["customer", "name"])),
+        ("Site", str_at(details, &["site", "name"])),
+        ("Server", str_at(details, &["server", "name"])),
+        ("Relay", str_at(details, &["relay", "name"])),
+    ];
+    if facts.iter().any(|(_, v)| v.is_some()) {
+        body.push('\n');
+        for (label, value) in facts {
+            if let Some(value) = value {
+                body.push_str(&format!("{label}: {value}\n"));
+            }
+        }
+    }
+    body.push_str(&format!(
+        "\n-- \nSent by MonitorFlow. Notification settings: {web_url}{SETTINGS_PATH}\n"
+    ));
+    body
+}
+
+/// Renders `event` with links under `web_url` (no trailing slash).
+pub fn render(event: &Event, web_url: &str) -> Message {
+    let d = &event.details;
+    let text = event_text(event);
     let text = match d.get("silence") {
         Some(_) => after_silence(&event.event, text),
         None => text,
@@ -249,30 +310,13 @@ pub fn render(event: &Event, web_url: &str) -> Message {
     payload
         .entry("occurred_at")
         .or_insert_with(|| json!(event.created_at));
-    let mut body = format!("{text}\n\n{url}\n");
-    let facts = [
-        ("Customer", str_at(d, &["customer", "name"])),
-        ("Site", str_at(d, &["site", "name"])),
-        ("Server", str_at(d, &["server", "name"])),
-        ("Relay", str_at(d, &["relay", "name"])),
-    ];
-    if facts.iter().any(|(_, v)| v.is_some()) {
-        body.push('\n');
-        for (label, value) in facts {
-            if let Some(value) = value {
-                body.push_str(&format!("{label}: {value}\n"));
-            }
-        }
-    }
-    body.push_str(&format!(
-        "\n-- \nSent by MonitorFlow. Notification settings: {web_url}{SETTINGS_PATH}\n"
-    ));
     Message {
         subject: format!("[MonitorFlow] {text}"),
+        body: email_body(&text, &url, &[], d, web_url),
         text,
         url,
-        body,
         payload: Value::Object(payload),
+        lines: Vec::new(),
     }
 }
 

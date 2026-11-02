@@ -14,6 +14,7 @@ use std::time::Duration;
 use reqwest::Url;
 use serde_json::{json, Value};
 
+use super::group::GROUP;
 use super::message::{capitalized, str_at, Message};
 
 /// Label of the link to the interface.
@@ -27,6 +28,10 @@ const DETAIL: usize = 2800;
 const FACT: usize = 200;
 /// Longest line of a gathered message, and how many it lists.
 const GATHERED_LINE: usize = 160;
+/// Longest line of a group message.
+pub const GROUP_LINE: usize = 150;
+/// Lines per section of a Slack message, so that one stays under 3000.
+const SLACK_LINES: usize = 10;
 const GATHERED_LINES: usize = 15;
 
 /// What a burst gathers under, in place of the notifications it replaces.
@@ -78,6 +83,17 @@ impl Service {
             Self::Slack => 20,
             Self::Teams => 5,
             Self::Discord => 15,
+        }
+    }
+
+    /// Most lines a group message lists (ADR-0080), each within
+    /// [`GROUP_LINE`]: well inside Slack's and Teams' limits, and inside
+    /// Discord's 4096 characters even if every other character needs a
+    /// backslash.
+    pub fn group_lines(self) -> usize {
+        match self {
+            Self::Slack | Self::Teams => 20,
+            Self::Discord => 12,
         }
     }
 
@@ -275,6 +291,7 @@ pub fn gather(messages: &[Message], keep: usize, web_url: &str) -> Vec<Message> 
         url: format!("{web_url}/incidents/"),
         body: lines.join("\n"),
         payload: json!({ "event": GATHERED }),
+        lines,
     });
     gathered
 }
@@ -292,7 +309,8 @@ enum Tone {
 #[derive(Debug)]
 struct Card {
     title: String,
-    /// Lines under the title: the whole text when the title cut it.
+    /// Lines under the title: the whole text when the title cut it, then
+    /// what a group or a gathered message lists.
     detail: Vec<String>,
     facts: Vec<(&'static str, String)>,
     link: String,
@@ -308,15 +326,18 @@ impl Card {
         let severity = str_at(p, &["incident", "severity"]);
         let summary = one_line(&message.text);
         let title = cut(&summary, TITLE);
-        let detail = if event == GATHERED {
-            message.body.lines().map(str::to_owned).collect()
-        } else if title == summary {
+        let mut detail = if title == summary {
             Vec::new()
         } else {
             vec![cut(&summary, DETAIL)]
         };
+        detail.extend(message.lines.iter().map(|l| cut(&one_line(l), GROUP_LINE)));
+        let resolved = event == "incident.resolved"
+            || (event == GROUP && p["group"]["resolved"].as_bool() == Some(true));
         let tone = match (event, severity) {
-            ("incident.resolved", _) => Tone::Good,
+            _ if resolved => Tone::Good,
+            (GROUP, Some("critical")) => Tone::Danger,
+            (GROUP, _) => Tone::Warning,
             ("incident.opened" | "incident.escalated", Some("critical")) => Tone::Danger,
             ("incident.opened" | "incident.escalated", _) | ("approval.waiting", _) => {
                 Tone::Warning
@@ -325,7 +346,7 @@ impl Card {
             _ => Tone::Neutral,
         };
         let severity = match event {
-            "incident.resolved" => Some("Resolved".to_owned()),
+            _ if resolved => Some("Resolved".to_owned()),
             e if e.starts_with("incident.") => severity.map(capitalized),
             _ => None,
         };
@@ -336,6 +357,7 @@ impl Card {
             ("Site", str_at(p, &["site", "name"])),
             ("Server", str_at(p, &["server", "name"])),
             ("Relay", str_at(p, &["relay", "name"])),
+            ("Affected", str_at(p, &["group", "hosts"])),
         ]
         .into_iter()
         .filter_map(|(label, value)| Some((label, cut(&one_line(value?), FACT))))
@@ -407,6 +429,26 @@ fn slack_char(c: char, out: &mut String) {
     }
 }
 
+/// `lines` in sections of at most [`SLACK_LINES`] lines and 2800
+/// characters once escaped, so that a list is never cut at Slack's 3000.
+fn sections(lines: &[String]) -> Vec<String> {
+    let escaped = |text: &str| length(&within(text, usize::MAX, slack_char));
+    let mut sections: Vec<(usize, String)> = Vec::new();
+    for line in lines {
+        match sections.last_mut() {
+            Some((count, text))
+                if *count < SLACK_LINES && escaped(text) + escaped(line) < DETAIL =>
+            {
+                *count += 1;
+                text.push('\n');
+                text.push_str(line);
+            }
+            _ => sections.push((1, line.clone())),
+        }
+    }
+    sections.into_iter().map(|(_, text)| text).collect()
+}
+
 fn slack_plain(text: &str, limit: usize) -> Value {
     json!({ "type": "plain_text", "text": within(text, limit, slack_char), "emoji": false })
 }
@@ -416,8 +458,7 @@ fn slack_plain(text: &str, limit: usize) -> Value {
 /// fallback, with formatting off.
 fn slack(card: &Card) -> Value {
     let mut blocks = vec![json!({ "type": "header", "text": slack_plain(&card.title, TITLE) })];
-    if !card.detail.is_empty() {
-        let text = card.detail.join("\n");
+    for text in sections(&card.detail) {
         blocks.push(json!({ "type": "section", "text": slack_plain(&text, 3000) }));
     }
     if !card.facts.is_empty() {
@@ -518,11 +559,18 @@ fn discord(card: &Card) -> Value {
     };
     let link = card.link.replace('(', "%28").replace(')', "%29");
     let link = format!("[{OPEN}]({link})");
+    // Each line gets its share once escaped, so that a list keeps its
+    // last line, which says how many more there are.
+    let share = 3000 / card.detail.len().max(1);
     let description = if card.detail.is_empty() {
         link
     } else {
-        let text = within(&card.detail.join("\n"), 3000, discord_char);
-        format!("{text}\n\n{link}")
+        let lines: Vec<String> = card
+            .detail
+            .iter()
+            .map(|line| within(line, share, discord_char))
+            .collect();
+        format!("{}\n\n{link}", lines.join("\n"))
     };
     let fields: Vec<Value> = card
         .facts
