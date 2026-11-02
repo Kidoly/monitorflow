@@ -51,6 +51,8 @@ pub struct ListParams {
     pub from: Option<DateTime<Utc>>,
     /// Incidents opened at or before this time.
     pub to: Option<DateTime<Utc>>,
+    /// The incidents one notification told together (ADR-0080).
+    pub group: Option<Uuid>,
     /// 1 to [`MAX_LIMIT`], default [`DEFAULT_LIMIT`].
     pub limit: Option<u32>,
     /// `next_cursor` of the previous page.
@@ -121,6 +123,16 @@ pub struct EventView {
     pub details: Value,
 }
 
+/// A notification that told this incident with others (ADR-0080).
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct GroupView {
+    /// `group` of `GET /api/incidents` lists them.
+    pub id: Uuid,
+    /// How many incidents it told, this one included.
+    pub incidents: i32,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Body of `GET /api/incidents/{id}`.
 #[derive(Debug, Serialize)]
 pub struct IncidentDetail {
@@ -128,6 +140,8 @@ pub struct IncidentDetail {
     pub incident: IncidentView,
     /// In the order they happened.
     pub events: Vec<EventView>,
+    /// Oldest first.
+    pub notification_groups: Vec<GroupView>,
 }
 
 /// The sort key `(open, opened_at, id)` of a page's last incident.
@@ -205,6 +219,8 @@ pub async fn list(
            AND ($7::timestamptz IS NULL OR i.resolved_at IS NULL OR i.resolved_at >= $7)
            AND ($8::timestamptz IS NULL OR i.opened_at <= $8)
            AND ($9::boolean IS NULL OR (i.state = 'open', i.opened_at, i.id) < ($9, $10, $11))
+           AND ($13::uuid IS NULL OR i.id = ANY(
+                    SELECT unnest(incident_ids) FROM notification_groups WHERE id = $13))
          ORDER BY i.state = 'open' DESC, i.opened_at DESC, i.id DESC
          LIMIT $12"
     )))
@@ -220,6 +236,7 @@ pub async fn list(
     .bind(after.map(|c| c.1))
     .bind(after.map(|c| c.2))
     .bind(i64::from(limit) + 1)
+    .bind(params.group)
     .fetch_all(&state.pool)
     .await?;
     let next_cursor = if rows.len() > limit as usize {
@@ -258,7 +275,19 @@ pub async fn detail(
     .bind(id)
     .fetch_all(&state.pool)
     .await?;
-    Ok(Json(IncidentDetail { incident, events }))
+    let notification_groups = sqlx::query_as(
+        "SELECT id, cardinality(incident_ids) AS incidents, created_at
+         FROM notification_groups WHERE incident_ids @> ARRAY[$1]
+         ORDER BY created_at, id",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(IncidentDetail {
+        incident,
+        events,
+        notification_groups,
+    }))
 }
 
 #[cfg(test)]

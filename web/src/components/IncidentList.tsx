@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { type Incident, type Server, type Site, api, describeError, isUnauthorized } from "@/lib/api";
 import { type IncidentFilters, apiQuery, filtersFromQuery, incidentTitle, isOffline } from "@/lib/incidents";
 import { administersEverything, useMe } from "@/lib/me";
-import { NOTIFICATIONS_PATH, incidentHref, incidentPeerHref } from "@/lib/routes";
+import { NOTIFICATIONS_PATH, incidentHref, incidentPeerHref, incidentsHref } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
@@ -16,7 +16,7 @@ import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { ButtonLink } from "@/components/ui/Button";
 import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
-import { EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
+import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatDay, formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
@@ -98,7 +98,9 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
   const open = data?.open.filter(visible) ?? [];
   const customers = new Map(sites.map((s) => [s.id, s.customer_name]));
   const now = updatedAt ?? new Date();
-  const filtered = Boolean(filters.severity || filters.serverId || filters.state !== "all" || (filters.siteId && !scope.siteId));
+  const filtered = Boolean(
+    filters.severity || filters.serverId || filters.groupId || filters.state !== "all" || (filters.siteId && !scope.siteId),
+  );
 
   const siteChoices = sites.filter((s) => !scope.customerId || s.customer_id === scope.customerId);
   const serverChoices = servers
@@ -210,11 +212,19 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
       )}
+      {filters.groupId && (
+        <Banner tone="info">
+          Sent together in one notification: the incidents below were told in a single message, with the other filters
+          still applied. <Link href={scopedHref(incidentsHref({ ...filters, groupId: null }), scope)}>Show all incidents</Link>
+        </Banner>
+      )}
       {!data && error !== null && !isUnauthorized(error) ? (
         <ErrorState what="incidents" error={describeError(error)} onRetry={refresh} />
       ) : data && incidents.length === 0 ? (
         filtered ? (
-          <NoMatches names={["state", "severity", "server", ...(scope.siteId ? [] : ["site"])]}>No incidents match these filters.</NoMatches>
+          <NoMatches names={["state", "severity", "server", "group", ...(scope.siteId ? [] : ["site"])]}>
+            No incidents match these filters.
+          </NoMatches>
         ) : (
           <EmptyState
             actions={

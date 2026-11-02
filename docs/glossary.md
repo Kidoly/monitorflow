@@ -30,6 +30,7 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Notify about | What a channel hears of: Everything, All of a customer, or one site | scope, coverage, routing | `customer_id`, `site_id`, `Coverage` |
 | Everything | For a channel or a silence: all customers and sites, plus news about the central server: failed backups, automatic updates, new versions | global, all customers | both columns null; a silence with no target |
 | Silence | Stop notifications about a server, relay, site, customer or everything for a while, whatever channel they go to. Incidents still open and show; what is still open at the end is sent | mute, snooze, maintenance mode, downtime | `silences` |
+| Sent together | Incidents told in one notification: the same check on several machines, the rest of a site, or what a silence held back. Each incident still has its own page | group, batch, digest, bundle, aggregate | `notification_groups`, `?group=` |
 | Turn off | Stop watching: no more alerts of a threshold, or offline incidents of a machine, until turned back on | mute | `offline_alerts`, `muted`, `enabled` |
 
 Keep the technical word when it is the thing being asked for, such as a certificate, a mirror or a sudo rule, and put the rest under a "Details" disclosure. Certificate warnings speak of renewal, and appear only when it is late (under 2 days left) or failed.

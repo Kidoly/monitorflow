@@ -16,12 +16,13 @@ import { incidentPeerHref, incidentsHref } from "./routes";
 
 const SITE = "0b8d2f6e-1c4a-4f7e-9d2b-3a5c6e7f8a90";
 const SERVER = "6f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a01";
+const GROUP = "9a3e2c1b-7d4f-4e6a-8b5c-1d2e3f4a5b6c";
 
 describe("incident filters", () => {
   it("round-trip through the query string", () => {
-    const filters = { state: "open", severity: "critical", siteId: SITE, serverId: SERVER } as const;
+    const filters = { state: "open", severity: "critical", siteId: SITE, serverId: SERVER, groupId: GROUP } as const;
     const query = filtersToQuery(filters);
-    expect(query).toBe(`state=open&severity=critical&site=${SITE}&server=${SERVER}`);
+    expect(query).toBe(`state=open&severity=critical&site=${SITE}&server=${SERVER}&group=${GROUP}`);
     expect(filtersFromQuery(new URLSearchParams(query))).toEqual(filters);
   });
 
@@ -31,24 +32,26 @@ describe("incident filters", () => {
   });
 
   it("ignore unknown and malformed values", () => {
-    const params = new URLSearchParams("state=closed&severity=Critical&site=paris&server=1&sort=asc");
+    const params = new URLSearchParams("state=closed&severity=Critical&site=paris&server=1&group=x&sort=asc");
     expect(filtersFromQuery(params)).toEqual(NO_FILTERS);
     expect(filtersFromQuery(new URLSearchParams(`server=${SERVER.toUpperCase()}`)).serverId).toBe(SERVER);
   });
 
   it("map to the API's parameters", () => {
     expect(apiQuery(NO_FILTERS)).toEqual({});
-    expect(apiQuery({ state: "resolved", severity: "warning", siteId: SITE, serverId: SERVER })).toEqual({
+    expect(apiQuery({ state: "resolved", severity: "warning", siteId: SITE, serverId: SERVER, groupId: GROUP })).toEqual({
       state: "resolved",
       severity: "warning",
       site_id: SITE,
       server_id: SERVER,
+      group: GROUP,
     });
   });
 
   it("build links to the list", () => {
     expect(incidentsHref()).toBe("/incidents/");
     expect(incidentsHref({ state: "open", serverId: SERVER })).toBe(`/incidents/?state=open&server=${SERVER}`);
+    expect(incidentsHref({ groupId: GROUP })).toBe(`/incidents/?group=${GROUP}`);
   });
 });
 

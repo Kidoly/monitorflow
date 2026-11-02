@@ -3,11 +3,13 @@
 //! updates fail, [`backup`] when a backup fails, and the release check when
 //! a new version appears. The [`dispatcher`] delivers each event to every
 //! channel whose [`Coverage`] includes it (ADR-0078), unless a [`silence`]
-//! holds it back (ADR-0079).
+//! holds it back (ADR-0079), and sends related incidents as one [`group`]
+//! (ADR-0080).
 
 pub mod backup;
 pub mod chat;
 pub mod dispatcher;
+pub mod group;
 pub mod message;
 pub mod send;
 pub mod silence;

@@ -158,6 +158,7 @@ db_tests! {
                 "mirror_snapshots",
                 "mirrors",
                 "notification_channels",
+                "notification_groups",
                 "notification_outbox",
                 "password_links",
                 "pending_hosts",

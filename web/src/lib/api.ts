@@ -564,9 +564,20 @@ export interface IncidentEvent {
   details: Record<string, unknown>;
 }
 
+/** A notification that sent this incident together with others (ADR-0080). */
+export interface NotificationGroup {
+  /** `group` of `GET /api/incidents` lists them. */
+  id: string;
+  /** How many incidents it sent, this one included. */
+  incidents: number;
+  created_at: string;
+}
+
 /** `GET /api/incidents/{id}`: the incident and its events in the order they happened. */
 export interface IncidentDetail extends Incident {
   events: IncidentEvent[];
+  /** Oldest first; absent from servers before ADR-0080. */
+  notification_groups?: NotificationGroup[];
 }
 
 /** Filters of `GET /api/incidents`; all optional. */
@@ -575,6 +586,8 @@ export interface IncidentQuery {
   severity?: IncidentSeverity;
   server_id?: string;
   site_id?: string;
+  /** The incidents one notification sent together (ADR-0080). */
+  group?: string;
   /** 1 to 500; the API's default is 100. */
   limit?: number;
   cursor?: string;

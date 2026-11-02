@@ -176,6 +176,31 @@ pub async fn hold(
     Ok(())
 }
 
+/// Room for owed messages in one pass of the narrowest chat channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Budget {
+    /// Messages it may be sent in a pass without gathering.
+    pub messages: usize,
+    /// Lines its group messages list.
+    pub lines: usize,
+}
+
+impl Budget {
+    /// Messages for owed rows: `incidents` per customer, which go out in
+    /// groups, and `others`, one each.
+    fn needs(self, incidents: &HashMap<Option<Uuid>, usize>, others: usize) -> usize {
+        let lines = self.lines.max(1);
+        incidents
+            .iter()
+            .map(|(customer, n)| match customer {
+                Some(_) => n.div_ceil(lines),
+                None => *n,
+            })
+            .sum::<usize>()
+            + others
+    }
+}
+
 /// What a release does with one incident's held rows, or one other event.
 enum Unit<'a> {
     Incident(Uuid, Vec<&'a Event>),
@@ -197,12 +222,14 @@ impl Unit<'_> {
 ///
 /// `budget` is how many owed messages may be pending at once, the room a
 /// paced chat channel has in one pass (ADR-0077); `None` without one.
-/// What does not fit stays held, whole, for a later pass, so that pacing
-/// never has to gather or drop it. Returns how many will be sent.
+/// Incidents of one customer go out in group messages (ADR-0080), so they
+/// count one message per [`Budget::lines`]. What does not fit stays held,
+/// whole, for a later pass, so that pacing never has to gather or drop it.
+/// Returns how many rows will be sent.
 pub async fn release(
     pool: &PgPool,
     now: DateTime<Utc>,
-    budget: Option<usize>,
+    budget: Option<Budget>,
 ) -> Result<usize, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let held: Vec<Event> = sqlx::query_as(
@@ -216,18 +243,24 @@ pub async fn release(
         return Ok(0);
     }
     let silences = load(&mut *tx, now, now).await?;
-    let room = match budget {
-        Some(budget) => {
-            let pending: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM notification_outbox
-                 WHERE sent_at IS NULL AND held_at IS NULL AND details ? 'silence'",
-            )
-            .fetch_one(&mut *tx)
-            .await?;
-            budget.saturating_sub(usize::try_from(pending).unwrap_or(usize::MAX))
+    // Owed rows not sent yet, waiting for their window or a channel.
+    let mut owed_incidents: HashMap<Option<Uuid>, usize> = HashMap::new();
+    let mut owed_others = 0;
+    if budget.is_some() {
+        let pending: Vec<(Option<Uuid>, bool)> = sqlx::query_as(
+            "SELECT customer_id, event LIKE 'incident.%' FROM notification_outbox
+             WHERE sent_at IS NULL AND held_at IS NULL AND details ? 'silence'",
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        for (customer, incident) in pending {
+            if incident {
+                *owed_incidents.entry(customer).or_default() += 1;
+            } else {
+                owed_others += 1;
+            }
         }
-        None => usize::MAX,
-    };
+    }
     let mut incidents: BTreeMap<Uuid, Vec<&Event>> = BTreeMap::new();
     let mut others = Vec::new();
     for event in held
@@ -301,8 +334,17 @@ pub async fn release(
                 _ => Some((event.id, event.details.clone())),
             },
         };
-        if chosen.is_some() && send.len() >= room {
-            continue;
+        if let (Some(budget), true) = (budget, chosen.is_some()) {
+            let customer = unit.rows().first().and_then(|e| e.customer_id);
+            let (mut incidents, mut others) = (owed_incidents.clone(), owed_others);
+            match unit {
+                Unit::Incident(..) => *incidents.entry(customer).or_default() += 1,
+                Unit::Other(_) => others += 1,
+            }
+            if budget.needs(&incidents, others) > budget.messages {
+                continue;
+            }
+            (owed_incidents, owed_others) = (incidents, others);
         }
         if let Unit::Incident(incident, _) = unit {
             sqlx::query(
@@ -518,5 +560,21 @@ mod tests {
         // Told before the silence, resolved during it.
         assert_eq!(settle(&[&resolved], false), Some(3));
         assert_eq!(settle(&[&escalated, &resolved], false), Some(3));
+    }
+
+    #[test]
+    fn a_release_counts_messages_not_rows() {
+        let budget = Budget {
+            messages: 4,
+            lines: 10,
+        };
+        let incidents = |counts: &[(Option<Uuid>, usize)]| counts.iter().copied().collect();
+        // One customer's 25 incidents are three group messages.
+        assert_eq!(budget.needs(&incidents(&[(Some(CUSTOMER), 25)]), 0), 3);
+        assert_eq!(budget.needs(&incidents(&[(Some(CUSTOMER), 1)]), 0), 1);
+        // Two customers never share one; other events and incidents of no
+        // customer go one each.
+        let two = incidents(&[(Some(CUSTOMER), 3), (Some(SITE), 3), (None, 2)]);
+        assert_eq!(budget.needs(&two, 1), 5);
     }
 }

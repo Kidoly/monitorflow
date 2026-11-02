@@ -198,6 +198,7 @@ export function IncidentPage({ id }: { id: string | null }) {
         }
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
+      <SentTogether incident={incident} now={now} />
       <StatTiles
         compact
         label="Summary"
@@ -341,6 +342,21 @@ function eventWords(event: IncidentEvent): string {
 }
 
 /** The events in the API's order, which is the order the engine made them. */
+/** The last notification that told this incident with others (ADR-0080), and the way to the others. */
+function SentTogether({ incident, now }: { incident: IncidentDetail; now: Date }) {
+  const scope = useScope();
+  const group = incident.notification_groups?.at(-1);
+  if (!group) return null;
+  const others = group.incidents - 1;
+  return (
+    <Banner tone="plain">
+      Sent together with {others} other {others === 1 ? "incident" : "incidents"} in one notification,{" "}
+      {formatDay(new Date(group.created_at), now)}.{" "}
+      <Link href={scopedHref(incidentsHref({ groupId: group.id }), scope)}>Show them</Link>
+    </Banner>
+  );
+}
+
 function Timeline({ events, format, now }: { events: IncidentEvent[]; format: (v: number) => string; now: Date }) {
   if (events.length === 0) return <p>No events recorded.</p>;
   const columns: Column<IncidentEvent>[] = [

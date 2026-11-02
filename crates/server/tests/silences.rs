@@ -161,7 +161,8 @@ async fn scoped(pool: &PgPool, coverage: Coverage) -> (Dispatcher, Arc<Mutex<Vec
         .unwrap();
     let dispatcher = Dispatcher::new(pool.clone(), "https://mf.example")
         .with_retries(Vec::new())
-        .without_pace();
+        .without_pace()
+        .without_waits();
     (dispatcher, seen, id)
 }
 
@@ -612,7 +613,9 @@ db_tests! {
         .execute(&pool)
         .await
         .unwrap();
-        let restarted = Dispatcher::new(pool.clone(), "https://mf.example").without_pace();
+        let restarted = Dispatcher::new(pool.clone(), "https://mf.example")
+            .without_pace()
+            .without_waits();
         settle(&restarted).await;
         assert_eq!(taken(&seen).len(), 1, "older than a day, and still sent");
     }
@@ -799,12 +802,13 @@ db_tests! {
     #[sqlx::test]
     async fn a_release_is_never_gathered_into_a_summary(pool: PgPool) {
         // Teams takes 5 messages a pass and gathers the rest (ADR-0077);
-        // each still-open incident is owed a message of its own.
+        // each still-open incident is owed a line naming it.
         let a = place(&pool, "a").await;
         let teams = chat(&pool, Destination::Teams, Vec::new()).await;
         let dispatcher = Dispatcher::new(pool.clone(), "https://mf.example")
             .with_retries(Vec::new())
-            .without_pace();
+            .without_pace()
+            .without_waits();
         let id = silence(&pool, Scope::default(), -1, 60).await;
         for i in 0..12 {
             open_disk(&pool, a.server, &format!("/disk{i}")).await;
@@ -829,7 +833,8 @@ db_tests! {
             let named = format!("/disk{i} is 99 on a-web");
             let found: Vec<&String> = bodies.iter().filter(|b| b.contains(&named)).collect();
             assert_eq!(found.len(), 1, "{named} is owed one message: {bodies:#?}");
-            assert!(found[0].contains("Still open after a silence"), "{}", found[0]);
+            // Named in a group of what the silence held back (ADR-0080).
+            assert!(found[0].contains("after a silence"), "{}", found[0]);
             assert!(!found[0].contains("more notifications"), "{}", found[0]);
         }
         // The fresh ones may be gathered, as before; none is lost.
@@ -852,7 +857,8 @@ db_tests! {
         let (_, hook, _) = scoped(&pool, Coverage::Everything).await;
         let dispatcher = Dispatcher::new(pool.clone(), "https://mf.example")
             .with_retries(vec![Duration::ZERO, Duration::ZERO])
-            .without_pace();
+            .without_pace()
+            .without_waits();
         let id = silence(&pool, Scope::default(), -1, 60).await;
         open_disk(&pool, a.server, "/var").await;
         open_disk(&pool, a.server, "/srv").await;

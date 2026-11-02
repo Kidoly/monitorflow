@@ -124,6 +124,20 @@ describe("IncidentList", () => {
     expect(window.location.search).toBe("");
   });
 
+  it("lists what one notification sent together, and the way back to all", async () => {
+    const GROUP = "9a3e2c1b-7d4f-4e6a-8b5c-1d2e3f4a5b6c";
+    setUrl(`/incidents/?group=${GROUP}`);
+    stubFetch({
+      ...options,
+      [OPEN]: openReply,
+      [`GET /api/incidents?group=${GROUP}&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [open, resolved], next_cursor: null } },
+    });
+    render(<IncidentList filters={{ ...NO_FILTERS, groupId: GROUP }} />);
+    await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(3));
+    expect(screen.getByText(/Sent together in one notification/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Show all incidents" })).toHaveAttribute("href", expect.stringMatching(/^\/incidents\/?$/));
+  });
+
   it("keeps the scope's customer only", async () => {
     setUrl(`/incidents/?customer=${ACME}`);
     stubFetch({

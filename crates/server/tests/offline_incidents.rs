@@ -189,10 +189,23 @@ db_tests! {
         );
         assert!(check(&pool, &[]).await.is_empty(), "no duplicate");
 
-        // The relay is back but its agent is not: the agent's own incident.
+        // The relay is back but its agent is not: the agent gets as long
+        // as anyone to reconnect through it (ADR-0080), so the relay's
+        // return does not open one incident per server behind it.
         let up = [(PeerRole::Relay, "relay-1"), (PeerRole::Agent, "direct")];
         let changes = check(&pool, &up).await;
-        assert_eq!(changes.len(), 3, "{changes:?}");
+        assert_eq!(changes.len(), 2, "{changes:?}");
+        assert!(open_offline(&pool).await.is_empty());
+
+        // Still not back five minutes later: the agent's own incident.
+        let long_ago: HashMap<_, _> = online(&up)
+            .into_iter()
+            .map(|(peer, at)| (peer, at - Duration::minutes(6)))
+            .collect();
+        let changes = offline::check(&pool, &long_ago, started(), &OfflineSettings::default())
+            .await
+            .unwrap();
+        assert_eq!(changes.len(), 1, "{changes:?}");
         assert_eq!(open_offline(&pool).await, [(Some(fleet.behind), None)]);
         let reasons: Vec<_> = events(&pool)
             .await

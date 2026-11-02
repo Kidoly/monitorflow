@@ -83,7 +83,9 @@ pub enum Action {
 /// connected peer to the start of its stream. Nobody counts as silent for
 /// longer than since `started`, the start of this server, so its own
 /// downtime opens nothing. A server behind a relay that is offline opens
-/// nothing either: the relay's incident says it.
+/// nothing either: the relay's incident says it. Once the relay is back,
+/// the start of its stream counts as heard from for its servers, which get
+/// the same time to reconnect through it (ADR-0080).
 pub fn decide(
     peers: &[Watched],
     online: &HashMap<(PeerRole, String), DateTime<Utc>>,
@@ -105,6 +107,17 @@ pub fn decide(
             _ => None,
         })
         .collect();
+    let relays_back: HashMap<Uuid, DateTime<Utc>> = peers
+        .iter()
+        .filter_map(|p| match p.peer {
+            Peer::Relay(id) => Some((id, connected(p)?)),
+            Peer::Server(_) => None,
+        })
+        .collect();
+    let heard = |p: &Watched| {
+        let relay = p.relay.and_then(|r| relays_back.get(&r)).copied();
+        p.last_seen.max(started).max(relay.unwrap_or(started))
+    };
     let after = chrono::Duration::from_std(after).unwrap_or(chrono::Duration::MAX);
     peers
         .iter()
@@ -122,7 +135,7 @@ pub fn decide(
                     reason: "muted",
                 },
                 (None, None, false)
-                    if now - p.last_seen.max(started) >= after
+                    if now - heard(p) >= after
                         && !p.relay.is_some_and(|r| relays_down.contains(&r)) =>
                 {
                     Action::Open { since: p.last_seen }
@@ -420,10 +433,12 @@ mod tests {
             decide(&peers, &none, at(10), at(-60), AFTER),
             [(relay.peer, Action::Open { since: at(0) })]
         );
-        // Up relay, down agent: the agent's own incident.
+        // Up relay, down agent: the agent's own incident, once the agent
+        // had as long as anyone to reconnect through the relay, back at 9.
         let up = online(&[(PeerRole::Relay, "r")]);
+        assert!(decide(&peers, &up, at(13), at(-60), AFTER).is_empty());
         assert_eq!(
-            decide(&peers, &up, at(10), at(-60), AFTER),
+            decide(&peers, &up, at(14), at(-60), AFTER),
             [(behind.peer, Action::Open { since: at(0) })]
         );
         // A muted relay no longer covers them.
@@ -435,5 +450,29 @@ mod tests {
             decide(&[muted, behind.clone()], &none, at(10), at(-60), AFTER),
             [(behind.peer, Action::Open { since: at(0) })]
         );
+    }
+
+    #[test]
+    fn a_relay_coming_back_does_not_open_one_incident_per_server() {
+        let relay_id = Uuid::from_u128(1);
+        let relay = Watched {
+            incident: Some(Uuid::from_u128(9)),
+            ..peer(Peer::Relay(relay_id), "r", 0)
+        };
+        let behind: Vec<Watched> = (2..42)
+            .map(|n| Watched {
+                relay: Some(relay_id),
+                ..peer(Peer::Server(Uuid::from_u128(n)), &format!("s{n}"), 0)
+            })
+            .collect();
+        let peers: Vec<Watched> = std::iter::once(relay.clone()).chain(behind).collect();
+        // The relay reconnected at 9; its agents are still on their way.
+        let up = online(&[(PeerRole::Relay, "r")]);
+        let changes = decide(&peers, &up, at(10), at(-60), AFTER);
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(
+            changes[0],
+            (Peer::Relay(_), Action::Resolve { .. })
+        ));
     }
 }

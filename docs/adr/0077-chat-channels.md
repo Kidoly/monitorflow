@@ -1,7 +1,7 @@
 # ADR-0077: Slack, Teams and Discord channels
 
 Date: 2026-11-02
-Status: accepted
+Status: accepted; related incidents are sent together before any gathering (ADR-0080)
 
 ## Context
 

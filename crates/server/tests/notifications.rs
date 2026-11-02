@@ -349,7 +349,9 @@ fn parts(response: (StatusCode, Value, Option<String>)) -> (StatusCode, Value) {
 }
 
 fn fast(pool: &PgPool) -> Dispatcher {
-    Dispatcher::new(pool.clone(), "https://mf.example").with_retries(vec![Duration::ZERO])
+    Dispatcher::new(pool.clone(), "https://mf.example")
+        .with_retries(vec![Duration::ZERO])
+        .without_waits()
 }
 
 db_tests! {

@@ -114,6 +114,30 @@ describe("IncidentPage", () => {
     await vi.waitFor(() => expect(document.title).toBe("Disk used /var on web-1 · MonitorFlow"));
   });
 
+  it("says when a notification sent it together with others", async () => {
+    const GROUP = "9a3e2c1b-7d4f-4e6a-8b5c-1d2e3f4a5b6c";
+    stubIncident({
+      ...resolved,
+      notification_groups: [
+        { id: "11111111-2222-4333-8444-555555555555", incidents: 2, created_at: "2026-10-19T11:00:30Z" },
+        { id: GROUP, incidents: 40, created_at: "2026-10-19T11:41:00Z" },
+      ],
+    });
+    render(<IncidentPage id={ID} />);
+    expect(await screen.findByText(/Sent together with 39 other incidents in one notification/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Show them" })).toHaveAttribute(
+      "href",
+      expect.stringMatching(new RegExp(`^/incidents/?\\?group=${GROUP}$`)),
+    );
+  });
+
+  it("says nothing of notifications sent for it alone", async () => {
+    stubIncident(resolved);
+    render(<IncidentPage id={ID} />);
+    expect(await screen.findByText("Timeline")).toBeInTheDocument();
+    expect(screen.queryByText(/Sent together/)).not.toBeInTheDocument();
+  });
+
   it("widens the window through the URL", async () => {
     const fetchMock = stubIncident(resolved);
     render(<IncidentPage id={ID} />);
