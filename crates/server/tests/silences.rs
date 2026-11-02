@@ -606,55 +606,53 @@ db_tests! {
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         let id = silence(&pool, Scope::default(), -1, 60).await;
-        for (name, pending) in [("waiting", true), ("gone", false)] {
-            let approval = if pending {
-                let remediation: Uuid = sqlx::query_scalar(
-                    "INSERT INTO remediation_incidents (customer_id, server_id, metric,
-                                                        max_commands, max_duration_s)
-                     VALUES ($1, $2, 'cpu', 5, 600) RETURNING id",
-                )
-                .bind(a.customer)
-                .bind(a.server)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-                sqlx::query(
-                    "INSERT INTO remediation_incident_events
-                         (incident_id, seq, kind, actor_kind, actor_id, payload, prev_hash, hash)
-                     VALUES ($1, 1, 'ai_proposal', 'ai', 'mock/m', '{\"command\": \"uptime\"}',
-                             decode(repeat('00', 32), 'hex'), decode(repeat('00', 32), 'hex'))",
-                )
-                .bind(remediation)
-                .execute(&pool)
-                .await
-                .unwrap();
-                sqlx::query_scalar(
-                    "INSERT INTO remediation_pending_commands
-                         (incident_id, proposal_seq, command, diagnosis, reasoning, tier, rule, reason)
-                     VALUES ($1, 1, 'uptime', 'd', 'r', 'low_impact', '{}', 'r')
-                     RETURNING id",
-                )
-                .bind(remediation)
-                .fetch_one(&pool)
-                .await
-                .unwrap()
-            } else {
-                Uuid::new_v4()
-            };
-            sqlx::query("INSERT INTO notification_outbox (event, customer_id, details) VALUES ('approval.waiting', $1, $2)")
-                .bind(a.customer)
-                .bind(json!({"approval": {"id": approval, "command": name, "tier": "low_impact"}}))
-                .execute(&pool)
-                .await
-                .unwrap();
-        }
+        // The trigger writes the notification of a real pending command.
+        let remediation: Uuid = sqlx::query_scalar(
+            "INSERT INTO remediation_incidents (customer_id, server_id, metric,
+                                                max_commands, max_duration_s)
+             VALUES ($1, $2, 'cpu', 5, 600) RETURNING id",
+        )
+        .bind(a.customer)
+        .bind(a.server)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO remediation_incident_events
+                 (incident_id, seq, kind, actor_kind, actor_id, payload, prev_hash, hash)
+             VALUES ($1, 1, 'ai_proposal', 'ai', 'mock/m', '{\"command\": \"uptime\"}',
+                     decode(repeat('00', 32), 'hex'), decode(repeat('00', 32), 'hex'))",
+        )
+        .bind(remediation)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO remediation_pending_commands
+                 (incident_id, proposal_seq, command, diagnosis, reasoning, tier, rule, reason)
+             VALUES ($1, 1, 'uptime', 'd', 'r', 'low_impact', '{}', 'r')",
+        )
+        .bind(remediation)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // One decided or expired during the silence.
+        sqlx::query(
+            "INSERT INTO notification_outbox (event, customer_id, details)
+             VALUES ('approval.waiting', $1, $2)",
+        )
+        .bind(a.customer)
+        .bind(json!({"approval": {"id": Uuid::new_v4(), "command": "gone", "tier": "low_impact"}}))
+        .execute(&pool)
+        .await
+        .unwrap();
         settle(&dispatcher).await;
         assert!(taken(&seen).is_empty());
         end(&pool, id).await;
         settle(&dispatcher).await;
         assert_eq!(
             taken(&seen),
-            ["Still waiting after a silence. Approval needed on the server: `waiting` (low impact)"]
+            ["Still waiting after a silence. Approval needed on a-web (a / a-site): `uptime` (low impact)"]
         );
     }
 
