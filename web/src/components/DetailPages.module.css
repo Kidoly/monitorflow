@@ -56,3 +56,23 @@
 .underline {
   text-decoration: underline;
 }
+
+/* Acknowledge (ADR-0082): the button and what it does, then who is told next. */
+.acknowledge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.acknowledge:empty {
+  display: none;
+}
+
+.followUp {
+  margin: 0;
+}
+
+.acknowledge:not(:empty) + .followUp {
+  margin-top: 8px;
+}

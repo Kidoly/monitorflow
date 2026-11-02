@@ -300,7 +300,12 @@ function Channels({
       key: "destination",
       header: "Sends to",
       className: styles.wrap,
-      cell: (c) => <strong>{destination(c)}</strong>,
+      cell: (c) => (
+        <>
+          <strong>{destination(c)}</strong>
+          {c.follow_up_only && <span className={styles.dim}> · only for follow-ups</span>}
+        </>
+      ),
     },
     ...(showScope
       ? [
@@ -388,6 +393,7 @@ function ChannelForm({
   const [url, setUrl] = useState(hook?.url ?? "");
   const [name, setName] = useState(chat?.name ?? "");
   const [secret, setSecret] = useState("");
+  const [followUpOnly, setFollowUpOnly] = useState(channel?.follow_up_only ?? false);
   const [chosen, setChosen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -409,6 +415,7 @@ function ChannelForm({
       secret: secret || null,
       customer_id: scope.customer_id,
       site_id: scope.site_id,
+      follow_up_only: followUpOnly,
     };
     const body: NotificationChannelRequest =
       kind === "email"
@@ -606,6 +613,10 @@ function ChannelForm({
         : scope?.value !== "everything" && (
             <p className={styles.fieldNote}>{scope?.note}</p>
           )}
+      <label>
+        <input type="checkbox" checked={followUpOnly} onChange={(e) => setFollowUpOnly(e.target.checked)} /> Only for follow-ups:
+        hears only the alerts nobody acknowledged, when a follow-up step names it
+      </label>
       <div className={styles.formFoot}>
         <Button type="submit" variant="k" disabled={busy || !scope}>
           {busy ? "Saving…" : "Save and send test"}

@@ -507,6 +507,11 @@ export interface Incident {
   silenced_until?: string | null;
   /** Whether a silence ever held back a notification of it. */
   silenced?: boolean;
+  /** Who said they are on it, and when (ADR-0082); null until someone does. */
+  acknowledged_by?: string | null;
+  acknowledged_at?: string | null;
+  /** Open, not acknowledged, and the reader an operator or above of its site. */
+  can_acknowledge?: boolean;
 }
 
 /** What a silence covers (ADR-0079). */
@@ -548,7 +553,15 @@ export interface IncidentList {
   next_cursor: string | null;
 }
 
-export type IncidentEventKind = "opened" | "escalated" | "deescalated" | "resolved" | "silenced" | "silence_ended";
+export type IncidentEventKind =
+  | "opened"
+  | "escalated"
+  | "deescalated"
+  | "resolved"
+  | "silenced"
+  | "silence_ended"
+  | "acknowledged"
+  | "followed_up";
 
 /** One change of an incident, as the engine made it. */
 export interface IncidentEvent {
@@ -573,11 +586,103 @@ export interface NotificationGroup {
   created_at: string;
 }
 
+/** Where an incident is in its follow-up: who is told next when nobody acknowledges (ADR-0082). */
+export interface FollowUp {
+  /** `waiting` for the next step at `next_at`, `silenced` until a silence ends, or `stopped`. */
+  state: "waiting" | "silenced" | "stopped";
+  stop_reason: "acknowledged" | "resolved" | "not_critical" | "finished" | null;
+  /** Steps told so far, and how many there are. */
+  step: number;
+  steps: number;
+  started_at: string;
+  next_at: string | null;
+  /** Who the next step tells, people first; empty when nobody can be. */
+  next: string[];
+  policy: "default" | "everything" | "customer" | "site";
+}
+
 /** `GET /api/incidents/{id}`: the incident and its events in the order they happened. */
 export interface IncidentDetail extends Incident {
   events: IncidentEvent[];
   /** Oldest first; absent from servers before ADR-0080. */
   notification_groups?: NotificationGroup[];
+  /** `page` or `link`: where it was acknowledged. */
+  acknowledged_via?: "page" | "link" | null;
+  /** Null when no follow-up started: a warning, or not sent yet. */
+  follow_up?: FollowUp | null;
+}
+
+/** Something a follow-up step names; `name` is null once removed. */
+export interface FollowUpNamed {
+  id: string;
+  name: string | null;
+}
+
+/** One step of a follow-up as `GET /api/follow-up/policies` shows it. */
+export interface FollowUpStepView {
+  after_minutes: number;
+  on_call: FollowUpNamed[];
+  users: FollowUpNamed[];
+  channels: FollowUpNamed[];
+  administrators: boolean;
+}
+
+/** One step as saved. */
+export interface FollowUpStep {
+  after_minutes: number;
+  on_call: string[];
+  users: string[];
+  channels: string[];
+  administrators: boolean;
+}
+
+/** The follow-up of one place. */
+export interface FollowUpPolicy {
+  id: string;
+  /** The customer it covers, or the site's; null with `site_id` too: everything. */
+  customer_id: string | null;
+  customer_name: string | null;
+  site_id: string | null;
+  site_name: string | null;
+  steps: FollowUpStepView[];
+  updated_at: string;
+}
+
+/** A schedule or channel a step may name. */
+export interface FollowUpChoice {
+  id: string;
+  name: string;
+  customer_id: string | null;
+  site_id: string | null;
+}
+
+/** `GET /api/follow-up/policies`, administrators only. */
+export interface FollowUpPolicyList {
+  policies: FollowUpPolicy[];
+  default_steps: FollowUpStepView[];
+  schedules: FollowUpChoice[];
+  channels: FollowUpChoice[];
+}
+
+/** Body of `PUT /api/follow-up/policies`: the steps of one place, replacing any. */
+export interface FollowUpPolicyRequest {
+  customer_id: string | null;
+  site_id: string | null;
+  steps: FollowUpStep[];
+}
+
+/** What an acknowledge link acknowledges, and as whom. */
+export interface AcknowledgeLink {
+  username: string;
+  expires_at: string;
+  used_at: string | null;
+  incidents: {
+    id: string;
+    text: string;
+    state: IncidentState;
+    acknowledged_by: string | null;
+    acknowledged_at: string | null;
+  }[];
 }
 
 /** Filters of `GET /api/incidents`; all optional. */
@@ -1574,6 +1679,8 @@ export type NotificationChannel = (
   /** The last delivery's or test's error in plain words; null once one works. */
   last_error: string | null;
   last_error_at: string | null;
+  /** Hears only follow-up steps that name it, and their resolution (ADR-0082). */
+  follow_up_only?: boolean;
 };
 
 export interface NotificationChannelList {
@@ -1592,6 +1699,8 @@ export type NotificationChannelRequest = (
   secret?: string | null;
   customer_id: string | null;
   site_id: string | null;
+  /** Only follow-up steps that name it, not every event it covers. */
+  follow_up_only?: boolean;
 };
 
 /** Why the person on call cannot be told: that period is a gap (ADR-0081). */
@@ -2185,6 +2294,39 @@ export const api = {
   incident: (id: string, signal?: AbortSignal) =>
     request<IncidentDetail>(`/api/incidents/${encodeURIComponent(id)}`, {
       signal,
+    }),
+
+  /** Says the user is on these incidents, so nobody else is told next (ADR-0082). */
+  acknowledgeIncidents: (ids: string[]) =>
+    request<{ acknowledged: string[] }>("/api/incidents/acknowledge", {
+      method: "POST",
+      body: { incident_ids: ids },
+    }),
+
+  /** Follow-ups of what the user administers, the default, and what steps may name. */
+  followUpPolicies: (signal?: AbortSignal) => request<FollowUpPolicyList>("/api/follow-up/policies", { signal }),
+
+  saveFollowUpPolicy: (body: FollowUpPolicyRequest) =>
+    request<FollowUpPolicy>("/api/follow-up/policies", { method: "PUT", body }),
+
+  /** The default applies again to that place. */
+  deleteFollowUpPolicy: (id: string) =>
+    request<void>(`/api/follow-up/policies/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** What an acknowledge link acknowledges; changes nothing. 410 once expired. */
+  inspectAcknowledgeLink: (token: string) =>
+    request<AcknowledgeLink>("/api/acknowledge-link", {
+      method: "POST",
+      body: { token },
+      redirectOn401: false,
+    }),
+
+  /** Acknowledges with the link `token`, as its person. */
+  useAcknowledgeLink: (token: string) =>
+    request<AcknowledgeLink>("/api/acknowledge-link/use", {
+      method: "POST",
+      body: { token },
+      redirectOn401: false,
     }),
 
   serverThresholds: (serverId: string, signal?: AbortSignal) =>

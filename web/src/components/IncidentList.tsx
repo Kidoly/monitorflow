@@ -13,7 +13,7 @@ import { formatSensorValue } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
 import { replaceParams } from "@/lib/urlState";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
-import { ButtonLink } from "@/components/ui/Button";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
 import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
@@ -36,6 +36,38 @@ function SilencedSign({ incident, now }: { incident: Incident; now: Date }) {
     );
   }
   return incident.silenced ? <span className={styles.small}> · was silenced</span> : null;
+}
+
+/** Who said they are on it (ADR-0082), or the button to say so. */
+function Acknowledged({
+  incident,
+  now,
+  pending,
+  onAcknowledge,
+}: {
+  incident: Incident;
+  now: Date;
+  pending: boolean;
+  onAcknowledge: (ids: string[]) => void;
+}) {
+  if (incident.state !== "open") return null;
+  if (incident.acknowledged_at) {
+    return (
+      <span className={styles.small}>
+        {" "}
+        · Acknowledged by {incident.acknowledged_by ?? "someone"} {formatSince(new Date(incident.acknowledged_at), now)}
+      </span>
+    );
+  }
+  if (!incident.can_acknowledge) return null;
+  return (
+    <>
+      {" "}
+      <Button size="small" disabled={pending} onClick={() => onAcknowledge([incident.id])} aria-label={`Acknowledge ${incident.hostname}`}>
+        Acknowledge
+      </Button>
+    </>
+  );
 }
 
 /** Incidents per "Load more". */
@@ -90,6 +122,20 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     [filters, limit],
   );
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher);
+  const [acknowledging, setAcknowledging] = useState(false);
+  const [ackError, setAckError] = useState<string | null>(null);
+  async function acknowledge(ids: string[]) {
+    setAcknowledging(true);
+    setAckError(null);
+    try {
+      await api.acknowledgeIncidents(ids);
+      refresh();
+    } catch (e) {
+      setAckError(describeError(e));
+    } finally {
+      setAcknowledging(false);
+    }
+  }
 
   const me = useMe();
   const inScope = scopeSites(scope, sites);
@@ -157,6 +203,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
         <>
           {i.resolved_at ? `Resolved ${formatSince(new Date(i.resolved_at), now)}` : "Open"}
           <SilencedSign incident={i} now={now} />
+          <Acknowledged incident={i} now={now} pending={acknowledging} onAcknowledge={acknowledge} />
         </>
       ),
     },
@@ -174,6 +221,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
   ];
 
   const critical = open.filter((i) => i.severity === "critical").length;
+  const acknowledgeable = incidents.filter((i) => i.state === "open" && i.can_acknowledge && !i.acknowledged_at);
   return (
     <Page>
       <PageHeader
@@ -216,8 +264,17 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
         <Banner tone="info">
           Sent together in one notification: the incidents below were told in a single message, with the other filters
           still applied. <Link href={scopedHref(incidentsHref({ ...filters, groupId: null }), scope)}>Show all incidents</Link>
+          {acknowledgeable.length > 1 && (
+            <>
+              {" "}
+              <Button size="small" variant="k" disabled={acknowledging} onClick={() => acknowledge(acknowledgeable.map((i) => i.id))}>
+                Acknowledge all {acknowledgeable.length}
+              </Button>
+            </>
+          )}
         </Banner>
       )}
+      {ackError && <Banner tone="bad">{ackError}</Banner>}
       {!data && error !== null && !isUnauthorized(error) ? (
         <ErrorState what="incidents" error={describeError(error)} onRetry={refresh} />
       ) : data && incidents.length === 0 ? (

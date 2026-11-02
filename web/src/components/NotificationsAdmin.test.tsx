@@ -201,6 +201,7 @@ describe("NotificationsPage", () => {
         secret: url,
         customer_id: null,
         site_id: null,
+        follow_up_only: false,
       });
       expect(
         screen.getByText(`${label}: ${new URL(url).host}`),
@@ -271,6 +272,7 @@ describe("NotificationsPage", () => {
       secret: null,
       customer_id: null,
       site_id: null,
+      follow_up_only: false,
     });
   });
 
@@ -330,6 +332,7 @@ describe("NotificationsPage", () => {
       secret: "hunter2",
       customer_id: null,
       site_id: null,
+      follow_up_only: false,
     });
     expect(
       within(screen.getByRole("table")).getByText(/Email to a@example.com/),
@@ -570,6 +573,7 @@ describe("Notify about", () => {
       secret: "https://discord.com/api/webhooks/1/x",
       customer_id: null,
       site_id: "site-2",
+      follow_up_only: false,
     });
   });
 
@@ -675,6 +679,28 @@ describe("Notify about", () => {
       customer_id: "c2",
       site_id: null,
     });
+  });
+
+  it("keeps a channel for follow-ups only, and says so in the list", async () => {
+    const quiet = hook({ follow_up_only: true });
+    const fetchMock = stubFetch({
+      [`GET ${CHANNELS}`]: { status: 200, body: { channels: [quiet] } },
+      "GET /api/customers": twoCustomers,
+      "GET /api/sites": threeSites,
+      [`PUT ${CHANNELS}/n1`]: { status: 200, body: { ...quiet, follow_up_only: false } },
+      [`POST ${CHANNELS}/n1/test`]: { status: 200, body: { ok: true, error: null } },
+    });
+    const user = userEvent.setup();
+    page();
+    expect(await screen.findByText(/only for follow-ups/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const box = screen.getByRole("checkbox", { name: /Only for follow-ups/ });
+    expect(box).toBeChecked();
+    await user.click(box);
+    await user.click(screen.getByRole("button", { name: "Save and send test" }));
+    await screen.findByText("Test sent");
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({ follow_up_only: false });
   });
 });
 

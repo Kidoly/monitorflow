@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ApiError,
@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import { metricsError } from "@/lib/charts";
 import { formatSeconds } from "@/lib/format";
+import { followUpLine, listNames, minutesText } from "@/lib/followUp";
 import { INCIDENT_MARGINS, OFFLINE_AFTER_S, incidentTitle, incidentWindow, isOffline, resolvesWhen } from "@/lib/incidents";
 import { incidentPeerHref, incidentsHref, sensorHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -198,6 +199,7 @@ export function IncidentPage({ id }: { id: string | null }) {
         }
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
+      <Acknowledgement incident={incident} now={now} onDone={refresh} />
       <SentTogether incident={incident} now={now} />
       <StatTiles
         compact
@@ -320,6 +322,8 @@ const EVENT_TONES: Record<IncidentEvent["kind"], (e: IncidentEvent) => Tone> = {
   resolved: () => "neutral",
   silenced: () => "neutral",
   silence_ended: () => "neutral",
+  acknowledged: () => "ok",
+  followed_up: () => "warn",
 };
 
 /** "Opened as Warning", "Escalated to Critical", "Resolved". */
@@ -338,7 +342,63 @@ function eventWords(event: IncidentEvent): string {
       return "Silenced";
     case "silence_ended":
       return event.details.notified ? "Silence ended, sent" : "Silence ended, nothing to send";
+    case "acknowledged":
+      return typeof event.details.username === "string" ? `Acknowledged by ${event.details.username}` : "Acknowledged";
+    case "followed_up": {
+      const told = Array.isArray(event.details.told) ? event.details.told.filter((t) => typeof t === "string") : [];
+      const after = typeof event.details.minutes === "number" ? ` after ${minutesText(event.details.minutes)}` : "";
+      return `Not acknowledged${after}: ${told.length ? `told ${listNames(told)}` : "nobody could be told"}`;
+    }
   }
+}
+
+/**
+ * Who said they are on it, or the button to say so, and who is told next
+ * if nobody does (ADR-0082).
+ */
+function Acknowledgement({ incident, now, onDone }: { incident: IncidentDetail; now: Date; onDone: () => void }) {
+  const [pending, setPending] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const followUp = followUpLine(incident, incident.follow_up, (iso) => formatDay(new Date(iso), now));
+  if (incident.acknowledged_at) {
+    return (
+      <Banner tone="plain">
+        Acknowledged by <strong>{incident.acknowledged_by ?? "someone"}</strong> {formatDay(new Date(incident.acknowledged_at), now)}
+        {incident.acknowledged_via === "link" && ", from the notification link"}.
+      </Banner>
+    );
+  }
+  if (!incident.can_acknowledge && !followUp) return null;
+
+  async function acknowledge() {
+    setPending(true);
+    setFailure(null);
+    try {
+      await api.acknowledgeIncidents([incident.id]);
+      onDone();
+    } catch (e) {
+      setFailure(describeError(e));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Banner tone="plain">
+      <div className={styles.acknowledge}>
+        {incident.can_acknowledge && (
+          <>
+            <Button variant="k" onClick={acknowledge} disabled={pending}>
+              {pending ? "Acknowledging…" : "Acknowledge"}
+            </Button>
+            <span className={styles.muted}>Says you are on it: nobody else is told next.</span>
+          </>
+        )}
+      </div>
+      {followUp && <p className={styles.followUp}>{followUp}</p>}
+      {failure && <p role="alert">{failure}</p>}
+    </Banner>
+  );
 }
 
 /** The events in the API's order, which is the order the engine made them. */

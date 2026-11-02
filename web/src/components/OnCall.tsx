@@ -38,6 +38,7 @@ import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } 
 import { Label } from "@/components/ui/StatusLabel";
 
 import admin from "./AdminPages.module.css";
+import { FollowUpSection } from "./FollowUp";
 import { CHAT } from "./NotificationsAdmin";
 import styles from "./OnCall.module.css";
 
@@ -725,6 +726,7 @@ export function OnCallPage() {
       ) : (
         schedules.map((s) => <ScheduleCard key={s.id} schedule={s} several={several} onChanged={refresh} />)
       )}
+      <FollowUpSection enabled={canCreate} />
     </Page>
   );
 }
