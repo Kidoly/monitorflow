@@ -238,7 +238,8 @@ function NewSilence({ onCreated, onCancel }: { onCreated: () => void; onCancel: 
       .filter((s) => modifiesSite(me, s.customer_id, s.site_id))
       .map((s) => ({ value: `server/${s.id}`, label: `Server ${s.hostname}`, scope: "server" as const, id: s.id })),
   ];
-  const chosen = choices.find((c) => c.value === value) ?? choices[0];
+  // Nothing chosen at first: a wide silence is never a default.
+  const chosen = choices.find((c) => c.value === value);
   return (
     <SilenceForm
       submitLabel="Silence"
@@ -251,7 +252,10 @@ function NewSilence({ onCreated, onCancel }: { onCreated: () => void; onCancel: 
     >
       <label className={admin.field}>
         What
-        <select className={fieldClass} value={chosen?.value ?? ""} onChange={(e) => setValue(e.target.value)}>
+        <select className={fieldClass} required value={value} onChange={(e) => setValue(e.target.value)}>
+          <option value="" disabled>
+            Choose…
+          </option>
           {choices.map((c) => (
             <option key={c.value} value={c.value}>
               {c.label}
