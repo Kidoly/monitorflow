@@ -34,6 +34,9 @@ export function incidentHref(id: string): string {
   return `/incidents/view/?id=${encodeURIComponent(id)}`;
 }
 
+/** Active and upcoming silences (ADR-0079). */
+export const SILENCES_PATH = "/silences/";
+
 /** Administration pages (ADR-0029). */
 export const RELAYS_PATH = "/admin/relays/";
 export const SITES_PATH = "/admin/sites/";

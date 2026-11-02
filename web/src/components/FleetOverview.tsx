@@ -153,7 +153,17 @@ export function FleetOverview() {
     {
       key: "status",
       header: "Status",
-      cell: (r) => <StatusLabel kind="server" value={r.server.status} />,
+      cell: (r) => (
+        <>
+          <StatusLabel kind="server" value={r.server.status} />
+          {r.server.silenced_until && (
+            <>
+              {" "}
+              <Label tone="neutral">Silenced</Label>
+            </>
+          )}
+        </>
+      ),
       sortValue: (r) => r.server.status,
     },
     { key: "problem", header: "Problem", cell: (r) => <Problem row={r} now={now} scope={scope} /> },

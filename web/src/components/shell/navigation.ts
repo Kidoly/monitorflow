@@ -12,6 +12,7 @@ import {
   RELAYS_PATH,
   SERVER_UPDATE_PATH,
   SETTINGS_PATH,
+  SILENCES_PATH,
   SITES_PATH,
   TOKENS_PATH,
   USERS_PATH,
@@ -51,6 +52,7 @@ export const NAVIGATION: NavSection[] = [
     items: [
       { label: "Fleet", href: "/", icon: "fleet", alsoCurrent: ["/servers/"] },
       { label: "Incidents", href: "/incidents/", icon: "incidents", incidentCount: true },
+      { label: "Silences", href: SILENCES_PATH, icon: "bell" },
     ],
   },
   {

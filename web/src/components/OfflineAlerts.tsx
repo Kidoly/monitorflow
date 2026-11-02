@@ -27,7 +27,8 @@ interface Target {
 
 /**
  * Whether a site, server or relay opens an incident when it stops
- * reporting (ADR-0072), with Mute and Turn on for operators of its site.
+ * reporting (ADR-0072), with Turn off and Turn on for operators of its
+ * site. To tell nobody for a while, a silence keeps it watched (ADR-0079).
  */
 export function OfflineAlerts({ kind, target, onChanged }: { kind: Kind; target: Target; onChanged: () => void }) {
   const me = useMe();
@@ -37,7 +38,7 @@ export function OfflineAlerts({ kind, target, onChanged }: { kind: Kind; target:
   if (target.site_offline_alerts === false) {
     return (
       <>
-        <Label tone="neutral">Muted</Label>{" "}
+        <Label tone="neutral">Off</Label>{" "}
         <span className={styles.muted}>
           for the whole site, in <Link href={SITES_PATH}>Sites</Link>
         </span>
@@ -59,13 +60,13 @@ export function OfflineAlerts({ kind, target, onChanged }: { kind: Kind; target:
   const who = kind === "sites" ? "a server or relay here" : "it";
   return (
     <>
-      <Label tone={on ? "ok" : "neutral"}>{on ? "On" : "Muted"}</Label>{" "}
+      <Label tone={on ? "ok" : "neutral"}>{on ? "On" : "Off"}</Label>{" "}
       <span className={styles.muted}>
         {on ? `critical incident when ${who} sends nothing for ${formatSeconds(OFFLINE_AFTER_S)}` : "no incident when offline"}
       </span>{" "}
       {modifiesSite(me, target.customer_id, target.site_id) && (
         <Button size="small" disabled={busy} onClick={() => void change()}>
-          {on ? "Mute" : "Turn on"}
+          {on ? "Turn off" : "Turn on"}
         </Button>
       )}
       {error && <span role="alert"> {error}</span>}

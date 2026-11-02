@@ -36,7 +36,7 @@ import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { StatTiles } from "@/components/ui/StatTiles";
 import { TableBox } from "@/components/ui/TableBox";
 import { type Threshold, TimeChart } from "@/components/ui/TimeChart";
-import { formatClock, formatDuration, formatExact, formatShortDate } from "@/components/ui/time";
+import { formatClock, formatDay, formatDuration, formatExact, formatShortDate } from "@/components/ui/time";
 import type { Tone } from "@/components/ui/tone";
 
 import styles from "./DetailPages.module.css";
@@ -175,6 +175,16 @@ export function IncidentPage({ id }: { id: string | null }) {
             <span className={styles.muted}>
               {open ? "open" : `was ${SEVERITY_LABELS[incident.severity]}`} · {incident.site_name}
             </span>
+            {incident.silenced_until ? (
+              <>
+                <Label tone="neutral">Silenced</Label>
+                <span className={styles.muted}>
+                  nobody is told until {formatDay(new Date(incident.silenced_until), now)}; if still open then, it is sent
+                </span>
+              </>
+            ) : (
+              incident.silenced && <Label tone="neutral">Was silenced</Label>
+            )}
           </>
         }
         meta={open ? <RefreshLine updatedAt={updatedAt} stale={stale} /> : "Resolved: it no longer changes."}
@@ -250,8 +260,8 @@ export function IncidentPage({ id }: { id: string | null }) {
             title="Rule"
             facts={[
               { label: "Opens", value: `after ${formatSeconds(OFFLINE_AFTER_S)} without contact` },
-              { label: "Resolves when", value: "it connects again, or is muted or removed" },
-              { label: "Mute", value: <>Offline alerts on {host}, or for its site in Administration › Sites</> },
+              { label: "Resolves when", value: "it connects again, its offline alerts are turned off, or it is removed" },
+              { label: "Turn off", value: <>Offline alerts on {host}, or for its site in Administration › Sites</> },
             ]}
           />
         ) : (
@@ -307,6 +317,8 @@ const EVENT_TONES: Record<IncidentEvent["kind"], (e: IncidentEvent) => Tone> = {
   escalated: (e) => (e.severity === "critical" ? "bad" : "warn"),
   deescalated: (e) => (e.severity === "critical" ? "bad" : "warn"),
   resolved: () => "neutral",
+  silenced: () => "neutral",
+  silence_ended: () => "neutral",
 };
 
 /** "Opened as Warning", "Escalated to Critical", "Resolved". */
@@ -321,6 +333,10 @@ function eventWords(event: IncidentEvent): string {
       return `De-escalated to ${severity}`;
     case "resolved":
       return "Resolved";
+    case "silenced":
+      return "Silenced";
+    case "silence_ended":
+      return event.details.notified ? "Silence ended, sent" : "Silence ended, nothing to send";
   }
 }
 
