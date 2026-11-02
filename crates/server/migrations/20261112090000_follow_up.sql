@@ -25,6 +25,10 @@ CREATE UNIQUE INDEX follow_up_policies_place_key ON follow_up_policies
     ((coalesce(customer_id, '00000000-0000-0000-0000-000000000000')),
      (coalesce(site_id, '00000000-0000-0000-0000-000000000000')));
 
+-- A channel for follow-ups only, like a managers' chat: it hears the steps
+-- that name it and their resolution, not every event it covers.
+ALTER TABLE notification_channels ADD COLUMN follow_up_only boolean NOT NULL DEFAULT false;
+
 -- Someone said "I'm on it". One per incident; the first one counts. The
 -- name stays when the account is removed.
 CREATE TABLE incident_acknowledgements (

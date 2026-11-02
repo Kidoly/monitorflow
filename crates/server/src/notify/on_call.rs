@@ -593,6 +593,7 @@ pub fn contact_channels(person: &Person, mail: Option<&Channel>) -> Vec<Channel>
                 coverage: Coverage::Everything,
                 public_only: mail.public_only,
                 person: true,
+                follow_up_only: false,
             });
         }
     }
@@ -604,6 +605,7 @@ pub fn contact_channels(person: &Person, mail: Option<&Channel>) -> Vec<Channel>
             coverage: Coverage::Everything,
             public_only: *public_only,
             person: true,
+            follow_up_only: false,
         });
     }
     out
@@ -1068,6 +1070,7 @@ mod tests {
             coverage,
             public_only: false,
             person: false,
+            follow_up_only: false,
         }
     }
 

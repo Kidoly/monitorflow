@@ -357,7 +357,7 @@ impl Dispatcher {
                 .iter()
                 .filter(|e| match extra_channels.get(&e.id) {
                     Some(named) if named.contains(&channel.id) => true,
-                    _ if extra.unrouted.contains(&e.id) => false,
+                    _ if extra.unrouted.contains(&e.id) || channel.follow_up_only => false,
                     _ => channel.coverage.includes(e.customer_id, e.site_id),
                 })
                 .filter(|e| !targets.people.contains_key(&e.id))

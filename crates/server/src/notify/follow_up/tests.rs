@@ -57,6 +57,7 @@ fn channel(id: u128, destination: Destination, coverage: Coverage) -> Channel {
         coverage,
         public_only: false,
         person: false,
+        follow_up_only: false,
     }
 }
 

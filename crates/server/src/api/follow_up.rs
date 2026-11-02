@@ -596,7 +596,7 @@ async fn live(db: impl PgExecutor<'_>, token: &str, lock: bool) -> Result<Live, 
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT l.user_id, u.username, l.incident_ids, l.expires_at, l.used_at
          FROM acknowledge_links l JOIN users u ON u.id = l.user_id
-         WHERE l.token_hash = $1 AND l.expires_at > now() {lock}"
+         WHERE l.token_hash = $1 AND l.expires_at > now() AND u.disabled_at IS NULL {lock}"
     )))
     .bind(token.hash())
     .fetch_optional(db)
@@ -604,9 +604,48 @@ async fn live(db: impl PgExecutor<'_>, token: &str, lock: bool) -> Result<Live, 
     .ok_or(ApiError::Gone(LINK_GONE.into()))
 }
 
+/// Of `ids`, the incidents `user` still sees, and those they still may
+/// acknowledge, by their roles now.
+async fn rights(
+    conn: &mut PgConnection,
+    user: Uuid,
+    ids: &[Uuid],
+) -> Result<(Vec<Uuid>, Vec<Uuid>), ApiError> {
+    let directory = Directory::load(&mut *conn).await?;
+    let person = directory
+        .people
+        .get(&user)
+        .ok_or(ApiError::Gone(LINK_GONE.into()))?;
+    let sites: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT i.id, si.id FROM incidents i
+         LEFT JOIN servers s ON s.id = i.server_id
+         LEFT JOIN relays r ON r.id = i.relay_id
+         JOIN sites si ON si.id = coalesce(s.site_id, r.site_id)
+         WHERE i.id = ANY($1)",
+    )
+    .bind(ids)
+    .fetch_all(&mut *conn)
+    .await?;
+    let place = |site: Uuid| Coverage::Site(site);
+    let visible = sites
+        .iter()
+        .filter(|(_, site)| directory.sees(person, place(*site)))
+        .map(|(id, _)| *id)
+        .collect();
+    let allowed = sites
+        .iter()
+        .filter(|(_, site)| directory.acknowledges(person, place(*site)))
+        .map(|(id, _)| *id)
+        .collect();
+    Ok((visible, allowed))
+}
+
+/// What `live` acknowledges, of the incidents in `visible`: a link shows
+/// nothing its person can no longer see.
 async fn link_view(
     db: impl PgExecutor<'_>,
-    (_, username, ids, expires_at, used_at): Live,
+    (_, username, _, expires_at, used_at): Live,
+    visible: &[Uuid],
 ) -> Result<LinkView, ApiError> {
     // SQL-safe: interpolates only the constant DETAILS.
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -618,7 +657,7 @@ async fn link_view(
          WHERE i.id = ANY($1)
          ORDER BY i.opened_at, i.id"
     )))
-    .bind(&ids)
+    .bind(visible)
     .fetch_all(db)
     .await?;
     let mut incidents = Vec::with_capacity(rows.len());
@@ -654,7 +693,8 @@ async fn link_view(
 }
 
 /// `POST /api/acknowledge-link`, without a session: what a link
-/// acknowledges and as whom. Changes nothing. 410 once expired.
+/// acknowledges and as whom. Changes nothing, so a mail scanner that opens
+/// the page acknowledges nothing. 410 once expired or its person disabled.
 pub async fn inspect_link(
     State(state): State<ApiState>,
     request: Result<Json<LinkRequest>, JsonRejection>,
@@ -662,14 +702,15 @@ pub async fn inspect_link(
     let Json(request) = request.map_err(|_| ApiError::BadRequest)?;
     let mut conn = state.pool.acquire().await?;
     let live = live(&mut *conn, &request.token, false).await?;
-    Ok(Json(link_view(&mut *conn, live).await?))
+    let (visible, _) = rights(&mut conn, live.0, &live.2).await?;
+    Ok(Json(link_view(&mut *conn, live, &visible).await?))
 }
 
 /// `POST /api/acknowledge-link/use`, without a session: acknowledges the
 /// link's incidents as its person, those still open and not acknowledged
-/// that they still may acknowledge: enabled, and an operator or above of
-/// the incident's site. 403 when they may acknowledge none, 410 once
-/// expired. Using it again changes nothing. Audited as
+/// that they still may acknowledge: an operator or above of the incident's
+/// site. 403 when they may acknowledge none, 410 once expired or its person
+/// disabled. Using it again changes nothing. Audited as
 /// `incident.acknowledge` with `via: link`.
 pub async fn use_link(
     State(state): State<ApiState>,
@@ -678,28 +719,13 @@ pub async fn use_link(
     let Json(request) = request.map_err(|_| ApiError::BadRequest)?;
     let mut tx = state.pool.begin().await?;
     let found = live(&mut *tx, &request.token, true).await?;
-    let (user, username, ids, ..) = &found;
-    let directory = Directory::load(&mut tx).await?;
-    let person = directory.people.get(user).ok_or(ApiError::Forbidden)?;
-    let sites: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as(
-        "SELECT i.id, coalesce(s.site_id, r.site_id) FROM incidents i
-         LEFT JOIN servers s ON s.id = i.server_id
-         LEFT JOIN relays r ON r.id = i.relay_id
-         WHERE i.id = ANY($1)",
-    )
-    .bind(ids)
-    .fetch_all(&mut *tx)
-    .await?;
-    let allowed: Vec<Uuid> = sites
-        .iter()
-        .filter(|(_, site)| site.is_some_and(|s| directory.acknowledges(person, Coverage::Site(s))))
-        .map(|(id, _)| *id)
-        .collect();
+    let (user, username) = (found.0, found.1.clone());
+    let (visible, allowed) = rights(&mut tx, user, &found.2).await?;
     if allowed.is_empty() {
         return Err(ApiError::Forbidden);
     }
     let now = Utc::now();
-    let done = follow_up::acknowledge(&mut tx, &allowed, (*user, username), "link", now).await?;
+    let done = follow_up::acknowledge(&mut tx, &allowed, (user, &username), "link", now).await?;
     let actor = user.to_string();
     for incident in &done {
         let target = incident.to_string();
@@ -724,7 +750,7 @@ pub async fn use_link(
     .execute(&mut *tx)
     .await?;
     let found = live(&mut *tx, &request.token, false).await?;
-    let view = link_view(&mut *tx, found).await?;
+    let view = link_view(&mut *tx, found, &visible).await?;
     tx.commit().await?;
     Ok(Json(view))
 }
