@@ -149,8 +149,6 @@ impl fmt::Display for PeerIdentity {
 ///
 /// Works only for servers fed by [`super::incoming`]; any failure maps to
 /// `UNAUTHENTICATED`.
-// Handlers return `tonic::Status` as is, so `?` works without conversion.
-#[allow(clippy::result_large_err)]
 pub fn peer_identity<T>(request: &Request<T>) -> Result<PeerIdentity, Status> {
     let certs = request
         .peer_certs()

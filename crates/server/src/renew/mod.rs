@@ -113,7 +113,6 @@ impl PresentedCert {
 
     /// The leaf certificate the client presented on the connection that
     /// carried `request`; `UNAUTHENTICATED` without one.
-    #[allow(clippy::result_large_err)]
     pub fn from_request<T>(request: &Request<T>) -> Result<Self, Status> {
         let leaf = request
             .peer_certs()
@@ -443,7 +442,6 @@ impl CertificateService for Renewer {
 
 impl Renewer {
     /// The response for `result`, logged with the calling `peer`.
-    #[allow(clippy::result_large_err)]
     fn respond(
         &self,
         peer: &PeerIdentity,

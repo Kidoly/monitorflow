@@ -9,9 +9,6 @@
 //! [`Lanes`] keeps one session per agent: a new one stops the current one
 //! and waits for it, so two never touch the same records.
 
-// `Ended` carries the `Status` tonic returns by value.
-#![allow(clippy::result_large_err)]
-
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

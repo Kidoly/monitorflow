@@ -13,9 +13,6 @@
 //!
 //! Envelope payloads are never logged.
 
-// Every check here ends as the `Status` tonic returns by value.
-#![allow(clippy::result_large_err)]
-
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
