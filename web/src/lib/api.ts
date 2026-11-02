@@ -1456,7 +1456,7 @@ export interface WebhookSettings {
   url: string;
 }
 
-/** One channel of `GET /api/notifications/channels`: global administrators only (ADR-0060). */
+/** One channel of `GET /api/notifications/channels`: those of what the user administers (ADR-0078). */
 export type NotificationChannel = (
   | { kind: "email"; settings: EmailSettings }
   | { kind: "webhook"; settings: WebhookSettings }
@@ -1464,9 +1464,12 @@ export type NotificationChannel = (
   id: string;
   /** Whether a password or signing secret is stored; the secret itself never leaves the server. */
   has_secret: boolean;
-  /** Null: every customer. */
+  /** The customer it covers, or the site's; null with `site_id` too: everything. */
   customer_id: string | null;
   customer_name: string | null;
+  /** The site it covers; null for a whole customer or everything. */
+  site_id: string | null;
+  site_name: string | null;
   created_at: string;
   last_sent_at: string | null;
   /** The last delivery's or test's error in plain words; null once one works. */
@@ -1482,7 +1485,7 @@ export interface NotificationChannelList {
 export type NotificationChannelRequest = (
   | { kind: "email"; settings: Partial<EmailSettings> & Pick<EmailSettings, "host" | "to"> }
   | { kind: "webhook"; settings: WebhookSettings }
-) & { secret?: string | null; customer_id: string | null };
+) & { secret?: string | null; customer_id: string | null; site_id: string | null };
 
 /** Result of "Send test": the error says why in plain words. */
 export interface ChannelTestResult {
@@ -1773,7 +1776,7 @@ export const api = {
   testAiSettings: (body: { api_key: string | null; model: string }) =>
     request<ChannelTestResult>("/api/settings/ai/test", { method: "POST", body }),
 
-  /** Notification channels, without secrets; global administrators only (ADR-0060). */
+  /** Notification channels of what the user administers, without secrets (ADR-0060, ADR-0078). */
   notificationChannels: (signal?: AbortSignal) =>
     request<NotificationChannelList>("/api/notifications/channels", { signal }),
 

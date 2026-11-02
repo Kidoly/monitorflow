@@ -103,7 +103,7 @@ Runs on the central server, not on the agent, so rules can change without touchi
 
 ### Notifications
 
-Database triggers on incident events, approvals and failed updates write an outbox, with failed backups copied from the updater's status; a server task delivers it to the email and webhook channels administrators set up in the web interface, each for every customer or one (ADR-0060).
+Database triggers on incident events, approvals and failed updates write an outbox, with failed backups copied from the updater's status; a server task delivers it to the email and webhook channels administrators set up in the web interface, each covering everything, one customer or one site (ADR-0060, ADR-0078).
 
 ## 6. Storage
 
@@ -286,7 +286,7 @@ Recorded in short form here; rationale in `docs/adr/`.
 | AI provider | Provider-agnostic trait; Claude API first |
 | AI in MSP mode | One shared configuration; one customer per request; secrets redacted |
 | Snapshots | Proxmox first |
-| Notifications | Email (SMTP) and signed JSON webhooks set up in the interface with a test button; an outbox filled by triggers on incident events, pending approvals and failed updates, delivered at most once by a polling task; secrets never returned (ADR-0060) |
+| Notifications | Email (SMTP) and signed JSON webhooks set up in the interface with a test button; an outbox filled by triggers on incident events, pending approvals and failed updates, delivered at most once by a polling task to the channels covering the event, per customer or site; secrets never returned (ADR-0060, ADR-0078) |
 | Threshold evaluation | Server side |
 | Time series | VictoriaMetrics, not a custom store |
 | Peer identity | Role and ID in a `monitorflow://<role>/<id>` URI SAN; relays speak only for agents of their site |

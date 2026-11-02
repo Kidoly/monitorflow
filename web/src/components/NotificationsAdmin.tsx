@@ -8,10 +8,12 @@ import {
   type Customer,
   type NotificationChannel,
   type NotificationChannelRequest,
+  type Site,
   api,
   describeError,
 } from "@/lib/api";
-import { administersEverything, useMe } from "@/lib/me";
+import { administersEverything, isAdministrator, useMe } from "@/lib/me";
+import { channelScopes, scopeName, scopeValue } from "@/lib/notifications";
 import { usePolledData } from "@/lib/usePolledData";
 
 import styles from "./AdminPages.module.css";
@@ -22,12 +24,12 @@ import { Banner, EmptyState, ErrorState, LoadingBlock, NoPermission, PageHeader 
 import { RelativeTime } from "./ui/RelativeTime";
 import { Label } from "./ui/StatusLabel";
 
-/** `/admin/notifications/`: global administrators only, like the API (ADR-0060). */
+/** `/admin/notifications/`: administrators, each of what they administer, like the API (ADR-0078). */
 export function NotificationsPage() {
   const me = useMe();
-  if (!administersEverything(me)) {
+  if (!isAdministrator(me)) {
     return (
-      <NoPermission title="Notifications need a global administrator">
+      <NoPermission title="Notifications need an administrator">
         Ask one to send incidents to your email or chat.
       </NoPermission>
     );
@@ -65,6 +67,8 @@ interface Editing {
 function Notifications() {
   const { data, error, refresh } = usePolledData(api.notificationChannels);
   const customers = usePolledData(api.customers, { intervalMs: 60_000 });
+  const sites = usePolledData(api.sites, { intervalMs: 60_000 });
+  const me = useMe();
   const [editing, setEditing] = useState<Editing | null>(null);
   const [tests, setTests] = useState<Record<string, ChannelTestResult | "sending">>({});
   const [actionError, setActionError] = useState<string | null>(null);
@@ -86,14 +90,12 @@ function Notifications() {
     refresh();
   }
 
-  const header = (
-    <PageHeader title="Notifications" meta="Email and webhooks, for every administrator of this server" />
-  );
+  const header = <PageHeader title="Notifications" meta="Email and webhooks" />;
   if (error instanceof ApiError && error.status === 403) {
     return (
       <div className={styles.page}>
         {header}
-        <NoPermission title="Notifications need a global administrator" />
+        <NoPermission title="Notifications need an administrator" />
       </div>
     );
   }
@@ -112,19 +114,23 @@ function Notifications() {
     </Button>
   );
   const allCustomers = customers.data?.customers ?? [];
+  const allSites = sites.data?.sites ?? [];
+  const global = administersEverything(me);
   return (
     <div className={styles.page}>
       {header}
       {actionError && <Banner tone="bad">{actionError}</Banner>}
       <p className={styles.footnote}>
-        MonitorFlow sends a message when an incident opens, becomes critical or resolves, when a command waits for
-        approval, when an update or a backup fails, and when a new version is out.
+        {global
+          ? "MonitorFlow sends a message when an incident opens, becomes critical or resolves, when a command waits for approval, when an update or a backup fails, and when a new version is out."
+          : "MonitorFlow sends a message when an incident opens, becomes critical or resolves, when a command waits for approval, and when an update fails. This page shows the channels of what you administer."}
       </p>
       {editing ? (
         <ChannelForm
           key={editing.channel?.id ?? editing.kind}
           editing={editing}
           customers={allCustomers}
+          sites={allSites}
           onCancel={() => setEditing(null)}
           onSaved={(channel) => {
             setEditing(null);
@@ -159,7 +165,8 @@ function Notifications() {
           <Channels
             channels={data.channels}
             tests={tests}
-            showCustomer={allCustomers.length > 1 || data.channels.some((c) => c.customer_id)}
+            showScope={!global || allCustomers.length > 1 || allSites.length > 1 || data.channels.some((c) => c.customer_id)}
+            severalCustomers={allCustomers.length > 1}
             onTest={(id) => void test(id)}
             onEdit={(channel) => setEditing({ kind: channel.kind, channel })}
             onDelete={remove}
@@ -207,26 +214,29 @@ function Status({ channel, test }: { channel: NotificationChannel; test?: Channe
 function Channels({
   channels,
   tests,
-  showCustomer,
+  showScope,
+  severalCustomers,
   onTest,
   onEdit,
   onDelete,
 }: {
   channels: NotificationChannel[];
   tests: Record<string, ChannelTestResult | "sending">;
-  showCustomer: boolean;
+  showScope: boolean;
+  severalCustomers: boolean;
   onTest: (id: string) => void;
   onEdit: (channel: NotificationChannel) => void;
   onDelete: (id: string) => Promise<void>;
 }) {
   const columns: Column<NotificationChannel>[] = [
     { key: "destination", header: "Sends to", className: styles.wrap, cell: (c) => <strong>{destination(c)}</strong> },
-    ...(showCustomer
+    ...(showScope
       ? [
           {
-            key: "customer",
+            key: "scope",
             header: "About",
-            cell: (c: NotificationChannel) => c.customer_name ?? <span className={styles.dim}>All customers</span>,
+            cell: (c: NotificationChannel) =>
+              c.customer_id ? scopeName(c, severalCustomers) : <span className={styles.dim}>{scopeName(c, false)}</span>,
           },
         ]
       : []),
@@ -267,11 +277,13 @@ function Channels({
 function ChannelForm({
   editing,
   customers,
+  sites,
   onCancel,
   onSaved,
 }: {
   editing: Editing;
   customers: Customer[];
+  sites: Site[];
   onCancel: () => void;
   onSaved: (channel: NotificationChannel) => void;
 }) {
@@ -285,17 +297,21 @@ function ChannelForm({
   const [from, setFrom] = useState(email?.from ?? "");
   const [url, setUrl] = useState(hook?.url ?? "");
   const [secret, setSecret] = useState("");
-  const [customer, setCustomer] = useState(channel?.customer_id ?? "");
+  const [chosen, setChosen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const id = useId();
   const kept = channel?.has_secret ? "Saved; leave empty to keep it" : undefined;
+  const scopes = channelScopes(useMe(), customers, sites, channel);
+  const wanted = chosen ?? (channel ? scopeValue(channel) : scopes[0]?.value);
+  const scope = scopes.find((s) => s.value === wanted);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (!scope) return;
     setBusy(true);
     setError(null);
-    const common = { secret: secret || null, customer_id: customer || null };
+    const common = { secret: secret || null, customer_id: scope.customer_id, site_id: scope.site_id };
     const body: NotificationChannelRequest =
       kind === "email"
         ? {
@@ -429,20 +445,21 @@ function ChannelForm({
           )}
         </>
       )}
-      {customers.length > 1 &&
-        field(
-          "Notify about",
-          <select className={fieldClass} value={customer} onChange={(e) => setCustomer(e.target.value)}>
-            <option value="">All customers</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} only
-              </option>
-            ))}
-          </select>,
-        )}
+      {scopes.length > 1
+        ? field(
+            "Notify about",
+            <select className={fieldClass} value={wanted} onChange={(e) => setChosen(e.target.value)}>
+              {scopes.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>,
+            scope?.note,
+          )
+        : scope?.value !== "everything" && <p className={styles.fieldNote}>{scope?.note}</p>}
       <div className={styles.formFoot}>
-        <Button type="submit" variant="k" disabled={busy}>
+        <Button type="submit" variant="k" disabled={busy || !scope}>
           {busy ? "Saving…" : "Save and send test"}
         </Button>
         <Button onClick={onCancel} disabled={busy}>

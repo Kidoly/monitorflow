@@ -34,6 +34,20 @@ export function administersCustomer(me: Me | null, customerId?: string): boolean
 }
 
 /**
+ * Whether `me` administers the site `siteId` of `customerId`: an administrator
+ * grant on it, its customer or everything. UX only: the API decides.
+ */
+export function administersSite(me: Me | null, customerId: string, siteId: string): boolean {
+  return (
+    me?.roles.some(
+      (grant) =>
+        grant.role === "administrator" &&
+        (grant.site_id ? grant.site_id === siteId : !grant.customer_id || grant.customer_id === customerId),
+    ) ?? false
+  );
+}
+
+/**
  * Whether `me` is a global administrator, which mirrors need as they are
  * shared by every customer (ADR-0030). UX only.
  */

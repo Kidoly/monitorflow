@@ -1,7 +1,7 @@
 # ADR-0060: Email and webhook notifications
 
 Date: 2026-10-30
-Status: accepted; `update.available` added by ADR-0061
+Status: accepted; `update.available` added by ADR-0061; scopes, who manages channels and keeping secrets revised by ADR-0078
 
 ## Context
 
