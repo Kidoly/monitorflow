@@ -12,7 +12,7 @@ use tokio::time::{interval, sleep, MissedTickBehavior};
 
 use super::backup;
 use super::message::{render, Event, Message};
-use super::send::{deliver, http_client, SendError};
+use super::send::{deliver, http_client, public_http_client, SendError};
 use super::{channels, record_outcome, Channel};
 
 /// Time between two looks at the outbox.
@@ -34,6 +34,8 @@ pub struct Dispatcher {
     /// Base URL of the web interface, for links.
     web_url: String,
     http: reqwest::Client,
+    /// For channels limited to public addresses.
+    public_http: reqwest::Client,
     /// Waits before the second and later tries of a delivery.
     retries: Vec<Duration>,
     /// The updater's shared directory (`server_update_dir`), to hear of
@@ -47,6 +49,7 @@ impl Dispatcher {
             pool,
             web_url: web_url.into().trim_end_matches('/').to_owned(),
             http: http_client(),
+            public_http: public_http_client(),
             retries: vec![Duration::from_secs(2), Duration::from_secs(10)],
             status_dir: None,
         }
@@ -103,7 +106,7 @@ impl Dispatcher {
             "UPDATE notification_outbox SET sent_at = now()
              WHERE id IN (SELECT id FROM notification_outbox WHERE sent_at IS NULL
                           ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED)
-             RETURNING id, event, customer_id, details, created_at",
+             RETURNING id, event, customer_id, site_id, details, created_at",
         )
         .bind(BATCH)
         .fetch_all(&self.pool)
@@ -127,7 +130,7 @@ impl Dispatcher {
         for channel in channels {
             let messages: Vec<Message> = fresh
                 .iter()
-                .filter(|e| channel.wants(e.customer_id))
+                .filter(|e| channel.coverage.includes(e.customer_id, e.site_id))
                 .map(|e| render(e, &self.web_url))
                 .collect();
             if messages.is_empty() {
@@ -164,26 +167,36 @@ impl Dispatcher {
         }
     }
 
+    fn client(&self, channel: &Channel) -> &reqwest::Client {
+        if channel.public_only {
+            &self.public_http
+        } else {
+            &self.http
+        }
+    }
+
     async fn deliver_with_retries(
         &self,
         channel: &Channel,
         message: &Message,
         retries: &[Duration],
     ) -> Result<(), SendError> {
-        let mut result = deliver(channel, message, &self.http).await;
+        let http = self.client(channel);
+        let mut result = deliver(channel, message, http).await;
         for wait in retries {
             if result.is_ok() {
                 break;
             }
             sleep(*wait).await;
-            result = deliver(channel, message, &self.http).await;
+            result = deliver(channel, message, http).await;
         }
         result
     }
 
     /// Sends a test to `channel` once and records the outcome.
     pub async fn test(&self, channel: &Channel) -> Result<Result<(), SendError>, sqlx::Error> {
-        let result = deliver(channel, &render(&Event::test(), &self.web_url), &self.http).await;
+        let test = render(&Event::test(), &self.web_url);
+        let result = deliver(channel, &test, self.client(channel)).await;
         let error = result.as_ref().err().map(|e| e.0.as_str());
         record_outcome(&self.pool, channel.id, error).await?;
         Ok(result)

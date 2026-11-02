@@ -2,6 +2,8 @@
 //! "Send test" button shows and the channel list keeps.
 
 use std::error::Error as StdError;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 use lettre::message::header::ContentType;
@@ -10,6 +12,7 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 use monitorflow_common::redact::Secret;
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use ring::hmac;
 
 use super::message::Message;
@@ -57,16 +60,113 @@ pub fn http_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
-/// Delivers `message` to `channel`.
+/// Whether `ip` is on the public Internet. Everything else is the central
+/// server's own side: loopback, private and link-local ranges, cloud
+/// metadata, shared address space, and the IPv6 forms that wrap an IPv4
+/// address.
+pub fn is_public(ip: IpAddr) -> bool {
+    match ip.to_canonical() {
+        IpAddr::V4(ip) => {
+            let [a, b, c, _] = ip.octets();
+            !(ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_documentation()
+                || a == 0
+                || a >= 224
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 192 && b == 0 && c == 0)
+                || (a == 198 && (b == 18 || b == 19))
+                || (a == 192 && b == 88 && c == 99))
+        }
+        IpAddr::V6(ip) => {
+            let [first, second, ..] = ip.segments();
+            // Global unicast is 2000::/3; 2001::/32 (Teredo), 2001:db8::/32
+            // (documentation) and 2002::/16 (6to4) are not destinations.
+            first & 0xe000 == 0x2000
+                && first != 0x2002
+                && !(first == 0x2001 && (second == 0 || second == 0xdb8))
+        }
+    }
+}
+
+/// The sentence for a destination that is not public.
+fn private_address(host: &str) -> SendError {
+    SendError(format!(
+        "{host} is a private address. Only a global administrator can set a channel to send there."
+    ))
+}
+
+/// Resolves names to their public addresses only. The connection uses
+/// what this returns, so a name that changes after a check cannot slip
+/// through.
+struct PublicResolver;
+
+impl Resolve for PublicResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        Box::pin(async move {
+            let addresses = public_addresses(name.as_str(), 0).await?;
+            Ok(Box::new(addresses.into_iter()) as Addrs)
+        })
+    }
+}
+
+/// The public addresses of `host`; an error when it has none.
+async fn public_addresses(host: &str, port: u16) -> Result<Vec<SocketAddr>, SendError> {
+    let found = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|error| SendError(format!("Could not find {host}: {error}")))?;
+    let public: Vec<SocketAddr> = found.filter(|a| is_public(a.ip())).collect();
+    if public.is_empty() {
+        return Err(private_address(host));
+    }
+    Ok(public)
+}
+
+/// [`http_client`] for destinations chosen by someone who does not control
+/// the server: public addresses only, and no proxy, which would resolve
+/// the name itself.
+pub fn public_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent(concat!("MonitorFlow/", env!("CARGO_PKG_VERSION")))
+        .no_proxy()
+        .dns_resolver(Arc::new(PublicResolver))
+        .build()
+        .unwrap_or_default()
+}
+
+/// Delivers `message` to `channel` with `http`, the client for its
+/// [`Channel::public_only`].
 pub async fn deliver(
     channel: &Channel,
     message: &Message,
     http: &reqwest::Client,
 ) -> Result<(), SendError> {
+    let secret = channel.secret.as_ref();
     match &channel.destination {
-        Destination::Email(email) => send_email(email, channel.secret.as_ref(), message).await,
+        Destination::Email(email) => {
+            let connect_to = if channel.public_only {
+                let addresses = public_addresses(&email.host, email.port).await?;
+                addresses.first().map(|a| a.ip().to_string())
+            } else {
+                None
+            };
+            send_email(email, connect_to, secret, message).await
+        }
         Destination::Webhook(webhook) => {
-            post_webhook(http, webhook, channel.secret.as_ref(), message).await
+            // The resolver never sees an address written in the URL.
+            let literal = reqwest::Url::parse(&webhook.url).ok().and_then(|url| {
+                url.host_str()?
+                    .trim_matches(['[', ']'])
+                    .parse::<IpAddr>()
+                    .ok()
+            });
+            if let Some(ip) = literal.filter(|ip| channel.public_only && !is_public(*ip)) {
+                return Err(private_address(&ip.to_string()));
+            }
+            post_webhook(http, webhook, secret, message).await
         }
     }
 }
@@ -140,9 +240,11 @@ async fn post_webhook(
 
 /// The SMTP transport for `email`: TLS from the start on port 465,
 /// STARTTLS required when there is a password to protect, opportunistic
-/// otherwise (a local relay on port 25).
+/// otherwise (a local relay on port 25). Connects to `connect_to` when
+/// set, still checking the certificate against the host's name.
 fn transport(
     email: &Email,
+    connect_to: Option<String>,
     password: Option<&Secret>,
 ) -> Result<AsyncSmtpTransport<Tokio1Executor>, SendError> {
     let tls = TlsParameters::new(email.host.clone()).map_err(|error| {
@@ -159,7 +261,8 @@ fn transport(
     } else {
         Tls::Opportunistic(tls)
     };
-    let mut builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(email.host.clone())
+    let server = connect_to.unwrap_or_else(|| email.host.clone());
+    let mut builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(server)
         .port(email.port)
         .tls(tls)
         .timeout(Some(TIMEOUT));
@@ -174,6 +277,7 @@ fn transport(
 
 async fn send_email(
     email: &Email,
+    connect_to: Option<String>,
     password: Option<&Secret>,
     message: &Message,
 ) -> Result<(), SendError> {
@@ -197,7 +301,7 @@ async fn send_email(
     let mail = builder
         .body(message.body.clone())
         .map_err(|error| SendError(format!("The email could not be built: {error}")))?;
-    transport(email, password)?
+    transport(email, connect_to, password)?
         .send(mail)
         .await
         .map(drop)
@@ -241,6 +345,49 @@ mod tests {
         assert_eq!(signed.len(), "sha256=".len() + 64);
         assert_ne!(signature("s3cret", 1_700_000_001, b"{\"a\":1}"), signed);
         assert_ne!(signature("other", 1_700_000_000, b"{\"a\":1}"), signed);
+    }
+
+    #[test]
+    fn only_addresses_on_the_internet_are_public() {
+        for ip in [
+            "93.184.216.34",
+            "8.8.8.8",
+            "172.32.0.1",
+            "100.128.0.1",
+            "2606:2800:220:1:248:1893:25c8:1946",
+            "::ffff:8.8.8.8",
+        ] {
+            assert!(is_public(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "192.0.0.1",
+            "198.18.0.1",
+            "203.0.113.1",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::",
+            "::1",
+            "fc00::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "ff02::1",
+            "2001:db8::1",
+            "2002:7f00:1::",
+            "2001:0:7f00:1::",
+            "64:ff9b::7f00:1",
+            "::ffff:127.0.0.1",
+            "::ffff:169.254.169.254",
+            "::127.0.0.1",
+        ] {
+            assert!(!is_public(ip.parse().unwrap()), "{ip}");
+        }
     }
 
     #[test]

@@ -21,6 +21,8 @@ pub struct Event {
     /// `update.available`, or `test`.
     pub event: String,
     pub customer_id: Option<Uuid>,
+    /// The site named in `details`, `None` when it names none.
+    pub site_id: Option<Uuid>,
     /// The objects of the event, written by the triggers.
     pub details: Value,
     pub created_at: DateTime<Utc>,
@@ -34,6 +36,7 @@ impl Event {
             id: 0,
             event: "test".into(),
             customer_id: None,
+            site_id: None,
             details: json!({ "occurred_at": now }),
             created_at: now,
         }
@@ -270,6 +273,7 @@ mod tests {
             id: 42,
             event: kind.into(),
             customer_id: None,
+            site_id: None,
             details,
             created_at: DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
         }

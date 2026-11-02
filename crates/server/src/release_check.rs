@@ -43,7 +43,7 @@ pub fn running_version() -> Version {
 
 /// Remembers that the source offers `version`, and queues `update.available`
 /// if it is new and newer than `running`; returns whether it did. Server-wide,
-/// so it goes only to channels for all customers.
+/// so it goes only to channels that cover everything.
 pub async fn record(
     pool: &PgPool,
     version: &Version,

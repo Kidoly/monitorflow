@@ -2,7 +2,7 @@
 //! triggers fill when incidents change, commands wait for approval or
 //! updates fail, [`backup`] when a backup fails, and the release check when
 //! a new version appears. The [`dispatcher`] delivers each event to every
-//! channel whose customer matches.
+//! channel whose [`Coverage`] includes it (ADR-0078).
 
 pub mod backup;
 pub mod dispatcher;
@@ -66,6 +66,19 @@ impl Destination {
         match self {
             Self::Email(_) => "email",
             Self::Webhook(_) => "webhook",
+        }
+    }
+
+    /// Whether `other` sends to the same place, so a stored password or
+    /// signing secret may stay with it. Recipients do not count: the
+    /// secret goes to the mail server, not to them.
+    pub fn same_target(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Email(a), Self::Email(b)) => {
+                (&a.host, a.port, &a.username) == (&b.host, b.port, &b.username)
+            }
+            (Self::Webhook(a), Self::Webhook(b)) => a.url == b.url,
+            _ => false,
         }
     }
 
@@ -167,6 +180,50 @@ fn normalize_webhook(webhook: Webhook) -> Result<Webhook, String> {
     })
 }
 
+/// What a channel hears about: the `customer_id` and `site_id` columns,
+/// which hold at most one ID, like a role grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Coverage {
+    /// Every event, those about no customer included.
+    Everything,
+    /// One customer, all its sites included.
+    Customer(Uuid),
+    /// One site.
+    Site(Uuid),
+}
+
+impl Coverage {
+    /// The coverage of the two columns; `None` when both are set.
+    pub fn from_columns(customer_id: Option<Uuid>, site_id: Option<Uuid>) -> Option<Self> {
+        match (customer_id, site_id) {
+            (None, None) => Some(Self::Everything),
+            (Some(id), None) => Some(Self::Customer(id)),
+            (None, Some(id)) => Some(Self::Site(id)),
+            (Some(_), Some(_)) => None,
+        }
+    }
+
+    /// `(customer_id, site_id)`.
+    pub fn columns(self) -> (Option<Uuid>, Option<Uuid>) {
+        match self {
+            Self::Everything => (None, None),
+            Self::Customer(id) => (Some(id), None),
+            Self::Site(id) => (None, Some(id)),
+        }
+    }
+
+    /// Whether an event about `customer` and `site` falls under this. The
+    /// tenancy boundary of notifications: an event without either reaches
+    /// only [`Coverage::Everything`].
+    pub fn includes(self, customer: Option<Uuid>, site: Option<Uuid>) -> bool {
+        match self {
+            Self::Everything => true,
+            Self::Customer(id) => customer == Some(id),
+            Self::Site(id) => site == Some(id),
+        }
+    }
+}
+
 /// A channel as the dispatcher uses it.
 #[derive(Debug, Clone)]
 pub struct Channel {
@@ -174,18 +231,13 @@ pub struct Channel {
     pub destination: Destination,
     /// The SMTP password or the webhook signing secret.
     pub secret: Option<Secret>,
-    /// Only this customer's events when set.
-    pub customer_id: Option<Uuid>,
+    pub coverage: Coverage,
+    /// Delivered only to public addresses: someone other than a global
+    /// administrator chose the destination (ADR-0078).
+    pub public_only: bool,
 }
 
-impl Channel {
-    /// Whether an event about `customer` goes to this channel.
-    pub fn wants(&self, customer: Option<Uuid>) -> bool {
-        self.customer_id.is_none() || self.customer_id == customer
-    }
-}
-
-const CHANNEL_COLUMNS: &str = "id, kind, settings, secret, customer_id";
+const CHANNEL_COLUMNS: &str = "id, kind, settings, secret, customer_id, site_id, public_only";
 
 fn channel(row: &sqlx::postgres::PgRow) -> Result<Channel, sqlx::Error> {
     let kind: String = row.try_get("kind")?;
@@ -195,7 +247,9 @@ fn channel(row: &sqlx::postgres::PgRow) -> Result<Channel, sqlx::Error> {
         id: row.try_get("id")?,
         destination,
         secret: row.try_get::<Option<String>, _>("secret")?.map(Secret::new),
-        customer_id: row.try_get("customer_id")?,
+        coverage: Coverage::from_columns(row.try_get("customer_id")?, row.try_get("site_id")?)
+            .ok_or_else(|| sqlx::Error::Decode("a channel with two scopes".into()))?,
+        public_only: row.try_get("public_only")?,
     })
 }
 
@@ -226,44 +280,67 @@ pub async fn load(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Channel>, 
     .transpose()
 }
 
+/// One channel, locked until the transaction ends, so that what a change
+/// was authorized against is still what it changes.
+pub async fn lock(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Channel>, sqlx::Error> {
+    // SQL-safe: interpolates only the constant CHANNEL_COLUMNS.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {CHANNEL_COLUMNS} FROM notification_channels WHERE id = $1 FOR UPDATE"
+    )))
+    .bind(id)
+    .fetch_optional(db)
+    .await?
+    .as_ref()
+    .map(channel)
+    .transpose()
+}
+
 /// Inserts a channel and returns its ID.
 pub async fn insert(
     db: impl PgExecutor<'_>,
     destination: &Destination,
     secret: Option<&Secret>,
-    customer_id: Option<Uuid>,
+    coverage: Coverage,
+    public_only: bool,
 ) -> Result<Uuid, sqlx::Error> {
+    let (customer_id, site_id) = coverage.columns();
     sqlx::query_scalar(
-        "INSERT INTO notification_channels (kind, settings, secret, customer_id)
-         VALUES ($1, $2, $3, $4) RETURNING id",
+        "INSERT INTO notification_channels (kind, settings, secret, customer_id, site_id, public_only)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
     )
     .bind(destination.kind())
     .bind(destination.settings())
     .bind(secret.map(Secret::expose))
     .bind(customer_id)
+    .bind(site_id)
+    .bind(public_only)
     .fetch_one(db)
     .await
 }
 
-/// Replaces a channel's destination and customer; `secret` `None` keeps
+/// Replaces a channel's destination and coverage; `secret` `None` keeps
 /// the stored one. `false` when it does not exist.
 pub async fn update(
     db: impl PgExecutor<'_>,
     id: Uuid,
     destination: &Destination,
     secret: Option<Option<&Secret>>,
-    customer_id: Option<Uuid>,
+    coverage: Coverage,
+    public_only: bool,
 ) -> Result<bool, sqlx::Error> {
+    let (customer_id, site_id) = coverage.columns();
     let done = sqlx::query(
         "UPDATE notification_channels
-         SET kind = $2, settings = $3, customer_id = $4,
-             secret = CASE WHEN $5 THEN $6 ELSE secret END
+         SET kind = $2, settings = $3, customer_id = $4, site_id = $5, public_only = $6,
+             secret = CASE WHEN $7 THEN $8 ELSE secret END
          WHERE id = $1",
     )
     .bind(id)
     .bind(destination.kind())
     .bind(destination.settings())
     .bind(customer_id)
+    .bind(site_id)
+    .bind(public_only)
     .bind(secret.is_some())
     .bind(secret.flatten().map(Secret::expose))
     .execute(db)
@@ -373,19 +450,51 @@ mod tests {
     }
 
     #[test]
-    fn unscoped_channels_take_every_customer() {
-        let customer = Uuid::new_v4();
-        let mut channel = Channel {
-            id: Uuid::nil(),
-            destination: Destination::Webhook(Webhook {
-                url: "https://x/".into(),
-            }),
-            secret: None,
-            customer_id: None,
-        };
-        assert!(channel.wants(Some(customer)) && channel.wants(None));
-        channel.customer_id = Some(customer);
-        assert!(channel.wants(Some(customer)));
-        assert!(!channel.wants(Some(Uuid::new_v4())) && !channel.wants(None));
+    fn coverage_goes_no_further_than_its_customer_or_site() {
+        let (customer, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let (site, sibling) = (Uuid::from_u128(3), Uuid::from_u128(4));
+        let at_site = (Some(customer), Some(site));
+        let at_sibling = (Some(customer), Some(sibling));
+        let at_customer = (Some(customer), None);
+        let elsewhere = (Some(other), Some(Uuid::from_u128(5)));
+        let nowhere = (None, None);
+        let includes =
+            |coverage: Coverage, (c, s): (Option<Uuid>, Option<Uuid>)| coverage.includes(c, s);
+        for place in [at_site, at_sibling, at_customer, elsewhere, nowhere] {
+            assert!(includes(Coverage::Everything, place));
+        }
+        let by_customer = Coverage::Customer(customer);
+        assert!(includes(by_customer, at_site) && includes(by_customer, at_customer));
+        assert!(!includes(by_customer, elsewhere) && !includes(by_customer, nowhere));
+        let by_site = Coverage::Site(site);
+        assert!(includes(by_site, at_site));
+        assert!(!includes(by_site, at_sibling) && !includes(by_site, at_customer));
+        assert!(!includes(by_site, elsewhere) && !includes(by_site, nowhere));
+    }
+
+    #[test]
+    fn coverage_is_one_column_at_most() {
+        let id = Uuid::from_u128(7);
+        assert_eq!(
+            Coverage::from_columns(None, None),
+            Some(Coverage::Everything)
+        );
+        assert_eq!(Coverage::from_columns(Some(id), Some(id)), None);
+        for coverage in [Coverage::Customer(id), Coverage::Site(id)] {
+            let (customer, site) = coverage.columns();
+            assert_eq!(Coverage::from_columns(customer, site), Some(coverage));
+        }
+    }
+
+    #[test]
+    fn the_target_is_where_a_secret_would_go() {
+        let base = email("smtp.x.io", "ops", "a@x.io", &["b@x.io"]);
+        assert!(base.same_target(&email("smtp.x.io", "ops", "c@x.io", &["d@x.io"])));
+        assert!(!base.same_target(&email("evil.example", "ops", "a@x.io", &["b@x.io"])));
+        assert!(!base.same_target(&email("smtp.x.io", "root", "a@x.io", &["b@x.io"])));
+        let hook = |url: &str| Destination::Webhook(Webhook { url: url.into() });
+        assert!(hook("https://a/").same_target(&hook("https://a/")));
+        assert!(!hook("https://a/").same_target(&hook("https://b/")));
+        assert!(!hook("https://a/").same_target(&base));
     }
 }
