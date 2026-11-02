@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde_json::json;
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{PgExecutor, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::remediation::audit::{self, Actor, AuditError, IncidentState, NewEvent};
@@ -147,9 +147,11 @@ pub async fn renew(
     Ok(done.rows_affected() == 1)
 }
 
-/// Gives up `holder`'s leases, of `incident` or of every incident.
+/// Gives up `holder`'s leases, of `incident` or of every incident. In
+/// the transaction that parks or closes an incident, so its new state is
+/// never seen with a lease.
 pub async fn release(
-    pool: &PgPool,
+    executor: impl PgExecutor<'_>,
     incident: Option<Uuid>,
     holder: Uuid,
 ) -> Result<(), sqlx::Error> {
@@ -159,7 +161,7 @@ pub async fn release(
     )
     .bind(incident)
     .bind(holder)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }

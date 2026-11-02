@@ -317,10 +317,10 @@ async fn route(
         .await?;
         Pass::Done
     };
-    tx.commit().await?;
     if let Pass::Done = pass {
-        store::release(&shared.pool, Some(incident.id), shared.holder).await?;
+        store::release(&mut *tx, Some(incident.id), shared.holder).await?;
     }
+    tx.commit().await?;
     Ok(pass)
 }
 
@@ -554,8 +554,10 @@ async fn finish_as(
     reason: &str,
     pending: Pending,
 ) -> Result<Pass, DriveError> {
-    close(&shared.pool, incident.id, to, reason, pending).await?;
-    store::release(&shared.pool, Some(incident.id), shared.holder).await?;
+    let mut tx = shared.pool.begin().await?;
+    close_in(&mut tx, incident.id, to, reason, pending).await?;
+    store::release(&mut *tx, Some(incident.id), shared.holder).await?;
+    tx.commit().await?;
     // The reason may quote the AI, untrusted text: it stays in the audit
     // trail, out of the logs.
     tracing::info!(incident = %incident.id, state = to.as_str(), "remediation incident closed");
