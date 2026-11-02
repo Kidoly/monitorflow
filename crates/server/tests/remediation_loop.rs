@@ -485,6 +485,8 @@ enum HookMode {
     Snapshot,
     Fail,
     Hang,
+    /// Snapshots once [`StubHook::open`] is called.
+    Gate,
 }
 
 /// A snapshot hook that records its calls and answers as told.
@@ -492,6 +494,7 @@ enum HookMode {
 struct StubHook {
     mode: HookMode,
     calls: Mutex<Vec<(u32, String)>>,
+    gate: tokio::sync::Semaphore,
 }
 
 impl StubHook {
@@ -499,7 +502,24 @@ impl StubHook {
         Arc::new(Self {
             mode,
             calls: Mutex::default(),
+            gate: tokio::sync::Semaphore::new(0),
         })
+    }
+
+    fn open(&self) {
+        self.gate.add_permits(1);
+    }
+
+    /// Waits for the hook's first call.
+    async fn called(&self) {
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        while self.calls().is_empty() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the hook was never called"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 
     fn calls(&self) -> Vec<(u32, String)> {
@@ -514,8 +534,11 @@ impl ChangeHook for StubHook {
             .lock()
             .unwrap()
             .push((change.step, change.command.to_owned()));
+        if let HookMode::Gate = self.mode {
+            let _ = self.gate.acquire().await.unwrap();
+        }
         match self.mode {
-            HookMode::Snapshot => Ok(hook::Snapshot {
+            HookMode::Snapshot | HookMode::Gate => Ok(hook::Snapshot {
                 method: "proxmox".into(),
                 name: Some(format!("mf-test-{}", change.step)),
                 detail: "proxmox snapshot of VM 101".into(),
@@ -1061,6 +1084,34 @@ db_tests! {
         assert_eq!(stub.calls().len(), 1);
         assert!(h.agent.seen().is_empty());
         assert_eq!(last_escalation(&h).await, "the duration limit of 2 s was reached");
+        h.close().await;
+    }
+
+    #[sqlx::test]
+    async fn a_driver_that_lost_its_lease_records_nothing(pool: PgPool) {
+        let h = Harness::start(&pool, &[]).await;
+        low_impact_auto(&h).await;
+        let ai = Arc::new(MockProvider::new([Step::run("full", "systemctl restart rsyslog", "restart")]));
+        let stub = StubHook::new(HookMode::Gate);
+        // Renewed every 20 s: the driver does not notice the loss on its own.
+        let settings = Settings { lease_ttl: Duration::from_secs(60), ..settings() };
+        let running = h.remediation_with(&ai, settings, stub.clone());
+        stub.called().await;
+        // The lease expired during the snapshot and another server took it.
+        sqlx::query("UPDATE remediation_loop_leases SET holder = gen_random_uuid()")
+            .execute(&pool)
+            .await
+            .unwrap();
+        stub.open();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        running.stop().await;
+
+        let events = h.events().await;
+        assert!(of_kind(&events, "snapshot").is_empty(), "{:?}", kinds(&events));
+        assert!(of_kind(&events, "command_queued").is_empty());
+        assert!(h.agent.seen().is_empty());
+        assert_eq!(h.leases().await, 1, "the other server's lease stays");
+        assert_eq!(h.wait_state("running").await, h.incident().await);
         h.close().await;
     }
 

@@ -128,9 +128,11 @@ pub async fn acquire(
     Ok(done.rows_affected() == 1)
 }
 
-/// Extends `holder`'s lease; `false` when it lost it.
+/// Extends `holder`'s lease; `false` when it lost it. In a transaction,
+/// the lease row stays locked until it ends: a holder taking the lease
+/// once expired waits for the commit.
 pub async fn renew(
-    pool: &PgPool,
+    executor: impl PgExecutor<'_>,
     incident: Uuid,
     holder: Uuid,
     ttl: Duration,
@@ -142,7 +144,7 @@ pub async fn renew(
     .bind(incident)
     .bind(holder)
     .bind(ttl.as_secs_f64())
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(done.rows_affected() == 1)
 }

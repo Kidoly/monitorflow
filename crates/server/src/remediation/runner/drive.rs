@@ -10,6 +10,7 @@ use monitorflow_common::command::SHELL;
 use monitorflow_common::proto::v1::ShellCommand;
 use prost::Message;
 use serde_json::json;
+use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use super::hook::Change;
@@ -182,8 +183,7 @@ async fn send_context(shared: &Shared, incident: &Incident) -> Result<Pass, Driv
         &shared.model,
         json!({ "rendered": rendered, "redactions": redactions }),
     );
-    audit::append(&shared.pool, incident.id, event).await?;
-    Ok(Pass::Again)
+    append(shared, incident, event).await
 }
 
 /// Asks the AI for the next step and records its answer.
@@ -232,8 +232,7 @@ async fn ask(shared: &Shared, incident: &Incident, progress: Progress) -> Result
             )
         }
     };
-    audit::append(&shared.pool, incident.id, event).await?;
-    Ok(Pass::Again)
+    append(shared, incident, event).await
 }
 
 async fn rules(shared: &Shared, incident: &Incident) -> Result<RuleSet, DriveError> {
@@ -268,7 +267,9 @@ async fn route(
 ) -> Result<Pass, DriveError> {
     let decision = risk::classify(command, &rules(shared, incident).await?);
     let automatic = automatic(shared, incident, &decision).await?;
-    let mut tx = shared.pool.begin().await?;
+    let Some(mut tx) = leased(shared, incident.id).await? else {
+        return Ok(Pass::Done);
+    };
     if store::lock(&mut tx, incident.id).await? != IncidentState::Running {
         return Ok(Pass::Again);
     }
@@ -377,8 +378,7 @@ async fn run(
                     snapshot.name.as_deref(),
                     &snapshot.detail,
                 );
-                audit::append(&shared.pool, incident.id, event).await?;
-                Ok(Pass::Again)
+                append(shared, incident, event).await
             }
             Ok(Err(error)) => {
                 let reason = format!("the snapshot before the change failed: {error}");
@@ -392,7 +392,9 @@ async fn run(
         timeout_seconds: u32::try_from(timeout.as_secs()).unwrap_or(u32::MAX),
     }
     .encode_to_vec();
-    let mut tx = shared.pool.begin().await?;
+    let Some(mut tx) = leased(shared, incident.id).await? else {
+        return Ok(Pass::Done);
+    };
     if store::lock(&mut tx, incident.id).await? != IncidentState::Running {
         return Ok(Pass::Again);
     }
@@ -466,7 +468,9 @@ async fn wait(
             Some(&reason),
             elapsed(&row),
         );
-        audit::append(&shared.pool, incident.id, event).await?;
+        if let Pass::Done = append(shared, incident, event).await? {
+            return Ok(Pass::Done);
+        }
         if limit >= incident.deadline() {
             return duration_limit(shared, incident).await;
         }
@@ -490,7 +494,9 @@ async fn wait(
         error.as_ref().map(|e| e.as_str()),
         elapsed(&row),
     );
-    audit::append(&shared.pool, incident.id, event).await?;
+    if let Pass::Done = append(shared, incident, event).await? {
+        return Ok(Pass::Done);
+    }
     if !completed {
         let why = error.map_or_else(|| row.state.as_str().to_owned(), |e| e.to_string());
         let reason = format!("the command did not run to completion: {why}");
@@ -537,6 +543,34 @@ async fn confirm(
     }
 }
 
+/// Begins a transaction that renews this process's lease on `incident`,
+/// so what the pass records commits only while the lease is held: a
+/// process taking the lease once it expires waits for that commit and
+/// reads it. `None` when another process took the lease; the pass then
+/// records nothing and the driver stops.
+async fn leased(
+    shared: &Shared,
+    incident: Uuid,
+) -> Result<Option<Transaction<'static, Postgres>>, DriveError> {
+    let mut tx = shared.pool.begin().await?;
+    if store::renew(&mut *tx, incident, shared.holder, shared.settings.lease_ttl).await? {
+        Ok(Some(tx))
+    } else {
+        tracing::warn!(%incident, "lost the remediation lease; stopped driving");
+        Ok(None)
+    }
+}
+
+/// Appends `event` while this process holds the lease.
+async fn append(shared: &Shared, incident: &Incident, event: NewEvent) -> Result<Pass, DriveError> {
+    let Some(mut tx) = leased(shared, incident.id).await? else {
+        return Ok(Pass::Done);
+    };
+    audit::append_in(&mut tx, incident.id, event).await?;
+    tx.commit().await?;
+    Ok(Pass::Again)
+}
+
 /// Closes `incident` as `to` and gives up its lease.
 async fn finish(
     shared: &Shared,
@@ -554,7 +588,9 @@ async fn finish_as(
     reason: &str,
     pending: Pending,
 ) -> Result<Pass, DriveError> {
-    let mut tx = shared.pool.begin().await?;
+    let Some(mut tx) = leased(shared, incident.id).await? else {
+        return Ok(Pass::Done);
+    };
     close_in(&mut tx, incident.id, to, reason, pending).await?;
     store::release(&mut *tx, Some(incident.id), shared.holder).await?;
     tx.commit().await?;
