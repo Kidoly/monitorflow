@@ -376,16 +376,22 @@ db_tests! {
         let admin = h.user("root", Role::Administrator, GrantScope::Global).await;
         let mirror = store::create(&pool, &dnf("rocky"), ("system", "test")).await.unwrap();
         let path = format!("/api/mirrors/{}", mirror.id);
-        // A running job keeps the deletion waiting.
         h.tools.hold.store(true, Ordering::SeqCst);
         assert_eq!(h.call("POST", &format!("{path}/sync"), &admin, None).await.0, StatusCode::ACCEPTED);
+        // A job of another mirror keeps the deletion waiting. The sync's
+        // own job may already have stopped: its watch looks once as its
+        // tool starts, which can come after the request below.
+        let other = store::create(&pool, &dnf("alma"), ("system", "test")).await.unwrap();
+        let running = store::MirrorLock::try_acquire(&pool, other.id).await.unwrap().unwrap();
 
         assert_eq!(h.call("DELETE", &path, &admin, None).await.0, StatusCode::ACCEPTED);
         let (status, list) = h.call("GET", "/api/mirrors", &admin, None).await;
         assert_eq!(status, StatusCode::OK);
-        assert!(list["mirrors"][0]["deleting_at"].is_string());
+        let listed = list["mirrors"].as_array().unwrap().iter().find(|m| m["name"] == "rocky").unwrap();
+        assert!(listed["deleting_at"].is_string(), "{list}");
         let (status, body) = h.call("POST", &format!("{path}/sync"), &admin, None).await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        running.release().await;
 
         // The job ends by the watch, not by its tool, and the rest follows.
         for _ in 0..1000 {
