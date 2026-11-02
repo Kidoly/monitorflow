@@ -13,8 +13,8 @@ use super::compress::{self, Compression};
 use super::meta::{join, Algorithm, Checksum, Entry, MetaError};
 
 pub const REPOMD: &str = "repodata/repomd.xml";
-/// Signed files of a repository, not listed in `repomd.xml` itself; only
-/// `repomd.xml` is required.
+/// Signed files of a repository, not listed in `repomd.xml` itself, all
+/// required.
 pub const ROOT_FILES: [&str; 2] = [REPOMD, "repodata/repomd.xml.asc"];
 
 /// A metadata file of `repomd.xml` and its `type` (`primary`, …).
@@ -454,6 +454,27 @@ mod tests {
         let reader = std::io::BufReader::with_capacity(1, xml.as_bytes());
         let records = records("p.xml", reader, "package", Size::Attribute).unwrap();
         assert_eq!(records[0].1.path, "Packages/\u{e9}/\u{e9}-1-1.x86_64.rpm");
+    }
+
+    /// quick-xml buffers an event whole, so a huge one is bounded by the
+    /// decoder's limit, not by quick-xml.
+    #[test]
+    fn a_bomb_of_metadata_stops_at_the_limit() {
+        for filler in ["<!-- ", "<package type=\"", "<package><size>"] {
+            let bomb = format!("<metadata>{filler}{}", "x".repeat(1 << 20));
+            let raw = compress::tests::compress(Compression::Zstd, bomb.as_bytes());
+            let reader = Compression::Zstd
+                .decoder("p.xml.zst", &raw[..], 4096)
+                .unwrap();
+            assert_eq!(
+                records("p.xml.zst", reader, "package", Size::Attribute).unwrap_err(),
+                MetaError::TooLarge {
+                    file: "p.xml.zst".into(),
+                    limit: 4096
+                },
+                "{filler}"
+            );
+        }
     }
 
     #[test]

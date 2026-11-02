@@ -131,7 +131,9 @@ impl<R: Read> Read for Capped<R> {
                 )),
             };
         }
-        let max = buf.len().min(usize::try_from(self.left).unwrap_or(usize::MAX));
+        let max = buf
+            .len()
+            .min(usize::try_from(self.left).unwrap_or(usize::MAX));
         let n = self.inner.read(&mut buf[..max])?;
         self.left -= n as u64;
         Ok(n)
@@ -178,6 +180,89 @@ pub(crate) mod tests {
             .read_to_string(&mut out)
             .map_err(|e| e.to_string())?;
         Ok(out)
+    }
+
+    /// `data` compressed with `compression`, and how its decoder with
+    /// `limit` reads it.
+    fn read_capped(
+        compression: Compression,
+        data: &[u8],
+        limit: u64,
+    ) -> (usize, Result<Vec<u8>, MetaError>) {
+        let raw = compress(compression, data);
+        let mut out = Vec::new();
+        let read = compression
+            .decoder("f", &raw[..], limit)
+            .unwrap()
+            .read_to_end(&mut out)
+            .map(|_| out)
+            .map_err(|e| read_error("f", &e));
+        (raw.len(), read)
+    }
+
+    #[test]
+    fn every_compression_stops_a_bomb() {
+        const MIB: usize = 1024 * 1024;
+        let bomb = vec![0u8; 3 * MIB];
+        for c in Compression::ALL {
+            let (size, read) = read_capped(c, &bomb, MIB as u64);
+            if c != Compression::Plain {
+                assert!(size < bomb.len() / 100, "{c:?} compresses to {size}");
+            }
+            assert_eq!(
+                read.unwrap_err(),
+                MetaError::TooLarge {
+                    file: "f".into(),
+                    limit: MIB as u64
+                },
+                "{c:?}"
+            );
+            // Exactly the limit is fine.
+            let (_, read) = read_capped(c, &bomb[..MIB], MIB as u64);
+            assert_eq!(read.unwrap().len(), MIB, "{c:?}");
+        }
+    }
+
+    /// An xz header can ask for a 4 GiB dictionary whatever the data.
+    #[test]
+    fn xz_memory_is_bounded() {
+        let mut raw = compress(Compression::Xz, b"xz");
+        // The block header follows the 12-byte stream header: its size,
+        // flags, optional sizes, then the LZMA2 filter (ID 0x21, one
+        // property byte: the dictionary size), padding and a CRC32.
+        let header = 12;
+        let size = (usize::from(raw[header]) + 1) * 4;
+        let flags = raw[header + 1];
+        let mut at = header + 2;
+        for present in [0x40, 0x80] {
+            if flags & present != 0 {
+                while raw[at] & 0x80 != 0 {
+                    at += 1;
+                }
+                at += 1;
+            }
+        }
+        assert_eq!(raw[at..at + 2], [0x21, 1], "LZMA2 filter");
+        raw[at + 2] = 40;
+        let crc =
+            crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&raw[header..header + size - 4]);
+        raw[header + size - 4..header + size].copy_from_slice(&crc.to_le_bytes());
+        let error = read(Compression::Xz, &raw).unwrap_err();
+        assert!(error.contains("mem"), "{error}");
+    }
+
+    #[test]
+    fn too_large_says_why_in_plain_words() {
+        let error = MetaError::TooLarge {
+            file: "dists/b/main/binary-amd64/Packages.xz".into(),
+            limit: MAX_DECOMPRESSED,
+        };
+        assert_eq!(
+            error.to_string(),
+            "dists/b/main/binary-amd64/Packages.xz expands to more than 512 MiB, far more than any real repository's metadata; the upstream's copy is damaged or was tampered with"
+        );
+        let other = io::Error::other("broken");
+        assert_eq!(read_error("f", &other), MetaError::invalid("f", "broken"));
     }
 
     #[test]

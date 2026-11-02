@@ -75,6 +75,8 @@ pub enum SyncError {
     Meta(#[from] MetaError),
     #[error("{0} is listed but missing upstream")]
     Missing(String),
+    #[error("{0} is missing upstream: the snapshot is not signed, so agents would refuse it")]
+    Unsigned(String),
     #[error("{0} is listed twice with different sizes or checksums")]
     Conflict(String),
     #[error("the snapshot lists more than {limit} bytes (mirror.max_snapshot_bytes)")]
@@ -396,7 +398,11 @@ fn record(
 }
 
 impl Run {
-    /// Downloads the signed files; the first one is required.
+    /// Downloads the signed files and their signatures, all required: the
+    /// server signs every snapshot it publishes, so one without its
+    /// signature is broken or tampered with, and agents would refuse it
+    /// (ADR-0083). The relay cannot tell a bad signature from a good one;
+    /// it copies them unchanged for agents to check.
     async fn roots(
         &self,
         paths: &[impl AsRef<str>],
@@ -423,7 +429,7 @@ impl Run {
                     progress.done.insert(stored.file.path.clone(), stored);
                 }
                 None if i == 0 => return Err(SyncError::Missing(path.to_owned())),
-                None => {}
+                None => return Err(SyncError::Unsigned(path.to_owned())),
             }
         }
         Ok(())

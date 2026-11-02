@@ -9,8 +9,8 @@ use std::path::Path;
 use super::compress::{self, Compression};
 use super::meta::{join, Algorithm, Checksum, Entry, MetaError};
 
-/// Signed files of a suite, not listed in `Release` itself; only
-/// `Release` is required.
+/// Signed files of a suite, not listed in `Release` itself, all
+/// required.
 pub const ROOT_FILES: [&str; 3] = ["Release", "InRelease", "Release.gpg"];
 
 /// `dists/<suite>`.
@@ -208,6 +208,20 @@ mod tests {
             assert_eq!(entries[0].path, "pool/a.deb");
         }
         assert!(read_packages("Packages.xz", &dir.path().join("absent")).is_err());
+    }
+
+    #[test]
+    fn a_bomb_of_a_list_stops_at_the_limit() {
+        let bomb = "Description: x\n".repeat(100_000);
+        let raw = compress::tests::compress(Compression::Gzip, bomb.as_bytes());
+        let reader = Compression::Gzip.decoder("P.gz", &raw[..], 1000).unwrap();
+        assert_eq!(
+            packages("P.gz", reader).unwrap_err(),
+            MetaError::TooLarge {
+                file: "P.gz".into(),
+                limit: 1000
+            }
+        );
     }
 
     #[test]
