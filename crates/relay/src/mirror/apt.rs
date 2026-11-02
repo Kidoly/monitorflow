@@ -105,7 +105,7 @@ pub fn packages(file: &str, reader: impl BufRead) -> Result<Vec<Entry>, MetaErro
         }
     };
     for line in reader.lines() {
-        let line = line.map_err(|e| MetaError::invalid(file, e.to_string()))?;
+        let line = line.map_err(|e| compress::read_error(file, &e))?;
         if line.trim().is_empty() {
             finish(&mut path, &mut size, &mut sha)?;
             continue;

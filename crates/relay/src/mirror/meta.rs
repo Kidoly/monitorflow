@@ -14,6 +14,22 @@ pub enum MetaError {
     Invalid { file: String, reason: String },
     #[error("{file}: unsafe path `{path}`")]
     UnsafePath { file: String, path: String },
+    /// A decompression bomb, or a broken file (ADR-0083).
+    #[error(
+        "{file} expands to more than {}, far more than any real repository's metadata; the upstream's copy is damaged or was tampered with",
+        size(*limit)
+    )]
+    TooLarge { file: String, limit: u64 },
+}
+
+/// `bytes` for people: in MiB when it is a whole number of them.
+pub fn size(bytes: u64) -> String {
+    const MIB: u64 = 1024 * 1024;
+    if bytes >= MIB && bytes % MIB == 0 {
+        format!("{} MiB", bytes / MIB)
+    } else {
+        format!("{bytes} bytes")
+    }
 }
 
 impl MetaError {

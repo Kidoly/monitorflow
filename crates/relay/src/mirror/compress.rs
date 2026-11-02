@@ -1,12 +1,22 @@
 //! Compressions of apt `Packages` indexes and dnf primary metadata
 //! (ADR-0034), told by the file name's extension. Every decoder is pure
-//! Rust.
+//! Rust, and what it produces is capped (ADR-0083): the relay does not
+//! check signatures, so a few kilobytes of tampered metadata must not
+//! expand into gigabytes.
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
 
 use super::meta::MetaError;
+
+/// Largest metadata file read, once decompressed: 2.5 times Fedora's
+/// primary metadata, the largest seen (ADR-0083).
+pub const MAX_DECOMPRESSED: u64 = 512 * 1024 * 1024;
+
+/// Memory an xz stream may ask for, in KiB: `xz -9` needs 65 MiB, and
+/// the format allows 1.5 GiB.
+const XZ_MEMORY_KIB: u32 = 128 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Compression {
@@ -42,30 +52,90 @@ impl Compression {
             .unwrap_or((Self::Plain, name))
     }
 
-    /// Decompresses `raw`, the content of `file`.
+    /// Decompresses `raw`, the content of `file`; reading past `limit`
+    /// bytes fails with [`TooLarge`]. ruzstd's default window limit,
+    /// 128 MiB, bounds the memory of zstd as [`XZ_MEMORY_KIB`] does xz.
     pub fn decoder<'a>(
         self,
         file: &str,
         raw: impl Read + 'a,
+        limit: u64,
     ) -> Result<Box<dyn BufRead + 'a>, MetaError> {
-        Ok(match self {
-            Self::Plain => Box::new(BufReader::new(raw)),
-            Self::Gzip => Box::new(BufReader::new(flate2::read::MultiGzDecoder::new(raw))),
-            Self::Xz => Box::new(BufReader::new(lzma_rust2::XzReader::new(raw, true))),
-            Self::Bzip2 => Box::new(BufReader::new(bzip2::read::MultiBzDecoder::new(raw))),
-            Self::Zstd => Box::new(BufReader::new(
+        let decoded: Box<dyn Read + 'a> = match self {
+            Self::Plain => Box::new(raw),
+            Self::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
+            Self::Xz => Box::new(lzma_rust2::XzReader::new_mem_limit(
+                raw,
+                true,
+                XZ_MEMORY_KIB,
+            )),
+            Self::Bzip2 => Box::new(bzip2::read::MultiBzDecoder::new(raw)),
+            Self::Zstd => Box::new(
                 ruzstd::decoding::StreamingDecoder::new(raw)
                     .map_err(|e| MetaError::invalid(file, e.to_string()))?,
-            )),
-        })
+            ),
+        };
+        Ok(Box::new(BufReader::new(Capped {
+            inner: decoded,
+            left: limit,
+            limit,
+        })))
     }
 }
 
 /// The decompressed content of `path`, the file `file` of a snapshot,
-/// by its extension. Blocking.
+/// by its extension, at most [`MAX_DECOMPRESSED`] bytes. Blocking.
 pub fn open(file: &str, path: &Path) -> Result<Box<dyn BufRead>, MetaError> {
     let raw = File::open(path).map_err(|e: io::Error| MetaError::invalid(file, e.to_string()))?;
-    Compression::of(file).0.decoder(file, raw)
+    Compression::of(file).0.decoder(file, raw, MAX_DECOMPRESSED)
+}
+
+/// The error a [`Compression::decoder`] reading past its limit returns,
+/// inside an [`io::Error`].
+#[derive(Debug, thiserror::Error)]
+#[error("larger than {limit} bytes once decompressed")]
+pub struct TooLarge {
+    pub limit: u64,
+}
+
+/// `error`, from reading the decompressed `file`, as a [`MetaError`].
+pub fn read_error(file: &str, error: &io::Error) -> MetaError {
+    match error.get_ref().and_then(|e| e.downcast_ref::<TooLarge>()) {
+        Some(e) => MetaError::TooLarge {
+            file: file.to_owned(),
+            limit: e.limit,
+        },
+        None => MetaError::invalid(file, error.to_string()),
+    }
+}
+
+/// A reader that fails rather than give more than `limit` bytes.
+struct Capped<R> {
+    inner: R,
+    left: u64,
+    limit: u64,
+}
+
+impl<R: Read> Read for Capped<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        if self.left == 0 {
+            // Exactly `limit` bytes is fine; one more is not.
+            return match self.inner.read(&mut [0])? {
+                0 => Ok(0),
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    TooLarge { limit: self.limit },
+                )),
+            };
+        }
+        let max = buf.len().min(usize::try_from(self.left).unwrap_or(usize::MAX));
+        let n = self.inner.read(&mut buf[..max])?;
+        self.left -= n as u64;
+        Ok(n)
+    }
 }
 
 #[cfg(test)]
@@ -103,7 +173,7 @@ pub(crate) mod tests {
     fn read(compression: Compression, raw: &[u8]) -> Result<String, String> {
         let mut out = String::new();
         compression
-            .decoder("f", raw)
+            .decoder("f", raw, u64::MAX)
             .map_err(|e| e.to_string())?
             .read_to_string(&mut out)
             .map_err(|e| e.to_string())?;

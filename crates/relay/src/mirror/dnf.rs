@@ -96,9 +96,10 @@ fn records(
     let mut text_of: Option<&'static str> = None;
     let mut text = String::new();
     loop {
-        let event = reader
-            .read_event_into(&mut buf)
-            .map_err(|e| fail(e.to_string()))?;
+        let event = reader.read_event_into(&mut buf).map_err(|e| match e {
+            quick_xml::Error::Io(e) => compress::read_error(file, &e),
+            e => fail(e.to_string()),
+        })?;
         match event {
             Event::Start(ref e) | Event::Empty(ref e) => {
                 let empty = matches!(event, Event::Empty(_));

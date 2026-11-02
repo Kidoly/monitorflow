@@ -41,8 +41,9 @@ pub const MANIFEST: &str = ".manifest";
 const STAGING: &str = ".sync-";
 
 /// Largest signed root file (`Release`, `repomd.xml` and their
-/// signatures), whose size nothing gives in advance.
-const ROOT_LIMIT: u64 = 64 * 1024 * 1024;
+/// signatures), whose size nothing gives in advance: 60 times Ubuntu's
+/// `Release`, the largest seen (ADR-0083). `Release` is read whole.
+const ROOT_LIMIT: u64 = 16 * 1024 * 1024;
 
 /// What one sync did.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
