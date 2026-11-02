@@ -25,7 +25,7 @@ pub enum MetaError {
 /// `bytes` for people: in MiB when it is a whole number of them.
 pub fn size(bytes: u64) -> String {
     const MIB: u64 = 1024 * 1024;
-    if bytes >= MIB && bytes % MIB == 0 {
+    if bytes >= MIB && bytes.is_multiple_of(MIB) {
         format!("{} MiB", bytes / MIB)
     } else {
         format!("{bytes} bytes")
