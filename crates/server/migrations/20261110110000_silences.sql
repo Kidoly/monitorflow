@@ -34,6 +34,18 @@ ALTER TABLE notification_outbox ADD COLUMN held_at timestamptz;
 CREATE INDEX notification_outbox_held_idx ON notification_outbox (id)
     WHERE held_at IS NOT NULL AND sent_at IS NULL;
 
+-- A row for one channel only: an owed message that a chat channel still
+-- limiting did not take (ADR-0077), copied for its next pass. NULL is every
+-- channel that covers the event, as before.
+ALTER TABLE notification_outbox
+    ADD COLUMN channel_id uuid REFERENCES notification_channels (id) ON DELETE CASCADE;
+-- One failed backup per outage stays the rule for the row every channel
+-- gets; a copy for one channel is the same message, not a second outage.
+DROP INDEX notification_outbox_one_backup_outage_key;
+CREATE UNIQUE INDEX notification_outbox_one_backup_outage_key ON notification_outbox
+    ((coalesce(details #>> '{backup,last_success_at}', '')))
+    WHERE event = 'backup.failed' AND channel_id IS NULL;
+
 -- The timeline of an incident says what a silence did to it. Both keep the
 -- incident's severity, so `severity` stays NULL only once resolved.
 ALTER TABLE incident_events DROP CONSTRAINT incident_events_kind_check;

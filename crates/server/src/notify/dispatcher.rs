@@ -3,6 +3,7 @@
 //! once: a claimed event is not sent again after a restart. What a silence
 //! covers is held back instead of claimed (ADR-0079).
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -10,6 +11,7 @@ use std::time::Duration;
 use sqlx::PgPool;
 use tokio::task::JoinSet;
 use tokio::time::{interval, sleep, MissedTickBehavior};
+use uuid::Uuid;
 
 use super::backup;
 use super::chat::gather;
@@ -114,8 +116,9 @@ impl Dispatcher {
 
     /// Claims pending events a silence does not hold, and writes them as
     /// sent. In one transaction, so a held event is never lost and nothing
-    /// slips past a silence between looking and claiming.
-    async fn claim(&self) -> Result<Vec<Event>, sqlx::Error> {
+    /// slips past a silence between looking and claiming. Also returns the
+    /// events copied for one channel ([`silence::requeue`]), by ID.
+    async fn claim(&self) -> Result<(Vec<Event>, HashMap<i64, Uuid>), sqlx::Error> {
         let now = chrono::Utc::now();
         let mut tx = self.pool.begin().await?;
         let pending: Vec<Event> = sqlx::query_as(
@@ -127,14 +130,28 @@ impl Dispatcher {
         .fetch_all(&mut *tx)
         .await?;
         let Some(oldest) = pending.iter().map(|e| e.created_at).min() else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), HashMap::new()));
         };
+        let ids: Vec<i64> = pending.iter().map(|e| e.id).collect();
+        let targets: HashMap<i64, Uuid> = sqlx::query_as(
+            "SELECT id, channel_id FROM notification_outbox
+             WHERE id = ANY($1) AND channel_id IS NOT NULL",
+        )
+        .bind(&ids)
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .collect();
         let silences = silence::load(&mut *tx, now, oldest).await?;
+        let held = silence::held_incidents(&mut *tx).await?;
         let mut events = Vec::with_capacity(pending.len());
         for event in pending {
-            match silences.iter().find(|s| s.holds(&event, now)) {
-                Some(s) => silence::hold(&mut tx, &event, s.id, now).await?,
-                None => events.push(event),
+            // A copy for one channel was settled already.
+            let covering = silences.iter().find(|s| s.holds(&event, now));
+            if !targets.contains_key(&event.id) && silence::waits(&event, covering, &held) {
+                silence::hold(&mut tx, &event, covering.map(|s| s.id), now).await?;
+            } else {
+                events.push(event);
             }
         }
         let ids: Vec<i64> = events.iter().map(|e| e.id).collect();
@@ -143,15 +160,22 @@ impl Dispatcher {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
-        Ok(events)
+        Ok((events, targets))
     }
 
     /// Claims and delivers pending events; returns how many were claimed.
     /// What a silence released is sent by the next pass, once this one has
     /// also held what was pending, so a release sees all of an incident.
+    /// A release fits in the narrowest chat channel's pass.
     pub async fn pass(&self) -> Result<usize, sqlx::Error> {
-        let events = self.claim().await?;
-        silence::release(&self.pool, chrono::Utc::now()).await?;
+        let (events, targets) = self.claim().await?;
+        let channels = channels(&self.pool).await?;
+        let budget = channels
+            .iter()
+            .filter_map(|c| c.destination.chat())
+            .map(|(service, _)| service.burst() - 1)
+            .min();
+        silence::release(&self.pool, chrono::Utc::now(), budget).await?;
         if events.is_empty() {
             return Ok(0);
         }
@@ -165,12 +189,12 @@ impl Dispatcher {
                 "dropped notifications older than a day"
             );
         }
-        let channels = channels(&self.pool).await?;
         let mut tasks = JoinSet::new();
         for channel in channels {
             let messages: Vec<Message> = fresh
                 .iter()
                 .filter(|e| channel.coverage.includes(e.customer_id, e.site_id))
+                .filter(|e| targets.get(&e.id).is_none_or(|only| *only == channel.id))
                 .map(|e| render(e, &self.web_url))
                 .collect();
             if messages.is_empty() {
@@ -187,11 +211,19 @@ impl Dispatcher {
     /// rest get one try each, so a dead channel does not hold the pass.
     /// Chat channels get their service's pace, a burst is gathered, and a
     /// service still limiting after every try gets nothing more this pass.
+    /// What a silence released is owed (ADR-0079): it is never gathered,
+    /// and a limit gives it to this channel again at the next pass.
     async fn deliver_all(&self, channel: &Channel, messages: &[Message]) {
         let service = channel.destination.chat().map(|(service, _)| service);
-        let gathered = service
-            .filter(|s| messages.len() > s.burst())
-            .map(|s| gather(messages, s.burst() - 1, &self.web_url));
+        let gathered = service.filter(|s| messages.len() > s.burst()).map(|s| {
+            let (mut owed, rest): (Vec<Message>, Vec<Message>) = messages
+                .iter()
+                .cloned()
+                .partition(|m| silence::owed(&m.payload));
+            let keep = s.burst().saturating_sub(owed.len() + 1);
+            owed.extend(gather(&rest, keep, &self.web_url));
+            owed
+        });
         let messages = gathered.as_deref().unwrap_or(messages);
         let mut last = Ok(());
         let mut sent = 0usize;
@@ -206,6 +238,7 @@ impl Dispatcher {
                 Err(error) => {
                     tracing::warn!(channel = %channel.id, kind = channel.destination.kind(), %error, "notification not delivered");
                     if error.retry_after.is_some() {
+                        self.requeue_owed(channel, &messages[index..]).await;
                         break;
                     }
                 }
@@ -217,6 +250,26 @@ impl Dispatcher {
         let error = last.err().map(|e| e.message);
         if let Err(db) = record_outcome(&self.pool, channel.id, error.as_deref()).await {
             tracing::warn!(channel = %channel.id, error = %db, "could not record a notification outcome");
+        }
+    }
+
+    /// Gives this channel the owed messages of `left` again at the next pass.
+    async fn requeue_owed(&self, channel: &Channel, left: &[Message]) {
+        let ids: Vec<i64> = left
+            .iter()
+            .filter(|m| silence::owed(&m.payload))
+            .filter_map(|m| m.payload.get("id")?.as_str()?.parse().ok())
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        match silence::requeue(&self.pool, &ids, channel.id).await {
+            Ok(copied) => {
+                tracing::info!(channel = %channel.id, copied, "kept what a silence held back for the next pass")
+            }
+            Err(error) => {
+                tracing::warn!(channel = %channel.id, %error, "could not keep what a silence held back")
+            }
         }
     }
 

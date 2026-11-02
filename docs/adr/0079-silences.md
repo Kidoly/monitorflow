@@ -32,6 +32,13 @@ Other events are not incidents with a state to look at. A command still waiting 
 
 All this is in the database, so a restart during a silence, or at its end, loses nothing.
 
+**With routing and chat channels.** A silence is decided before routing: it holds an event back from every channel, whatever channel would have taken it. A released event is an outbox row like any other, so ADR-0078 routes it by its customer and site, and ADR-0077 paces it. Two of ADR-0077's rules would break the promise above, so a released message is **owed**, marked by its `silence` field:
+
+- **It is never gathered.** A chat channel sends at most a few messages a pass and gathers the rest into one that names only the first 15; an incident still open at the end of a silence must be named. Owed messages go one each, and only fresh events are gathered, in the room left. To keep a pass to the service's count, a release lets out at most the narrowest chat channel's count minus one per pass (4 with Teams, counting owed messages not yet sent); the rest stay held, in the database, for the next pass, five seconds later. Without chat channels a release goes at once.
+- **A rate limit does not lose it.** A chat channel still limiting after three tries gets nothing more that pass. The owed messages it did not take are copied into the outbox for that channel alone (`channel_id`), and the next pass sends them, with the same pacing and the same 429 handling. A copy keeps the time of its release, so a channel limiting for a whole day loses it like any event that old. A copy has its own ID, so a webhook would see another `X-MonitorFlow-Delivery`; only chat channels are limited this way, and they show no ID. Other failures keep ADR-0060's rule: three tries, at most once.
+
+While an incident has rows held, a new event of it waits with them, silence or not, so that a "Resolved" never goes out before the "Still open" a paced release still owes.
+
 **Messages.** Webhook payloads keep version 1 and the event names of ADR-0060, so receivers need no change. A held event gains `"silence": {"ended_at": "…"}`. A message that sums up an incident keeps the event of its first held row, `incident.opened` when nobody was told it opened and `incident.escalated` otherwise, with `severity`, `value` and `peak_value` as they are at the end. Its `text` says it comes after a silence.
 
 **Signs.** `GET /api/incidents` adds `silenced_until`, when the last silence now covering an open incident ends, and `silenced`, whether a silence ever held a notification back. The timeline adds the kinds `silenced` and `silence_ended`, the latter with `notified`. Server and relay views add `silenced_until`. The incidents list, the incident page and the fleet show the sign, and a silenced server, relay or site says so in a banner at the top of its page, with the reason, who created it and a way to end it.
@@ -54,7 +61,8 @@ Rejected:
 ## Consequences
 
 - Maintenance needs one click and pages nobody, with a banner so that nobody forgets, and nothing has to be turned back on.
-- A wide silence ending can send one message per open incident at once. Alert grouping (Phase 10) is the place to address it.
+- A wide silence ending can send one message per open incident. Alert grouping (Phase 10) is the place to address it.
 - AI remediation keeps running on a silenced server, and a command waiting for approval is not announced until the silence ends; it may expire unseen, which runs nothing.
-- The offline rule, the engine and the triggers are unchanged. A channel added later (ADR-0060) needs nothing: held rows are about events, not channels.
+- The offline rule, the engine and the triggers are unchanged. A channel added later needs nothing: held rows are about events, not channels.
+- A wide silence ending with a chat channel set up releases a few incidents per pass: 100 incidents take about two minutes with Teams. The outbox gains `channel_id` for the copies a limited chat channel is owed.
 - `silences` keeps its rows, as the record of what was quiet and why; incident timelines point to them.

@@ -14,7 +14,7 @@ use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::grpc::Registry;
-use monitorflow_server::notify::{self, Destination, Dispatcher, Webhook};
+use monitorflow_server::notify::{self, Chat, Coverage, Destination, Dispatcher, Webhook};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use tokio::net::TcpListener;
@@ -130,6 +130,12 @@ async fn place(pool: &PgPool, name: &str) -> Place {
 /// A webhook on loopback, set up as a channel for everyone, recording the
 /// `text` of each message; and a dispatcher sending to it.
 async fn channel(pool: &PgPool) -> (Dispatcher, Arc<Mutex<Vec<String>>>) {
+    let (dispatcher, seen, _) = scoped(pool, Coverage::Everything).await;
+    (dispatcher, seen)
+}
+
+/// [`channel`] for `coverage`, with its ID.
+async fn scoped(pool: &PgPool, coverage: Coverage) -> (Dispatcher, Arc<Mutex<Vec<String>>>, Uuid) {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let store = seen.clone();
     let app = axum::Router::new().route(
@@ -150,11 +156,80 @@ async fn channel(pool: &PgPool) -> (Dispatcher, Arc<Mutex<Vec<String>>>) {
     let url = format!("http://{}/hook", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let destination = Destination::Webhook(Webhook { url });
-    notify::insert(pool, &destination, None, None)
+    let id = notify::insert(pool, &destination, None, coverage, false)
         .await
         .unwrap();
-    let dispatcher = Dispatcher::new(pool.clone(), "https://mf.example").with_retries(Vec::new());
-    (dispatcher, seen)
+    let dispatcher = Dispatcher::new(pool.clone(), "https://mf.example")
+        .with_retries(Vec::new())
+        .without_pace();
+    (dispatcher, seen, id)
+}
+
+/// A fake chat service answering `script`'s statuses in turn, then 200,
+/// recording each JSON body; set up as a channel of `destination`'s kind.
+async fn chat(
+    pool: &PgPool,
+    destination: fn(Chat) -> Destination,
+    script: Vec<u16>,
+) -> Arc<Mutex<Vec<String>>> {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let script = Arc::new(Mutex::new(std::collections::VecDeque::from(script)));
+    let store = seen.clone();
+    let app = axum::Router::new().fallback(move |body: Bytes| {
+        let (store, script) = (store.clone(), script.clone());
+        async move {
+            store
+                .lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(&body).into_owned());
+            let status = script.lock().unwrap().pop_front().unwrap_or(200);
+            let mut response =
+                axum::response::IntoResponse::into_response(StatusCode::from_u16(status).unwrap());
+            if status == 429 {
+                response
+                    .headers_mut()
+                    .insert("retry-after", "0".parse().unwrap());
+            }
+            response
+        }
+    });
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/services/T0/B0/TOKEN",
+        listener.local_addr().unwrap()
+    );
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let named = Chat {
+        name: "#ops".into(),
+        host: "hooks.slack.com".into(),
+    };
+    notify::insert(
+        pool,
+        &destination(named),
+        Some(&Secret::new(url)),
+        Coverage::Everything,
+        false,
+    )
+    .await
+    .unwrap();
+    seen
+}
+
+/// Opens a critical incident on `server` for the disk `instance`.
+async fn open_disk(pool: &PgPool, server: Uuid, instance: &str) -> Uuid {
+    let id = sqlx::query_scalar(
+        "INSERT INTO incidents (server_id, metric, instance, severity, opened_at, last_value,
+                                last_value_at, peak_value, threshold)
+         VALUES ($1, 'monitorflow_disk_used_percent', $2, 'critical', now(), 99, now(), 99, '{}')
+         RETURNING id",
+    )
+    .bind(server)
+    .bind(instance)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    event(pool, id, "opened", Some("critical")).await;
+    id
 }
 
 /// Passes enough for a release to go out.
@@ -499,6 +574,22 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_new_event_waits_behind_its_incidents_release(pool: PgPool) {
+        // The release is paced, so an incident can still be held when it
+        // resolves after the silence: its resolution must not go first.
+        let a = place(&pool, "a").await;
+        let (dispatcher, seen) = channel(&pool).await;
+        let id = silence(&pool, Scope::default(), -1, 60).await;
+        let incident = open(&pool, a.server, "critical").await;
+        settle(&dispatcher).await;
+        end(&pool, id).await;
+        // Resolved before the dispatcher looks again.
+        resolve(&pool, incident).await;
+        settle(&dispatcher).await;
+        assert!(taken(&seen).is_empty(), "opened and resolved without anyone told");
+    }
+
+    #[sqlx::test]
     async fn a_silence_that_ends_on_its_own_sends_too_even_after_a_restart(pool: PgPool) {
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
@@ -521,7 +612,7 @@ db_tests! {
         .execute(&pool)
         .await
         .unwrap();
-        let restarted = Dispatcher::new(pool.clone(), "https://mf.example");
+        let restarted = Dispatcher::new(pool.clone(), "https://mf.example").without_pace();
         settle(&restarted).await;
         assert_eq!(taken(&seen).len(), 1, "older than a day, and still sent");
     }
@@ -679,6 +770,106 @@ db_tests! {
             taken(&seen),
             ["Resolved: offline alerts for a-web (a / a-site) were turned off (during a silence)"]
         );
+    }
+
+    #[sqlx::test]
+    async fn a_silence_holds_back_from_every_channel_and_routing_still_applies(pool: PgPool) {
+        let a = place(&pool, "a").await;
+        let b = place(&pool, "b").await;
+        let (dispatcher, site_a, _) = scoped(&pool, Coverage::Site(a.site)).await;
+        let (_, customer_b, _) = scoped(&pool, Coverage::Customer(b.customer)).await;
+        let (_, everything, _) = scoped(&pool, Coverage::Everything).await;
+        let id = silence(&pool, Scope { server: Some(a.server), ..Scope::default() }, -1, 60).await;
+        open(&pool, a.server, "critical").await;
+        open(&pool, b.server, "critical").await;
+        settle(&dispatcher).await;
+        // a's incident is held from all channels, b's goes where it is routed.
+        assert!(taken(&site_a).is_empty());
+        assert_eq!(taken(&customer_b), ["Critical: cpu_usage_percent is 91 on b-web (b / b-site)"]);
+        assert_eq!(taken(&everything).len(), 1);
+
+        end(&pool, id).await;
+        settle(&dispatcher).await;
+        let still = "Still open after a silence. Critical: cpu_usage_percent is 91 on a-web (a / a-site)";
+        assert_eq!(taken(&site_a), [still]);
+        assert_eq!(taken(&everything), [still]);
+        assert!(taken(&customer_b).is_empty(), "routing applies to what a silence released");
+    }
+
+    #[sqlx::test]
+    async fn a_release_is_never_gathered_into_a_summary(pool: PgPool) {
+        // Teams takes 5 messages a pass and gathers the rest (ADR-0077);
+        // each still-open incident is owed a message of its own.
+        let a = place(&pool, "a").await;
+        let teams = chat(&pool, Destination::Teams, Vec::new()).await;
+        let dispatcher = Dispatcher::new(pool.clone(), "https://mf.example")
+            .with_retries(Vec::new())
+            .without_pace();
+        let id = silence(&pool, Scope::default(), -1, 60).await;
+        for i in 0..12 {
+            open_disk(&pool, a.server, &format!("/disk{i}")).await;
+        }
+        settle(&dispatcher).await;
+        assert!(taken(&teams).is_empty());
+        end(&pool, id).await;
+        // A fresh burst meets the release in the same passes.
+        let b = place(&pool, "b").await;
+        for i in 0..8 {
+            open_disk(&pool, b.server, &format!("/fresh{i}")).await;
+        }
+        // Released a few at a time, so no pass sends Teams more than its 5.
+        let mut bodies = Vec::new();
+        for _ in 0..10 {
+            dispatcher.pass().await.unwrap();
+            let pass = taken(&teams);
+            assert!(pass.len() <= 5, "{} messages in one pass", pass.len());
+            bodies.extend(pass);
+        }
+        for i in 0..12 {
+            let named = format!("/disk{i} is 99 on a-web");
+            let found: Vec<&String> = bodies.iter().filter(|b| b.contains(&named)).collect();
+            assert_eq!(found.len(), 1, "{named} is owed one message: {bodies:#?}");
+            assert!(found[0].contains("Still open after a silence"), "{}", found[0]);
+            assert!(!found[0].contains("more notifications"), "{}", found[0]);
+        }
+        // The fresh ones may be gathered, as before; none is lost.
+        let fresh = bodies.iter().filter(|b| b.contains("b-web")).count();
+        assert!(fresh >= 1, "{bodies:#?}");
+        let left: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM notification_outbox WHERE sent_at IS NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    #[sqlx::test]
+    async fn a_chat_channel_still_limiting_gets_the_release_at_the_next_pass(pool: PgPool) {
+        let a = place(&pool, "a").await;
+        // Three limited tries: the pass gives up on Discord (ADR-0077).
+        let discord = chat(&pool, Destination::Discord, vec![429, 429, 429]).await;
+        let (_, hook, _) = scoped(&pool, Coverage::Everything).await;
+        let dispatcher = Dispatcher::new(pool.clone(), "https://mf.example")
+            .with_retries(vec![Duration::ZERO, Duration::ZERO])
+            .without_pace();
+        let id = silence(&pool, Scope::default(), -1, 60).await;
+        open_disk(&pool, a.server, "/var").await;
+        open_disk(&pool, a.server, "/srv").await;
+        settle(&dispatcher).await;
+        end(&pool, id).await;
+        dispatcher.pass().await.unwrap();
+        dispatcher.pass().await.unwrap();
+        assert_eq!(taken(&hook).len(), 2, "the webhook got both, once");
+        let limited = taken(&discord);
+        assert_eq!(limited.len(), 3, "three tries of the first, nothing more");
+        settle(&dispatcher).await;
+        let later = taken(&discord);
+        for disk in ["/var", "/srv"] {
+            let found = later.iter().filter(|b| b.contains(&format!("{disk} is 99"))).count();
+            assert_eq!(found, 1, "{disk}: {later:#?}");
+        }
+        assert!(taken(&hook).is_empty(), "the copies are for Discord alone");
     }
 
     #[sqlx::test]

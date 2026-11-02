@@ -6,6 +6,10 @@
 //! silence does: an incident gets one message, or none if nobody needs one
 //! ([`settle`]). All of it lives in the database, so a restart loses
 //! nothing.
+//!
+//! What a release sends is owed: chat pacing (ADR-0077) never gathers it
+//! into a summary, and a channel still limiting after every try gets it
+//! again at the next pass through [`requeue`], for that channel alone.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -113,15 +117,43 @@ pub fn settle(rows: &[&Event], open: bool) -> Option<i64> {
     }
 }
 
+/// Whether a rendered message is owed by a release: it carries
+/// `silence`, which only [`release`] writes.
+pub fn owed(payload: &Value) -> bool {
+    payload.get("silence").is_some()
+}
+
+/// The incidents with rows held back. A new event of one of them waits
+/// with them, so that it never goes out before what they will say.
+pub async fn held_incidents(db: impl PgExecutor<'_>) -> Result<HashSet<Uuid>, sqlx::Error> {
+    let ids: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT DISTINCT details #>> '{incident,id}' FROM notification_outbox
+         WHERE held_at IS NOT NULL AND sent_at IS NULL AND event LIKE 'incident.%'",
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(ids
+        .into_iter()
+        .flatten()
+        .filter_map(|id| id.parse().ok())
+        .collect())
+}
+
+/// Whether a pending `event` waits: held by a silence, or behind its
+/// incident's held rows.
+pub fn waits(event: &Event, silence: Option<&Silence>, held: &HashSet<Uuid>) -> bool {
+    silence.is_some() || incident_of(event).is_some_and(|i| held.contains(&i))
+}
+
 /// Keeps `event` from being delivered. The incident's timeline says so
-/// when this is the first of its rows held.
+/// when `silence` holds the first of its rows.
 pub async fn hold(
     db: &mut PgConnection,
     event: &Event,
-    silence: Uuid,
+    silence: Option<Uuid>,
     now: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
-    if let Some(incident) = incident_of(event) {
+    if let (Some(incident), Some(silence)) = (incident_of(event), silence) {
         sqlx::query(
             "INSERT INTO incident_events (incident_id, occurred_at, kind, severity, details)
              SELECT i.id, $2, 'silenced', i.severity, $3 FROM incidents i
@@ -144,11 +176,34 @@ pub async fn hold(
     Ok(())
 }
 
+/// What a release does with one incident's held rows, or one other event.
+enum Unit<'a> {
+    Incident(Uuid, Vec<&'a Event>),
+    Other(&'a Event),
+}
+
+impl Unit<'_> {
+    fn rows(&self) -> Vec<&Event> {
+        match self {
+            Self::Incident(_, rows) => rows.clone(),
+            Self::Other(event) => vec![event],
+        }
+    }
+}
+
 /// Lets go of the held rows no silence covers any more, marked with
 /// `silence` in their details. A row sent goes back to the outbox as new:
 /// the silence may have lasted longer than events are kept pending.
-/// Returns how many will be sent.
-pub async fn release(pool: &PgPool, now: DateTime<Utc>) -> Result<usize, sqlx::Error> {
+///
+/// `budget` is how many owed messages may be pending at once, the room a
+/// paced chat channel has in one pass (ADR-0077); `None` without one.
+/// What does not fit stays held, whole, for a later pass, so that pacing
+/// never has to gather or drop it. Returns how many will be sent.
+pub async fn release(
+    pool: &PgPool,
+    now: DateTime<Utc>,
+    budget: Option<usize>,
+) -> Result<usize, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let held: Vec<Event> = sqlx::query_as(
         "SELECT id, event, customer_id, site_id, details, created_at FROM notification_outbox
@@ -161,6 +216,18 @@ pub async fn release(pool: &PgPool, now: DateTime<Utc>) -> Result<usize, sqlx::E
         return Ok(0);
     }
     let silences = load(&mut *tx, now, now).await?;
+    let room = match budget {
+        Some(budget) => {
+            let pending: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM notification_outbox
+                 WHERE sent_at IS NULL AND held_at IS NULL AND details ? 'silence'",
+            )
+            .fetch_one(&mut *tx)
+            .await?;
+            budget.saturating_sub(usize::try_from(pending).unwrap_or(usize::MAX))
+        }
+        None => usize::MAX,
+    };
     let mut incidents: BTreeMap<Uuid, Vec<&Event>> = BTreeMap::new();
     let mut others = Vec::new();
     for event in held
@@ -200,45 +267,61 @@ pub async fn release(pool: &PgPool, now: DateTime<Utc>) -> Result<usize, sqlx::E
     .into_iter()
     .collect();
 
+    // Oldest first, so that what waits longest goes first.
+    let mut units: Vec<Unit> = incidents
+        .iter()
+        .map(|(incident, rows)| Unit::Incident(*incident, rows.clone()))
+        .chain(others.iter().map(|e| Unit::Other(e)))
+        .collect();
+    units.sort_by_key(|u| u.rows().first().map(|e| e.id));
+
     let mut send: Vec<(i64, Value)> = Vec::new();
-    for (incident, rows) in &incidents {
-        let state = states.get(incident);
-        let open = state.is_some_and(|s| s.1);
-        let chosen = settle(rows, open).and_then(|id| rows.iter().find(|e| e.id == id));
-        if let Some(event) = chosen {
-            let mut details = event.details.clone();
-            if let (true, Some((.., value, peak, severity))) = (open, state) {
-                details["incident"]["value"] = json!(value);
-                details["incident"]["peak_value"] = json!(peak);
-                details["incident"]["severity"] = json!(severity);
+    let mut settled: Vec<i64> = Vec::new();
+    for unit in &units {
+        let chosen = match unit {
+            Unit::Incident(incident, rows) => {
+                let state = states.get(incident);
+                let open = state.is_some_and(|s| s.1);
+                settle(rows, open)
+                    .and_then(|id| rows.iter().find(|e| e.id == id))
+                    .map(|event| {
+                        let mut details = event.details.clone();
+                        if let (true, Some((.., value, peak, severity))) = (open, state) {
+                            details["incident"]["value"] = json!(value);
+                            details["incident"]["peak_value"] = json!(peak);
+                            details["incident"]["severity"] = json!(severity);
+                        }
+                        (event.id, details)
+                    })
             }
-            send.push((event.id, details));
+            // A command nobody can approve any more needs no message; the
+            // rest happened once and nothing else will tell it.
+            Unit::Other(event) => match id_at(&event.details, "approval") {
+                Some(approval) if !waiting.contains(&approval) => None,
+                _ => Some((event.id, event.details.clone())),
+            },
+        };
+        if chosen.is_some() && send.len() >= room {
+            continue;
         }
-        sqlx::query(
-            "INSERT INTO incident_events (incident_id, occurred_at, kind, severity, details)
-             SELECT id, $2, 'silence_ended', severity, $3 FROM incidents WHERE id = $1",
-        )
-        .bind(incident)
-        .bind(now)
-        .bind(json!({ "notified": chosen.is_some() }))
-        .execute(&mut *tx)
-        .await?;
-    }
-    // A command nobody can approve any more needs no message; the rest
-    // happened once and nothing else will tell it.
-    for event in &others {
-        match id_at(&event.details, "approval") {
-            Some(approval) if !waiting.contains(&approval) => {}
-            _ => send.push((event.id, event.details.clone())),
+        if let Unit::Incident(incident, _) = unit {
+            sqlx::query(
+                "INSERT INTO incident_events (incident_id, occurred_at, kind, severity, details)
+                 SELECT id, $2, 'silence_ended', severity, $3 FROM incidents WHERE id = $1",
+            )
+            .bind(incident)
+            .bind(now)
+            .bind(json!({ "notified": chosen.is_some() }))
+            .execute(&mut *tx)
+            .await?;
         }
+        settled.extend(unit.rows().iter().map(|e| e.id));
+        send.extend(chosen);
     }
 
     let sent: HashSet<i64> = send.iter().map(|(id, _)| *id).collect();
-    let dropped: Vec<i64> = incidents
-        .values()
-        .flatten()
-        .chain(&others)
-        .map(|e| e.id)
+    let dropped: Vec<i64> = settled
+        .into_iter()
         .filter(|id| !sent.contains(id))
         .collect();
     for (id, details) in &mut send {
@@ -260,6 +343,26 @@ pub async fn release(pool: &PgPool, now: DateTime<Utc>) -> Result<usize, sqlx::E
         .await?;
     tx.commit().await?;
     Ok(send.len())
+}
+
+/// Owed rows `ids` again, for `channel` only: it was still limiting when
+/// their turn came. A copy keeps the time of its release, so a channel
+/// limiting for a whole day loses it like any event that old (ADR-0060).
+pub async fn requeue(
+    db: impl PgExecutor<'_>,
+    ids: &[i64],
+    channel: Uuid,
+) -> Result<u64, sqlx::Error> {
+    Ok(sqlx::query(
+        "INSERT INTO notification_outbox (event, customer_id, details, created_at, channel_id)
+         SELECT event, customer_id, details, created_at, $2 FROM notification_outbox
+         WHERE id = ANY($1) ORDER BY id",
+    )
+    .bind(ids)
+    .bind(channel)
+    .execute(db)
+    .await?
+    .rows_affected())
 }
 
 #[cfg(test)]
@@ -371,6 +474,27 @@ mod tests {
         assert!(silence().concerns(&backup));
         assert!(!scoped(None, None, Some(SITE), None).concerns(&backup));
         assert!(!scoped(None, None, None, Some(CUSTOMER)).concerns(&backup));
+    }
+
+    #[test]
+    fn new_events_wait_behind_their_incidents_held_rows() {
+        let opened = Event {
+            details: json!({"incident": {"id": SERVER}}),
+            ..event(1, "incident.opened")
+        };
+        let none = HashSet::new();
+        let held = HashSet::from([SERVER]);
+        assert!(!waits(&opened, None, &none));
+        assert!(waits(&opened, None, &held));
+        assert!(waits(&opened, Some(&silence()), &none));
+        // Only incidents wait behind incidents.
+        let backup = Event {
+            details: json!({"incident": {"id": SERVER}}),
+            ..event(2, "backup.failed")
+        };
+        assert!(!waits(&backup, None, &held));
+        assert!(owed(&json!({"silence": {"ended_at": "x"}})));
+        assert!(!owed(&json!({"event": "incident.opened"})));
     }
 
     #[test]
