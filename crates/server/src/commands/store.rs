@@ -145,6 +145,20 @@ impl CommandStore {
         }
     }
 
+    /// Moves a command marked sent back to `queued` when its sending
+    /// failed: the agent never got it, so it expires as undelivered or goes
+    /// out on the agent's next connection.
+    pub async fn unmark_sent(&self, id: Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE commands SET state = 'queued', sent_at = NULL
+             WHERE id = $1 AND state = 'sent'",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Records `result`, sent by the agent `peer_id`, on its own command
     /// only. Returns the new state, or `None` when nothing changed: an
     /// unknown or foreign command, or one already final. Final results are

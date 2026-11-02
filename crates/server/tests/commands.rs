@@ -7,6 +7,7 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
 use monitorflow_common::command;
 use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
@@ -14,14 +15,15 @@ use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
     Command, CommandResult, CommandStatus, Envelope, Hello, Package, PackageReport,
 };
-use monitorflow_common::tls::{self, Identity};
+use monitorflow_common::tls::{self, Identity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
 use monitorflow_server::commands::{
     CommandStore, Commands, DispatcherSettings, NewCommand, PackageStore, State,
 };
 use monitorflow_server::grpc::{
-    self, AgentStreamService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
+    self, AgentStreamService, Counters, DbInventory, DbRelayPolicy, PeerInfo, Registry,
+    StreamSettings,
 };
 use rustls::pki_types::CertificateDer;
 use sqlx::PgPool;
@@ -363,6 +365,67 @@ db_tests! {
         // The agent ran it before expiry by its clock: the result wins.
         let late = result(sent.id, CommandStatus::Succeeded, 0);
         assert_eq!(store.record("web-02", &late).await.unwrap(), Some(State::Succeeded));
+    }
+
+    #[sqlx::test]
+    async fn a_command_that_could_not_be_sent_expires_undelivered(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        let web1 = server(&pool, "web-01", paris).await;
+        let dir = TempDir::new().unwrap();
+        let signer = Arc::new(
+            CertificateAuthority::open_or_create(&dir.path().join("ca"), CaOptions::default())
+                .unwrap(),
+        );
+        // Still registered, its stream already gone: what the dispatcher
+        // sees when the agent leaves between the registry check and the send.
+        let registry = Registry::default();
+        let (outbound, _) = mpsc::channel(1);
+        let now = Utc::now();
+        let _registration = registry
+            .register(
+                PeerInfo {
+                    id: "web-01".into(),
+                    role: PeerRole::Agent,
+                    via_relay: None,
+                    connection: 0,
+                    cert_serial: None,
+                    agent_version: "0.1.0".into(),
+                    hostname: "web-01".into(),
+                    connected_at: now,
+                    last_seen: now,
+                    last_sequence: 1,
+                    counters: Counters::default(),
+                    sensor_revision_sent: None,
+                    sensor_revision_applied: None,
+                },
+                outbound,
+            )
+            .unwrap();
+        let store = CommandStore::new(pool.clone());
+        let settings = DispatcherSettings {
+            poll_interval: Duration::from_millis(50),
+            ..DispatcherSettings::default()
+        };
+        let commands = Commands::spawn(store.clone(), registry, signer, settings);
+        let id = store
+            .enqueue(&NewCommand { ttl: Duration::from_millis(500), ..new(web1, b"") })
+            .await
+            .unwrap()
+            .id;
+        commands.dispatch("web-01");
+
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        while state(&store, id).await != State::Expired {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "stayed {:?}",
+                state(&store, id).await
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let row = store.get(id).await.unwrap().unwrap();
+        assert_eq!(row.sent_at, None);
+        assert_eq!(row.error.as_deref(), Some("not delivered before expiry"));
     }
 
     #[sqlx::test]
