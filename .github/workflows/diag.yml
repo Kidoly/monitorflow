@@ -9,46 +9,45 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        attempt: [1, 2, 3]
+        attempt: [1]
     steps:
-      - name: Time Windows PowerShell as the script sensor starts it
+      - name: Find the variable that makes Windows PowerShell slow
         shell: pwsh
         run: |
           $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
           $dir = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'diag')
-          Set-Content "$dir\exit.ps1" "exit 1"
-          Set-Content "$dir\write.ps1" "Write-Output 'WARNING'`nexit 1"
-          Set-Content "$dir\autoload.ps1" "Write-Output `"env=`$((Get-ChildItem env: | Measure-Object).Count)`"`nexit 1"
-          Set-Content "$dir\module.ps1" "Write-Output (Get-Module | ForEach-Object Name) -join ','`nWrite-Output `$env:PSModulePath`nexit 1"
+          Set-Content "$dir\write.ps1" "Write-Output 'WARNING'`nWrite-Output `"cache=`$env:PSModuleAnalysisCachePath`"`nexit 1"
           $keep = 'SystemRoot','SystemDrive','windir','ComSpec','PATHEXT','ProgramData','ProgramFiles','ProgramFiles(x86)','ProgramW6432','CommonProgramFiles','CommonProgramFiles(x86)','CommonProgramW6432','COMPUTERNAME','NUMBER_OF_PROCESSORS','PROCESSOR_ARCHITECTURE','USERPROFILE','APPDATA','LOCALAPPDATA','TEMP','TMP'
-          function Run($script, [switch]$Clear) {
+          function Run($label, [hashtable]$Env) {
             $psi = [System.Diagnostics.ProcessStartInfo]::new($ps)
-            foreach ($a in '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',"$dir\$script") { $psi.ArgumentList.Add($a) }
+            foreach ($a in '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',"$dir\write.ps1") { $psi.ArgumentList.Add($a) }
             $psi.UseShellExecute = $false
             $psi.RedirectStandardOutput = $true
-            if ($Clear) {
-              $psi.Environment.Clear()
-              foreach ($k in $keep) { $v = [Environment]::GetEnvironmentVariable($k); if ($v) { $psi.Environment[$k] = $v } }
-              $psi.Environment['PATH'] = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
-            }
+            $psi.Environment.Clear()
+            foreach ($k in $Env.Keys) { $psi.Environment[$k] = $Env[$k] }
             $sw = [Diagnostics.Stopwatch]::StartNew()
             $p = [Diagnostics.Process]::Start($psi)
             $out = $p.StandardOutput.ReadToEnd()
             $p.WaitForExit()
-            "{0,-14} clear={1,-5} {2,6:N1}s exit={3} out={4}" -f $script, [bool]$Clear, $sw.Elapsed.TotalSeconds, $p.ExitCode, ($out -replace "`r?`n", ' | ').Substring(0, [Math]::Min(200, $out.Length))
+            "{0,-40} {1,6:N1}s {2}" -f $label, $sw.Elapsed.TotalSeconds, ($out -replace "`r?`n", ' | ')
           }
-          "modules in Program Files: " + (Get-ChildItem "$env:ProgramFiles\WindowsPowerShell\Modules" -Directory).Count
-          "runner PSModulePath: $env:PSModulePath"
-          "analysis cache: " + (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\Windows\PowerShell" -ErrorAction SilentlyContinue | Out-String)
-          foreach ($round in 1..3) {
-            Run exit.ps1 -Clear
-            Run write.ps1 -Clear
-            Run autoload.ps1 -Clear
-            Run autoload.ps1
+          $all = @{}
+          Get-ChildItem env: | ForEach-Object { $all[$_.Name] = $_.Value }
+          $base = @{}
+          foreach ($k in $keep) { if ($all[$k]) { $base[$k] = $all[$k] } }
+          $base['PATH'] = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+          "runner variables missing from the sensor's: " + (($all.Keys | Where-Object { -not $base.ContainsKey($_) } | Sort-Object) -join ', ')
+          "PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath"
+          Run 'sensor environment' $base
+          Run 'full runner environment' $all
+          foreach ($k in 'PSModuleAnalysisCachePath','PSModulePath','USERNAME','USERDOMAIN','HOMEDRIVE','HOMEPATH','ALLUSERSPROFILE','PUBLIC','OS','PROCESSOR_IDENTIFIER','PROCESSOR_LEVEL','PROCESSOR_REVISION') {
+            if ($all.ContainsKey($k)) {
+              $plus = $base.Clone(); $plus[$k] = $all[$k]
+              Run "sensor + $k" $plus
+              $minus = $all.Clone(); $minus.Remove($k)
+              Run "full - $k" $minus
+            }
           }
-          Run module.ps1 -Clear
-          Run module.ps1
-          "analysis cache after: " + (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\Windows\PowerShell" -ErrorAction SilentlyContinue | Out-String)
       - name: Register new event sources with eventcreate
         shell: pwsh
         run: |
