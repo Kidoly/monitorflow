@@ -110,9 +110,9 @@ Limits already recorded in the ADRs that get in the way of daily use. What the f
 
 Reach people outside the web interface. Email and webhook channels shipped in Phase 8 (ADR-0060).
 
-- [ ] Slack, Teams and Discord channels.
-- [ ] Routing per customer and site.
-- [ ] Silences.
+- [x] Slack, Teams and Discord channels.
+- [x] Routing per customer and site.
+- [x] Silences.
 - [ ] Alert grouping.
 - [ ] Escalation.
 - [ ] PagerDuty-style on-call.
