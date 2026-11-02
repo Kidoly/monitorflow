@@ -74,7 +74,7 @@
   border-color: var(--bad);
 }
 
-.wrap {
+tr td.wrap {
   white-space: normal;
 }
 
