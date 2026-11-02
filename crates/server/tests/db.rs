@@ -138,6 +138,7 @@ db_tests! {
         assert_eq!(
             tables,
             [
+                "acknowledge_links",
                 "agent_auto_updates",
                 "alert_states",
                 "audit_log",
@@ -151,7 +152,11 @@ db_tests! {
                 "commands",
                 "customers",
                 "enrollment_tokens",
+                "follow_up_policies",
+                "incident_acknowledgements",
                 "incident_events",
+                "incident_follow_ups",
+                "incident_told",
                 "incidents",
                 "install_keys",
                 "mirror_runs",

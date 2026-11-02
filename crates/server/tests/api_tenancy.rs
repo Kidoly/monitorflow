@@ -168,6 +168,8 @@ struct Tenant {
     member: Uuid,
     schedule: Uuid,
     on_call_override: Uuid,
+    /// The customer's follow-up, telling its schedule and member (ADR-0082).
+    follow_up: Uuid,
 }
 
 async fn tenant(pool: &PgPool, name: &str) -> Tenant {
@@ -369,10 +371,21 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    let follow_up = one("INSERT INTO follow_up_policies (customer_id, steps)
+         VALUES ($1, jsonb_build_array(jsonb_build_object(
+             'after_minutes', 5, 'on_call', jsonb_build_array($2), 'users', jsonb_build_array($3))))
+         RETURNING id")
+    .bind(customer)
+    .bind(schedule)
+    .bind(member)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     Tenant {
         member,
         schedule,
         on_call_override,
+        follow_up,
         silence,
         customer_silence,
         remediation,
@@ -1287,6 +1300,106 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     .await
                     .unwrap();
             assert_eq!(theirs, "member-b@x.example");
+        }
+        // Follow-up (ADR-0082): B's follow-up, schedules, people and
+        // channels are not A's to see or name, and B's incidents not A's
+        // to acknowledge, from the page or with a link.
+        ("GET", "/api/follow-up/policies") => {
+            let body = ctx.call(method, path, None).await.1;
+            assert!(Ctx::mentions(&body, a.follow_up), "{body}");
+            for id in [b.follow_up, b.schedule, b.member] {
+                assert!(!Ctx::mentions(&body, id), "{body}");
+            }
+        }
+        ("PUT", "/api/follow-up/policies") => {
+            let step = |field: &str, id: Uuid| json!([{ "after_minutes": 5, field: [id] }]);
+            for place in [
+                json!({ "customer_id": b.customer }),
+                json!({ "site_id": b.site }),
+                json!({}),
+            ] {
+                let mut ask = place;
+                ask["steps"] = json!([{ "after_minutes": 5, "administrators": true }]);
+                assert_eq!(
+                    ctx.status(method, path, Some(ask)).await,
+                    StatusCode::FORBIDDEN
+                );
+            }
+            let channel = ctx.channel(json!(b.customer)).await;
+            for (field, id) in [
+                ("on_call", b.schedule),
+                ("users", b.member),
+                ("channels", channel),
+            ] {
+                let ask = json!({ "customer_id": a.customer, "steps": step(field, id) });
+                assert_eq!(
+                    ctx.status(method, path, Some(ask)).await,
+                    StatusCode::BAD_REQUEST,
+                    "{field}"
+                );
+            }
+            let steps: Value =
+                sqlx::query_scalar("SELECT steps FROM follow_up_policies WHERE id = $1")
+                    .bind(a.follow_up)
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert!(
+                Ctx::mentions(&steps, a.schedule) && !Ctx::mentions(&steps, b.member),
+                "{steps}"
+            );
+        }
+        ("DELETE", "/api/follow-up/policies/{id}") => {
+            let uri = path.replace("{id}", &b.follow_up.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+        }
+        ("POST", "/api/incidents/acknowledge") => {
+            for ids in [json!([b.incident]), json!([a.incident, b.incident])] {
+                let body = json!({ "incident_ids": ids });
+                assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            }
+            let acknowledged: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM incident_acknowledgements")
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(acknowledged, 0);
+        }
+        ("POST", "/api/acknowledge-link") | ("POST", "/api/acknowledge-link/use") => {
+            // A link is its person's: one of A's administrator over B's
+            // incident shows nothing of it and acknowledges nothing.
+            let token = "ab".repeat(32);
+            sqlx::query(
+                "INSERT INTO acknowledge_links (token_hash, user_id, incident_ids, expires_at)
+                 SELECT sha256(convert_to($1, 'UTF8')), id, ARRAY[$2::uuid], now() + interval '1 hour'
+                 FROM users WHERE username = 'admin-a'
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(&token)
+            .bind(b.incident)
+            .execute(&ctx.pool)
+            .await
+            .unwrap();
+            let (status, body) = ctx
+                .call(method, path, Some(json!({ "token": token })))
+                .await;
+            assert!(!Ctx::mentions(&body, b.incident), "{body}");
+            let expected = if path.ends_with("use") {
+                StatusCode::FORBIDDEN
+            } else {
+                StatusCode::OK
+            };
+            assert_eq!(status, expected);
+            let (status, _) = ctx
+                .call(method, path, Some(json!({ "token": "cd".repeat(32) })))
+                .await;
+            assert_eq!(status, StatusCode::GONE);
+            let acknowledged: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM incident_acknowledgements")
+                    .fetch_one(&ctx.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(acknowledged, 0);
         }
         ("POST", "/api/silences/{id}/end") => {
             for id in [b.silence, b.customer_silence] {

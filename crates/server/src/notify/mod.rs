@@ -5,11 +5,13 @@
 //! channel whose [`Coverage`] includes it (ADR-0078), unless a [`silence`]
 //! holds it back (ADR-0079), and sends related incidents as one [`group`]
 //! (ADR-0080). Whoever is [`on_call`] for the place hears of it in person
-//! too, grouped the same way (ADR-0081).
+//! too, grouped the same way (ADR-0081). When nobody acknowledges a
+//! critical incident, the next step of its [`follow_up`] is told (ADR-0082).
 
 pub mod backup;
 pub mod chat;
 pub mod dispatcher;
+pub mod follow_up;
 pub mod group;
 pub mod message;
 pub mod on_call;
@@ -302,9 +304,13 @@ pub struct Channel {
     /// A person's own destination (ADR-0081): `id` is the user's, and the
     /// outcome is recorded on their contact.
     pub person: bool,
+    /// Hears only the follow-up steps that name it, not every event it
+    /// covers (ADR-0082).
+    pub follow_up_only: bool,
 }
 
-const CHANNEL_COLUMNS: &str = "id, kind, settings, secret, customer_id, site_id, public_only";
+const CHANNEL_COLUMNS: &str =
+    "id, kind, settings, secret, customer_id, site_id, public_only, follow_up_only";
 
 fn channel(row: &sqlx::postgres::PgRow) -> Result<Channel, sqlx::Error> {
     let kind: String = row.try_get("kind")?;
@@ -318,6 +324,7 @@ fn channel(row: &sqlx::postgres::PgRow) -> Result<Channel, sqlx::Error> {
             .ok_or_else(|| sqlx::Error::Decode("a channel with two scopes".into()))?,
         public_only: row.try_get("public_only")?,
         person: false,
+        follow_up_only: row.try_get("follow_up_only")?,
     })
 }
 
@@ -414,6 +421,21 @@ pub async fn update(
     .execute(db)
     .await?;
     Ok(done.rows_affected() == 1)
+}
+
+/// Makes channel `id` hear only the follow-up steps that name it, or every
+/// event it covers again.
+pub async fn set_follow_up_only(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    follow_up_only: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE notification_channels SET follow_up_only = $2 WHERE id = $1")
+        .bind(id)
+        .bind(follow_up_only)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// Records the outcome of a delivery or test to `channel`: `None` for

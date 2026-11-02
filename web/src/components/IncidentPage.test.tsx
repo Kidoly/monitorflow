@@ -214,3 +214,84 @@ describe("snapshotLines", () => {
     ]);
   });
 });
+
+describe("IncidentPage acknowledgement", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(NOW);
+    setUrl(`/incidents/view/?id=${ID}`);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const opened: IncidentDetail = { ...incident(), events: resolved.events.slice(0, 1) };
+
+  it("acknowledges, and says who will be told next until then", async () => {
+    const waiting: IncidentDetail = {
+      ...opened,
+      can_acknowledge: true,
+      follow_up: {
+        state: "waiting",
+        stop_reason: null,
+        step: 0,
+        steps: 2,
+        started_at: "2026-10-19T11:58:00Z",
+        next_at: "2026-10-19T12:13:00Z",
+        next: ["bob", "Slack #ops"],
+        policy: "default",
+      },
+    };
+    const acknowledged: IncidentDetail = {
+      ...opened,
+      acknowledged_by: "alice",
+      acknowledged_at: "2026-10-19T12:01:00Z",
+      acknowledged_via: "link",
+      events: [
+        ...opened.events,
+        { id: 9, kind: "acknowledged", severity: "critical", value: null, occurred_at: "2026-10-19T12:01:00Z", recorded_at: "2026-10-19T12:01:00Z", details: { username: "alice", via: "link" } },
+        { id: 8, kind: "followed_up", severity: "critical", value: null, occurred_at: "2026-10-19T11:59:00Z", recorded_at: "2026-10-19T11:59:00Z", details: { minutes: 15, told: ["bob", "Slack #ops"] } },
+      ],
+    };
+    const fetchMock = stubFetch({
+      [`GET /api/incidents/${ID}`]: [
+        { status: 200, body: waiting },
+        { status: 200, body: acknowledged },
+      ],
+      [REMEDIATION]: none,
+      "POST /api/incidents/acknowledge": { status: 200, body: { acknowledged: [ID] } },
+    });
+    fetchMock.mockImplementation(
+      ((original) => async (input, init) => {
+        if (String(input).startsWith("/api/metrics/query_range")) {
+          return new Response(JSON.stringify({ query: "…", series: [] }), { status: 200 });
+        }
+        return original(input, init);
+      })(fetchMock.getMockImplementation()!),
+    );
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<IncidentPage id={ID} />);
+    expect(await screen.findByText(/^bob and Slack #ops will be told at .* if nobody acknowledges\.$/)).toBeInTheDocument();
+    expect(screen.getByText("Says you are on it: nobody else is told next.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Acknowledge" }));
+    expect(await screen.findByText(/from the notification link/)).toBeInTheDocument();
+    expect(screen.getByText("alice")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Acknowledge" })).not.toBeInTheDocument();
+    expect(screen.getByText("Acknowledged by alice")).toBeInTheDocument();
+    expect(screen.getByText("Not acknowledged after 15 minutes: told bob and Slack #ops")).toBeInTheDocument();
+    const call = fetchMock.mock.calls.find(([url]) => url === "/api/incidents/acknowledge");
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ incident_ids: [ID] });
+  });
+
+  it("says when warnings are not followed up and when everyone was told", async () => {
+    stubIncident({ ...opened, severity: "warning" });
+    const { unmount } = render(<IncidentPage id={ID} />);
+    expect(await screen.findByText("Warnings are not followed up.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Acknowledge" })).not.toBeInTheDocument();
+    unmount();
+    stubIncident({
+      ...opened,
+      follow_up: { state: "stopped", stop_reason: "finished", step: 1, steps: 1, started_at: "2026-10-19T11:00:00Z", next_at: null, next: [], policy: "default" },
+    });
+    render(<IncidentPage id={ID} />);
+    expect(await screen.findByText("Everyone in the follow-up was told; nobody acknowledged.")).toBeInTheDocument();
+  });
+});

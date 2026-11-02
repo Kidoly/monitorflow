@@ -22,9 +22,10 @@ use uuid::Uuid;
 
 use super::chat::Service;
 use super::message::{
-    capitalized, email_body, event_text, sensor, site_place, str_at, Event, Message,
+    capitalized, email_body, event_text, not_acknowledged, sensor, site_place, str_at, Event,
+    Message,
 };
-use super::silence;
+use super::{follow_up, silence};
 
 /// The `event` of a group message's payload. Webhooks never get one: they
 /// keep one request per event (ADR-0080).
@@ -120,8 +121,12 @@ pub fn group<'a>(events: &[&'a Event]) -> Vec<Outgoing<'a>> {
         }
     }
     for events in customers.into_values() {
-        let (owed, mut fresh): (Vec<&Event>, Vec<&Event>) =
+        let (owed, rest): (Vec<&Event>, Vec<&Event>) =
             events.into_iter().partition(|e| silence::owed(&e.details));
+        // Follow-up steps (ADR-0082) go together, apart from fresh news.
+        let (steps, mut fresh): (Vec<&Event>, Vec<&Event>) = rest
+            .into_iter()
+            .partition(|e| follow_up::is_step(&e.details));
         // An incident that opened and got worse within the window is told
         // once, as it is now.
         let latest: BTreeMap<(&str, bool), i64> = fresh
@@ -130,22 +135,20 @@ pub fn group<'a>(events: &[&'a Event]) -> Vec<Outgoing<'a>> {
             .collect();
         fresh.retain(|e| latest.get(&(incident(e, "id"), resolved(e))) == Some(&e.id));
         let (silenced, alone) = split(owed, Kind::Silence, |_| ());
-        let (checks, rest) = split(fresh, Kind::Check, |e| {
-            (
-                resolved(e),
-                incident(e, "metric").to_owned(),
-                incident(e, "instance").to_owned(),
-            )
-        });
-        let (sites, rest) = split(rest, Kind::Site, |e| (resolved(e), e.site_id));
-        out.extend(
-            silenced
-                .into_iter()
-                .chain(checks)
-                .chain(sites)
-                .map(Outgoing::Group),
-        );
-        out.extend(alone.into_iter().chain(rest).map(Outgoing::One));
+        out.extend(silenced.into_iter().map(Outgoing::Group));
+        out.extend(alone.into_iter().map(Outgoing::One));
+        for pool in [steps, fresh] {
+            let (checks, rest) = split(pool, Kind::Check, |e| {
+                (
+                    resolved(e),
+                    incident(e, "metric").to_owned(),
+                    incident(e, "instance").to_owned(),
+                )
+            });
+            let (sites, rest) = split(rest, Kind::Site, |e| (resolved(e), e.site_id));
+            out.extend(checks.into_iter().chain(sites).map(Outgoing::Group));
+            out.extend(rest.into_iter().map(Outgoing::One));
+        }
     }
     out.sort_by_key(Outgoing::first);
     out
@@ -222,7 +225,21 @@ fn worst<'a>(members: &[&'a Event]) -> &'a str {
 }
 
 /// The group in one line: what happened, to how many, where, how bad.
+/// Follow-up steps say first how long nobody acknowledged them.
 pub fn title(group: &Group) -> String {
+    let title = plain_title(group);
+    let waited = group
+        .members
+        .iter()
+        .filter_map(|e| e.details["follow_up"]["minutes"].as_i64())
+        .min();
+    match waited {
+        Some(minutes) => format!("{}{title}", not_acknowledged(minutes)),
+        None => title,
+    }
+}
+
+fn plain_title(group: &Group) -> String {
     let members = &group.members[..];
     let (hosts, many) = hosts(members);
     let place = place(members);

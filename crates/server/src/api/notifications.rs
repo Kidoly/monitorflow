@@ -51,6 +51,9 @@ pub struct ChannelView {
     /// The last delivery's or test's error, `null` once one works.
     pub last_error: Option<String>,
     pub last_error_at: Option<DateTime<Utc>>,
+    /// Hears only follow-up steps that name it, and their resolution
+    /// (ADR-0082).
+    pub follow_up_only: bool,
 }
 
 /// Body of `GET /api/notifications/channels`.
@@ -75,6 +78,10 @@ pub struct ChannelRequest {
     /// The site to cover. Not together with `customer_id`.
     #[serde(default)]
     pub site_id: Option<Uuid>,
+    /// Only follow-up steps that name it, not every event it covers
+    /// (ADR-0082).
+    #[serde(default)]
+    pub follow_up_only: bool,
 }
 
 /// Body of `POST /api/notifications/channels/{id}/test`.
@@ -88,7 +95,7 @@ pub struct TestResult {
 const VIEW: &str = "SELECT n.id, n.kind, n.settings, n.secret IS NOT NULL AS has_secret,
         coalesce(n.customer_id, s.customer_id) AS customer_id, c.name AS customer_name,
         n.site_id, s.name AS site_name, n.created_at, n.last_sent_at,
-        n.last_error, n.last_error_at
+        n.last_error, n.last_error_at, n.follow_up_only
     FROM notification_channels n
     LEFT JOIN sites s ON s.id = n.site_id
     LEFT JOIN customers c ON c.id = coalesce(n.customer_id, s.customer_id)";
@@ -303,6 +310,7 @@ pub async fn create(
 ) -> Result<(StatusCode, Json<ChannelView>), ApiError> {
     require_administrator(&user)?;
     let request = body(request)?;
+    let follow_up_only = request.follow_up_only;
     let valid = validate(&state.pool, &user, request, None).await?;
     let mut tx = state.pool.begin().await?;
     let id = notify::insert(
@@ -313,7 +321,9 @@ pub async fn create(
         !is_global_admin(&user),
     )
     .await?;
-    let details = audited(&valid.destination, valid.coverage);
+    notify::set_follow_up_only(&mut *tx, id, follow_up_only).await?;
+    let mut details = audited(&valid.destination, valid.coverage);
+    details["follow_up_only"] = follow_up_only.into();
     record(
         &mut *tx,
         &user,
@@ -346,6 +356,7 @@ pub async fn update(
     require_administrator(&user)?;
     let id = parse_id(&id)?;
     let request = body(request)?;
+    let follow_up_only = request.follow_up_only;
     let mut tx = state.pool.begin().await?;
     let current = notify::lock(&mut *tx, id)
         .await?
@@ -376,7 +387,9 @@ pub async fn update(
     if !found {
         return Err(ApiError::NotFound);
     }
-    let details = audited(&valid.destination, valid.coverage);
+    notify::set_follow_up_only(&mut *tx, id, follow_up_only).await?;
+    let mut details = audited(&valid.destination, valid.coverage);
+    details["follow_up_only"] = follow_up_only.into();
     record(
         &mut *tx,
         &user,

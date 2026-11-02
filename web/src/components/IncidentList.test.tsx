@@ -138,6 +138,35 @@ describe("IncidentList", () => {
     expect(screen.getByRole("link", { name: "Show all incidents" })).toHaveAttribute("href", expect.stringMatching(/^\/incidents\/?$/));
   });
 
+  it("acknowledges one incident, or all of a notification's at once", async () => {
+    const GROUP = "9a3e2c1b-7d4f-4e6a-8b5c-1d2e3f4a5b6c";
+    setUrl(`/incidents/?group=${GROUP}`);
+    const mine = incident({ can_acknowledge: true });
+    const other = incident({ id: "3d6a9a3e-5b7c-4d8e-9f01-23456789abcd", hostname: "web-2", can_acknowledge: true });
+    const done = incident({
+      id: "4d6a9a3e-5b7c-4d8e-9f01-23456789abcd",
+      hostname: "web-3",
+      acknowledged_by: "bob",
+      acknowledged_at: new Date(2026, 9, 19, 13, 50).toISOString(),
+    });
+    const fetchMock = stubFetch({
+      ...options,
+      [OPEN]: openReply,
+      [`GET /api/incidents?group=${GROUP}&limit=${PAGE_SIZE}`]: { status: 200, body: { incidents: [mine, other, done], next_cursor: null } },
+      "POST /api/incidents/acknowledge": { status: 200, body: { acknowledged: [] } },
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<IncidentList filters={{ ...NO_FILTERS, groupId: GROUP }} />);
+    await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(4));
+    expect(screen.getByText(/Acknowledged by bob 13:50/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Acknowledge web-2" }));
+    await user.click(screen.getByRole("button", { name: "Acknowledge all 2" }));
+    const bodies = fetchMock.mock.calls
+      .filter(([url]) => url === "/api/incidents/acknowledge")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies).toEqual([{ incident_ids: [other.id] }, { incident_ids: [mine.id, other.id] }]);
+  });
+
   it("keeps the scope's customer only", async () => {
     setUrl(`/incidents/?customer=${ACME}`);
     stubFetch({

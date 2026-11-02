@@ -1,23 +1,29 @@
-//! Incident endpoints (ADR-0017, ADR-0019): read-only views of what the
-//! threshold engine and the offline rule (ADR-0072) opened and resolved.
+//! Incident endpoints (ADR-0017, ADR-0019): views of what the threshold
+//! engine and the offline rule (ADR-0072) opened and resolved, and their
+//! acknowledgement (ADR-0082).
 //!
-//! They own `incidents` and `incident_events`; nothing here writes them. Every role reads the incidents of the servers of its sites, and
-//! an incident outside them is not found.
+//! The engine owns `incidents`; nothing here changes them. Acknowledging
+//! adds to `incident_events` and stops the follow-up, nothing else. Every
+//! role reads the incidents of the servers of its sites, and an incident
+//! outside them is not found; operators and above acknowledge them.
 
-use axum::extract::rejection::QueryRejection;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
-use super::access::authorize;
+use super::access::{authorize, Scope};
+use super::audit;
 use super::auth::CurrentUser;
-use super::sensors::parse_id;
+use super::follow_up::{follow_up_view, FollowUpView};
+use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
+use crate::notify::follow_up;
 
 /// Page size without `limit`.
 pub const DEFAULT_LIMIT: u32 = 100;
@@ -95,6 +101,14 @@ pub struct IncidentView {
     pub silenced_until: Option<DateTime<Utc>>,
     /// Whether a silence ever held back a notification of it.
     pub silenced: bool,
+    /// Who said they are on it, and when (ADR-0082); `null` until someone
+    /// does. The name stays when the account is removed.
+    pub acknowledged_by: Option<String>,
+    pub acknowledged_at: Option<DateTime<Utc>>,
+    /// Whether the reader may acknowledge it: open, not acknowledged, and
+    /// the reader an operator or above of its site.
+    #[sqlx(skip)]
+    pub can_acknowledge: bool,
 }
 
 /// Body of `GET /api/incidents`.
@@ -109,8 +123,9 @@ pub struct IncidentList {
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct EventView {
     pub id: i64,
-    /// `opened`, `escalated`, `deescalated`, `resolved`, or what a silence
-    /// did: `silenced` and `silence_ended` (ADR-0079).
+    /// `opened`, `escalated`, `deescalated`, `resolved`, what a silence
+    /// did: `silenced` and `silence_ended` (ADR-0079), `acknowledged`, and
+    /// `followed_up` when a follow-up step told someone (ADR-0082).
     pub kind: String,
     /// Severity after the change; `null` once resolved.
     pub severity: Option<String>,
@@ -118,8 +133,10 @@ pub struct EventView {
     /// Sample time of the change, or the server clock without a sample.
     pub occurred_at: DateTime<Utc>,
     pub recorded_at: DateTime<Utc>,
-    /// For instance `{"reason": "threshold_removed"}`, or `{"notified":
-    /// true}` when a silence ended.
+    /// For instance `{"reason": "threshold_removed"}`, `{"notified":
+    /// true}` when a silence ended, `{"username", "via"}` when
+    /// acknowledged, or `{"step", "steps", "minutes", "told"}` for a
+    /// follow-up step.
     pub details: Value,
 }
 
@@ -142,6 +159,11 @@ pub struct IncidentDetail {
     pub events: Vec<EventView>,
     /// Oldest first.
     pub notification_groups: Vec<GroupView>,
+    /// `page` or `link`: where it was acknowledged.
+    pub acknowledged_via: Option<String>,
+    /// Who is told next if nobody acknowledges (ADR-0082); `null` when no
+    /// follow-up started: a warning, or not sent yet.
+    pub follow_up: Option<FollowUpView>,
 }
 
 /// The sort key `(open, opened_at, id)` of a page's last incident.
@@ -168,8 +190,10 @@ const SELECT: &str = "SELECT i.id, i.server_id, i.relay_id,
                                  silenced_until(i.server_id, i.relay_id, si.id, si.customer_id)
                              END AS silenced_until,
                              EXISTS (SELECT 1 FROM incident_events e
-                                     WHERE e.incident_id = i.id AND e.kind = 'silenced') AS silenced
+                                     WHERE e.incident_id = i.id AND e.kind = 'silenced') AS silenced,
+                             a.username AS acknowledged_by, a.acknowledged_at
                       FROM incidents i
+                      LEFT JOIN incident_acknowledgements a ON a.incident_id = i.id
                       LEFT JOIN servers s ON s.id = i.server_id
                       LEFT JOIN relays r ON r.id = i.relay_id
                       JOIN sites si ON si.id = COALESCE(s.site_id, r.site_id)";
@@ -239,6 +263,10 @@ pub async fn list(
     .bind(params.group)
     .fetch_all(&state.pool)
     .await?;
+    let modifiable = user.modifiable_sites();
+    for row in &mut rows {
+        row.can_acknowledge = acknowledgeable(row, &modifiable);
+    }
     let next_cursor = if rows.len() > limit as usize {
         rows.truncate(limit as usize);
         rows.last()
@@ -266,7 +294,8 @@ pub async fn detail(
             .fetch_optional(&state.pool)
             .await?;
     authorize(&user, incident.as_ref().map(|i| i.site_id), false)?;
-    let incident = incident.ok_or(ApiError::NotFound)?;
+    let mut incident = incident.ok_or(ApiError::NotFound)?;
+    incident.can_acknowledge = acknowledgeable(&incident, &user.modifiable_sites());
     // Events are appended as they happen, so their ID is their order.
     let events = sqlx::query_as(
         "SELECT id, kind, severity, value, occurred_at, recorded_at, details
@@ -283,11 +312,104 @@ pub async fn detail(
     .bind(id)
     .fetch_all(&state.pool)
     .await?;
+    let acknowledged_via =
+        sqlx::query_scalar("SELECT via FROM incident_acknowledgements WHERE incident_id = $1")
+            .bind(id)
+            .fetch_optional(&state.pool)
+            .await?;
+    let follow_up = follow_up_view(&state.pool, &incident).await?;
     Ok(Json(IncidentDetail {
         incident,
         events,
         notification_groups,
+        acknowledged_via,
+        follow_up,
     }))
+}
+
+fn acknowledgeable(incident: &IncidentView, modifiable: &Scope) -> bool {
+    incident.state == "open"
+        && incident.acknowledged_at.is_none()
+        && modifiable.contains(incident.site_id)
+}
+
+/// Body of `POST /api/incidents/acknowledge`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcknowledgeRequest {
+    /// 1 to [`MAX_LIMIT`] incidents, like a group of a notification.
+    pub incident_ids: Vec<Uuid>,
+}
+
+/// Body of the answer: the incidents this request acknowledged. The
+/// others were resolved, or someone acknowledged them first.
+#[derive(Debug, Serialize)]
+pub struct Acknowledged {
+    pub acknowledged: Vec<Uuid>,
+}
+
+/// `POST /api/incidents/acknowledge`: says the user is on it, so nobody
+/// else is told next (ADR-0082). Needs an operator role or above on each
+/// incident's site, as silencing its server does: 404 when one is not
+/// readable, 403 when one is read-only, before anything is written.
+/// Audited as `incident.acknowledge` per incident.
+pub async fn acknowledge(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    request: Result<Json<AcknowledgeRequest>, JsonRejection>,
+) -> Result<Json<Acknowledged>, ApiError> {
+    if !user.can_read() {
+        return Err(ApiError::Forbidden);
+    }
+    let request = body(request)?;
+    let mut ids = request.incident_ids;
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() || ids.len() > MAX_LIMIT as usize {
+        return Err(ApiError::Invalid(format!(
+            "acknowledge 1 to {MAX_LIMIT} incidents at once"
+        )));
+    }
+    let sites: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT i.id, si.id FROM incidents i
+         LEFT JOIN servers s ON s.id = i.server_id
+         LEFT JOIN relays r ON r.id = i.relay_id
+         JOIN sites si ON si.id = COALESCE(s.site_id, r.site_id)
+         WHERE i.id = ANY($1)",
+    )
+    .bind(&ids)
+    .fetch_all(&state.pool)
+    .await?;
+    if sites.len() != ids.len() {
+        return Err(ApiError::NotFound);
+    }
+    for (_, site) in &sites {
+        authorize(&user, Some(*site), false)?;
+    }
+    for (_, site) in &sites {
+        authorize(&user, Some(*site), true)?;
+    }
+    let mut tx = state.pool.begin().await?;
+    let acknowledged =
+        follow_up::acknowledge(&mut tx, &ids, (user.id, &user.username), "page", Utc::now())
+            .await?;
+    let actor = user.id.to_string();
+    for incident in &acknowledged {
+        let target = incident.to_string();
+        audit::record(
+            &mut *tx,
+            audit::Event {
+                actor_kind: "user",
+                actor_id: &actor,
+                action: "incident.acknowledge",
+                target: Some(("incident", &target)),
+                details: json!({ "via": "page" }),
+            },
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(Json(Acknowledged { acknowledged }))
 }
 
 #[cfg(test)]
