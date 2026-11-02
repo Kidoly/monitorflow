@@ -31,7 +31,7 @@ const APPLYING_REFRESH_MS = 3_000;
 const OTHER_SETTINGS: { label: string; href: string; note: string }[] = [
   { label: "Users and roles", href: USERS_PATH, note: "Who signs in, and what they can do." },
   { label: "Sites", href: SITES_PATH, note: "Customers and the sites their servers belong to." },
-  { label: "Notifications", href: NOTIFICATIONS_PATH, note: "Email and webhooks for incidents, approvals and failed updates." },
+  { label: "Notifications", href: NOTIFICATIONS_PATH, note: "Email, Slack, Teams, Discord and webhooks for incidents, approvals and failed updates." },
   { label: "AI", href: AI_SETTINGS_PATH, note: "An API key and a model to diagnose incidents and propose fixes." },
   { label: "Automatic updates", href: AUTO_UPDATE_PATH, note: "Keep agents and relays on the newest release." },
   { label: "Server update", href: SERVER_UPDATE_PATH, note: "Update this server, or import a release without Internet." },

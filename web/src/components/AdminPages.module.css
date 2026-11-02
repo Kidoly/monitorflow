@@ -74,8 +74,14 @@
   border-color: var(--bad);
 }
 
+/* More specific than the table's nowrap cells. */
+.wrap,
 tr td.wrap {
   white-space: normal;
+}
+
+tr td.wrap {
+  padding-block: 8px;
 }
 
 /* Sites: the New site form under each customer's table. */
@@ -212,6 +218,13 @@ tr td.wrap {
 
 .buttons {
   display: flex;
+  gap: 8px;
+}
+
+/* A row outside a table, free to wrap on a phone. */
+.buttonRow {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 

@@ -11,10 +11,11 @@ use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
-use monitorflow_common::redact::Secret;
+use monitorflow_common::redact::{Secret, REDACTED};
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use ring::hmac;
 
+use super::chat::Service;
 use super::message::Message;
 use super::{Channel, Destination, Email, Webhook};
 
@@ -29,10 +30,30 @@ pub const DELIVERY_HEADER: &str = "x-monitorflow-delivery";
 pub const TIMESTAMP_HEADER: &str = "x-monitorflow-timestamp";
 pub const SIGNATURE_HEADER: &str = "x-monitorflow-signature";
 
+/// How long a chat service that asks to wait is waited for, at most.
+pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
+/// Query values shorter than this are not treated as secrets.
+const MIN_SECRET_VALUE: usize = 8;
+/// The wait when a chat service limits messages without saying for how long.
+const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(5);
+
 /// Why a delivery failed, as a sentence for the person who set it up.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{0}")]
-pub struct SendError(pub String);
+#[error("{message}")]
+pub struct SendError {
+    pub message: String,
+    /// A rate limit: how long the service asked to wait.
+    pub retry_after: Option<Duration>,
+}
+
+impl SendError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retry_after: None,
+        }
+    }
+}
 
 /// `error` and its sources, each once.
 fn chain(error: &dyn StdError) -> String {
@@ -47,6 +68,34 @@ fn chain(error: &dyn StdError) -> String {
         source = cause.source();
     }
     text
+}
+
+/// A request that got no answer, in plain words. The URL is taken out of
+/// the error first: it can hold a token, and the text is shown and logged.
+fn request_error(host: &str, error: reqwest::Error) -> SendError {
+    let error = error.without_url();
+    SendError::new(if error.is_timeout() {
+        format!(
+            "No answer from {host} within {} seconds. Check the URL, and that this server can reach it.",
+            TIMEOUT.as_secs()
+        )
+    } else if error.is_connect() {
+        format!("Could not connect to {host}: {}", chain(&error))
+    } else {
+        format!("The request to {host} failed: {}", chain(&error))
+    })
+}
+
+/// A refusal in plain words, from the first characters of the answer.
+fn response_error(host: &str, status: reqwest::StatusCode, text: &str) -> SendError {
+    let text: String = text.trim().chars().take(200).collect();
+    SendError::new(if status.is_redirection() {
+        format!("{host} answered {status}, a redirect, which is not followed: enter the final URL.")
+    } else if text.is_empty() {
+        format!("{host} answered {status}.")
+    } else {
+        format!("{host} answered {status}: {text}")
+    })
 }
 
 /// The client for webhooks: no redirects, so a request never lands
@@ -92,7 +141,7 @@ pub fn is_public(ip: IpAddr) -> bool {
 
 /// The sentence for a destination that is not public.
 fn private_address(host: &str) -> SendError {
-    SendError(format!(
+    SendError::new(format!(
         "{host} is a private address. Only a global administrator can set a channel to send there."
     ))
 }
@@ -115,7 +164,7 @@ impl Resolve for PublicResolver {
 async fn public_addresses(host: &str, port: u16) -> Result<Vec<SocketAddr>, SendError> {
     let found = tokio::net::lookup_host((host, port))
         .await
-        .map_err(|error| SendError(format!("Could not find {host}: {error}")))?;
+        .map_err(|error| SendError::new(format!("Could not find {host}: {error}")))?;
     let public: Vec<SocketAddr> = found.filter(|a| is_public(a.ip())).collect();
     if public.is_empty() {
         return Err(private_address(host));
@@ -156,18 +205,32 @@ pub async fn deliver(
             send_email(email, connect_to, secret, message).await
         }
         Destination::Webhook(webhook) => {
-            // The resolver never sees an address written in the URL.
-            let literal = reqwest::Url::parse(&webhook.url).ok().and_then(|url| {
-                url.host_str()?
-                    .trim_matches(['[', ']'])
-                    .parse::<IpAddr>()
-                    .ok()
-            });
-            if let Some(ip) = literal.filter(|ip| channel.public_only && !is_public(*ip)) {
-                return Err(private_address(&ip.to_string()));
-            }
+            refuse_private_literal(channel, &webhook.url)?;
             post_webhook(http, webhook, secret, message).await
         }
+        Destination::Slack(_) | Destination::Teams(_) | Destination::Discord(_) => {
+            // Saving refuses addresses in chat URLs; a row written another
+            // way still meets the rule of its channel.
+            if let Some(url) = secret {
+                refuse_private_literal(channel, url.expose())?;
+            }
+            post_chat(http, channel, message).await
+        }
+    }
+}
+
+/// The resolver never sees an address written in a URL, so a channel
+/// limited to public addresses checks it here.
+fn refuse_private_literal(channel: &Channel, url: &str) -> Result<(), SendError> {
+    let literal = reqwest::Url::parse(url).ok().and_then(|url| {
+        url.host_str()?
+            .trim_matches(['[', ']'])
+            .parse::<IpAddr>()
+            .ok()
+    });
+    match literal.filter(|ip| channel.public_only && !is_public(*ip)) {
+        Some(ip) => Err(private_address(&ip.to_string())),
+        None => Ok(()),
     }
 }
 
@@ -211,31 +274,114 @@ async fn post_webhook(
         .ok()
         .and_then(|u| u.host_str().map(str::to_owned))
         .unwrap_or_else(|| webhook.url.clone());
-    let response = request.body(body).send().await.map_err(|error| {
-        SendError(if error.is_timeout() {
-            format!(
-                "No answer from {host} within {} seconds. Check the URL, and that this server can reach it.",
-                TIMEOUT.as_secs()
-            )
-        } else if error.is_connect() {
-            format!("Could not connect to {host}: {}", chain(&error))
-        } else {
-            format!("The request to {host} failed: {}", chain(&error))
-        })
-    })?;
+    let response = request
+        .body(body)
+        .send()
+        .await
+        .map_err(|error| request_error(&host, error))?;
     let status = response.status();
     if status.is_success() {
         return Ok(());
     }
     let text = response.text().await.unwrap_or_default();
-    let text: String = text.trim().chars().take(200).collect();
-    Err(SendError(if status.is_redirection() {
-        format!("{host} answered {status}, a redirect, which is not followed: enter the final URL.")
-    } else if text.is_empty() {
-        format!("{host} answered {status}.")
-    } else {
-        format!("{host} answered {status}: {text}")
-    }))
+    Err(response_error(&host, status, &text))
+}
+
+/// How long a rate limited answer asks to wait, within
+/// [`MAX_RETRY_AFTER`]: the `Retry-After` header, or Discord's `retry_after`
+/// in the body.
+fn retry_after(header: Option<&str>, body: &str) -> Duration {
+    header
+        .and_then(|seconds| seconds.trim().parse::<f64>().ok())
+        .or_else(|| {
+            let body: serde_json::Value = serde_json::from_str(body).ok()?;
+            body.get("retry_after")?.as_f64()
+        })
+        .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
+        .unwrap_or(DEFAULT_RETRY_AFTER)
+        .min(MAX_RETRY_AFTER)
+}
+
+/// Posts to a chat service. The channel's secret is the URL, so only its
+/// host appears in errors, and an answer that repeats it is cut out.
+async fn post_chat(
+    http: &reqwest::Client,
+    channel: &Channel,
+    message: &Message,
+) -> Result<(), SendError> {
+    let Some((service, _)) = channel.destination.chat() else {
+        return Err(SendError::new("This is not a chat channel."));
+    };
+    let url = channel
+        .secret
+        .as_ref()
+        .and_then(|url| service.request_url(url.expose()))
+        .ok_or_else(|| SendError::new("This channel has no webhook URL: edit it and paste one."))?;
+    let host = url.host_str().unwrap_or_default().to_owned();
+    let response = http
+        .post(url.clone())
+        .header("content-type", "application/json")
+        .body(service.payload(message).to_string())
+        .send()
+        .await
+        .map_err(|error| request_error(&host, error))?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    let header = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let text = response.text().await.unwrap_or_default();
+    Err(chat_error(service, &url, status, header.as_deref(), &text))
+}
+
+/// A chat service's refusal in plain words.
+fn chat_error(
+    service: Service,
+    url: &reqwest::Url,
+    status: reqwest::StatusCode,
+    retry_header: Option<&str>,
+    text: &str,
+) -> SendError {
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        let wait = retry_after(retry_header, text);
+        return SendError {
+            message: format!(
+                "{} is limiting messages from this webhook; it asked to wait {} seconds.",
+                service.name(),
+                wait.as_secs_f64().ceil()
+            ),
+            retry_after: Some(wait),
+        };
+    }
+    match service.explain(status.as_u16(), text) {
+        Some(reason) => SendError::new(reason),
+        None => {
+            let host = url.host_str().unwrap_or_default();
+            response_error(host, status, &without_url_secrets(text, url))
+        }
+    }
+}
+
+/// `text` without what makes `url` a credential, should an answer repeat
+/// it: the path of Slack and Discord, the query values of Teams (`sig`).
+/// Short values like `api-version=1` are not worth hiding.
+fn without_url_secrets(text: &str, url: &reqwest::Url) -> String {
+    let raw = url.query().unwrap_or_default();
+    let raw = raw.split('&').filter_map(|pair| pair.split_once('='));
+    let decoded = url.query_pairs();
+    let values = raw
+        .map(|(_, value)| value.to_owned())
+        .chain(decoded.map(|(_, value)| value.into_owned()))
+        .filter(|value| value.len() >= MIN_SECRET_VALUE);
+    let mut text = text.replace(url.path(), REDACTED);
+    for value in values {
+        text = text.replace(&value, REDACTED);
+    }
+    text
 }
 
 /// The SMTP transport for `email`: TLS from the start on port 465,
@@ -248,7 +394,7 @@ fn transport(
     password: Option<&Secret>,
 ) -> Result<AsyncSmtpTransport<Tokio1Executor>, SendError> {
     let tls = TlsParameters::new(email.host.clone()).map_err(|error| {
-        SendError(format!(
+        SendError::new(format!(
             "Cannot use TLS with {}: {}",
             email.host,
             chain(&error)
@@ -289,7 +435,7 @@ async fn send_email(
     let mailbox = |address: &str| {
         address
             .parse::<Mailbox>()
-            .map_err(|_| SendError(format!("`{address}` is not an email address.")))
+            .map_err(|_| SendError::new(format!("`{address}` is not an email address.")))
     };
     let mut builder = lettre::Message::builder()
         .from(mailbox(from)?)
@@ -300,12 +446,12 @@ async fn send_email(
     }
     let mail = builder
         .body(message.body.clone())
-        .map_err(|error| SendError(format!("The email could not be built: {error}")))?;
+        .map_err(|error| SendError::new(format!("The email could not be built: {error}")))?;
     transport(email, connect_to, password)?
         .send(mail)
         .await
         .map(drop)
-        .map_err(|error| SendError(smtp_error(email, &error)))
+        .map_err(|error| SendError::new(smtp_error(email, &error)))
 }
 
 /// An SMTP failure in plain words.
@@ -388,6 +534,65 @@ mod tests {
         ] {
             assert!(!is_public(ip.parse().unwrap()), "{ip}");
         }
+    }
+
+    #[test]
+    fn a_rate_limit_says_how_long_within_bounds() {
+        assert_eq!(retry_after(Some("3"), ""), Duration::from_secs(3));
+        assert_eq!(
+            retry_after(None, r#"{"message":"limited","retry_after":0.5}"#),
+            Duration::from_millis(500)
+        );
+        assert_eq!(retry_after(Some("86400"), ""), MAX_RETRY_AFTER);
+        assert_eq!(retry_after(Some("soon"), "nope"), DEFAULT_RETRY_AFTER);
+        assert_eq!(retry_after(Some("-1"), ""), DEFAULT_RETRY_AFTER);
+    }
+
+    #[test]
+    fn chat_refusals_are_explained_and_keep_the_url_out() {
+        let status = reqwest::StatusCode::from_u16;
+        let slack = reqwest::Url::parse("https://hooks.slack.com/services/T0/B0/TOKEN").unwrap();
+        let gone = chat_error(
+            Service::Slack,
+            &slack,
+            status(404).unwrap(),
+            None,
+            "no_service",
+        );
+        assert!(gone.message.contains("no longer knows"), "{gone}");
+        let echoed = chat_error(
+            Service::Slack,
+            &slack,
+            status(500).unwrap(),
+            None,
+            "failed for /services/T0/B0/TOKEN",
+        );
+        assert!(!echoed.message.contains("TOKEN"), "{echoed}");
+        assert!(echoed.message.starts_with("hooks.slack.com answered 500"));
+        let teams = reqwest::Url::parse(
+            "https://a.logic.azure.com/workflows/w/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sig=SIGNATURE",
+        )
+        .unwrap();
+        let echoed = chat_error(
+            Service::Teams,
+            &teams,
+            status(500).unwrap(),
+            None,
+            "bad call to /x?api-version=1&sp=/triggers/manual/run&sp2=%2Ftriggers%2Fmanual%2Frun&sig=SIGNATURE",
+        );
+        assert!(!echoed.message.contains("SIGNATURE"), "{echoed}");
+        assert!(!echoed.message.contains("manual"), "{echoed}");
+        assert!(echoed.message.contains("api-version=1"), "{echoed}");
+        let discord = reqwest::Url::parse("https://discord.com/api/webhooks/1/t").unwrap();
+        let limited = chat_error(
+            Service::Discord,
+            &discord,
+            status(429).unwrap(),
+            Some("2"),
+            "",
+        );
+        assert_eq!(limited.retry_after, Some(Duration::from_secs(2)));
+        assert!(limited.message.contains("Discord is limiting"));
     }
 
     #[test]

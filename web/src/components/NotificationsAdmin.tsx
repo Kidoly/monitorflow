@@ -5,6 +5,8 @@ import { type FormEvent, type ReactNode, useId, useState } from "react";
 import {
   ApiError,
   type ChannelTestResult,
+  type ChatKind,
+  type ChatSettings,
   type Customer,
   type NotificationChannel,
   type NotificationChannelRequest,
@@ -20,7 +22,14 @@ import styles from "./AdminPages.module.css";
 import { Button, fieldClass } from "./ui/Button";
 import { type Column, DataTable } from "./ui/DataTable";
 import { InlineConfirm } from "./ui/InlineConfirm";
-import { Banner, EmptyState, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
+import {
+  Banner,
+  EmptyState,
+  ErrorState,
+  LoadingBlock,
+  NoPermission,
+  PageHeader,
+} from "./ui/PageState";
 import { RelativeTime } from "./ui/RelativeTime";
 import { Label } from "./ui/StatusLabel";
 
@@ -39,11 +48,41 @@ export function NotificationsPage() {
 
 type Kind = NotificationChannel["kind"];
 
+/** What each chat service needs on screen: the URL lives in that service, so the form says where. */
+const CHAT: Record<
+  ChatKind,
+  { name: string; placeholder: string; help: string }
+> = {
+  slack: {
+    name: "Slack",
+    placeholder: "https://hooks.slack.com/services/…",
+    help: "In Slack, create an app at api.slack.com/apps, turn on Incoming Webhooks, and add a webhook to your channel.",
+  },
+  teams: {
+    name: "Teams",
+    placeholder: "https://….api.powerplatform.com/…",
+    help: "In Teams, open the channel's Workflows, pick “Send webhook alerts to a channel”, and copy the URL it gives you. Old connector URLs no longer work.",
+  },
+  discord: {
+    name: "Discord",
+    placeholder: "https://discord.com/api/webhooks/…",
+    help: "In Discord, open the channel's settings, then Integrations, Webhooks, New Webhook, and Copy Webhook URL.",
+  },
+};
+
+function isChat(kind: Kind): kind is ChatKind {
+  return kind in CHAT;
+}
+
 /** What a channel sends to, in a few words. */
 export function destination(channel: NotificationChannel): string {
   if (channel.kind === "email") {
     const { to, host, port } = channel.settings;
     return `Email to ${to.join(", ")} through ${host}:${port}`;
+  }
+  if (channel.kind !== "webhook") {
+    const { name, host } = channel.settings;
+    return `${CHAT[channel.kind].name}: ${name || host}`;
   }
   try {
     return `Webhook to ${new URL(channel.settings.url).host}`;
@@ -70,7 +109,9 @@ function Notifications() {
   const sites = usePolledData(api.sites, { intervalMs: 60_000 });
   const me = useMe();
   const [editing, setEditing] = useState<Editing | null>(null);
-  const [tests, setTests] = useState<Record<string, ChannelTestResult | "sending">>({});
+  const [tests, setTests] = useState<
+    Record<string, ChannelTestResult | "sending">
+  >({});
   const [actionError, setActionError] = useState<string | null>(null);
 
   async function test(id: string) {
@@ -90,7 +131,9 @@ function Notifications() {
     refresh();
   }
 
-  const header = <PageHeader title="Notifications" meta="Email and webhooks" />;
+  const header = (
+    <PageHeader title="Notifications" meta="Email, chat and webhooks" />
+  );
   if (error instanceof ApiError && error.status === 403) {
     return (
       <div className={styles.page}>
@@ -103,16 +146,31 @@ function Notifications() {
     return (
       <div className={styles.page}>
         {header}
-        {error ? <ErrorState what="notifications" error={describeError(error)} onRetry={refresh} /> : <LoadingBlock />}
+        {error ? (
+          <ErrorState
+            what="notifications"
+            error={describeError(error)}
+            onRetry={refresh}
+          />
+        ) : (
+          <LoadingBlock />
+        )}
       </div>
     );
   }
 
   const add = (kind: Kind) => (
-    <Button variant={kind === "email" ? "k" : undefined} onClick={() => setEditing({ kind })}>
-      {kind === "email" ? "Add email" : "Add webhook"}
+    <Button
+      key={kind}
+      variant={kind === "email" ? "k" : undefined}
+      onClick={() => setEditing({ kind })}
+    >
+      Add {kindName(kind)}
     </Button>
   );
+  const addButtons = (
+    ["email", "slack", "teams", "discord", "webhook"] as const
+  ).map(add);
   const allCustomers = customers.data?.customers ?? [];
   const allSites = sites.data?.sites ?? [];
   const global = administersEverything(me);
@@ -139,23 +197,13 @@ function Notifications() {
           }}
         />
       ) : data.channels.length === 0 ? (
-        <EmptyState
-          title="No one is notified yet"
-          actions={
-            <>
-              {add("email")}
-              {add("webhook")}
-            </>
-          }
-        >
-          Incidents only show while someone has this page open. Add an email address, or a webhook for Slack,
+        <EmptyState title="No one is notified yet" actions={<>{addButtons}</>}>
+          Incidents only show while someone has this page open. Add an email
+          address, a Slack, Teams or Discord channel, or a webhook for
           Mattermost or your own tools.
         </EmptyState>
       ) : (
-        <div className={styles.buttons}>
-          {add("email")}
-          {add("webhook")}
-        </div>
+        <div className={styles.buttonRow}>{addButtons}</div>
       )}
       {data.channels.length > 0 && (
         <section className={styles.section} aria-label="Channels">
@@ -165,7 +213,12 @@ function Notifications() {
           <Channels
             channels={data.channels}
             tests={tests}
-            showScope={!global || allCustomers.length > 1 || allSites.length > 1 || data.channels.some((c) => c.customer_id)}
+            showScope={
+              !global ||
+              allCustomers.length > 1 ||
+              allSites.length > 1 ||
+              data.channels.some((c) => c.customer_id)
+            }
             severalCustomers={allCustomers.length > 1}
             onTest={(id) => void test(id)}
             onEdit={(channel) => setEditing({ kind: channel.kind, channel })}
@@ -177,15 +230,28 @@ function Notifications() {
   );
 }
 
-function Status({ channel, test }: { channel: NotificationChannel; test?: ChannelTestResult | "sending" }) {
+function kindName(kind: Kind): string {
+  return isChat(kind) ? CHAT[kind].name : kind;
+}
+
+function Status({
+  channel,
+  test,
+}: {
+  channel: NotificationChannel;
+  test?: ChannelTestResult | "sending";
+}) {
   const now = new Date();
-  if (test === "sending") return <span className={styles.dim}>Sending a test…</span>;
+  if (test === "sending")
+    return <span className={styles.dim}>Sending a test…</span>;
   if (test?.ok) {
     return (
       <>
         <Label tone="ok">Test sent</Label>{" "}
         <span className={styles.dim}>
-          {channel.kind === "email" ? "Check that it arrived, and the spam folder." : "Check that it arrived."}
+          {channel.kind === "email"
+            ? "Check that it arrived, and the spam folder."
+            : "Check that it arrived."}
         </span>
       </>
     );
@@ -194,7 +260,8 @@ function Status({ channel, test }: { channel: NotificationChannel; test?: Channe
   if (error) {
     return (
       <>
-        <Label tone="bad">Failing</Label> <span role={test ? "alert" : undefined}>{error}</span>
+        <Label tone="bad">Failing</Label>{" "}
+        <span role={test ? "alert" : undefined}>{error}</span>
       </>
     );
   }
@@ -229,14 +296,23 @@ function Channels({
   onDelete: (id: string) => Promise<void>;
 }) {
   const columns: Column<NotificationChannel>[] = [
-    { key: "destination", header: "Sends to", className: styles.wrap, cell: (c) => <strong>{destination(c)}</strong> },
+    {
+      key: "destination",
+      header: "Sends to",
+      className: styles.wrap,
+      cell: (c) => <strong>{destination(c)}</strong>,
+    },
     ...(showScope
       ? [
           {
             key: "scope",
             header: "About",
             cell: (c: NotificationChannel) =>
-              c.customer_id ? scopeName(c, severalCustomers) : <span className={styles.dim}>{scopeName(c, false)}</span>,
+              c.customer_id ? (
+                scopeName(c, severalCustomers)
+              ) : (
+                <span className={styles.dim}>{scopeName(c, false)}</span>
+              ),
           },
         ]
       : []),
@@ -251,7 +327,11 @@ function Channels({
       header: "",
       cell: (c) => (
         <span className={styles.buttons}>
-          <Button size="small" disabled={tests[c.id] === "sending"} onClick={() => onTest(c.id)}>
+          <Button
+            size="small"
+            disabled={tests[c.id] === "sending"}
+            onClick={() => onTest(c.id)}
+          >
             Send test
           </Button>
           <Button size="small" onClick={() => onEdit(c)}>
@@ -271,7 +351,15 @@ function Channels({
       ),
     },
   ];
-  return <DataTable bare label="Notification channels" columns={columns} rows={channels} rowKey={(c) => c.id} />;
+  return (
+    <DataTable
+      bare
+      label="Notification channels"
+      columns={columns}
+      rows={channels}
+      rowKey={(c) => c.id}
+    />
+  );
 }
 
 function ChannelForm({
@@ -290,43 +378,65 @@ function ChannelForm({
   const { kind, channel } = editing;
   const email = channel?.kind === "email" ? channel.settings : null;
   const hook = channel?.kind === "webhook" ? channel.settings : null;
+  const chat =
+    channel && isChat(channel.kind) ? (channel.settings as ChatSettings) : null;
   const [to, setTo] = useState(email?.to.join(", ") ?? "");
   const [host, setHost] = useState(email?.host ?? "");
   const [port, setPort] = useState(String(email?.port ?? 587));
   const [username, setUsername] = useState(email?.username ?? "");
   const [from, setFrom] = useState(email?.from ?? "");
   const [url, setUrl] = useState(hook?.url ?? "");
+  const [name, setName] = useState(chat?.name ?? "");
   const [secret, setSecret] = useState("");
   const [chosen, setChosen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const id = useId();
-  const kept = channel?.has_secret ? "Saved; leave empty to keep it" : undefined;
+  const kept = channel?.has_secret
+    ? "Saved; leave empty to keep it"
+    : undefined;
   const scopes = channelScopes(useMe(), customers, sites, channel);
   const wanted = chosen ?? (channel ? scopeValue(channel) : scopes[0]?.value);
   const scope = scopes.find((s) => s.value === wanted);
+  const service = isChat(kind) ? CHAT[kind] : null;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!scope) return;
     setBusy(true);
     setError(null);
-    const common = { secret: secret || null, customer_id: scope.customer_id, site_id: scope.site_id };
+    const common = {
+      secret: secret || null,
+      customer_id: scope.customer_id,
+      site_id: scope.site_id,
+    };
     const body: NotificationChannelRequest =
       kind === "email"
         ? {
             kind,
-            settings: { to: to.split(/[,;\s]+/).filter(Boolean), host, port: Number(port), username, from },
+            settings: {
+              to: to.split(/[,;\s]+/).filter(Boolean),
+              host,
+              port: Number(port),
+              username,
+              from,
+            },
             ...common,
           }
-        : { kind, settings: { url }, ...common };
+        : isChat(kind)
+          ? { kind, settings: { name }, ...common }
+          : { kind, settings: { url }, ...common };
     try {
       const saved = channel
         ? await api.updateNotificationChannel(channel.id, body)
         : await api.createNotificationChannel(body);
       onSaved(saved);
     } catch (e) {
-      setError(e instanceof ApiError && e.status === 400 ? e.message : describeError(e));
+      setError(
+        e instanceof ApiError && e.status === 400
+          ? e.message
+          : describeError(e),
+      );
       setBusy(false);
     }
   }
@@ -339,9 +449,13 @@ function ChannelForm({
     </label>
   );
   return (
-    <form className={styles.panel} onSubmit={(e) => void submit(e)} aria-labelledby={`${id}-title`}>
+    <form
+      className={styles.panel}
+      onSubmit={(e) => void submit(e)}
+      aria-labelledby={`${id}-title`}
+    >
       <h2 id={`${id}-title`} className={styles.sectionTitle}>
-        {channel ? "Edit" : "Add"} {kind === "email" ? "email" : "webhook"}
+        {channel ? "Edit" : "Add"} {kindName(kind)}
       </h2>
       {kind === "email" ? (
         <>
@@ -414,6 +528,34 @@ function ChannelForm({
             )}
           </div>
         </>
+      ) : service ? (
+        <>
+          {field(
+            "Webhook URL",
+            <input
+              className={fieldClass}
+              required={!channel}
+              autoComplete="off"
+              spellCheck={false}
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              placeholder={kept ?? service.placeholder}
+            />,
+            `${service.help} Stored on the server, never shown again.`,
+          )}
+          {field(
+            "Name (optional)",
+            <input
+              className={fieldClass}
+              autoComplete="off"
+              maxLength={80}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="#ops-alerts"
+            />,
+            "Tells this channel from others in the list here.",
+          )}
+        </>
       ) : (
         <>
           {field(
@@ -424,9 +566,9 @@ function ChannelForm({
               required
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://hooks.slack.com/services/…"
+              placeholder="https://hooks.example.com/monitorflow"
             />,
-            "Receives a JSON POST per event. Slack and Mattermost show its text as is.",
+            "Receives a JSON POST per event. Mattermost shows its text as is.",
           )}
           {field(
             "Signing secret (optional)",
@@ -448,7 +590,11 @@ function ChannelForm({
       {scopes.length > 1
         ? field(
             "Notify about",
-            <select className={fieldClass} value={wanted} onChange={(e) => setChosen(e.target.value)}>
+            <select
+              className={fieldClass}
+              value={wanted}
+              onChange={(e) => setChosen(e.target.value)}
+            >
               {scopes.map((s) => (
                 <option key={s.value} value={s.value}>
                   {s.label}
@@ -457,7 +603,9 @@ function ChannelForm({
             </select>,
             scope?.note,
           )
-        : scope?.value !== "everything" && <p className={styles.fieldNote}>{scope?.note}</p>}
+        : scope?.value !== "everything" && (
+            <p className={styles.fieldNote}>{scope?.note}</p>
+          )}
       <div className={styles.formFoot}>
         <Button type="submit" variant="k" disabled={busy || !scope}>
           {busy ? "Saving…" : "Save and send test"}

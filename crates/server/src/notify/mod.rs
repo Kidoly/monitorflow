@@ -1,10 +1,11 @@
-//! Notifications (ADR-0060): email and webhook channels, and the outbox
-//! triggers fill when incidents change, commands wait for approval or
+//! Notifications (ADR-0060): email, webhook and chat channels (ADR-0077),
+//! and the outbox triggers fill when incidents change, commands wait for approval or
 //! updates fail, [`backup`] when a backup fails, and the release check when
 //! a new version appears. The [`dispatcher`] delivers each event to every
 //! channel whose [`Coverage`] includes it (ADR-0078).
 
 pub mod backup;
+pub mod chat;
 pub mod dispatcher;
 pub mod message;
 pub mod send;
@@ -16,11 +17,14 @@ use serde_json::Value;
 use sqlx::{PgExecutor, Row};
 use uuid::Uuid;
 
+pub use chat::Service;
 pub use dispatcher::Dispatcher;
 pub use message::Event;
 
 /// Most recipients of one email channel.
 pub const MAX_RECIPIENTS: usize = 20;
+/// Longest name of a chat channel.
+pub const MAX_CHAT_NAME: usize = 80;
 /// The usual submission port, with STARTTLS.
 pub const DEFAULT_SMTP_PORT: u16 = 587;
 
@@ -53,12 +57,28 @@ pub struct Webhook {
     pub url: String,
 }
 
+/// A Slack, Teams or Discord channel as stored and shown. Its webhook URL
+/// is a credential, so it is in [`Channel::secret`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Chat {
+    /// Tells channels of one service apart; may be empty.
+    #[serde(default)]
+    pub name: String,
+    /// The webhook URL's host, set from the URL when it is saved.
+    #[serde(default)]
+    pub host: String,
+}
+
 /// The destination of a channel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Destination {
     Email(Email),
     Webhook(Webhook),
+    Slack(Chat),
+    Teams(Chat),
+    Discord(Chat),
 }
 
 impl Destination {
@@ -66,18 +86,36 @@ impl Destination {
         match self {
             Self::Email(_) => "email",
             Self::Webhook(_) => "webhook",
+            Self::Slack(_) => "slack",
+            Self::Teams(_) => "teams",
+            Self::Discord(_) => "discord",
+        }
+    }
+
+    /// The chat service of a chat channel, with its settings.
+    pub fn chat(&self) -> Option<(Service, &Chat)> {
+        match self {
+            Self::Slack(chat) => Some((Service::Slack, chat)),
+            Self::Teams(chat) => Some((Service::Teams, chat)),
+            Self::Discord(chat) => Some((Service::Discord, chat)),
+            Self::Email(_) | Self::Webhook(_) => None,
         }
     }
 
     /// Whether `other` sends to the same place, so a stored password or
     /// signing secret may stay with it. Recipients do not count: the
-    /// secret goes to the mail server, not to them.
+    /// secret goes to the mail server, not to them. A chat channel's URL is
+    /// its secret, so only the service and the host are here to compare: a
+    /// new URL always comes with the request that changes it.
     pub fn same_target(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Email(a), Self::Email(b)) => {
                 (&a.host, a.port, &a.username) == (&b.host, b.port, &b.username)
             }
             (Self::Webhook(a), Self::Webhook(b)) => a.url == b.url,
+            (Self::Slack(a), Self::Slack(b))
+            | (Self::Teams(a), Self::Teams(b))
+            | (Self::Discord(a), Self::Discord(b)) => a.host == b.host,
             _ => false,
         }
     }
@@ -88,7 +126,18 @@ impl Destination {
         match self {
             Self::Email(email) => normalize_email(email).map(Self::Email),
             Self::Webhook(webhook) => normalize_webhook(webhook).map(Self::Webhook),
+            Self::Slack(chat) => normalize_chat(chat).map(Self::Slack),
+            Self::Teams(chat) => normalize_chat(chat).map(Self::Teams),
+            Self::Discord(chat) => normalize_chat(chat).map(Self::Discord),
         }
+    }
+
+    /// The same destination with `host`, which comes from the checked URL.
+    pub fn with_chat_host(mut self, host: &str) -> Self {
+        if let Self::Slack(chat) | Self::Teams(chat) | Self::Discord(chat) = &mut self {
+            host.clone_into(&mut chat.host);
+        }
+        self
     }
 
     /// The settings column: the fields without the kind.
@@ -224,12 +273,21 @@ impl Coverage {
     }
 }
 
+fn normalize_chat(chat: Chat) -> Result<Chat, String> {
+    let name = chat.name.trim().to_owned();
+    if name.chars().count() > MAX_CHAT_NAME {
+        return Err(format!("Keep the name under {MAX_CHAT_NAME} characters."));
+    }
+    Ok(Chat { name, ..chat })
+}
+
 /// A channel as the dispatcher uses it.
 #[derive(Debug, Clone)]
 pub struct Channel {
     pub id: Uuid,
     pub destination: Destination,
-    /// The SMTP password or the webhook signing secret.
+    /// The SMTP password, the webhook signing secret or the chat webhook
+    /// URL.
     pub secret: Option<Secret>,
     pub coverage: Coverage,
     /// Delivered only to public addresses: someone other than a global
@@ -496,5 +554,15 @@ mod tests {
         assert!(hook("https://a/").same_target(&hook("https://a/")));
         assert!(!hook("https://a/").same_target(&hook("https://b/")));
         assert!(!hook("https://a/").same_target(&base));
+        let chat = |name: &str, host: &str| Chat {
+            name: name.into(),
+            host: host.into(),
+        };
+        let slack = Destination::Slack(chat("#ops", "hooks.slack.com"));
+        assert!(slack.same_target(&Destination::Slack(chat("#alerts", "hooks.slack.com"))));
+        assert!(!slack.same_target(&Destination::Slack(chat("#ops", "hooks.slack-gov.com"))));
+        assert!(!slack.same_target(&Destination::Discord(chat("#ops", "hooks.slack.com"))));
+        assert!(!slack.same_target(&hook("https://hooks.slack.com/")));
+        assert!(!hook("https://hooks.slack.com/").same_target(&slack));
     }
 }
