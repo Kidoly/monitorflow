@@ -120,6 +120,8 @@ pub struct ServerView {
     /// this or `site_offline_alerts` is `false`.
     pub offline_alerts: bool,
     pub site_offline_alerts: bool,
+    /// While a silence covers it, when the last one ends (ADR-0079).
+    pub silenced_until: Option<DateTime<Utc>>,
     /// Latest expiry among the agent's unrevoked certificates; `null` when
     /// it has none. Past dates mean every certificate has expired.
     pub cert_not_after: Option<DateTime<Utc>>,
@@ -180,6 +182,7 @@ const SELECT_SERVERS: &str = "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.
             s.os_family, s.os_version, s.package_updates, s.command_kinds, s.agent_version,
             s.created_at, s.last_seen_at,
             s.revoked_at, s.offline_alerts, si.offline_alerts AS site_offline_alerts,
+            silenced_until(s.id, NULL, s.site_id, si.customer_id) AS silenced_until,
             -- One probe of the partial unique index on open incidents.
             (SELECT count(*) FROM incidents i
              WHERE i.server_id = s.id AND i.state = 'open') AS open_incidents,
@@ -211,6 +214,7 @@ struct Row {
     revoked_at: Option<DateTime<Utc>>,
     offline_alerts: bool,
     site_offline_alerts: bool,
+    silenced_until: Option<DateTime<Utc>>,
     open_incidents: i64,
     cert_not_after: Option<DateTime<Utc>>,
 }
@@ -360,6 +364,7 @@ impl ServerView {
             open_incidents: row.open_incidents,
             offline_alerts: row.offline_alerts,
             site_offline_alerts: row.site_offline_alerts,
+            silenced_until: row.silenced_until,
             cert_not_after: row.cert_not_after,
         }
     }

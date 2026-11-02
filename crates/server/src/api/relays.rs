@@ -90,6 +90,8 @@ pub struct RelayView {
     /// this or `site_offline_alerts` is `false`.
     pub offline_alerts: bool,
     pub site_offline_alerts: bool,
+    /// While a silence covers it, when the last one ends (ADR-0079).
+    pub silenced_until: Option<DateTime<Utc>>,
 }
 
 /// Body of `GET /api/relays/{id}`.
@@ -119,6 +121,7 @@ const SELECT_RELAYS: &str = "SELECT r.id, r.peer_id, r.name, r.site_id, si.name 
             si.customer_id, c.name AS customer_name, r.created_at, r.last_seen_at,
             r.revoked_at, r.mirror_url, r.mirror_reported_at, r.relay_version,
             r.offline_alerts, si.offline_alerts AS site_offline_alerts,
+            silenced_until(NULL, r.id, r.site_id, si.customer_id) AS silenced_until,
             r.pending_names, r.pending_source,
             (SELECT max(ce.not_after) FROM certificates ce
              WHERE ce.peer_role = 'relay' AND ce.peer_id = r.peer_id
@@ -152,6 +155,7 @@ struct Row {
     relay_version: Option<String>,
     offline_alerts: bool,
     site_offline_alerts: bool,
+    silenced_until: Option<DateTime<Utc>>,
     pending_names: Option<Vec<String>>,
     pending_source: Option<String>,
     cert_not_after: Option<DateTime<Utc>>,
@@ -320,6 +324,7 @@ impl RelayView {
             relay_version: row.relay_version,
             offline_alerts: row.offline_alerts,
             site_offline_alerts: row.site_offline_alerts,
+            silenced_until: row.silenced_until,
             last_update,
         }
     }

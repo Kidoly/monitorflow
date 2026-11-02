@@ -186,6 +186,11 @@ impl CurrentUser {
         self.access.customers(|_| true)
     }
 
+    /// Customers whose every site the user may change, as a whole.
+    pub fn modifiable_customers(&self) -> Scope {
+        self.access.customers(Role::can_modify)
+    }
+
     /// Customers the user administers as a whole, where it may add sites.
     pub fn administered_customers(&self) -> Scope {
         self.access.customers(|role| role == Role::Administrator)

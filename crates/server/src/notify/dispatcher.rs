@@ -1,6 +1,7 @@
 //! Delivers the outbox: claims pending events, renders them, and sends
 //! each to every channel that wants it, a few tries per delivery. At most
-//! once: a claimed event is not sent again after a restart.
+//! once: a claimed event is not sent again after a restart. What a silence
+//! covers is held back instead of claimed (ADR-0079).
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ use super::backup;
 use super::chat::gather;
 use super::message::{render, Event, Message};
 use super::send::{deliver, http_client, public_http_client, SendError};
+use super::silence;
 use super::{channels, record_outcome, Channel};
 
 /// Time between two looks at the outbox.
@@ -110,21 +112,49 @@ impl Dispatcher {
         }
     }
 
-    /// Claims and delivers pending events; returns how many were claimed.
-    pub async fn pass(&self) -> Result<usize, sqlx::Error> {
-        let mut events: Vec<Event> = sqlx::query_as(
-            "UPDATE notification_outbox SET sent_at = now()
-             WHERE id IN (SELECT id FROM notification_outbox WHERE sent_at IS NULL
-                          ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED)
-             RETURNING id, event, customer_id, site_id, details, created_at",
+    /// Claims pending events a silence does not hold, and writes them as
+    /// sent. In one transaction, so a held event is never lost and nothing
+    /// slips past a silence between looking and claiming.
+    async fn claim(&self) -> Result<Vec<Event>, sqlx::Error> {
+        let now = chrono::Utc::now();
+        let mut tx = self.pool.begin().await?;
+        let pending: Vec<Event> = sqlx::query_as(
+            "SELECT id, event, customer_id, site_id, details, created_at FROM notification_outbox
+             WHERE sent_at IS NULL AND held_at IS NULL
+             ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED",
         )
         .bind(BATCH)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
+        let Some(oldest) = pending.iter().map(|e| e.created_at).min() else {
+            return Ok(Vec::new());
+        };
+        let silences = silence::load(&mut *tx, now, oldest).await?;
+        let mut events = Vec::with_capacity(pending.len());
+        for event in pending {
+            match silences.iter().find(|s| s.holds(&event, now)) {
+                Some(s) => silence::hold(&mut tx, &event, s.id, now).await?,
+                None => events.push(event),
+            }
+        }
+        let ids: Vec<i64> = events.iter().map(|e| e.id).collect();
+        sqlx::query("UPDATE notification_outbox SET sent_at = now() WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(events)
+    }
+
+    /// Claims and delivers pending events; returns how many were claimed.
+    /// What a silence released is sent by the next pass, once this one has
+    /// also held what was pending, so a release sees all of an incident.
+    pub async fn pass(&self) -> Result<usize, sqlx::Error> {
+        let events = self.claim().await?;
+        silence::release(&self.pool, chrono::Utc::now()).await?;
         if events.is_empty() {
             return Ok(0);
         }
-        events.sort_by_key(|e| e.id);
         let claimed = events.len();
         let oldest = chrono::Utc::now() - MAX_AGE;
         let (fresh, stale): (Vec<_>, Vec<_>) =

@@ -88,6 +88,11 @@ pub struct IncidentView {
     pub peak_value: f64,
     /// The threshold as it was when the incident opened.
     pub threshold: Value,
+    /// While open and covered by a silence, when the last one ends
+    /// (ADR-0079).
+    pub silenced_until: Option<DateTime<Utc>>,
+    /// Whether a silence ever held back a notification of it.
+    pub silenced: bool,
 }
 
 /// Body of `GET /api/incidents`.
@@ -102,7 +107,8 @@ pub struct IncidentList {
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct EventView {
     pub id: i64,
-    /// `opened`, `escalated`, `deescalated` or `resolved`.
+    /// `opened`, `escalated`, `deescalated`, `resolved`, or what a silence
+    /// did: `silenced` and `silence_ended` (ADR-0079).
     pub kind: String,
     /// Severity after the change; `null` once resolved.
     pub severity: Option<String>,
@@ -110,7 +116,8 @@ pub struct EventView {
     /// Sample time of the change, or the server clock without a sample.
     pub occurred_at: DateTime<Utc>,
     pub recorded_at: DateTime<Utc>,
-    /// For instance `{"reason": "threshold_removed"}`.
+    /// For instance `{"reason": "threshold_removed"}`, or `{"notified":
+    /// true}` when a silence ended.
     pub details: Value,
 }
 
@@ -142,7 +149,12 @@ const SELECT: &str = "SELECT i.id, i.server_id, i.relay_id,
                              COALESCE(s.hostname, r.name) AS hostname, si.id AS site_id,
                              si.name AS site_name, si.customer_id, i.metric, i.instance, i.severity, i.state, i.opened_at,
                              i.resolved_at, i.last_value, i.last_value_at, i.peak_value,
-                             i.threshold
+                             i.threshold,
+                             CASE WHEN i.state = 'open' THEN
+                                 silenced_until(i.server_id, i.relay_id, si.id, si.customer_id)
+                             END AS silenced_until,
+                             EXISTS (SELECT 1 FROM incident_events e
+                                     WHERE e.incident_id = i.id AND e.kind = 'silenced') AS silenced
                       FROM incidents i
                       LEFT JOIN servers s ON s.id = i.server_id
                       LEFT JOIN relays r ON r.id = i.relay_id
