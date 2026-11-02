@@ -294,7 +294,10 @@
 //! `hostname` (ADR-0072). `GET /api/incidents` takes optional `state` (`open`,
 //! `resolved`), `severity` (`warning`, `critical`), `server_id`,
 //! `site_id`, `from` and `to` (RFC 3339; incidents active at some point of
-//! the range), `limit` (1 to 500, default 100) and `cursor`. Open incidents
+//! the range), `group` (the incidents one notification told together, from
+//! its link; ADR-0080), `limit` (1 to 500, default 100) and `cursor`. The
+//! detail adds `notification_groups`, `{"id", "incidents", "created_at"}`
+//! of each such notification that told this one. Open incidents
 //! come first, then newest `opened_at` first; `next_cursor` works as for
 //! servers. Unknown parameters and bad values are 400. A server or site
 //! outside the user's scope gives an empty list, an incident outside it 404.

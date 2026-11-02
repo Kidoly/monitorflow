@@ -561,4 +561,20 @@ mod tests {
         assert_eq!(settle(&[&resolved], false), Some(3));
         assert_eq!(settle(&[&escalated, &resolved], false), Some(3));
     }
+
+    #[test]
+    fn a_release_counts_messages_not_rows() {
+        let budget = Budget {
+            messages: 4,
+            lines: 10,
+        };
+        let incidents = |counts: &[(Option<Uuid>, usize)]| counts.iter().copied().collect();
+        // One customer's 25 incidents are three group messages.
+        assert_eq!(budget.needs(&incidents(&[(Some(CUSTOMER), 25)]), 0), 3);
+        assert_eq!(budget.needs(&incidents(&[(Some(CUSTOMER), 1)]), 0), 1);
+        // Two customers never share one; other events and incidents of no
+        // customer go one each.
+        let two = incidents(&[(Some(CUSTOMER), 3), (Some(SITE), 3), (None, 2)]);
+        assert_eq!(budget.needs(&two, 1), 5);
+    }
 }

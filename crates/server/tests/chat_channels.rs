@@ -220,6 +220,7 @@ fn fast(pool: &PgPool) -> Dispatcher {
     Dispatcher::new(pool.clone(), "https://mf.example")
         .with_retries(vec![Duration::ZERO, Duration::ZERO])
         .without_pace()
+        .without_waits()
 }
 
 async fn events(pool: &PgPool, count: usize) {
@@ -584,7 +585,11 @@ db_tests! {
         let (url, fake) = service(Vec::new()).await;
         channel(&pool, Destination::Slack(chat()), &url).await;
         events(&pool, 2).await;
-        Dispatcher::new(pool.clone(), "https://mf.example").pass().await.unwrap();
+        Dispatcher::new(pool.clone(), "https://mf.example")
+            .without_waits()
+            .pass()
+            .await
+            .unwrap();
         let seen = fake.seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
         assert!(seen[1].2.duration_since(seen[0].2) >= Duration::from_secs(1));
