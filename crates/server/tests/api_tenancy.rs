@@ -159,6 +159,10 @@ struct Tenant {
     /// A customer-wide deny rule; the customer also has a remediation
     /// policy (ADR-0041).
     remediation_rule: Uuid,
+    /// An active silence of the server (ADR-0079).
+    silence: Uuid,
+    /// An active silence of the whole customer.
+    customer_silence: Uuid,
 }
 
 async fn tenant(pool: &PgPool, name: &str) -> Tenant {
@@ -312,7 +316,23 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .execute(pool)
     .await
     .unwrap();
+    let silence = "INSERT INTO silences (server_id, customer_id, starts_at, ends_at, reason)
+                   VALUES ($1, $2, now(), now() + interval '1 hour', 'x') RETURNING id";
+    let customer_silence = one(silence)
+        .bind(None::<Uuid>)
+        .bind(customer)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let silence = one(silence)
+        .bind(server)
+        .bind(None::<Uuid>)
+        .fetch_one(pool)
+        .await
+        .unwrap();
     Tenant {
+        silence,
+        customer_silence,
         remediation,
         pending,
         campaign,
@@ -1085,6 +1105,50 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 last.contains("site=\"site-a\"") && last.contains("extra_label=site=site-a"),
                 "{last}"
             );
+        }
+        ("GET", "/api/silences") => {
+            let body = ctx.call(method, path, None).await.1;
+            let mine = [a.silence, a.customer_silence];
+            let theirs = [b.silence, b.customer_silence];
+            assert!(mine.iter().all(|id| Ctx::mentions(&body, *id)), "{body}");
+            assert!(!theirs.iter().any(|id| Ctx::mentions(&body, *id)), "{body}");
+            for query in [
+                format!("server_id={}", b.server),
+                format!("relay_id={}", b.relay),
+                format!("site_id={}", b.site),
+            ] {
+                let uri = format!("{path}?{query}");
+                assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+            }
+        }
+        ("POST", "/api/silences") => {
+            let ends_at = chrono::Utc::now() + chrono::TimeDelta::hours(1);
+            for (scope, id) in [
+                ("server", b.server),
+                ("relay", b.relay),
+                ("site", b.site),
+                ("customer", b.customer),
+            ] {
+                let body = json!({
+                    "scope": scope, "target_id": id, "ends_at": ends_at, "reason": "x",
+                });
+                assert_eq!(
+                    ctx.status(method, path, Some(body)).await,
+                    not_found,
+                    "{scope}"
+                );
+            }
+            let body = json!({"scope": "all", "ends_at": ends_at, "reason": "x"});
+            assert_eq!(
+                ctx.status(method, path, Some(body)).await,
+                StatusCode::FORBIDDEN
+            );
+        }
+        ("POST", "/api/silences/{id}/end") => {
+            for id in [b.silence, b.customer_silence] {
+                let uri = path.replace("{id}", &id.to_string());
+                assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+            }
         }
         ("PUT", "/api/sites/{id}/agent-auto-update") => {
             let uri = path.replace("{id}", &b.site.to_string());

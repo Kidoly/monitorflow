@@ -47,6 +47,7 @@ import { RemovedPanel, RemovePeer } from "./RemovePeer";
 import { ServerCommandsTab } from "./ServerCommandsTab";
 import { ServerSensorsTab } from "./ServerSensorsTab";
 import { ServerUpdatesTab } from "./ServerUpdatesTab";
+import { SilenceBar } from "./Silences";
 
 /** Commands loaded at first; "Load more" adds pages of this size. */
 export const COMMANDS_PAGE = 50;
@@ -177,6 +178,11 @@ export function ServerPage({ id }: { id: string | null }) {
           osFamily={server.os_family}
           removedAt={server.revoked_at}
           canAdminister={administersCustomer(me, server.customer_id)}
+        />
+      )}
+      {!server.revoked_at && (
+        <SilenceBar
+          target={{ scope: "server", id: server.id, name: server.hostname, customerId: server.customer_id, siteId: server.site_id }}
         />
       )}
       <ServerFacts server={server} latestAgent={latestAgent} now={updatedAt} stale={stale} onChanged={refresh} />

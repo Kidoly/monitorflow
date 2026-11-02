@@ -121,7 +121,7 @@ fn incident_text(event: &str, details: &Value) -> String {
     if str_at(incident, &["metric"]) == Some("offline") {
         return match event {
             "incident.resolved" => match str_at(incident, &["reason"]) {
-                Some("muted") => format!("Resolved: offline alerts for {place} were muted"),
+                Some("muted") => format!("Resolved: offline alerts for {place} were turned off"),
                 _ => format!("Resolved: {place} is back online"),
             },
             _ => format!("{}: {place} is offline", capitalized(severity)),
@@ -166,6 +166,16 @@ fn update_text(details: &Value) -> String {
         }
         Some("self_update") => because(format!("Agent update failed on {}", place(details))),
         _ => because(format!("Package updates failed on {}", place(details))),
+    }
+}
+
+/// `text` when a silence held the event back until now (ADR-0079).
+fn after_silence(event: &str, text: String) -> String {
+    match event {
+        "incident.resolved" => format!("{text} (during a silence)"),
+        "approval.waiting" => format!("Still waiting after a silence. {text}"),
+        e if e.starts_with("incident.") => format!("Still open after a silence. {text}"),
+        _ => format!("During a silence: {text}"),
     }
 }
 
@@ -219,6 +229,10 @@ pub fn render(event: &Event, web_url: &str) -> Message {
             str_at(d, &["release", "running_version"]).unwrap_or("an older one")
         ),
         e => incident_text(e, d),
+    };
+    let text = match d.get("silence") {
+        Some(_) => after_silence(&event.event, text),
+        None => text,
     };
     let url = format!("{web_url}{}", path(event));
     let mut payload = Map::new();
@@ -354,7 +368,48 @@ mod tests {
         );
         assert_eq!(
             resolved(Some("muted")),
-            "Resolved: offline alerts for web-1 (paris) were muted"
+            "Resolved: offline alerts for web-1 (paris) were turned off"
+        );
+    }
+
+    #[test]
+    fn what_a_silence_held_back_says_so() {
+        let held = |kind: &str, mut details: Value| {
+            details["silence"] = json!({"ended_at": "2027-01-15T09:00:00Z"});
+            render(&event(kind, details), WEB)
+        };
+        let open = held(
+            "incident.opened",
+            incident("monitorflow_load", "critical", Some(4.0)),
+        );
+        assert_eq!(
+            open.text,
+            "Still open after a silence. Critical: load /var is 4 on web-1 (paris)"
+        );
+        assert_eq!(open.payload["silence"]["ended_at"], "2027-01-15T09:00:00Z");
+        assert_eq!(
+            held(
+                "incident.escalated",
+                incident("load", "critical", Some(4.0))
+            )
+            .text,
+            "Still open after a silence. Escalated to critical: load /var is 4 on web-1 (paris)"
+        );
+        assert_eq!(
+            held("incident.resolved", incident("load", "warning", None)).text,
+            "Resolved: load /var on web-1 (paris) (during a silence)"
+        );
+        assert_eq!(
+            held(
+                "approval.waiting",
+                json!({"approval": {"command": "uptime", "tier": "low_impact"}})
+            )
+            .text,
+            "Still waiting after a silence. Approval needed on the server: `uptime` (low impact)"
+        );
+        assert_eq!(
+            held("backup.failed", json!({"backup": {"error": "disk full"}})).text,
+            "During a silence: Backup of the server failed: disk full"
         );
     }
 

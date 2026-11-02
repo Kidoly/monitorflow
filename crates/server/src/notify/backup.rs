@@ -42,7 +42,7 @@ pub async fn record(pool: &PgPool, backups: &Backups) -> Result<bool, sqlx::Erro
     let done = sqlx::query(
         "INSERT INTO notification_outbox (event, details) VALUES ('backup.failed', $1)
          ON CONFLICT ((coalesce(details #>> '{backup,last_success_at}', '')))
-             WHERE event = 'backup.failed' DO NOTHING",
+             WHERE event = 'backup.failed' AND channel_id IS NULL DO NOTHING",
     )
     .bind(details)
     .execute(pool)

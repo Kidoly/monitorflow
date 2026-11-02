@@ -17,13 +17,26 @@ import { ButtonLink } from "@/components/ui/Button";
 import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
 import { EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
-import { StatusLabel } from "@/components/ui/StatusLabel";
+import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatDay, formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
 import styles from "./IncidentList.module.css";
 
 /** A threshold incident's value; offline ones have none. */
 const value = (i: Incident, v: number) => (isOffline(i) ? "—" : formatSensorValue(i.metric, v));
+
+/** Whether a silence keeps this incident quiet now, or did. */
+function SilencedSign({ incident, now }: { incident: Incident; now: Date }) {
+  if (incident.silenced_until) {
+    return (
+      <>
+        {" "}
+        <Label tone="neutral">Silenced</Label> <span className={styles.small}>until {formatDay(new Date(incident.silenced_until), now)}</span>
+      </>
+    );
+  }
+  return incident.silenced ? <span className={styles.small}> · was silenced</span> : null;
+}
 
 /** Incidents per "Load more". */
 export const PAGE_SIZE = 50;
@@ -135,7 +148,16 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
         </time>
       ),
     },
-    { key: "state", header: "State", cell: (i) => (i.resolved_at ? `Resolved ${formatSince(new Date(i.resolved_at), now)}` : "Open") },
+    {
+      key: "state",
+      header: "State",
+      cell: (i) => (
+        <>
+          {i.resolved_at ? `Resolved ${formatSince(new Date(i.resolved_at), now)}` : "Open"}
+          <SilencedSign incident={i} now={now} />
+        </>
+      ),
+    },
     {
       key: "duration",
       header: "Duration",

@@ -39,6 +39,7 @@ import { ConfirmRelayNames } from "./AddRelay";
 import { AdminLayout } from "./AdminLayout";
 import styles from "./AdminPages.module.css";
 import { OfflineAlerts } from "./OfflineAlerts";
+import { SilenceBar } from "./Silences";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
 import { CertificateCell, relayStatus } from "./RelayList";
 import { NewInstallKey } from "./TokensAdmin";
@@ -362,6 +363,11 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
         />
       )}
       {relay.pending_names && canAdminister && <ConfirmRelayNames relay={relay} onConfirmed={refresh} />}
+      {!relay.revoked_at && (
+        <SilenceBar
+          target={{ scope: "relay", id: relay.id, name: relay.peer_id, customerId: relay.customer_id, siteId: relay.site_id }}
+        />
+      )}
       <FactsBox columns={2} facts={facts} details={details} />
       <section className={styles.section} aria-labelledby="attached-title">
         <div className={styles.sectionHead}>

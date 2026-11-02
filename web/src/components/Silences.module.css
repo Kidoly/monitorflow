@@ -1,0 +1,29 @@
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.label {
+  color: var(--muted);
+}
+
+.lines {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 560px;
+}
+
+.intro {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--muted);
+}

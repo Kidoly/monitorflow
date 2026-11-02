@@ -66,6 +66,8 @@ export interface Server {
   /** Offline incidents of this one (ADR-0072); absent is on. Muted when this or `site_offline_alerts` is false. */
   offline_alerts?: boolean;
   site_offline_alerts?: boolean;
+  /** While a silence covers it, when the last one ends (ADR-0079). */
+  silenced_until?: string | null;
 }
 
 /** The certificate the CA issued last to an agent, revoked or not. */
@@ -393,6 +395,8 @@ export interface Relay {
   /** Offline incidents of this one (ADR-0072); absent is on. Muted when this or `site_offline_alerts` is false. */
   offline_alerts?: boolean;
   site_offline_alerts?: boolean;
+  /** While a silence covers it, when the last one ends (ADR-0079). */
+  silenced_until?: string | null;
 }
 
 /** A relay self-update (ADR-0055). */
@@ -499,6 +503,43 @@ export interface Incident {
   /** The worst value seen while open. */
   peak_value: number;
   threshold: ThresholdSnapshot;
+  /** While open and covered by a silence, when the last one ends (ADR-0079). */
+  silenced_until?: string | null;
+  /** Whether a silence ever held back a notification of it. */
+  silenced?: boolean;
+}
+
+/** What a silence covers (ADR-0079). */
+export type SilenceScope = "server" | "relay" | "site" | "customer" | "all";
+
+/** One active or upcoming silence of `GET /api/silences`. */
+export interface Silence {
+  id: string;
+  scope: SilenceScope;
+  /** Null for everything. */
+  target_id: string | null;
+  target_name: string | null;
+  site_id: string | null;
+  customer_id: string | null;
+  starts_at: string;
+  ends_at: string;
+  /** Started, as opposed to upcoming. */
+  active: boolean;
+  reason: string;
+  created_by_username: string | null;
+  created_at: string;
+  /** Whether this user may end it. */
+  can_end: boolean;
+}
+
+/** Body of `POST /api/silences`. */
+export interface SilenceRequest {
+  scope: SilenceScope;
+  target_id?: string;
+  /** Now when absent. */
+  starts_at?: string;
+  ends_at: string;
+  reason: string;
 }
 
 /** One page of incidents: open ones first, then newest first. */
@@ -507,8 +548,7 @@ export interface IncidentList {
   next_cursor: string | null;
 }
 
-export type IncidentEventKind =
-  "opened" | "escalated" | "deescalated" | "resolved";
+export type IncidentEventKind = "opened" | "escalated" | "deescalated" | "resolved" | "silenced" | "silence_ended";
 
 /** One change of an incident, as the engine made it. */
 export interface IncidentEvent {
@@ -1828,6 +1868,18 @@ export const api = {
         body: { enabled },
       },
     ),
+
+  /** Active and upcoming silences of what the user reads, or those covering one server, relay or site (ADR-0079). */
+  silences: (filter: { server_id?: string; relay_id?: string; site_id?: string }, signal?: AbortSignal) => {
+    const query = new URLSearchParams(filter).toString();
+    return request<{ silences: Silence[] }>(`/api/silences${query ? `?${query}` : ""}`, { signal });
+  },
+
+  /** Silences something for a while; operators of it. */
+  createSilence: (body: SilenceRequest) => request<Silence>("/api/silences", { method: "POST", body }),
+
+  /** Ends a silence now, or calls it off before it starts. */
+  endSilence: (id: string) => request<void>(`/api/silences/${encodeURIComponent(id)}/end`, { method: "POST" }),
 
   /** Creates the site `name` under `customerId`; customer administrators only. */
   createSite: (customerId: string, name: string) =>

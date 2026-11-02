@@ -98,6 +98,7 @@ describe("AppShell", () => {
       "MonitorFlowMF",
       "Fleet",
       "Incidents",
+      "Silences",
       "Mirrors",
       "Automatic updates",
       "Campaigns",

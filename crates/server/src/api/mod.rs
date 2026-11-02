@@ -58,6 +58,9 @@
 //! | POST | `/api/password-link/use` | password link | body `{"token", "password"}`; 200 [`Me`] and the session cookie; 400 for a short password, 410 for a dead link |
 //! | PUT | `/api/sites/{id}/agent-auto-update` | customer administrator | body `{"enabled": true, false or null}`; [`sites::SiteView`]; audited (ADR-0055) |
 //! | PUT | `/api/sites/{id}/offline-alerts`, `/api/servers/{id}/offline-alerts`, `/api/relays/{id}/offline-alerts` | modify | body and answer `{"enabled": bool}`: offline incidents on or muted; audited (ADR-0072) |
+//! | GET | `/api/silences` | any role | [`silences::SilenceList`]: active and upcoming silences of the user's scope, or with `server_id`, `relay_id` or `site_id` those covering it (ADR-0079) |
+//! | POST | `/api/silences` | modify the scope | body [`silences::CreateRequest`]; 201 [`silences::SilenceView`]; audited |
+//! | POST | `/api/silences/{id}/end` | modify the scope | 204: ended now, or called off before it started; 409 once over; audited |
 //! | POST | `/api/relays/{id}/update` | customer administrator | body [`relays::UpdateRequest`]; 202 with the relay command; 409 while one is in flight; audited (ADR-0055) |
 //! | POST | `/api/relays/{id}/names` | customer administrator | body [`relays::ConfirmNames`]; 204; 409 if it is not waiting, or a name is the server's or another site's relay's; audited (ADR-0066) |
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
@@ -536,6 +539,7 @@ pub mod servers;
 pub mod session;
 pub mod settings;
 pub mod setup;
+pub mod silences;
 pub mod sites;
 pub mod sources;
 pub mod thresholds;
@@ -734,6 +738,8 @@ pub fn router(state: ApiState) -> Router {
             "/api/sites/{id}/agent-auto-update",
             put(sites::set_agent_auto_update),
         )
+        .route("/api/silences", get(silences::list).post(silences::create))
+        .route("/api/silences/{id}/end", post(silences::end))
         .route("/api/sites/{id}/offline-alerts", put(offline_alerts::site))
         .route(
             "/api/servers/{id}/offline-alerts",

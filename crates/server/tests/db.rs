@@ -180,6 +180,7 @@ db_tests! {
                 "servers",
                 "sessions",
                 "setup_tokens",
+                "silences",
                 "sites",
                 "thresholds",
                 "user_roles",
