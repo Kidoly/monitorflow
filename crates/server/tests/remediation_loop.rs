@@ -35,6 +35,7 @@ use monitorflow_server::remediation::switch;
 use prost::Message;
 use rustls::pki_types::CertificateDer;
 use serde_json::Value;
+use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use support::Ca;
 use tempfile::TempDir;
@@ -93,18 +94,32 @@ impl TestAgent {
 }
 
 /// The server's stream service and command dispatcher over mTLS, with
-/// one customer, site, server and open disk alert.
+/// one customer, site, server and open disk alert. End each test with
+/// [`Harness::close`].
 struct Harness {
+    /// The test database, for the tasks the harness and tests start.
     pool: PgPool,
     commands: Commands,
     agent: TestAgent,
     customer: Uuid,
     alert: Uuid,
+    closed: bool,
     _dir: TempDir,
 }
 
 impl Harness {
-    async fn start(pool: &PgPool, script: &[(&str, Reply)]) -> Self {
+    async fn start(test_pool: &PgPool, script: &[(&str, Reply)]) -> Self {
+        // Spawned tasks get a pool of their own. A `#[sqlx::test]` pool
+        // borrows its connection permits from sqlx's master pool, 20 for
+        // the whole binary, and returns them only when its last clone
+        // drops. Tasks hold clones until the test's runtime goes, after
+        // sqlx has waited on the master pool to drop the database, so
+        // concurrent tests starved each other into `PoolTimedOut`.
+        let pool = &PgPoolOptions::new()
+            .max_connections(4)
+            .connect_with((*test_pool.connect_options()).clone())
+            .await
+            .unwrap();
         let customer: Uuid =
             sqlx::query_scalar("INSERT INTO customers (name) VALUES ('acme') RETURNING id")
                 .fetch_one(pool)
@@ -225,8 +240,16 @@ impl Harness {
             agent: TestAgent { seen, answer },
             customer,
             alert,
+            closed: false,
             _dir: dir,
         }
+    }
+
+    /// Closes the harness's pool once its tasks give their connections
+    /// back, so sqlx can drop the test database.
+    async fn close(mut self) {
+        self.pool.close().await;
+        self.closed = true;
     }
 
     /// A remediation loop on `provider`, running until stopped.
@@ -342,6 +365,14 @@ impl Harness {
             .fetch_one(&self.pool)
             .await
             .unwrap()
+    }
+}
+
+impl Drop for Harness {
+    fn drop(&mut self) {
+        if !self.closed && !std::thread::panicking() {
+            panic!("end the test with Harness::close");
+        }
     }
 }
 
@@ -544,6 +575,38 @@ async fn decide(pool: &PgPool, id: Uuid, verdict: Verdict) {
     tx.commit().await.unwrap();
 }
 
+/// Records, as each transaction that changes an incident's state commits,
+/// the incident's leases: a deferred trigger runs after the
+/// transaction's last statement, where polling from the test only
+/// sometimes lands between the commit and a later release.
+async fn record_leases_at_commit(pool: &PgPool) {
+    sqlx::raw_sql(
+        "CREATE TABLE leases_at_commit (
+             at bigserial PRIMARY KEY, state text NOT NULL, leases bigint NOT NULL);
+         CREATE FUNCTION record_leases() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             INSERT INTO leases_at_commit (state, leases)
+                 SELECT NEW.state, count(*) FROM remediation_loop_leases
+                 WHERE incident_id = NEW.id;
+             RETURN NULL;
+         END $$;
+         CREATE CONSTRAINT TRIGGER record_leases AFTER UPDATE OF state ON remediation_incidents
+             DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION record_leases();",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The states recorded by [`record_leases_at_commit`], with the leases
+/// held as each committed.
+async fn leases_at_commit(pool: &PgPool) -> Vec<(String, i64)> {
+    sqlx::query_as("SELECT state, leases FROM leases_at_commit ORDER BY at")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
 async fn last_escalation(h: &Harness) -> String {
     let events = h.events().await;
     of_kind(&events, "escalation")
@@ -559,6 +622,7 @@ db_tests! {
             ("df -h", Reply::Run { exit_code: 0, stdout: "/dev/sda1 97% /\npassword=hunter2Sup3r\n" }),
             ("systemctl restart rsyslog", Reply::Run { exit_code: 0, stdout: "" }),
         ];
+        record_leases_at_commit(&pool).await;
         let h = Harness::start(&pool, &script).await;
         // Low-impact commands run without approval on this customer.
         sqlx::query("INSERT INTO remediation_policies (customer_id, low_impact_auto) VALUES ($1, true)")
@@ -620,15 +684,22 @@ db_tests! {
 
         assert!(audit::verify(&pool, id).await.unwrap().valid);
         assert_eq!(h.leases().await, 0);
+        // The lease went in the transaction that closed the incident.
+        assert_eq!(leases_at_commit(&pool).await, [
+            ("running".to_owned(), 1),
+            ("resolved".to_owned(), 0),
+        ]);
         let kinds: Vec<String> = sqlx::query_scalar("SELECT DISTINCT kind FROM commands")
             .fetch_all(&pool)
             .await
             .unwrap();
         assert_eq!(kinds, [SHELL]);
+        h.close().await;
     }
 
     #[sqlx::test]
     async fn changes_wait_for_approval_until_the_alert_resolves(pool: PgPool) {
+        record_leases_at_commit(&pool).await;
         let h = Harness::start(&pool, &[]).await;
         let ai = Arc::new(MockProvider::new([Step::run(
             "nginx leaks memory",
@@ -670,6 +741,13 @@ db_tests! {
         assert_eq!(state, "cancelled");
         assert!(h.agent.seen().is_empty());
         assert_eq!(ai.requests().len(), 1);
+        // The lease went in the transaction that parked the incident.
+        assert_eq!(leases_at_commit(&pool).await, [
+            ("running".to_owned(), 1),
+            ("awaiting_approval".to_owned(), 0),
+            ("resolved".to_owned(), 0),
+        ]);
+        h.close().await;
     }
 
     #[sqlx::test]
@@ -683,11 +761,11 @@ db_tests! {
         let started = Arc::new(Mutex::new(Vec::new()));
         let (stop, stopped) = oneshot::channel::<()>();
         let supervisor = tokio::spawn(switch::supervise(
-            pool.clone(),
+            h.pool.clone(),
             Duration::from_millis(50),
             {
                 let (ai, started) = (ai.clone(), started.clone());
-                let (commands, pool) = (h.commands.clone(), pool.clone());
+                let (commands, pool) = (h.commands.clone(), h.pool.clone());
                 move |wanted: switch::Wanted| {
                     started.lock().unwrap().push(wanted.model.clone());
                     let remediation = Remediation::new(
@@ -755,6 +833,7 @@ db_tests! {
         supervisor.await.unwrap();
         assert_eq!(*started.lock().unwrap(), ["claude-a", "claude-b", "claude-b"]);
         assert_eq!(h.leases().await, 0);
+        h.close().await;
     }
 
     #[sqlx::test]
@@ -778,6 +857,7 @@ db_tests! {
             .await
             .unwrap();
         assert_eq!(commands, 0);
+        h.close().await;
     }
 
     #[sqlx::test]
@@ -793,6 +873,7 @@ db_tests! {
         assert_eq!(h.agent.seen(), ["df -h"]);
         assert_eq!(last_escalation(&h).await, "the command limit of 1 was reached");
         assert!(ai.requests()[0].system_prompt.contains("At most 1 commands"));
+        h.close().await;
     }
 
     #[sqlx::test]
@@ -808,6 +889,7 @@ db_tests! {
         let result = of_kind(&events, "command_result")[0];
         assert_eq!(result["exit_code"], Value::Null);
         assert!(result["error"].as_str().unwrap().starts_with("no result within"));
+        h.close().await;
     }
 
     #[sqlx::test]
@@ -828,6 +910,7 @@ db_tests! {
         .await
         .unwrap();
         assert_eq!((tier.as_str(), state.as_str()), ("high_impact", "expired"));
+        h.close().await;
     }
 
     #[sqlx::test]
@@ -839,6 +922,7 @@ db_tests! {
         h.wait_state("escalated").await;
         running.stop().await;
         assert!(last_escalation(&h).await.contains("sensor still breaches"));
+        h.close().await;
     }
 
     #[sqlx::test]
@@ -883,6 +967,7 @@ db_tests! {
         assert_eq!(last_escalation(&h).await, "the AI escalated: grow the volume");
         assert!(audit::verify(&pool, h.incident().await).await.unwrap().valid);
         assert_eq!(h.leases().await, 0);
+        h.close().await;
     }
 
     #[sqlx::test]
@@ -917,6 +1002,7 @@ db_tests! {
             "detail": "proxmox snapshot of VM 101",
         })]);
         assert_eq!(of_kind(&events, "command_queued")[1]["command"], "systemctl restart rsyslog");
+        h.close().await;
     }
 
     /// ADR-0076: a person is told why, and neither a snapshot nor a command
@@ -938,6 +1024,7 @@ db_tests! {
         assert!(of_kind(&h.events().await, "command_queued").is_empty());
         assert!(h.agent.seen().is_empty());
         assert!(last_escalation(&h).await.contains("MF_ALLOW_COMMANDS=1"));
+        h.close().await;
     }
 
     #[sqlx::test]
@@ -958,6 +1045,7 @@ db_tests! {
             last_escalation(&h).await,
             "the snapshot before the change failed: Proxmox task failed: VM is locked (backup)"
         );
+        h.close().await;
     }
 
     #[sqlx::test]
@@ -973,6 +1061,7 @@ db_tests! {
         assert_eq!(stub.calls().len(), 1);
         assert!(h.agent.seen().is_empty());
         assert_eq!(last_escalation(&h).await, "the duration limit of 2 s was reached");
+        h.close().await;
     }
 
     #[sqlx::test]
@@ -1007,6 +1096,7 @@ db_tests! {
         assert_eq!((command.as_str(), *exit_code), ("systemctl reload nginx", Some(0)));
         assert!(audit::verify(&pool, id).await.unwrap().valid);
         assert_eq!(h.leases().await, 0);
+        h.close().await;
     }
 
     #[sqlx::test]
@@ -1030,5 +1120,6 @@ db_tests! {
             CommandOutcome::NotRun { reason: "rejected by an approver: not during business hours".into() }
         );
         assert_eq!(last_escalation(&h).await, "the AI escalated: a human must restart nginx");
+        h.close().await;
     }
 }
