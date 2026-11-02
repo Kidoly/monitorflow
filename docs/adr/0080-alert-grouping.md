@@ -1,7 +1,7 @@
 # ADR-0080: Alert grouping
 
 Date: 2026-11-02
-Status: accepted; the person on call gets the same groups as a channel (ADR-0081)
+Status: accepted; the person on call gets the same groups as a channel (ADR-0081); follow-up steps are grouped the same way and wait for the same window (ADR-0082)
 
 ## Context
 

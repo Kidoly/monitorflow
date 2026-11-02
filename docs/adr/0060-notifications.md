@@ -1,7 +1,7 @@
 # ADR-0060: Email and webhook notifications
 
 Date: 2026-10-30
-Status: accepted; `update.available` added by ADR-0061; dedicated Slack, Teams and Discord channels added by ADR-0077; scopes, who manages channels and keeping secrets revised by ADR-0078; a silence holds events back for a while (ADR-0079); a customer's events are claimed at most once a minute and related incidents sent together, except to webhooks (ADR-0080)
+Status: accepted; `update.available` added by ADR-0061; dedicated Slack, Teams and Discord channels added by ADR-0077; scopes, who manages channels and keeping secrets revised by ADR-0078; a silence holds events back for a while (ADR-0079); a customer's events are claimed at most once a minute and related incidents sent together, except to webhooks (ADR-0080); a critical incident nobody acknowledges is told to the next step of a follow-up, whose messages are `incident.opened` with a `follow_up` object (ADR-0082)
 
 ## Context
 

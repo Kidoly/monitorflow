@@ -87,6 +87,12 @@
 //! | DELETE | `/api/sites/{id}/sources` | administrator of the customer | [`package_sources::SiteChange`], for `revert_sources` on the servers using a mirror |
 //! | GET | `/api/incidents` | any role | [`incidents::IncidentList`], see below |
 //! | GET | `/api/incidents/{id}` | read | [`incidents::IncidentDetail`]: the incident and its `events` |
+//! | POST | `/api/incidents/acknowledge` | modify each incident's site | body [`incidents::AcknowledgeRequest`] `{"incident_ids"}`; 200 [`incidents::Acknowledged`]: those this request acknowledged; 404 when one is not readable, 403 when one is read-only; audited (ADR-0082) |
+//! | GET | `/api/follow-up/policies` | any administrator | [`follow_up::PolicyList`]: the follow-ups of what the user administers, the default, and the schedules and channels a step may name |
+//! | PUT | `/api/follow-up/policies` | administrator of the place | body [`follow_up::PolicyRequest`]: the steps of one place, creating or replacing its follow-up; 200 [`follow_up::PolicyView`]; 403 for a place the user does not manage; audited |
+//! | DELETE | `/api/follow-up/policies/{id}` | administrator of the place | 204, the default applies again; 404 for one the user does not manage; audited |
+//! | POST | `/api/acknowledge-link` | acknowledge link | body `{"token"}`; [`follow_up::LinkView`]: whose link and what it acknowledges; changes nothing; 410 for a dead link |
+//! | POST | `/api/acknowledge-link/use` | acknowledge link | body `{"token"}`; 200 [`follow_up::LinkView`] after acknowledging as the link's person; 403 when they may acknowledge none of its incidents, 410 for a dead link; audited |
 //! | GET | `/api/remediation/incidents` | any role | [`remediation_incidents::IncidentList`], see below |
 //! | GET | `/api/remediation/incidents/{id}` | read | [`remediation_incidents::IncidentDetail`]: the incident, its `events` and `chain` |
 //! | GET | `/api/remediation/approvals` | any role | [`approvals::PendingList`], see below |
@@ -288,7 +294,7 @@
 //!
 //! # Incidents
 //!
-//! Read-only: the threshold engine owns incidents and their events
+//! The threshold engine owns incidents and their events
 //! (ADR-0019), and the offline rule those with `metric` `offline`, where a
 //! relay's has `relay_id` set, `server_id` null and the relay's name as
 //! `hostname` (ADR-0072). `GET /api/incidents` takes optional `state` (`open`,
@@ -301,6 +307,14 @@
 //! come first, then newest `opened_at` first; `next_cursor` works as for
 //! servers. Unknown parameters and bad values are 400. A server or site
 //! outside the user's scope gives an empty list, an incident outside it 404.
+//!
+//! The API changes incidents in one way: operators and above acknowledge
+//! them, saying they are on it (ADR-0082). Each incident carries
+//! `acknowledged_by`, `acknowledged_at` and `can_acknowledge`; the detail
+//! adds `acknowledged_via` (`page` or `link`) and `follow_up`: who is told
+//! next if nobody acknowledges (`state` `waiting`, `silenced` or
+//! `stopped`, `step`, `steps`, `next_at`, `next`, `stop_reason`, `policy`).
+//! The timeline adds `acknowledged` and `followed_up`.
 //!
 //! # Remediation incidents
 //!

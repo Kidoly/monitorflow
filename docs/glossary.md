@@ -37,6 +37,10 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Cover | Someone else is on call for a period, for a holiday or a swap: "alice covers bob" | override (on screen), substitute | `on_call_overrides` |
 | Gap | A period when the person on call cannot be told: no email or chat, disabled, removed, or no longer sees the place. The nearest administrators are told instead | hole, uncovered | `problem` |
 | How you are reached | A person's own email address and optional chat or webhook, used when they are on call. Each person sets their own | contact method, notification rule | `user_contacts` |
+| Acknowledge | Say "I'm on it" about an alert: nobody else is told next. "Acknowledged by alice at 03:12". From the alert's page, the alerts list, or the link in a message sent to you | ack, accept, claim, take | `incident_acknowledgements`, `acknowledge` |
+| Follow-up | Who is told next when nobody acknowledges a critical alert, step after step, for everything, a customer or a site. "bob will be told at 03:27 if nobody acknowledges" | escalation, escalate, escalation policy (an incident "escalated" got worse; the AI "escalates" to a person when it stops) | `follow_up_policies`, `incident_follow_ups` |
+| Step | One part of a follow-up: after a wait without acknowledgement, tell the person on call of a schedule, named people, channels or the administrators | level, tier (tiers are the risk of AI commands) | `steps` |
+| Only for follow-ups | A channel that hears only the alerts nobody acknowledged, when a follow-up step names it | escalation channel | `follow_up_only` |
 | Turn off | Stop watching: no more alerts of a threshold, or offline incidents of a machine, until turned back on | mute | `offline_alerts`, `muted`, `enabled` |
 
 Keep the technical word when it is the thing being asked for, such as a certificate, a mirror or a sudo rule, and put the rest under a "Details" disclosure. Certificate warnings speak of renewal, and appear only when it is late (under 2 days left) or failed.
