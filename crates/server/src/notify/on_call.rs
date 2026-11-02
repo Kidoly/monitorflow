@@ -8,7 +8,7 @@
 //! (no contact, disabled, removed, or no longer sees the place) it is a gap,
 //! and the nearest administrators of the place are told instead.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{
     DateTime, Datelike, Days, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeDelta,
@@ -276,6 +276,9 @@ pub struct Person {
     pub disabled: bool,
     /// `(administrator, customer_id, site_id)` per grant.
     pub grants: Vec<(bool, Option<Uuid>, Option<Uuid>)>,
+    /// `(customer_id, site_id)` of the grants of an operator or above,
+    /// who may acknowledge incidents there (ADR-0082).
+    pub operates: Vec<(Option<Uuid>, Option<Uuid>)>,
     pub email: Option<String>,
     /// Their chat or webhook destination, its secret, and whether only
     /// public addresses may be reached.
@@ -325,6 +328,7 @@ impl Directory {
                     username: row.try_get("username")?,
                     disabled: row.try_get("disabled")?,
                     grants: Vec::new(),
+                    operates: Vec::new(),
                     email: row.try_get("email")?,
                     chat,
                 },
@@ -339,6 +343,9 @@ impl Directory {
                 person
                     .grants
                     .push((role == "administrator", customer, site));
+                if role != "viewer" {
+                    person.operates.push((customer, site));
+                }
             }
         }
         let site_customer = sqlx::query_as("SELECT id, customer_id FROM sites")
@@ -379,6 +386,16 @@ impl Directory {
             .grants
             .iter()
             .any(|(_, customer, site)| self.grant_reaches(*customer, *site, coverage))
+    }
+
+    /// Whether `person` may acknowledge incidents of `coverage`: an operator
+    /// or above of all of it, enabled.
+    pub fn acknowledges(&self, person: &Person, coverage: Coverage) -> bool {
+        !person.disabled
+            && person
+                .operates
+                .iter()
+                .any(|(customer, site)| self.grant_reaches(*customer, *site, coverage))
     }
 
     /// Why `user` cannot be told about `coverage`, if they cannot. `mail`
@@ -592,17 +609,32 @@ pub fn contact_channels(person: &Person, mail: Option<&Channel>) -> Vec<Channel>
     out
 }
 
+/// People told of the events of a pass besides the schedules that cover
+/// them.
+#[derive(Debug, Default)]
+pub struct Extra {
+    /// Events copied for one person, which go to that person's chat or
+    /// webhook alone.
+    pub copies: HashMap<i64, Uuid>,
+    /// More people per event: a follow-up step's, or those told of an
+    /// incident before its resolution (ADR-0082). Those who cannot be told
+    /// about the event's place are skipped.
+    pub users: HashMap<i64, Vec<Uuid>>,
+    /// Events no schedule hears of: follow-up steps, told only to whom the
+    /// step names.
+    pub unrouted: HashSet<i64>,
+}
+
 /// Personal deliveries of one pass: each destination with the IDs of the
 /// events it takes, in order. `targets` are the events copied for one
-/// channel; `people` those copied for one person, which go to that
-/// person's chat or webhook alone.
+/// channel; `extra` adds people to the schedules'.
 pub fn deliveries(
     schedules: &[Schedule],
     directory: &Directory,
     channels: &[Channel],
     events: &[Event],
     targets: &HashMap<i64, Uuid>,
-    people: &HashMap<i64, Uuid>,
+    extra: &Extra,
     now: DateTime<Utc>,
 ) -> Vec<(Channel, Vec<i64>)> {
     let found: Vec<(&Schedule, Option<&Channel>, Vec<Uuid>)> = schedules
@@ -618,15 +650,30 @@ pub fn deliveries(
         if targets.contains_key(&event.id) {
             continue;
         }
-        if let Some(user) = people.get(&event.id) {
+        if let Some(user) = extra.copies.get(&event.id) {
             out.entry((*user, None)).or_default().push(event.id);
             continue;
         }
         // Per user, the narrowest schedule that names them chooses the
         // mail server.
         let mut told: HashMap<Uuid, (u8, Option<Uuid>)> = HashMap::new();
+        if let Some(users) = extra.users.get(&event.id) {
+            // The event's own place chooses: the narrowest of all.
+            let place = super::follow_up::place(event.customer_id, event.site_id);
+            let mail = mail_channel(channels, directory, place);
+            for user in users {
+                if directory
+                    .problem(Some(*user), place, mail.is_some())
+                    .is_none()
+                {
+                    told.insert(*user, (u8::MAX, mail.map(|m| m.id)));
+                }
+            }
+        }
         for (schedule, mail, users) in &found {
-            if !schedule.coverage.includes(event.customer_id, event.site_id) {
+            if extra.unrouted.contains(&event.id)
+                || !schedule.coverage.includes(event.customer_id, event.site_id)
+            {
                 continue;
             }
             let rank = narrowness(schedule.coverage);
@@ -906,6 +953,7 @@ mod tests {
             id,
             username: format!("u{}", id.as_u128()),
             disabled: false,
+            operates: grants.iter().map(|(_, c, s)| (*c, *s)).collect(),
             grants,
             email: email.then(|| format!("u{}@x.io", id.as_u128())),
             chat: None,
@@ -1090,7 +1138,10 @@ mod tests {
             event(6, Some(CUSTOMER), Some(SITE)),
         ];
         let targets = HashMap::from([(5, Uuid::from_u128(1))]);
-        let people = HashMap::from([(6, BOB)]);
+        let people = Extra {
+            copies: HashMap::from([(6, BOB)]),
+            ..Extra::default()
+        };
         let now = utc("2026-11-02T10:00:00Z");
         let out = deliveries(
             &[acme, everything, also],

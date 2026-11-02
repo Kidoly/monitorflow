@@ -5,11 +5,13 @@
 //! channel whose [`Coverage`] includes it (ADR-0078), unless a [`silence`]
 //! holds it back (ADR-0079), and sends related incidents as one [`group`]
 //! (ADR-0080). Whoever is [`on_call`] for the place hears of it in person
-//! too, grouped the same way (ADR-0081).
+//! too, grouped the same way (ADR-0081). When nobody acknowledges a
+//! critical incident, the next step of its [`follow_up`] is told (ADR-0082).
 
 pub mod backup;
 pub mod chat;
 pub mod dispatcher;
+pub mod follow_up;
 pub mod group;
 pub mod message;
 pub mod on_call;

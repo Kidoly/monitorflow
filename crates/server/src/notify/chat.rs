@@ -19,6 +19,8 @@ use super::message::{capitalized, str_at, Message};
 
 /// Label of the link to the interface.
 const OPEN: &str = "Open in MonitorFlow";
+/// The second button of a personal message (ADR-0082).
+const ACKNOWLEDGE: &str = "Acknowledge";
 
 /// Longest title; Slack's header block takes 150 characters.
 const TITLE: usize = 150;
@@ -324,6 +326,8 @@ struct Card {
     detail: Vec<String>,
     facts: Vec<(&'static str, String)>,
     link: String,
+    /// The link that acknowledges, in a personal message (ADR-0082).
+    acknowledge: Option<String>,
     tone: Tone,
     /// The whole text in one line, for notifications.
     summary: String,
@@ -378,6 +382,7 @@ impl Card {
             detail,
             facts,
             link: message.url.clone(),
+            acknowledge: str_at(p, &["acknowledge_url"]).map(str::to_owned),
             tone,
             summary,
         }
@@ -479,10 +484,15 @@ fn slack(card: &Card) -> Value {
             .collect();
         blocks.push(json!({ "type": "section", "fields": fields }));
     }
-    let link = within(&card.link, 2900, slack_char);
+    let link = within(&card.link, 1400, slack_char);
+    let mut links = format!("<{link}|{OPEN}>");
+    if let Some(acknowledge) = &card.acknowledge {
+        let acknowledge = within(acknowledge, 1400, slack_char);
+        links.push_str(&format!("   <{acknowledge}|{ACKNOWLEDGE}>"));
+    }
     blocks.push(json!({
         "type": "section",
-        "text": { "type": "mrkdwn", "text": format!("<{link}|{OPEN}>"), "verbatim": true },
+        "text": { "type": "mrkdwn", "text": links, "verbatim": true },
     }));
     json!({
         "text": within(&card.summary, 3000, slack_char),
@@ -531,6 +541,10 @@ fn teams(card: &Card) -> Value {
             "inlines": [name, teams_run(value)],
         }));
     }
+    let mut actions = vec![json!({ "type": "Action.OpenUrl", "title": OPEN, "url": card.link })];
+    if let Some(acknowledge) = &card.acknowledge {
+        actions.push(json!({ "type": "Action.OpenUrl", "title": ACKNOWLEDGE, "url": acknowledge }));
+    }
     json!({
         "type": "message",
         "attachments": [{
@@ -542,7 +556,7 @@ fn teams(card: &Card) -> Value {
                 "version": "1.2",
                 "msteams": { "width": "Full" },
                 "body": body,
-                "actions": [{ "type": "Action.OpenUrl", "title": OPEN, "url": card.link }],
+                "actions": actions,
             },
         }],
     })
@@ -567,8 +581,11 @@ fn discord(card: &Card) -> Value {
         Tone::Good => 0x002e_a043,
         Tone::Neutral => 0x003b_82f6,
     };
-    let link = card.link.replace('(', "%28").replace(')', "%29");
-    let link = format!("[{OPEN}]({link})");
+    let escape = |url: &str| url.replace('(', "%28").replace(')', "%29");
+    let mut link = format!("[{OPEN}]({})", escape(&card.link));
+    if let Some(acknowledge) = &card.acknowledge {
+        link.push_str(&format!(" · [{ACKNOWLEDGE}]({})", escape(acknowledge)));
+    }
     // Each line gets its share once escaped, so that a list keeps its
     // last line, which says how many more there are.
     let share = 3000 / card.detail.len().max(1);

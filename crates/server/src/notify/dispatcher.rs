@@ -6,7 +6,7 @@
 //! messages per channel (ADR-0080). Whoever is on call for an event's place
 //! gets the same messages in person (ADR-0081).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -18,12 +18,14 @@ use uuid::Uuid;
 
 use super::backup;
 use super::chat::gather;
+use super::follow_up;
 use super::group::{self, render_group, Group, Outgoing};
-use super::message::{render, Event, Message};
+use super::message::{render, with_acknowledge, Event, Message, ACKNOWLEDGE_PATH};
 use super::on_call;
 use super::send::{deliver, http_client, public_http_client, SendError};
 use super::silence::{self, Budget};
-use super::{channels, record_outcome, Channel, Destination, Service};
+use super::{channels, record_outcome, Channel, Coverage, Destination, Service};
+use crate::api::one_time::OneTimeToken;
 
 /// Time between two looks at the outbox.
 pub const POLL: Duration = Duration::from_secs(5);
@@ -230,6 +232,14 @@ impl Dispatcher {
             .bind(&ids)
             .execute(&mut *tx)
             .await?;
+        // What is sent now starts or stops follow-ups (ADR-0082); copies for
+        // one channel or person were told before.
+        let told: Vec<Event> = events
+            .iter()
+            .filter(|e| !targets.contains(e.id))
+            .cloned()
+            .collect();
+        follow_up::start(&mut tx, &told, now).await?;
         tx.commit().await?;
         Ok((events, targets))
     }
@@ -261,10 +271,15 @@ impl Dispatcher {
                 lines: a.lines.min(b.lines),
             });
         silence::release(&self.pool, chrono::Utc::now(), budget).await?;
-        if events.is_empty() {
+        // Follow-up steps due now (ADR-0082), with a customer's other
+        // events when it has some, or once its window is over.
+        let customers: HashSet<Uuid> = events.iter().filter_map(|e| e.customer_id).collect();
+        let due =
+            follow_up::take_due(&self.pool, chrono::Utc::now(), self.window, &customers).await?;
+        if events.is_empty() && due.is_empty() {
             return Ok(0);
         }
-        let claimed = events.len();
+        let claimed = events.len() + due.len();
         let oldest = chrono::Utc::now() - MAX_AGE;
         let (mut fresh, stale): (Vec<_>, Vec<_>) =
             events.into_iter().partition(|e| e.created_at >= oldest);
@@ -283,22 +298,68 @@ impl Dispatcher {
         let mut conn = self.pool.acquire().await?;
         let directory = on_call::Directory::load(&mut conn).await?;
         let schedules = on_call::schedules(&mut conn, now, None).await?;
-        drop(conn);
+        // Who each follow-up step tells, and who was told of what resolves
+        // now, which they hear too.
+        let mut extra = on_call::Extra {
+            copies: targets.people.clone(),
+            ..on_call::Extra::default()
+        };
+        let mut extra_channels: HashMap<i64, Vec<Uuid>> = HashMap::new();
+        let mut steps = Vec::with_capacity(due.len());
+        for step in &due {
+            let event = &step.event;
+            let told = follow_up::recipients(
+                &step.step,
+                &schedules,
+                &directory,
+                &channels,
+                (event.customer_id, event.site_id),
+                now,
+            );
+            extra.unrouted.insert(event.id);
+            extra.users.insert(event.id, told.users.clone());
+            extra_channels.insert(event.id, told.channels.clone());
+            steps.push((event, told));
+        }
+        let resolved: HashMap<Uuid, i64> = fresh
+            .iter()
+            .filter(|e| e.event == "incident.resolved")
+            .filter_map(|e| Some((incident_id(e)?, e.id)))
+            .collect();
+        if !resolved.is_empty() {
+            let ids: Vec<Uuid> = resolved.keys().copied().collect();
+            for (incident, told) in follow_up::told_before(&mut *conn, &ids).await? {
+                let id = resolved[&incident];
+                extra.users.insert(id, told.users);
+                extra_channels.insert(id, told.channels);
+            }
+        }
+        for (event, told) in &steps {
+            let names = follow_up::names(told, &directory, &channels);
+            follow_up::record_step(&mut conn, event, &names).await?;
+        }
+        fresh.extend(due.into_iter().map(|d| d.event));
         let people = on_call::deliveries(
             &schedules,
             &directory,
             &channels,
             &fresh,
             &targets.channels,
-            &targets.people,
+            &extra,
             now,
         );
         let mut groups = Groups::default();
+        let mut links = Links::default();
+        let mut told: HashMap<Uuid, follow_up::Told> = HashMap::new();
         let mut work = Vec::new();
         for channel in channels {
             let events: Vec<&Event> = fresh
                 .iter()
-                .filter(|e| channel.coverage.includes(e.customer_id, e.site_id))
+                .filter(|e| match extra_channels.get(&e.id) {
+                    Some(named) if named.contains(&channel.id) => true,
+                    _ if extra.unrouted.contains(&e.id) => false,
+                    _ => channel.coverage.includes(e.customer_id, e.site_id),
+                })
                 .filter(|e| !targets.people.contains_key(&e.id))
                 .filter(|e| {
                     targets
@@ -310,21 +371,47 @@ impl Dispatcher {
             if events.is_empty() {
                 continue;
             }
+            for event in events.iter().filter(|e| extra.unrouted.contains(&e.id)) {
+                if let Some(incident) = incident_id(event) {
+                    told.entry(incident).or_default().channels.push(channel.id);
+                }
+            }
             let messages = self.messages(&channel, &events, &mut groups);
             work.push((channel, messages));
         }
         // People on call get what a channel of their schedule's place gets:
         // the same groups, with the same IDs, or one request per event to a
-        // webhook.
+        // webhook, and a link that acknowledges what they may.
         for (channel, ids) in people {
             let events: Vec<&Event> = fresh.iter().filter(|e| ids.contains(&e.id)).collect();
-            let messages = self.messages(&channel, &events, &mut groups);
+            for event in events.iter().filter(|e| problem(e)) {
+                if let Some(incident) = incident_id(event) {
+                    told.entry(incident).or_default().users.push(channel.id);
+                }
+            }
+            let mut messages = self.messages(&channel, &events, &mut groups);
+            if let Some(person) = directory.people.get(&channel.id) {
+                for message in &mut messages {
+                    let incidents = acknowledgeable(message, &events, person, &directory);
+                    if !incidents.is_empty() {
+                        let url = links.add(person.id, incidents, &self.web_url);
+                        *message = with_acknowledge(std::mem::take(message), &url);
+                    }
+                }
+            }
             work.push((channel, messages));
         }
-        // Before sending, so that the links work; a failure costs the list,
-        // not the messages.
+        for (incident, told) in &told {
+            follow_up::record_told(&mut conn, *incident, told, now).await?;
+        }
+        drop(conn);
+        // Before sending, so that the links work; a failure costs the list
+        // or the links, not the messages.
         if let Err(error) = groups.save(&self.pool).await {
             tracing::warn!(%error, "could not record notification groups");
+        }
+        if let Err(error) = links.save(&self.pool, now).await {
+            tracing::warn!(%error, "could not record acknowledge links");
         }
         let mut tasks = JoinSet::new();
         for (channel, messages) in work {
@@ -512,6 +599,93 @@ impl Groups {
         }
         tx.commit().await
     }
+}
+
+/// The links of a pass that acknowledge incidents from a personal message
+/// (ADR-0082), each for one person and the incidents of one message.
+#[derive(Default)]
+struct Links {
+    /// Hash of the secret, user, incidents.
+    rows: Vec<(Vec<u8>, Uuid, Vec<Uuid>)>,
+}
+
+impl Links {
+    /// A new link for `user` to acknowledge `incidents`, under `web_url`.
+    fn add(&mut self, user: Uuid, incidents: Vec<Uuid>, web_url: &str) -> String {
+        let token = OneTimeToken::generate();
+        self.rows.push((token.hash(), user, incidents));
+        token.url(web_url, ACKNOWLEDGE_PATH)
+    }
+
+    async fn save(
+        &self,
+        pool: &PgPool,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), sqlx::Error> {
+        if self.rows.is_empty() {
+            return Ok(());
+        }
+        let mut tx = pool.begin().await?;
+        for (hash, user, incidents) in &self.rows {
+            sqlx::query(
+                "INSERT INTO acknowledge_links (token_hash, user_id, incident_ids, created_at,
+                                                expires_at)
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(hash)
+            .bind(user)
+            .bind(incidents)
+            .bind(now)
+            .bind(now + follow_up::LINK_LIFETIME)
+            .execute(&mut *tx)
+            .await?;
+        }
+        sqlx::query("DELETE FROM acknowledge_links WHERE expires_at < $1")
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await
+    }
+}
+
+fn incident_id(event: &Event) -> Option<Uuid> {
+    event
+        .event
+        .starts_with("incident.")
+        .then(|| event.details["incident"]["id"].as_str()?.parse().ok())
+        .flatten()
+}
+
+/// Whether `event` tells of an incident still a problem: opened or worse,
+/// or a follow-up step.
+fn problem(event: &Event) -> bool {
+    matches!(
+        event.event.as_str(),
+        "incident.opened" | "incident.escalated"
+    )
+}
+
+/// The incidents `message` tells as problems that `person` may
+/// acknowledge, from `events`, the ones it was rendered from.
+fn acknowledgeable(
+    message: &Message,
+    events: &[&Event],
+    person: &on_call::Person,
+    directory: &on_call::Directory,
+) -> Vec<Uuid> {
+    let rows = group::rows(&message.payload);
+    let mut incidents: Vec<Uuid> = events
+        .iter()
+        .filter(|e| rows.contains(&e.id) && problem(e))
+        .filter(|e| {
+            e.site_id
+                .is_some_and(|site| directory.acknowledges(person, Coverage::Site(site)))
+        })
+        .filter_map(|e| incident_id(e))
+        .collect();
+    incidents.sort();
+    incidents.dedup();
+    incidents
 }
 
 /// Adds to each relay's offline incident how many servers are behind it,

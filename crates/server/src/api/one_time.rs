@@ -1,5 +1,5 @@
-//! The secret of a one-time link: the setup link (ADR-0071) and password
-//! links (ADR-0059). Only its SHA-256 is stored.
+//! The secret of a one-time link: the setup link (ADR-0071), password
+//! links (ADR-0059) and acknowledge links (ADR-0082). Only its SHA-256 is stored.
 
 use std::fmt;
 
@@ -20,7 +20,7 @@ impl fmt::Debug for OneTimeToken {
 }
 
 impl OneTimeToken {
-    pub(super) fn generate() -> Self {
+    pub(crate) fn generate() -> Self {
         let mut bytes = [0u8; TOKEN_BYTES];
         SystemRandom::new()
             .fill(&mut bytes)
@@ -29,7 +29,7 @@ impl OneTimeToken {
     }
 
     /// Accepts only the exact format [`OneTimeToken::generate`] produces.
-    pub(super) fn parse(value: &str) -> Option<Self> {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
         let valid = value.len() == 2 * TOKEN_BYTES
             && value
                 .bytes()
@@ -37,7 +37,7 @@ impl OneTimeToken {
         valid.then(|| Self(value.to_owned()))
     }
 
-    pub(super) fn hash(&self) -> Vec<u8> {
+    pub(crate) fn hash(&self) -> Vec<u8> {
         digest(&SHA256, self.0.as_bytes()).as_ref().to_vec()
     }
 

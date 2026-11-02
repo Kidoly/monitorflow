@@ -515,6 +515,7 @@ pub mod campaigns;
 pub mod commands;
 pub mod customers;
 mod error;
+pub mod follow_up;
 mod health;
 pub mod incidents;
 pub mod install_keys;
@@ -523,7 +524,7 @@ pub mod mirrors;
 pub mod notifications;
 pub mod offline_alerts;
 pub mod on_call;
-mod one_time;
+pub(crate) mod one_time;
 pub mod package_sources;
 pub mod packages;
 pub mod password;
@@ -833,6 +834,14 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/mirrors/{id}/sync", post(mirrors::sync))
         .route("/api/mirrors/{id}/snapshots", post(mirrors::snapshot))
         .route("/api/incidents", get(incidents::list))
+        .route("/api/incidents/acknowledge", post(incidents::acknowledge))
+        .route(
+            "/api/follow-up/policies",
+            get(follow_up::list).put(follow_up::save),
+        )
+        .route("/api/follow-up/policies/{id}", delete(follow_up::delete))
+        .route("/api/acknowledge-link", post(follow_up::inspect_link))
+        .route("/api/acknowledge-link/use", post(follow_up::use_link))
         .route("/api/incidents/{id}", get(incidents::detail))
         .route(
             "/api/remediation/incidents",

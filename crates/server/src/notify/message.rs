@@ -9,6 +9,10 @@ use uuid::Uuid;
 /// The page of notification settings, under the web interface's URL.
 pub const SETTINGS_PATH: &str = "/admin/notifications/";
 
+/// The page a personal message's link opens to acknowledge (ADR-0082); the
+/// secret follows in the fragment.
+pub const ACKNOWLEDGE_PATH: &str = "/acknowledge/";
+
 /// Version of the webhook payload; fields are only ever added.
 pub const PAYLOAD_VERSION: u32 = 1;
 
@@ -44,7 +48,7 @@ impl Event {
 }
 
 /// An event rendered for delivery.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Message {
     /// Email subject.
     pub subject: String,
@@ -198,6 +202,15 @@ fn after_silence(event: &str, text: String) -> String {
     }
 }
 
+/// "Not acknowledged after 15 minutes. ": what a follow-up step adds before
+/// the text (ADR-0082), for the minutes since the first message.
+pub(super) fn not_acknowledged(minutes: i64) -> String {
+    match minutes {
+        1 => "Not acknowledged after 1 minute. ".into(),
+        n => format!("Not acknowledged after {n} minutes. "),
+    }
+}
+
 /// The page that shows the event, under `web_url`.
 fn path(event: &Event) -> String {
     let d = &event.details;
@@ -222,7 +235,7 @@ fn path(event: &Event) -> String {
 }
 
 /// The event in one line, without what a silence adds.
-pub(super) fn event_text(event: &Event) -> String {
+pub fn event_text(event: &Event) -> String {
     let d = &event.details;
     match event.event.as_str() {
         "test" => "Test notification from MonitorFlow: this channel works.".to_owned(),
@@ -295,6 +308,10 @@ pub fn render(event: &Event, web_url: &str) -> Message {
         Some(_) => after_silence(&event.event, text),
         None => text,
     };
+    let text = match d["follow_up"]["minutes"].as_i64() {
+        Some(minutes) => format!("{}{text}", not_acknowledged(minutes)),
+        None => text,
+    };
     let url = format!("{web_url}{}", path(event));
     let mut payload = Map::new();
     payload.insert("version".into(), PAYLOAD_VERSION.into());
@@ -318,6 +335,20 @@ pub fn render(event: &Event, web_url: &str) -> Message {
         payload: Value::Object(payload),
         lines: Vec::new(),
     }
+}
+
+/// Adds the link that acknowledges what `message` tells (ADR-0082): in the
+/// webhook payload as `acknowledge_url`, under the link of an email, and as
+/// a second button of a chat card.
+pub fn with_acknowledge(mut message: Message, url: &str) -> Message {
+    message.payload["acknowledge_url"] = url.into();
+    let link = format!("{}\n", message.url);
+    message.body = message.body.replacen(
+        &link,
+        &format!("{link}\nAcknowledge, to say you are on it: {url}\n"),
+        1,
+    );
+    message
 }
 
 #[cfg(test)]

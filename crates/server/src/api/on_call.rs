@@ -380,7 +380,7 @@ async fn views(
 /// The users `user` may put on a schedule for `coverage`: those with a
 /// grant on its site or its customer, and, for a global administrator,
 /// those with a global grant. Disabled users are left out.
-async fn candidates(
+pub(super) async fn candidates(
     db: impl PgExecutor<'_>,
     user: &CurrentUser,
     coverage: Coverage,
@@ -419,7 +419,7 @@ async fn candidates(
 
 /// The coverage of a request's columns, which `user` must manage: 403
 /// before any lookup otherwise, as for channels.
-fn coverage_of(
+pub(super) fn coverage_of(
     user: &CurrentUser,
     customer_id: Option<Uuid>,
     site_id: Option<Uuid>,
@@ -1112,6 +1112,7 @@ mod tests {
             username: name.into(),
             disabled: false,
             grants: vec![(false, Some(customer), None)],
+            operates: Vec::new(),
             email: None,
             chat: Some((
                 Destination::Webhook(crate::notify::Webhook {
