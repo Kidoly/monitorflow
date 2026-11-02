@@ -113,9 +113,9 @@ Reach people outside the web interface. Email and webhook channels shipped in Ph
 - [x] Slack, Teams and Discord channels.
 - [x] Routing per customer and site.
 - [x] Silences.
-- [ ] Alert grouping.
+- [x] Alert grouping.
 - [ ] Escalation.
-- [ ] PagerDuty-style on-call.
+- [x] PagerDuty-style on-call.
 
 ## Phase 11 — Windows parity
 
