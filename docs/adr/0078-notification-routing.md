@@ -1,7 +1,7 @@
 # ADR-0078: Notification routing per customer and site
 
 Date: 2026-11-02
-Status: accepted
+Status: accepted; on-call schedules cover places the same way (ADR-0081)
 
 ## Context
 
