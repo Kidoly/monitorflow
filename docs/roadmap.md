@@ -114,7 +114,7 @@ Reach people outside the web interface. Email and webhook channels shipped in Ph
 - [x] Routing per customer and site.
 - [x] Silences.
 - [x] Alert grouping.
-- [ ] Escalation.
+- [x] Escalation.
 - [x] PagerDuty-style on-call.
 
 ## Phase 11 — Windows parity
