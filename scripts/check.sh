@@ -5,4 +5,10 @@ cd "$(dirname "$0")/.."
 scripts/check-numbers.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+# sqlx names test databases after the test alone, so two checkouts
+# testing against one PostgreSQL drop each other's databases: take turns.
+if command -v flock >/dev/null; then
+    flock "${TMPDIR:-/tmp}/monitorflow-db-tests.lock" cargo test --workspace
+else
+    cargo test --workspace
+fi

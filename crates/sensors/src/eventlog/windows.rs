@@ -324,7 +324,6 @@ impl Sensor for EventLogSensor {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::process::Command;
 
     use super::*;
     use crate::registry::{build_local, Local};
@@ -339,24 +338,44 @@ mod tests {
         (samples[0].value, samples[1].value)
     }
 
-    /// Writes an Application event with `eventcreate`, provider
-    /// `MonitorFlowTest`, as an administrator (the CI runner is one).
+    /// Writes an Application event from provider `MonitorFlowTest`. The
+    /// source stays unregistered: registering one under HKLM, as
+    /// `eventcreate` does on first use, is refused now and then on the CI
+    /// runner ("Access is denied"). Its events keep the message as data,
+    /// which the sensor matches in the event's XML.
     fn write_event(id: u16, message: &str) {
-        let status = Command::new("eventcreate")
-            .args([
-                "/L",
-                "APPLICATION",
-                "/T",
-                "ERROR",
-                "/SO",
-                "MonitorFlowTest",
-                "/ID",
-            ])
-            .arg(id.to_string())
-            .args(["/D", message])
-            .output()
-            .unwrap();
-        assert!(status.status.success(), "{status:?}");
+        use windows_sys::Win32::System::EventLog::{
+            DeregisterEventSource, RegisterEventSourceW, ReportEventW, EVENTLOG_ERROR_TYPE,
+        };
+        let source = wide("MonitorFlowTest");
+        let message = wide(message);
+        let strings = [message.as_ptr()];
+        // SAFETY: both strings are NUL-terminated UTF-16 that outlive the
+        // calls, `strings` holds the one pointer announced, and there is no
+        // SID or raw data. The handle is used only between a successful
+        // RegisterEventSourceW and its DeregisterEventSource.
+        unsafe {
+            let log = RegisterEventSourceW(std::ptr::null(), source.as_ptr());
+            assert!(
+                !log.is_null(),
+                "RegisterEventSourceW: {}",
+                io::Error::last_os_error()
+            );
+            let written = ReportEventW(
+                log,
+                EVENTLOG_ERROR_TYPE,
+                0,
+                id.into(),
+                std::ptr::null_mut(),
+                1,
+                0,
+                strings.as_ptr(),
+                std::ptr::null(),
+            );
+            let error = io::Error::last_os_error();
+            DeregisterEventSource(log);
+            assert!(written != 0, "ReportEventW: {error}");
+        }
     }
 
     #[tokio::test]

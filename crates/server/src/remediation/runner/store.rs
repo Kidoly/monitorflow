@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde_json::json;
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{PgExecutor, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::remediation::audit::{self, Actor, AuditError, IncidentState, NewEvent};
@@ -128,9 +128,11 @@ pub async fn acquire(
     Ok(done.rows_affected() == 1)
 }
 
-/// Extends `holder`'s lease; `false` when it lost it.
+/// Extends `holder`'s lease; `false` when it lost it. In a transaction,
+/// the lease row stays locked until it ends: a holder taking the lease
+/// once expired waits for the commit.
 pub async fn renew(
-    pool: &PgPool,
+    executor: impl PgExecutor<'_>,
     incident: Uuid,
     holder: Uuid,
     ttl: Duration,
@@ -142,14 +144,16 @@ pub async fn renew(
     .bind(incident)
     .bind(holder)
     .bind(ttl.as_secs_f64())
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(done.rows_affected() == 1)
 }
 
-/// Gives up `holder`'s leases, of `incident` or of every incident.
+/// Gives up `holder`'s leases, of `incident` or of every incident. In
+/// the transaction that parks or closes an incident, so its new state is
+/// never seen with a lease.
 pub async fn release(
-    pool: &PgPool,
+    executor: impl PgExecutor<'_>,
     incident: Option<Uuid>,
     holder: Uuid,
 ) -> Result<(), sqlx::Error> {
@@ -159,7 +163,7 @@ pub async fn release(
     )
     .bind(incident)
     .bind(holder)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }

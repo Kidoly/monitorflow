@@ -36,6 +36,9 @@ use crate::win;
 use crate::{Sample, Sensor, SensorError};
 
 /// Variables passed from the agent's environment; nothing else is.
+/// Without `PSModulePath`, Windows PowerShell rebuilds the module path
+/// and searches every installed module for the commands a script uses,
+/// on every run: 18 to 33 s for a `Write-Output` on the CI runner.
 const ENV: &[&str] = &[
     "SystemRoot",
     "SystemDrive",
@@ -57,6 +60,7 @@ const ENV: &[&str] = &[
     "LOCALAPPDATA",
     "TEMP",
     "TMP",
+    "PSModulePath",
 ];
 
 /// How a checked script runs.
@@ -319,6 +323,12 @@ mod tests {
             "{got:?}"
         );
         assert!(samples.iter().all(|s| s.labels["script"] == "check.ps1"));
+        // Seconds with `PSModulePath`, never under 18 without it on the runner.
+        let duration = samples
+            .iter()
+            .find(|s| s.sensor == "duration_seconds")
+            .unwrap();
+        assert!(duration.value < 10.0, "{samples:?}");
     }
 
     #[tokio::test]

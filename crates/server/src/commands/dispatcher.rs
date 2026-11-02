@@ -210,7 +210,9 @@ impl Dispatcher {
                 return;
             }
         };
-        if row.state == State::Queued {
+        // The agent may leave between the registry check and the send.
+        let fresh = row.state == State::Queued;
+        if fresh {
             match self.store.mark_sent(row.id).await {
                 Ok(true) => {}
                 Ok(false) => return,
@@ -225,6 +227,10 @@ impl Dispatcher {
         if self.send(peer_id, &row).await {
             self.delivered
                 .insert(peer_id.to_owned(), (peer.connection, row.id));
+        } else if fresh {
+            if let Err(error) = self.store.unmark_sent(row.id).await {
+                tracing::warn!(agent_id = peer_id, command_id = %row.id, %error, "could not return an unsent command to the queue; it is sent again");
+            }
         }
     }
 
