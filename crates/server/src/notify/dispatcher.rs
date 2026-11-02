@@ -278,7 +278,7 @@ impl Dispatcher {
         // The person on call is whoever it is now, as this pass sends:
         // every event of the pass goes to the same people.
         let now = chrono::Utc::now();
-        let schedules = on_call::schedules(&mut conn, now).await?;
+        let schedules = on_call::schedules(&mut conn, now, None).await?;
         drop(conn);
         let people = on_call::deliveries(
             &schedules,

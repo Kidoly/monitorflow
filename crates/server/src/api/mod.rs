@@ -522,6 +522,7 @@ pub mod metrics;
 pub mod mirrors;
 pub mod notifications;
 pub mod offline_alerts;
+pub mod on_call;
 mod one_time;
 pub mod package_sources;
 pub mod packages;
@@ -742,6 +743,28 @@ pub fn router(state: ApiState) -> Router {
             put(sites::set_agent_auto_update),
         )
         .route("/api/silences", get(silences::list).post(silences::create))
+        .route(
+            "/api/on-call/schedules",
+            get(on_call::list).post(on_call::create),
+        )
+        .route(
+            "/api/on-call/schedules/{id}",
+            put(on_call::update).delete(on_call::delete),
+        )
+        .route(
+            "/api/on-call/schedules/{id}/overrides",
+            post(on_call::add_override),
+        )
+        .route(
+            "/api/on-call/overrides/{id}",
+            delete(on_call::delete_override),
+        )
+        .route("/api/on-call/people", get(on_call::people))
+        .route(
+            "/api/on-call/contact",
+            get(on_call::contact).put(on_call::set_contact),
+        )
+        .route("/api/on-call/contact/test", post(on_call::test_contact))
         .route("/api/silences/{id}/end", post(silences::end))
         .route("/api/sites/{id}/offline-alerts", put(offline_alerts::site))
         .route(

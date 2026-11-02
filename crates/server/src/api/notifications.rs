@@ -93,14 +93,14 @@ const VIEW: &str = "SELECT n.id, n.kind, n.settings, n.secret IS NOT NULL AS has
     LEFT JOIN sites s ON s.id = n.site_id
     LEFT JOIN customers c ON c.id = coalesce(n.customer_id, s.customer_id)";
 
-fn is_global_admin(user: &CurrentUser) -> bool {
+pub(super) fn is_global_admin(user: &CurrentUser) -> bool {
     user.administered_customers() == Scope::All
 }
 
 /// Whether `user` may see and change what covers `coverage`: everything
 /// takes a global administrator, a customer an administrator of it, and a
 /// site an administrator of it or of its customer.
-fn manages(user: &CurrentUser, coverage: Coverage) -> bool {
+pub(super) fn manages(user: &CurrentUser, coverage: Coverage) -> bool {
     match coverage {
         Coverage::Everything => is_global_admin(user),
         Coverage::Customer(id) => user.administered_customers().contains(id),
@@ -110,7 +110,7 @@ fn manages(user: &CurrentUser, coverage: Coverage) -> bool {
 
 /// Only administrators reach channels at all; for them a channel they do
 /// not manage is 404, like a site they do not read.
-fn require_administrator(user: &CurrentUser) -> Result<(), ApiError> {
+pub(super) fn require_administrator(user: &CurrentUser) -> Result<(), ApiError> {
     if user.is_administrator() {
         Ok(())
     } else {
@@ -151,39 +151,12 @@ async fn validate(
     if !manages(user, coverage) {
         return Err(ApiError::Forbidden);
     }
-    let mut settings = request.settings;
-    let Some(object) = settings.as_object_mut() else {
-        return Err(ApiError::Invalid("settings must be an object".into()));
-    };
-    object.insert("kind".into(), request.kind.clone().into());
-    let destination: Destination = serde_json::from_value(settings).map_err(|error| {
-        ApiError::Invalid(format!("invalid {} settings: {error}", request.kind))
-    })?;
-    let destination = destination.normalize().map_err(ApiError::Invalid)?;
-    let mut secret = request.secret.filter(|s| !s.is_empty());
-    if secret.as_ref().is_some_and(|s| s.len() > MAX_SECRET) {
-        return Err(ApiError::Invalid(format!(
-            "the secret is longer than {MAX_SECRET} bytes"
-        )));
-    }
-    let mut destination = destination;
-    if let Some((service, _)) = destination.chat() {
-        let host = match (secret.take(), current.and_then(|c| c.destination.chat())) {
-            (Some(url), _) => {
-                let checked = service.check_url(&url).map_err(ApiError::Invalid)?;
-                secret = Some(checked.url);
-                checked.host
-            }
-            (None, Some((_, chat))) => chat.host.clone(),
-            (None, None) => {
-                return Err(ApiError::Invalid(format!(
-                    "Paste the {} webhook URL.",
-                    service.name()
-                )))
-            }
-        };
-        destination = destination.with_chat_host(&host);
-    }
+    let (destination, secret) = checked(
+        &request.kind,
+        request.settings,
+        request.secret,
+        current.map(|c| &c.destination),
+    )?;
     let unknown = match coverage {
         Coverage::Everything => None,
         Coverage::Customer(id) => Some((
@@ -204,6 +177,50 @@ async fn validate(
         secret: secret.map(Secret::new),
         coverage,
     })
+}
+
+/// The destination of `kind` and `settings`, trimmed and checked, with
+/// the secret to store: `None` keeps the stored one. A chat destination's
+/// secret is its URL: a new one is checked for its service, and without
+/// one the stored chat URL's host is kept, so that
+/// [`Destination::same_target`] sees the same place.
+pub(super) fn checked(
+    kind: &str,
+    mut settings: Value,
+    secret: Option<String>,
+    current: Option<&Destination>,
+) -> Result<(Destination, Option<String>), ApiError> {
+    let Some(object) = settings.as_object_mut() else {
+        return Err(ApiError::Invalid("settings must be an object".into()));
+    };
+    object.insert("kind".into(), kind.into());
+    let destination: Destination = serde_json::from_value(settings)
+        .map_err(|error| ApiError::Invalid(format!("invalid {kind} settings: {error}")))?;
+    let mut destination = destination.normalize().map_err(ApiError::Invalid)?;
+    let mut secret = secret.filter(|s| !s.is_empty());
+    if secret.as_ref().is_some_and(|s| s.len() > MAX_SECRET) {
+        return Err(ApiError::Invalid(format!(
+            "the secret is longer than {MAX_SECRET} bytes"
+        )));
+    }
+    if let Some((service, _)) = destination.chat() {
+        let host = match (secret.take(), current.and_then(Destination::chat)) {
+            (Some(url), _) => {
+                let checked = service.check_url(&url).map_err(ApiError::Invalid)?;
+                secret = Some(checked.url);
+                checked.host
+            }
+            (None, Some((_, chat))) => chat.host.clone(),
+            (None, None) => {
+                return Err(ApiError::Invalid(format!(
+                    "Paste the {} webhook URL.",
+                    service.name()
+                )))
+            }
+        };
+        destination = destination.with_chat_host(&host);
+    }
+    Ok((destination, secret))
 }
 
 /// What the audit keeps of a channel: no secret, and only the host of a

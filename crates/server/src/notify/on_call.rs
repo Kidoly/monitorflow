@@ -436,7 +436,7 @@ impl Directory {
 }
 
 /// How narrow a coverage is: a site before a customer before everything.
-fn narrowness(coverage: Coverage) -> u8 {
+pub fn narrowness(coverage: Coverage) -> u8 {
     match coverage {
         Coverage::Everything => 0,
         Coverage::Customer(_) => 1,
@@ -461,16 +461,19 @@ pub fn mail_channel<'a>(
         .max_by_key(|c| narrowness(c.coverage))
 }
 
-/// Every schedule, with the overrides that end after `from`.
+/// Every schedule, or only `only`, with the overrides that end after
+/// `from`.
 pub async fn schedules(
     db: &mut sqlx::PgConnection,
     from: DateTime<Utc>,
+    only: Option<Uuid>,
 ) -> Result<Vec<Schedule>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT id, customer_id, site_id, time_zone, rotation, handoff_time, anchor_date,
                 anchor_position
-         FROM on_call_schedules ORDER BY created_at, id",
+         FROM on_call_schedules WHERE $1::uuid IS NULL OR id = $1 ORDER BY created_at, id",
     )
+    .bind(only)
     .fetch_all(&mut *db)
     .await?;
     let mut members: HashMap<Uuid, Vec<Option<Uuid>>> = HashMap::new();
