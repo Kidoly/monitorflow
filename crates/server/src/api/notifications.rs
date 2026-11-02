@@ -1,8 +1,9 @@
-//! Notification channels (ADR-0060): email and webhook destinations, with
-//! a test that answers in plain words. Each covers everything, one customer
-//! or one site, and an administrator manages exactly the channels of what
-//! they administer (ADR-0078): others do not exist for them. The SMTP
-//! password or webhook signing secret is written, never read back: views
+//! Notification channels (ADR-0060): email, webhook, and Slack, Teams or
+//! Discord (ADR-0077) destinations, with a test that answers in plain
+//! words. Each covers everything, one customer or one site, and an
+//! administrator manages exactly the channels of what they administer
+//! (ADR-0078): others do not exist for them. The SMTP password, webhook
+//! signing secret or chat webhook URL is written, never read back: views
 //! say `has_secret`.
 
 use axum::extract::rejection::JsonRejection;
@@ -22,7 +23,7 @@ use super::auth::CurrentUser;
 use super::roles::Role;
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
-use crate::notify::{self, Coverage, Destination, Dispatcher};
+use crate::notify::{self, Channel, Coverage, Destination, Dispatcher};
 
 /// Longest accepted secret.
 const MAX_SECRET: usize = 1024;
@@ -31,12 +32,12 @@ const MAX_SECRET: usize = 1024;
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct ChannelView {
     pub id: Uuid,
-    /// `email` or `webhook`.
+    /// `email`, `webhook`, `slack`, `teams` or `discord`.
     pub kind: String,
     /// email: `{"host", "port", "username", "from", "to"}`; webhook:
-    /// `{"url"}`.
+    /// `{"url"}`; chat: `{"name", "host"}`.
     pub settings: Value,
-    /// Whether a password or signing secret is stored.
+    /// Whether a password, signing secret or chat webhook URL is stored.
     pub has_secret: bool,
     /// The customer it covers, or the customer of the site it covers;
     /// `null` for everything.
@@ -64,8 +65,8 @@ pub struct ChannelList {
 pub struct ChannelRequest {
     pub kind: String,
     pub settings: Value,
-    /// The SMTP password or webhook signing secret. On `PUT`, absent,
-    /// `null` or empty keeps the stored one.
+    /// The SMTP password, webhook signing secret or chat webhook URL. On
+    /// `PUT`, absent, `null` or empty keeps the stored one.
     #[serde(default)]
     pub secret: Option<String>,
     /// The customer to cover; with `site_id` also `null`, everything.
@@ -133,13 +134,17 @@ struct Valid {
     coverage: Coverage,
 }
 
-/// Checks a request `user` may make. Whether `user` manages what it asks to
-/// cover comes first and needs no lookup, so a refusal says nothing about
-/// which customers and sites exist.
+/// Checks a request `user` may make; `current` is the channel it edits, if
+/// any. Whether `user` manages what it asks to cover comes first and needs
+/// no lookup, so a refusal says nothing about which customers and sites
+/// exist. A chat channel's secret is its URL: a new one is checked for its
+/// service, and an edit without one keeps the stored URL's host, so that
+/// [`Destination::same_target`] sees the same place.
 async fn validate(
     db: impl PgExecutor<'_>,
     user: &CurrentUser,
     request: ChannelRequest,
+    current: Option<&Channel>,
 ) -> Result<Valid, ApiError> {
     let coverage = Coverage::from_columns(request.customer_id, request.site_id)
         .ok_or_else(|| ApiError::Invalid("choose a customer or a site, not both".into()))?;
@@ -155,11 +160,29 @@ async fn validate(
         ApiError::Invalid(format!("invalid {} settings: {error}", request.kind))
     })?;
     let destination = destination.normalize().map_err(ApiError::Invalid)?;
-    let secret = request.secret.filter(|s| !s.is_empty());
+    let mut secret = request.secret.filter(|s| !s.is_empty());
     if secret.as_ref().is_some_and(|s| s.len() > MAX_SECRET) {
         return Err(ApiError::Invalid(format!(
             "the secret is longer than {MAX_SECRET} bytes"
         )));
+    }
+    let mut destination = destination;
+    if let Some((service, _)) = destination.chat() {
+        let host = match (secret.take(), current.and_then(|c| c.destination.chat())) {
+            (Some(url), _) => {
+                let checked = service.check_url(&url).map_err(ApiError::Invalid)?;
+                secret = Some(checked.url);
+                checked.host
+            }
+            (None, Some((_, chat))) => chat.host.clone(),
+            (None, None) => {
+                return Err(ApiError::Invalid(format!(
+                    "Paste the {} webhook URL.",
+                    service.name()
+                )))
+            }
+        };
+        destination = destination.with_chat_host(&host);
     }
     let unknown = match coverage {
         Coverage::Everything => None,
@@ -184,7 +207,7 @@ async fn validate(
 }
 
 /// What the audit keeps of a channel: no secret, and only the host of a
-/// webhook, whose path often is one (Slack, Teams).
+/// webhook, whose path often is one.
 fn audited(destination: &Destination, coverage: Coverage) -> Value {
     let target = match destination {
         Destination::Email(email) => json!({
@@ -195,6 +218,9 @@ fn audited(destination: &Destination, coverage: Coverage) -> Value {
                 .ok()
                 .and_then(|u| u.host_str().map(str::to_owned)),
         }),
+        Destination::Slack(chat) | Destination::Teams(chat) | Destination::Discord(chat) => {
+            json!({ "host": chat.host, "name": chat.name })
+        }
     };
     let (customer_id, site_id) = coverage.columns();
     json!({
@@ -260,7 +286,7 @@ pub async fn create(
 ) -> Result<(StatusCode, Json<ChannelView>), ApiError> {
     require_administrator(&user)?;
     let request = body(request)?;
-    let valid = validate(&state.pool, &user, request).await?;
+    let valid = validate(&state.pool, &user, request, None).await?;
     let mut tx = state.pool.begin().await?;
     let id = notify::insert(
         &mut *tx,
@@ -308,11 +334,13 @@ pub async fn update(
         .await?
         .filter(|c| manages(&user, c.coverage))
         .ok_or(ApiError::NotFound)?;
-    let valid = validate(&mut *tx, &user, request).await?;
-    let same_target = current.destination.same_target(&valid.destination);
+    let valid = validate(&mut *tx, &user, request, Some(&current)).await?;
+    // A new chat URL is a new target, though the host may stay the same.
+    let new_chat_url = valid.destination.chat().is_some() && valid.secret.is_some();
+    let same_target = current.destination.same_target(&valid.destination) && !new_chat_url;
     if !same_target && current.secret.is_some() && valid.secret.is_none() {
         return Err(ApiError::Invalid(
-            "Enter the password or signing secret again: a saved one stays with the address it was saved for."
+            "Enter the password, signing secret or webhook URL again: a saved one stays with the address it was saved for."
                 .into(),
         ));
     }
@@ -401,7 +429,7 @@ pub async fn test(
         },
         Err(error) => TestResult {
             ok: false,
-            error: Some(error.0),
+            error: Some(error.message),
         },
     }))
 }
@@ -409,7 +437,7 @@ pub async fn test(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notify::{Email, Webhook};
+    use crate::notify::{Chat, Email, Webhook};
 
     #[test]
     fn the_audit_keeps_no_secret_and_only_the_webhook_host() {
@@ -430,5 +458,12 @@ mod tests {
         assert_eq!(details["target"]["to"][0], "a@x.io");
         assert_eq!(details["site_id"], Uuid::nil().to_string());
         assert_eq!(details["customer_id"], Value::Null);
+        let chat = Destination::Slack(Chat {
+            name: "#ops".into(),
+            host: "hooks.slack.com".into(),
+        });
+        let details = audited(&chat, Coverage::Everything);
+        assert_eq!(details["target"]["host"], "hooks.slack.com");
+        assert_eq!(details["kind"], "slack");
     }
 }

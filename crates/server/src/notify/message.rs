@@ -58,7 +58,7 @@ pub struct Message {
     pub payload: Value,
 }
 
-fn str_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
+pub(super) fn str_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
     path.iter()
         .try_fold(value, |v, key| v.get(key))
         .and_then(Value::as_str)
@@ -101,7 +101,7 @@ fn sensor(incident: &Value) -> String {
     }
 }
 
-fn capitalized(word: &str) -> String {
+pub(super) fn capitalized(word: &str) -> String {
     let mut chars = word.chars();
     chars.next().map_or_else(String::new, |c| {
         c.to_uppercase().chain(chars).collect::<String>()

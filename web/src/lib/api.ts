@@ -226,7 +226,9 @@ export interface SensorConfigRequest {
 }
 
 /** One stored row of `sensor_configs`; exactly one of `site_id` and `server_id` is set. */
-export interface SensorConfigEntry extends Required<Omit<SensorConfigRequest, "timeout_ms">> {
+export interface SensorConfigEntry extends Required<
+  Omit<SensorConfigRequest, "timeout_ms">
+> {
   id: string;
   site_id: string | null;
   server_id: string | null;
@@ -398,7 +400,14 @@ export interface RelayCommand {
   id: string;
   relay_id: string;
   version: string;
-  state: "queued" | "sent" | "running" | "succeeded" | "failed" | "expired" | "cancelled";
+  state:
+    | "queued"
+    | "sent"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "expired"
+    | "cancelled";
   /** Null when queued by automatic updates. */
   requested_by: string | null;
   issued_at: string;
@@ -498,7 +507,8 @@ export interface IncidentList {
   next_cursor: string | null;
 }
 
-export type IncidentEventKind = "opened" | "escalated" | "deescalated" | "resolved";
+export type IncidentEventKind =
+  "opened" | "escalated" | "deescalated" | "resolved";
 
 /** One change of an incident, as the engine made it. */
 export interface IncidentEvent {
@@ -530,7 +540,14 @@ export interface IncidentQuery {
   cursor?: string;
 }
 
-export type CommandState = "queued" | "sent" | "running" | "succeeded" | "failed" | "expired" | "cancelled";
+export type CommandState =
+  | "queued"
+  | "sent"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "expired"
+  | "cancelled";
 
 /** One command of `GET /api/servers/{id}/commands`, without its output (ADR-0031). */
 export interface Command {
@@ -621,7 +638,11 @@ export interface ServerUpdateView {
   /** A request waits for the updater. */
   requested: boolean;
   /** A newer release the daily check saw (ADR-0061). */
-  available: { version: string; release_notes_url: string | null; first_seen_at: string } | null;
+  available: {
+    version: string;
+    release_notes_url: string | null;
+    first_seen_at: string;
+  } | null;
 }
 
 export type BackupKind = "daily" | "manual" | "update";
@@ -697,7 +718,13 @@ export interface CommandList {
   next_cursor: string | null;
 }
 
-export type RemediationState = "open" | "running" | "awaiting_approval" | "resolved" | "escalated" | "failed";
+export type RemediationState =
+  | "open"
+  | "running"
+  | "awaiting_approval"
+  | "resolved"
+  | "escalated"
+  | "failed";
 
 /** One incident of the AI remediation loop (ADR-0042), read-only. */
 export interface RemediationIncident {
@@ -1047,7 +1074,14 @@ export interface ServerSettings {
   retention: RetentionSettings | null;
 }
 
-export type CampaignState = "draft" | "scheduled" | "running" | "paused" | "stopped" | "completed" | "failed";
+export type CampaignState =
+  | "draft"
+  | "scheduled"
+  | "running"
+  | "paused"
+  | "stopped"
+  | "completed"
+  | "failed";
 export type CampaignAction = "start" | "pause" | "resume" | "stop";
 
 /** A wave fails when more of its servers failed than `value` servers or percent (ADR-0033). */
@@ -1071,7 +1105,8 @@ export type CampaignWindow =
   | { kind: "once"; starts_at: string; ends_at: string };
 
 /** Explicit servers, a number of servers, or a percentage of all targets (rounded up). */
-export type WaveSpec = { servers: string[] } | { size: number } | { percent: number };
+export type WaveSpec =
+  { servers: string[] } | { size: number } | { percent: number };
 
 /** The `ApplyUpdates` every command of a campaign carries. */
 export interface UpdateSpec {
@@ -1456,13 +1491,24 @@ export interface WebhookSettings {
   url: string;
 }
 
+/** A Slack, Teams or Discord channel; its webhook URL is the secret, never sent back (ADR-0077). */
+export interface ChatSettings {
+  /** Tells channels of one service apart; may be empty. */
+  name: string;
+  /** Host of the webhook URL. */
+  host: string;
+}
+
+export type ChatKind = "slack" | "teams" | "discord";
+
 /** One channel of `GET /api/notifications/channels`: those of what the user administers (ADR-0078). */
 export type NotificationChannel = (
   | { kind: "email"; settings: EmailSettings }
   | { kind: "webhook"; settings: WebhookSettings }
+  | { kind: ChatKind; settings: ChatSettings }
 ) & {
   id: string;
-  /** Whether a password or signing secret is stored; the secret itself never leaves the server. */
+  /** Whether a password, signing secret or chat webhook URL is stored; it never leaves the server. */
   has_secret: boolean;
   /** The customer it covers, or the site's; null with `site_id` too: everything. */
   customer_id: string | null;
@@ -1483,9 +1529,17 @@ export interface NotificationChannelList {
 
 /** Body of creating or editing a channel; on edit an empty `secret` keeps the stored one. */
 export type NotificationChannelRequest = (
-  | { kind: "email"; settings: Partial<EmailSettings> & Pick<EmailSettings, "host" | "to"> }
+  | {
+      kind: "email";
+      settings: Partial<EmailSettings> & Pick<EmailSettings, "host" | "to">;
+    }
   | { kind: "webhook"; settings: WebhookSettings }
-) & { secret?: string | null; customer_id: string | null; site_id: string | null };
+  | { kind: ChatKind; settings: Pick<ChatSettings, "name"> }
+) & {
+  secret?: string | null;
+  customer_id: string | null;
+  site_id: string | null;
+};
 
 /** Result of "Send test": the error says why in plain words. */
 export interface ChannelTestResult {
@@ -1510,7 +1564,10 @@ export interface AiSettings {
   models: AiModel[];
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  options: RequestOptions = {},
+): Promise<T> {
   const method = options.method ?? "GET";
   const headers: Record<string, string> = { Accept: "application/json" };
   if (method !== "GET") {
@@ -1525,7 +1582,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     response = await fetch(path, {
       method,
       headers,
-      body: options.form ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
+      body:
+        options.form ??
+        (options.body === undefined ? undefined : JSON.stringify(options.body)),
       credentials: "same-origin",
       cache: "no-store",
       signal: options.signal,
@@ -1553,7 +1612,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 async function errorMessage(response: Response): Promise<string> {
   try {
     const body: unknown = await response.json();
-    if (body && typeof body === "object" && "error" in body && typeof body.error === "string") {
+    if (
+      body &&
+      typeof body === "object" &&
+      "error" in body &&
+      typeof body.error === "string"
+    ) {
       return body.error;
     }
   } catch {
@@ -1602,7 +1666,8 @@ export const api = {
 
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
 
-  setupStatus: (signal?: AbortSignal) => request<SetupStatus>("/api/setup", { signal, redirectOn401: false }),
+  setupStatus: (signal?: AbortSignal) =>
+    request<SetupStatus>("/api/setup", { signal, redirectOn401: false }),
 
   /** Creates the first administrator with the setup link's `token`, and signs it in. */
   setup: (token: string, username: string, password: string) =>
@@ -1617,7 +1682,9 @@ export const api = {
   /** One page of servers, from `cursor` when given. */
   serversPage: (cursor?: string, signal?: AbortSignal) =>
     request<ServerList>(
-      cursor === undefined ? "/api/servers" : `/api/servers?cursor=${encodeURIComponent(cursor)}`,
+      cursor === undefined
+        ? "/api/servers"
+        : `/api/servers?cursor=${encodeURIComponent(cursor)}`,
       { signal },
     ),
 
@@ -1638,18 +1705,29 @@ export const api = {
     request<ServerDetail>(`/api/servers/${encodeURIComponent(id)}`, { signal }),
 
   serverSensors: (serverId: string, signal?: AbortSignal) =>
-    request<EffectiveSensors>(`/api/servers/${encodeURIComponent(serverId)}/sensors`, { signal }),
+    request<EffectiveSensors>(
+      `/api/servers/${encodeURIComponent(serverId)}/sensors`,
+      { signal },
+    ),
 
   /** The server's whole package report, following `next_cursor` across pages. */
-  serverPackages: async (serverId: string, signal?: AbortSignal): Promise<PackageList> => {
+  serverPackages: async (
+    serverId: string,
+    signal?: AbortSignal,
+  ): Promise<PackageList> => {
     const base = `/api/servers/${encodeURIComponent(serverId)}/packages?limit=5000`;
     const packages: Package[] = [];
     let cursor: string | undefined;
     let page: PackageList;
     do {
-      page = await request<PackageList>(cursor === undefined ? base : `${base}&cursor=${encodeURIComponent(cursor)}`, {
-        signal,
-      });
+      page = await request<PackageList>(
+        cursor === undefined
+          ? base
+          : `${base}&cursor=${encodeURIComponent(cursor)}`,
+        {
+          signal,
+        },
+      );
       packages.push(...page.packages);
       cursor = page.next_cursor ?? undefined;
     } while (cursor !== undefined);
@@ -1658,21 +1736,29 @@ export const api = {
 
   sites: (signal?: AbortSignal) => request<SiteList>("/api/sites", { signal }),
 
-  customers: (signal?: AbortSignal) => request<CustomerList>("/api/customers", { signal }),
+  customers: (signal?: AbortSignal) =>
+    request<CustomerList>("/api/customers", { signal }),
 
   /** Overrides automatic updates of the site, or `null` to follow the server-wide setting; customer administrators only (ADR-0055). */
   setAgentAutoUpdate: (siteId: string, enabled: boolean | null) =>
-    request<Site>(`/api/sites/${encodeURIComponent(siteId)}/agent-auto-update`, {
-      method: "PUT",
-      body: { enabled },
-    }),
+    request<Site>(
+      `/api/sites/${encodeURIComponent(siteId)}/agent-auto-update`,
+      {
+        method: "PUT",
+        body: { enabled },
+      },
+    ),
 
   /** Creates the customer `name`; global administrators only. */
-  createCustomer: (name: string) => request<Customer>("/api/customers", { method: "POST", body: { name } }),
+  createCustomer: (name: string) =>
+    request<Customer>("/api/customers", { method: "POST", body: { name } }),
 
   /** Renames a customer; global administrators only. */
   renameCustomer: (customerId: string, name: string) =>
-    request<Customer>(`/api/customers/${encodeURIComponent(customerId)}`, { method: "PUT", body: { name } }),
+    request<Customer>(`/api/customers/${encodeURIComponent(customerId)}`, {
+      method: "PUT",
+      body: { name },
+    }),
 
   /** Every account; global administrators only (ADR-0059). */
   users: (signal?: AbortSignal) => request<UserList>("/api/users", { signal }),
@@ -1686,33 +1772,62 @@ export const api = {
 
   /** A new password link for the user, replacing their previous one. */
   passwordLink: (userId: string) =>
-    request<PasswordLink>(`/api/users/${encodeURIComponent(userId)}/link`, { method: "POST" }),
+    request<PasswordLink>(`/api/users/${encodeURIComponent(userId)}/link`, {
+      method: "POST",
+    }),
 
   setUserDisabled: (userId: string, disabled: boolean) =>
-    request<UserAccount>(`/api/users/${encodeURIComponent(userId)}/disabled`, { method: "PUT", body: { disabled } }),
+    request<UserAccount>(`/api/users/${encodeURIComponent(userId)}/disabled`, {
+      method: "PUT",
+      body: { disabled },
+    }),
 
-  removeUser: (userId: string) => request<void>(`/api/users/${encodeURIComponent(userId)}`, { method: "DELETE" }),
+  removeUser: (userId: string) =>
+    request<void>(`/api/users/${encodeURIComponent(userId)}`, {
+      method: "DELETE",
+    }),
 
   grantRole: (userId: string, grant: GrantRequest) =>
-    request<UserAccount>(`/api/users/${encodeURIComponent(userId)}/roles`, { method: "POST", body: grant }),
+    request<UserAccount>(`/api/users/${encodeURIComponent(userId)}/roles`, {
+      method: "POST",
+      body: grant,
+    }),
 
   revokeRole: (userId: string, grant: GrantRequest) =>
-    request<UserAccount>(`/api/users/${encodeURIComponent(userId)}/roles`, { method: "DELETE", body: grant }),
+    request<UserAccount>(`/api/users/${encodeURIComponent(userId)}/roles`, {
+      method: "DELETE",
+      body: grant,
+    }),
 
   /** Whose password link `token` is; 410 when it is no longer valid. */
   inspectPasswordLink: (token: string) =>
-    request<LinkOwner>("/api/password-link", { method: "POST", body: { token }, redirectOn401: false }),
+    request<LinkOwner>("/api/password-link", {
+      method: "POST",
+      body: { token },
+      redirectOn401: false,
+    }),
 
   /** Sets the password with the link `token`, and signs the user in. */
   usePasswordLink: (token: string, password: string) =>
-    request<Me>("/api/password-link/use", { method: "POST", body: { token, password }, redirectOn401: false }),
+    request<Me>("/api/password-link/use", {
+      method: "POST",
+      body: { token, password },
+      redirectOn401: false,
+    }),
 
   /** Turns offline incidents on or off for a site, server or relay; operators of the site (ADR-0072). */
-  setOfflineAlerts: (kind: "sites" | "servers" | "relays", id: string, enabled: boolean) =>
-    request<{ enabled: boolean }>(`/api/${kind}/${encodeURIComponent(id)}/offline-alerts`, {
-      method: "PUT",
-      body: { enabled },
-    }),
+  setOfflineAlerts: (
+    kind: "sites" | "servers" | "relays",
+    id: string,
+    enabled: boolean,
+  ) =>
+    request<{ enabled: boolean }>(
+      `/api/${kind}/${encodeURIComponent(id)}/offline-alerts`,
+      {
+        method: "PUT",
+        body: { enabled },
+      },
+    ),
 
   /** Creates the site `name` under `customerId`; customer administrators only. */
   createSite: (customerId: string, name: string) =>
@@ -1726,7 +1841,10 @@ export const api = {
     const relays: Relay[] = [];
     let cursor: string | undefined;
     do {
-      const path = cursor === undefined ? "/api/relays" : `/api/relays?cursor=${encodeURIComponent(cursor)}`;
+      const path =
+        cursor === undefined
+          ? "/api/relays"
+          : `/api/relays?cursor=${encodeURIComponent(cursor)}`;
       const page = await request<RelayList>(path, { signal });
       relays.push(...page.relays);
       cursor = page.next_cursor ?? undefined;
@@ -1738,76 +1856,122 @@ export const api = {
     request<RelayDetail>(`/api/relays/${encodeURIComponent(id)}`, { signal }),
 
   /** The newest enrollment tokens of the customers the user administers. */
-  tokens: (signal?: AbortSignal) => request<TokenList>("/api/tokens", { signal }),
+  tokens: (signal?: AbortSignal) =>
+    request<TokenList>("/api/tokens", { signal }),
 
-  createToken: (body: TokenRequest) => request<CreatedToken>("/api/tokens", { method: "POST", body }),
+  createToken: (body: TokenRequest) =>
+    request<CreatedToken>("/api/tokens", { method: "POST", body }),
 
   /** The default install source; customer administrators (ADR-0054). */
-  agentInstall: (signal?: AbortSignal) => request<AgentInstall>("/api/settings/agent-install", { signal }),
-  publicAddress: (signal?: AbortSignal) => request<PublicAddress>("/api/settings/public-address", { signal }),
+  agentInstall: (signal?: AbortSignal) =>
+    request<AgentInstall>("/api/settings/agent-install", { signal }),
+  publicAddress: (signal?: AbortSignal) =>
+    request<PublicAddress>("/api/settings/public-address", { signal }),
 
   /** Changes the default install source; global administrators only, audited. */
-  setAgentInstall: (body: { source: InstallSource; custom_url: string | null }) =>
-    request<AgentInstall>("/api/settings/agent-install", { method: "PUT", body }),
+  setAgentInstall: (body: {
+    source: InstallSource;
+    custom_url: string | null;
+  }) =>
+    request<AgentInstall>("/api/settings/agent-install", {
+      method: "PUT",
+      body,
+    }),
 
   /** Changes the address in install commands; global administrators only, audited. `null` is the default. */
   setPublicAddress: (body: { address: string | null }) =>
-    request<PublicAddress>("/api/settings/public-address", { method: "PUT", body }),
+    request<PublicAddress>("/api/settings/public-address", {
+      method: "PUT",
+      body,
+    }),
 
   /** Whether AI is on, and its model; never the key (ADR-0064). */
-  serverSettings: (signal?: AbortSignal) => request<ServerSettings>("/api/settings/server", { signal }),
+  serverSettings: (signal?: AbortSignal) =>
+    request<ServerSettings>("/api/settings/server", { signal }),
   setServerSettings: (body: {
     session_lifetime: number | null;
     session_idle_timeout: number | null;
     mirror_public_url: string | null;
-  }) => request<ServerSettings>("/api/settings/server", { method: "PUT", body }),
-  setRetention: (body: { metrics_days: number | null; logs_days: number | null }) =>
+  }) =>
+    request<ServerSettings>("/api/settings/server", { method: "PUT", body }),
+  setRetention: (body: {
+    metrics_days: number | null;
+    logs_days: number | null;
+  }) =>
     request<ServerSettings>("/api/settings/retention", { method: "PUT", body }),
-  aiSettings: (signal?: AbortSignal) => request<AiSettings>("/api/settings/ai", { signal }),
+  aiSettings: (signal?: AbortSignal) =>
+    request<AiSettings>("/api/settings/ai", { signal }),
 
   /** Saves the AI settings, testing them when they turn AI on; global administrators only, audited. An empty key keeps the stored one. */
-  setAiSettings: (body: { api_key: string | null; model: string; enabled: boolean }) =>
-    request<AiSettings>("/api/settings/ai", { method: "PUT", body }),
+  setAiSettings: (body: {
+    api_key: string | null;
+    model: string;
+    enabled: boolean;
+  }) => request<AiSettings>("/api/settings/ai", { method: "PUT", body }),
 
   /** Forgets the API key, which turns AI off; global administrators only, audited. */
-  removeAiKey: () => request<AiSettings>("/api/settings/ai", { method: "DELETE" }),
+  removeAiKey: () =>
+    request<AiSettings>("/api/settings/ai", { method: "DELETE" }),
 
   /** Tests a key and model without saving; an empty key tests the stored one. */
   testAiSettings: (body: { api_key: string | null; model: string }) =>
-    request<ChannelTestResult>("/api/settings/ai/test", { method: "POST", body }),
+    request<ChannelTestResult>("/api/settings/ai/test", {
+      method: "POST",
+      body,
+    }),
 
   /** Notification channels of what the user administers, without secrets (ADR-0060, ADR-0078). */
   notificationChannels: (signal?: AbortSignal) =>
     request<NotificationChannelList>("/api/notifications/channels", { signal }),
 
   createNotificationChannel: (body: NotificationChannelRequest) =>
-    request<NotificationChannel>("/api/notifications/channels", { method: "POST", body }),
+    request<NotificationChannel>("/api/notifications/channels", {
+      method: "POST",
+      body,
+    }),
 
   updateNotificationChannel: (id: string, body: NotificationChannelRequest) =>
-    request<NotificationChannel>(`/api/notifications/channels/${encodeURIComponent(id)}`, { method: "PUT", body }),
+    request<NotificationChannel>(
+      `/api/notifications/channels/${encodeURIComponent(id)}`,
+      { method: "PUT", body },
+    ),
 
   deleteNotificationChannel: (id: string) =>
-    request<void>(`/api/notifications/channels/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    request<void>(`/api/notifications/channels/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 
   /** Sends a test now; 200 with `ok` false and the reason when it does not go through. */
   testNotificationChannel: (id: string) =>
-    request<ChannelTestResult>(`/api/notifications/channels/${encodeURIComponent(id)}/test`, { method: "POST" }),
+    request<ChannelTestResult>(
+      `/api/notifications/channels/${encodeURIComponent(id)}/test`,
+      { method: "POST" },
+    ),
   /** Install keys and hosts waiting for approval, of the customers the user administers (ADR-0073). */
-  installKeys: (signal?: AbortSignal) => request<InstallKeyList>("/api/install-keys", { signal }),
+  installKeys: (signal?: AbortSignal) =>
+    request<InstallKeyList>("/api/install-keys", { signal }),
 
   createInstallKey: (body: InstallKeyRequest) =>
     request<CreatedInstallKey>("/api/install-keys", { method: "POST", body }),
 
   /** Stops a key from enrolling more hosts; hosts it enrolled keep working. */
   revokeInstallKey: (id: string) =>
-    request<void>(`/api/install-keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    request<void>(`/api/install-keys/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 
   /** Lets a waiting host connect, or revokes its certificate. */
   decidePendingHost: (peerId: string, decision: "approve" | "reject") =>
-    request<void>(`/api/pending-hosts/${encodeURIComponent(peerId)}/${decision}`, { method: "POST" }),
+    request<void>(
+      `/api/pending-hosts/${encodeURIComponent(peerId)}/${decision}`,
+      { method: "POST" },
+    ),
 
   /** Revokes an unused token; 409 once used. */
-  revokeToken: (id: string) => request<void>(`/api/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  revokeToken: (id: string) =>
+    request<void>(`/api/tokens/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 
   /** Revokes a server or relay and its certificates; cannot be undone. */
   revoke: (kind: "servers" | "relays", id: string, reason: RevocationReason) =>
@@ -1822,57 +1986,97 @@ export const api = {
       if (value !== undefined) params.set(key, String(value));
     }
     const search = params.toString();
-    return request<IncidentList>(search ? `/api/incidents?${search}` : "/api/incidents", { signal });
+    return request<IncidentList>(
+      search ? `/api/incidents?${search}` : "/api/incidents",
+      { signal },
+    );
   },
 
   incident: (id: string, signal?: AbortSignal) =>
-    request<IncidentDetail>(`/api/incidents/${encodeURIComponent(id)}`, { signal }),
-
-  serverThresholds: (serverId: string, signal?: AbortSignal) =>
-    request<EffectiveThresholds>(`/api/servers/${encodeURIComponent(serverId)}/thresholds/effective`, {
+    request<IncidentDetail>(`/api/incidents/${encodeURIComponent(id)}`, {
       signal,
     }),
 
+  serverThresholds: (serverId: string, signal?: AbortSignal) =>
+    request<EffectiveThresholds>(
+      `/api/servers/${encodeURIComponent(serverId)}/thresholds/effective`,
+      {
+        signal,
+      },
+    ),
+
   siteThresholds: (siteId: string, signal?: AbortSignal) =>
-    request<SiteThresholds>(`/api/sites/${encodeURIComponent(siteId)}/thresholds/effective`, { signal }),
+    request<SiteThresholds>(
+      `/api/sites/${encodeURIComponent(siteId)}/thresholds/effective`,
+      { signal },
+    ),
 
   siteSensors: (siteId: string, signal?: AbortSignal) =>
-    request<SiteSensors>(`/api/sites/${encodeURIComponent(siteId)}/sensors`, { signal }),
+    request<SiteSensors>(`/api/sites/${encodeURIComponent(siteId)}/sensors`, {
+      signal,
+    }),
 
   /** The threshold rows of one site or server, not what it inherits. */
   thresholdRows: (owner: ConfigOwner, signal?: AbortSignal) =>
-    request<{ entries: ThresholdEntry[] }>(`/api/${owner.kind}/${encodeURIComponent(owner.id)}/thresholds`, { signal }),
+    request<{ entries: ThresholdEntry[] }>(
+      `/api/${owner.kind}/${encodeURIComponent(owner.id)}/thresholds`,
+      { signal },
+    ),
 
   createThreshold: (owner: ConfigOwner, body: ThresholdRequest) =>
-    request<ThresholdEntry>(`/api/${owner.kind}/${encodeURIComponent(owner.id)}/thresholds`, { method: "POST", body }),
+    request<ThresholdEntry>(
+      `/api/${owner.kind}/${encodeURIComponent(owner.id)}/thresholds`,
+      { method: "POST", body },
+    ),
 
   updateThreshold: (id: string, body: ThresholdRequest) =>
-    request<ThresholdEntry>(`/api/thresholds/${encodeURIComponent(id)}`, { method: "PUT", body }),
-
-  deleteThreshold: (id: string) => request<void>(`/api/thresholds/${encodeURIComponent(id)}`, { method: "DELETE" }),
-
-  /** The sensor rows of one site or server, disabled ones included. */
-  sensorRows: (owner: ConfigOwner, signal?: AbortSignal) =>
-    request<{ entries: SensorConfigEntry[] }>(`/api/${owner.kind}/${encodeURIComponent(owner.id)}/sensor_configs`, {
-      signal,
-    }),
-
-  createSensor: (owner: ConfigOwner, body: SensorConfigRequest) =>
-    request<SensorConfigEntry>(`/api/${owner.kind}/${encodeURIComponent(owner.id)}/sensor_configs`, {
-      method: "POST",
+    request<ThresholdEntry>(`/api/thresholds/${encodeURIComponent(id)}`, {
+      method: "PUT",
       body,
     }),
 
-  deleteSensor: (id: string) => request<void>(`/api/sensor_configs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  deleteThreshold: (id: string) =>
+    request<void>(`/api/thresholds/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  /** The sensor rows of one site or server, disabled ones included. */
+  sensorRows: (owner: ConfigOwner, signal?: AbortSignal) =>
+    request<{ entries: SensorConfigEntry[] }>(
+      `/api/${owner.kind}/${encodeURIComponent(owner.id)}/sensor_configs`,
+      {
+        signal,
+      },
+    ),
+
+  createSensor: (owner: ConfigOwner, body: SensorConfigRequest) =>
+    request<SensorConfigEntry>(
+      `/api/${owner.kind}/${encodeURIComponent(owner.id)}/sensor_configs`,
+      {
+        method: "POST",
+        body,
+      },
+    ),
+
+  deleteSensor: (id: string) =>
+    request<void>(`/api/sensor_configs/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 
   serverMetrics: (serverId: string, signal?: AbortSignal) =>
-    request<MetricList>(`/api/servers/${encodeURIComponent(serverId)}/metrics`, { signal }),
+    request<MetricList>(
+      `/api/servers/${encodeURIComponent(serverId)}/metrics`,
+      { signal },
+    ),
 
   /** The newest 500 campaigns of the customers the user reads as a whole. */
-  campaigns: (signal?: AbortSignal) => request<CampaignList>("/api/campaigns?limit=500", { signal }),
+  campaigns: (signal?: AbortSignal) =>
+    request<CampaignList>("/api/campaigns?limit=500", { signal }),
 
   campaign: (id: string, signal?: AbortSignal) =>
-    request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}`, { signal }),
+    request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}`, {
+      signal,
+    }),
 
   /** Creates a draft campaign; customer administrators only. */
   createCampaign: (body: CampaignRequest) =>
@@ -1880,66 +2084,107 @@ export const api = {
 
   /** 409 when the campaign's state does not allow `action`. */
   campaignAction: (id: string, action: CampaignAction) =>
-    request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(id)}/${action}`, { method: "POST" }),
+    request<CampaignDetail>(
+      `/api/campaigns/${encodeURIComponent(id)}/${action}`,
+      { method: "POST" },
+    ),
 
   /** Every mirror, by name; global administrators only. */
-  mirrors: (signal?: AbortSignal) => request<MirrorList>("/api/mirrors", { signal }),
+  mirrors: (signal?: AbortSignal) =>
+    request<MirrorList>("/api/mirrors", { signal }),
 
   /** Automatic updates: settings and rollouts; global administrators only (ADR-0055). */
-  autoUpdate: (signal?: AbortSignal) => request<AutoUpdateStatus>("/api/auto-update", { signal }),
+  autoUpdate: (signal?: AbortSignal) =>
+    request<AutoUpdateStatus>("/api/auto-update", { signal }),
 
   /** Changes automatic update settings; global administrators only; audited. */
   setAutoUpdate: (change: AutoUpdateChange) =>
-    request<AutoUpdateSettings>("/api/settings/auto-update", { method: "PUT", body: change }),
+    request<AutoUpdateSettings>("/api/settings/auto-update", {
+      method: "PUT",
+      body: change,
+    }),
 
   /** Resumes a halted rollout; global administrators only; audited. */
   resumeRollout: (kind: RolloutKind, version: string) =>
-    request<Rollout>(`/api/auto-update/rollouts/${kind}/${encodeURIComponent(version)}/resume`, { method: "POST" }),
+    request<Rollout>(
+      `/api/auto-update/rollouts/${kind}/${encodeURIComponent(version)}/resume`,
+      { method: "POST" },
+    ),
 
   /** What can be added, with its size, the free disk and the tools' state. */
-  mirrorCatalog: (signal?: AbortSignal) => request<MirrorCatalog>("/api/mirrors/catalog", { signal }),
+  mirrorCatalog: (signal?: AbortSignal) =>
+    request<MirrorCatalog>("/api/mirrors/catalog", { signal }),
 
   /** Adds every mirror of a distribution; 409 says why not in a sentence. */
   addMirror: (distribution: string) =>
-    request<MirrorList>("/api/mirrors", { method: "POST", body: { distribution } }),
+    request<MirrorList>("/api/mirrors", {
+      method: "POST",
+      body: { distribution },
+    }),
 
   mirror: (id: string, signal?: AbortSignal) =>
     request<MirrorDetail>(`/api/mirrors/${encodeURIComponent(id)}`, { signal }),
 
   /** Starts removing a mirror, also to try again; 409 says what still uses it. */
-  deleteMirror: (id: string) => request<Mirror>(`/api/mirrors/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  deleteMirror: (id: string) =>
+    request<Mirror>(`/api/mirrors/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 
   /** Starts a sync; 409 while another run of the mirror is going. */
   syncMirror: (id: string) =>
-    request<MirrorRunSummary>(`/api/mirrors/${encodeURIComponent(id)}/sync`, { method: "POST" }),
+    request<MirrorRunSummary>(`/api/mirrors/${encodeURIComponent(id)}/sync`, {
+      method: "POST",
+    }),
 
   /** Starts a snapshot named after the time; 409 while busy or before the first sync. */
   snapshotMirror: (id: string) =>
-    request<MirrorRunSummary>(`/api/mirrors/${encodeURIComponent(id)}/snapshots`, { method: "POST", body: {} }),
+    request<MirrorRunSummary>(
+      `/api/mirrors/${encodeURIComponent(id)}/snapshots`,
+      { method: "POST", body: {} },
+    ),
 
   /** Where the server's packages come from, and what can change that. */
   serverSources: (id: string, signal?: AbortSignal) =>
-    request<SourcesStatus>(`/api/servers/${encodeURIComponent(id)}/sources`, { signal }),
+    request<SourcesStatus>(`/api/servers/${encodeURIComponent(id)}/sources`, {
+      signal,
+    }),
 
   /** Points the server at the mirrors of its distribution; 409 says why not. */
   useMirror: (id: string) =>
-    request<CommandDetail>(`/api/servers/${encodeURIComponent(id)}/sources/use-mirror`, { method: "POST" }),
+    request<CommandDetail>(
+      `/api/servers/${encodeURIComponent(id)}/sources/use-mirror`,
+      { method: "POST" },
+    ),
 
   /** Puts the server's own sources back. */
   revertSources: (id: string) =>
-    request<CommandDetail>(`/api/servers/${encodeURIComponent(id)}/sources`, { method: "DELETE" }),
+    request<CommandDetail>(`/api/servers/${encodeURIComponent(id)}/sources`, {
+      method: "DELETE",
+    }),
 
   siteSources: (id: string, signal?: AbortSignal) =>
-    request<SiteSourcesList>(`/api/sites/${encodeURIComponent(id)}/sources`, { signal }),
+    request<SiteSourcesList>(`/api/sites/${encodeURIComponent(id)}/sources`, {
+      signal,
+    }),
 
   useMirrorOnSite: (id: string) =>
-    request<SiteSourcesChange>(`/api/sites/${encodeURIComponent(id)}/sources/use-mirror`, { method: "POST" }),
+    request<SiteSourcesChange>(
+      `/api/sites/${encodeURIComponent(id)}/sources/use-mirror`,
+      { method: "POST" },
+    ),
 
   revertSiteSources: (id: string) =>
-    request<SiteSourcesChange>(`/api/sites/${encodeURIComponent(id)}/sources`, { method: "DELETE" }),
+    request<SiteSourcesChange>(`/api/sites/${encodeURIComponent(id)}/sources`, {
+      method: "DELETE",
+    }),
 
   /** One page of the server's commands, newest first. */
-  serverCommands: (serverId: string, query: { limit?: number; cursor?: string } = {}, signal?: AbortSignal) => {
+  serverCommands: (
+    serverId: string,
+    query: { limit?: number; cursor?: string } = {},
+    signal?: AbortSignal,
+  ) => {
     const params = new URLSearchParams();
     if (query.limit !== undefined) params.set("limit", String(query.limit));
     if (query.cursor !== undefined) params.set("cursor", query.cursor);
@@ -1950,31 +2195,48 @@ export const api = {
     );
   },
 
-  agentReleases: (signal?: AbortSignal) => request<AgentReleases>("/api/agent-releases", { signal }),
+  agentReleases: (signal?: AbortSignal) =>
+    request<AgentReleases>("/api/agent-releases", { signal }),
 
   /** Imports a release from its files; global administrators only (ADR-0061). */
   importRelease: (files: File[]) => {
     const form = new FormData();
     for (const file of files) form.append("files", file, file.name);
-    return request<ReleaseImported>("/api/agent-releases/import", { method: "POST", form });
+    return request<ReleaseImported>("/api/agent-releases/import", {
+      method: "POST",
+      form,
+    });
   },
   importReleaseUrl: (url: string) =>
-    request<ReleaseImported>("/api/agent-releases/import-url", { method: "POST", body: { url } }),
+    request<ReleaseImported>("/api/agent-releases/import-url", {
+      method: "POST",
+      body: { url },
+    }),
 
   /** Server updates; global administrators only (ADR-0056). */
-  serverUpdate: (signal?: AbortSignal) => request<ServerUpdateView>("/api/server-update", { signal }),
+  serverUpdate: (signal?: AbortSignal) =>
+    request<ServerUpdateView>("/api/server-update", { signal }),
 
-  backups: (signal?: AbortSignal) => request<BackupsView>("/api/backups", { signal }),
-  startBackup: () => request<{ id: string }>("/api/backups", { method: "POST" }),
-  checkServerUpdate: () => request<ServerUpdateCheck>("/api/server-update/check", { method: "POST" }),
+  backups: (signal?: AbortSignal) =>
+    request<BackupsView>("/api/backups", { signal }),
+  startBackup: () =>
+    request<{ id: string }>("/api/backups", { method: "POST" }),
+  checkServerUpdate: () =>
+    request<ServerUpdateCheck>("/api/server-update/check", { method: "POST" }),
 
   startServerUpdate: (version: string) =>
-    request<{ id: string }>("/api/server-update", { method: "POST", body: { version } }),
+    request<{ id: string }>("/api/server-update", {
+      method: "POST",
+      body: { version },
+    }),
 
   /** Queues a `self_update` to `version`; customer administrators only (ADR-0053). */
   /** Confirms the names for a waiting relay's certificate; administrators of its customer (ADR-0066). */
   confirmRelayNames: (relayId: string, names: string[]) =>
-    request<void>(`/api/relays/${encodeURIComponent(relayId)}/names`, { method: "POST", body: { names } }),
+    request<void>(`/api/relays/${encodeURIComponent(relayId)}/names`, {
+      method: "POST",
+      body: { names },
+    }),
 
   /** Queues a relay self-update; administrators of its customer (ADR-0055). */
   updateRelay: (relayId: string, version: string) =>
@@ -1984,13 +2246,18 @@ export const api = {
     }),
 
   updateAgent: (serverId: string, version: string) =>
-    request<CommandDetail>(`/api/servers/${encodeURIComponent(serverId)}/commands`, {
-      method: "POST",
-      body: { kind: "self_update", version },
-    }),
+    request<CommandDetail>(
+      `/api/servers/${encodeURIComponent(serverId)}/commands`,
+      {
+        method: "POST",
+        body: { kind: "self_update", version },
+      },
+    ),
 
   command: (id: string, signal?: AbortSignal) =>
-    request<CommandDetail>(`/api/commands/${encodeURIComponent(id)}`, { signal }),
+    request<CommandDetail>(`/api/commands/${encodeURIComponent(id)}`, {
+      signal,
+    }),
 
   /** The remediation incidents a threshold incident opened, newest first. */
   remediationIncidents: (alertIncidentId: string, signal?: AbortSignal) =>
@@ -2000,25 +2267,35 @@ export const api = {
     ),
 
   /** Every command waiting for approval in the user's sites, nearest deadline first. */
-  approvals: (signal?: AbortSignal) => request<PendingApprovalList>("/api/remediation/approvals", { signal }),
+  approvals: (signal?: AbortSignal) =>
+    request<PendingApprovalList>("/api/remediation/approvals", { signal }),
 
   /** Runs the pending command, or `command` instead when given; 409 once decided or past the deadline. */
   approve: (id: string, command?: string) =>
-    request<ApprovalDecision>(`/api/remediation/approvals/${encodeURIComponent(id)}/approve`, {
-      method: "POST",
-      body: command === undefined ? {} : { command },
-    }),
+    request<ApprovalDecision>(
+      `/api/remediation/approvals/${encodeURIComponent(id)}/approve`,
+      {
+        method: "POST",
+        body: command === undefined ? {} : { command },
+      },
+    ),
 
   /** Drops the pending command; the reason goes back to the AI. */
   reject: (id: string, reason: string) =>
-    request<ApprovalDecision>(`/api/remediation/approvals/${encodeURIComponent(id)}/reject`, {
-      method: "POST",
-      body: { reason },
-    }),
+    request<ApprovalDecision>(
+      `/api/remediation/approvals/${encodeURIComponent(id)}/reject`,
+      {
+        method: "POST",
+        body: { reason },
+      },
+    ),
 
   /** One remediation incident with its events and verified chain. */
   remediationIncident: (id: string, signal?: AbortSignal) =>
-    request<RemediationIncidentDetail>(`/api/remediation/incidents/${encodeURIComponent(id)}`, { signal }),
+    request<RemediationIncidentDetail>(
+      `/api/remediation/incidents/${encodeURIComponent(id)}`,
+      { signal },
+    ),
 
   /** Remediation events across incidents, newest first. */
   remediationEvents: (query: RemediationEventQuery, signal?: AbortSignal) => {
@@ -2027,26 +2304,40 @@ export const api = {
       if (value !== undefined) params.set(key, String(value));
     }
     const search = params.toString();
-    return request<RemediationEventList>(search ? `/api/remediation/events?${search}` : "/api/remediation/events", {
-      signal,
-    });
+    return request<RemediationEventList>(
+      search ? `/api/remediation/events?${search}` : "/api/remediation/events",
+      {
+        signal,
+      },
+    );
   },
 
   /** The latest value of each series of `metric`, as of now. */
-  queryInstant: (query: { serverId: string; metric: string; instance?: string }, signal?: AbortSignal) => {
-    const params = new URLSearchParams({ server_id: query.serverId, metric: query.metric });
+  queryInstant: (
+    query: { serverId: string; metric: string; instance?: string },
+    signal?: AbortSignal,
+  ) => {
+    const params = new URLSearchParams({
+      server_id: query.serverId,
+      metric: query.metric,
+    });
     if (query.instance !== undefined) params.set("instance", query.instance);
     return request<QueryResult>(`/api/metrics/query?${params}`, { signal });
   },
 
   queryRange: (query: RangeQuery, signal?: AbortSignal) => {
-    const params = new URLSearchParams({ server_id: query.serverId, metric: query.metric });
+    const params = new URLSearchParams({
+      server_id: query.serverId,
+      metric: query.metric,
+    });
     if (query.instance !== undefined) params.set("instance", query.instance);
     params.set("start", query.start.toISOString());
     params.set("end", query.end.toISOString());
     params.set("step", String(query.step));
     if (query.agg) params.set("agg", query.agg);
     if (query.rollup) params.set("rollup", query.rollup);
-    return request<QueryResult>(`/api/metrics/query_range?${params}`, { signal });
+    return request<QueryResult>(`/api/metrics/query_range?${params}`, {
+      signal,
+    });
   },
 };

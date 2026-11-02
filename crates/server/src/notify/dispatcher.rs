@@ -11,6 +11,7 @@ use tokio::task::JoinSet;
 use tokio::time::{interval, sleep, MissedTickBehavior};
 
 use super::backup;
+use super::chat::gather;
 use super::message::{render, Event, Message};
 use super::send::{deliver, http_client, public_http_client, SendError};
 use super::{channels, record_outcome, Channel};
@@ -38,6 +39,8 @@ pub struct Dispatcher {
     public_http: reqwest::Client,
     /// Waits before the second and later tries of a delivery.
     retries: Vec<Duration>,
+    /// Whether chat channels get their service's pace.
+    paced: bool,
     /// The updater's shared directory (`server_update_dir`), to hear of
     /// failed backups; `None` without an updater.
     status_dir: Option<PathBuf>,
@@ -51,6 +54,7 @@ impl Dispatcher {
             http: http_client(),
             public_http: public_http_client(),
             retries: vec![Duration::from_secs(2), Duration::from_secs(10)],
+            paced: true,
             status_dir: None,
         }
     }
@@ -58,6 +62,12 @@ impl Dispatcher {
     /// Without waits between tries, for tests.
     pub fn with_retries(mut self, retries: Vec<Duration>) -> Self {
         self.retries = retries;
+        self
+    }
+
+    /// Without waits between messages to a chat channel, for tests.
+    pub fn without_pace(mut self) -> Self {
+        self.paced = false;
         self
     }
 
@@ -145,23 +155,36 @@ impl Dispatcher {
 
     /// Sends `messages` in order. After a delivery failed every try, the
     /// rest get one try each, so a dead channel does not hold the pass.
+    /// Chat channels get their service's pace, a burst is gathered, and a
+    /// service still limiting after every try gets nothing more this pass.
     async fn deliver_all(&self, channel: &Channel, messages: &[Message]) {
+        let service = channel.destination.chat().map(|(service, _)| service);
+        let gathered = service
+            .filter(|s| messages.len() > s.burst())
+            .map(|s| gather(messages, s.burst() - 1, &self.web_url));
+        let messages = gathered.as_deref().unwrap_or(messages);
         let mut last = Ok(());
         let mut sent = 0usize;
-        for message in messages {
+        for (index, message) in messages.iter().enumerate() {
+            if let (Some(service), true) = (service, index > 0 && self.paced) {
+                sleep(service.pace()).await;
+            }
             let retries = if last.is_ok() { &self.retries[..] } else { &[] };
             last = self.deliver_with_retries(channel, message, retries).await;
             match &last {
                 Ok(()) => sent += 1,
                 Err(error) => {
-                    tracing::warn!(channel = %channel.id, kind = channel.destination.kind(), %error, "notification not delivered")
+                    tracing::warn!(channel = %channel.id, kind = channel.destination.kind(), %error, "notification not delivered");
+                    if error.retry_after.is_some() {
+                        break;
+                    }
                 }
             }
         }
         if sent > 0 {
             tracing::info!(channel = %channel.id, sent, failed = messages.len() - sent, "notifications delivered");
         }
-        let error = last.err().map(|e| e.0);
+        let error = last.err().map(|e| e.message);
         if let Err(db) = record_outcome(&self.pool, channel.id, error.as_deref()).await {
             tracing::warn!(channel = %channel.id, error = %db, "could not record a notification outcome");
         }
@@ -184,10 +207,11 @@ impl Dispatcher {
         let http = self.client(channel);
         let mut result = deliver(channel, message, http).await;
         for wait in retries {
-            if result.is_ok() {
-                break;
-            }
-            sleep(*wait).await;
+            let asked = match &result {
+                Ok(()) => break,
+                Err(error) => error.retry_after,
+            };
+            sleep(asked.map_or(*wait, |asked| asked.max(*wait))).await;
             result = deliver(channel, message, http).await;
         }
         result
@@ -197,7 +221,7 @@ impl Dispatcher {
     pub async fn test(&self, channel: &Channel) -> Result<Result<(), SendError>, sqlx::Error> {
         let test = render(&Event::test(), &self.web_url);
         let result = deliver(channel, &test, self.client(channel)).await;
-        let error = result.as_ref().err().map(|e| e.0.as_str());
+        let error = result.as_ref().err().map(|e| e.message.as_str());
         record_outcome(&self.pool, channel.id, error).await?;
         Ok(result)
     }

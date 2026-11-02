@@ -22,9 +22,11 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Recovery margin | How far past the threshold a value must return before the incident resolves; under Details | hysteresis | `hysteresis` |
 | Set by | Where a setting comes from; under Details | origin | `origin` |
 | Batch | Part of the servers of a campaign, updated together | wave | `waves` |
+| Channel | Where notifications go: an email address, a webhook, or a Slack, Teams or Discord channel | destination, target, integration | `notification_channels` |
+| Webhook URL | The address a chat service gives for posting to one of its channels. It works as a password, so it is never shown again | token, connector | `secret` |
+| Workflow | What Teams calls the automation that gives such a URL, from the "Send webhook alerts to a channel" template | connector, except to name the retired ones | |
 | Remove | Revoke a server or relay and hide it from lists; for a mirror, delete it and its packages | delete | `revoked_at`, `deleting_at` |
 | Revoke | Stop an install command, a token or a role from working | | |
-| Channel | Where notifications go: an email or a webhook | destination, target | `notification_channels` |
 | Notify about | What a channel hears of: Everything, All of a customer, or one site | scope, coverage, routing | `customer_id`, `site_id`, `Coverage` |
 | Everything | A channel for all alerts, plus news about the central server: failed backups, automatic updates, new versions | global, all customers | both columns null |
 
