@@ -43,6 +43,8 @@ Shared code:
 
 Relays can be chained. Each relay keeps a store-and-forward buffer on disk: if its uplink drops, data is kept and sent once the link returns, in order.
 
+The central server can run as several instances on one PostgreSQL database, reached under one DNS name with an address per instance (ADR-0089). Each instance holds some of the streams and sends their commands, woken by `NOTIFY` when one is queued anywhere; work that needs the whole fleet or one sender (offline check, notifications, automatic updates, release check) runs on the instance holding the leader lease, and the rest is shared by row locks, leases and advisory locks. Every loop is also correct when two instances run it at once. PostgreSQL, VictoriaMetrics and VictoriaLogs stay single.
+
 ## 3. Communication
 
 ### Transport
