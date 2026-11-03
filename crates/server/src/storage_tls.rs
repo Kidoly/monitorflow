@@ -8,6 +8,11 @@
 //! stores re-read the certificate every second, so renewing it is a file
 //! write. The server's clients trust the CA alone and send the password.
 //!
+//! During a change of certificate authority (ADR-0088) the certificate is
+//! issued again from the new CA when it starts issuing, and the clients
+//! trust whatever CAs the server trusts at each handshake, so the stores
+//! are reachable before, during and after the change.
+//!
 //! Blocking file I/O in [`ensure`] and [`StorageAuth::load`]: call them
 //! from `spawn_blocking` in async code.
 
@@ -119,14 +124,23 @@ pub fn ensure(
 /// What the clients of the stores need: the CA to trust and the password.
 #[derive(Debug, Clone)]
 pub struct StorageAuth {
-    ca_pem: String,
+    trust: StoreTrust,
     password: Secret,
+}
+
+/// The CAs a client of the stores trusts.
+#[derive(Debug, Clone)]
+enum StoreTrust {
+    /// These PEM certificates, for a one-off check.
+    Fixed(String),
+    /// Those the CA trusts at each handshake, for the running server.
+    Live(Arc<CertificateAuthority>),
 }
 
 impl StorageAuth {
     pub fn new(ca_pem: impl Into<String>, password: Secret) -> Self {
         Self {
-            ca_pem: ca_pem.into(),
+            trust: StoreTrust::Fixed(ca_pem.into()),
             password,
         }
     }
@@ -139,6 +153,13 @@ impl StorageAuth {
         Ok(Self::new(ca_pem, Secret::new(password.trim())))
     }
 
+    /// Trusts what `ca` trusts at each handshake rather than a fixed list:
+    /// both CAs during a change of certificate authority (ADR-0088).
+    pub fn following(mut self, ca: Arc<CertificateAuthority>) -> Self {
+        self.trust = StoreTrust::Live(ca);
+        self
+    }
+
     /// Makes `builder` trust only the CA and send the password with every
     /// request.
     pub fn apply(
@@ -146,7 +167,6 @@ impl StorageAuth {
         builder: reqwest::ClientBuilder,
     ) -> Result<reqwest::ClientBuilder, StorageTlsError> {
         let client = |e: &dyn std::fmt::Display| StorageTlsError::Client(e.to_string());
-        let ca = reqwest::Certificate::from_pem(self.ca_pem.as_bytes()).map_err(|e| client(&e))?;
         let credentials = base64::engine::general_purpose::STANDARD
             .encode(format!("{USERNAME}:{}", self.password.expose()));
         let mut value =
@@ -154,10 +174,96 @@ impl StorageAuth {
         value.set_sensitive(true);
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, value);
-        Ok(builder
-            .tls_built_in_root_certs(false)
-            .add_root_certificate(ca)
-            .default_headers(headers))
+        let builder = builder.default_headers(headers);
+        match &self.trust {
+            StoreTrust::Fixed(pem) => {
+                let mut builder = builder.tls_built_in_root_certs(false);
+                for ca in
+                    reqwest::Certificate::from_pem_bundle(pem.as_bytes()).map_err(|e| client(&e))?
+                {
+                    builder = builder.add_root_certificate(ca);
+                }
+                Ok(builder)
+            }
+            StoreTrust::Live(ca) => {
+                let provider = Arc::new(rustls::crypto::ring::default_provider());
+                let config = rustls::ClientConfig::builder_with_provider(provider.clone())
+                    .with_safe_default_protocol_versions()
+                    .map_err(|e| client(&e))?
+                    .dangerous()
+                    .with_custom_certificate_verifier(Arc::new(LiveCas {
+                        ca: ca.clone(),
+                        provider,
+                    }))
+                    .with_no_client_auth();
+                Ok(builder.use_preconfigured_tls(config))
+            }
+        }
+    }
+}
+
+/// Verifies a store's certificate against the CAs the server trusts now,
+/// with the usual name, validity and usage checks.
+#[derive(Debug)]
+struct LiveCas {
+    ca: Arc<CertificateAuthority>,
+    provider: Arc<rustls::crypto::CryptoProvider>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for LiveCas {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        server_name: &rustls::pki_types::ServerName<'_>,
+        ocsp_response: &[u8],
+        now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        let mut roots = rustls::RootCertStore::empty();
+        for ca in self.ca.trusted_certs() {
+            roots.add(ca)?;
+        }
+        rustls::client::WebPkiServerVerifier::builder_with_provider(
+            Arc::new(roots),
+            self.provider.clone(),
+        )
+        .build()
+        .map_err(|e| rustls::Error::General(e.to_string()))?
+        .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 
@@ -174,7 +280,7 @@ pub async fn start(
     tokio::task::spawn_blocking(move || ensure(&issuer, &path, &list))
         .await
         .map_err(|e| StorageTlsError::Client(e.to_string()))??;
-    let auth = StorageAuth::load(ca.ca_cert_pem(), &dir)?;
+    let auth = StorageAuth::load(ca.ca_cert_pem(), &dir)?.following(ca.clone());
     tokio::spawn(async move {
         let mut timer = tokio::time::interval(CHECK_INTERVAL);
         timer.tick().await;

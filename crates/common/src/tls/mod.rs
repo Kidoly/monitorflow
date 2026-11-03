@@ -216,6 +216,12 @@ impl Identity {
         })
     }
 
+    /// The trusted CA certificates, as loaded: two during a change of
+    /// certificate authority (ADR-0088).
+    pub fn ca_certs(&self) -> &[CertificateDer<'static>] {
+        &self.ca_certs
+    }
+
     /// Our own certificate, the first of the chain.
     pub fn leaf(&self) -> &CertificateDer<'static> {
         &self.key.cert[0]

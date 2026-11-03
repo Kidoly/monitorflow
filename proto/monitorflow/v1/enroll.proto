@@ -27,6 +27,8 @@ message EnrollRequest {
   // none reaches a certificate until an administrator confirms it, and a
   // token that names server names ignores them (ADR-0066).
   repeated string server_names = 4;
+  // The peer stores `ca_bundle_pem` as its trust anchors (ADR-0088).
+  bool accepts_ca_bundle = 5;
 }
 
 message EnrollResponse {
@@ -38,4 +40,8 @@ message EnrollResponse {
   string peer_uri = 3;
   // End of the certificate's validity, Unix seconds.
   int64 not_after_unix = 4;
+  // Every CA certificate the peer must trust, in PEM, the issuer of
+  // `cert_pem` first; it holds the pinned CA. Two during a change of
+  // certificate authority (ADR-0088). Only with `accepts_ca_bundle`.
+  string ca_bundle_pem = 5;
 }

@@ -43,17 +43,18 @@ pub fn parse_names(names: &[String]) -> Vec<ServerName> {
         .collect()
 }
 
-/// Makes `paths` hold the CA certificate and a server certificate and key
-/// from `ca`, valid for every name in `names` for at least
+/// Makes `paths` hold the trusted CA certificates and a server certificate
+/// and key from the active CA, valid for every name in `names` for at least
 /// [`RENEW_BEFORE`]. Issues a new one when missing, expiring, missing a
-/// name or not matching its key; refuses a certificate from another CA
-/// rather than overwrite it.
+/// name, not matching its key or from a CA that no longer issues (ADR-0088);
+/// refuses a certificate from another CA rather than overwrite it. The
+/// certificate never outlives the CA.
 pub fn ensure(
     ca: &CertificateAuthority,
     paths: &TlsPaths,
     names: &[ServerName],
 ) -> Result<Outcome, CaError> {
-    let write_ca = || write(&paths.ca_cert, ca.ca_cert_pem().as_bytes(), 0o644);
+    let write_ca = || write(&paths.ca_cert, ca.trust_bundle_pem().as_bytes(), 0o644);
     match fit(ca, &paths.cert, &paths.key, names, RENEW_BEFORE)? {
         Fit::Current => {
             write_ca()?;
@@ -70,8 +71,13 @@ pub fn ensure(
         Fit::Missing | Fit::Stale => {}
     }
     let identity = PeerIdentity::new(PeerRole::Server, SERVER_ID).expect("SERVER_ID is valid");
+    // Never past the CA's own end, which `issue` refuses.
+    let left = ca
+        .not_after()
+        .duration_since(std::time::SystemTime::now())
+        .unwrap_or_default();
     let serial = issue_pair(&paths.cert, &paths.key, |csr| {
-        ca.issue(csr, &identity, Some(VALIDITY), names)
+        ca.issue(csr, &identity, Some(VALIDITY.min(left)), names)
     })?;
     write_ca()?;
     tracing::info!(cert = %paths.cert.display(), %serial, "issued the server certificate");
@@ -85,9 +91,10 @@ pub(crate) enum Fit {
     /// than the margin.
     Current,
     Missing,
-    /// Expiring, missing a name, or not matching its key.
+    /// Expiring, missing a name, not matching its key, or from a CA that
+    /// is still trusted but no longer issues (ADR-0088).
     Stale,
-    /// Signed by another CA.
+    /// Signed by a CA the server does not trust.
     Foreign,
 }
 
@@ -112,17 +119,24 @@ pub(crate) fn fit(
     let der = pem_der(&cert_pem).ok_or_else(|| corrupt("not a PEM certificate"))?;
     let (_, cert) = X509Certificate::from_der(&der).map_err(|_| corrupt("invalid certificate"))?;
 
-    let mut roots = RootCertStore::empty();
-    let ca_der = pem_der(ca.ca_cert_pem()).expect("the CA checked its certificate when loading");
-    roots
-        .add(CertificateDer::from(ca_der))
-        .map_err(|e| CaError::Signing(e.to_string()))?;
-    let verifier = WebPkiServerVerifier::builder_with_provider(
-        Arc::new(roots),
-        Arc::new(rustls::crypto::ring::default_provider()),
-    )
-    .build()
-    .map_err(|e| CaError::Signing(e.to_string()))?;
+    let verifier = |ca_pem: &str| {
+        let mut roots = RootCertStore::empty();
+        for ca in pem::parse_many(ca_pem).map_err(|e| CaError::Signing(e.to_string()))? {
+            roots
+                .add(CertificateDer::from(ca.into_contents()))
+                .map_err(|e| CaError::Signing(e.to_string()))?;
+        }
+        WebPkiServerVerifier::builder_with_provider(
+            Arc::new(roots),
+            Arc::new(rustls::crypto::ring::default_provider()),
+        )
+        .build()
+        .map_err(|e| CaError::Signing(e.to_string()))
+    };
+    let (active, trusted) = (
+        verifier(&ca.ca_cert_pem())?,
+        verifier(&ca.trust_bundle_pem())?,
+    );
     let end_entity = CertificateDer::from(der.as_slice());
     for name in names {
         let name = match name {
@@ -132,8 +146,18 @@ pub(crate) fn fit(
             },
             ServerName::Ip(ip) => rustls::pki_types::ServerName::IpAddress((*ip).into()),
         };
-        match verifier.verify_server_cert(&end_entity, &[], &name, &[], UnixTime::now()) {
+        match active.verify_server_cert(&end_entity, &[], &name, &[], UnixTime::now()) {
             Ok(_) => {}
+            Err(rustls::Error::InvalidCertificate(
+                CertificateError::UnknownIssuer | CertificateError::BadSignature,
+            )) if trusted
+                .verify_server_cert(&end_entity, &[], &name, &[], UnixTime::now())
+                .is_ok() =>
+            {
+                // From the CA a change of certificate authority replaces
+                // (ADR-0088): issue again from the active one.
+                return Ok(Fit::Stale);
+            }
             Err(rustls::Error::InvalidCertificate(
                 CertificateError::UnknownIssuer | CertificateError::BadSignature,
             )) => return Ok(Fit::Foreign),

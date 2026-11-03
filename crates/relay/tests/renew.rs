@@ -146,6 +146,7 @@ db_tests! {
                 names_only: false,
                 csr_pem: String::new(),
                 peer_cert_der: web03.tls.leaf().to_vec(),
+                ..Default::default()
             })
             .await
             .unwrap_err();

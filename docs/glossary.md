@@ -44,6 +44,10 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Follow-up | Who is told next when nobody acknowledges a critical alert, step after step, for everything, a customer or a site. "bob will be told at 03:27 if nobody acknowledges" | escalation, escalate, escalation policy (an incident "escalated" got worse; the AI "escalates" to a person when it stops) | `follow_up_policies`, `incident_follow_ups` |
 | Step | One part of a follow-up: after a wait without acknowledgement, tell the person on call of a schedule, named people, channels or the administrators | level, tier (tiers are the risk of AI commands) | `steps` |
 | Only for follow-ups | A channel that hears only the alerts nobody acknowledged, when a follow-up step names it | escalation channel | `follow_up_only` |
+| Certificate authority | What the central server uses to give every server and relay its certificate and to sign commands. Said in full on screen | CA, PKI, root | `ca`, `ca-cert.pem` |
+| Change the certificate authority | Replace it with a new one while every server and relay keeps working: they learn the new one, move to it, then the old one is retired. An emergency change is for when its key may have leaked | rotate, rotation, roll over, re-key, compromise | `ca_rotation`, `ca.rotation.*` |
+| Moved | A server or relay whose certificate comes from the new certificate authority. "312 of 315 servers and relays moved" | migrated, re-issued | `moved`, `issuer_ca` |
+| Needs a new install | A server or relay that missed an emergency change and cannot connect until it is installed again | cut off, stranded, orphaned | `cut_off` |
 | Turn off | Stop watching: no more alerts of a threshold, or offline incidents of a machine, until turned back on | mute | `offline_alerts`, `muted`, `enabled` |
 
 Keep the technical word when it is the thing being asked for, such as a certificate, a mirror or a sudo rule, and put the rest under a "Details" disclosure. Certificate warnings speak of renewal, and appear only when it is late (under 2 days left) or failed.

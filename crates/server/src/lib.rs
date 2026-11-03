@@ -6,6 +6,7 @@ pub mod alerting;
 pub mod api;
 pub mod auto_update;
 pub mod ca;
+pub mod ca_rotation;
 pub mod campaign;
 pub mod cluster;
 pub mod commands;

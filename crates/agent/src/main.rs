@@ -305,7 +305,8 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         handlers,
         Journal::in_dir(&config.data_dir),
         DispatcherSettings::default(),
-    );
+    )
+    .following(updates.clone());
     // Answers a self_update the restart interrupted (ADR-0053).
     let dispatcher = dispatcher.with_resumer(Arc::new(StatusResumer::new(
         &monitorflow_agent::self_update::state_dir(),

@@ -13,6 +13,7 @@ pub mod env_file;
 pub mod host;
 pub mod project;
 pub mod restore;
+pub mod retired_ca;
 pub mod source;
 pub mod update;
 

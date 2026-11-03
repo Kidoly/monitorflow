@@ -105,4 +105,27 @@ describe("InlineConfirm", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByRole("button", { name: "Revoke the token for web-13" })).toHaveFocus();
   });
+
+  it("keeps the confirm button disabled until the acknowledgement is ticked", async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    render(
+      <InlineConfirm
+        trigger="Emergency change…"
+        title="Start an emergency change?"
+        consequence="Machines that miss it must be installed again."
+        acknowledge="I understand"
+        confirmLabel="Start the emergency change"
+        onConfirm={onConfirm}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Emergency change…" }));
+    const check = screen.getByRole("checkbox", { name: "I understand" });
+    expect(check).toHaveFocus();
+    const confirm = screen.getByRole("button", { name: "Start the emergency change" });
+    expect(confirm).toBeDisabled();
+    await user.click(check);
+    await user.click(confirm);
+    expect(onConfirm).toHaveBeenCalledWith(null);
+  });
 });

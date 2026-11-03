@@ -27,6 +27,13 @@ message RenewRequest {
   // only if an administrator confirmed names it does not carry yet,
   // otherwise FAILED_PRECONDITION. Not limited by the renewal interval.
   bool names_only = 2;
+  // The peer stores `ca_bundle_pem` as its trust anchors (ADR-0088).
+  // Peers older than CA rotation leave it false and get only `ca_cert_pem`.
+  bool accepts_ca_bundle = 3;
+  // Asked every hour (ADR-0088): issue a certificate only if a change of
+  // certificate authority needs one for this peer, otherwise
+  // FAILED_PRECONDITION. Not limited by the renewal interval.
+  bool rotation_only = 4;
 }
 
 message ForwardedRenewRequest {
@@ -38,6 +45,10 @@ message ForwardedRenewRequest {
   bytes peer_cert_der = 2;
   // The `names_only` of the peer's `Renew`.
   bool names_only = 3;
+  // The `accepts_ca_bundle` of the peer's `Renew`.
+  bool accepts_ca_bundle = 4;
+  // The `rotation_only` of the peer's `Renew`.
+  bool rotation_only = 5;
 }
 
 message RenewResponse {
@@ -49,6 +60,10 @@ message RenewResponse {
   string peer_uri = 3;
   // End of the certificate's validity, Unix seconds.
   int64 not_after_unix = 4;
+  // Every CA certificate the peer must trust from now on, in PEM, the
+  // issuer of `cert_pem` first: two during a change of certificate
+  // authority (ADR-0088). Only when the request has `accepts_ca_bundle`.
+  string ca_bundle_pem = 5;
 }
 
 // The CA's certificate revocation list, for relays: a relay terminates the
@@ -64,4 +79,7 @@ message GetCrlResponse {
   // The current CRL in DER, signed by the CA. The same list the server's
   // listener enforces, including its next_update.
   bytes crl_der = 1;
+  // One CRL per trusted CA, `crl_der` first: two during a change of
+  // certificate authority (ADR-0088). A relay enforces all of them.
+  repeated bytes crl_ders = 2;
 }

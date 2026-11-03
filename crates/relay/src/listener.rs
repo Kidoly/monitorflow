@@ -5,10 +5,13 @@
 //! that copy to downstream relays (ADR-0028).
 //!
 //! [`TlsPublisher`] refetches the CRL every hour, retrying every minute
-//! after a failure, and rebuilds the configuration when the relay's
-//! certificate is renewed. Like the server, the listener enforces the CRL's
+//! after a failure, and refetches it and rebuilds the configuration when
+//! the relay's certificate is renewed. Like the server, the listener enforces the CRL's
 //! `next_update`: a relay that cannot refresh it for about a day refuses
 //! its agents.
+//!
+//! During a change of certificate authority the upstream sends one CRL per
+//! CA (ADR-0088), and the listener enforces both.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -70,11 +73,14 @@ impl CrlSettings {
     }
 }
 
+/// The CRLs of the CAs the upstream trusts, the active one's first.
+pub type Crls = Vec<CertificateRevocationListDer<'static>>;
+
 /// One `GetCrl` call with the relay's certificate.
 pub async fn fetch_crl(
     identity: &StoredIdentity,
     settings: &CrlSettings,
-) -> Result<CertificateRevocationListDer<'static>, CrlError> {
+) -> Result<Crls, CrlError> {
     let config = identity
         .tls
         .client_config()
@@ -90,21 +96,30 @@ pub async fn fetch_crl(
             Err(CrlError::Refused(status.message().to_owned()))
         }
         Ok(Err(status)) => Err(CrlError::Fetch(error_chain(&status))),
-        Ok(Ok(response)) => Ok(CertificateRevocationListDer::from(
-            response.into_inner().crl_der,
-        )),
+        Ok(Ok(response)) => {
+            let response = response.into_inner();
+            // An upstream older than ADR-0088 sends only `crl_der`.
+            let ders = match response.crl_ders.is_empty() {
+                true => vec![response.crl_der],
+                false => response.crl_ders,
+            };
+            Ok(ders
+                .into_iter()
+                .map(CertificateRevocationListDer::from)
+                .collect())
+        }
     }
 }
 
 /// Server configuration for the agent listener: the relay's certificate,
-/// clients checked against the CA and `crl`. An unparsable CRL fails here.
+/// clients checked against the CAs and `crls`. An unparsable CRL fails here.
 pub fn server_config(
     identity: &StoredIdentity,
-    crl: &CertificateRevocationListDer<'static>,
+    crls: &Crls,
 ) -> Result<Arc<ServerConfig>, CrlError> {
     identity
         .tls
-        .server_config(vec![crl.clone()])
+        .server_config(crls.clone())
         .map_err(|e| CrlError::Config(e.to_string()))
 }
 
@@ -140,7 +155,7 @@ fn ip_addr(bytes: &[u8]) -> Option<std::net::IpAddr> {
 pub struct TlsPublisher {
     settings: CrlSettings,
     identity: watch::Receiver<StoredIdentity>,
-    crl: watch::Sender<CertificateRevocationListDer<'static>>,
+    crl: watch::Sender<Crls>,
     tx: watch::Sender<Arc<ServerConfig>>,
 }
 
@@ -183,7 +198,7 @@ impl TlsPublisher {
     }
 
     /// The CRL the listener enforces, for [`CrlCache`].
-    pub fn crl(&self) -> watch::Receiver<CertificateRevocationListDer<'static>> {
+    pub fn crl(&self) -> watch::Receiver<Crls> {
         self.crl.subscribe()
     }
 
@@ -211,6 +226,14 @@ impl TlsPublisher {
                 changed = self.identity.changed(), if !fixed => match changed {
                     Ok(()) => {
                         let current = self.identity.borrow_and_update().clone();
+                        // A new certificate may come with a new CA, whose
+                        // CRL the listener needs at once (ADR-0088).
+                        match fetch_crl(&current, &self.settings).await {
+                            Ok(crl) => {
+                                self.crl.send_replace(crl);
+                            }
+                            Err(error) => tracing::warn!(%error, "cannot refresh the CRL after a renewal; keeping the previous one"),
+                        }
                         self.publish(&current);
                     }
                     Err(_) => fixed = true,
@@ -235,11 +258,11 @@ impl TlsPublisher {
 /// but not a forged one, and its `next_update` still bounds how old.
 #[derive(Clone)]
 pub struct CrlCache {
-    crl: watch::Receiver<CertificateRevocationListDer<'static>>,
+    crl: watch::Receiver<Crls>,
 }
 
 impl CrlCache {
-    pub fn new(crl: watch::Receiver<CertificateRevocationListDer<'static>>) -> Self {
+    pub fn new(crl: watch::Receiver<Crls>) -> Self {
         Self { crl }
     }
 }
@@ -257,9 +280,10 @@ impl RevocationService for CrlCache {
                 "only relays may fetch the CRL",
             ));
         }
-        let crl_der = self.crl.borrow().as_ref().to_vec();
-        tracing::debug!(%peer, bytes = crl_der.len(), "CRL sent");
-        Ok(tonic::Response::new(GetCrlResponse { crl_der }))
+        let crl_ders: Vec<Vec<u8>> = self.crl.borrow().iter().map(|crl| crl.to_vec()).collect();
+        let crl_der = crl_ders.first().cloned().unwrap_or_default();
+        tracing::debug!(%peer, crls = crl_ders.len(), "CRL sent");
+        Ok(tonic::Response::new(GetCrlResponse { crl_der, crl_ders }))
     }
 }
 

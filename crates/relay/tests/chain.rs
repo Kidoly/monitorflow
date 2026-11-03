@@ -117,7 +117,7 @@ db_tests! {
         // The CRL b serves downstream is the server's.
         let channel = tls::connect(&b.url, b_id.tls.client_config().unwrap(), TIMEOUT).await.unwrap();
         let served = RevocationServiceClient::new(channel).get_crl(GetCrlRequest {}).await.unwrap().into_inner();
-        assert_eq!(served.crl_der, upstream.crl.subscribe().borrow().as_ref().to_vec());
+        assert_eq!(served.crl_der, upstream.crl.subscribe().borrow()[0].to_vec());
         let channel = tls::connect(&b.url, web01.tls.client_config().unwrap(), TIMEOUT).await.unwrap();
         let status = RevocationServiceClient::new(channel).get_crl(GetCrlRequest {}).await.unwrap_err();
         assert_eq!(status.code(), Code::PermissionDenied);

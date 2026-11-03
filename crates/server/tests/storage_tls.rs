@@ -199,3 +199,52 @@ async fn a_renewed_certificate_is_served_and_trusted() {
     sink.write(&series()).await.unwrap();
     assert_eq!(store.requests().len(), 2);
 }
+
+#[tokio::test]
+async fn the_stores_follow_a_change_of_certificate_authority() {
+    let dir = TempDir::new().unwrap();
+    let ca = Arc::new(open_ca(&dir, "ca"));
+    let tls = dir.path().join("tls");
+    storage_tls::ensure(&ca, &tls, &names()).unwrap();
+    let old_cert = std::fs::read_to_string(tls.join(CERT_FILE)).unwrap();
+    let old_key = std::fs::read_to_string(tls.join(KEY_FILE)).unwrap();
+    let store = Store::start(tls.clone()).await;
+    // One client for the whole change, as the running server has.
+    let auth = StorageAuth::load(ca.ca_cert_pem(), &tls)
+        .unwrap()
+        .following(ca.clone());
+    let sink = sink(&store.url, &auth);
+    sink.write(&series()).await.unwrap();
+
+    // Introduced: the old CA still issues, the certificate stays.
+    ca.start_rotation(false).unwrap();
+    assert_eq!(
+        storage_tls::ensure(&ca, &tls, &names()).unwrap(),
+        storage_tls::Outcome::Kept
+    );
+    sink.write(&series()).await.unwrap();
+
+    // Switched: a new certificate from the new CA, which the same client
+    // trusts at once.
+    ca.switch().unwrap();
+    assert_eq!(
+        storage_tls::ensure(&ca, &tls, &names()).unwrap(),
+        storage_tls::Outcome::Issued
+    );
+    sink.write(&series()).await.unwrap();
+
+    // Retired: the new certificate still works; one from the old CA is
+    // refused by the same client.
+    ca.retire().unwrap();
+    assert_eq!(
+        storage_tls::ensure(&ca, &tls, &names()).unwrap(),
+        storage_tls::Outcome::Kept
+    );
+    sink.write(&series()).await.unwrap();
+    assert_eq!(store.requests().len(), 4);
+    std::fs::write(tls.join(CERT_FILE), old_cert).unwrap();
+    std::fs::write(tls.join(KEY_FILE), old_key).unwrap();
+    let err = sink.write(&series()).await.unwrap_err();
+    assert!(matches!(err, WriteError::Retryable(_)), "{err:?}");
+    assert_eq!(store.requests().len(), 4);
+}

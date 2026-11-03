@@ -17,6 +17,7 @@ import { isCurrent, visibleNavigation } from "./navigation";
 import styles from "./Shell.module.css";
 import { ScopeSwitcher } from "./ScopeSwitcher";
 import { ThemeToggle } from "./ThemeToggle";
+import { CertificateAuthorityBanner } from "./CertificateAuthorityBanner";
 import { UpdateBanner } from "./UpdateBanner";
 
 /** The API caps a page at 500; past that the count reads "500+". */
@@ -172,7 +173,12 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         <ThemeToggle />
       </nav>
       <main id="main" className={styles.main} tabIndex={-1}>
-        {administersEverything(me) && <UpdateBanner />}
+        {administersEverything(me) && (
+          <>
+            <UpdateBanner />
+            <CertificateAuthorityBanner />
+          </>
+        )}
         {children}
       </main>
     </div>

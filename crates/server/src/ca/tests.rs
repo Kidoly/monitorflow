@@ -58,7 +58,7 @@ fn unix(t: SystemTime) -> i64 {
 /// Verifies the chain to the CA with webpki, as a TLS server would.
 fn chains_to(ca: &CertificateAuthority, cert: &CertificateDer<'_>) -> bool {
     let mut roots = RootCertStore::empty();
-    roots.add(der(ca.ca_cert_pem())).unwrap();
+    roots.add(der(&ca.ca_cert_pem())).unwrap();
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
         .build()
@@ -88,7 +88,7 @@ fn creates_a_root_ca_and_reopens_it() {
     assert_eq!(mode(KEY_FILE), 0o600);
     assert_eq!(mode(""), 0o700);
 
-    let cert_der = der(ca.ca_cert_pem());
+    let cert_der = der(&ca.ca_cert_pem());
     let (_, cert) = X509Certificate::from_der(&cert_der).unwrap();
     let constraints = cert.basic_constraints().unwrap().unwrap().value;
     assert!(constraints.ca);
@@ -456,14 +456,14 @@ fn commands_signed_by_the_ca_verify_against_its_certificate() {
         ..Command::default()
     };
     cmd.signature = ca.sign_command(&command::signed_bytes(&cmd)).unwrap();
-    let ca_der = der(ca.ca_cert_pem());
+    let ca_der = der(&ca.ca_cert_pem());
     assert_eq!(command::verify(&cmd, std::slice::from_ref(&ca_der)), Ok(()));
     // The same CA reopened from disk signs with the same key.
     let reopened = open(&ca.dir);
     cmd.signature = reopened.sign_command(&command::signed_bytes(&cmd)).unwrap();
     assert_eq!(command::verify(&cmd, std::slice::from_ref(&ca_der)), Ok(()));
     let (_other_dir, other) = new_ca();
-    assert!(command::verify(&cmd, &[der(other.ca_cert_pem())]).is_err());
+    assert!(command::verify(&cmd, &[der(&other.ca_cert_pem())]).is_err());
 }
 
 /// What a v0.2.0 server left on disk and handed out, written by that release

@@ -19,9 +19,11 @@ use monitorflow_agent::commands::{
 };
 use monitorflow_agent::self_update::handler::{SelfUpdateHandler, SudoHelper};
 use monitorflow_agent::self_update::{Connected, StatusResumer, RELAY};
+use monitorflow_common::client::identity::StoredIdentity;
 use monitorflow_common::client::shutdown::Shutdown;
 use monitorflow_common::command::SELF_UPDATE;
 use rustls::pki_types::CertificateDer;
+use tokio::sync::watch;
 
 /// The dispatcher of the relay's own commands, and the end its stream
 /// holds.
@@ -50,10 +52,11 @@ pub fn dispatcher(
 /// sudo, root's state directory.
 pub fn start(
     relay_id: &str,
-    ca_certs: Vec<CertificateDer<'static>>,
+    identity: watch::Receiver<StoredIdentity>,
     data_dir: &Path,
     shutdown: Shutdown,
 ) -> StreamEnd {
+    let ca_certs = identity.borrow().tls.ca_certs().to_vec();
     let handler = SelfUpdateHandler::new(SudoHelper::of(RELAY)).for_product(RELAY);
     let (dispatcher, stream, end) = dispatcher(
         relay_id,
@@ -62,6 +65,8 @@ pub fn start(
         handler,
         Path::new(RELAY.state_dir),
     );
+    // A change of certificate authority brings a new CA (ADR-0088).
+    let dispatcher = dispatcher.following(identity);
     tokio::spawn(dispatcher.run(end, shutdown));
     stream
 }

@@ -40,12 +40,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use monitorflow_common::client::identity::StoredIdentity;
 use monitorflow_common::command;
 use monitorflow_common::proto::v1::{
     Command, CommandAcceptance, CommandKindState, CommandResult, CommandStatus,
 };
 use rustls::pki_types::CertificateDer;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use crate::shutdown::Shutdown;
@@ -227,6 +228,10 @@ struct Running {
 pub struct Dispatcher {
     agent_id: String,
     ca_certs: Vec<CertificateDer<'static>>,
+    /// When set, the CA certificates of the current identity replace
+    /// `ca_certs`: a change of certificate authority brings a new one
+    /// while the agent runs (ADR-0088).
+    identity: Option<watch::Receiver<StoredIdentity>>,
     handlers: Handlers,
     journal: Journal,
     settings: DispatcherSettings,
@@ -246,10 +251,24 @@ impl Dispatcher {
         Self {
             agent_id: agent_id.to_owned(),
             ca_certs,
+            identity: None,
             handlers,
             journal,
             settings,
             resumer: None,
+        }
+    }
+
+    /// Verifies signatures against the CAs of `identity` as it changes.
+    pub fn following(mut self, identity: watch::Receiver<StoredIdentity>) -> Self {
+        self.identity = Some(identity);
+        self
+    }
+
+    fn ca_certs(&self) -> Vec<CertificateDer<'static>> {
+        match &self.identity {
+            Some(identity) => identity.borrow().tls.ca_certs().to_vec(),
+            None => self.ca_certs.clone(),
         }
     }
 
@@ -316,7 +335,7 @@ impl Dispatcher {
             tracing::warn!("rejecting a command with an invalid ID");
             return Answer(not_run(id, CommandStatus::Rejected, "invalid command ID"));
         }
-        if let Err(error) = command::verify(command, &self.ca_certs) {
+        if let Err(error) = command::verify(command, &self.ca_certs()) {
             tracing::warn!(command_id = %id, %error, "rejecting a command");
             return Answer(not_run(id, CommandStatus::Rejected, &error.to_string()));
         }

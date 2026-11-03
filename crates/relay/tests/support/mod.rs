@@ -354,7 +354,7 @@ pub struct Relay {
     pub url: String,
     pub up: watch::Receiver<bool>,
     pub buffer: Buffer,
-    _identity: watch::Sender<StoredIdentity>,
+    _identity: Option<watch::Sender<StoredIdentity>>,
     _options: BufferOptions,
     served: tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
     stop: Trigger,
@@ -389,13 +389,25 @@ impl Relay {
         upstream_url: &str,
         options: BufferOptions,
     ) -> Self {
+        let (identity_tx, identities) = watch::channel(identity);
+        let mut relay = Self::start_following(identities, upstream_url, options).await;
+        relay._identity = Some(identity_tx);
+        relay
+    }
+
+    /// [`Self::start_with`] for an identity that changes, as a renewal
+    /// task changes it.
+    pub async fn start_following(
+        identities: watch::Receiver<StoredIdentity>,
+        upstream_url: &str,
+        options: BufferOptions,
+    ) -> Self {
         let config = RelayConfig {
             upstream_url: upstream_url.into(),
             heartbeat_interval: 1,
             ..RelayConfig::default()
         };
         let (trigger, stop) = shutdown::channel();
-        let (identity_tx, identities) = watch::channel(identity);
         let fast = || Backoff::new(Duration::from_millis(50), Duration::from_millis(200));
         let control = ControlSettings {
             backoff: fast(),
@@ -448,7 +460,7 @@ impl Relay {
             url,
             up,
             buffer,
-            _identity: identity_tx,
+            _identity: None,
             _options: options,
             served,
             stop: trigger,

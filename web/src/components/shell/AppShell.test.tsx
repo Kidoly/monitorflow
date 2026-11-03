@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "@/lib/api";
 import { THEME_KEY, THEME_SCRIPT } from "@/lib/theme";
 import { stubFetch } from "@/test/fetch";
+import { authority, rotation } from "@/test/certificateAuthority";
 import { setUrl } from "@/test/navigation";
 import { ACME, LYON, SHELL_ROUTES } from "@/test/shell";
 
@@ -69,6 +70,36 @@ describe("AppShell", () => {
     });
   });
 
+  describe("certificate authority notice", () => {
+    const routes = (body: unknown) => ({ ...SHELL_ROUTES, "GET /api/certificate-authority": { status: 200, body } });
+
+    it("leads global administrators to an emergency change", async () => {
+      stubFetch(routes(authority({ rotation: rotation({ stage: "switched", emergency: true }) })));
+      render(<AppShell me={admin}>page</AppShell>);
+      expect(await screen.findByText("An emergency change of the certificate authority is under way.")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "See the certificate authority" })).toHaveAttribute(
+        "href",
+        "/admin/certificate-authority",
+      );
+    });
+
+    it("stays away when all is well, during a planned change and on its page", async () => {
+      for (const [body, url] of [
+        [authority(), "/"],
+        [authority({ rotation: rotation() }), "/"],
+        [authority({ expires_soon: true }), "/admin/certificate-authority/"],
+      ] as const) {
+        setUrl(url);
+        const fetchMock = stubFetch(routes(body));
+        const { unmount } = render(<AppShell me={admin}>page</AppShell>);
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/certificate-authority", expect.anything()));
+        await screen.findByLabelText("3 open incidents");
+        expect(screen.queryByText(/certificate authority/)).not.toBeInTheDocument();
+        unmount();
+      }
+    });
+  });
+
   it("starts with a skip link to the main content", async () => {
     renderShell();
     await userEvent.tab();
@@ -114,6 +145,7 @@ describe("AppShell", () => {
       "AI",
       "Server update",
       "Backups",
+      "Certificate authority",
     ]);
     expect(within(nav()).getByText("Remediation")).toBeInTheDocument();
     expect(within(nav()).getByText("Updates")).toBeInTheDocument();

@@ -115,7 +115,7 @@ impl Pki {
         write_identity(
             dir,
             "server",
-            self.ca.ca_cert_pem(),
+            &self.ca.ca_cert_pem(),
             &cert.cert_pem,
             &key.serialize_pem(),
         )
@@ -237,6 +237,7 @@ impl Server {
             csr_pem: csr_pem.into(),
             hostname: hostname.into(),
             server_names: Vec::new(),
+            accepts_ca_bundle: true,
         };
         EnrollServiceClient::new(channel)
             .enroll(request)

@@ -19,6 +19,7 @@ use monitorflow_server::api::{
 };
 use monitorflow_server::auto_update::AutoUpdate;
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
+use monitorflow_server::ca_rotation::{self, Rotator};
 use monitorflow_server::campaign::{self, Runner};
 use monitorflow_server::cluster::{self, Cluster, Links};
 use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings};
@@ -388,16 +389,18 @@ async fn main() -> anyhow::Result<()> {
     let ca = Arc::new(open_ca(&config).await?);
     let names = server_cert::parse_names(&config.server_names);
     let tls_paths = config.tls_paths();
-    let (issuer, paths) = (ca.clone(), tls_paths.clone());
-    tokio::task::spawn_blocking(move || server_cert::ensure(&issuer, &paths, &names))
+    let (issuer, paths, cert_names) = (ca.clone(), tls_paths.clone(), names.clone());
+    tokio::task::spawn_blocking(move || server_cert::ensure(&issuer, &paths, &cert_names))
         .await?
         .context("preparing the server certificate")?;
     let identity = Identity::load(&tls_paths).context("loading the TLS identity")?;
 
     // Every new mTLS connection uses the latest config from the publisher,
     // which carries a fresh CRL.
-    let (crl, tls_config) = CrlPublisher::start(ca.clone(), identity.clone()).await?;
+    let (crl, tls_config) = CrlPublisher::start(ca.clone(), identity).await?;
     let crl = Arc::new(crl);
+    // Changes of certificate authority (ADR-0088).
+    let rotator = Rotator::new(pool.clone(), ca.clone(), crl.clone(), tls_paths, names);
     let listener = TcpListener::bind(config.grpc_listen_addr)
         .await
         .with_context(|| format!("binding gRPC listener on {}", config.grpc_listen_addr))?;
@@ -419,6 +422,11 @@ async fn main() -> anyhow::Result<()> {
                 .context("preparing TLS to VictoriaMetrics and VictoriaLogs")?,
         ),
         None => None,
+    };
+    // The stores' certificate moves with the CA too.
+    let rotator = match &config.storage_tls_dir {
+        Some(dir) => rotator.with_storage(dir.clone(), storage_tls::names(&storage_urls(&config))?),
+        None => rotator,
     };
     // Storage writers (ADR-0013). Streams only push to their queues.
     let writer_settings = WriterSettings::from_config(&config.ingest);
@@ -512,6 +520,7 @@ async fn main() -> anyhow::Result<()> {
             enroll::ca_fingerprint(&ca),
         ))
         .with_crl(crl.clone())
+        .with_ca_rotation(rotator.clone())
         .with_commands(commands.clone())
         .with_relay_commands(relay_commands.clone())
         .with_mirrors(mirrors.clone())
@@ -560,9 +569,9 @@ async fn main() -> anyhow::Result<()> {
             .context("gRPC server")
         },
         async {
-            enroll::serve(
+            enroll::serve_following(
                 enroll_listener,
-                identity.server_config_without_client_auth()?,
+                crl.enroll_config(),
                 enroller,
                 until_stopped(),
             )
@@ -680,6 +689,10 @@ async fn main() -> anyhow::Result<()> {
                 until_stopped(),
             )
             .await;
+            Ok(())
+        },
+        async {
+            rotator.run(ca_rotation::POLL, until_stopped()).await;
             Ok(())
         },
     );

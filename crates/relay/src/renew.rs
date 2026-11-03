@@ -141,6 +141,8 @@ impl CertificateService for RenewProxy {
             csr_pem: request.csr_pem,
             peer_cert_der: leaf.to_vec(),
             names_only: request.names_only,
+            accepts_ca_bundle: request.accepts_ca_bundle,
+            rotation_only: request.rotation_only,
         };
         let via = Via::origin(peer.clone());
         self.forward(&peer, via, forwarded).await.map(Response::new)
