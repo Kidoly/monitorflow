@@ -14,6 +14,7 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::hardware::{self, Hardware};
 use crate::packages::Tools;
 
 /// `os-release` locations, in the order systemd documents them.
@@ -76,6 +77,9 @@ pub struct HostInfo {
     /// [`OsFamily::Linux`], and on an image-based system of a known family
     /// (ADR-0063).
     pub package_manager: bool,
+    /// System UUID and MAC addresses, to find the host's Proxmox VM or
+    /// container (ADR-0093).
+    pub hardware: Hardware,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -124,6 +128,7 @@ pub fn detect_from(os_release: Option<&Path>) -> HostInfo {
         os_family,
         os_version,
         package_manager: Tools::default().package_manager(os_family),
+        hardware: hardware::detect(),
     }
 }
 
@@ -168,6 +173,7 @@ pub fn detect() -> Result<HostInfo, OsError> {
         os_family: OsFamily::Windows,
         os_version: windows_version(&product, display.as_deref(), &build, ubr),
         package_manager: Tools::default().package_manager(OsFamily::Windows),
+        hardware: hardware::detect(),
     })
 }
 

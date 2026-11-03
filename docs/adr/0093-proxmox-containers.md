@@ -1,7 +1,7 @@
-# ADR-0093: Proxmox containers
+# ADR-0093: Proxmox containers, and finding each server's guest
 
 Date: 2026-11-03
-Status: accepted; amends ADR-0044 and ADR-0046
+Status: accepted; amends ADR-0044 and ADR-0046; the discovery amendment below replaces ADR-0044's manual-only mapping
 
 ## Context
 
@@ -47,3 +47,44 @@ Rejected:
 - A rollback restores a container's volume mount points with its root disk, as it restores all of a VM's disks. Data on them written after the snapshot is lost, as on a VM.
 - Each mapped guest costs two or three API requests an hour.
 - A token without `Datastore.Audit` still works; the reason is less precise.
+
+## Amendment: discovery
+
+### Context
+
+ADR-0044 left discovery out: "a wrong automatic match would snapshot or roll back the wrong machine". Mapping each server by hand does not scale past a few, and a mapping goes stale when its guest migrates to another node. The question is which signals to trust, how a doubt is shown, how a person corrects a match, and how a cluster stays within its customer.
+
+### Decision
+
+**What agents report.** `Hello` gains `system_uuid` (field 9) and `mac_addresses` (field 10), additive. A VM's SMBIOS system UUID is the `uuid` of its `smbios1` line, set by Proxmox when the VM is created and regenerated on clone. Linux keeps it root-only (`/sys/class/dmi/id/product_uuid`), and the agent runs as `monitorflow`, so the systemd unit copies it into the agent's runtime directory before starting it (`ExecStartPre=+-…`, ignored where there is none). The agent reads the copy, or the file itself when it runs as root. Windows records it in `HKLM\SYSTEM\HardwareConfig\LastConfig`, which the agent, as LocalSystem, reads. Inside a container the agent sends no UUID, as a privileged one reads its host's. Linux agents send the MAC addresses of their interfaces, loopback and all-zero left out. Windows agents send none: a Windows VM is found by its UUID, and a container never runs Windows. The server stores both on `servers` (`system_uuid`, `mac_addresses`, migration `20261115110100_proxmox_discovery`, add-only), cleaned of what does not parse and of the firmware placeholders many machines share. A malformed value never refuses the agent. Installs made before this change get the unit's copy on their next install; until then their Linux agents match by MAC, which works as well for VMs and containers.
+
+**Signals, most trusted first.**
+
+1. **The SMBIOS UUID**, against VMs. It is the hardware identity Proxmox gives the VM, unique per VM unless a person copied it.
+2. **A MAC address**, against VMs and containers. Proxmox generates one per network device, and two guests sharing one would not work on the same network.
+3. **The host name**, against the VM's name or the container's `hostname`, compared on their first label without case, **only when the agent reports neither** (an agent older than this change, or behind an older relay, which drops the fields). Names are typed by people and reused across customers. When an agent reports hardware that matches nothing, its name is not tried: the hardware says it is not on that cluster. A match by name is shown as such, with "check it is the right one".
+
+A server is mapped at the first signal that matches anything, and only if exactly one guest matches and no other server matches that guest. Otherwise nothing is mapped, the candidates are recorded (`server_proxmox_candidates`), and the server's page asks: "Several Proxmox VMs or containers match this server, so none is used yet. Which one is it?" with one button per candidate. Rollback stays limited meanwhile, which is the safe side. Templates are left out.
+
+**Who corrects.** A mapping by hand (`PUT`) always wins: discovery never changes it, except to follow its guest to another node. Unmapping (`DELETE`, "Not this one" on the page) records a rejection (`server_proxmox_rejections`) and discovery never maps that server to that guest again; mapping the pair by hand lifts it. `matched_by` on the mapping is `uuid`, `mac` or `hostname`, or null for a mapping by hand. The page says "Matched automatically to VM 104 web-1 on pve2 by its hardware ID" (or "by its network card", or "by its name only; check it is the right one"), with Change and Not this one. The form picks from the guests discovery saw, with "Not in the list" for type, node and ID by hand.
+
+**Tenancy.** Clusters stay in `server.toml` (ADR-0064 kept them there). Each `[[proxmox.clusters]]` entry takes an optional `customer` or `site`, an ID as the web interface shows it. A cluster with an owner serves only that customer's or site's servers: by discovery, by hand (a `PUT` naming another customer's cluster is 400 "unknown Proxmox cluster", as for a missing one) and for snapshots (such a mapping reads `unknown_cluster`). A cluster without one is the operator's and serves every customer, as before. The picker lists an operator's cluster to global administrators only, since its guests belong to every customer; others see the candidates their own server matched, and can still map by hand. No setting is needed for a single-customer or single-operator install.
+
+**The pass.** The leader runs it at start and every 10 minutes, before the snapshot checks: `GET /cluster/resources?type=vm` per cluster, then each guest's configuration (`smbios1`, `netN`, `hostname`), into `proxmox_guests`. Every mapping whose guest is now on another node moves there (`server.proxmox.move`). Then, only if every cluster could be listed, servers are matched: a cluster that cannot be read must not unmap its servers. New and changed matches are audited as `server.proxmox.discover` (with `matched_by` and the previous mapping), lost ones as `server.proxmox.unmatch` (with the reason), all with actor `system/proxmox-discovery`. The token needs `VM.Audit` on the guests to list them, as ADR-0044 already asks.
+
+**Migrations between passes.** A snapshot or rollback that Proxmox refuses with an API error looks the guest up in `/cluster/resources`; if it is on another node, the mapping moves there (audited) and the call is made again once.
+
+Rejected:
+
+- **The guest agent** (`qemu-guest-agent`'s network interfaces). It needs the agent installed in each VM and `VM.Monitor`, and says nothing a MAC does not.
+- **Matching by name whenever the hardware fails.** A name matching across customers on an operator's cluster would snapshot the wrong machine and show rollback as available.
+- **Mapping the first of several candidates.** A clone and its original share everything but their history; a person tells them apart in one click.
+- **Moving clusters into the web interface.** It would store API tokens in the database and is a separate change; the owner keys keep the configuration where it is.
+
+### Consequences
+
+- On a cluster with up-to-date agents, servers in VMs and containers are mapped within 10 minutes of connecting, with no click, and stay mapped across migrations.
+- An agent older than this change matches by name only when its name is unique on both sides, and the page says to check it.
+- A clone keeps its original's MAC addresses until someone changes them; both show as candidates until then.
+- Each pass costs one request per cluster and one per guest.
+- A container's agent reports its veth MAC, which Proxmox keeps in the container's configuration: containers match as reliably as VMs.

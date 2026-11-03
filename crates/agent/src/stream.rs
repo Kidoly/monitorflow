@@ -375,6 +375,8 @@ impl Agent {
             os_version: self.host.os_version.clone(),
             no_package_manager: !self.host.package_manager,
             command_kinds: self.command_kinds.clone(),
+            system_uuid: self.host.hardware.system_uuid.clone().unwrap_or_default(),
+            mac_addresses: self.host.hardware.mac_addresses.clone(),
         }
     }
 

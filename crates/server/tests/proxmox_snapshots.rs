@@ -18,8 +18,8 @@ use monitorflow_common::redact::Secret;
 use monitorflow_server::remediation::risk::Tier;
 use monitorflow_server::remediation::runner::hook::{Change, ChangeHook};
 use monitorflow_server::remediation::snapshot::{
-    GuestKind, ProxmoxClient, ProxmoxOptions, ProxmoxSnapshotter, SnapshotError, SnapshotHook,
-    SnapshotName, SnapshotRequest, Snapshotter, Unsupported, VmRef,
+    discovery::Owner, GuestKind, ProxmoxClient, ProxmoxOptions, ProxmoxSnapshotter, SnapshotError,
+    SnapshotHook, SnapshotName, SnapshotRequest, Snapshotter, Unsupported, VmRef,
 };
 use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair};
 use serde_json::{json, Value};
@@ -76,6 +76,11 @@ struct Fake {
     /// Its configuration, and the node's storage list.
     config: Mutex<Value>,
     storage: Mutex<Value>,
+    /// The cluster's guests for discovery, as `/cluster/resources` lists
+    /// them, and their configurations. A guest listed here is reached only
+    /// at its node and kind.
+    resources: Mutex<Value>,
+    configs: Mutex<HashMap<u32, Value>>,
     /// Snapshots of the guest: name, description, snaptime.
     snapshots: Mutex<Vec<(String, String, i64)>>,
     tasks: Mutex<HashMap<String, Task>>,
@@ -165,8 +170,25 @@ fn data(value: Value) -> Response {
 
 /// Proxmox's answer to a path of the wrong kind: no such configuration.
 fn wrong_kind(f: &Fake, node: &str, kind: &str, vmid: u32) -> Option<Response> {
-    let actual = *f.kind.lock().unwrap();
-    (kind != actual).then(|| {
+    let listed = f
+        .resources
+        .lock()
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["vmid"] == vmid)
+        .map(|r| {
+            (
+                r["node"].as_str().unwrap().to_owned(),
+                r["type"].as_str().unwrap().to_owned(),
+            )
+        });
+    let wrong = match listed {
+        Some((at, actual)) => at != node || actual != kind,
+        None => kind != *f.kind.lock().unwrap(),
+    };
+    wrong.then(|| {
         let dir = if kind == "qemu" { "qemu-server" } else { kind };
         let message =
             format!("Configuration file 'nodes/{node}/{dir}/{vmid}.conf' does not exist\n");
@@ -321,7 +343,28 @@ async fn config(
     if let Some(r) = wrong_kind(&f, &node, &kind, vmid) {
         return r;
     }
-    data(f.config.lock().unwrap().clone())
+    match f.configs.lock().unwrap().get(&vmid) {
+        Some(config) => data(config.clone()),
+        None => data(f.config.lock().unwrap().clone()),
+    }
+}
+
+async fn resources(
+    State(f): State<Shared>,
+    axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = check(
+        &f,
+        Method::GET,
+        "cluster/resources".into(),
+        &headers,
+        query.clone(),
+    ) {
+        return *r;
+    }
+    assert_eq!(query.get("type").map(String::as_str), Some("vm"));
+    data(f.resources.lock().unwrap().clone())
 }
 
 async fn storage(
@@ -424,6 +467,8 @@ impl Harness {
             feature: Mutex::new(true),
             config: Mutex::new(json!({ "scsi0": "local-lvm:vm-101-disk-0,size=32G" })),
             storage: Mutex::new(json!([{ "storage": "local-lvm", "type": "lvmthin" }])),
+            resources: Mutex::new(json!([])),
+            configs: Mutex::default(),
             snapshots: Mutex::default(),
             tasks: Mutex::default(),
             outcome: Mutex::new(Outcome::Ok(2)),
@@ -449,6 +494,7 @@ impl Harness {
             )
             .route("/api2/json/nodes/{node}/{kind}/{vmid}/config", get(config))
             .route("/api2/json/nodes/{node}/storage", get(storage))
+            .route("/api2/json/cluster/resources", get(resources))
             .route("/api2/json/nodes/{node}/tasks/{upid}/status", get(status))
             .with_state(fake.clone());
         let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -698,6 +744,83 @@ async fn audit_actions(pool: &PgPool) -> Vec<(String, String)> {
     .fetch_all(pool)
     .await
     .unwrap()
+}
+
+/// Two customers, `acme` and `globex`, with a site each.
+async fn tenants(pool: &PgPool) -> [(Uuid, Uuid); 2] {
+    let mut out = Vec::new();
+    for name in ["acme", "globex"] {
+        let customer: Uuid =
+            sqlx::query_scalar("INSERT INTO customers (name) VALUES ($1) RETURNING id")
+                .bind(name)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let site: Uuid = sqlx::query_scalar(
+            "INSERT INTO sites (name, customer_id) VALUES ($1, $2) RETURNING id",
+        )
+        .bind(format!("{name}-site"))
+        .bind(customer)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        out.push((customer, site));
+    }
+    [out[0], out[1]]
+}
+
+/// A server of `site` reporting `uuid` and `macs`, as an agent's Hello
+/// records them.
+async fn reporting(
+    pool: &PgPool,
+    site: Uuid,
+    hostname: &str,
+    uuid: Option<&str>,
+    macs: &[&str],
+) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO servers (peer_id, site_id, hostname, os_family, system_uuid, mac_addresses)
+         VALUES ($1, $2, $1, 'debian', $3::uuid, $4) RETURNING id",
+    )
+    .bind(hostname)
+    .bind(site)
+    .bind(uuid)
+    .bind(macs.iter().map(|m| m.to_string()).collect::<Vec<_>>())
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+impl Harness {
+    /// Lists a guest of the cluster for discovery, with its configuration.
+    fn guest(&self, vmid: u32, node: &str, kind: &str, name: &str, config: Value) {
+        let mut resources = self.fake.resources.lock().unwrap();
+        let list = resources.as_array_mut().unwrap();
+        list.retain(|r| r["vmid"] != vmid);
+        list.push(
+            json!({ "id": format!("{kind}/{vmid}"), "vmid": vmid, "node": node, "type": kind,
+                          "name": name, "status": "running", "template": 0 }),
+        );
+        self.fake.configs.lock().unwrap().insert(vmid, config);
+    }
+
+    fn migrate(&self, vmid: u32, node: &str) {
+        let mut resources = self.fake.resources.lock().unwrap();
+        for r in resources.as_array_mut().unwrap() {
+            if r["vmid"] == vmid {
+                r["node"] = json!(node);
+            }
+        }
+    }
+}
+
+const UUID_1: &str = "1b3e2f80-6c0a-4e1b-9c3d-2a4b5c6d7e01";
+const UUID_9: &str = "1b3e2f80-6c0a-4e1b-9c3d-2a4b5c6d7e09";
+
+/// `(server_id, cluster, node, vmid, kind, matched_by)` of every mapping.
+async fn mappings(pool: &PgPool) -> Vec<(Uuid, String, String, i32, String, Option<String>)> {
+    sqlx::query_as("SELECT server_id, cluster, node, vmid, kind, matched_by FROM server_proxmox_vms ORDER BY vmid")
+        .fetch_all(pool).await.unwrap()
 }
 
 db_tests! {
@@ -989,5 +1112,168 @@ db_tests! {
         let checked: Option<chrono::DateTime<chrono::Utc>> =
             sqlx::query_scalar("SELECT checked_at FROM server_proxmox_vms").fetch_one(&pool).await.unwrap();
         assert_eq!(checked, None);
+    }
+
+    #[sqlx::test]
+    async fn discovery_matches_by_uuid_then_mac_then_name_and_skips_templates(pool: PgPool) {
+        let h = Harness::start().await;
+        let [(_, site), _] = tenants(&pool).await;
+        h.guest(101, "pve1", "qemu", "web-1", json!({
+            "smbios1": format!("uuid={},manufacturer=QEMU", UUID_1.to_uppercase()),
+            "net0": "virtio=BC:24:11:00:00:01,bridge=vmbr0",
+        }));
+        h.guest(104, "pve2", "lxc", "CT104", json!({
+            "hostname": "files-1",
+            "net0": "name=eth0,bridge=vmbr0,hwaddr=BC:24:11:00:00:04,ip=dhcp,type=veth",
+        }));
+        h.guest(107, "pve1", "qemu", "legacy", json!({ "net0": "virtio=BC:24:11:00:00:07,bridge=vmbr0" }));
+        h.guest(900, "pve1", "qemu", "tpl", json!({ "smbios1": format!("uuid={UUID_9}") }));
+        h.fake.resources.lock().unwrap().as_array_mut().unwrap().last_mut().unwrap()["template"] = json!(1);
+
+        let by_uuid = reporting(&pool, site, "anything", Some(UUID_1), &["02:42:ac:11:00:01"]).await;
+        let by_mac = reporting(&pool, site, "files", None, &["bc:24:11:00:00:04"]).await;
+        let by_name = reporting(&pool, site, "Legacy.example.net", None, &[]).await;
+        let template = reporting(&pool, site, "tpl", Some(UUID_9), &[]).await;
+
+        let snapshots = snapshotter(&h, &pool, 3);
+        let found = snapshots.discover().await.unwrap();
+        assert_eq!((found.guests, found.mapped, found.ambiguous), (3, 3, 0), "{found:?}");
+        assert_eq!(mappings(&pool).await, [
+            (by_uuid, "pve".into(), "pve1".into(), 101, "qemu".into(), Some("uuid".into())),
+            (by_mac, "pve".into(), "pve2".into(), 104, "lxc".into(), Some("mac".into())),
+            (by_name, "pve".into(), "pve1".into(), 107, "qemu".into(), Some("hostname".into())),
+        ]);
+        assert!(!snapshots.support(template).await.unwrap().is_available());
+        let names: Vec<(i32, String)> = sqlx::query_as("SELECT vmid, name FROM proxmox_guests ORDER BY vmid")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(names, [(101, "web-1".into()), (104, "files-1".into()), (107, "legacy".into())]);
+        let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = 'server.proxmox.discover' AND actor_id = 'proxmox-discovery'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(audited, 3);
+
+        // A second pass changes nothing.
+        let again = snapshots.discover().await.unwrap();
+        assert_eq!((again.mapped, again.unmapped, again.moved), (0, 0, 0));
+
+        // The container found by its MAC is snapshotted through its lxc path.
+        let request = SnapshotRequest { incident: Uuid::from_u128(8 << 80), step: 1 };
+        snapshots.take(by_mac, request).await.unwrap();
+        assert!(h.fake.seen(Method::POST).iter().any(|s| s.path == "pve2/lxc/104/snapshot"));
+    }
+
+    #[sqlx::test]
+    async fn mappings_follow_guests_that_migrate(pool: PgPool) {
+        let h = Harness::start().await;
+        let [(_, site), _] = tenants(&pool).await;
+        h.guest(101, "pve1", "qemu", "web-1", json!({ "smbios1": format!("uuid={UUID_1}") }));
+        h.guest(107, "pve1", "qemu", "db-1", json!({}));
+        let auto = reporting(&pool, site, "web-1", Some(UUID_1), &[]).await;
+        let manual = reporting(&pool, site, "db-1", None, &["02:00:00:00:00:01"]).await;
+        sqlx::query("INSERT INTO server_proxmox_vms (server_id, cluster, node, vmid) VALUES ($1, 'pve', 'pve1', 107)")
+            .bind(manual).execute(&pool).await.unwrap();
+        let snapshots = snapshotter(&h, &pool, 3);
+        snapshots.discover().await.unwrap();
+
+        h.migrate(101, "pve3");
+        h.migrate(107, "pve2");
+        let found = snapshots.discover().await.unwrap();
+        assert_eq!(found.moved, 2);
+        let nodes: Vec<(Uuid, String, Option<String>)> = mappings(&pool).await.into_iter().map(|m| (m.0, m.2, m.5)).collect();
+        assert_eq!(nodes, [(auto, "pve3".into(), Some("uuid".into())), (manual, "pve2".into(), None)]);
+        let moves: Vec<Value> = sqlx::query_scalar("SELECT details FROM audit_log WHERE action = 'server.proxmox.move' ORDER BY id")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(moves.len(), 2);
+
+        // Migrated between passes: the snapshot follows it at once.
+        h.migrate(101, "pve1");
+        let request = SnapshotRequest { incident: Uuid::from_u128(4 << 80), step: 1 };
+        snapshots.take(auto, request).await.unwrap();
+        // Refused at the old node, listed and taken at the new one.
+        let lists: Vec<String> = h.fake.seen(Method::GET).into_iter().map(|s| s.path).filter(|p| p.ends_with("/snapshot")).collect();
+        assert_eq!(lists, ["pve3/qemu/101/snapshot", "pve1/qemu/101/snapshot"]);
+        let posts: Vec<String> = h.fake.seen(Method::POST).into_iter().map(|s| s.path).collect();
+        assert_eq!(posts, ["pve1/qemu/101/snapshot"]);
+        assert_eq!(mappings(&pool).await[0].2, "pve1");
+    }
+
+    #[sqlx::test]
+    async fn ambiguous_matches_map_nothing_and_rejections_and_manual_mappings_stick(pool: PgPool) {
+        let h = Harness::start().await;
+        let [(_, site), _] = tenants(&pool).await;
+        // Two guests carry the server's MAC: a clone.
+        h.guest(101, "pve1", "qemu", "web-1", json!({ "net0": "virtio=BC:24:11:00:00:01,bridge=vmbr0" }));
+        h.guest(102, "pve2", "qemu", "web-1-clone", json!({ "net0": "virtio=BC:24:11:00:00:01,bridge=vmbr0" }));
+        h.guest(103, "pve2", "qemu", "app-1", json!({ "smbios1": format!("uuid={UUID_1}") }));
+        let web = reporting(&pool, site, "web-1", None, &["bc:24:11:00:00:01"]).await;
+        let app = reporting(&pool, site, "app-1", Some(UUID_1), &[]).await;
+        let snapshots = snapshotter(&h, &pool, 3);
+        let found = snapshots.discover().await.unwrap();
+        assert_eq!((found.mapped, found.ambiguous), (1, 1));
+        let candidates: Vec<(Uuid, i32, String)> = sqlx::query_as("SELECT server_id, vmid, matched_by FROM server_proxmox_candidates ORDER BY vmid")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(candidates, [(web, 101, "mac".into()), (web, 102, "mac".into())]);
+        assert_eq!(snapshots.support(web).await.unwrap().reason(), Some(Unsupported::NotMapped));
+
+        // Someone says app-1 is not VM 103: it is never matched again.
+        sqlx::query("DELETE FROM server_proxmox_vms WHERE server_id = $1").bind(app).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO server_proxmox_rejections (server_id, cluster, vmid) VALUES ($1, 'pve', 103)")
+            .bind(app).execute(&pool).await.unwrap();
+        // And web-1 is mapped by hand to the clone's original.
+        sqlx::query("INSERT INTO server_proxmox_vms (server_id, cluster, node, vmid) VALUES ($1, 'pve', 'pve1', 101)")
+            .bind(web).execute(&pool).await.unwrap();
+        let found = snapshots.discover().await.unwrap();
+        assert_eq!((found.mapped, found.ambiguous), (0, 0), "{found:?}");
+        let rows: Vec<(Uuid, i32, Option<String>)> = mappings(&pool).await.into_iter().map(|m| (m.0, m.3, m.5)).collect();
+        assert_eq!(rows, [(web, 101, None)]);
+    }
+
+    #[sqlx::test]
+    async fn a_customer_s_cluster_never_matches_another_customer_s_servers(pool: PgPool) {
+        let h = Harness::start().await;
+        let [(acme, acme_site), (_, globex_site)] = tenants(&pool).await;
+        h.guest(101, "pve1", "qemu", "web-1", json!({ "smbios1": format!("uuid={UUID_1}") }));
+        // Same UUID on both sides: a copied disk image, say.
+        let theirs = reporting(&pool, globex_site, "web-1", Some(UUID_1), &[]).await;
+        let snapshots = snapshotter(&h, &pool, 3).with_owners(HashMap::from([("pve".to_owned(), Owner::Customer(acme))]));
+        let found = snapshots.discover().await.unwrap();
+        assert_eq!((found.guests, found.mapped), (1, 0));
+        assert!(mappings(&pool).await.is_empty());
+
+        // Even mapped by hand, the cluster does not serve it.
+        sqlx::query("INSERT INTO server_proxmox_vms (server_id, cluster, node, vmid) VALUES ($1, 'pve', 'pve1', 101)")
+            .bind(theirs).execute(&pool).await.unwrap();
+        assert_eq!(snapshots.support(theirs).await.unwrap().reason(), Some(Unsupported::UnknownCluster));
+        sqlx::query("DELETE FROM server_proxmox_vms").execute(&pool).await.unwrap();
+
+        let ours = reporting(&pool, acme_site, "web-1b", Some(UUID_1), &[]).await;
+        let found = snapshots.discover().await.unwrap();
+        assert_eq!(found.mapped, 1);
+        assert_eq!(mappings(&pool).await[0].0, ours);
+        assert!(snapshots.support(ours).await.unwrap().is_available());
+    }
+
+    #[sqlx::test]
+    async fn a_cluster_that_cannot_be_listed_unmaps_nothing(pool: PgPool) {
+        let h = Harness::start().await;
+        let [(_, site), _] = tenants(&pool).await;
+        h.guest(101, "pve1", "qemu", "web-1", json!({ "smbios1": format!("uuid={UUID_1}") }));
+        let server = reporting(&pool, site, "web-1", Some(UUID_1), &[]).await;
+        let broken = ProxmoxSnapshotter::new(
+            pool.clone(),
+            HashMap::from([("pve".to_owned(), h.client()), ("lab".to_owned(), h.client_with("wrong", Duration::from_secs(5)))]),
+            3,
+        );
+        snapshotter(&h, &pool, 3).discover().await.unwrap();
+        h.fake.resources.lock().unwrap().as_array_mut().unwrap().clear();
+        let found = broken.discover().await.unwrap();
+        assert_eq!(found.failed_clusters, ["lab"]);
+        assert_eq!(mappings(&pool).await.len(), 1, "kept while a cluster cannot be listed");
+        let found = snapshotter(&h, &pool, 3).discover().await.unwrap();
+        assert_eq!(found.unmapped, 1);
+        assert!(mappings(&pool).await.is_empty());
+        let reason: String = sqlx::query_scalar("SELECT details->>'reason' FROM audit_log WHERE action = 'server.proxmox.unmatch'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(reason, "no guest matches");
+        let _ = server;
     }
 }

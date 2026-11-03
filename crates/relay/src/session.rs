@@ -159,7 +159,8 @@ enum Event {
 }
 
 enum FromAgent {
-    Envelope(Envelope),
+    /// Boxed: an envelope dwarfs the other events.
+    Envelope(Box<Envelope>),
     Gone,
 }
 
@@ -232,6 +233,7 @@ impl Session {
                 }
                 Event::Agent(FromAgent::Gone) => break "agent closed",
                 Event::Agent(FromAgent::Envelope(envelope)) => {
+                    let envelope = *envelope;
                     let side = agent.as_mut().expect("an event came from it");
                     if envelope.sequence <= side.last_sequence {
                         counts.dropped += 1;
@@ -413,7 +415,7 @@ async fn from_agent(agent: &mut Option<AgentSide>) -> FromAgent {
     };
     tokio::select! {
         message = side.inbound.message() => match message {
-            Ok(Some(envelope)) => FromAgent::Envelope(envelope),
+            Ok(Some(envelope)) => FromAgent::Envelope(Box::new(envelope)),
             Ok(None) => FromAgent::Gone,
             Err(status) => {
                 tracing::debug!(%status, "agent stream failed");

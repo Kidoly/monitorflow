@@ -480,6 +480,8 @@ pub fn hello(agent_id: &str) -> Envelope {
             os_version: "debian 12".into(),
             no_package_manager: false,
             command_kinds: Vec::new(),
+            system_uuid: String::new(),
+            mac_addresses: Vec::new(),
         })),
     }
 }

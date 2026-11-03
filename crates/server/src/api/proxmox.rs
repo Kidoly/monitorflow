@@ -1,7 +1,8 @@
 //! `/api/servers/{id}/proxmox`: the Proxmox VE VM or container of a
 //! server, which the remediation loop snapshots before change-tier
 //! commands (ADR-0044, ADR-0093), and whether snapshots are available for
-//! it.
+//! it. Discovery maps most servers by itself; a mapping by hand overrides
+//! it, and unmapping tells it the guest is not this server's.
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -16,9 +17,14 @@ use uuid::Uuid;
 use super::access::authorize_admin;
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
+use super::notifications::is_global_admin;
 use super::sensors::{body, parse_id, site_of_server, UNIQUE_VIOLATION};
 use super::{ApiError, ApiSettings, ApiState};
+use crate::remediation::snapshot::discovery::Owner;
 use crate::remediation::snapshot::{GuestKind, Mapped, Support, Unsupported, VmRef};
+
+/// Guests listed at most for the picker.
+const MAX_GUESTS: i64 = 2000;
 
 /// Answer of the GET and PUT routes.
 #[derive(Debug, Serialize)]
@@ -26,8 +32,36 @@ pub struct ProxmoxView {
     pub server_id: Uuid,
     pub mapping: Option<Mapping>,
     pub snapshots: SnapshotSupport,
-    /// The configured clusters, to map the server to.
+    /// The configured clusters that serve the server, to map it to.
     pub clusters: Vec<String>,
+    /// Guests that match the server equally, when discovery could not
+    /// choose: the page asks which one.
+    pub candidates: Vec<Guest>,
+}
+
+/// A guest of a cluster, as the last discovery pass saw it.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct Guest {
+    pub cluster: String,
+    pub node: String,
+    #[sqlx(try_from = "i32")]
+    pub vmid: u32,
+    #[sqlx(try_from = "String")]
+    pub kind: KindColumn,
+    /// The VM's name or the container's host name.
+    pub name: String,
+    /// Among candidates, what matched; elsewhere null.
+    #[sqlx(default)]
+    pub matched_by: Option<String>,
+    /// Mapped to another server already.
+    #[sqlx(default)]
+    pub taken: bool,
+}
+
+/// `GET /api/servers/{id}/proxmox/guests`.
+#[derive(Debug, Serialize)]
+pub struct GuestList {
+    pub guests: Vec<Guest>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -48,6 +82,11 @@ pub struct Mapping {
     pub cannot_snapshot: Option<String>,
     /// What a snapshot of the guest does not hold, like a bind mount.
     pub left_out: Option<String>,
+    /// Null when mapped by hand, else what discovery matched: `uuid`,
+    /// `mac` or `hostname`.
+    pub matched_by: Option<String>,
+    /// The guest's name, once discovery saw it.
+    pub name: Option<String>,
 }
 
 /// `server_proxmox_vms.kind`, which its check keeps to two values.
@@ -83,15 +122,17 @@ pub struct SnapshotSupport {
 }
 
 impl SnapshotSupport {
-    /// From a server's mapping, with what the last check found.
-    pub fn of(settings: &ApiSettings, mapping: Option<Mapped>, left_out: Option<String>) -> Self {
+    /// From a server's mapping, with what the last check found, and the
+    /// clusters that serve the server.
+    pub fn of(
+        settings: &ApiSettings,
+        clusters: &[String],
+        mapping: Option<Mapped>,
+        left_out: Option<String>,
+    ) -> Self {
         let kind = mapping.as_ref().map(|m| m.vm.kind);
         let detail = mapping.as_ref().and_then(|m| m.cannot_snapshot.clone());
-        let support = Support::of(
-            settings.proxmox_enabled,
-            &settings.proxmox_clusters,
-            mapping,
-        );
+        let support = Support::of(settings.proxmox_enabled, clusters, mapping);
         let unsupported = support.reason();
         Self {
             available: support.is_available(),
@@ -121,18 +162,51 @@ pub async fn get(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<ProxmoxView>, ApiError> {
-    let server = authorize(&state, &user, &id).await?;
-    Ok(Json(view(&state.pool, &state.settings, server).await?))
+    let target = authorize(&state, &user, &id).await?;
+    Ok(Json(view(&state.pool, &state.settings, &target).await?))
 }
 
-/// `PUT /api/servers/{id}/proxmox`: sets or replaces the mapping.
+/// `GET /api/servers/{id}/proxmox/guests`: the guests the server may be
+/// mapped to, for the picker. A cluster that serves every customer is
+/// listed to global administrators only, as its guests belong to all.
+pub async fn guests(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<GuestList>, ApiError> {
+    let target = authorize(&state, &user, &id).await?;
+    let global = is_global_admin(&user);
+    let clusters: Vec<String> = target
+        .clusters(&state.settings)
+        .into_iter()
+        .filter(|c| global || state.settings.proxmox_owner(c) != Owner::Everyone)
+        .collect();
+    let guests: Vec<Guest> = sqlx::query_as(
+        "SELECT g.cluster, g.node, g.vmid, g.kind, g.name,
+                (v.server_id IS NOT NULL AND v.server_id <> $2) AS taken
+         FROM proxmox_guests g
+         LEFT JOIN server_proxmox_vms v ON v.cluster = g.cluster AND v.vmid = g.vmid
+         WHERE g.cluster = ANY($1)
+         ORDER BY g.cluster, g.vmid
+         LIMIT $3",
+    )
+    .bind(&clusters)
+    .bind(target.server)
+    .bind(MAX_GUESTS)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(GuestList { guests }))
+}
+
+/// `PUT /api/servers/{id}/proxmox`: sets or replaces the mapping, by hand.
 pub async fn set(
     State(state): State<ApiState>,
     user: CurrentUser,
     Path(id): Path<String>,
     request: Result<Json<MappingRequest>, JsonRejection>,
 ) -> Result<Json<ProxmoxView>, ApiError> {
-    let server = authorize(&state, &user, &id).await?;
+    let target = authorize(&state, &user, &id).await?;
+    let server = target.server;
     let request = body(request)?;
     let vm = VmRef {
         cluster: request.cluster,
@@ -141,24 +215,26 @@ pub async fn set(
         kind: request.kind,
     };
     vm.check().map_err(|m| ApiError::Invalid(m.into()))?;
-    if !state.settings.proxmox_clusters.contains(&vm.cluster) {
+    // A cluster of another customer is as unknown as a missing one.
+    if !target.clusters(&state.settings).contains(&vm.cluster) {
         return Err(ApiError::Invalid("unknown Proxmox cluster".into()));
     }
     let mut tx = state.pool.begin().await?;
-    let previous: Option<(String, String, i32, String)> = sqlx::query_as(
-        "SELECT cluster, node, vmid, kind FROM server_proxmox_vms
+    let previous: Option<(String, String, i32, String, Option<String>)> = sqlx::query_as(
+        "SELECT cluster, node, vmid, kind, matched_by FROM server_proxmox_vms
          WHERE server_id = $1 FOR UPDATE",
     )
     .bind(server)
     .fetch_optional(&mut *tx)
     .await?;
-    // A new guest is checked again by the next pass (ADR-0093).
+    // A new guest is checked again by the next pass, and discovery leaves
+    // a mapping by hand alone (ADR-0093).
     sqlx::query(
         "INSERT INTO server_proxmox_vms (server_id, cluster, node, vmid, kind, updated_by)
          VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (server_id) DO UPDATE
          SET cluster = $2, node = $3, vmid = $4, kind = $5, updated_by = $6, updated_at = now(),
-             checked_at = NULL, cannot_snapshot = NULL, left_out = NULL",
+             checked_at = NULL, cannot_snapshot = NULL, left_out = NULL, matched_by = NULL",
     )
     .bind(server)
     .bind(&vm.cluster)
@@ -174,8 +250,22 @@ pub async fn set(
         }
         _ => ApiError::Database(e),
     })?;
-    let previous = previous.map(|(cluster, node, vmid, kind)| {
-        json!({ "cluster": cluster, "node": node, "vmid": vmid, "kind": kind })
+    sqlx::query(
+        "DELETE FROM server_proxmox_rejections
+         WHERE server_id = $1 AND cluster = $2 AND vmid = $3",
+    )
+    .bind(server)
+    .bind(&vm.cluster)
+    .bind(vm.vmid as i32)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM server_proxmox_candidates WHERE server_id = $1")
+        .bind(server)
+        .execute(&mut *tx)
+        .await?;
+    let previous = previous.map(|(cluster, node, vmid, kind, matched_by)| {
+        json!({ "cluster": cluster, "node": node, "vmid": vmid, "kind": kind,
+                "matched_by": matched_by })
     });
     record(
         &mut tx,
@@ -187,61 +277,114 @@ pub async fn set(
     )
     .await?;
     tx.commit().await?;
-    Ok(Json(view(&state.pool, &state.settings, server).await?))
+    Ok(Json(view(&state.pool, &state.settings, &target).await?))
 }
 
 /// `DELETE /api/servers/{id}/proxmox`: 204, or 404 without a mapping.
-/// Snapshots already taken stay on the VM.
+/// Snapshots already taken stay on the guest. Discovery never maps the
+/// server to that guest again, unless it is mapped by hand.
 pub async fn clear(
     State(state): State<ApiState>,
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let server = authorize(&state, &user, &id).await?;
+    let server = authorize(&state, &user, &id).await?.server;
     let mut tx = state.pool.begin().await?;
-    let (cluster, node, vmid, kind): (String, String, i32, String) = sqlx::query_as(
-        "DELETE FROM server_proxmox_vms WHERE server_id = $1
-         RETURNING cluster, node, vmid, kind",
+    let (cluster, node, vmid, kind, matched_by): (String, String, i32, String, Option<String>) =
+        sqlx::query_as(
+            "DELETE FROM server_proxmox_vms WHERE server_id = $1
+             RETURNING cluster, node, vmid, kind, matched_by",
+        )
+        .bind(server)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    sqlx::query(
+        "INSERT INTO server_proxmox_rejections (server_id, cluster, vmid, rejected_by)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (server_id, cluster, vmid) DO UPDATE
+         SET rejected_by = $4, rejected_at = now()",
     )
     .bind(server)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+    .bind(&cluster)
+    .bind(vmid)
+    .bind(user.id)
+    .execute(&mut *tx)
+    .await?;
     record(
         &mut tx,
         &user,
         "server.proxmox.clear",
         server,
-        json!({ "cluster": cluster, "node": node, "vmid": vmid, "kind": kind }),
+        json!({ "cluster": cluster, "node": node, "vmid": vmid, "kind": kind,
+                "matched_by": matched_by }),
     )
     .await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The server's ID once the user administers its customer.
-async fn authorize(state: &ApiState, user: &CurrentUser, id: &str) -> Result<Uuid, ApiError> {
+/// A server whose customer the user administers.
+struct Target {
+    server: Uuid,
+    customer: Uuid,
+    site: Uuid,
+}
+
+impl Target {
+    /// The configured clusters that serve the server.
+    fn clusters(&self, settings: &ApiSettings) -> Vec<String> {
+        settings.proxmox_clusters_for(self.customer, self.site)
+    }
+}
+
+/// The server once the user administers its customer.
+async fn authorize(state: &ApiState, user: &CurrentUser, id: &str) -> Result<Target, ApiError> {
     let server = parse_id(id)?;
     let site = site_of_server(&state.pool, server).await?;
-    authorize_admin(user, site)?;
-    Ok(server)
+    let site = authorize_admin(user, site)?;
+    let customer = sqlx::query_scalar("SELECT customer_id FROM sites WHERE id = $1")
+        .bind(site)
+        .fetch_one(&state.pool)
+        .await?;
+    Ok(Target {
+        server,
+        customer,
+        site,
+    })
 }
 
 async fn view(
     pool: &PgPool,
     settings: &ApiSettings,
-    server: Uuid,
+    target: &Target,
 ) -> Result<ProxmoxView, sqlx::Error> {
+    let server = target.server;
+    let clusters = target.clusters(settings);
     let mapping: Option<Mapping> = sqlx::query_as(
-        "SELECT cluster, node, vmid, kind, updated_by, updated_at, checked_at,
-                cannot_snapshot, left_out
-         FROM server_proxmox_vms WHERE server_id = $1",
+        "SELECT v.cluster, v.node, v.vmid, v.kind, v.updated_by, v.updated_at, v.checked_at,
+                v.cannot_snapshot, v.left_out, v.matched_by, g.name
+         FROM server_proxmox_vms v
+         LEFT JOIN proxmox_guests g ON g.cluster = v.cluster AND g.vmid = v.vmid
+         WHERE v.server_id = $1",
     )
     .bind(server)
     .fetch_optional(pool)
     .await?;
+    let candidates: Vec<Guest> = sqlx::query_as(
+        "SELECT g.cluster, g.node, g.vmid, g.kind, g.name, c.matched_by
+         FROM server_proxmox_candidates c
+         JOIN proxmox_guests g ON g.cluster = c.cluster AND g.vmid = c.vmid
+         WHERE c.server_id = $1 AND c.cluster = ANY($2)
+         ORDER BY g.cluster, g.vmid",
+    )
+    .bind(server)
+    .bind(&clusters)
+    .fetch_all(pool)
+    .await?;
     let snapshots = SnapshotSupport::of(
         settings,
+        &clusters,
         mapping.as_ref().map(|m| Mapped {
             vm: VmRef {
                 cluster: m.cluster.clone(),
@@ -258,10 +401,14 @@ async fn view(
         mapping,
         snapshots,
         clusters: if settings.proxmox_enabled {
-            settings.proxmox_clusters.clone()
+            clusters
         } else {
             Vec::new()
         },
+        candidates: candidates
+            .into_iter()
+            .filter(|_| settings.proxmox_enabled)
+            .collect(),
     })
 }
 

@@ -166,9 +166,10 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # command_timeout = 120
 
 # Proxmox VE snapshots of VMs and containers before change-tier
-# remediation commands (ADR-0044, ADR-0093). Off by default. Map servers
-# on their page in the web interface, under Rollback; servers without a
-# mapping run commands with limited rollback.
+# remediation commands (ADR-0044, ADR-0093). Off by default. Servers are
+# matched to their VM or container by themselves; correct a match on the
+# server's page, under Rollback. Servers without one run commands with
+# limited rollback.
 [proxmox]
 # enabled = false
 # Snapshots kept per VM or container; older ones MonitorFlow took are
@@ -180,8 +181,9 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # task_timeout = 600
 
 # One entry per cluster; any node's API URL works. The token needs
-# VM.Snapshot, VM.Snapshot.Rollback and VM.Audit on the mapped VMs and
-# containers, and Datastore.Audit to name a storage that cannot snapshot.
+# VM.Snapshot, VM.Snapshot.Rollback and VM.Audit on the VMs and
+# containers (VM.Audit on all of them, to find each server's), and
+# Datastore.Audit to name a storage that cannot snapshot.
 # [[proxmox.clusters]]
 # name = "pve"
 # url = "https://pve1.example.net:8006"
@@ -193,6 +195,11 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # roots, like a copy of /etc/pve/pve-root-ca.pem. Certificates are always
 # verified.
 # ca_file = "/etc/monitorflow/proxmox-pve-ca.pem"
+# The customer, or the site, this cluster belongs to: only its servers are
+# matched to the cluster's guests. Leave both out for a cluster that hosts
+# servers of every customer. IDs are those the web interface shows.
+# customer = "0b3f2c4e-1111-2222-3333-444455556666"
+# site = "0b3f2c4e-1111-2222-3333-444455556666"
 
 [log]
 # trace, debug, info, warn or error.

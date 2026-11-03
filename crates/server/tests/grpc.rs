@@ -180,6 +180,8 @@ fn hello_v(agent_id: &str, version: &str) -> Envelope {
             os_version: "debian 12".into(),
             no_package_manager: false,
             command_kinds: Vec::new(),
+            system_uuid: String::new(),
+            mac_addresses: Vec::new(),
         })),
     }
 }
@@ -860,6 +862,42 @@ db_tests! {
         });
         let _peer = h.open(&h.ca.client("agent-1", 14), future).await.unwrap();
         assert_eq!(stored().await, Some(serde_json::json!({})));
+    }
+
+    /// ADR-0093: what identifies the machine to Proxmox, cleaned up, and
+    /// never a reason to refuse the agent.
+    #[sqlx::test]
+    async fn stores_the_hardware_the_agent_reports(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        enrolled(&pool, "agent-1", paris).await;
+        let h = db_harness(&pool, settings()).await;
+        let stored = || async {
+            let row: (Option<uuid::Uuid>, Vec<String>) = sqlx::query_as(
+                "SELECT system_uuid, mac_addresses FROM servers WHERE peer_id = 'agent-1'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            row
+        };
+        let vm = with_hello("agent-1", |hello| {
+            hello.system_uuid = "1B3E2F80-6C0A-4E1B-9C3D-2A4B5C6D7E8F".into();
+            hello.mac_addresses = vec![
+                "BC:24:11:00:00:01".into(),
+                "bc:24:11:00:00:01".into(),
+                "00:00:00:00:00:00".into(),
+                "not a mac".into(),
+            ];
+        });
+        let _peer = h.open(&h.ca.client("agent-1", 10), vm).await.unwrap();
+        let (uuid, macs) = stored().await;
+        assert_eq!(uuid.unwrap().to_string(), "1b3e2f80-6c0a-4e1b-9c3d-2a4b5c6d7e8f");
+        assert_eq!(macs, ["bc:24:11:00:00:01"]);
+
+        // Garbage is dropped, and an older agent reports nothing.
+        let odd = with_hello("agent-1", |hello| hello.system_uuid = "Not Settable".into());
+        let _peer = h.open(&h.ca.client("agent-1", 11), odd).await.unwrap();
+        assert_eq!(stored().await, (None, Vec::new()));
     }
 
     #[sqlx::test]

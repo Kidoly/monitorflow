@@ -151,6 +151,7 @@ impl Setup {
             os_family: OsFamily::Debian,
             os_version: "debian 12".into(),
             package_manager: true,
+            hardware: Default::default(),
         };
         let (reports, latest) = watch::channel(None);
         let agent = Agent::new(settings, identity, host)

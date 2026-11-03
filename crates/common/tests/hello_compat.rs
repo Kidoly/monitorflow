@@ -1,4 +1,5 @@
-//! `Hello.command_kinds` between versions (ADR-0076). `OldHello` is the
+//! `Hello.command_kinds` (ADR-0076) and the hardware fields (ADR-0093)
+//! between versions. `OldHello` is the
 //! message of 0.1.0, field for field. Relays decode every envelope and
 //! encode it again, and prost keeps no unknown fields, so a 0.1.0 relay
 //! passes on what `OldHello` holds.
@@ -37,6 +38,8 @@ fn reporting() -> Hello {
             kind: "shell".into(),
             acceptance: CommandAcceptance::Disabled.into(),
         }],
+        system_uuid: "1b3e2f80-6c0a-4e1b-9c3d-2a4b5c6d7e8f".into(),
+        mac_addresses: vec!["bc:24:11:00:00:01".into()],
     }
 }
 
@@ -63,6 +66,8 @@ fn an_old_relay_loses_the_report_and_nothing_else() {
         passed_on,
         Hello {
             command_kinds: Vec::new(),
+            system_uuid: String::new(),
+            mac_addresses: Vec::new(),
             ..new
         }
     );

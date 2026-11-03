@@ -15,6 +15,7 @@
 //! (ADR-0046).
 
 pub mod check;
+pub mod discovery;
 pub mod hook;
 pub mod proxmox;
 pub mod store;

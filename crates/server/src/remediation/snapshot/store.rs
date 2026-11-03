@@ -114,6 +114,40 @@ pub async fn mapping(db: impl PgExecutor<'_>, server: Uuid) -> Result<Option<Map
     )
 }
 
+/// The customer and site of `server`, if it exists.
+pub async fn owner_of(
+    db: impl PgExecutor<'_>,
+    server: Uuid,
+) -> Result<Option<(Uuid, Uuid)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT si.customer_id, s.site_id FROM servers s JOIN sites si ON si.id = s.site_id
+         WHERE s.id = $1",
+    )
+    .bind(server)
+    .fetch_optional(db)
+    .await
+}
+
+/// Moves `server`'s mapping of `vm` to `node`, where the guest now is.
+pub async fn move_node(
+    db: impl PgExecutor<'_>,
+    server: Uuid,
+    vm: &VmRef,
+    node: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE server_proxmox_vms SET node = $4, updated_at = now()
+         WHERE server_id = $1 AND cluster = $2 AND vmid = $3",
+    )
+    .bind(server)
+    .bind(&vm.cluster)
+    .bind(vm.vmid as i32)
+    .bind(node)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 /// Mappings to check again: never checked, or not for `every`, on
 /// `clusters`, at most `limit`, the oldest check first.
 pub async fn due_checks(

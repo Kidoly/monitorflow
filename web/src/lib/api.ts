@@ -1082,10 +1082,31 @@ export interface ProxmoxView {
     checked_at: string | null;
     cannot_snapshot: string | null;
     left_out: string | null;
+    /** Null when mapped by hand, else what discovery matched (ADR-0093). */
+    matched_by?: ProxmoxSignal | null;
+    /** The guest's name, once discovery saw it. */
+    name?: string | null;
   } | null;
   snapshots: SnapshotSupport;
-  /** Configured clusters; empty when Proxmox is off. */
+  /** Clusters that serve the server; empty when Proxmox is off. */
   clusters: string[];
+  /** Guests that match the server equally: the page asks which one. */
+  candidates?: ProxmoxGuest[];
+}
+
+/** What matched a server to its guest: its SMBIOS UUID, a MAC address, or only its name. */
+export type ProxmoxSignal = "uuid" | "mac" | "hostname";
+
+/** A VM or container as the last discovery pass saw it. */
+export interface ProxmoxGuest {
+  cluster: string;
+  node: string;
+  vmid: number;
+  kind: GuestKind;
+  name: string;
+  matched_by: ProxmoxSignal | null;
+  /** Mapped to another server already. */
+  taken: boolean;
 }
 
 /** One command waiting for approval (ADR-0045). */
@@ -2209,6 +2230,11 @@ export const api = {
   setServerProxmox: (id: string, guest: { cluster: string; node: string; vmid: number; kind: GuestKind }) =>
     request<ProxmoxView>(`/api/servers/${encodeURIComponent(id)}/proxmox`, { method: "PUT", body: guest }),
 
+  /** Guests the server may be mapped to, for the picker. */
+  serverProxmoxGuests: (id: string, signal?: AbortSignal) =>
+    request<{ guests: ProxmoxGuest[] }>(`/api/servers/${encodeURIComponent(id)}/proxmox/guests`, { signal }),
+
+  /** Unmaps the server; discovery never maps it to that guest again. */
   clearServerProxmox: (id: string) =>
     request<void>(`/api/servers/${encodeURIComponent(id)}/proxmox`, { method: "DELETE" }),
 

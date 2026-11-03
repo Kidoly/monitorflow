@@ -142,6 +142,7 @@
 //! | GET | `/api/servers/{id}/proxmox` | customer administrator | [`proxmox::ProxmoxView`], see below |
 //! | PUT | `/api/servers/{id}/proxmox` | customer administrator | body [`proxmox::MappingRequest`]; 200 [`proxmox::ProxmoxView`] |
 //! | DELETE | `/api/servers/{id}/proxmox` | customer administrator | 204; 404 without a mapping |
+//! | GET | `/api/servers/{id}/proxmox/guests` | customer administrator | [`proxmox::GuestList`], see below |
 //! | GET | `/api/notifications/channels` | any administrator | [`notifications::ChannelList`]: the channels of what the user administers, without secrets, with `has_secret` and the last error (ADR-0060, ADR-0078) |
 //! | POST | `/api/notifications/channels` | administrator of what it covers | body [`notifications::ChannelRequest`]; 201 [`notifications::ChannelView`]; 403 for anything else; audited |
 //! | PUT | `/api/notifications/channels/{id}` | administrator of what it covers | body [`notifications::ChannelRequest`], an empty secret keeps the stored one unless the destination changes; 200 [`notifications::ChannelView`]; 404 for a channel the user does not manage, 403 for a coverage they do not; audited |
@@ -451,6 +452,17 @@
 //! another server is 409. Changes are audited (`server.proxmox.set` with
 //! the `previous` mapping, `server.proxmox.clear`).
 //!
+//! Discovery (ADR-0093) maps most servers by itself: the mapping's
+//! `matched_by` is then `uuid`, `mac` or `hostname`, and null for one made
+//! with `PUT`, which discovery never changes. `candidates` lists the guests
+//! that match equally when discovery could not choose. `DELETE` also tells
+//! discovery never to map the server to that guest again; a `PUT` of the
+//! same guest lifts it. Only clusters that serve the server's customer and
+//! site count: `clusters` lists them, and `PUT` refuses others as unknown.
+//! `GET …/guests` lists their guests for a picker, with `taken` when mapped
+//! to another server; a cluster serving every customer is listed to global
+//! administrators only.
+//!
 //! # Metric queries
 //!
 //! The query endpoints take `server_id`, `metric` (`monitorflow_` and a
@@ -590,6 +602,7 @@ use crate::grpc::Registry;
 use crate::live_settings::Live;
 use crate::mirror::Mirrors;
 use crate::relay_commands::RelayCommands;
+use crate::remediation::snapshot::discovery::Owner;
 use crate::vm_query::VmQuery;
 
 pub use auth::{CurrentUser, Me};
@@ -612,6 +625,8 @@ pub struct ApiSettings {
     /// Whether `[proxmox]` is on, and its cluster names (ADR-0044).
     pub proxmox_enabled: bool,
     pub proxmox_clusters: Vec<String>,
+    /// Whom each cluster serves; one missing serves everyone (ADR-0093).
+    pub proxmox_owners: std::collections::HashMap<String, Owner>,
     /// Where agents download releases from, and the server's cache of
     /// them (ADR-0053).
     pub agent_releases: agent_releases::Sources,
@@ -647,7 +662,28 @@ impl ApiSettings {
                 .iter()
                 .map(|c| c.name.clone())
                 .collect(),
+            proxmox_owners: config
+                .proxmox
+                .clusters
+                .iter()
+                .map(|c| (c.name.clone(), Owner::from_config(c)))
+                .collect(),
         }
+    }
+
+    /// Whom the cluster `name` serves.
+    pub fn proxmox_owner(&self, name: &str) -> Owner {
+        self.proxmox_owners.get(name).copied().unwrap_or_default()
+    }
+
+    /// The configured clusters that serve servers of `customer` and
+    /// `site`.
+    pub fn proxmox_clusters_for(&self, customer: uuid::Uuid, site: uuid::Uuid) -> Vec<String> {
+        self.proxmox_clusters
+            .iter()
+            .filter(|c| self.proxmox_owner(c).serves(customer, site))
+            .cloned()
+            .collect()
     }
 }
 
@@ -1042,6 +1078,7 @@ pub fn router(state: ApiState) -> Router {
             "/api/servers/{id}/proxmox",
             get(proxmox::get).put(proxmox::set).delete(proxmox::clear),
         )
+        .route("/api/servers/{id}/proxmox/guests", get(proxmox::guests))
         .fallback(not_found)
         .layer(middleware::from_fn(auth::csrf_guard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

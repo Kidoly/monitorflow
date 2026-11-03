@@ -7,7 +7,8 @@
 //! a bind or device mount point, or a volume on storage without snapshots
 //! (`dir` for containers, raw files, plain LVM). A refusal is recorded on
 //! the mapping, so the interface says "Rollback limited" before a change
-//! rather than after a failed snapshot. [`run`] keeps the answers fresh.
+//! rather than after a failed snapshot. [`run`] keeps the answers fresh,
+//! after each discovery pass ([`super::discovery`]).
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -190,10 +191,29 @@ pub fn explain(
     }
 }
 
-/// Checks mappings due every [`POLL`] until `stop`.
+/// Between two discovery passes (ADR-0093); the first runs at once.
+pub const DISCOVER_EVERY: Duration = Duration::from_secs(600);
+
+/// Discovers guests every [`DISCOVER_EVERY`], then checks mappings due,
+/// every [`POLL`] until `stop`.
 pub async fn run(snapshotter: ProxmoxSnapshotter, stop: impl Future<Output = ()>) {
     tokio::pin!(stop);
+    let mut discovered: Option<tokio::time::Instant> = None;
     loop {
+        if discovered.is_none_or(|at| at.elapsed() >= DISCOVER_EVERY) {
+            discovered = Some(tokio::time::Instant::now());
+            match snapshotter.discover().await {
+                Ok(found) => tracing::info!(
+                    guests = found.guests,
+                    mapped = found.mapped,
+                    unmapped = found.unmapped,
+                    moved = found.moved,
+                    ambiguous = found.ambiguous,
+                    "Proxmox discovery pass"
+                ),
+                Err(error) => tracing::warn!(%error, "Proxmox discovery failed"),
+            }
+        }
         if let Err(error) = snapshotter.check_due(EVERY).await {
             tracing::warn!(%error, "cannot check Proxmox mappings");
         }
