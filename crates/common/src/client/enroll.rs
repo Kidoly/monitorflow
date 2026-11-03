@@ -399,6 +399,55 @@ mod tests {
     }
 
     #[test]
+    fn a_ca_bundle_starts_with_the_issuer_and_keeps_a_trusted_ca() {
+        let (old, new, stranger) = (Ca::new(), Ca::new(), Ca::new());
+        let both = format!("{}{}", new.cert.pem(), old.cert.pem());
+        let err = |r: Result<Vec<CertificateDer<'static>>, EnrollError>| r.unwrap_err().to_string();
+        // Switched: issued by the new CA, the old one still trusted.
+        assert_eq!(
+            check_bundle(&both, &new.pin(), &[old.pin()]).unwrap().len(),
+            2
+        );
+        // Retired: only the new CA, which the peer trusts already.
+        let only_new = new.cert.pem();
+        assert!(check_bundle(&only_new, &new.pin(), &[new.pin(), old.pin()]).is_ok());
+        assert!(err(check_bundle(&both, &old.pin(), &[old.pin()])).contains("issuing"));
+        assert!(err(check_bundle(
+            &stranger.cert.pem(),
+            &stranger.pin(),
+            &[old.pin()]
+        ))
+        .contains("none of the certificate authorities"));
+        let three = format!("{both}{}", stranger.cert.pem());
+        assert!(err(check_bundle(&three, &new.pin(), &[old.pin()])).contains("more than two"));
+    }
+
+    #[test]
+    fn an_enrollment_bundle_must_start_with_the_pinned_ca() {
+        let (ca, other) = (Ca::new(), Ca::new());
+        let key = KeyPair::generate().unwrap();
+        let mut response = ca.response(&key, "monitorflow://agent/web-01");
+        response.ca_bundle_pem = format!("{}{}", ca.cert.pem(), other.cert.pem());
+        assert_eq!(check(&response, &ca.pin(), &key), Ok(()));
+        response.ca_bundle_pem = format!("{}{}", other.cert.pem(), ca.cert.pem());
+        assert!(check(&response, &ca.pin(), &key).is_err());
+    }
+
+    #[test]
+    fn a_certificate_must_verify_against_its_issuer() {
+        let (ca, other) = (Ca::new(), Ca::new());
+        let key = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::default();
+        params.subject_alt_names = vec![SanType::URI(
+            "monitorflow://agent/web-01".try_into().unwrap(),
+        )];
+        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+        let cert = params.signed_by(&key, &ca.cert).unwrap().pem();
+        assert!(verify_issued_by(&cert, &ca.cert.pem()).is_ok());
+        assert!(verify_issued_by(&cert, &other.cert.pem()).is_err());
+    }
+
+    #[test]
     fn accepts_a_matching_response() {
         let (ca, key) = (Ca::new(), KeyPair::generate().unwrap());
         let response = ca.response(&key, "monitorflow://agent/web-01");
