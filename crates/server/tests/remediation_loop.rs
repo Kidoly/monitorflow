@@ -215,6 +215,8 @@ impl Harness {
                 os_version: format!("{os_family} 12"),
                 no_package_manager: false,
                 command_kinds: Vec::new(),
+                system_uuid: String::new(),
+                mac_addresses: Vec::new(),
             })),
         })
         .await

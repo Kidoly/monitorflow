@@ -1460,6 +1460,12 @@ pub struct ProxmoxClusterConfig {
     /// built-in web roots, for self-signed clusters. Certificates are
     /// always verified.
     pub ca_file: Option<PathBuf>,
+    /// ID of the customer the cluster belongs to: only its servers are
+    /// mapped to the cluster's guests, by hand or by discovery. Without it
+    /// or `site`, the cluster serves every customer (ADR-0093).
+    pub customer: Option<String>,
+    /// ID of the site the cluster belongs to, instead of a customer.
+    pub site: Option<String>,
 }
 
 impl ProxmoxConfig {
@@ -1495,6 +1501,20 @@ impl ProxmoxConfig {
             if cluster.token_secret_file.as_os_str().is_empty() {
                 return Err(check.fail(&key("token_secret_file"), "is required"));
             }
+            for (field, id) in [("customer", &cluster.customer), ("site", &cluster.site)] {
+                if id.as_deref().is_some_and(|id| !valid_uuid(id)) {
+                    return Err(check.fail(
+                        &key(field),
+                        "must be an ID like 0b3f2c4e-1111-2222-3333-444455556666",
+                    ));
+                }
+            }
+            if cluster.customer.is_some() && cluster.site.is_some() {
+                return Err(check.fail(
+                    &key("site"),
+                    "cannot be set with customer: a site names its customer",
+                ));
+            }
         }
         if !self.enabled {
             return Ok(());
@@ -1506,6 +1526,15 @@ impl ProxmoxConfig {
         check.positive("proxmox.request_timeout", self.request_timeout)?;
         check.positive("proxmox.task_timeout", self.task_timeout)
     }
+}
+
+/// Whether `id` is a hyphenated UUID, as the web interface shows IDs.
+fn valid_uuid(id: &str) -> bool {
+    id.len() == 36
+        && id.bytes().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => b.is_ascii_hexdigit(),
+        })
 }
 
 /// Whether `name` can name a Proxmox cluster in mappings.

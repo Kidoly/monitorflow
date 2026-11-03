@@ -38,6 +38,7 @@ fn host() -> HostInfo {
         os_family: OsFamily::Debian,
         os_version: "debian 12".into(),
         package_manager: true,
+        hardware: Default::default(),
     }
 }
 

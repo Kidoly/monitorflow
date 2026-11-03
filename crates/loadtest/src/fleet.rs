@@ -319,6 +319,7 @@ async fn run_agent(
         }
         .into(),
         package_manager: true,
+        hardware: Default::default(),
     };
     let opened = shared.clone();
     let agent = Agent::new(StreamSettings::from_config(&config), identity, host)

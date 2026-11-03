@@ -11,6 +11,7 @@ pub mod commands;
 pub mod enroll;
 #[cfg(windows)]
 pub mod eventlog;
+pub mod hardware;
 pub mod identity;
 pub mod init_config;
 pub mod os;

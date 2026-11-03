@@ -317,6 +317,23 @@ fn server_proxmox_defaults_overrides_and_checks() {
         let msg = err::<ServerConfig>(&text, &[]);
         assert!(msg.contains(key), "{msg}");
     }
+
+    // A cluster belongs to everyone, a customer or a site (ADR-0093).
+    let customer = "0b3f2c4e-1111-2222-3333-444455556666";
+    let owned = format!("{SERVER_MIN}\n{cluster}\ncustomer = \"{customer}\"");
+    let server: ServerConfig = parse_with_env(&owned, path(), &env(&[])).unwrap();
+    assert_eq!(
+        server.proxmox.clusters[0].customer.as_deref(),
+        Some(customer)
+    );
+    assert_eq!(server.proxmox.clusters[0].site, None);
+    let msg = err::<ServerConfig>(
+        &format!("{SERVER_MIN}\n{cluster}\ncustomer = \"acme\""),
+        &[],
+    );
+    assert!(msg.contains("proxmox.clusters.pve-1.customer"), "{msg}");
+    let both = format!("{owned}\nsite = \"{customer}\"");
+    assert!(err::<ServerConfig>(&both, &[]).contains("proxmox.clusters.pve-1.site"));
     let text = format!(
         "{SERVER_MIN}\n{}",
         cluster.replace("monitorflow@pve!snapshots", "monitorflow@pve")

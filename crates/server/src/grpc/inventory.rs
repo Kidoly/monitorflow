@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::api::audit::{self, Event};
 use crate::commands::acceptance;
 use crate::mirror::relays;
+use crate::remediation::snapshot::discovery;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InventoryError {
@@ -229,6 +230,9 @@ async fn agent_hello(
     // Replaced, also by nothing: an agent that went back to an older version
     // or behind an older relay stays unknown rather than keep an old answer.
     let command_kinds = acceptance::from_hello(hello).map(sqlx::types::Json);
+    // To find its Proxmox guest (ADR-0093); replaced like the rest.
+    let system_uuid = discovery::reported_uuid(&hello.system_uuid);
+    let mac_addresses = discovery::reported_macs(&hello.mac_addresses);
 
     match existing {
         // A removed server enrolled again, until its approval restores it.
@@ -245,7 +249,8 @@ async fn agent_hello(
             sqlx::query(
                 "UPDATE servers SET hostname = $2, os_family = $3, os_version = $4,
                         agent_version = $5, relay_id = $6, package_updates = $7,
-                        command_kinds = $8, last_seen_at = now()
+                        command_kinds = $8, system_uuid = $9, mac_addresses = $10,
+                        last_seen_at = now()
                  WHERE id = $1",
             )
             .bind(server_id)
@@ -256,6 +261,8 @@ async fn agent_hello(
             .bind(relay_id)
             .bind(package_updates)
             .bind(&command_kinds)
+            .bind(system_uuid)
+            .bind(&mac_addresses)
             .execute(&mut **tx)
             .await?;
             site_name(tx, site_id).await
@@ -275,8 +282,8 @@ async fn agent_hello(
             let server_id: Uuid = sqlx::query_scalar(
                 "INSERT INTO servers (peer_id, site_id, relay_id, hostname, os_family,
                                       os_version, agent_version, package_updates,
-                                      command_kinds, last_seen_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+                                      command_kinds, system_uuid, mac_addresses, last_seen_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
                  RETURNING id",
             )
             .bind(id)
@@ -288,6 +295,8 @@ async fn agent_hello(
             .bind(&agent_version)
             .bind(package_updates)
             .bind(&command_kinds)
+            .bind(system_uuid)
+            .bind(&mac_addresses)
             .fetch_one(&mut **tx)
             .await?;
             let actor = accepted.peer.uri();

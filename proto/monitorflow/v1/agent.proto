@@ -56,6 +56,13 @@ message Hello {
   // a relay before it on the way, which drops this field. It says nothing
   // about whether the agent would accept a command.
   repeated CommandKindState command_kinds = 8;
+  // The SMBIOS system UUID, lowercase, which Proxmox calls a VM's
+  // `smbios1` uuid. Empty when unreadable, and inside containers, which
+  // see their host's (ADR-0093).
+  string system_uuid = 9;
+  // MAC addresses of the network interfaces, lowercase `aa:bb:cc:dd:ee:ff`,
+  // loopback and all-zero ones left out. Empty when not reported.
+  repeated string mac_addresses = 10;
 }
 
 message Heartbeat {

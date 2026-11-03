@@ -109,6 +109,7 @@ impl Running {
             os_family: OsFamily::Debian,
             os_version: "debian 12".into(),
             package_manager: true,
+            hardware: Default::default(),
         };
         let agent = Agent::new(StreamSettings::from_config(&config), identity, host)
             .with_sensors(stream_end)
