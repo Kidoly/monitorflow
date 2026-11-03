@@ -76,6 +76,10 @@ struct Cli {
     victoriametrics_url: String,
     #[arg(long, env = "LOADTEST_VICTORIALOGS_URL")]
     victorialogs_url: String,
+    /// The stores' certificate and password from `monitorflow-server
+    /// storage-certs` (ADR-0087); the store URLs are then https.
+    #[arg(long, env = "LOADTEST_STORAGE_TLS_DIR")]
+    storage_tls_dir: Option<PathBuf>,
     /// `monitorflow-server` and `monitorflow-relay`; next to this binary by
     /// default.
     #[arg(long)]
@@ -137,9 +141,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         .clone()
         .map_or_else(|| sibling("monitorflow-relay"), Ok)?;
     let work = std::path::absolute(&cli.work_dir)?;
-    if work.exists() {
-        std::fs::remove_dir_all(&work).with_context(|| format!("emptying {}", work.display()))?;
-    }
+    empty_work_dir(&work)?;
     std::fs::create_dir_all(work.join("agents"))?;
 
     let pool = sqlx::postgres::PgPoolOptions::new()
@@ -158,8 +160,17 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         &cli.database_url,
         &cli.victoriametrics_url,
         &cli.victorialogs_url,
+        cli.storage_tls_dir.as_deref(),
     )?;
     server.start().await?;
+    let victoriametrics = match &cli.storage_tls_dir {
+        Some(dir) => {
+            let ca = std::fs::read(work.join("server/ca/ca-cert.pem"))?;
+            let password = std::fs::read_to_string(dir.join("password"))?;
+            measure::Store::tls(&cli.victoriametrics_url, &ca, &password)?
+        }
+        None => measure::Store::plain(&cli.victoriametrics_url),
+    };
     let password = format!("loadtest-{}", std::process::id());
     server.add_admin(ADMIN, &password).await?;
     let api = Api::login(&server.ports.api_url(), ADMIN, &password).await?;
@@ -214,7 +225,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Duration::from_secs(5),
         watching,
         pool.clone(),
-        cli.victoriametrics_url.clone(),
+        victoriametrics,
         server.ports.grpc.port(),
         snapshots_tx,
     ));
@@ -355,6 +366,31 @@ async fn post_all(
     }
     responses.sort_by_key(|(index, _)| *index);
     Ok(responses.into_iter().map(|(_, r)| r).collect())
+}
+
+/// Empties `work`, except the server's data and the stores' certificate,
+/// which `scripts/load-test.sh` issued before the stores started.
+fn empty_work_dir(work: &std::path::Path) -> anyhow::Result<()> {
+    let Ok(entries) = std::fs::read_dir(work) else {
+        return Ok(());
+    };
+    for entry in entries {
+        let path = entry?.path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if matches!(name, "server" | "storage-tls" | "storage-certs.toml") {
+            continue;
+        }
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        }
+        .with_context(|| format!("emptying {}", work.display()))?;
+    }
+    Ok(())
 }
 
 /// Open incidents of the storm's metric.

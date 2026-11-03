@@ -1,6 +1,11 @@
 # The stores of the load test (scripts/load-test.sh, docs/load-test.md):
 # the production images and versions, on loopback ports of their own, data
 # in anonymous volumes removed with `down -v`. Not for production.
+#
+# Like the production compose (ADR-0087), VictoriaMetrics and VictoriaLogs
+# take TLS and basic auth, from the certificate and password that
+# `monitorflow-server storage-certs` wrote in LOADTEST_STORAGE_TLS_DIR
+# before they start.
 services:
   postgres:
     image: postgres:17
@@ -30,12 +35,19 @@ services:
 
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.155.0
-    command: ["-storageDataPath=/storage"]
+    command: &store-tls
+      - -storageDataPath=/storage
+      - -tls
+      - -tlsCertFile=/tls/cert.pem
+      - -tlsKeyFile=/tls/key.pem
+      - -tlsMinVersion=TLS13
+      - -httpAuth.username=monitorflow
+      - -httpAuth.password=file:///tls/password
     ports: ["127.0.0.1:${LOADTEST_VICTORIAMETRICS_PORT:-28428}:8428"]
-    volumes: ["/storage"]
+    volumes: ["/storage", "${LOADTEST_STORAGE_TLS_DIR:?run scripts/load-test.sh}:/tls:ro"]
 
   victorialogs:
     image: victoriametrics/victoria-logs:v1.53.0
-    command: ["-storageDataPath=/storage"]
+    command: *store-tls
     ports: ["127.0.0.1:${LOADTEST_VICTORIALOGS_PORT:-29428}:9428"]
-    volumes: ["/storage"]
+    volumes: ["/storage", "${LOADTEST_STORAGE_TLS_DIR:?run scripts/load-test.sh}:/tls:ro"]

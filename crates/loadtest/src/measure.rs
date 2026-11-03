@@ -81,16 +81,52 @@ pub fn parse_vm_rows(metrics: &str) -> f64 {
         .sum()
 }
 
-pub async fn vm_rows(client: &reqwest::Client, base: &str) -> Option<f64> {
-    let text = client
-        .get(format!("{base}/metrics"))
-        .send()
-        .await
-        .ok()?
-        .text()
-        .await
-        .ok()?;
-    Some(parse_vm_rows(&text))
+/// VictoriaMetrics as the server reaches it: plain HTTP, or TLS from the
+/// server's CA with basic auth (ADR-0087).
+#[derive(Clone)]
+pub struct Store {
+    client: reqwest::Client,
+    base: String,
+    password: Option<String>,
+}
+
+impl Store {
+    pub fn plain(base: &str) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base: base.to_owned(),
+            password: None,
+        }
+    }
+
+    /// Trusts `ca_pem` alone and logs in as the server does.
+    pub fn tls(base: &str, ca_pem: &[u8], password: &str) -> anyhow::Result<Self> {
+        let client = reqwest::Client::builder()
+            .tls_built_in_root_certs(false)
+            .add_root_certificate(reqwest::Certificate::from_pem(ca_pem)?)
+            .build()?;
+        Ok(Self {
+            client,
+            base: base.to_owned(),
+            password: Some(password.trim().to_owned()),
+        })
+    }
+
+    async fn get(&self, path: &str) -> Option<String> {
+        let mut request = self.client.get(format!("{}{path}", self.base));
+        if let Some(password) = &self.password {
+            request = request.basic_auth("monitorflow", Some(password));
+        }
+        let response = request.send().await.ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        response.text().await.ok()
+    }
+}
+
+pub async fn vm_rows(store: &Store) -> Option<f64> {
+    Some(parse_vm_rows(&store.get("/metrics").await?))
 }
 
 /// One reading of everything.
@@ -132,11 +168,10 @@ pub async fn sample(
     every: Duration,
     mut watched: watch::Receiver<Watched>,
     pool: PgPool,
-    vm_url: String,
+    victoriametrics: Store,
     grpc_port: u16,
     out: tokio::sync::mpsc::UnboundedSender<Snapshot>,
 ) {
-    let client = reqwest::Client::new();
     let start = Instant::now();
     let ticks = rustix::param::clock_ticks_per_second() as f64;
     let mut ticker = tokio::time::interval(every);
@@ -158,7 +193,7 @@ pub async fn sample(
             .filter_map(|p| proc_stats(*p))
             .collect();
         let own = proc_stats(std::process::id()).unwrap_or_default();
-        let rows = vm_rows(&client, &vm_url).await.unwrap_or_default();
+        let rows = vm_rows(&victoriametrics).await.unwrap_or_default();
         let (pg_connections, pg_active) = pg_connections(&pool).await.unwrap_or_default();
         let mut snapshot = Snapshot {
             at: now.duration_since(start).as_secs_f64(),

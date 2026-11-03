@@ -126,8 +126,12 @@ impl Server {
         database_url: &str,
         victoriametrics_url: &str,
         victorialogs_url: &str,
+        storage_tls_dir: Option<&Path>,
     ) -> anyhow::Result<Self> {
         let ports = ServerPorts::free()?;
+        let storage_tls = storage_tls_dir
+            .map(|dir| format!("storage_tls_dir = \"{}\"\n", dir.display()))
+            .unwrap_or_default();
         let data = dir.join("server");
         std::fs::create_dir_all(&data)?;
         let config = dir.join("server.toml");
@@ -142,7 +146,7 @@ api_cookie_secure = false
 database_url = "{database_url}"
 victoriametrics_url = "{victoriametrics_url}"
 victorialogs_url = "{victorialogs_url}"
-data_dir = "{data}"
+{storage_tls}data_dir = "{data}"
 server_names = ["127.0.0.1"]
 
 [tls]
