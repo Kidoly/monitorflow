@@ -80,6 +80,11 @@ impl CrlPublisher {
         Ok(())
     }
 
+    /// Whether the CA lists `serial` as revoked.
+    pub fn is_revoked(&self, serial: &Serial) -> bool {
+        self.ca.is_revoked(serial)
+    }
+
     /// Revokes `serial` in the CA, then publishes a CRL listing it: new
     /// connections with that certificate fail from then on. Recording the
     /// revocation in the database and the audit log is the caller's job.

@@ -98,6 +98,8 @@ struct Inner {
     /// Sequence of the last envelope the server sent.
     last_sequence: u64,
     shutting_down: bool,
+    /// Streams other server instances hold (ADR-0089), as last read.
+    remote: HashMap<String, PeerInfo>,
 }
 
 /// Shared handle to the registry; clones are cheap and see the same peers.
@@ -193,6 +195,39 @@ impl Registry {
         self.lock().peers.get(id).map(|e| e.info.clone())
     }
 
+    /// Replaces the streams other server instances hold (ADR-0089). Their
+    /// entries have connection 0 and no counters; nothing can be sent on
+    /// them from here.
+    pub fn set_remote(&self, peers: Vec<PeerInfo>) {
+        // A later entry, connected later, wins.
+        self.lock().remote = peers.into_iter().map(|p| (p.id.clone(), p)).collect();
+    }
+
+    /// `id`'s stream on this instance, or else on another one.
+    pub fn live(&self, id: &str) -> Option<PeerInfo> {
+        let inner = self.lock();
+        inner
+            .peers
+            .get(id)
+            .map(|e| e.info.clone())
+            .or_else(|| inner.remote.get(id).cloned())
+    }
+
+    /// Every stream of every instance, this one's first, sorted by ID.
+    pub fn live_all(&self) -> Vec<PeerInfo> {
+        let inner = self.lock();
+        let mut peers: Vec<_> = inner.peers.values().map(|e| e.info.clone()).collect();
+        peers.extend(
+            inner
+                .remote
+                .values()
+                .filter(|p| !inner.peers.contains_key(&p.id))
+                .cloned(),
+        );
+        peers.sort_by(|a, b| a.id.cmp(&b.id));
+        peers
+    }
+
     /// Wraps `payload` with the server's next sequence number, monotonic
     /// over every stream of this process.
     pub fn envelope(&self, payload: Payload) -> Envelope {
@@ -273,6 +308,23 @@ mod tests {
             sensor_revision_sent: None,
             sensor_revision_applied: None,
         }
+    }
+
+    #[test]
+    fn live_views_merge_other_instances_and_prefer_this_one() {
+        let registry = Registry::default();
+        let (tx, _rx) = mpsc::channel(1);
+        registry.register(info("here"), tx).unwrap();
+        let mut elsewhere = info("here");
+        elsewhere.hostname = "other".into();
+        registry.set_remote(vec![elsewhere, info("there")]);
+        assert_eq!(registry.get("there"), None, "nothing to send on");
+        assert_eq!(registry.live("there").unwrap().id, "there");
+        assert_eq!(registry.live("here").unwrap().hostname, "host");
+        let ids: Vec<_> = registry.live_all().into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, ["here", "there"]);
+        registry.set_remote(Vec::new());
+        assert_eq!(registry.live("there"), None);
     }
 
     #[test]

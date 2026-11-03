@@ -7,6 +7,7 @@ pub mod api;
 pub mod auto_update;
 pub mod ca;
 pub mod campaign;
+pub mod cluster;
 pub mod commands;
 pub mod crl;
 pub mod db;
