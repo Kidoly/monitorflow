@@ -94,7 +94,9 @@ Volumes are prefixed with the project name, like `monitorflow_serverdata`.
 
 The updater backs up the database and `serverdata` every day and keeps the 7 newest backups[^0058]. **Administration, Backups** shows the last one, takes one now and downloads any of them. A backup holds the CA keys: whoever has the file can impersonate the server, so keep copies somewhere safe. Metrics, logs and the mirror repositories are not in backups; the mirror signing key is.
 
-To restore one, on a fresh install or on this one: `deploy/restore.sh <file>`.
+To restore one, on a fresh install or on this one: `deploy/restore.sh <file>`. A backup taken before the certificate authority changed brings the old one back, and the restore says so: servers and relays that moved cannot connect to it.
+
+The certificate authority in `serverdata` lasts 10 years. **Administration, Certificate authority** changes it in one click, and the server starts a change by itself six months before it expires; every server and relay moves to the new one over its own connection, with nothing to do on them[^0088]. Use **Emergency change** if its key may have leaked. Install commands made before a change stop working after it: copy new ones.
 
 ## Updating
 
@@ -198,4 +200,5 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 [^0068]: [ADR-0068: Browser certificate without a terminal](adr/0068-browser-certificate.md)
 [^0069]: [ADR-0069: Settings page](adr/0069-settings-page.md)
 [^0071]: [ADR-0071: First-run setup in the browser](adr/0071-first-run-setup.md)
+[^0088]: [ADR-0088: Changing the certificate authority](adr/0088-changing-the-certificate-authority.md)
 [^0089]: [ADR-0089: Several server instances](adr/0089-several-server-instances.md)
