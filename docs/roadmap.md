@@ -139,11 +139,11 @@ Needed before real customers. Daily backups and restore shipped in Phase 8 (ADR-
 Mostly follow-ups that the ADRs postponed.
 
 - [ ] journald and log forwarding.
-- [ ] Disk I/O.
-- [ ] Proxmox containers (ADR-0044).
+- [x] Disk I/O.
+- [x] Proxmox containers (ADR-0044).
 - [ ] LVM and ZFS snapshots.
-- [ ] Automatic discovery of Proxmox servers instead of mapping each one by hand (ADR-0044).
-- [ ] Custom dashboards.
+- [x] Automatic discovery of Proxmox servers instead of mapping each one by hand (ADR-0044).
+- [x] Custom dashboards.
 
 ## Phase 14 — Commercial
 
