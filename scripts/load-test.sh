@@ -19,7 +19,10 @@ export LOADTEST_VICTORIALOGS_PORT=${LOADTEST_VICTORIALOGS_PORT:-29428}
 profile=${LOADTEST_PROFILE:-release}
 
 compose=(docker compose -p "$project" -f deploy/docker-compose.loadtest.yml)
-cleanup() { "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; }
+cleanup() {
+    "${compose[@]}" logs --no-color postgres >target/load-test-postgres.log 2>&1 || true
+    "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 
 if [[ $profile == release ]]; then

@@ -451,7 +451,7 @@ impl Inventory for Hellos {
         Ok(String::new())
     }
 
-    async fn seen(&self, _role: PeerRole, _id: &str) -> Result<(), InventoryError> {
+    async fn seen(&self, _role: PeerRole, _ids: &[String]) -> Result<(), InventoryError> {
         Ok(())
     }
 }

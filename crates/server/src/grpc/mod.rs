@@ -6,6 +6,7 @@ mod inventory;
 mod policy;
 mod registry;
 mod revocation;
+mod seen;
 mod service;
 
 use std::future::Future;
