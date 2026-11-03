@@ -176,6 +176,7 @@ update() {
 server_version() { compose exec -T server monitorflow-server --version; }
 
 # A sample written in plain HTTP, read back once the stores use TLS.
+# shellcheck disable=SC2016 # expanded in the server container
 compose exec -T server bash -c 'body="mf_update_kept 7 $(( $(date +%s) - 60 ))000"
     exec 3<>/dev/tcp/victoriametrics/8428
     printf "POST /api/v1/import/prometheus HTTP/1.0\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" >&3
@@ -217,6 +218,7 @@ tls_flag() { docker inspect --format '{{json .Config.Cmd}}' "$(compose ps -q "$1
 check "VictoriaMetrics runs with TLS" tls_flag victoriametrics
 check "VictoriaLogs runs with TLS" tls_flag victorialogs
 kept_sample() {
+    # shellcheck disable=SC2016 # expanded in the server container
     compose exec -T server bash -c 'auth=$(printf "monitorflow:%s" "$(cat /var/lib/monitorflow/storage-tls/password)" | base64 -w0)
         printf "GET /api/v1/query?query=mf_update_kept HTTP/1.0\r\nHost: victoriametrics\r\nAuthorization: Basic %s\r\n\r\n" "$auth" \
         | openssl s_client -quiet -verify_return_error -CAfile /var/lib/monitorflow/server/ca/ca-cert.pem \
