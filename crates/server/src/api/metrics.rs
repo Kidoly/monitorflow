@@ -308,7 +308,7 @@ fn backend_error(error: QueryError) -> ApiError {
 
 /// Converts a `vector` or `matrix` result, refusing more than
 /// [`MAX_SERIES`] series.
-fn series(data: Value) -> Result<Vec<SeriesView>, ApiError> {
+pub(super) fn series(data: Value) -> Result<Vec<SeriesView>, ApiError> {
     let malformed = || ApiError::MetricsUnavailable("unexpected query result".into());
     let Value::Array(results) = &data["result"] else {
         return Err(malformed());

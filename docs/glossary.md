@@ -51,6 +51,10 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Change the certificate authority | Replace it with a new one while every server and relay keeps working: they learn the new one, move to it, then the old one is retired. An emergency change is for when its key may have leaked | rotate, rotation, roll over, re-key, compromise | `ca_rotation`, `ca.rotation.*` |
 | Moved | A server or relay whose certificate comes from the new certificate authority. "312 of 315 servers and relays moved" | migrated, re-issued | `moved`, `issuer_ca` |
 | Needs a new install | A server or relay that missed an emergency change and cannot connect until it is installed again | cut off, stranded, orphaned | `cut_off` |
+| Dashboard | A page of charts and figures someone builds by picking from lists, under Monitoring | board, view (on screen), Grafana | `dashboards` |
+| Panel | One chart, figure, top list or list of open alerts on a dashboard | widget, tile, card | `panels` |
+| Shared with | Who sees a dashboard: Only me, a site or a customer. Operators of that site or customer change it | visibility, owner, scope | `shared_with` |
+| Ready-made | A dashboard MonitorFlow comes with, for every server you see. Make a copy to change it | built-in, template, default | |
 | Turn off | Stop watching: no more alerts of a threshold, or offline incidents of a machine, until turned back on | mute | `offline_alerts`, `muted`, `enabled` |
 | Rollback | Going back to the snapshot taken before an AI change. "Snapshot first" when MonitorFlow takes one, "Rollback limited" when it cannot, with the reason: "the container's storage cannot take snapshots" | revert, restore point | `snapshots.available`, `reason` |
 | VM, container | The Proxmox guest a server runs in: a virtual machine, or an LXC container. "VM 101 on pve1", "container 104 on pve2". The ID is Proxmox's | guest, CT, qemu, lxc (on screen) | `server_proxmox_vms`, `kind`, `vmid` |

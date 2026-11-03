@@ -114,7 +114,7 @@ impl FakeVm {
                 .collect::<Vec<_>>()
                 .join("&");
             vm.seen.lock().unwrap().push(decoded);
-            let data = if uri.path().ends_with("/series") {
+            let data = if uri.path().ends_with("/series") || uri.path().contains("/label/") {
                 json!([])
             } else {
                 json!({ "resultType": "matrix", "result": [] })
@@ -170,6 +170,10 @@ struct Tenant {
     on_call_override: Uuid,
     /// The customer's follow-up, telling its schedule and member (ADR-0082).
     follow_up: Uuid,
+    /// Dashboards shared with the site and with the customer, of the
+    /// server (ADR-0095).
+    site_dashboard: Uuid,
+    customer_dashboard: Uuid,
 }
 
 async fn tenant(pool: &PgPool, name: &str) -> Tenant {
@@ -381,7 +385,31 @@ async fn tenant(pool: &PgPool, name: &str) -> Tenant {
     .fetch_one(pool)
     .await
     .unwrap();
+    let dashboard = "INSERT INTO dashboards (name, site_id, customer_id, schema_version, spec)
+         VALUES ($1, $2, $3, 1, jsonb_build_object('version', 1, 'range', '6h', 'panels',
+             jsonb_build_array(jsonb_build_object('id', 'a', 'title', 'Alerts', 'kind', 'alerts',
+                 'count', 5, 'width', 1,
+                 'servers', jsonb_build_object('kind', 'list', 'ids', jsonb_build_array($4))))))
+         RETURNING id";
+    let site_dashboard = one(dashboard)
+        .bind(format!("Site {name}"))
+        .bind(site)
+        .bind(None::<Uuid>)
+        .bind(server)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let customer_dashboard = one(dashboard)
+        .bind(format!("Customer {name}"))
+        .bind(None::<Uuid>)
+        .bind(customer)
+        .bind(server)
+        .fetch_one(pool)
+        .await
+        .unwrap();
     Tenant {
+        site_dashboard,
+        customer_dashboard,
         member,
         schedule,
         on_call_override,
@@ -503,6 +531,18 @@ fn sensor_body() -> Value {
 
 fn threshold_body() -> Value {
     json!({ "metric": "monitorflow_cpu_usage_ratio", "comparison": ">", "warning": 0.5 })
+}
+
+/// A dashboard of one chart over `servers`, shared with `sharing`.
+fn dashboard_body(sharing: Value, servers: Value) -> Value {
+    json!({
+        "name": "Mine",
+        "shared_with": sharing,
+        "spec": { "version": 1, "range": "6h", "panels": [
+            { "id": "c", "title": "CPU", "kind": "chart", "metric": "monitorflow_cpu_usage_ratio",
+              "combine": "avg", "servers": servers }
+        ] }
+    })
 }
 
 /// The tenancy case of one route. A route without one panics.
@@ -1494,6 +1534,168 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 "{last}"
             );
         }
+        // Dashboards (ADR-0095): B's are invisible, cannot be written, and
+        // panels naming B's servers, site or customer are refused on save
+        // and show nothing on display.
+        ("GET", "/api/dashboards") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(
+                Ctx::mentions(&body, a.site_dashboard)
+                    && Ctx::mentions(&body, a.customer_dashboard)
+                    && !Ctx::mentions(&body, b.site_dashboard)
+                    && !Ctx::mentions(&body, b.customer_dashboard),
+                "{body}"
+            );
+        }
+        ("POST", "/api/dashboards") => {
+            for sharing in [
+                json!({ "kind": "site", "id": b.site }),
+                json!({ "kind": "customer", "id": b.customer }),
+            ] {
+                let body = dashboard_body(sharing.clone(), json!({ "kind": "all" }));
+                assert_eq!(
+                    ctx.status(method, path, Some(body)).await,
+                    not_found,
+                    "{sharing}"
+                );
+            }
+            for servers in [
+                json!({ "kind": "list", "ids": [b.server] }),
+                json!({ "kind": "list", "ids": [a.server, b.server] }),
+                json!({ "kind": "site", "id": b.site }),
+                json!({ "kind": "customer", "id": b.customer }),
+            ] {
+                for sharing in [
+                    json!({ "kind": "personal" }),
+                    json!({ "kind": "customer", "id": a.customer }),
+                ] {
+                    let body = dashboard_body(sharing, servers.clone());
+                    let (status, body) = ctx.call(method, path, Some(body)).await;
+                    assert_eq!(status, StatusCode::BAD_REQUEST, "{servers}");
+                    assert!(!Ctx::mentions(&body, b.server), "{body}");
+                }
+            }
+        }
+        ("GET", "/api/dashboards/{id}")
+        | ("PUT", "/api/dashboards/{id}")
+        | ("DELETE", "/api/dashboards/{id}") => {
+            for id in [b.site_dashboard, b.customer_dashboard] {
+                let uri = path.replace("{id}", &id.to_string());
+                let mut body =
+                    dashboard_body(json!({ "kind": "personal" }), json!({ "kind": "all" }));
+                body["revision"] = json!(1);
+                assert_eq!(
+                    ctx.status(method, &uri, Some(body)).await,
+                    not_found,
+                    "{uri}"
+                );
+            }
+            // A's own may not be moved to B or point at B.
+            if method == "PUT" {
+                let uri = path.replace("{id}", &a.customer_dashboard.to_string());
+                let mut body = dashboard_body(
+                    json!({ "kind": "site", "id": b.site }),
+                    json!({ "kind": "all" }),
+                );
+                body["revision"] = json!(1);
+                assert_eq!(ctx.status(method, &uri, Some(body)).await, not_found);
+                let mut body = dashboard_body(
+                    json!({ "kind": "customer", "id": a.customer }),
+                    json!({ "kind": "list", "ids": [b.server] }),
+                );
+                body["revision"] = json!(1);
+                assert_eq!(
+                    ctx.status(method, &uri, Some(body)).await,
+                    StatusCode::BAD_REQUEST
+                );
+            }
+        }
+        ("POST", "/api/dashboard-data") => {
+            let panels = |servers: Value| {
+                json!([
+                    { "id": "c", "title": "CPU", "kind": "chart", "metric": "monitorflow_cpu_usage_ratio",
+                      "combine": "each", "servers": servers },
+                    { "id": "f", "title": "CPU", "kind": "figure", "metric": "monitorflow_cpu_usage_ratio",
+                      "combine": "max", "servers": servers },
+                    { "id": "t", "title": "Disks", "kind": "top", "metric": "monitorflow_disk_used_ratio",
+                      "order": "highest", "count": 5, "servers": servers },
+                    { "id": "a", "title": "Alerts", "kind": "alerts", "count": 5, "servers": servers }
+                ])
+            };
+            let request = |within: Value, servers: Value| json!({ "range": "6h", "within": within, "panels": panels(servers) });
+            // A hand-edited dashboard naming B shows nothing of B, however
+            // it is shared.
+            for (within, servers) in [
+                (
+                    json!({ "kind": "all" }),
+                    json!({ "kind": "list", "ids": [b.server] }),
+                ),
+                (
+                    json!({ "kind": "all" }),
+                    json!({ "kind": "site", "id": b.site }),
+                ),
+                (
+                    json!({ "kind": "all" }),
+                    json!({ "kind": "customer", "id": b.customer }),
+                ),
+                (
+                    json!({ "kind": "customer", "id": b.customer }),
+                    json!({ "kind": "all" }),
+                ),
+                (
+                    json!({ "kind": "site", "id": b.site }),
+                    json!({ "kind": "all" }),
+                ),
+            ] {
+                let (status, body) = ctx
+                    .call(method, path, Some(request(within, servers.clone())))
+                    .await;
+                assert_eq!(status, StatusCode::OK, "{body}");
+                for panel in body["panels"].as_array().unwrap() {
+                    assert_eq!(panel["servers"], 0, "{servers}: {panel}");
+                }
+                assert!(
+                    !Ctx::mentions(&body, b.server) && !Ctx::mentions(&body, b.incident),
+                    "{body}"
+                );
+            }
+            // A's own servers are queried with A's site only.
+            let (status, body) = ctx
+                .call(
+                    method,
+                    path,
+                    Some(request(json!({ "kind": "all" }), json!({ "kind": "all" }))),
+                )
+                .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert!(
+                body["panels"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|p| p["servers"] == 1),
+                "{body}"
+            );
+            assert!(Ctx::mentions(&body, a.incident), "{body}");
+            let last = ctx.vm_seen_last();
+            assert!(
+                last.contains("site=~\"site-a\"")
+                    && last.contains("extra_filters[]={site=~\"site-a\"}"),
+                "{last}"
+            );
+        }
+        ("GET", "/api/dashboard-metrics") => {
+            let uri = format!("{path}?site_id={}", b.site);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            let uri = format!("{path}?customer_id={}&{metric}", b.customer);
+            let (status, body) = ctx.call(method, &uri, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body, json!({ "metrics": [], "instances": [] }));
+            let uri = format!("{path}?{metric}");
+            assert_eq!(ctx.status(method, &uri, None).await, StatusCode::OK);
+            assert!(ctx.vm_seen_last().contains("site=~\"site-a\""));
+        }
         _ => panic!(
             "no tenancy case for {method} {path}; add one to check() in tests/api_tenancy.rs"
         ),
@@ -1597,6 +1799,15 @@ db_tests! {
         .await
         .unwrap();
         assert_eq!(untouched, (2, 2), "an administrator of A decided on B's hosts or keys");
+        let dashboards: String = sqlx::query_scalar(
+            "SELECT string_agg(id::text || name || revision || spec::text, ',' ORDER BY id) FROM dashboards",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let expected = [a.site_dashboard, a.customer_dashboard, b.site_dashboard, b.customer_dashboard];
+        assert!(expected.iter().all(|id| dashboards.contains(&id.to_string())), "{dashboards}");
+        assert!(dashboards.matches("\"version\"").count() == 4, "a dashboard was added: {dashboards}");
         let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM mirror_runs").fetch_one(&pool).await.unwrap();
         assert_eq!(runs, 0, "a customer administrator started a mirror job");
         // Writes against B changed nothing (A's rows were not touched either).
