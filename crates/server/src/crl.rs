@@ -5,9 +5,13 @@
 //! after each revocation and on a timer, and sends it through the watch
 //! channel read by `tls::incoming`. The same CRL is published for
 //! `RevocationService`, so relays enforce what the listener enforces.
+//!
+//! During a change of certificate authority there are two CAs, each with
+//! its CRL (ADR-0088), and the server's own certificate changes: the
+//! publisher also rebuilds the enrollment listener's config.
 
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use monitorflow_common::tls::{Identity, TlsError};
@@ -38,13 +42,15 @@ pub fn refresh_interval(options: &CaOptions) -> Duration {
 
 pub struct CrlPublisher {
     ca: Arc<CertificateAuthority>,
-    identity: Identity,
+    identity: Mutex<Identity>,
     tx: watch::Sender<Arc<ServerConfig>>,
+    enroll: watch::Sender<Arc<ServerConfig>>,
     crl: watch::Sender<Crl>,
 }
 
-/// The CRL in DER, as last published.
-pub type Crl = Arc<CertificateRevocationListDer<'static>>;
+/// The CRLs in DER, as last published: the active CA's first, then the
+/// other CA's during a change of certificate authority.
+pub type Crl = Arc<Vec<CertificateRevocationListDer<'static>>>;
 
 impl CrlPublisher {
     /// Builds the first config with a fresh CRL. Pass the receiver to the
@@ -56,15 +62,39 @@ impl CrlPublisher {
         let (config, crl) = build(ca.clone(), identity.clone()).await?;
         let (tx, rx) = watch::channel(config);
         let (crl, _) = watch::channel(crl);
+        let (enroll, _) = watch::channel(identity.server_config_without_client_auth()?);
         Ok((
             Self {
                 ca,
-                identity,
+                identity: Mutex::new(identity),
                 tx,
+                enroll,
                 crl,
             },
             rx,
         ))
+    }
+
+    /// Follows the enrollment listener's config.
+    pub fn enroll_config(&self) -> watch::Receiver<Arc<ServerConfig>> {
+        self.enroll.subscribe()
+    }
+
+    /// Switches both listeners to `identity`, the server's new certificate
+    /// and CAs, for new connections, with fresh CRLs.
+    pub async fn reload(&self, identity: Identity) -> Result<(), CrlError> {
+        let enroll = identity.server_config_without_client_auth()?;
+        *self.identity.lock().unwrap_or_else(PoisonError::into_inner) = identity;
+        self.refresh().await?;
+        self.enroll.send_replace(enroll);
+        Ok(())
+    }
+
+    fn identity(&self) -> Identity {
+        self.identity
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Follows the published CRL, for `RevocationService`.
@@ -74,7 +104,7 @@ impl CrlPublisher {
 
     /// Publishes a new CRL now.
     pub async fn refresh(&self) -> Result<(), CrlError> {
-        let (config, crl) = build(self.ca.clone(), self.identity.clone()).await?;
+        let (config, crl) = build(self.ca.clone(), self.identity()).await?;
         self.tx.send_replace(config);
         self.crl.send_replace(crl);
         Ok(())
@@ -123,9 +153,9 @@ async fn build(
     identity: Identity,
 ) -> Result<(Arc<ServerConfig>, Crl), CrlError> {
     tokio::task::spawn_blocking(move || {
-        let crl = ca.crl()?;
-        let config = identity.server_config(vec![crl.clone()])?;
-        Ok((config, Arc::new(crl)))
+        let crls = ca.crls()?;
+        let config = identity.server_config(crls.clone())?;
+        Ok((config, Arc::new(crls)))
     })
     .await?
 }

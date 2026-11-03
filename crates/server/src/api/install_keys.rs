@@ -190,7 +190,7 @@ pub async fn create(
             creator: Creator::User(user.id),
         },
     };
-    let created = install_key::create(&state.pool, settings.ca_fingerprint, &key).await?;
+    let created = install_key::create(&state.pool, state.ca_pin(settings), &key).await?;
     // SQL-safe: interpolates only the constant SELECT_KEYS.
     let view = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT_KEYS} WHERE k.id = $1"

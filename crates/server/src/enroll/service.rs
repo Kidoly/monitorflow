@@ -5,11 +5,10 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
-use chrono::{DateTime, Utc};
 use monitorflow_common::proto::v1::enroll_service_server::{EnrollService, EnrollServiceServer};
 use monitorflow_common::proto::v1::{EnrollRequest, EnrollResponse};
 use monitorflow_common::tls::{
-    self, AcceptOptions, EnrollmentToken, Fingerprint, PeerIdentity, PeerRole,
+    self, AcceptOptions, EnrollmentToken, PeerIdentity, PeerRole,
 };
 use rcgen::CertificateSigningRequestParams;
 use rustls::ServerConfig as TlsServerConfig;
@@ -21,9 +20,10 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use super::limiter::{FailureLimiter, UNKNOWN_SOURCE};
-use super::{ca_fingerprint, install_key, relay_names, server_cert, token};
+use super::{install_key, relay_names, server_cert, token};
 use crate::api::audit::{self, Event};
-use crate::ca::{CertificateAuthority, IssuedCert};
+use crate::ca::{CertificateAuthority, IssuedCert, Trust};
+use crate::renew;
 
 /// Largest request accepted: a token and a CSR fit in a few KiB.
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
@@ -80,6 +80,8 @@ impl From<EnrollError> for Status {
 pub struct Enrolled {
     pub identity: PeerIdentity,
     pub cert: IssuedCert,
+    /// The CAs to send with it, read when it was issued.
+    pub trust: Trust,
 }
 
 /// Exchanges tokens for certificates. Cheap to clone.
@@ -87,17 +89,14 @@ pub struct Enrolled {
 pub struct Enroller {
     pool: PgPool,
     ca: Arc<CertificateAuthority>,
-    ca_fingerprint: Fingerprint,
     limiter: Arc<FailureLimiter>,
 }
 
 impl Enroller {
     pub fn new(pool: PgPool, ca: Arc<CertificateAuthority>, limiter: FailureLimiter) -> Self {
-        let ca_fingerprint = ca_fingerprint(&ca);
         Self {
             pool,
             ca,
-            ca_fingerprint,
             limiter: Arc::new(limiter),
         }
     }
@@ -141,10 +140,27 @@ impl Enroller {
         reported: &[String],
         source: Option<IpAddr>,
     ) -> Result<Enrolled, EnrollError> {
+        self.enroll_peer(token, csr_pem, hostname, reported, source, true)
+            .await
+    }
+
+    /// [`Self::enroll_reporting`] for a peer that stores a CA bundle, or
+    /// one too old to (ADR-0088).
+    async fn enroll_peer(
+        &self,
+        token: &str,
+        csr_pem: &str,
+        hostname: &str,
+        reported: &[String],
+        source: Option<IpAddr>,
+        accepts_ca_bundle: bool,
+    ) -> Result<Enrolled, EnrollError> {
         // Checks that need no database come first, so their answers say
         // nothing about the token's state.
         let token = EnrollmentToken::parse(token).map_err(|_| EnrollError::Refused)?;
-        if token.ca_fingerprint() != &self.ca_fingerprint {
+        // Tokens pin the CA that issued when they were made; the other CA
+        // of a planned change still counts (ADR-0088).
+        if !self.ca.trust().accepts_pin(token.ca_fingerprint()) {
             return Err(EnrollError::Refused);
         }
         CertificateSigningRequestParams::from_pem(csr_pem).map_err(|_| EnrollError::InvalidCsr)?;
@@ -203,23 +219,10 @@ impl Enroller {
         // Names come from the token, like the identity (ADR-0025), never
         // from the peer (ADR-0066).
         let names = server_cert::parse_names(&server_names);
-        let (ca, csr, id) = (self.ca.clone(), csr_pem.to_owned(), identity.clone());
-        let cert = tokio::task::spawn_blocking(move || ca.issue(&csr, &id, None, &names))
+        let (cert, trust) = renew::issue(&self.ca, csr_pem, &identity, names)
             .await
-            .map_err(|e| EnrollError::Internal(e.to_string()))?
             .map_err(|e| EnrollError::Internal(e.to_string()))?;
-
-        sqlx::query(
-            "INSERT INTO certificates (serial, peer_role, peer_id, not_before, not_after)
-             VALUES ($1, $2, $3, $4, $5)",
-        )
-        .bind(cert.serial.as_bytes())
-        .bind(role.as_str())
-        .bind(&peer_id)
-        .bind(DateTime::<Utc>::from(cert.not_before))
-        .bind(DateTime::<Utc>::from(cert.not_after))
-        .execute(&mut *tx)
-        .await?;
+        renew::record_certificate(&mut tx, &cert, &identity, &trust, accepts_ca_bundle).await?;
         let details = serde_json::json!({
             "token_id": token_id,
             "install_key_id": key_id,
@@ -277,7 +280,11 @@ impl Enroller {
         }
         tx.commit().await?;
         tracing::info!(peer = %identity, serial = %cert.serial, ?source, "enrolled a peer");
-        Ok(Enrolled { identity, cert })
+        Ok(Enrolled {
+            identity,
+            cert,
+            trust,
+        })
     }
 }
 
@@ -394,12 +401,13 @@ impl EnrollService for Enroller {
         }
         let request = request.into_inner();
         let enrolled = match self
-            .enroll_reporting(
+            .enroll_peer(
                 &request.token,
                 &request.csr_pem,
                 &request.hostname,
                 &request.server_names,
                 source,
+                request.accepts_ca_bundle,
             )
             .await
         {
@@ -429,9 +437,13 @@ impl EnrollService for Enroller {
             .map_or(0, |d| d.as_secs() as i64);
         Ok(Response::new(EnrollResponse {
             cert_pem: enrolled.cert.cert_pem,
-            ca_cert_pem: self.ca.ca_cert_pem().to_owned(),
+            ca_cert_pem: enrolled.trust.issuer_pem,
             peer_uri: enrolled.identity.uri(),
             not_after_unix,
+            ca_bundle_pem: match request.accepts_ca_bundle {
+                true => enrolled.trust.bundle_pem,
+                false => String::new(),
+            },
         }))
     }
 }
@@ -441,11 +453,10 @@ impl EnrollService for Enroller {
 /// until `shutdown` resolves.
 pub async fn serve(
     listener: TcpListener,
-    tls: Arc<TlsServerConfig>,
+    tls: watch::Receiver<Arc<TlsServerConfig>>,
     enroller: Enroller,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), tonic::transport::Error> {
-    let (_fixed, tls) = watch::channel(tls);
     let options = AcceptOptions {
         max_handshakes: MAX_HANDSHAKES,
         ..AcceptOptions::default()

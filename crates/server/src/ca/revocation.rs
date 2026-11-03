@@ -89,9 +89,15 @@ impl CertificateAuthority {
         self.lock().revoked.iter().any(|r| &r.serial == serial)
     }
 
-    /// A new DER CRL listing every revoked serial, valid from now for
+    /// A new DER CRL per trusted CA generation, the active one first, each
+    /// listing every revoked serial, valid from now for
     /// [`CaOptions::crl_validity`], with a CRL number one above the last.
-    pub fn crl(&self) -> Result<CertificateRevocationListDer<'static>, CaError> {
+    ///
+    /// The revocation list is shared: serials are 128 random bits, so a
+    /// serial of one generation in the other's CRL revokes nothing else.
+    ///
+    /// [`CaOptions::crl_validity`]: super::CaOptions::crl_validity
+    pub fn crls(&self) -> Result<Vec<CertificateRevocationListDer<'static>>, CaError> {
         let mut state = self.lock();
         let mut next = state.clone();
         next.crl_number += 1;
@@ -104,7 +110,7 @@ impl CertificateAuthority {
             .ok()
             .and_then(|v| this_update.checked_add(v))
             .ok_or_else(|| CaError::InvalidRequest("CRL validity is too long".into()))?;
-        let revoked_certs = state
+        let revoked_certs: Vec<_> = state
             .revoked
             .iter()
             .map(|r| RevokedCertParams {
@@ -115,17 +121,28 @@ impl CertificateAuthority {
                 invalidity_date: None,
             })
             .collect();
-        let crl = CertificateRevocationListParams {
-            this_update,
-            next_update,
-            crl_number: SerialNumber::from(state.crl_number),
-            issuing_distribution_point: None,
-            revoked_certs,
-            key_identifier_method: self.key_id.clone(),
-        }
-        .signed_by(&self.issuer)
-        .map_err(CaError::signing)?;
-        Ok(crl.der().clone())
+        let generations: Vec<_> = self.state().trusted().cloned().collect();
+        generations
+            .iter()
+            .map(|generation| {
+                let crl = CertificateRevocationListParams {
+                    this_update,
+                    next_update,
+                    crl_number: SerialNumber::from(state.crl_number),
+                    issuing_distribution_point: None,
+                    revoked_certs: revoked_certs.clone(),
+                    key_identifier_method: generation.key_id.clone(),
+                }
+                .signed_by(&generation.issuer)
+                .map_err(CaError::signing)?;
+                Ok(crl.der().clone())
+            })
+            .collect()
+    }
+
+    /// The CRL of the active CA alone; see [`Self::crls`].
+    pub fn crl(&self) -> Result<CertificateRevocationListDer<'static>, CaError> {
+        Ok(self.crls()?.swap_remove(0))
     }
 
     fn lock(&self) -> MutexGuard<'_, Revocations> {

@@ -5,6 +5,7 @@
 //!
 //! The private key is never logged; its PEM lives in a [`Secret`].
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
 use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
@@ -87,6 +88,19 @@ pub struct Renewal {
     paths: TlsPaths,
     identity: watch::Sender<StoredIdentity>,
     lacks_names: Option<fn(&StoredIdentity) -> bool>,
+    /// Cleared when the upstream turns out older than ADR-0088.
+    rotation_checks: AtomicBool,
+}
+
+/// What a `Renew` call asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ask {
+    /// A certificate, because the current one is due.
+    Renewal,
+    /// Only names an administrator confirmed (ADR-0066).
+    NamesOnly,
+    /// Only what a change of certificate authority needs (ADR-0088).
+    RotationOnly,
 }
 
 impl Renewal {
@@ -101,6 +115,7 @@ impl Renewal {
             paths,
             identity: tx,
             lacks_names: None,
+            rotation_checks: AtomicBool::new(true),
         };
         (renewal, rx)
     }
@@ -136,7 +151,7 @@ impl Renewal {
         if !self.lacks_names.is_some_and(|lacks| lacks(&current)) {
             return wait;
         }
-        match self.request(&current, true).await {
+        match self.request(&current, Ask::NamesOnly).await {
             Ok(renewed) => {
                 tracing::info!(peer = %renewed.id, "an administrator confirmed the server names; reconnecting with them");
                 self.identity.send_replace(renewed);
@@ -159,6 +174,7 @@ impl Renewal {
             return self.settings.check_every;
         }
         if !current.renewal_due(now) {
+            self.check_rotation(&current).await;
             let until_due = current.renewal_at().duration_since(now).unwrap_or_default();
             return until_due.min(next_check(&self.settings));
         }
@@ -183,18 +199,37 @@ impl Renewal {
         }
     }
 
+    /// Asks whether a change of certificate authority needs a new
+    /// certificate or new CAs here, and takes them if so (ADR-0088). The
+    /// server answers `FAILED_PRECONDITION` when nothing changed.
+    async fn check_rotation(&self, current: &StoredIdentity) {
+        if !self.rotation_checks.load(Ordering::Relaxed) {
+            return;
+        }
+        match self.request(current, Ask::RotationOnly).await {
+            Ok(renewed) => {
+                tracing::info!(peer = %renewed.id, "the server changes its certificate authority; reconnecting with the new certificate");
+                self.identity.send_replace(renewed);
+            }
+            Err(RenewError::Failed(why)) if why.starts_with("FailedPrecondition") => {}
+            Err(error) => {
+                tracing::debug!(%error, "cannot ask about a change of certificate authority")
+            }
+        }
+    }
+
     /// One attempt: new key, CSR, `Renew`, checks, then the files. Nothing
     /// is written unless the response matches our CA, key and identity.
     pub async fn renew(&self, current: &StoredIdentity) -> Result<StoredIdentity, RenewError> {
-        self.request(current, false).await
+        self.request(current, Ask::Renewal).await
     }
 
-    /// [`Self::renew`]; with `names_only`, the server answers only with
-    /// names the certificate does not carry yet.
+    /// [`Self::renew`] for `ask`: names only or rotation only get an
+    /// answer only when there is something new.
     async fn request(
         &self,
         current: &StoredIdentity,
-        names_only: bool,
+        ask: Ask,
     ) -> Result<StoredIdentity, RenewError> {
         let failed = |e: &dyn std::fmt::Display| RenewError::Failed(e.to_string());
         let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
@@ -210,7 +245,9 @@ impl Renewal {
         let mut client = CertificateServiceClient::new(channel);
         let call = client.renew(RenewRequest {
             csr_pem,
-            names_only,
+            names_only: ask == Ask::NamesOnly,
+            accepts_ca_bundle: true,
+            rotation_only: ask == Ask::RotationOnly,
         });
         let response = match tokio::time::timeout(CALL_TIMEOUT, call).await {
             Err(_) => return Err(RenewError::Failed("no answer in time".into())),
@@ -222,13 +259,29 @@ impl Renewal {
             EnrollError::BadResponse(why) => RenewError::BadResponse(why),
             other => RenewError::BadResponse(other.to_string()),
         };
-        if !enroll::is_ca(&response.ca_cert_pem, &current.ca_fingerprint).map_err(bad)? {
-            return Err(RenewError::BadResponse(format!(
-                "ca_cert_pem is not the stored CA (expected SHA-256 {})",
-                tls::fingerprint_hex(&current.ca_fingerprint)
-            )));
-        }
+        let issuer = enroll::single_ca(&response.ca_cert_pem)
+            .map_err(bad)?
+            .ok_or_else(|| RenewError::BadResponse("ca_cert_pem is not one certificate".into()))?;
+        let ca_bundle_pem = if response.ca_bundle_pem.is_empty() {
+            // A server older than ADR-0088: a CA we already trust, and no
+            // change of certificate authority.
+            if ask == Ask::RotationOnly {
+                self.rotation_checks.store(false, Ordering::Relaxed);
+            }
+            if !current.ca_fingerprints.contains(&issuer) {
+                return Err(RenewError::BadResponse(format!(
+                    "ca_cert_pem is not a stored CA (SHA-256 {})",
+                    tls::fingerprint_hex(&issuer)
+                )));
+            }
+            None
+        } else {
+            enroll::check_bundle(&response.ca_bundle_pem, &issuer, &current.ca_fingerprints)
+                .map_err(bad)?;
+            Some(response.ca_bundle_pem)
+        };
         enroll::verify_cert(&response.cert_pem, &response.peer_uri, &key, role).map_err(bad)?;
+        enroll::verify_issued_by(&response.cert_pem, &response.ca_cert_pem).map_err(bad)?;
         if response.peer_uri != current.id.uri() {
             return Err(RenewError::BadResponse(format!(
                 "the certificate is for `{}`, not `{}`",
@@ -240,6 +293,7 @@ impl Renewal {
         let renewed = Renewed {
             key_pem: Secret::new(key.serialize_pem()),
             cert_pem: response.cert_pem,
+            ca_bundle_pem,
         };
         let paths = self.paths.clone();
         tokio::task::spawn_blocking(move || {

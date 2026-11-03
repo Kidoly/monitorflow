@@ -523,6 +523,7 @@ pub mod ai;
 pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
+pub mod certificate_authority;
 pub mod auto_update;
 pub mod backups;
 pub mod campaigns;
@@ -679,6 +680,8 @@ pub struct ApiState {
     pub campaigns: Option<Runner>,
     /// Held by the release import running, if any.
     pub release_import: release_import::ImportLock,
+    /// Changes the certificate authority (ADR-0088); `None` refuses to.
+    pub ca_rotation: Option<crate::ca_rotation::Rotator>,
 }
 
 impl ApiState {
@@ -695,7 +698,22 @@ impl ApiState {
             mirrors: None,
             campaigns: None,
             release_import: release_import::ImportLock::default(),
+            ca_rotation: None,
         }
+    }
+
+    /// Shows and changes the certificate authority with `rotator`; tokens
+    /// then pin the CA that issues now.
+    pub fn with_ca_rotation(mut self, rotator: crate::ca_rotation::Rotator) -> Self {
+        self.ca_rotation = Some(rotator);
+        self
+    }
+
+    /// The CA new tokens pin: the one that issues now.
+    pub fn ca_pin(&self, settings: &EnrollmentSettings) -> monitorflow_common::tls::Fingerprint {
+        self.ca_rotation
+            .as_ref()
+            .map_or(settings.ca_fingerprint, |r| r.ca().fingerprint())
     }
 
     pub fn with_relay_commands(mut self, commands: RelayCommands) -> Self {
@@ -933,6 +951,18 @@ pub fn router(state: ApiState) -> Router {
             post(release_import::from_url),
         )
         .route("/api/backups", get(backups::get).post(backups::start))
+        .route(
+            "/api/certificate-authority",
+            get(certificate_authority::get),
+        )
+        .route(
+            "/api/certificate-authority/rotation",
+            post(certificate_authority::start),
+        )
+        .route(
+            "/api/certificate-authority/rotation/next",
+            post(certificate_authority::next),
+        )
         .route("/api/backups/{name}", get(backups::download))
         .route(
             "/api/servers/{id}/sources",

@@ -188,6 +188,7 @@ pub async fn request(
         csr_pem: csr,
         hostname: settings.hostname.clone(),
         server_names: settings.server_names.clone(),
+        accepts_ca_bundle: true,
     };
     let mut client = EnrollServiceClient::new(channel);
     let call = client.enroll(request);
@@ -197,10 +198,15 @@ pub async fn request(
         Ok(Ok(response)) => response.into_inner(),
     };
     verify(&response, &pin, &key, role)?;
+    let ca_cert_pem = match response.ca_bundle_pem.is_empty() {
+        // A server older than ADR-0088.
+        true => response.ca_cert_pem,
+        false => response.ca_bundle_pem,
+    };
     Ok(Enrolled {
         key_pem: Secret::new(key.serialize_pem()),
         cert_pem: response.cert_pem,
-        ca_cert_pem: response.ca_cert_pem,
+        ca_cert_pem,
     })
 }
 
@@ -237,8 +243,9 @@ fn pem_certs(pem: &str, what: &str) -> Result<Vec<CertificateDer<'static>>, Enro
     Ok(certs)
 }
 
-/// The CA must be the pinned one and the certificate must hold our key and
-/// name `role`. Run before anything is written.
+/// The CA must be the pinned one, the CA bundle if any must start with it,
+/// and the certificate must hold our key and name `role`. Run before
+/// anything is written.
 pub fn verify(
     response: &EnrollResponse,
     pin: &Fingerprint,
@@ -251,13 +258,66 @@ pub fn verify(
             tls::fingerprint_hex(pin)
         )));
     }
+    if !response.ca_bundle_pem.is_empty() {
+        check_bundle(&response.ca_bundle_pem, pin, std::slice::from_ref(pin))?;
+    }
     verify_cert(&response.cert_pem, &response.peer_uri, key, role)
+}
+
+/// A CA bundle of a server (ADR-0088) must start with the CA that issued
+/// the certificate, `issuer`, and keep at least one CA of `trusted`: it
+/// arrives over a connection those authenticated, and a peer never jumps
+/// to a set of CAs it has no link with. Returns its certificates.
+pub(crate) fn check_bundle(
+    bundle_pem: &str,
+    issuer: &Fingerprint,
+    trusted: &[Fingerprint],
+) -> Result<Vec<CertificateDer<'static>>, EnrollError> {
+    let bad = |why: &str| Err(EnrollError::BadResponse(format!("ca_bundle_pem {why}")));
+    let bundle = pem_certs(bundle_pem, "ca_bundle_pem")?;
+    let fingerprints: Vec<_> = bundle.iter().map(tls::fingerprint).collect();
+    if fingerprints.len() > 2 {
+        return bad("holds more than two certificate authorities");
+    }
+    if fingerprints[0] != *issuer {
+        return bad("does not start with the issuing certificate authority");
+    }
+    if !fingerprints.iter().any(|fp| trusted.contains(fp)) {
+        return bad("has none of the certificate authorities this peer trusts");
+    }
+    Ok(bundle)
 }
 
 /// True if `ca_cert_pem` holds exactly one certificate, with SHA-256 `pin`.
 pub(crate) fn is_ca(ca_cert_pem: &str, pin: &Fingerprint) -> Result<bool, EnrollError> {
+    Ok(single_ca(ca_cert_pem)? == Some(*pin))
+}
+
+/// The SHA-256 of `ca_cert_pem` if it holds exactly one certificate.
+pub(crate) fn single_ca(ca_cert_pem: &str) -> Result<Option<Fingerprint>, EnrollError> {
     let ca = pem_certs(ca_cert_pem, "ca_cert_pem")?;
-    Ok(ca.len() == 1 && tls::fingerprint(&ca[0]) == *pin)
+    Ok((ca.len() == 1).then(|| tls::fingerprint(&ca[0])))
+}
+
+/// The first certificate of `cert_pem` must be signed by the CA of
+/// `ca_cert_pem` and valid now, as a TLS listener would check it.
+pub(crate) fn verify_issued_by(cert_pem: &str, ca_cert_pem: &str) -> Result<(), EnrollError> {
+    let chain = pem_certs(cert_pem, "cert_pem")?;
+    let mut roots = rustls::RootCertStore::empty();
+    for ca in pem_certs(ca_cert_pem, "ca_cert_pem")? {
+        roots
+            .add(ca)
+            .map_err(|e| EnrollError::BadResponse(format!("ca_cert_pem: {e}")))?;
+    }
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    rustls::server::WebPkiClientVerifier::builder_with_provider(std::sync::Arc::new(roots), provider)
+        .build()
+        .map_err(|e| EnrollError::BadResponse(e.to_string()))?
+        .verify_client_cert(&chain[0], &chain[1..], rustls::pki_types::UnixTime::now())
+        .map(drop)
+        .map_err(|e| {
+            EnrollError::BadResponse(format!("the certificate does not verify against ca_cert_pem: {e}"))
+        })
 }
 
 /// The certificate must hold our key, name `role`, and match `peer_uri`.
@@ -324,6 +384,7 @@ mod tests {
                 ca_cert_pem: self.cert.pem(),
                 peer_uri: uri.into(),
                 not_after_unix: 0,
+                ..Default::default()
             }
         }
     }

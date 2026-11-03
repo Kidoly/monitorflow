@@ -6,12 +6,18 @@
 //!
 //! - `ca-key.pem`: ECDSA P-256 root key, PKCS#8, mode 0600;
 //! - `ca-cert.pem`: self-signed root certificate;
-//! - `revocations.json`: revoked serials and the last CRL number.
+//! - `revocations.json`: revoked serials and the last CRL number, shared
+//!   by every CA generation.
+//!
+//! A change of certificate authority (ADR-0088) adds `rotation.json`, a
+//! second generation in `next/` or `previous/`, and keeps the certificate
+//! of each retired generation in `retired/`; see [`rotation`].
 //!
 //! Every write goes to a temporary file that is then renamed. Methods do
 //! blocking file I/O; call them from `spawn_blocking` in async code.
 
 mod revocation;
+pub mod rotation;
 pub(crate) mod store;
 
 #[cfg(test)]
@@ -24,10 +30,10 @@ use std::net::IpAddr;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard};
 use std::time::{Duration, SystemTime};
 
-use monitorflow_common::tls::{PeerIdentity, PeerRole};
+use monitorflow_common::tls::{fingerprint, Fingerprint, PeerIdentity, PeerRole};
 use rcgen::{
     BasicConstraints, CertificateParams, CertificateSigningRequestParams, DistinguishedName,
     DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyIdMethod, KeyPair, KeyUsagePurpose, SanType,
@@ -47,6 +53,8 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 
 pub use revocation::RevocationReason;
 use revocation::Revocations;
+pub use rotation::{CaInfo, CaStatus, Retired, Rotation, Stage};
+use rotation::RotationState;
 
 pub const KEY_FILE: &str = "ca-key.pem";
 pub const CERT_FILE: &str = "ca-cert.pem";
@@ -218,24 +226,76 @@ pub enum ServerName {
 pub struct IssuedCert {
     pub cert_pem: String,
     pub serial: Serial,
+    /// SHA-256 of the CA certificate that signed it.
+    pub issuer: Fingerprint,
     pub not_before: SystemTime,
     pub not_after: SystemTime,
+}
+
+/// One CA key and its self-signed certificate. Two exist during a change
+/// of certificate authority (ADR-0088).
+pub(crate) struct Generation {
+    cert_pem: String,
+    cert_der: CertificateDer<'static>,
+    fingerprint: Fingerprint,
+    /// The subject, key usages and key identifier of the certificate, with
+    /// its key.
+    issuer: Issuer<'static, KeyPair>,
+    /// The subject key identifier of the certificate, for CRLs.
+    key_id: KeyIdMethod,
+    not_before: OffsetDateTime,
+    not_after: OffsetDateTime,
+    /// The same key for ring, which signs commands (ADR-0031).
+    command_key: EcdsaKeyPair,
+}
+
+impl Generation {
+    fn info(&self) -> CaInfo {
+        CaInfo {
+            fingerprint: self.fingerprint,
+            cert_pem: self.cert_pem.clone(),
+            not_before: self.not_before.into(),
+            not_after: self.not_after.into(),
+        }
+    }
+}
+
+/// The CAs a peer trusts with a new certificate (ADR-0088).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Trust {
+    /// The CA that issues now.
+    pub issuer: Fingerprint,
+    pub issuer_pem: String,
+    /// Every trusted CA in PEM, the issuer first.
+    pub bundle_pem: String,
+    pub bundle: Vec<Fingerprint>,
+    /// An emergency change is under way: only the new CA counts for
+    /// enrollment.
+    pub emergency: bool,
+}
+
+impl Trust {
+    /// Whether a peer whose certificate `issuer` signed, and which trusts
+    /// `trusted`, needs a new certificate.
+    pub fn is_behind(&self, issuer: &Fingerprint, trusted: &[Fingerprint]) -> bool {
+        issuer != &self.issuer
+            || trusted.len() != self.bundle.len()
+            || !trusted.iter().all(|fp| self.bundle.contains(fp))
+    }
+
+    /// Whether an enrollment token pinned to `pin` is still good.
+    pub fn accepts_pin(&self, pin: &Fingerprint) -> bool {
+        pin == &self.issuer || (!self.emergency && self.bundle.contains(pin))
+    }
 }
 
 /// The CA. `Send + Sync`: share it in an `Arc`.
 pub struct CertificateAuthority {
     dir: PathBuf,
     options: CaOptions,
-    cert_pem: String,
-    /// The subject, key usages and key identifier of `ca-cert.pem`, with its
-    /// key.
-    issuer: Issuer<'static, KeyPair>,
-    /// The subject key identifier of `ca-cert.pem`, for CRLs.
-    key_id: KeyIdMethod,
-    /// When `ca-cert.pem` expires.
-    not_after: OffsetDateTime,
-    /// The same key for ring, which signs commands (ADR-0031).
-    command_key: EcdsaKeyPair,
+    /// The active generation, which issues and signs, and the other one
+    /// during a change of certificate authority.
+    state: RwLock<RotationState>,
     revocations: Mutex<Revocations>,
 }
 
@@ -269,78 +329,85 @@ impl CertificateAuthority {
     }
 
     fn load(dir: &Path, options: CaOptions) -> Result<Self, CaError> {
-        let key_path = dir.join(KEY_FILE);
-        let cert_path = dir.join(CERT_FILE);
-        store::check_key_permissions(&key_path)?;
-        let key_pem = fs::read_to_string(&key_path).map_err(|e| CaError::io(&key_path, e))?;
-        // TODO(ca-key-at-rest): decrypt the key here once it is encrypted.
-        // rcgen's message never quotes the key; drop it anyway.
-        let key = KeyPair::from_pem(&key_pem)
-            .map_err(|_| CaError::corrupt(&key_path, "cannot decode the private key"))?;
-        if key.algorithm() != &PKCS_ECDSA_P256_SHA256 {
-            return Err(CaError::corrupt(&key_path, "expected an ECDSA P-256 key"));
-        }
-
-        let cert_pem = fs::read_to_string(&cert_path).map_err(|e| CaError::io(&cert_path, e))?;
-        let cert_der = pem::parse(&cert_pem).map_err(|e| CaError::corrupt(&cert_path, e))?;
-        let (_, cert) = X509Certificate::from_der(cert_der.contents())
-            .map_err(|e| CaError::corrupt(&cert_path, e))?;
-        let is_ca = cert
-            .basic_constraints()
-            .map_err(|e| CaError::corrupt(&cert_path, e))?
-            .is_some_and(|constraints| constraints.value.ca);
-        if !is_ca {
-            return Err(CaError::corrupt(&cert_path, "not a CA certificate"));
-        }
-        check_key_matches(cert_der.contents(), &key)
-            .map_err(|why| CaError::corrupt(&key_path, why))?;
-        let command_key = EcdsaKeyPair::from_pkcs8(
-            &ECDSA_P256_SHA256_ASN1_SIGNING,
-            &key.serialize_der(),
-            &SystemRandom::new(),
-        )
-        .map_err(|_| CaError::corrupt(&key_path, "cannot load the key for signing"))?;
-        let issuer = Issuer::from_ca_cert_pem(&cert_pem, key)
-            .map_err(|e| CaError::corrupt(&cert_path, e))?;
-
+        let state = rotation::recover_and_load(dir, &options)?;
         let revocations = revocation::load(&dir.join(REVOCATIONS_FILE))?;
         Ok(Self {
             dir: dir.to_owned(),
             options,
-            cert_pem,
-            issuer,
-            key_id: key_id_of(&cert),
-            not_after: cert.validity().not_after.to_datetime(),
-            command_key,
+            state: RwLock::new(state),
             revocations: Mutex::new(revocations),
         })
     }
 
+    fn state(&self) -> RwLockReadGuard<'_, RotationState> {
+        // Every change is applied whole after its files are written.
+        self.state.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn active(&self) -> Arc<Generation> {
+        self.state().active.clone()
+    }
+
+    /// SHA-256 of the active CA certificate, which enrollment tokens pin.
+    pub fn fingerprint(&self) -> Fingerprint {
+        self.active().fingerprint
+    }
+
+    /// The certificates peers must trust, the active one first, in PEM:
+    /// two during a change of certificate authority.
+    pub fn trust_bundle_pem(&self) -> String {
+        self.state()
+            .trusted()
+            .map(|g| g.cert_pem.as_str())
+            .collect::<Vec<_>>()
+            .concat()
+    }
+
+    /// What a peer gets with a certificate issued now, read at once.
+    pub fn trust(&self) -> Trust {
+        let state = self.state();
+        Trust {
+            issuer: state.active.fingerprint,
+            issuer_pem: state.active.cert_pem.clone(),
+            bundle_pem: state.trusted().map(|g| g.cert_pem.as_str()).collect(),
+            bundle: state.trusted().map(|g| g.fingerprint).collect(),
+            emergency: state.rotation.as_ref().is_some_and(|r| r.emergency),
+        }
+    }
+
+    /// The active CA, the change of certificate authority under way if
+    /// any, and whether a restore brought back a retired CA.
+    pub fn status(&self) -> CaStatus {
+        self.state().status()
+    }
     /// Signs `message`, the bytes of `common::command::signed_bytes`, for
     /// agents to verify with the CA certificate (ADR-0031).
     pub fn sign_command(&self, message: &[u8]) -> Result<Vec<u8>, CaError> {
-        self.command_key
+        self.active()
+            .command_key
             .sign(&SystemRandom::new(), message)
             .map(|signature| signature.as_ref().to_vec())
             .map_err(|_| CaError::Signing("cannot sign the command".into()))
     }
 
-    /// The root certificate, for peers' trust stores.
-    pub fn ca_cert_pem(&self) -> &str {
-        &self.cert_pem
+    /// The active root certificate, which issues every new certificate.
+    /// Peers trust [`Self::trust_bundle_pem`].
+    pub fn ca_cert_pem(&self) -> String {
+        self.active().cert_pem.clone()
     }
 
-    /// Checks that `der` is a client certificate this CA signed and that it
-    /// is valid now, as a TLS listener would. For certificates a relay
+    /// Checks that `der` is a client certificate a trusted CA generation
+    /// signed and that it is valid now, as a TLS listener would. For certificates a relay
     /// forwards on behalf of a peer it terminated (ADR-0028): the relay
     /// cannot make one up, only pass on one it was shown. Revocation is the
     /// caller's check.
     pub fn verify_issued(&self, der: &CertificateDer<'_>) -> Result<(), String> {
-        let ca_der = pem::parse(&self.cert_pem).map_err(|e| e.to_string())?;
         let mut roots = RootCertStore::empty();
-        roots
-            .add(CertificateDer::from(ca_der.into_contents()))
-            .map_err(|e| e.to_string())?;
+        for generation in self.state().trusted() {
+            roots
+                .add(generation.cert_der.clone())
+                .map_err(|e| e.to_string())?;
+        }
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
             .build()
@@ -427,6 +494,9 @@ impl CertificateAuthority {
         usages: Vec<ExtendedKeyUsagePurpose>,
         validity: Option<Duration>,
     ) -> Result<IssuedCert, CaError> {
+        // One generation for the whole certificate, even if a change of
+        // certificate authority happens meanwhile.
+        let active = self.active();
         let invalid = |why: String| CaError::InvalidRequest(why);
         let csr = CertificateSigningRequestParams::from_pem(csr_pem).map_err(|e| match e {
             rcgen::Error::InvalidCertificationRequestSignature => CaError::CsrSignature,
@@ -439,7 +509,7 @@ impl CertificateAuthority {
         let not_after = time::Duration::try_from(validity)
             .ok()
             .and_then(|v| now.checked_add(v))
-            .filter(|&t| t > now && t <= self.not_after)
+            .filter(|&t| t > now && t <= active.not_after)
             .ok_or_else(|| {
                 invalid(format!(
                     "validity of {validity:?} is zero or ends after the CA certificate"
@@ -464,15 +534,22 @@ impl CertificateAuthority {
             params,
             public_key: csr.public_key,
         }
-        .signed_by(&self.issuer)
+        .signed_by(&active.issuer)
         .map_err(CaError::signing)?;
 
         Ok(IssuedCert {
             cert_pem: cert.pem(),
             serial,
+            issuer: active.fingerprint,
             not_before: not_before.into(),
             not_after: not_after.into(),
         })
+    }
+
+    /// When the active CA certificate expires; issued certificates cannot
+    /// outlive it.
+    pub fn not_after(&self) -> SystemTime {
+        self.active().not_after.into()
     }
 }
 
@@ -502,6 +579,12 @@ fn now() -> OffsetDateTime {
 }
 
 fn create(dir: &Path, options: &CaOptions) -> Result<(), CaError> {
+    create_named(dir, &options.common_name, options.ca_validity)
+}
+
+/// Creates a key and a self-signed CA certificate named `common_name` in
+/// `dir`.
+fn create_named(dir: &Path, common_name: &str, validity: Duration) -> Result<(), CaError> {
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -513,12 +596,12 @@ fn create(dir: &Path, options: &CaOptions) -> Result<(), CaError> {
     params.distinguished_name = DistinguishedName::new();
     params
         .distinguished_name
-        .push(DnType::CommonName, options.common_name.as_str());
+        .push(DnType::CommonName, common_name);
     params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     params.serial_number = Some(SerialNumber::from_slice(Serial::random()?.as_bytes()));
     params.not_before = now - CLOCK_SKEW;
-    params.not_after = time::Duration::try_from(options.ca_validity)
+    params.not_after = time::Duration::try_from(validity)
         .ok()
         .and_then(|v| now.checked_add(v))
         .ok_or_else(|| CaError::InvalidRequest("CA validity is too long".into()))?;
@@ -528,6 +611,53 @@ fn create(dir: &Path, options: &CaOptions) -> Result<(), CaError> {
     // TODO(ca-key-at-rest): encrypt the key before writing it.
     store::write_atomic(&dir.join(KEY_FILE), key.serialize_pem().as_bytes(), 0o600)?;
     store::write_atomic(&dir.join(CERT_FILE), cert.pem().as_bytes(), 0o644)
+}
+
+/// Loads the key and certificate in `dir` and checks they match.
+fn load_generation(dir: &Path) -> Result<Generation, CaError> {
+    let key_path = dir.join(KEY_FILE);
+    let cert_path = dir.join(CERT_FILE);
+    store::check_key_permissions(&key_path)?;
+    let key_pem = fs::read_to_string(&key_path).map_err(|e| CaError::io(&key_path, e))?;
+    // TODO(ca-key-at-rest): decrypt the key here once it is encrypted.
+    // rcgen's message never quotes the key; drop it anyway.
+    let key = KeyPair::from_pem(&key_pem)
+        .map_err(|_| CaError::corrupt(&key_path, "cannot decode the private key"))?;
+    if key.algorithm() != &PKCS_ECDSA_P256_SHA256 {
+        return Err(CaError::corrupt(&key_path, "expected an ECDSA P-256 key"));
+    }
+
+    let cert_pem = fs::read_to_string(&cert_path).map_err(|e| CaError::io(&cert_path, e))?;
+    let cert_der = pem::parse(&cert_pem).map_err(|e| CaError::corrupt(&cert_path, e))?;
+    let (_, cert) = X509Certificate::from_der(cert_der.contents())
+        .map_err(|e| CaError::corrupt(&cert_path, e))?;
+    let is_ca = cert
+        .basic_constraints()
+        .map_err(|e| CaError::corrupt(&cert_path, e))?
+        .is_some_and(|constraints| constraints.value.ca);
+    if !is_ca {
+        return Err(CaError::corrupt(&cert_path, "not a CA certificate"));
+    }
+    check_key_matches(cert_der.contents(), &key).map_err(|why| CaError::corrupt(&key_path, why))?;
+    let command_key = EcdsaKeyPair::from_pkcs8(
+        &ECDSA_P256_SHA256_ASN1_SIGNING,
+        &key.serialize_der(),
+        &SystemRandom::new(),
+    )
+    .map_err(|_| CaError::corrupt(&key_path, "cannot load the key for signing"))?;
+    let issuer =
+        Issuer::from_ca_cert_pem(&cert_pem, key).map_err(|e| CaError::corrupt(&cert_path, e))?;
+    let der = CertificateDer::from(cert_der.contents().to_vec());
+    Ok(Generation {
+        fingerprint: fingerprint(&der),
+        key_id: key_id_of(&cert),
+        not_before: cert.validity().not_before.to_datetime(),
+        not_after: cert.validity().not_after.to_datetime(),
+        cert_der: der,
+        cert_pem,
+        issuer,
+        command_key,
+    })
 }
 
 /// How rcgen names the key of `cert`: the identifier it states, or the hash

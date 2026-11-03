@@ -77,8 +77,9 @@ pub struct StoredIdentity {
     /// From the certificate's URI SAN; what an agent's `Hello.agent_id`
     /// must say.
     pub id: PeerIdentity,
-    /// SHA-256 of the stored CA certificate; a renewal must return it.
-    pub ca_fingerprint: Fingerprint,
+    /// SHA-256 of each stored CA certificate: two during a change of
+    /// certificate authority (ADR-0088).
+    pub ca_fingerprints: Vec<Fingerprint>,
     pub not_before: SystemTime,
     pub not_after: SystemTime,
 }
@@ -129,12 +130,15 @@ pub fn load(paths: &TlsPaths, role: PeerRole) -> Result<Option<StoredIdentity>, 
         )));
     }
     let (not_before, not_after) = validity(leaf.as_ref())?;
-    let ca_fingerprint = tls::fingerprint(&tls::load_certs(&paths.ca_cert)?[0]);
+    let ca_fingerprints = tls::load_certs(&paths.ca_cert)?
+        .iter()
+        .map(tls::fingerprint)
+        .collect();
     warn_if_key_is_readable(&paths.key);
     Ok(Some(StoredIdentity {
         tls,
         id,
-        ca_fingerprint,
+        ca_fingerprints,
         not_before,
         not_after,
     }))
@@ -183,6 +187,8 @@ fn warn_if_key_is_readable(path: &Path) {
 pub struct Enrolled {
     pub key_pem: Secret,
     pub cert_pem: String,
+    /// Every CA to trust: the pinned one, and the new one during a change
+    /// of certificate authority (ADR-0088).
     pub ca_cert_pem: String,
 }
 
@@ -194,11 +200,13 @@ pub fn store(paths: &TlsPaths, enrolled: &Enrolled) -> Result<(), IdentityError>
     write_atomic(&paths.cert, enrolled.cert_pem.as_bytes(), PUBLIC_MODE)
 }
 
-/// A renewed key and certificate, already checked. The CA does not change.
+/// A renewed key and certificate, already checked, and the CA
+/// certificates to trust from now on when they change (ADR-0088).
 #[derive(Debug)]
 pub struct Renewed {
     pub key_pem: Secret,
     pub cert_pem: String,
+    pub ca_bundle_pem: Option<String>,
 }
 
 /// `<path>.next`, where a renewal writes before replacing `path`.
@@ -210,7 +218,13 @@ fn next(path: &Path) -> PathBuf {
 
 /// Replaces the key and certificate so that a crash at any point leaves a
 /// matching pair, the old one or the new one (see the module docs).
+///
+/// A new CA bundle is written first, on its own: it holds the CA of the
+/// current certificate as well as the new one's, so it fits either pair.
 pub fn store_renewed(paths: &TlsPaths, renewed: &Renewed) -> Result<(), IdentityError> {
+    if let Some(bundle) = &renewed.ca_bundle_pem {
+        write_atomic(&paths.ca_cert, bundle.as_bytes(), PUBLIC_MODE)?;
+    }
     write_atomic(
         &next(&paths.key),
         renewed.key_pem.expose().as_bytes(),
@@ -448,7 +462,7 @@ mod tests {
         assert_eq!(mode(&paths.key), 0o600);
         let after = load(&paths, PeerRole::Agent).unwrap().unwrap();
         assert_eq!(after.id, before.id);
-        assert_eq!(after.ca_fingerprint, before.ca_fingerprint);
+        assert_eq!(after.ca_fingerprints, before.ca_fingerprints);
         assert!(!next(&paths.key).exists() && !next(&paths.cert).exists());
     }
 
@@ -555,7 +569,11 @@ mod tests {
 
     fn renewed_by(ca: &TestCa, id: &str) -> Renewed {
         let (key_pem, cert_pem) = issue(ca, PeerRole::Agent, id);
-        Renewed { key_pem, cert_pem }
+        Renewed {
+            key_pem,
+            cert_pem,
+            ca_bundle_pem: None,
+        }
     }
 
     fn issue(ca: &TestCa, role: PeerRole, id: &str) -> (Secret, String) {

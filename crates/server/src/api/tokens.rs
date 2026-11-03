@@ -33,7 +33,9 @@ pub const MAX_LIMIT: u32 = 500;
 /// goes with them; from the server's CA and configuration.
 #[derive(Debug, Clone)]
 pub struct EnrollmentSettings {
-    /// SHA-256 of the CA certificate, pinned in every token (ADR-0007).
+    /// SHA-256 of the CA certificate at start, pinned in every token
+    /// (ADR-0007), unless a change of certificate authority replaced it
+    /// ([`super::ApiState::ca_pin`]).
     pub ca_fingerprint: Fingerprint,
     /// Names the server's certificate is issued for, the first one being
     /// the default public address.
@@ -264,7 +266,7 @@ pub async fn create(
         .map_or(token::DEFAULT_TTL, Duration::from_secs);
     let created = token::create(
         &state.pool,
-        settings.ca_fingerprint,
+        state.ca_pin(settings),
         &TokenRequest {
             role: request.role.into(),
             peer_id: request.peer_id,
