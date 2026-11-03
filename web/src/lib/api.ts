@@ -1178,6 +1178,8 @@ export interface SnapshotSupport {
   detail?: string | null;
   /** What a snapshot does not hold, like a bind mount. */
   left_out?: string | null;
+  /** Which snapshot a change gets when available: `proxmox`, or a local `lvm` or `zfs` one; absent from servers before ADR-0094. */
+  method?: "proxmox" | "lvm" | "zfs" | null;
 }
 
 /** `GET /api/servers/{id}/proxmox`: the server's Proxmox guest; customer administrators. */
@@ -1568,6 +1570,8 @@ export interface CampaignServer {
   /** With pinned snapshots: the `configure_sources` before the update and the restore after it. */
   sources_command_id: string | null;
   restore_command_id: string | null;
+  /** The local snapshot taken before the update, if any (ADR-0094). */
+  snapshot_command_id?: string | null;
 }
 
 export interface CampaignWave {
@@ -1727,6 +1731,38 @@ export interface MirrorDetail extends Mirror {
     campaigns: { id: string; name: string }[];
     servers: { id: string; hostname: string }[];
   };
+}
+
+/** One volume of a local snapshot (ADR-0094). */
+export interface LocalSnapshotVolume {
+  name: string;
+  mount_point: string;
+  kind: "lvm" | "lvm_thin" | "zfs";
+  /** `vg/lv` or `dataset@name`. */
+  source: string;
+  origin: string;
+  created_at: string;
+  size_bytes: number;
+  used_percent: number;
+  invalid: boolean;
+}
+
+/** `GET /api/servers/{id}/rollback` (ADR-0094). */
+export interface Rollback {
+  server_id: string;
+  /** What a change gets first, as the approval queue says it (ADR-0094). */
+  snapshots: SnapshotSupport;
+  /** System mount points a local snapshot leaves out. */
+  not_covered: string[];
+  /** MonitorFlow's local snapshots on the server, oldest first. */
+  local_snapshots: {
+    name: string;
+    kind: "lvm" | "lvm_thin" | "zfs";
+    created_at: string;
+    delete_after: string;
+    volumes: LocalSnapshotVolume[];
+  }[];
+  reported_at: string | null;
 }
 
 /** `GET /api/servers/{id}/sources` (ADR-0074). */
@@ -2744,6 +2780,10 @@ export const api = {
       `/api/mirrors/${encodeURIComponent(id)}/snapshots`,
       { method: "POST", body: {} },
     ),
+
+  /** What a change on the server gets first, and its local snapshots. */
+  serverRollback: (id: string, signal?: AbortSignal) =>
+    request<Rollback>(`/api/servers/${encodeURIComponent(id)}/rollback`, { signal }),
 
   /** Where the server's packages come from, and what can change that. */
   serverSources: (id: string, signal?: AbortSignal) =>

@@ -51,6 +51,10 @@ impl PackageManager for Dnf {
     }
 
     /// `dnf needs-restarting -r` exits 1 when a reboot is needed.
+    async fn storage(&self) -> Option<monitorflow_common::proto::v1::StorageReport> {
+        Some(crate::snapshots::storage(&self.tools).await)
+    }
+
     async fn reboot_required(&self) -> Result<bool, PackageError> {
         let run = self
             .tools

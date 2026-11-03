@@ -167,7 +167,7 @@ db_tests! {
         assert_eq!(body["mapping"]["kind"], "qemu", "a VM unless told otherwise");
         assert_eq!(body["mapping"]["checked_at"], Value::Null);
         assert_eq!(body["snapshots"], json!({
-            "available": true, "reason": null, "kind": "qemu", "detail": null, "left_out": null,
+            "available": true, "reason": null, "kind": "qemu", "detail": null, "left_out": null, "method": "proxmox",
         }));
 
         // Moved to another node of the cluster.
@@ -238,7 +238,7 @@ db_tests! {
             .execute(&pool).await.unwrap();
         let (_, body) = h.call("GET", &uri, &admin, None).await;
         assert_eq!(body["snapshots"], json!({
-            "available": false,
+            "available": false, "method": null,
             "reason": "cannot_snapshot",
             "kind": "lxc",
             "detail": "rootfs is on storage local (dir), which cannot take snapshots",

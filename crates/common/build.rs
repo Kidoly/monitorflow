@@ -5,6 +5,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_prost_build::configure()
         .build_server(true)
         .build_client(true)
+        // Keeps envelopes small: most package reports pass through relays
+        // without it being read (ADR-0094).
+        .boxed(".monitorflow.v1.PackageReport.storage")
         .compile_protos(
             &[
                 format!("{proto_root}/monitorflow/v1/agent.proto"),
@@ -13,6 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format!("{proto_root}/monitorflow/v1/packages.proto"),
                 format!("{proto_root}/monitorflow/v1/sources.proto"),
                 format!("{proto_root}/monitorflow/v1/release.proto"),
+                format!("{proto_root}/monitorflow/v1/snapshots.proto"),
             ],
             &[proto_root.to_owned()],
         )?;

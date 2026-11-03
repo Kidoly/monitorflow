@@ -65,6 +65,7 @@ pub struct TargetRow {
     pub sources_command_id: Option<Uuid>,
     pub restore_command_id: Option<Uuid>,
     pub restore_state: Option<CommandState>,
+    pub snapshot_command_id: Option<Uuid>,
 }
 
 impl TargetRow {
@@ -191,7 +192,7 @@ pub async fn targets(pool: &PgPool, campaign: Uuid) -> Result<Vec<TargetRow>, sq
                            THEN 'restoring sources ' || r.state
                                 || COALESCE(': ' || r.error, '') END) AS error,
              c.finished_at, t.sources_command_id, t.restore_command_id,
-             r.state AS restore_state
+             r.state AS restore_state, t.snapshot_command_id
          FROM campaign_targets t
          JOIN servers s ON s.id = t.server_id
          LEFT JOIN commands c ON c.id = t.command_id
@@ -243,6 +244,7 @@ mod tests {
             sources_command_id: None,
             restore_command_id: None,
             restore_state: None,
+            snapshot_command_id: None,
         };
         assert_eq!(row.status(), "pending");
         row.error = Some("server revoked".into());

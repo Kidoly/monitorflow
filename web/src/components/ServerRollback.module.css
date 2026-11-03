@@ -1,0 +1,27 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 20px;
+}
+
+.note {
+  margin: 0;
+  color: var(--muted);
+}
+
+.steps summary {
+  cursor: pointer;
+}
+
+.steps[open] summary {
+  margin-bottom: 8px;
+}
+
+.commands {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: var(--mono);
+}

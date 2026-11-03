@@ -1,0 +1,10 @@
+22 1 253:1 / / rw,relatime shared:1 - ext4 /dev/mapper/vg0-root rw,errors=remount-ro
+23 22 0:21 / /sys rw,nosuid,nodev,noexec,relatime shared:7 - sysfs sysfs rw
+24 22 0:22 / /proc rw,nosuid,nodev,noexec,relatime shared:12 - proc proc rw
+25 22 0:5 / /dev rw,nosuid,relatime shared:2 - devtmpfs udev rw,size=4015000k,nr_inodes=1003750,mode=755
+26 22 0:24 / /run rw,nosuid,nodev,noexec,relatime shared:5 - tmpfs tmpfs rw,size=806000k,mode=755
+30 22 8:1 / /boot rw,relatime shared:30 - ext4 /dev/sda1 rw
+31 30 8:2 / /boot/efi rw,relatime shared:31 - vfat /dev/sda2 rw,fmask=0077,dmask=0077
+32 22 253:3 / /var rw,relatime shared:32 master:4 - xfs /dev/mapper/vg0-var rw,attr2,inode64
+33 22 253:4 / /home rw,relatime shared:33 - ext4 /dev/mapper/vg0-home rw
+34 22 253:5 / /srv/my\040data rw,relatime - ext4 /dev/mapper/vg0-data rw

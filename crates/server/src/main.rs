@@ -38,7 +38,9 @@ use monitorflow_server::relay_commands::RelayCommands;
 use monitorflow_server::release_check;
 use monitorflow_server::remediation::context::Backends;
 use monitorflow_server::remediation::runner::{self, Remediation};
-use monitorflow_server::remediation::snapshot::{self, ProxmoxSnapshotter, SnapshotHook};
+use monitorflow_server::remediation::snapshot::{
+    self, LocalSnapshots, ProxmoxSnapshotter, SnapshotHook,
+};
 use monitorflow_server::remediation::switch;
 use monitorflow_server::renew::Renewer;
 use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
@@ -461,6 +463,8 @@ async fn main() -> anyhow::Result<()> {
         ca.clone(),
         DispatcherSettings::default(),
     );
+    // Deletes local snapshots past their time (ADR-0094).
+    tokio::spawn(monitorflow_server::remediation::snapshot::local::run_retention(commands.clone()));
     // Relays' own self-updates (ADR-0055).
     let relay_commands = RelayCommands::spawn(pool.clone(), registry.clone(), ca.clone());
     // One of maybe several instances on this database (ADR-0089).
@@ -491,7 +495,8 @@ async fn main() -> anyhow::Result<()> {
     let campaigns = Runner::new(pool.clone())
         .with_commands(commands.clone())
         .with_sources(api_settings.live.clone(), mirrors.clone())
-        .with_agent_releases(api_settings.agent_releases.clone());
+        .with_agent_releases(api_settings.agent_releases.clone())
+        .with_proxmox(config.proxmox.enabled);
     let service = AgentStreamService::new(
         registry.clone(),
         Arc::new(DbRelayPolicy::new(pool.clone())),
@@ -788,6 +793,7 @@ async fn build_remediation(
                 .context("VictoriaLogs query client")?,
         ),
     };
+    let commands_for_hook = commands.clone();
     let remediation = Remediation::new(
         provider,
         model,
@@ -795,7 +801,11 @@ async fn build_remediation(
         backends,
         runner::Settings::from_config(&config.remediation),
     );
-    Ok(remediation.with_hook(Arc::new(SnapshotHook::new(Arc::new(snapshots), "proxmox"))))
+    // Servers without a Proxmox VM get local LVM or ZFS snapshots from
+    // their agent where `/` allows it (ADR-0094).
+    let hook = SnapshotHook::new(Arc::new(snapshots), "proxmox")
+        .with_local(LocalSnapshots::new(commands_for_hook));
+    Ok(remediation.with_hook(Arc::new(hook)))
 }
 
 async fn user_command(pool: &sqlx::PgPool, command: UserCommand) -> anyhow::Result<()> {

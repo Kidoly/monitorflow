@@ -21,7 +21,8 @@ use super::notifications::is_global_admin;
 use super::sensors::{body, parse_id, site_of_server, UNIQUE_VIOLATION};
 use super::{ApiError, ApiSettings, ApiState};
 use crate::remediation::snapshot::discovery::Owner;
-use crate::remediation::snapshot::{GuestKind, Mapped, Support, Unsupported, VmRef};
+use crate::remediation::snapshot::local::{self, Storage};
+use crate::remediation::snapshot::{choice, GuestKind, Mapped, Support, Unsupported, VmRef};
 
 /// Guests listed at most for the picker.
 const MAX_GUESTS: i64 = 2000;
@@ -119,6 +120,9 @@ pub struct SnapshotSupport {
     pub detail: Option<String>,
     /// What a snapshot does not hold, though Proxmox takes one.
     pub left_out: Option<String>,
+    /// Which snapshot a change gets when available: `proxmox`, or a local
+    /// `lvm` or `zfs` snapshot (ADR-0094).
+    pub method: Option<&'static str>,
 }
 
 impl SnapshotSupport {
@@ -140,7 +144,27 @@ impl SnapshotSupport {
             kind,
             detail: detail.filter(|_| matches!(unsupported, Some(Unsupported::CannotSnapshot(_)))),
             left_out: left_out.filter(|_| support.is_available()),
+            method: support.is_available().then_some("proxmox"),
         }
+    }
+
+    /// Where Proxmox has no say (off, or the server is not one of its
+    /// guests), a local snapshot from the server's storage report, in the
+    /// order the remediation hook follows ([`choice::choose`], ADR-0094).
+    pub fn with_local(mut self, os_family: &str, storage: Option<&Storage>) -> Self {
+        let Some(reason) = self.reason.filter(|r| !choice::proxmox_decides(*r)) else {
+            return self;
+        };
+        match local::plan_of(os_family, storage) {
+            Ok(plan) => {
+                self.available = true;
+                self.method = Some(plan.method);
+                self.detail = Some(plan.summary);
+            }
+            Err(why) => self.detail = Some(why.to_string()),
+        }
+        self.reason = Some(reason);
+        self
     }
 }
 

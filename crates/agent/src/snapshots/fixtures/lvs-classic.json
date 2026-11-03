@@ -1,0 +1,13 @@
+  {
+      "report": [
+          {
+              "lv": [
+                  {"vg_name":"rl", "lv_name":"home", "lv_attr":"-wi-ao----", "lv_size":"20971520000", "pool_lv":"", "origin":"", "data_percent":"", "metadata_percent":"", "lv_tags":"", "lv_time":"2026-01-10 09:00:00 +0000", "lv_kernel_major":"253", "lv_kernel_minor":"2"},
+                  {"vg_name":"rl", "lv_name":"monitorflow-campaign-0123456789ab_root", "lv_attr":"swi-a-s---", "lv_size":"8589934592", "pool_lv":"", "origin":"root", "data_percent":"12.34", "metadata_percent":"", "lv_tags":"monitorflow", "lv_time":"2026-11-03 02:00:00 +0000", "lv_kernel_major":"253", "lv_kernel_minor":"5"},
+                  {"vg_name":"rl", "lv_name":"monitorflow-campaign-ba9876543210_root", "lv_attr":"swi-I-s---", "lv_size":"8589934592", "pool_lv":"", "origin":"root", "data_percent":"100.00", "metadata_percent":"", "lv_tags":"monitorflow", "lv_time":"2026-10-30 02:00:00 +0000", "lv_kernel_major":"253", "lv_kernel_minor":"6"},
+                  {"vg_name":"rl", "lv_name":"root", "lv_attr":"owi-aos---", "lv_size":"42949672960", "pool_lv":"", "origin":"", "data_percent":"", "metadata_percent":"", "lv_tags":"", "lv_time":"2026-01-10 09:00:00 +0000", "lv_kernel_major":"253", "lv_kernel_minor":"0"},
+                  {"vg_name":"rl", "lv_name":"swap", "lv_attr":"-wi-ao----", "lv_size":"4294967296", "pool_lv":"", "origin":"", "data_percent":"", "metadata_percent":"", "lv_tags":"", "lv_time":"2026-01-10 09:00:00 +0000", "lv_kernel_major":"253", "lv_kernel_minor":"1"}
+              ]
+          }
+      ]
+  }

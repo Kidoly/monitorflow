@@ -1,0 +1,3 @@
+22 1 253:0 / / rw,relatime shared:1 - xfs /dev/mapper/rl-root rw,attr2,inode64
+30 22 8:1 / /boot rw,relatime shared:30 - xfs /dev/sda1 rw
+33 22 253:2 / /home rw,relatime shared:33 - xfs /dev/mapper/rl-home rw

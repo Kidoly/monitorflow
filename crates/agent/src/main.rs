@@ -50,6 +50,11 @@ enum Command {
     #[cfg(unix)]
     #[command(subcommand)]
     Packages(PackagesCommand),
+    /// Local snapshots of the system volumes on LVM or ZFS, run as root
+    /// through sudo by the agent (ADR-0094).
+    #[cfg(unix)]
+    #[command(subcommand)]
+    Snapshots(SnapshotsCommand),
     /// Install a signed agent release, run as root through sudo by the
     /// agent (ADR-0053): reads a header line and the binary on stdin,
     /// verifies them, replaces /usr/bin/monitorflow-agent and starts the
@@ -119,6 +124,20 @@ enum PackagesCommand {
 
 #[cfg(unix)]
 #[derive(Subcommand, Debug, Clone, Copy)]
+enum SnapshotsCommand {
+    /// Print the system volumes (/, /usr, /var, /opt, /boot) and
+    /// MonitorFlow's snapshots of them, as JSON.
+    Inspect,
+    /// Read `{"name": "monitorflow-…"}` on stdin and snapshot every system
+    /// volume on LVM or ZFS under that name, if there is room.
+    Take,
+    /// Read `{"name": "monitorflow-…"}` on stdin and delete MonitorFlow's
+    /// snapshots of that name.
+    Delete,
+}
+
+#[cfg(unix)]
+#[derive(Subcommand, Debug, Clone, Copy)]
 enum SelfUpdateStep {
     /// The watchdog, started by `self-update` in a transient systemd unit.
     #[command(hide = true)]
@@ -183,6 +202,10 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
         }
         #[cfg(unix)]
         Some(Command::Packages(PackagesCommand::Update)) => return packages_update().await,
+        #[cfg(unix)]
+        Some(Command::Snapshots(command)) => {
+            return tokio::task::spawn_blocking(move || snapshots(command)).await?;
+        }
         #[cfg(unix)]
         Some(Command::SelfUpdate { step }) => {
             let path = cli.config.clone();
@@ -355,6 +378,7 @@ fn platform_handlers(
     use monitorflow_agent::packages::{
         self, ApplyUpdatesHandler, Reports, SourcesAction, SourcesHandler, Tools,
     };
+    use monitorflow_agent::snapshots::{SnapshotAction, SnapshotHandler};
     use monitorflow_common::command;
 
     let tools = Tools::default();
@@ -366,13 +390,24 @@ fn platform_handlers(
         tokio::spawn(reports.clone().run(report_every, stop.clone()));
         handlers.register(
             command::APPLY_UPDATES,
-            Arc::new(ApplyUpdatesHandler::new(manager, reports, tools.clone())),
+            Arc::new(ApplyUpdatesHandler::new(
+                manager,
+                reports.clone(),
+                tools.clone(),
+            )),
         );
         for (kind, action) in [
             (command::CONFIGURE_SOURCES, SourcesAction::Apply),
             (command::REVERT_SOURCES, SourcesAction::Revert),
         ] {
             let handler = SourcesHandler::new(action, host.os_family, tools.clone());
+            handlers.register(kind, Arc::new(handler));
+        }
+        for (kind, action) in [
+            (command::TAKE_SNAPSHOT, SnapshotAction::Take),
+            (command::DELETE_SNAPSHOT, SnapshotAction::Delete),
+        ] {
+            let handler = SnapshotHandler::new(action, tools.clone(), reports.clone());
             handlers.register(kind, Arc::new(handler));
         }
         latest_report
@@ -382,6 +417,8 @@ fn platform_handlers(
             (command::APPLY_UPDATES, "package updates"),
             (command::CONFIGURE_SOURCES, "package sources"),
             (command::REVERT_SOURCES, "package sources"),
+            (command::TAKE_SNAPSHOT, "snapshots"),
+            (command::DELETE_SNAPSHOT, "snapshots"),
         ] {
             handlers.register(kind, Arc::new(Unsupported::new(what, "this system")));
         }
@@ -444,6 +481,8 @@ fn platform_handlers(
     for (kind, what) in [
         (command::CONFIGURE_SOURCES, "package sources"),
         (command::REVERT_SOURCES, "package sources"),
+        (command::TAKE_SNAPSHOT, "snapshots"),
+        (command::DELETE_SNAPSHOT, "snapshots"),
     ] {
         handlers.register(kind, Arc::new(Unsupported::new(what, "Windows")));
     }
@@ -473,6 +512,53 @@ fn sources(command: SourcesCommand) -> anyhow::Result<()> {
     }
     if let Some(dir) = &outcome.backup {
         println!("backup {}", dir.display());
+    }
+    Ok(())
+}
+
+/// The snapshots helper (ADR-0094), as root. `take` and `delete` check
+/// the request before anything else, then print each run's command line
+/// and output, and the error last on stderr, like `packages update`.
+#[cfg(unix)]
+fn snapshots(command: SnapshotsCommand) -> anyhow::Result<()> {
+    use std::io::{Read, Write};
+
+    use monitorflow_agent::snapshots::helper::{self, Host, Request, MAX_REQUEST_BYTES};
+
+    let host = Host::default();
+    let outcome = match command {
+        SnapshotsCommand::Inspect => {
+            let inventory = helper::inspect(&host)?;
+            println!("{}", serde_json::to_string_pretty(&inventory)?);
+            return Ok(());
+        }
+        SnapshotsCommand::Take | SnapshotsCommand::Delete => {
+            let mut bytes = Vec::new();
+            std::io::stdin()
+                .take(MAX_REQUEST_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            let request = Request::parse(&bytes)?;
+            if matches!(command, SnapshotsCommand::Take) {
+                helper::take(&host, &request.name)
+            } else {
+                helper::delete(&host, &request.name)
+            }
+        }
+    };
+    let (mut stdout, mut stderr) = (std::io::stdout().lock(), std::io::stderr().lock());
+    for run in &outcome.runs {
+        writeln!(stdout, "$ {}", run.line)?;
+        stdout.write_all(run.stdout.as_bytes())?;
+        stderr.write_all(run.stderr.as_bytes())?;
+    }
+    if let Some(note) = &outcome.note {
+        writeln!(stdout, "{note}")?;
+    }
+    stdout.flush()?;
+    if let Some(error) = &outcome.error {
+        writeln!(stderr, "Error: {error}")?;
+        stderr.flush()?;
+        std::process::exit(1);
     }
     Ok(())
 }

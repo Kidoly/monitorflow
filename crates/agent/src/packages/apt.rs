@@ -57,6 +57,10 @@ impl PackageManager for Apt {
         Ok(packages)
     }
 
+    async fn storage(&self) -> Option<monitorflow_common::proto::v1::StorageReport> {
+        Some(crate::snapshots::storage(&self.tools).await)
+    }
+
     async fn reboot_required(&self) -> Result<bool, PackageError> {
         Ok(tokio::fs::try_exists(&self.tools.reboot_required_file)
             .await

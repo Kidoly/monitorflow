@@ -201,7 +201,8 @@ db_tests! {
         assert_eq!(
             keys(server),
             ["command_id", "error", "exit_code", "finished_at", "hostname", "peer_id",
-             "restore_command_id", "server_id", "site_id", "sources_command_id", "status"]
+             "restore_command_id", "server_id", "site_id", "snapshot_command_id",
+             "sources_command_id", "status"]
         );
         assert_eq!(server["hostname"], "web-1");
         assert_eq!(server["status"], "pending");

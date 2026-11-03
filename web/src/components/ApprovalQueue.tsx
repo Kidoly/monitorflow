@@ -13,7 +13,7 @@ import {
   isUnauthorized,
 } from "@/lib/api";
 import { acceptance } from "@/lib/commandKinds";
-import { riskWord, snapshotReason, timeLeft } from "@/lib/remediation";
+import { riskWord, rollbackText, timeLeft } from "@/lib/remediation";
 import { administersEverything, useMe } from "@/lib/me";
 import { AI_SETTINGS_PATH, AUDIT_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -223,6 +223,7 @@ function ApprovalDetail({
   const reasonId = useId();
   const left = timeLeft(item.deadline, now);
   const rollbackLimited = item.tier !== "read_only" && !item.snapshots.available;
+  const rollback = rollbackText(item.snapshots);
   const scope = useScope();
   const shell = acceptance(item.shell_acceptance);
   const refused = shell === "off" || shell === "unsupported";
@@ -276,16 +277,13 @@ function ApprovalDetail({
               <Label tone="warn" small>
                 Rollback limited
               </Label>{" "}
-              No snapshot before this change: {snapshotReason(item.snapshots.reason, item.snapshots.kind)}
-              {item.snapshots.detail && <span className={styles.dim}> ({item.snapshots.detail}.)</span>}
+              {rollback.text}
+              {rollback.note && <span className={styles.dim}> {rollback.note}</span>}
             </>
           ) : (
             <>
-              A Proxmox snapshot of the {item.snapshots.kind === "lxc" ? "container" : "VM"} is taken before the command
-              runs.
-              {item.snapshots.left_out && (
-                <span className={styles.dim}> It leaves out {item.snapshots.left_out}: a rollback does not restore it.</span>
-              )}
+              {rollback.text}
+              {rollback.note && <span className={styles.dim}> {rollback.note}</span>}
             </>
           )}
         </dd>

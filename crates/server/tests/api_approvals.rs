@@ -313,6 +313,8 @@ db_tests! {
         assert_eq!((item["can_approve"].clone(), item["can_reject"].clone()), (json!(true), json!(true)));
         assert_eq!(item["snapshots"]["available"], false);
         assert_eq!(item["snapshots"]["reason"], "disabled");
+        // No Proxmox, and no storage report for a local snapshot (ADR-0094).
+        assert_eq!(item["snapshots"]["detail"], "the agent has not reported its storage");
         // High impact: an approver may only reject.
         assert_eq!((items[0]["can_approve"].clone(), items[0]["can_reject"].clone()), (json!(false), json!(true)));
 

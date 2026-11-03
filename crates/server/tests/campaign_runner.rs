@@ -465,3 +465,156 @@ db_tests! {
         assert!(f.store.create(&mixed, USER).await.is_err());
     }
 }
+
+/// Local snapshots before updates (ADR-0094).
+mod snapshots {
+    use monitorflow_common::proto::v1::{StorageReport, TakeSnapshot, Volume, VolumeKind};
+    use monitorflow_server::remediation::snapshot::local;
+
+    use super::*;
+
+    const GIB: u64 = 1 << 30;
+
+    fn storage(kind: VolumeKind) -> StorageReport {
+        StorageReport {
+            volumes: vec![Volume {
+                mount_point: "/".into(),
+                fs_type: "ext4".into(),
+                kind: kind.into(),
+                source: "vg0/root".into(),
+                size_bytes: 20 * GIB,
+                free_bytes: 40 * GIB,
+                pool_bytes: 100 * GIB,
+                metadata_percent: 10.0,
+            }],
+            ..StorageReport::default()
+        }
+    }
+
+    /// `(kind, state)` of server `i`'s campaign commands, oldest first.
+    async fn kinds(f: &Fleet, campaign: Uuid, i: usize) -> Vec<(String, State)> {
+        sqlx::query_as(
+            "SELECT kind, state FROM commands WHERE campaign_id = $1 AND server_id = $2
+             ORDER BY issued_at, id",
+        )
+        .bind(campaign)
+        .bind(f.servers[i].0)
+        .fetch_all(&f.pool)
+        .await
+        .unwrap()
+    }
+
+    /// Server `i` reports `status` for its snapshot command.
+    async fn snapshot_ends(f: &Fleet, campaign: Uuid, i: usize, status: CommandStatus) -> Uuid {
+        let id: Uuid = sqlx::query_scalar(
+            "SELECT snapshot_command_id FROM campaign_targets
+             WHERE campaign_id = $1 AND server_id = $2",
+        )
+        .bind(campaign)
+        .bind(f.servers[i].0)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+        assert!(f.commands.mark_sent(id).await.unwrap());
+        let result = CommandResult {
+            command_id: id.to_string(),
+            exit_code: i32::from(status != CommandStatus::Succeeded),
+            status: status as i32,
+            error: if status == CommandStatus::Succeeded {
+                String::new()
+            } else {
+                "no snapshot: volume group vg0 has 0 B free".into()
+            },
+            ..CommandResult::default()
+        };
+        f.commands.record(&f.servers[i].1, &result).await.unwrap();
+        id
+    }
+
+    db_tests! {
+        #[sqlx::test]
+        async fn the_campaign_takes_a_local_snapshot_when_there_is_no_proxmox_vm(pool: PgPool) {
+            let f = Fleet::new(&pool, 3).await;
+            // web-1 on thin LVM, web-2 too but mapped to a Proxmox VM,
+            // web-3 on a plain partition.
+            local::store(&pool, f.servers[0].0, Some(&storage(VolumeKind::LvmThin))).await.unwrap();
+            local::store(&pool, f.servers[1].0, Some(&storage(VolumeKind::LvmThin))).await.unwrap();
+            local::store(&pool, f.servers[2].0, Some(&storage(VolumeKind::Plain))).await.unwrap();
+            sqlx::query("INSERT INTO server_proxmox_vms (server_id, cluster, node, vmid) VALUES ($1, 'pve', 'pve1', 101)")
+                .bind(f.servers[1].0)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let runner = Runner::new(pool.clone()).with_proxmox(true);
+            let now = Utc::now();
+            let id = f.start(&f.campaign(vec![WaveSpec::Size(3)])).await;
+
+            assert_eq!(queued(runner.advance(id, now).await.unwrap()).len(), 3);
+            let snapshot = ("take_snapshot".to_owned(), State::Queued);
+            let update = ("apply_updates".to_owned(), State::Queued);
+            assert_eq!(kinds(&f, id, 0).await, std::slice::from_ref(&snapshot));
+            assert_eq!(kinds(&f, id, 1).await, std::slice::from_ref(&update));
+            assert_eq!(kinds(&f, id, 2).await, std::slice::from_ref(&update));
+            let row = f.commands.get(
+                sqlx::query_scalar("SELECT snapshot_command_id FROM campaign_targets WHERE server_id = $1")
+                    .bind(f.servers[0].0)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap(),
+            ).await.unwrap().unwrap();
+            let name = TakeSnapshot::decode(row.payload.as_slice()).unwrap().name;
+            assert_eq!(name, local::campaign_name(id));
+            // The snapshot's TTL is capped.
+            assert!(row.expires_at - row.issued_at <= TimeDelta::minutes(10));
+
+            // Nothing more while the snapshot runs; the update once it is taken.
+            assert_eq!(runner.advance(id, now).await.unwrap(), Step::Idle);
+            snapshot_ends(&f, id, 0, CommandStatus::Succeeded).await;
+            assert_eq!(queued(runner.advance(id, now).await.unwrap()), ["agent-1"]);
+            assert_eq!(
+                kinds(&f, id, 0).await,
+                [("take_snapshot".to_owned(), State::Succeeded), update]
+            );
+        }
+
+        #[sqlx::test]
+        async fn with_proxmox_off_a_mapping_does_not_stop_the_local_snapshot(pool: PgPool) {
+            let f = Fleet::new(&pool, 1).await;
+            local::store(&pool, f.servers[0].0, Some(&storage(VolumeKind::LvmThin))).await.unwrap();
+            sqlx::query("INSERT INTO server_proxmox_vms (server_id, cluster, node, vmid) VALUES ($1, 'pve', 'pve1', 101)")
+                .bind(f.servers[0].0)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let runner = Runner::new(pool.clone()).with_proxmox(false);
+            let id = f.start(&f.campaign(vec![WaveSpec::Size(1)])).await;
+            assert_eq!(queued(runner.advance(id, Utc::now()).await.unwrap()), ["agent-1"]);
+            assert_eq!(kinds(&f, id, 0).await, [("take_snapshot".to_owned(), State::Queued)]);
+        }
+
+        #[sqlx::test]
+        async fn a_failed_snapshot_fails_the_server_without_updating_it(pool: PgPool) {
+            let f = Fleet::new(&pool, 1).await;
+            local::store(&pool, f.servers[0].0, Some(&storage(VolumeKind::Lvm))).await.unwrap();
+            let runner = Runner::new(pool.clone());
+            let now = Utc::now();
+            let id = f.start(&f.campaign(vec![WaveSpec::Size(1)])).await;
+
+            assert_eq!(queued(runner.advance(id, now).await.unwrap()), ["agent-1"]);
+            snapshot_ends(&f, id, 0, CommandStatus::Failed).await;
+            // One step records the failure, the next counts it.
+            assert_eq!(runner.advance(id, now).await.unwrap(), Step::Queued(Vec::new()));
+            assert_eq!(runner.advance(id, now).await.unwrap(), Step::Failed);
+            let error: Option<String> = sqlx::query_scalar("SELECT error FROM campaign_targets WHERE campaign_id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                error.as_deref(),
+                Some("the snapshot before the update failed: no snapshot: volume group vg0 has 0 B free")
+            );
+            assert_eq!(kinds(&f, id, 0).await, [("take_snapshot".to_owned(), State::Failed)]);
+        }
+    }
+}

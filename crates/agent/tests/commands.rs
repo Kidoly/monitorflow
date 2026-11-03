@@ -320,6 +320,7 @@ db_tests! {
             reboot_required: true,
             collected_at_unix_ms: 1_800_000_000_000,
             windows_update_source: None,
+            storage: None,
         }));
         let deadline = tokio::time::Instant::now() + TIMEOUT;
         loop {

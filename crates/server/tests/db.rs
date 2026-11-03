@@ -193,6 +193,7 @@ db_tests! {
                 "server_proxmox_rejections",
                 "server_proxmox_vms",
                 "server_settings",
+                "server_storage",
                 "servers",
                 "sessions",
                 "setup_tokens",

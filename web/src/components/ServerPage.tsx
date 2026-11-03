@@ -43,9 +43,9 @@ import { formatExact } from "@/components/ui/time";
 import { AllowCommandsLine } from "./AllowCommands";
 import { MonitoringSettings } from "./MonitoringSettings";
 import { OfflineAlerts } from "./OfflineAlerts";
-import { ProxmoxRollback, useProxmox } from "./ProxmoxRollback";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
 import { ServerCommandsTab } from "./ServerCommandsTab";
+import { RollbackFact } from "./ServerRollback";
 import { ServerSensorsTab } from "./ServerSensorsTab";
 import { ServerUpdatesTab } from "./ServerUpdatesTab";
 import { SilenceBar } from "./Silences";
@@ -351,9 +351,6 @@ function ServerFacts({
   const { certificate } = server;
   const summary = commandSummary(server);
   const me = useMe();
-  // Rollback before AI's changes, for administrators of the customer while Proxmox is on.
-  const proxmox = useProxmox(server.id, !server.revoked_at && administersCustomer(me, server.customer_id));
-  const proxmoxView = proxmox.data && proxmox.data.clusters.length > 0 ? proxmox.data : null;
   return (
     <FactsBox
       columns={2}
@@ -395,9 +392,11 @@ function ServerFacts({
           : [
               { label: "AI commands", value: <AiCommandsFact server={server} /> },
               { label: "Offline alerts", value: <OfflineAlerts kind="servers" target={server} onChanged={onChanged} /> },
-              ...(proxmoxView
-                ? [{ label: "Rollback", value: <ProxmoxRollback view={proxmoxView} onChanged={proxmox.refresh} /> }]
-                : []),
+              // What a change gets first; the Proxmox mapping for administrators of the customer.
+              {
+                label: "Rollback",
+                value: <RollbackFact server={server} canMap={administersCustomer(me, server.customer_id)} />,
+              },
             ]),
       ]}
       details={[

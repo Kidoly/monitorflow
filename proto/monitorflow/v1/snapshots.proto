@@ -1,0 +1,85 @@
+// MonitorFlow local snapshots, version 1. See ADR-0094.
+//
+// Rules: changes are additive only. Never renumber or reuse a field number.
+
+syntax = "proto3";
+
+package monitorflow.v1;
+
+// Payload of a Command of kind "take_snapshot": snapshot every system
+// volume on LVM or ZFS under `name`. The agent picks the volumes itself;
+// the server only names the snapshot.
+message TakeSnapshot {
+  // `monitorflow-` then lowercase letters, digits and inner `-`, at most
+  // 64 bytes, like `monitorflow-incident-1a2b3c4d5e6f-2`.
+  string name = 1;
+}
+
+// Payload of a Command of kind "delete_snapshot": delete the snapshots
+// named `name` that MonitorFlow took on this host, and only those.
+message DeleteSnapshot {
+  string name = 1;
+}
+
+// The system volumes of a Linux host and MonitorFlow's snapshots of them,
+// sent inside PackageReport. Absent from Windows agents and agents before
+// ADR-0094.
+message StorageReport {
+  repeated Volume volumes = 1;
+  repeated LocalSnapshot snapshots = 2;
+  // Why the agent could not inspect its storage, like a sudoers file
+  // without the `snapshots inspect` line. Volumes are then empty.
+  string error = 3;
+}
+
+// Kind of storage under a mount point.
+enum VolumeKind {
+  VOLUME_KIND_UNSPECIFIED = 0;
+  // A partition or anything MonitorFlow does not snapshot.
+  VOLUME_KIND_PLAIN = 1;
+  // A classic LVM logical volume.
+  VOLUME_KIND_LVM = 2;
+  // A thin LVM volume.
+  VOLUME_KIND_LVM_THIN = 3;
+  VOLUME_KIND_ZFS = 4;
+}
+
+// One system mount point: /, /usr, /var, /opt or /boot.
+message Volume {
+  string mount_point = 1;
+  // ext4, xfs, zfs, btrfs...
+  string fs_type = 2;
+  VolumeKind kind = 3;
+  // `vg/lv` for LVM, the dataset for ZFS, the device otherwise.
+  string source = 4;
+  uint64 size_bytes = 5;
+  // What snapshots draw from: the volume group's free space for classic
+  // LVM, the thin pool's for thin LVM, the dataset's available space for
+  // ZFS.
+  uint64 free_bytes = 6;
+  // The size of that space: the volume group, the thin pool, or the
+  // dataset's used plus available space.
+  uint64 pool_bytes = 7;
+  // Thin pools only: how full the pool's metadata is, in percent.
+  double metadata_percent = 8;
+}
+
+// A snapshot MonitorFlow took of one volume.
+message LocalSnapshot {
+  // The name the server gave, shared by the volumes snapshotted together.
+  string name = 1;
+  // The volume's mount point when taken from a volume still mounted.
+  string mount_point = 2;
+  VolumeKind kind = 3;
+  // `vg/lv` of the snapshot for LVM, `dataset@name` for ZFS.
+  string source = 4;
+  // `vg/lv` or the dataset it is a snapshot of.
+  string origin = 5;
+  int64 created_at_unix = 6;
+  // Space it holds: the classic LVM snapshot's size, ZFS's `used`.
+  uint64 size_bytes = 7;
+  // Classic LVM only: how full the snapshot is, in percent. At 100 it is
+  // invalid and cannot be rolled back to.
+  double used_percent = 8;
+  bool invalid = 9;
+}

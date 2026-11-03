@@ -1,0 +1,5 @@
+22 1 0:23 / / rw,relatime shared:1 - zfs rpool/ROOT/debian rw,xattr,posixacl
+30 22 0:25 / /var/lib rw,relatime shared:30 - zfs rpool/ROOT/debian/var/lib rw,xattr,posixacl
+31 22 0:26 / /var rw,relatime shared:31 - zfs rpool/var rw,xattr,posixacl
+32 22 0:27 / /home rw,relatime shared:32 - zfs rpool/home rw,xattr,posixacl
+33 22 259:2 / /boot rw,relatime shared:33 - zfs bpool/BOOT/debian rw,xattr,posixacl

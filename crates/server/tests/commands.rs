@@ -536,6 +536,7 @@ db_tests! {
             reboot_required: at % 2 == 0,
             collected_at_unix_ms: at,
             windows_update_source: None,
+            storage: None,
         };
         let stored = || async {
             sqlx::query_as::<_, (String, Option<String>)>(
@@ -600,6 +601,7 @@ db_tests! {
             reboot_required: true,
             collected_at_unix_ms: 1_800_000_000_000,
             windows_update_source: None,
+            storage: None,
         };
         assert!(store.replace("win-01", &report).await.unwrap());
         type Row = (String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>, bool);

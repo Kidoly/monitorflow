@@ -40,9 +40,19 @@ const SIGNALS: Record<ProxmoxSignal, string> = {
 /**
  * Whether AI's changes on the server are preceded by a Proxmox snapshot of
  * its VM or container, in words, with the mapping for administrators of
- * its customer (ADR-0044, ADR-0093). Nothing when Proxmox is off.
+ * its customer (ADR-0044, ADR-0093). Nothing when Proxmox is off. A server
+ * that is no guest shows its `local` line instead, with the mapping button.
  */
-export function ProxmoxRollback({ view, onChanged }: { view: ProxmoxView; onChanged: () => void }) {
+export function ProxmoxRollback({
+  view,
+  onChanged,
+  local,
+}: {
+  view: ProxmoxView;
+  onChanged: () => void;
+  /** The local snapshot line, for a server that is no Proxmox guest (ADR-0094). */
+  local?: ReactNode;
+}) {
   const [editing, setEditing] = useState(false);
   const { mapping, snapshots } = view;
   if (editing) {
@@ -65,6 +75,13 @@ export function ProxmoxRollback({ view, onChanged }: { view: ProxmoxView; onChan
   const candidates = view.candidates ?? [];
   if (!mapping && candidates.length > 0) {
     return <Candidates view={view} candidates={candidates} change={change} onChanged={onChanged} />;
+  }
+  if (!mapping && local) {
+    return (
+      <>
+        {local} {change}
+      </>
+    );
   }
   if (!mapping) {
     return (
