@@ -264,7 +264,7 @@ Get-Content "$data\update\update.log"   # "update service listening"
 
 The service logs to `%ProgramData%\MonitorFlow\update\update.log`, rotated at 16 MiB like the agent's log. Without it the agent runs as before, but it sends no update report, logs a warning every 5 minutes, and fails `apply_updates` and `self_update` with "the update service is not running". The two services can be installed in either order. `sc.exe delete MonitorFlowUpdate` removes it.
 
-Updates come from the source the machine is configured for: Windows Update, Microsoft Update, or the WSUS server set by Group Policy, together with its approvals. MonitorFlow never changes that source, and its mirrors do not apply to Windows. Windows keeps its own automatic updates. On servers patched by campaigns, set them to notify or download only (Group Policy "Configure Automatic Updates", option 2 or 3), so installs happen in campaign windows.
+Updates come from the source the machine is configured for: Windows Update, Microsoft Update, or the WSUS server set by Group Policy, together with its approvals. MonitorFlow never changes that source, and its mirrors do not apply to Windows. Windows keeps its own automatic updates. On servers patched by campaigns, set them to notify or download only (Group Policy "Configure Automatic Updates", option 2 or 3), so installs happen in campaign windows. The server's Updates tab shows the source the agent reads from that policy, like "Updates come from WSUS at http://wsus.example:8530", and warns when the policy contradicts itself, for example a WSUS server named but not turned on[^0086].
 
 ### What works on Windows
 
@@ -312,3 +312,4 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0064]: [ADR-0064: AI setup in the interface](adr/0064-ai-setup-in-the-interface.md)
 [^0073]: [ADR-0073: Reusable install keys per site](adr/0073-reusable-install-keys.md)
 [^0084]: [ADR-0084: AI remediation on Windows](adr/0084-windows-remediation.md)
+[^0086]: [ADR-0086: Where Windows servers take their updates from](adr/0086-windows-update-source.md)
