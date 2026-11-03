@@ -323,6 +323,50 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn the_sweep_finds_the_agents_next_would_answer_for(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        let store = CommandStore::new(pool.clone());
+        let mut ids = Vec::new();
+        for peer in ["queued", "sent", "done", "expired", "revoked", "idle"] {
+            ids.push(server(&pool, peer, paris).await);
+        }
+        for id in &ids[..5] {
+            store.enqueue(&new(*id, b"x")).await.unwrap();
+        }
+        let sent = store.next("sent").await.unwrap().unwrap();
+        assert!(store.mark_sent(sent.id).await.unwrap());
+        let done = store.next("done").await.unwrap().unwrap();
+        assert!(store.mark_sent(done.id).await.unwrap());
+        let finished = result(done.id, CommandStatus::Succeeded, 0);
+        store.record("done", &finished).await.unwrap();
+        sqlx::query("UPDATE commands SET issued_at = now() - interval '1 hour',
+                                expires_at = now() - interval '1 second'
+             WHERE server_id = $1")
+            .bind(ids[3])
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE servers SET revoked_at = now() WHERE id = $1")
+            .bind(ids[4])
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let all: Vec<String> = ["queued", "sent", "done", "expired", "revoked", "idle", "unknown"]
+            .map(String::from)
+            .to_vec();
+        let mut busy = store.with_commands(&all).await.unwrap();
+        busy.sort();
+        assert_eq!(busy, ["queued", "sent"]);
+        // Exactly the agents `next` answers for.
+        for peer in &all {
+            let next = store.next(peer).await.unwrap();
+            assert_eq!(next.is_some(), busy.contains(peer), "{peer}");
+        }
+        assert!(store.with_commands(&all[2..3]).await.unwrap().is_empty());
+    }
+
+    #[sqlx::test]
     async fn stale_commands_expire_and_late_results_still_count(pool: PgPool) {
         let paris = site(&pool, "paris").await;
         let (web1, web2, web3) = (

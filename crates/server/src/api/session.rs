@@ -197,7 +197,10 @@ mod tests {
         let minutes = |m: u64| Duration::from_secs(m * 60);
         assert_eq!(touch_every(minutes(30)), minutes(1));
         assert_eq!(touch_every(minutes(5)), Duration::from_secs(30));
-        assert_eq!(touch_every(Duration::from_secs(1)), Duration::from_millis(100));
+        assert_eq!(
+            touch_every(Duration::from_secs(1)),
+            Duration::from_millis(100)
+        );
     }
 
     #[test]
