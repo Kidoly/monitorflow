@@ -1,7 +1,7 @@
 # ADR-0051: Production compose and the server's storage links
 
 Date: 2026-10-25
-Status: accepted
+Status: accepted; the stores move to TLS in ADR-0087
 
 ## Context
 
