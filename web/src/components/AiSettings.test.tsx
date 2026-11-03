@@ -90,7 +90,10 @@ describe("AiSettingsPage", () => {
     expect(sent(fetchMock, "PUT")).toEqual({ api_key: "sk-ant-1", model: "claude-sonnet-5-5", enabled: true });
     expect(screen.getByLabelText(/Anthropic API key/)).toHaveValue("");
     expect(screen.getByLabelText(/Anthropic API key/)).toHaveAttribute("placeholder", "Saved; leave empty to keep it");
-    expect(await screen.findByLabelText("Command that allows AI commands")).toHaveTextContent("sudo MF_ALLOW_COMMANDS=1 sh");
+    const [linux, windows] = await screen.findAllByLabelText("Command that allows AI commands");
+    expect(linux).toHaveTextContent("sudo MF_ALLOW_COMMANDS=1 sh");
+    expect(windows).toHaveTextContent('monitorflow-agent.exe" ai-commands on');
+    expect(windows).toHaveTextContent("Restart-Service MonitorFlowAgent");
   });
 
   it("shows where each server stands, with a link to act on it", async () => {
@@ -119,7 +122,7 @@ describe("AiSettingsPage", () => {
     expect(screen.getByRole("link", { name: "web-2" })).toHaveAttribute("href", expect.stringContaining("id=2&tab=commands"));
     // Not reporting is its own group, even from an agent that reports other kinds.
     expect(screen.getByText(/^Not known yet/)).toHaveTextContent(/web-3, web-5$/);
-    expect(screen.getByText(/^Their system does not run/)).toHaveTextContent(/web-4$/);
+    expect(screen.getByText(/^Their agent is too old/)).toHaveTextContent(/web-4$/);
   });
 
   it("still gives the line when the servers cannot be read", async () => {
@@ -130,7 +133,8 @@ describe("AiSettingsPage", () => {
       "GET /api/servers": { status: 500, body: { error: "database unavailable" } },
     });
     page();
-    expect(await screen.findByLabelText("Command that allows AI commands")).toBeInTheDocument();
+    expect(await screen.findByText("On Windows servers, in PowerShell as an administrator:")).toBeInTheDocument();
+    expect(await screen.findByText(/sudo MF_ALLOW_COMMANDS=1 sh/)).toBeInTheDocument();
     expect(screen.queryByText(/accept AI commands\./)).not.toBeInTheDocument();
   });
 

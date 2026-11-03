@@ -28,7 +28,7 @@ Each phase delivers something usable on its own. No dates are set.
 | 3 | Relays | Relay binary, chaining, store-and-forward buffering, MSP multi-tenancy |
 | 4 | Packages and updates | apt and dnf mirrors, source configuration, scheduled campaigns in waves |
 | 5 | AI remediation | Context gathering, risk tiers, approval queue, audit log, snapshot-based rollback |
-| 6 | Windows agent | Sensor support and Windows update management |
+| 6 | Windows agent | Sensor support and Windows update management; AI remediation with PowerShell came with Windows parity (ADR-0084) |
 
 Detailed task lists per phase are in [roadmap.md](roadmap.md).
 

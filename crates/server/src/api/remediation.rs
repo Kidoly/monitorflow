@@ -22,7 +22,7 @@ use super::campaigns::authorize_customer;
 use super::sensors::{body, parse_id, UNIQUE_VIOLATION};
 use super::{ApiError, ApiState};
 use crate::remediation::risk::store::{self, Kind, NewRule, Policy, StoredRule};
-use crate::remediation::risk::{self, Decision, Tier};
+use crate::remediation::risk::{self, Decision, Shell, Tier};
 
 /// Body of `POST /api/remediation/rules`.
 #[derive(Debug, Deserialize)]
@@ -76,6 +76,10 @@ pub struct ClassifyRequest {
     pub customer_id: Uuid,
     pub site_id: Option<Uuid>,
     pub command: String,
+    /// `posix` (the default) for Linux servers, `powershell` for Windows
+    /// ones (ADR-0084).
+    #[serde(default)]
+    pub shell: Shell,
 }
 
 /// 400 unless `site` is absent or a site of `customer`.
@@ -273,5 +277,9 @@ pub async fn classify(
     authorize_customer(&user, request.customer_id, false)?;
     check_site(&state, request.customer_id, request.site_id).await?;
     let rules = store::rule_set(&state.pool, request.customer_id, request.site_id).await?;
-    Ok(Json(risk::classify(&request.command, &rules)))
+    Ok(Json(risk::classify_for(
+        request.shell,
+        &request.command,
+        &rules,
+    )))
 }

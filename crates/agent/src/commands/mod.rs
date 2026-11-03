@@ -31,7 +31,6 @@
 //! place of a handler, reported `RUNNING`, and its output is the result.
 
 pub mod journal;
-#[cfg(unix)]
 pub mod shell;
 pub mod unsupported;
 

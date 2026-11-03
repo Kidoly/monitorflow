@@ -6,6 +6,7 @@
 //! configured token, then keep the stream to the upstream open until SIGINT or SIGTERM,
 //! renewing the certificate before it expires and running the sensors.
 
+pub mod ai_commands;
 pub mod commands;
 pub mod enroll;
 #[cfg(windows)]

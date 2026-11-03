@@ -28,6 +28,8 @@ pub mod log;
 pub mod memory;
 mod pattern;
 pub mod port;
+#[cfg(windows)]
+pub mod powershell;
 mod procfs;
 pub mod registry;
 pub mod scheduler;

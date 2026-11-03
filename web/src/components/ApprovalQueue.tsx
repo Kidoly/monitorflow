@@ -258,7 +258,12 @@ function ApprovalDetail({
         </dd>
         <dt>Command</dt>
         <dd>
-          <code className={styles.command}>{item.command}</code>
+          <code className={styles.command}>{item.command}</code>{" "}
+          <span className={styles.dim}>
+            {item.shell === "powershell"
+              ? "Runs in Windows PowerShell, as the agent's account."
+              : "Runs with /bin/sh, as the agent's user."}
+          </span>
         </dd>
         <dt>Rule</dt>
         <dd>
@@ -357,7 +362,11 @@ function ApprovalDetail({
                   <Link href={scopedHref(serverHref(item.server_id, "commands"), scope)}>How to turn them on</Link>
                 </>
               ) : (
-                `${item.hostname} would refuse this: its system does not run AI commands yet.`
+                `${item.hostname} would refuse this: ${
+                  item.shell === "powershell"
+                    ? "its agent is too old for AI commands on Windows, and updates by itself."
+                    : "its system does not run AI commands yet."
+                }`
               )}
             </p>
           )}

@@ -4,6 +4,7 @@ import type { AgentInstall } from "./api";
 import {
   type Command,
   type InstallTarget,
+  WINDOWS_ALLOW_COMMANDS,
   allowCommandsCommand,
   endpoints,
   hostPort,
@@ -182,6 +183,14 @@ describe("install commands", () => {
     expect(relayAddress("2001:db8::5")).toBe("[2001:db8::5]");
     expect(text(linuxInstallCommand(target(), "github", ORIGIN, relayAddress("2001:db8::5")))).toContain(
       "MF_SERVER=[2001:db8::5]:7443 MF_ENROLL=mf.example:7445",
+    );
+  });
+});
+
+describe("WINDOWS_ALLOW_COMMANDS", () => {
+  it("turns AI commands on with the agent itself, then restarts it", () => {
+    expect(WINDOWS_ALLOW_COMMANDS).toBe(
+      '& "$env:ProgramFiles\\MonitorFlow\\monitorflow-agent.exe" ai-commands on\nRestart-Service MonitorFlowAgent',
     );
   });
 });

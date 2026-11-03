@@ -19,49 +19,15 @@
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{ExitStatus, Stdio};
+use std::process::ExitStatus;
 
 use tokio::time::Instant;
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-};
-use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use super::{parse_params, report, script_name, spawn_error, wait, DEFAULT_DIR, MARGIN};
+use crate::powershell::{self, Job};
 use crate::registry::{BuildError, Local, Params};
 use crate::win;
 use crate::{Sample, Sensor, SensorError};
-
-/// Variables passed from the agent's environment; nothing else is.
-/// Without `PSModulePath`, Windows PowerShell rebuilds the module path
-/// and searches every installed module for the commands a script uses,
-/// on every run: 18 to 33 s for a `Write-Output` on the CI runner.
-const ENV: &[&str] = &[
-    "SystemRoot",
-    "SystemDrive",
-    "windir",
-    "ComSpec",
-    "PATHEXT",
-    "ProgramData",
-    "ProgramFiles",
-    "ProgramFiles(x86)",
-    "ProgramW6432",
-    "CommonProgramFiles",
-    "CommonProgramFiles(x86)",
-    "CommonProgramW6432",
-    "COMPUTERNAME",
-    "NUMBER_OF_PROCESSORS",
-    "PROCESSOR_ARCHITECTURE",
-    "USERPROFILE",
-    "APPDATA",
-    "LOCALAPPDATA",
-    "TEMP",
-    "TMP",
-    "PSModulePath",
-];
 
 /// How a checked script runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,58 +87,6 @@ fn check_dir(dir: &Path, agent: &str) -> Result<(), String> {
     win::check_writers(dir, agent).map_err(|e| format!("script directory {e}"))
 }
 
-/// A job object that kills its processes when dropped.
-struct Job(HANDLE);
-
-// SAFETY: a kernel handle, usable from any thread.
-unsafe impl Send for Job {}
-
-impl Job {
-    fn new() -> io::Result<Self> {
-        // SAFETY: no attributes and no name.
-        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-        if handle.is_null() {
-            return Err(io::Error::last_os_error());
-        }
-        let job = Self(handle);
-        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        // SAFETY: the structure and its size match the information class.
-        let ok = unsafe {
-            SetInformationJobObject(
-                job.0,
-                JobObjectExtendedLimitInformation,
-                (&raw const limits).cast(),
-                std::mem::size_of_val(&limits) as u32,
-            )
-        };
-        if ok == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(job)
-    }
-
-    fn assign(&self, process: HANDLE) -> io::Result<()> {
-        // SAFETY: two open handles.
-        if unsafe { AssignProcessToJobObject(self.0, process) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
-    }
-}
-
-impl Drop for Job {
-    fn drop(&mut self) {
-        // SAFETY: the handle is open and owned by this value. Closing it
-        // would be enough with KILL_ON_JOB_CLOSE; terminating first does
-        // not wait for other handles to the job.
-        unsafe {
-            TerminateJobObject(self.0, 1);
-            CloseHandle(self.0);
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct ScriptSensor {
     script: String,
@@ -209,56 +123,26 @@ impl ScriptSensor {
             .map_err(|e| SensorError::Transient(format!("system directory: {e}")))?;
         let (exe, mut args): (PathBuf, Vec<OsString>) = match program {
             Program::PowerShell(path) => (
-                system.join(r"WindowsPowerShell\v1.0\powershell.exe"),
-                [
-                    "-NoLogo",
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                ]
-                .map(OsString::from)
-                .into_iter()
-                .chain([path.into_os_string()])
-                .collect(),
+                powershell::exe(&system),
+                powershell::OPTIONS
+                    .into_iter()
+                    .chain(["-File"])
+                    .map(OsString::from)
+                    .chain([path.into_os_string()])
+                    .collect(),
             ),
             Program::Exe(path) => (path, Vec::new()),
         };
         args.extend(self.args.iter().map(OsString::from));
-        let windows = system.parent().unwrap_or(&system);
-        let path = std::env::join_paths([
-            system.clone(),
-            windows.to_path_buf(),
-            system.join("Wbem"),
-            system.join(r"WindowsPowerShell\v1.0"),
-        ])
-        .unwrap_or_default();
         let job = Job::new().map_err(|e| SensorError::Transient(format!("job object: {e}")))?;
-        let mut child = tokio::process::Command::new(exe)
-            .args(args)
-            .env_clear()
-            .envs(ENV.iter().filter_map(|k| Some((k, std::env::var_os(k)?))))
-            .env("PATH", path)
-            .current_dir(system.ancestors().last().unwrap_or(&system))
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .kill_on_drop(true)
-            .spawn()
+        let mut child = powershell::command(exe)
+            .and_then(|mut command| command.args(args).spawn())
             .map_err(|e| spawn_error(&self.script, e))?;
-        // Assigned right after the start: PowerShell takes far longer to
-        // start than this, so nothing escapes the job in between.
-        if let Some(handle) = child.raw_handle() {
-            if let Err(e) = job.assign(handle) {
-                if child.try_wait().ok().flatten().is_none() {
-                    return Err(SensorError::Transient(format!(
-                        "script `{}`: job object: {e}",
-                        self.script
-                    )));
-                }
-            }
+        if let Err(e) = job.assign(&mut child) {
+            return Err(SensorError::Transient(format!(
+                "script `{}`: job object: {e}",
+                self.script
+            )));
         }
         let outcome = wait(&mut child, &self.script, cutoff).await;
         drop(job);
@@ -319,7 +203,7 @@ mod tests {
         assert_eq!(got[1], ("free".into(), 12.5));
         // The fixed environment, plus what PowerShell sets itself.
         assert!(
-            got[2].0 == "env" && got[2].1 <= (ENV.len() + 6) as f64,
+            got[2].0 == "env" && got[2].1 <= (powershell::ENV.len() + 6) as f64,
             "{got:?}"
         );
         assert!(samples.iter().all(|s| s.labels["script"] == "check.ps1"));

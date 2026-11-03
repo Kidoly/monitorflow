@@ -38,8 +38,8 @@ describe("commandSummary", () => {
 });
 
 describe("unsupportedReason", () => {
-  it("names Windows", () => {
-    expect(unsupportedReason("windows")).toContain("Windows");
+  it("sends Windows to an agent update", () => {
+    expect(unsupportedReason("windows")).toBe("Its agent is too old for AI commands on Windows. It updates by itself.");
     expect(unsupportedReason("linux")).toBe("This system does not run AI commands yet.");
   });
 });

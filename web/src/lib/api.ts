@@ -1031,6 +1031,8 @@ export interface PendingApproval {
   snapshots: { available: boolean; reason: SnapshotUnsupported | null };
   /** `accepted`, `off` or `unsupported`; null or absent is unknown. Approving is refused when off or unsupported (ADR-0076). */
   shell_acceptance?: string | null;
+  /** What runs the command: `posix` (/bin/sh on Linux) or `powershell` (Windows PowerShell); absent from older servers (ADR-0084). */
+  shell?: "posix" | "powershell";
 }
 
 export interface PendingApprovalList {

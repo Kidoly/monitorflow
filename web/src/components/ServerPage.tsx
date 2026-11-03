@@ -284,9 +284,10 @@ function AllowOnThisServer({ server }: { server: ServerDetail }) {
       <strong>AI commands are off on {server.hostname}.</strong>{" "}
       {administersCustomer(me, server.customer_id) ? (
         <>
-          AI&apos;s commands are refused here and its incidents go to a person. To allow them, run this once on the server.
-          This page changes by itself when it is done.
-          <AllowCommandsLine />
+          AI&apos;s commands are refused here and its incidents go to a person. To allow them, run this once on the server
+          {server.os_family === "windows" && ", in PowerShell as an administrator"}. This page changes by itself when it is
+          done.
+          <AllowCommandsLine osFamily={server.os_family} />
         </>
       ) : (
         "AI's commands are refused here and its incidents go to a person. An administrator can turn them on from this page."
