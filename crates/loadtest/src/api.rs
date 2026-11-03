@@ -44,6 +44,7 @@ impl Api {
         let response = self
             .client
             .post(format!("{}{path}", self.base))
+            .header("X-MonitorFlow-CSRF", "1")
             .json(body)
             .send()
             .await?;

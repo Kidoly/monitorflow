@@ -21,6 +21,7 @@ clap.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
 serde_json.workspace = true
+chrono.workspace = true
 reqwest = { workspace = true, features = ["json", "cookies"] }
 sqlx.workspace = true
 axum.workspace = true

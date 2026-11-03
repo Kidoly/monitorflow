@@ -542,7 +542,7 @@ impl Run {
             .await?;
         let elapsed = start.elapsed().as_secs_f64();
         let latencies: Vec<(f64, String)> = sqlx::query_as(
-            "SELECT extract(epoch FROM finished_at - created_at)::float8, state
+            "SELECT extract(epoch FROM finished_at - issued_at)::float8, state
              FROM commands WHERE finished_at IS NOT NULL",
         )
         .fetch_all(&self.pool)
@@ -576,6 +576,7 @@ impl Run {
     async fn renewal(&mut self) -> anyhow::Result<()> {
         let mut phase = self.begin("Certificate renewal of every agent");
         let mark = self.fleet.shared.now_ms();
+        let since = chrono::Utc::now();
         let start = Instant::now();
         let (ok, failed) = self.fleet.renew_all(50).await;
         phase.result(
@@ -585,47 +586,82 @@ impl Run {
                 start.elapsed().as_secs_f64()
             ),
         );
-        self.reconnected(&mut phase, mark, Duration::from_secs(120))
-            .await;
+        // The server renews a peer at most once an hour (ADR-0010): a run
+        // shorter than that measures the refusals only.
+        if ok > 0 {
+            self.reconnected(&mut phase, mark, since, Duration::from_secs(120))
+                .await?;
+        } else {
+            phase.result(
+                "Note",
+                "the server refuses a renewal within an hour of the last certificate (ADR-0010); this measured the refused calls",
+            );
+        }
         self.end(phase).await
     }
 
-    /// Waits until every agent reopened its stream after `mark` and
-    /// records when, and when its first batch went.
-    async fn reconnected(&mut self, phase: &mut Phase, mark: u64, limit: Duration) {
-        let shared = self.fleet.shared.clone();
+    /// Waits until the server shows every agent on a stream opened after
+    /// `since` (agents behind a relay keep their stream to the relay, which
+    /// opens a new one upstream), and until every agent that reopened its
+    /// own stream after `mark` sent a batch on it.
+    async fn reconnected(
+        &mut self,
+        phase: &mut Phase,
+        mark: u64,
+        since: chrono::DateTime<chrono::Utc>,
+        limit: Duration,
+    ) -> anyhow::Result<()> {
         let total = self.fleet.len();
+        let connected_after = |servers: &[serde_json::Value]| -> Vec<f64> {
+            servers
+                .iter()
+                .filter(|s| s["status"] == "online")
+                .filter_map(|s| {
+                    s["connected_at"]
+                        .as_str()?
+                        .parse::<chrono::DateTime<chrono::Utc>>()
+                        .ok()
+                })
+                .filter(|at| *at >= since)
+                .map(|at| (at - since).as_seconds_f64())
+                .collect()
+        };
         let all = self
-            .until(limit, || {
+            .until(limit, || async {
+                let servers = self.api.servers().await?;
+                Ok((connected_after(&servers).len() == total).then_some(()))
+            })
+            .await?;
+        let servers = self.api.servers().await?;
+        phase.seconds(
+            "Streams open again at the server",
+            Spread::of(connected_after(&servers)),
+        );
+        if all.is_none() {
+            let missing = total - connected_after(&servers).len();
+            self.miss(phase, format!("{missing} agents were not connected again"));
+        }
+        // Agents that reopened their own stream: until their next batch.
+        let shared = self.fleet.shared.clone();
+        let _ = self
+            .until(Duration::from_secs(120), || {
                 let shared = shared.clone();
                 async move {
-                    let done = shared
-                        .since(mark)
+                    let since = shared.since(mark);
+                    Ok(since
                         .iter()
-                        .filter(|(_, b)| b.is_some())
-                        .count();
-                    Ok((done == total).then_some(()))
+                        .all(|(o, b)| o.is_none() || b.is_some())
+                        .then_some(()))
                 }
             })
-            .await
-            .unwrap_or(None);
+            .await?;
         let since = shared.since(mark);
-        let opened: Vec<f64> = since
-            .iter()
-            .filter_map(|(o, _)| *o)
-            .map(|ms| ms as f64 / 1000.0)
-            .collect();
-        let batches: Vec<f64> = since
-            .iter()
-            .filter_map(|(_, b)| *b)
-            .map(|ms| ms as f64 / 1000.0)
-            .collect();
-        phase.seconds("Stream reopened", Spread::of(opened));
-        phase.seconds("First batch sent", Spread::of(batches));
-        if all.is_none() {
-            let missing = since.iter().filter(|(_, b)| b.is_none()).count();
-            self.miss(phase, format!("{missing} agents had not sent data again"));
-        }
+        let seconds = |ms: u64| ms as f64 / 1000.0;
+        let opened: Vec<f64> = since.iter().filter_map(|(o, _)| o.map(seconds)).collect();
+        let batches: Vec<f64> = since.iter().filter_map(|(_, b)| b.map(seconds)).collect();
+        phase.seconds("Direct agents: stream reopened", Spread::of(opened));
+        phase.seconds("Direct agents: first batch sent", Spread::of(batches));
+        Ok(())
     }
 
     /// SIGTERM to the server, start it again, every agent reconnects.
@@ -638,6 +674,7 @@ impl Run {
             format!("{:.1} s", stop.elapsed().as_secs_f64()),
         );
         let mark = self.fleet.shared.now_ms();
+        let since = chrono::Utc::now();
         let start = Instant::now();
         self.server.start().await?;
         self.watched.send_modify(|w| w.server = self.server.pid());
@@ -645,21 +682,8 @@ impl Run {
             "Ready again in",
             format!("{:.1} s", start.elapsed().as_secs_f64()),
         );
-        self.reconnected(&mut phase, mark, Duration::from_secs(300))
-            .await;
-        let total = self.fleet.len();
-        let online = self
-            .until(Duration::from_secs(60), || async {
-                Ok((self.online().await? == total).then_some(()))
-            })
+        self.reconnected(&mut phase, mark, since, Duration::from_secs(300))
             .await?;
-        phase.result(
-            "All online in the API",
-            match online {
-                Some(()) => format!("{:.0} s after the restart", start.elapsed().as_secs_f64()),
-                None => "no".to_owned(),
-            },
-        );
         self.end(phase).await
     }
 
