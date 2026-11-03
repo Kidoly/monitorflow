@@ -981,7 +981,11 @@ async fn storage_certs_command(config: &ServerConfig) -> anyhow::Result<()> {
 async fn storage_check_command(config: &ServerConfig) -> anyhow::Result<()> {
     let storage = match &config.storage_tls_dir {
         Some(dir) => {
-            let (ca_cert, dir) = (config.tls_paths().ca_cert, dir.clone());
+            let ca_cert = config
+                .data_dir
+                .join("ca")
+                .join(monitorflow_server::ca::CERT_FILE);
+            let dir = dir.clone();
             let auth = tokio::task::spawn_blocking(move || {
                 let ca = std::fs::read_to_string(&ca_cert)
                     .with_context(|| format!("reading {}", ca_cert.display()))?;
