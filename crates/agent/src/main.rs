@@ -256,7 +256,7 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     let (stream_end, sensors_end) = sensor_config::link();
     let uplink = Uplink::new(UploadSettings::default());
     let sensors = Sensors::new(
-        Arc::new(Builtin::from_config(&config.sensors)),
+        Arc::new(Builtin::from_config(&config.sensors, &config.data_dir)),
         ConfigFile::in_dir(&config.data_dir),
         uplink.clone(),
     );

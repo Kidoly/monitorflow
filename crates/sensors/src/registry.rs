@@ -11,12 +11,13 @@
 //! configuration cannot change, and also refuses what this host does not
 //! allow, like a script nobody installed (ADR-0024).
 //!
-//! Some kinds only run on one platform ([`supported`]): `systemd` and
-//! `log` on Unix, `eventlog` and `windows_service` on Windows. The agent
-//! refuses the others with [`BuildError::Unsupported`]. [`build`] still
-//! checks the parameters of Windows kinds on Unix, so the server's API
-//! validates them; on Windows, Unix kinds are refused without looking at
-//! their parameters, as their code is not compiled there (ADR-0048).
+//! Some kinds only run on one platform ([`supported`]): `systemd` on Unix,
+//! `eventlog` and `windows_service` on Windows. The agent refuses the
+//! others with [`BuildError::Unsupported`]. [`build`] still checks the
+//! parameters of Windows kinds on Unix, so the server's API validates
+//! them; on Windows, `systemd` is refused without looking at its
+//! parameters, as its code is not compiled there (ADR-0048). `log` runs on
+//! both (ADR-0085).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -25,7 +26,6 @@ use std::sync::Arc;
 use crate::cpu::CpuSensor;
 use crate::disk::DiskSensor;
 use crate::eventlog::{self, EventLogSensor};
-#[cfg(unix)]
 use crate::log::{self, LogSensor};
 use crate::memory::MemorySensor;
 use crate::port::PortSensor;
@@ -48,11 +48,11 @@ pub const KINDS: &[&str] = &[
     "windows_service",
 ];
 
-/// Whether this platform runs `kind`: `log` and `systemd` need Unix,
-/// `eventlog` and `windows_service` Windows, the others run on both.
+/// Whether this platform runs `kind`: `systemd` needs Unix, `eventlog`
+/// and `windows_service` Windows, the others run on both.
 pub fn supported(kind: &str) -> bool {
     match kind {
-        "log" | "systemd" => cfg!(unix),
+        "systemd" => cfg!(unix),
         "eventlog" | "windows_service" => cfg!(windows),
         _ => KINDS.contains(&kind),
     }
@@ -86,6 +86,9 @@ pub struct Local {
     pub script_dir: PathBuf,
     /// Directories the `log` sensor may read files under.
     pub log_dirs: Vec<PathBuf>,
+    /// Where the `log` sensor saves how far it read each file, so a
+    /// restart resumes there; `None` to keep it in memory only.
+    pub log_positions: Option<PathBuf>,
     /// Event Log channels the `eventlog` sensor may read, compared without
     /// case.
     pub event_channels: Vec<String>,
@@ -93,13 +96,10 @@ pub struct Local {
 
 impl Default for Local {
     fn default() -> Self {
-        #[cfg(unix)]
-        let log_dirs = log::DEFAULT_DIRS.iter().map(PathBuf::from).collect();
-        #[cfg(not(unix))]
-        let log_dirs = Vec::new();
         Self {
             script_dir: script::DEFAULT_DIR.into(),
-            log_dirs,
+            log_dirs: log::DEFAULT_DIRS.iter().map(PathBuf::from).collect(),
+            log_positions: None,
             event_channels: eventlog::DEFAULT_CHANNELS
                 .iter()
                 .map(|c| c.to_string())
@@ -138,7 +138,6 @@ fn build_with(
         "cpu" => Arc::new(CpuSensor::new(params.bool("per_core", true)?)),
         "disk" => Arc::new(DiskSensor::from_params(&mut params)?),
         "eventlog" => Arc::new(EventLogSensor::from_params(&mut params, local)?),
-        #[cfg(unix)]
         "log" => Arc::new(LogSensor::from_params(&mut params, local)?),
         "memory" => Arc::new(MemorySensor),
         "port" => Arc::new(PortSensor::from_params(&mut params)?),
@@ -146,7 +145,7 @@ fn build_with(
         #[cfg(unix)]
         "systemd" => Arc::new(SystemdSensor::from_params(&mut params)?),
         "windows_service" => Arc::new(ServiceSensor::from_params(&mut params)?),
-        // Unix kinds on Windows, not compiled there.
+        // `systemd` on Windows, not compiled there.
         kind => return Err(BuildError::Unsupported { kind }),
     };
     params.finish()?;
@@ -296,16 +295,16 @@ mod tests {
     #[test]
     fn kinds_of_another_platform_are_refused_by_the_agent() {
         let (here, elsewhere) = if cfg!(windows) {
-            (["eventlog", "windows_service"], ["log", "systemd"])
+            (vec!["eventlog", "log", "windows_service"], vec!["systemd"])
         } else {
-            (["log", "systemd"], ["eventlog", "windows_service"])
+            (vec!["log", "systemd"], vec!["eventlog", "windows_service"])
         };
         for kind in KINDS {
             assert_eq!(supported(kind), !elsewhere.contains(kind), "{kind}");
         }
         assert!(here.iter().all(|k| supported(k)) && !supported("gpu"));
         let local = Local::default();
-        for kind in elsewhere {
+        for kind in &elsewhere {
             let error = build_local(kind, &BTreeMap::new(), &local).err().unwrap();
             assert!(matches!(error, BuildError::Unsupported { .. }), "{error}");
             assert!(

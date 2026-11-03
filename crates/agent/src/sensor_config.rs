@@ -73,17 +73,26 @@ impl Builtin {
         Self { local }
     }
 
-    /// The limits set by the `[sensors]` section of the agent's config.
-    pub fn from_config(config: &AgentSensorsConfig) -> Self {
-        Self::new(local(config))
+    /// The limits set by the `[sensors]` section of the agent's config,
+    /// with log positions saved under `data_dir` (ADR-0085).
+    pub fn from_config(config: &AgentSensorsConfig, data_dir: &Path) -> Self {
+        Self::new(Local {
+            log_positions: Some(data_dir.join(LOG_POSITIONS_DIR)),
+            ..local(config)
+        })
     }
 }
 
-/// The registry's [`Local`] limits from the agent's configuration.
+/// Where, under `data_dir`, the `log` sensor saves how far it read.
+pub const LOG_POSITIONS_DIR: &str = "log-positions";
+
+/// The registry's [`Local`] limits from the agent's configuration, without
+/// saved log positions.
 pub fn local(config: &AgentSensorsConfig) -> Local {
     Local {
         script_dir: config.script_dir.clone(),
         log_dirs: config.log_dirs.clone(),
+        log_positions: None,
         event_channels: config.event_channels.clone(),
     }
 }
@@ -425,11 +434,14 @@ mod tests {
             std::os::unix::fs::PermissionsExt::from_mode(0o755),
         )
         .unwrap();
-        let builtin = Builtin::from_config(&AgentSensorsConfig {
-            script_dir: scripts.path().into(),
-            log_dirs: vec![scripts.path().into()],
-            ..AgentSensorsConfig::default()
-        });
+        let builtin = Builtin::from_config(
+            &AgentSensorsConfig {
+                script_dir: scripts.path().into(),
+                log_dirs: vec![scripts.path().into()],
+                ..AgentSensorsConfig::default()
+            },
+            scripts.path(),
+        );
         let log = format!("{}/app.log", scripts.path().display());
         let required: [(&str, &[(&str, &str)]); 4] = [
             ("log", &[("path", &log), ("pattern", "error")]),

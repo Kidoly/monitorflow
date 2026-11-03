@@ -564,8 +564,9 @@ impl Default for AgentSensorsConfig {
     }
 }
 
-/// The `log` sensor does not run on Windows (ADR-0048), so it gets no
-/// directories; the Event Log channels are the same as on Unix.
+/// Windows has no common folder of text logs, so the `log` sensor reads
+/// none until the administrator lists some (ADR-0085); the Event Log
+/// channels are the same as on Unix.
 #[cfg(windows)]
 impl Default for AgentSensorsConfig {
     fn default() -> Self {
