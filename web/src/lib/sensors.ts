@@ -11,6 +11,7 @@ const PRIMARY: Record<string, { suffix: string; instance?: string }> = {
   cpu: { suffix: "usage_ratio", instance: "total" },
   memory: { suffix: "available_ratio" },
   disk: { suffix: "used_ratio" },
+  diskio: { suffix: "busy_ratio" },
   systemd: { suffix: "active" },
   windows_service: { suffix: "active" },
   port: { suffix: "up" },
@@ -50,6 +51,8 @@ export function seriesTitle(sensor: EffectiveSensor | undefined, metric: string,
         return "Memory available";
       case "disk":
         return `Disk used${shown ? ` ${shown}` : ""}`;
+      case "diskio":
+        return `Disk busy${shown ? ` ${shown}` : ""}`;
       case "systemd":
       case "windows_service":
         return shown || sensor.name;

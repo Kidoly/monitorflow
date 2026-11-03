@@ -181,6 +181,17 @@ pub fn builtin_defaults() -> Vec<Rule> {
             Some(0.05),
             5,
         ),
+        // A disk whose I/Os take over 200 ms on average for 10 minutes is
+        // slowing what runs on it, whatever its kind; a busy disk that
+        // still answers fast is not a problem (ADR-0092).
+        rule(
+            "monitorflow_diskio_wait_seconds",
+            None,
+            Comparison::Gt,
+            Some(0.2),
+            None,
+            10,
+        ),
     ]
 }
 
@@ -308,6 +319,13 @@ mod tests {
             (Comparison::Lt, Some(0.05), 300)
         );
         assert_eq!(rules.lookup("monitorflow_cpu_load1", ""), None);
+        let wait = rules
+            .lookup("monitorflow_diskio_wait_seconds", "sda")
+            .unwrap();
+        assert_eq!(
+            (wait.warning, wait.critical, wait.duration_s),
+            (Some(0.2), None, 600)
+        );
     }
 
     #[test]
@@ -329,7 +347,7 @@ mod tests {
         assert_eq!(warning(&rules, DISK, "/"), Some(0.7));
         assert_eq!(warning(&rules, CPU, "total"), Some(0.6));
         assert_eq!(rules.lookup("monitorflow_memory_available_ratio", ""), None);
-        assert_eq!(rules.enabled().count(), 2);
+        assert_eq!(rules.enabled().count(), 3);
     }
 
     #[test]

@@ -19,6 +19,7 @@ use uuid::Uuid;
 const PASSWORD: &str = "correct horse battery";
 const DISK: &str = "monitorflow_disk_used_ratio";
 const MEMORY: &str = "monitorflow_memory_available_ratio";
+const DISKIO: &str = "monitorflow_diskio_wait_seconds";
 /// Marks every test in the block as ignored when `DATABASE_URL` is unset.
 macro_rules! db_tests {
     ($($item:item)*) => {
@@ -203,6 +204,7 @@ db_tests! {
             [
                 ("monitorflow_cpu_usage_ratio", "default", Value::Null),
                 (DISK, "default", Value::Null),
+                (DISKIO, "default", Value::Null),
                 (MEMORY, "default", Value::Null),
             ]
         );
@@ -300,11 +302,12 @@ db_tests! {
                 with_origin("monitorflow_cpu_usage_ratio", json!("total"), "default", true),
                 with_origin(DISK, Value::Null, "site", true),
                 with_origin(DISK, json!("/data"), "server", true),
+                with_origin(DISKIO, Value::Null, "default", true),
                 with_origin(MEMORY, Value::Null, "site", false),
             ]
         );
         assert_eq!(body["thresholds"][1]["threshold_id"], site_row["id"]);
-        assert_eq!(body["thresholds"][3]["threshold_id"], mute["id"]);
+        assert_eq!(body["thresholds"][4]["threshold_id"], mute["id"]);
 
         // Same metric and instance twice for one owner.
         let (status, body) = call(
@@ -458,6 +461,7 @@ db_tests! {
             [
                 ("monitorflow_cpu_usage_ratio".to_owned(), json!("total"), "default".to_owned(), true),
                 (DISK.to_owned(), Value::Null, "site".to_owned(), true),
+                (DISKIO.to_owned(), Value::Null, "default".to_owned(), true),
                 (MEMORY.to_owned(), Value::Null, "default".to_owned(), true),
             ]
         );

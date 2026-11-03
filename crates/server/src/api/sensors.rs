@@ -749,6 +749,7 @@ mod tests {
             entry(false, "memory", "", 10_000, true),
             entry(false, "disk", "", 60_000, false),
             entry(true, "disk", "/data", 60_000, true),
+            entry(false, "diskio", "", 60_000, false),
         ];
         let sensors = effective_sensors(&entries);
         let view: Vec<_> = sensors
@@ -776,6 +777,6 @@ mod tests {
         assert!(defaults
             .iter()
             .all(|s| s.origin == Origin::Default && s.entry_id.is_none()));
-        assert_eq!(defaults.len(), 3);
+        assert_eq!(defaults.len(), 4);
     }
 }

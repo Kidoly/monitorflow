@@ -138,6 +138,35 @@ describe("SensorPage", () => {
     expect(screen.getByText("No incidents on this sensor.")).toBeInTheDocument();
   });
 
+  it("charts a disk's activity under its busy share", async () => {
+    const diskio = { origin: "default", entry_id: null, kind: "diskio", name: "diskio", instance: "", interval_ms: 60_000, timeout_ms: null, params: {} };
+    const fetchMock = stub(
+      {
+        [`GET /api/servers/${ID}/sensors`]: { status: 200, body: { ...config, sensors: [diskio] } },
+        [`GET /api/incidents?server_id=${ID}&limit=500`]: { status: 200, body: { incidents: [], next_cursor: null } },
+      },
+      { status: 200, body: { query: "", series: [{ labels: { instance: "sda" }, points: [[t(13, 0), 2048], [t(14, 30), 4096]] }] } },
+    );
+    render(<SensorPage id={ID} sensor="diskio_busy_ratio" instance="sda" />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Disk busy sda" })).toBeInTheDocument();
+    const read = screen.getByRole("figure", { name: "Read and written" });
+    expect(read).toHaveTextContent("Read");
+    expect(read).toHaveTextContent("Written");
+    for (const name of ["Reads and writes", "Average wait per I/O", "I/Os in flight"]) {
+      expect(screen.getByRole("figure", { name })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("figure", { name: "Busy" })).not.toBeInTheDocument();
+    const metrics = rangeCalls(fetchMock).map((c) => c.metric);
+    expect(new Set(metrics)).toEqual(
+      new Set(
+        ["busy_ratio", "read_bytes_per_second", "written_bytes_per_second", "reads_per_second", "writes_per_second", "wait_seconds", "queue_depth"].map(
+          (m) => `monitorflow_diskio_${m}`,
+        ),
+      ),
+    );
+    expect(rangeCalls(fetchMock).every((c) => c.instance === "sda")).toBe(true);
+  });
+
   it("does not call the API for a malformed sensor", () => {
     const fetchMock = stubFetch({});
     render(<SensorPage id={ID} sensor="../metrics" instance="" />);

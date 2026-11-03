@@ -51,6 +51,8 @@ describe("format", () => {
     expect(unitOf("monitorflow_memory_used_bytes")).toBe("bytes");
     expect(unitOf("monitorflow_http_duration_seconds")).toBe("seconds");
     expect(unitOf("monitorflow_cpu_load1")).toBe("number");
+    expect(unitOf("monitorflow_diskio_written_bytes_per_second")).toBe("bytes_per_second");
+    expect(unitOf("monitorflow_diskio_writes_per_second")).toBe("per_second");
   });
 
   it("formats ratios as percentages and bytes in binary units", () => {
@@ -69,6 +71,9 @@ describe("format", () => {
     expect(formatValue(90, "seconds")).toBe("1.5 min");
     expect(formatSeconds(0.25)).toBe("250 ms");
     expect(formatValue(1234.567, "number")).toBe("1,234.57");
+    expect(formatValue(1536, "bytes_per_second")).toBe("1.5 KiB/s");
+    expect(formatValue(5e8, "bytes_per_second")).toBe("477 MiB/s");
+    expect(formatValue(1234.5, "per_second")).toBe("1,235/s");
     expect(formatValue(null, "ratio")).toBe("–");
   });
 });

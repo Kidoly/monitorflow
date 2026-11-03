@@ -18,7 +18,7 @@ import { SEVERITY_LABELS, type Severity } from "./thresholds";
  * log gets a matching line) that has one fixed trigger and a severity.
  */
 export type Shape =
-  | { type: "percent" | "number"; noun: string; suffix: string }
+  | { type: "percent" | "number"; noun: string; suffix: string; unit?: string }
   | { type: "event"; noun: string; text: string; comparison: Comparison; value: number };
 
 /** The fixed trigger of an event, by sensor kind and metric suffix. */
@@ -58,6 +58,9 @@ export function shapeOf(sensors: EffectiveSensor[], metric: string, instance: st
   if (short === "cpu_usage_ratio") return { type: "percent", noun: "CPU usage", suffix: "" };
   if (short === "memory_available_ratio") return { type: "percent", noun: "available memory", suffix: "" };
   if (short === "disk_used_ratio") return { type: "percent", noun: instance ? `disk ${instance}` : "a disk", suffix: " full" };
+  if (short === "diskio_wait_seconds") {
+    return { type: "number", noun: `the average wait of ${instance ? `disk ${instance}` : "a disk"}`, suffix: "", unit: "s" };
+  }
   const sensor = sensorOf(sensors, metric);
   const event = sensor && EVENTS[sensor.kind];
   if (sensor && event && short === `${sensor.name}_${event.suffix}`) {
@@ -65,7 +68,8 @@ export function shapeOf(sensors: EffectiveSensor[], metric: string, instance: st
     return { type: "event", noun: checkNoun(sensor), text, comparison, value };
   }
   const noun = `${metricTitle(metric)}${instance ? ` ${instance}` : ""}`;
-  return { type: short.endsWith("_ratio") ? "percent" : "number", noun, suffix: "" };
+  if (short.endsWith("_ratio")) return { type: "percent", noun, suffix: "" };
+  return { type: "number", noun, suffix: "", ...(short.endsWith("_seconds") && { unit: "s" }) };
 }
 
 /** An event threshold whose values are not the event's own reads as a number. */
@@ -79,8 +83,10 @@ export function shapeFor(sensors: EffectiveSensor[], rule: EffectiveThreshold): 
 
 const WORDS: Record<Comparison, string> = { ">": "over", ">=": "at or over", "<": "under", "<=": "at or under" };
 
-const show = (shape: Shape, value: number) =>
-  shape.type === "percent" ? `${formatNumber(value * 100, 1)}%` : formatNumber(value);
+const show = (shape: Shape, value: number) => {
+  if (shape.type === "percent") return `${formatNumber(value * 100, 1)}%`;
+  return shape.type === "number" && shape.unit ? `${formatNumber(value)} ${shape.unit}` : formatNumber(value);
+};
 
 /** "Warn when a disk is over 85% full, critical over 95%, for 5 min." */
 export function describeThreshold(shape: Shape, rule: EffectiveThreshold): string {
@@ -363,6 +369,8 @@ export function checkTitle(sensor: EffectiveSensor): string {
       return "Memory";
     case "disk":
       return `Disk space${sensor.instance ? ` ${sensor.instance}` : ""}`;
+    case "diskio":
+      return "Disk activity";
     case "log":
       return `“${sensor.params.pattern ?? ""}” in ${sensor.params.path ?? sensor.name}`;
     case "eventlog":

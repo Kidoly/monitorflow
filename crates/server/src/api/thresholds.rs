@@ -748,6 +748,14 @@ mod tests {
                     true,
                     Some(0.9)
                 ),
+                (
+                    "monitorflow_diskio_wait_seconds".into(),
+                    None,
+                    Origin::Default,
+                    None,
+                    true,
+                    Some(0.2)
+                ),
                 (memory, None, Origin::Default, None, true, Some(0.10)),
             ]
         );

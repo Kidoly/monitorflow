@@ -21,6 +21,13 @@ export const METRIC_TITLES: Record<string, string> = {
   disk_total_bytes: "Disk size",
   disk_inodes_free: "Free inodes",
   disk_inodes: "Inodes",
+  diskio_busy_ratio: "Disk busy",
+  diskio_wait_seconds: "Disk wait",
+  diskio_read_bytes_per_second: "Disk read",
+  diskio_written_bytes_per_second: "Disk written",
+  diskio_reads_per_second: "Disk reads",
+  diskio_writes_per_second: "Disk writes",
+  diskio_queue_depth: "Disk queue",
 };
 
 /** The metric's name without the prefix: `monitorflow_port_open` gives `port_open`. */
@@ -41,14 +48,14 @@ export const DEFAULT_INTERVAL_S = 60;
  * How a long range summarizes `metric` per step (ADR-0020): the worst value
  * of the step. Headroom and health (`available`, `free`, `_up`, `_active`,
  * `_loaded`, `_installed`) take the minimum, so a dip or an outage shows; usage and
- * pressure (ratios, used bytes, load, durations, statuses, failures,
+ * pressure (ratios, used bytes, load, durations, queues, statuses, failures,
  * matches, lag, restarts) take the maximum, so a spike shows. Sizes and
  * custom gauges of unknown meaning take the average.
  */
 export function rollupFor(metric: string): Rollup {
   const short = shortMetric(metric);
   if (/available|free|_(up|active|loaded|installed)$/.test(short)) return "min";
-  if (/(_ratio|_used_bytes|_seconds|_status|_failed|_matches|_lag_bytes|_lag_events|_restarts)$|^cpu_load/.test(short)) {
+  if (/(_ratio|_used_bytes|_seconds|_status|_failed|_matches|_lag_bytes|_lag_events|_restarts|_queue_depth)$|^cpu_load/.test(short)) {
     return "max";
   }
   return "avg";

@@ -48,11 +48,13 @@ export function formatDateTime(iso: string): string {
 }
 
 /** How a metric's values read, from its name's last word (ADR-0015). */
-export type Unit = "ratio" | "bytes" | "seconds" | "number";
+export type Unit = "ratio" | "bytes" | "bytes_per_second" | "per_second" | "seconds" | "number";
 
 export function unitOf(metric: string): Unit {
   if (metric.endsWith("_ratio")) return "ratio";
   if (metric.endsWith("_bytes")) return "bytes";
+  if (metric.endsWith("_bytes_per_second")) return "bytes_per_second";
+  if (metric.endsWith("_per_second")) return "per_second";
   if (metric.endsWith("_seconds")) return "seconds";
   return "number";
 }
@@ -100,6 +102,14 @@ export function formatValue(value: number | null | undefined, unit: Unit): strin
       return formatPercent(value);
     case "bytes":
       return formatBytes(value);
+    case "bytes_per_second": {
+      // Short enough for a chart's axis: 954 MiB/s, not 953.7 MiB/s.
+      const exponent = binaryExponent(value);
+      const scaled = value / 1024 ** exponent;
+      return scaled >= 100 ? `${formatNumber(scaled, 0)} ${formatBytes(value).split(" ")[1]}/s` : `${formatBytes(value)}/s`;
+    }
+    case "per_second":
+      return `${formatNumber(value, value < 10 ? 1 : 0)}/s`;
     case "seconds":
       return formatSeconds(value);
     case "number":
