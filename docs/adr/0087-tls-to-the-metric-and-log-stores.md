@@ -74,6 +74,7 @@ A known gap: a compose file that needs an image `.env` does not pin cannot be ap
 
 - No plaintext link remains between the server and its stores. The ADR-0051 exception is gone, and the stores refuse a request without the password.
 - New installs and installer runs get TLS from the compose file. Installs updated from the web interface switch at that update, with no step on the host.
+- That switch restarts the stack a second time in the update, PostgreSQL included, for about a minute. The update page shows it as steps after the update itself.
 - `storagetls` joins the volumes. `--uninstall --purge` removes it with the others.
 - `serverdata`, with the CA key, is mounted by one more short-lived container, `storage-certs`. It has no network.
 - The updater can now change the compose file, which makes it a bigger part of the deployment to review (ADR-0056). It only writes files its own image carries, which the release signature covers.
