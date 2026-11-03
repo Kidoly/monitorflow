@@ -120,14 +120,20 @@ describe("the threshold form", () => {
 describe("adding a check", () => {
   it("offers what the server's system runs, everything for a site", () => {
     expect(checkTypesFor("debian").map((t) => t.kind)).toEqual(["port", "systemd", "log", "script"]);
-    expect(checkTypesFor("windows").map((t) => t.kind)).toEqual(["port", "windows_service", "eventlog", "script"]);
+    expect(checkTypesFor("windows").map((t) => t.kind)).toEqual(["port", "windows_service", "log", "eventlog", "script"]);
     expect(checkTypesFor(null)).toHaveLength(CHECK_TYPES.length);
+    const path = (os: string | null) => checkTypesFor(os).find((t) => t.kind === "log")!.fields[0]!;
+    expect(path("windows").placeholder).toBe("C:\\Logs\\app.log");
+    expect(path("windows").hint).toMatch(/log_dirs/);
+    expect(path("ubuntu").hint).toBe("Under /var/log unless the agent allows more.");
+    expect(path(null).hint).toMatch(/Linux.*Windows/);
   });
 
   it("names the check after what it watches", () => {
     expect(checkName(type("port"), { port: "443" })).toBe("port_443");
     expect(checkName(type("systemd"), { units: "nginx.service" })).toBe("service_nginx");
     expect(checkName(type("log"), { path: "/var/log/nginx/error.log" })).toBe("log_error");
+    expect(checkName(type("log"), { path: "D:\\Logs\\App\\Service.log" })).toBe("log_service");
     expect(checkName(type("script"), { script: "check-backup.sh" })).toBe("script_check_backup");
     expect(checkName(type("eventlog"), { channel: "System" })).toBe("eventlog_system");
     expect(checkName(type("script"), { script: "x".repeat(80) })).toHaveLength(64);
@@ -138,6 +144,8 @@ describe("adding a check", () => {
     expect(checkErrors(type("port"), { port: "70000", host: "db" })).toEqual({ port: "Enter a port from 1 to 65535." });
     expect(checkErrors(type("systemd"), { units: "a b" }).units).toMatch(/one name/);
     expect(checkErrors(type("log"), { path: "syslog", pattern: "x" }).path).toMatch(/full path/);
+    expect(checkErrors(type("log"), { path: "Logs\\app.log", pattern: "x" }).path).toMatch(/full path/);
+    expect(checkErrors(type("log"), { path: "C:\\Logs\\app.log", pattern: "x" })).toEqual({});
     expect(checkErrors(type("script"), { script: "../x" }).script).toMatch(/file name only/);
     expect(checkErrors(type("port"), { port: "443", host: "127.0.0.1" })).toEqual({});
   });
