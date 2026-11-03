@@ -16,6 +16,7 @@ import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock } from "./ui/PageState";
 import { Label } from "./ui/StatusLabel";
 import type { Tone } from "./ui/tone";
+import { UpdateSource, describeUpdateSource } from "./UpdateSource";
 
 /** The word for where a server's packages come from. */
 function standing(status: SourcesStatus): [string, Tone] {
@@ -40,7 +41,7 @@ const USE_SITE_CONSEQUENCE =
 const BACK_CONSEQUENCE = "Its original package sources are put back exactly as they were.";
 const FAILED = "A change that fails puts the server's own sources back.";
 
-/** The section of a server's Updates tab (ADR-0074). */
+/** The section of a server's Updates tab (ADR-0074); for Windows, its update source (ADR-0086). */
 export function PackageSources({ server }: { server: ServerDetail }) {
   const me = useMe();
   const id = server.id;
@@ -55,6 +56,7 @@ export function PackageSources({ server }: { server: ServerDetail }) {
       <LoadingBlock label="Loading the package sources" />
     );
   }
+  if (server.os_family === "windows") return <UpdateSource source={status.windows_update_source} />;
   const [word, tone] = standing(status);
   const settled = status.changing_to === null && !status.campaign;
   return (
@@ -136,6 +138,12 @@ function Problem({ status }: { status: SourcesStatus }) {
   );
 }
 
+/** A Windows row of the site table: where its updates come from, and what is wrong. */
+function windowsDetails(s: SiteRow): string {
+  const words = describeUpdateSource(s.windows_update_source);
+  return [words.text, ...words.warnings].join(" ");
+}
+
 const count = (n: number) => `${n} ${n === 1 ? "server" : "servers"}`;
 
 /** What a change of the whole site did, server by server. */
@@ -158,7 +166,7 @@ function ChangeResult({ change }: { change: SiteSourcesChange }) {
   );
 }
 
-type SiteRow = SourcesStatus & { id: string; hostname: string };
+type SiteRow = SourcesStatus & { id: string; hostname: string; os_family: string };
 
 /** Every server of a site at once, on the site page (ADR-0074). */
 export function SiteSources({ site }: { site: Site }) {
@@ -190,6 +198,10 @@ export function SiteSources({ site }: { site: Site }) {
       key: "sources",
       header: "Package sources",
       cell: (s) => {
+        if (s.os_family === "windows") {
+          const words = describeUpdateSource(s.windows_update_source);
+          return <Label tone={words.tone}>{words.label}</Label>;
+        }
         const [word, tone] = standing(s);
         return <Label tone={tone}>{word}</Label>;
       },
@@ -200,13 +212,15 @@ export function SiteSources({ site }: { site: Site }) {
       className: styles.reason,
       cell: (s) => (
         <span className={styles.dim}>
-          {s.failed
-            ? `The last change didn't work: ${s.failed}`
-            : s.campaign
-              ? "An update campaign has its sources for now."
-              : s.using === "mirror"
-                ? mirrorsText(s)
-                : (s.problem ?? `Can use ${s.distribution}.`)}
+          {s.os_family === "windows"
+            ? windowsDetails(s)
+            : s.failed
+              ? `The last change didn't work: ${s.failed}`
+              : s.campaign
+                ? "An update campaign has its sources for now."
+                : s.using === "mirror"
+                  ? mirrorsText(s)
+                  : (s.problem ?? `Can use ${s.distribution}.`)}
         </span>
       ),
     },

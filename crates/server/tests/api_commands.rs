@@ -494,6 +494,7 @@ db_tests! {
         let (_, site) = h.send("GET", &format!("/api/sites/{}/sources", h.site), &admin, None).await;
         let row = |id: Uuid| site["servers"].as_array().unwrap().iter().find(|s| s["id"] == json!(id)).unwrap().clone();
         assert_eq!(row(windows)["windows_update_source"]["origin"], "wsus");
+        assert_eq!(row(windows)["os_family"], "windows");
         assert_eq!(row(h.server)["windows_update_source"], Value::Null);
 
         // A report without it, as after a downgrade, clears it.

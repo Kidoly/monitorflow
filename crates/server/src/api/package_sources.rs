@@ -109,6 +109,8 @@ impl SourcesStatus {
 pub struct SiteServer {
     pub id: Uuid,
     pub hostname: String,
+    /// As in the server listing, so Windows rows read differently.
+    pub os_family: String,
     #[serde(flatten)]
     pub status: SourcesStatus,
 }
@@ -504,6 +506,7 @@ pub async fn site(
         .map(|(host, status)| SiteServer {
             id: host.id,
             hostname: host.hostname,
+            os_family: host.os_family,
             status,
         })
         .collect();

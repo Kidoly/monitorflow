@@ -80,7 +80,7 @@
 //! | DELETE | `/api/mirrors/{id}` | global administrator | 202 with the listing item once the mirror is being deleted, in the background, until its detail answers 404; 409 saying what still uses it (ADR-0075) |
 //! | POST | `/api/mirrors/{id}/sync` | global administrator | 202 [`mirrors::RunSummary`] of the started sync; 409 while busy |
 //! | POST | `/api/mirrors/{id}/snapshots` | global administrator | body `{"name"?}`; 202 [`mirrors::RunSummary`]; 409 while busy or never synced |
-//! | GET | `/api/servers/{id}/sources` | a role on the site | [`package_sources::SourcesStatus`]: where the server's packages come from, and why it cannot use a mirror |
+//! | GET | `/api/servers/{id}/sources` | a role on the site | [`package_sources::SourcesStatus`]: where the server's packages come from, and why it cannot use a mirror; for Windows, where Windows Update takes its updates from (ADR-0086) |
 //! | POST | `/api/servers/{id}/sources/use-mirror` | administrator of the customer | 201 with the command pointing the server at the mirrors of its distribution; 409 saying why not |
 //! | GET | `/api/sites/{id}/sources` | a role on the site | [`package_sources::SiteSources`] |
 //! | POST | `/api/sites/{id}/sources/use-mirror` | administrator of the customer | [`package_sources::SiteChange`]: the servers sent the change, those skipped and why |
