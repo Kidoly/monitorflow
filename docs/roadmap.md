@@ -121,9 +121,9 @@ Reach people outside the web interface. Email and webhook channels shipped in Ph
 
 Bring Windows to the level of Linux after Phase 6. The Windows updates list already shows on a server's page (ADR-0049).
 
-- [ ] AI remediation on Windows, where `shell` commands are refused today (ADR-0047).
-- [ ] The file log sensor on Windows, following file IDs through rotation (ADR-0048).
-- [ ] The configured update source in the inventory: WSUS URL or Windows Update (ADR-0049).
+- [x] AI remediation on Windows, where `shell` commands are refused today (ADR-0047).
+- [x] The file log sensor on Windows, following file IDs through rotation (ADR-0048).
+- [x] The configured update source in the inventory: WSUS URL or Windows Update (ADR-0049).
 
 ## Phase 12 — Production hardening
 
