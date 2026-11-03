@@ -110,6 +110,13 @@
 //! | GET | `/api/servers/{id}/metrics` | read | [`metrics::MetricList`]: metric names and instances of the last day |
 //! | GET | `/api/metrics/query` | read | [`metrics::QueryResult`], see below |
 //! | GET | `/api/metrics/query_range` | read | [`metrics::QueryResult`], see below |
+//! | GET | `/api/dashboards` | any role | [`dashboards::DashboardList`]: the user's own, its sites' and its customers' as a whole (ADR-0095) |
+//! | POST | `/api/dashboards` | the owner, or modify the site or customer | body [`dashboards::DashboardRequest`]; 201 [`dashboards::DashboardView`]; panels may name only what the editor reads, within the sharing; audited |
+//! | GET | `/api/dashboards/{id}` | see it | [`dashboards::DashboardView`] with its `spec` and `revision` |
+//! | PUT | `/api/dashboards/{id}` | edit it, and the new sharing | body [`dashboards::DashboardRequest`] with `revision`; 409 when someone saved since; audited |
+//! | DELETE | `/api/dashboards/{id}` | edit it | 204; audited |
+//! | POST | `/api/dashboard-data` | any role | body [`dashboard_data::DataRequest`]; [`dashboard_data::DataResponse`]: every panel at once, for the servers the user reads within `within`; a failed panel has an `error` sentence |
+//! | GET | `/api/dashboard-metrics` | any role | optional `site_id`, `customer_id`, `metric`; [`dashboard_data::Catalog`]: metrics reported in the last day, and the instances of `metric` |
 //! | GET | `/api/servers/{id}/packages` | read | [`packages::PackageList`], see below |
 //! | GET | `/api/servers/{id}/commands` | read | [`commands::CommandList`], newest first, paginated |
 //! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
@@ -529,6 +536,8 @@ pub mod campaigns;
 pub mod certificate_authority;
 pub mod commands;
 pub mod customers;
+pub mod dashboard_data;
+pub mod dashboards;
 mod error;
 pub mod follow_up;
 mod health;
@@ -682,6 +691,8 @@ pub struct ApiState {
     pub release_import: release_import::ImportLock,
     /// Changes the certificate authority (ADR-0088); `None` refuses to.
     pub ca_rotation: Option<crate::ca_rotation::Rotator>,
+    /// Recent dashboard query answers (ADR-0095).
+    pub dashboard_cache: Arc<dashboard_data::Cache>,
 }
 
 impl ApiState {
@@ -699,6 +710,7 @@ impl ApiState {
             campaigns: None,
             release_import: release_import::ImportLock::default(),
             ca_rotation: None,
+            dashboard_cache: Arc::default(),
         }
     }
 
@@ -898,6 +910,18 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/servers/{id}/metrics", get(metrics::discover))
         .route("/api/metrics/query", get(metrics::query))
         .route("/api/metrics/query_range", get(metrics::query_range))
+        .route(
+            "/api/dashboards",
+            get(dashboards::list).post(dashboards::create),
+        )
+        .route(
+            "/api/dashboards/{id}",
+            get(dashboards::detail)
+                .put(dashboards::update)
+                .delete(dashboards::delete),
+        )
+        .route("/api/dashboard-data", post(dashboard_data::data))
+        .route("/api/dashboard-metrics", get(dashboard_data::catalog))
         .route(
             "/api/servers/{id}/sensor_configs",
             get(sensors::list_server).post(sensors::create_server),
