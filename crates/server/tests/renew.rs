@@ -379,7 +379,7 @@ db_tests! {
         let names = [ServerName::Dns("localhost".into()), ServerName::Ip(Ipv4Addr::LOCALHOST.into())];
         let server_id = PeerIdentity::new(PeerRole::Server, "central").unwrap();
         let cert = pki.ca.issue(&csr(&key, "central", vec![]), &server_id, None, &names).unwrap();
-        let server = write_identity(dir.path(), "server", pki.ca.ca_cert_pem(), &cert.cert_pem, &key.serialize_pem());
+        let server = write_identity(dir.path(), "server", &pki.ca.ca_cert_pem(), &cert.cert_pem, &key.serialize_pem());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("https://localhost:{}", listener.local_addr().unwrap().port());
         let (_, rx) = watch::channel(server.server_config(vec![pki.ca.crl().unwrap()]).unwrap());
@@ -387,11 +387,11 @@ db_tests! {
         tokio::spawn(grpc::serve_with_renewer(listener, rx, service, Some(pki.renewer(&pool)), std::future::pending()));
 
         let agent = pki.enroll(&pool, PeerRole::Agent, "web-01").await;
-        let identity = write_identity(dir.path(), "agent", pki.ca.ca_cert_pem(), &agent.cert_pem, &agent.key_pem);
+        let identity = write_identity(dir.path(), "agent", &pki.ca.ca_cert_pem(), &agent.cert_pem, &agent.key_pem);
         let channel = tls::connect(&url, identity.client_config().unwrap(), TIMEOUT).await.unwrap();
         let mut client = CertificateServiceClient::new(channel);
         let reply = client
-            .renew(RenewRequest { csr_pem: csr(&KeyPair::generate().unwrap(), "web-02", vec![]), names_only: false })
+            .renew(RenewRequest { csr_pem: csr(&KeyPair::generate().unwrap(), "web-02", vec![]), names_only: false, ..Default::default() })
             .await
             .unwrap()
             .into_inner();
@@ -400,7 +400,7 @@ db_tests! {
         assert!(reply.not_after_unix > 0);
         assert_ne!(presented(&reply.cert_pem).serial, agent.presented.serial);
 
-        let status = client.renew(RenewRequest { csr_pem: "x".repeat(32 * 1024), names_only: false }).await.unwrap_err();
+        let status = client.renew(RenewRequest { csr_pem: "x".repeat(32 * 1024), names_only: false, ..Default::default() }).await.unwrap_err();
         assert_eq!(status.code(), Code::OutOfRange, "{status:?}");
     }
 }

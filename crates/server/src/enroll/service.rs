@@ -7,9 +7,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use monitorflow_common::proto::v1::enroll_service_server::{EnrollService, EnrollServiceServer};
 use monitorflow_common::proto::v1::{EnrollRequest, EnrollResponse};
-use monitorflow_common::tls::{
-    self, AcceptOptions, EnrollmentToken, PeerIdentity, PeerRole,
-};
+use monitorflow_common::tls::{self, AcceptOptions, EnrollmentToken, PeerIdentity, PeerRole};
 use rcgen::CertificateSigningRequestParams;
 use rustls::ServerConfig as TlsServerConfig;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -452,6 +450,18 @@ impl EnrollService for Enroller {
 /// client certificates (`Identity::server_config_without_client_auth`),
 /// until `shutdown` resolves.
 pub async fn serve(
+    listener: TcpListener,
+    tls: Arc<TlsServerConfig>,
+    enroller: Enroller,
+    shutdown: impl Future<Output = ()>,
+) -> Result<(), tonic::transport::Error> {
+    let (_fixed, tls) = watch::channel(tls);
+    serve_following(listener, tls, enroller, shutdown).await
+}
+
+/// [`serve`] with the TLS configuration current in `tls` for each new
+/// connection: the server's certificate changes with its CA (ADR-0088).
+pub async fn serve_following(
     listener: TcpListener,
     tls: watch::Receiver<Arc<TlsServerConfig>>,
     enroller: Enroller,

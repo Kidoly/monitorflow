@@ -208,7 +208,7 @@ impl Harness {
 
     fn revoked_in_crl(&self) -> Vec<Vec<u8>> {
         let der = self.crl.as_ref().unwrap().subscribe().borrow().clone();
-        let (_, crl) = CertificateRevocationList::from_der(der.as_ref()).unwrap();
+        let (_, crl) = CertificateRevocationList::from_der(der[0].as_ref()).unwrap();
         crl.iter_revoked_certificates()
             .map(|r| r.raw_serial().to_vec())
             .collect()

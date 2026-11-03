@@ -96,9 +96,12 @@ async fn main() -> anyhow::Result<()> {
         identity,
     );
     tokio::spawn(renewal.awaiting_names(names::lacks_names).run(stop.clone()));
-    let ca_certs = monitorflow_common::tls::load_certs(&config.tls_paths().ca_cert)
-        .context("loading the CA certificate")?;
-    let commands = self_update::start(&relay_id, ca_certs, &config.data_dir, stop.clone());
+    let commands = self_update::start(
+        &relay_id,
+        identities.clone(),
+        &config.data_dir,
+        stop.clone(),
+    );
     let (control, upstream_up) =
         Control::new(ControlSettings::from_config(&config), identities.clone());
     let control = control

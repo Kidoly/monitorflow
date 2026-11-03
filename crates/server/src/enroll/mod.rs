@@ -11,7 +11,7 @@ mod service;
 pub mod token;
 
 pub use limiter::FailureLimiter;
-pub use service::{serve, EnrollError, Enrolled, Enroller};
+pub use service::{serve, serve_following, EnrollError, Enrolled, Enroller};
 
 use monitorflow_common::tls::Fingerprint;
 

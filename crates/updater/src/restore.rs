@@ -9,6 +9,7 @@ use monitorflow_common::server_update::backup::{Manifest, DATABASE};
 
 use crate::backup::{extract_database, extract_serverdata};
 use crate::host::Host;
+use crate::retired_ca;
 
 /// Replaces the database and the server's data with those of `archive`,
 /// then starts the deployment. `work` is an empty directory for the
@@ -57,7 +58,16 @@ pub async fn restore(
         .map_err(|e| format!("database restore failed: {e}"))?;
     if manifest.serverdata {
         say("restoring the server data");
+        let retired = retired_ca::read(serverdata_dir)
+            .map_err(|e| format!("reading the retired certificate authorities: {e}"))?;
         extract_serverdata(archive, serverdata_dir).await?;
+        match retired_ca::put_back(serverdata_dir, &retired) {
+            Ok(Some(warning)) => say(&format!("warning: {warning}")),
+            Ok(None) => {}
+            Err(e) => say(&format!(
+                "warning: cannot keep the retired certificate authorities: {e}"
+            )),
+        }
     } else {
         say("the backup has no server data: the current one is kept");
     }

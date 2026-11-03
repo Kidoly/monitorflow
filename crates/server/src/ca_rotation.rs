@@ -75,7 +75,10 @@ pub struct PeerState {
 }
 
 /// Every peer with a valid certificate, as the fleet stands now.
-pub async fn fleet(pool: &PgPool, ca: &CertificateAuthority) -> Result<Vec<PeerState>, sqlx::Error> {
+pub async fn fleet(
+    pool: &PgPool,
+    ca: &CertificateAuthority,
+) -> Result<Vec<PeerState>, sqlx::Error> {
     let rows: Vec<FleetRow> = sqlx::query_as(
         "WITH latest AS (
              SELECT DISTINCT ON (peer_role, peer_id)
@@ -98,23 +101,25 @@ pub async fn fleet(pool: &PgPool, ca: &CertificateAuthority) -> Result<Vec<PeerS
     let trust = ca.trust();
     Ok(rows
         .into_iter()
-        .map(|(role, peer_id, name, last_seen_at, not_after, issuer, trusted)| {
-            let issuer = issuer.as_deref().and_then(from_hex);
-            let fingerprints: Vec<Fingerprint> = match &trusted {
-                Some(list) => list.iter().filter_map(|fp| from_hex(fp)).collect(),
-                None => issuer.into_iter().collect(),
-            };
-            PeerState {
-                role,
-                peer_id,
-                name,
-                last_seen_at,
-                not_after,
-                moved: issuer == Some(trust.issuer),
-                trusts_all: trust.bundle.iter().all(|fp| fingerprints.contains(fp)),
-                too_old: trusted.is_none(),
-            }
-        })
+        .map(
+            |(role, peer_id, name, last_seen_at, not_after, issuer, trusted)| {
+                let issuer = issuer.as_deref().and_then(from_hex);
+                let fingerprints: Vec<Fingerprint> = match &trusted {
+                    Some(list) => list.iter().filter_map(|fp| from_hex(fp)).collect(),
+                    None => issuer.into_iter().collect(),
+                };
+                PeerState {
+                    role,
+                    peer_id,
+                    name,
+                    last_seen_at,
+                    not_after,
+                    moved: issuer == Some(trust.issuer),
+                    trusts_all: trust.bundle.iter().all(|fp| fingerprints.contains(fp)),
+                    too_old: trusted.is_none(),
+                }
+            },
+        )
         .collect())
 }
 
@@ -202,7 +207,10 @@ impl Rotator {
             .execute(&self.pool)
             .await?;
         if done.rows_affected() > 0 {
-            tracing::info!(certificates = done.rows_affected(), "recorded the issuer of earlier certificates");
+            tracing::info!(
+                certificates = done.rows_affected(),
+                "recorded the issuer of earlier certificates"
+            );
         }
         Ok(())
     }
@@ -246,7 +254,10 @@ impl Rotator {
             return Ok(0);
         };
         let fleet = fleet(&self.pool, &self.ca).await?;
-        Ok(fleet.iter().filter(|p| is_waiting(rotation.stage, p)).count())
+        Ok(fleet
+            .iter()
+            .filter(|p| is_waiting(rotation.stage, p))
+            .count())
     }
 
     async fn step(&self, actor: Actor<'_>, waiting: usize) -> Result<(), RotationError> {

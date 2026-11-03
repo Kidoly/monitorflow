@@ -310,14 +310,19 @@ pub(crate) fn verify_issued_by(cert_pem: &str, ca_cert_pem: &str) -> Result<(), 
             .map_err(|e| EnrollError::BadResponse(format!("ca_cert_pem: {e}")))?;
     }
     let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
-    rustls::server::WebPkiClientVerifier::builder_with_provider(std::sync::Arc::new(roots), provider)
-        .build()
-        .map_err(|e| EnrollError::BadResponse(e.to_string()))?
-        .verify_client_cert(&chain[0], &chain[1..], rustls::pki_types::UnixTime::now())
-        .map(drop)
-        .map_err(|e| {
-            EnrollError::BadResponse(format!("the certificate does not verify against ca_cert_pem: {e}"))
-        })
+    rustls::server::WebPkiClientVerifier::builder_with_provider(
+        std::sync::Arc::new(roots),
+        provider,
+    )
+    .build()
+    .map_err(|e| EnrollError::BadResponse(e.to_string()))?
+    .verify_client_cert(&chain[0], &chain[1..], rustls::pki_types::UnixTime::now())
+    .map(drop)
+    .map_err(|e| {
+        EnrollError::BadResponse(format!(
+            "the certificate does not verify against ca_cert_pem: {e}"
+        ))
+    })
 }
 
 /// The certificate must hold our key, name `role`, and match `peer_uri`.

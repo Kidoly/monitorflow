@@ -133,7 +133,10 @@ pub(crate) fn fit(
         .build()
         .map_err(|e| CaError::Signing(e.to_string()))
     };
-    let (active, trusted) = (verifier(&ca.ca_cert_pem())?, verifier(&ca.trust_bundle_pem())?);
+    let (active, trusted) = (
+        verifier(&ca.ca_cert_pem())?,
+        verifier(&ca.trust_bundle_pem())?,
+    );
     let end_entity = CertificateDer::from(der.as_slice());
     for name in names {
         let name = match name {

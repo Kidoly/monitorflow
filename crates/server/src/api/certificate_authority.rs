@@ -12,7 +12,7 @@ use super::auth::CurrentUser;
 use super::server_update::require_global_admin;
 use super::{ApiError, ApiState};
 use crate::ca::{CaError, CaInfo, Stage};
-use crate::ca_rotation::{self, Actor, PeerState, Rotator, RotationError};
+use crate::ca_rotation::{self, Actor, PeerState, RotationError, Rotator};
 use crate::renew::hex;
 
 /// Peers listed by name; the rest are only counted.

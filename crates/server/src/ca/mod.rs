@@ -53,8 +53,8 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 
 pub use revocation::RevocationReason;
 use revocation::Revocations;
-pub use rotation::{CaInfo, CaStatus, Retired, Rotation, Stage};
 use rotation::RotationState;
+pub use rotation::{CaInfo, CaStatus, Retired, Rotation, Stage};
 
 pub const KEY_FILE: &str = "ca-key.pem";
 pub const CERT_FILE: &str = "ca-cert.pem";

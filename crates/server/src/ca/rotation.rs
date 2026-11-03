@@ -299,7 +299,11 @@ impl CertificateAuthority {
     }
 
     fn switch_locked(&self, state: &mut RotationState, emergency: bool) -> Result<(), CaError> {
-        let Some(rotation) = state.rotation.clone().filter(|r| r.stage == Stage::Introduced) else {
+        let Some(rotation) = state
+            .rotation
+            .clone()
+            .filter(|r| r.stage == Stage::Introduced)
+        else {
             return Err(CaError::InvalidRequest(
                 "no new certificate authority is waiting to take over".into(),
             ));
@@ -335,7 +339,10 @@ impl CertificateAuthority {
     pub fn retire(&self) -> Result<Retired, CaError> {
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
         let (Some(rotation), Some(old)) = (
-            state.rotation.clone().filter(|r| r.stage == Stage::Switched),
+            state
+                .rotation
+                .clone()
+                .filter(|r| r.stage == Stage::Switched),
             state.other.clone(),
         ) else {
             return Err(CaError::InvalidRequest(

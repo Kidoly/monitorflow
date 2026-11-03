@@ -71,9 +71,7 @@ impl From<RenewError> for Status {
             RenewError::Refused(_) => Status::permission_denied(message),
             RenewError::TooSoon(_) => Status::resource_exhausted(message),
             RenewError::InvalidCsr => Status::invalid_argument(message),
-            RenewError::NoNewNames | RenewError::NoRotation => {
-                Status::failed_precondition(message)
-            }
+            RenewError::NoNewNames | RenewError::NoRotation => Status::failed_precondition(message),
             RenewError::Internal(_) => Status::internal("renewal failed"),
         }
     }
@@ -420,7 +418,14 @@ impl Renewer {
 }
 
 /// `peer_role`, `peer_id`, revoked, expired, `issuer_ca`, `trusted_cas`.
-type Recorded = (String, String, bool, bool, Option<String>, Option<Vec<String>>);
+type Recorded = (
+    String,
+    String,
+    bool,
+    bool,
+    Option<String>,
+    Option<Vec<String>>,
+);
 
 /// Issues a certificate for `peer` (in `spawn_blocking`) with the CAs it
 /// goes with. A change of certificate authority in between fails the call,

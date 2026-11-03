@@ -19,10 +19,10 @@ use monitorflow_server::api::{
 };
 use monitorflow_server::auto_update::AutoUpdate;
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
+use monitorflow_server::ca_rotation::{self, Rotator};
 use monitorflow_server::campaign::{self, Runner};
 use monitorflow_server::cluster::{self, Cluster, Links};
 use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings};
-use monitorflow_server::ca_rotation::{self, Rotator};
 use monitorflow_server::crl::{self, CrlPublisher};
 use monitorflow_server::db;
 use monitorflow_server::enroll::{self, server_cert, token, Enroller, FailureLimiter};
@@ -564,7 +564,7 @@ async fn main() -> anyhow::Result<()> {
             .context("gRPC server")
         },
         async {
-            enroll::serve(
+            enroll::serve_following(
                 enroll_listener,
                 crl.enroll_config(),
                 enroller,
