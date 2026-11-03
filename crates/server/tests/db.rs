@@ -152,6 +152,7 @@ db_tests! {
                 "cluster_leases",
                 "commands",
                 "customers",
+                "dashboards",
                 "enrollment_tokens",
                 "follow_up_policies",
                 "incident_acknowledgements",
