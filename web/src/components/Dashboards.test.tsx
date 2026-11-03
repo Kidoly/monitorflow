@@ -273,6 +273,8 @@ describe("Dashboards", () => {
     await userEvent.click(await screen.findByRole("button", { name: "7 d" }));
     expect(window.location.search).toContain("range=7d");
     await vi.waitFor(() => expect(bodyOf(fetchMock, "POST /api/dashboard-data").range).toBe("7d"));
+    // The sharing's name stays out of the request, which the API would refuse.
+    expect(bodyOf(fetchMock, "POST /api/dashboard-data").within).toEqual({ kind: "customer", id: "c1" });
   });
 
   it("edits, arranges and saves with the revision, and says when someone saved first", async () => {

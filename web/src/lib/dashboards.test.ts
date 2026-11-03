@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { DashboardSpec, Panel, Server } from "./api";
+import type { DashboardSpec, Panel, Server, Sharing } from "./api";
 import {
   READY_MADE,
   copyName,
@@ -115,6 +115,7 @@ describe("dashboards", () => {
     expect(sharingLabel({ kind: "customer", id: "1", name: "acme" })).toBe("Customer acme");
     expect(withinOf({ kind: "personal" })).toEqual({ kind: "all" });
     expect(withinOf({ kind: "site", id: "1" })).toEqual({ kind: "site", id: "1" });
+    expect(withinOf({ kind: "customer", id: "1", name: "acme" } as Sharing)).toEqual({ kind: "customer", id: "1" });
   });
 
   it("offer the servers of their sharing, without removed ones", () => {

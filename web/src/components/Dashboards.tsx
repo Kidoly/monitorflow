@@ -390,7 +390,9 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
             </option>
           ))}
         </select>
-        <span className={admin.fieldNote}>Its viewers see it; its operators change it.</span>
+        <span className={admin.fieldNote}>
+          {draft.shared_with.kind === "personal" ? "Only you see it." : "Everyone there sees it; its operators change it."}
+        </span>
       </label>
       <label className={admin.field}>
         Opens on
@@ -423,7 +425,16 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
       <PageHeader
         detail
         title={shown.name || "New dashboard"}
-        status={<Label tone="neutral">{builtIn ? "Ready-made" : sharingLabel(saved?.shared_with ?? shown.shared_with)}</Label>}
+        status={
+          <Label tone="neutral">
+            {builtIn
+              ? "Ready-made"
+              : draft
+                ? (sharingOptions(me, servers ?? [], draft.shared_with).find((o) => o.value === sharingValue(draft.shared_with))?.label ??
+                  sharingLabel(draft.shared_with))
+                : sharingLabel(saved?.shared_with ?? shown.shared_with)}
+          </Label>
+        }
         meta={panels.length > 0 ? <RefreshLine updatedAt={updatedAt} stale={stale} intervalMs={DASHBOARD_REFRESH_MS} /> : undefined}
         actions={
           !draft && (
@@ -510,7 +521,7 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
               <DashboardPanel panel={panel} data={byId.get(panel.id)} window={data} scope={scope} />
               {draft && (
                 <div className={styles.tools} role="group" aria-label={`Arrange ${panel.title}`}>
-                  <Button size="small" onClick={() => setEditing(index)} disabled={!servers || editing !== null}>
+                  <Button size="small" onClick={() => setEditing(index)} disabled={!servers || editing !== null} aria-label={`Edit ${panel.title}`}>
                     Edit
                   </Button>
                   <Button size="small" onClick={() => setPanels(movePanel(panels, index, -1))} disabled={index === 0} aria-label={`Move ${panel.title} earlier`}>

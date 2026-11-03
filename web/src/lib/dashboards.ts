@@ -179,7 +179,8 @@ export function dropMissingServers(spec: DashboardSpec, known: ReadonlySet<strin
 
 /** What a dashboard so shared can show at most. */
 export function withinOf(sharing: Sharing): Within {
-  return sharing.kind === "personal" ? { kind: "all" } : sharing;
+  // Only the kind and id: the API refuses other fields, like a display name.
+  return sharing.kind === "personal" ? { kind: "all" } : { kind: sharing.kind, id: sharing.id };
 }
 
 /** "Only me", "Site paris", "Customer acme". */
