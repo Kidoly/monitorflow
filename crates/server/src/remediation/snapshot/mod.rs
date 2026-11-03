@@ -2,9 +2,9 @@
 //!
 //! An arbitrary shell command cannot be undone reliably, so before the
 //! remediation loop runs a low- or high-impact command it asks a
-//! [`Snapshotter`] for a snapshot of the server. Proxmox VE VM snapshots
-//! come first ([`ProxmoxSnapshotter`]); LVM, Btrfs and ZFS may follow
-//! behind the same trait. A server without snapshot support gets
+//! [`Snapshotter`] for a snapshot of the server. Proxmox VE snapshots of
+//! VMs and containers come first ([`ProxmoxSnapshotter`], ADR-0093); LVM,
+//! Btrfs and ZFS may follow behind the same trait. A server without snapshot support gets
 //! [`Support::Unavailable`], and the interface shows that rollback is
 //! limited.
 //!
@@ -14,6 +14,7 @@
 //! retention. [`SnapshotHook`] is what the remediation loop calls
 //! (ADR-0046).
 
+pub mod check;
 pub mod hook;
 pub mod proxmox;
 pub mod store;
@@ -24,19 +25,18 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use uuid::Uuid;
 
 pub use hook::SnapshotHook;
 pub use proxmox::{ProxmoxClient, ProxmoxOptions, ProxmoxSnapshotter};
-pub use store::VmRef;
+pub use store::{GuestKind, Mapped, VmRef};
 
 /// Longest error text kept from a Proxmox answer or task.
 const MAX_MESSAGE: usize = 512;
 
 /// Why a server cannot be snapshotted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unsupported {
     /// `[proxmox]` is off.
     Disabled,
@@ -44,15 +44,40 @@ pub enum Unsupported {
     NotMapped,
     /// The mapping names a cluster missing from the configuration.
     UnknownCluster,
+    /// Proxmox refuses snapshots of the guest: its storage or a mount
+    /// point cannot take them (ADR-0093).
+    CannotSnapshot(GuestKind),
+}
+
+impl Unsupported {
+    /// The code the API answers: `disabled`, `not_mapped`,
+    /// `unknown_cluster` or `cannot_snapshot`.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::NotMapped => "not_mapped",
+            Self::UnknownCluster => "unknown_cluster",
+            Self::CannotSnapshot(_) => "cannot_snapshot",
+        }
+    }
+}
+
+impl Serialize for Unsupported {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.code())
+    }
 }
 
 impl fmt::Display for Unsupported {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Disabled => "snapshots are not enabled",
-            Self::NotMapped => "the server is not mapped to a Proxmox VM",
-            Self::UnknownCluster => "the server's Proxmox cluster is not configured",
-        })
+        match self {
+            Self::Disabled => f.write_str("snapshots are not enabled"),
+            Self::NotMapped => f.write_str("the server is not mapped to a Proxmox VM"),
+            Self::UnknownCluster => f.write_str("the server's Proxmox cluster is not configured"),
+            Self::CannotSnapshot(kind) => {
+                write!(f, "the {}'s storage cannot take snapshots", kind.noun())
+            }
+        }
     }
 }
 
@@ -65,16 +90,19 @@ pub enum Support {
 
 impl Support {
     /// From a server's mapping and the configured clusters: available only
-    /// when the integration is on, the server mapped and its cluster
-    /// configured.
-    pub fn of(enabled: bool, clusters: &[String], mapping: Option<VmRef>) -> Self {
+    /// when the integration is on, the server mapped, its cluster
+    /// configured and Proxmox not known to refuse snapshots of the guest.
+    pub fn of(enabled: bool, clusters: &[String], mapping: Option<Mapped>) -> Self {
         match mapping {
             _ if !enabled => Self::Unavailable(Unsupported::Disabled),
             None => Self::Unavailable(Unsupported::NotMapped),
-            Some(vm) if !clusters.contains(&vm.cluster) => {
+            Some(m) if !clusters.contains(&m.vm.cluster) => {
                 Self::Unavailable(Unsupported::UnknownCluster)
             }
-            Some(vm) => Self::Available(vm),
+            Some(m) if m.cannot_snapshot.is_some() => {
+                Self::Unavailable(Unsupported::CannotSnapshot(m.vm.kind))
+            }
+            Some(m) => Self::Available(m.vm),
         }
     }
 

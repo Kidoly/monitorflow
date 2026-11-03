@@ -38,7 +38,7 @@ use monitorflow_server::relay_commands::RelayCommands;
 use monitorflow_server::release_check;
 use monitorflow_server::remediation::context::Backends;
 use monitorflow_server::remediation::runner::{self, Remediation};
-use monitorflow_server::remediation::snapshot::{ProxmoxSnapshotter, SnapshotHook};
+use monitorflow_server::remediation::snapshot::{self, ProxmoxSnapshotter, SnapshotHook};
 use monitorflow_server::remediation::switch;
 use monitorflow_server::renew::Renewer;
 use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
@@ -528,6 +528,17 @@ async fn main() -> anyhow::Result<()> {
     let remediation =
         remediation_loop(&config, storage.as_ref(), pool.clone(), commands.clone()).await?;
     let remediation_pool = pool.clone();
+    // Whether Proxmox can snapshot each mapped guest (ADR-0093); `None`
+    // with `[proxmox]` off.
+    let proxmox_checks = if config.proxmox.enabled {
+        Some(
+            ProxmoxSnapshotter::from_config(pool.clone(), &config.proxmox)
+                .await
+                .context("Proxmox")?,
+        )
+    } else {
+        None
+    };
     // Notifications (ADR-0060): the outbox the database triggers fill.
     let notify_pool = pool.clone();
     // The daily look for a newer release (ADR-0061).
@@ -658,6 +669,15 @@ async fn main() -> anyhow::Result<()> {
                     )
                     .await;
                 }
+            }
+            Ok(())
+        },
+        async {
+            if let Some(checks) = &proxmox_checks {
+                cluster::lead(cluster.leadership(), stopped.clone(), |until| {
+                    snapshot::check::run(checks.clone(), until)
+                })
+                .await;
             }
             Ok(())
         },

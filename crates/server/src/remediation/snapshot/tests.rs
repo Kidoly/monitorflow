@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use monitorflow_common::redact::Secret;
 use uuid::Uuid;
 
-use super::store::{beyond_retention, VmRef};
+use super::store::{beyond_retention, GuestKind, Mapped, VmRef};
 use super::*;
 
 fn vm(cluster: &str, node: &str, vmid: u32) -> VmRef {
@@ -12,7 +12,15 @@ fn vm(cluster: &str, node: &str, vmid: u32) -> VmRef {
         cluster: cluster.into(),
         node: node.into(),
         vmid,
+        kind: GuestKind::Qemu,
     }
+}
+
+fn mapped(vm: VmRef) -> Option<Mapped> {
+    Some(Mapped {
+        vm,
+        cannot_snapshot: None,
+    })
 }
 
 fn options() -> ProxmoxOptions {
@@ -61,26 +69,69 @@ fn requests_name_and_describe_the_step() {
 #[test]
 fn support_needs_the_integration_a_mapping_and_its_cluster() {
     let clusters = vec!["pve".to_owned()];
-    let mapped = Some(vm("pve", "node1", 101));
+    let one = mapped(vm("pve", "node1", 101));
     assert_eq!(
-        Support::of(true, &clusters, mapped.clone()),
+        Support::of(true, &clusters, one.clone()),
         Support::Available(vm("pve", "node1", 101))
     );
     assert_eq!(
-        Support::of(false, &clusters, mapped).reason(),
+        Support::of(false, &clusters, one).reason(),
         Some(Unsupported::Disabled)
     );
     assert_eq!(
         Support::of(true, &clusters, None).reason(),
         Some(Unsupported::NotMapped)
     );
-    let other = Support::of(true, &clusters, Some(vm("lab", "node1", 101)));
+    let other = Support::of(true, &clusters, mapped(vm("lab", "node1", 101)));
     assert_eq!(other.reason(), Some(Unsupported::UnknownCluster));
     assert!(!other.is_available());
     assert_eq!(
         serde_json::to_value(Unsupported::UnknownCluster).unwrap(),
         "unknown_cluster"
     );
+}
+
+#[test]
+fn a_guest_proxmox_cannot_snapshot_limits_rollback() {
+    let clusters = vec!["pve".to_owned()];
+    let container = VmRef {
+        kind: GuestKind::Lxc,
+        ..vm("pve", "node1", 104)
+    };
+    let refused = Some(Mapped {
+        vm: container.clone(),
+        cannot_snapshot: Some("rootfs is on storage local (dir)".into()),
+    });
+    let support = Support::of(true, &clusters, refused);
+    let reason = support.reason().unwrap();
+    assert_eq!(reason, Unsupported::CannotSnapshot(GuestKind::Lxc));
+    assert_eq!(
+        reason.to_string(),
+        "the container's storage cannot take snapshots"
+    );
+    assert_eq!(serde_json::to_value(reason).unwrap(), "cannot_snapshot");
+    assert_eq!(
+        Unsupported::CannotSnapshot(GuestKind::Qemu).to_string(),
+        "the VM's storage cannot take snapshots"
+    );
+    // Off or unmapped wins over what an old check found.
+    assert_eq!(
+        Support::of(true, &clusters, mapped(container)),
+        Support::Available(VmRef {
+            kind: GuestKind::Lxc,
+            ..vm("pve", "node1", 104)
+        })
+    );
+}
+
+#[test]
+fn guest_kinds_name_their_api_path() {
+    assert_eq!(GuestKind::Qemu.as_str(), "qemu");
+    assert_eq!(GuestKind::Lxc.as_str(), "lxc");
+    assert_eq!(GuestKind::parse("lxc"), Some(GuestKind::Lxc));
+    assert_eq!(GuestKind::parse("openvz"), None);
+    assert_eq!(GuestKind::default(), GuestKind::Qemu);
+    assert_eq!(serde_json::to_value(GuestKind::Lxc).unwrap(), "lxc");
 }
 
 #[test]
@@ -285,6 +336,7 @@ async fn the_hook_falls_back_without_support_and_fails_on_errors() {
         Unsupported::Disabled,
         Unsupported::NotMapped,
         Unsupported::UnknownCluster,
+        Unsupported::CannotSnapshot(GuestKind::Lxc),
     ] {
         let (snapshots, hook) = scripted(Support::Unavailable(reason), || unreachable!());
         let recorded = hook.before_change(&change("x")).await.unwrap();

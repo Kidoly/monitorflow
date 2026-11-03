@@ -1,14 +1,15 @@
-//! Proxmox VE VM snapshots over the HTTPS REST API (ADR-0044).
+//! Proxmox VE snapshots of VMs and containers over the HTTPS REST API
+//! (ADR-0044, ADR-0093).
 //!
 //! [`ProxmoxClient`] speaks to one cluster with an API token
 //! (`Authorization: PVEAPIToken=user@realm!tokenid=secret`): it starts
 //! snapshot, rollback and deletion tasks under
-//! `/api2/json/nodes/{node}/qemu/{vmid}/snapshot` and polls
+//! `/api2/json/nodes/{node}/{qemu|lxc}/{vmid}/snapshot` and polls
 //! `/nodes/{node}/tasks/{upid}/status` until they stop. Certificates are
 //! always verified, against the cluster's `ca_file` alone when set.
 //!
-//! [`ProxmoxSnapshotter`] maps servers to VMs with the database and keeps
-//! the newest `keep_snapshots` snapshots it took per VM.
+//! [`ProxmoxSnapshotter`] maps servers to guests with the database and
+//! keeps the newest `keep_snapshots` snapshots it took per guest.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -25,6 +26,7 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::check::{self, Check};
 use super::store::{self, VmRef};
 use super::{
     bounded, Snapshot, SnapshotError, SnapshotName, SnapshotRequest, Snapshotter, Support,
@@ -160,33 +162,89 @@ impl ProxmoxClient {
     ) -> Result<String, SnapshotError> {
         let vmid = vm.vmid.to_string();
         let form = [("snapname", name), ("description", description)];
-        let path = ["nodes", &vm.node, "qemu", &vmid, "snapshot"];
-        upid(self.call(Method::POST, &path, Some(&form)).await?)
+        let path = ["nodes", &vm.node, vm.kind.as_str(), &vmid, "snapshot"];
+        upid(self.call(Method::POST, &path, &[], Some(&form)).await?)
     }
 
     pub async fn delete_snapshot(&self, vm: &VmRef, name: &str) -> Result<String, SnapshotError> {
         let vmid = vm.vmid.to_string();
-        let path = ["nodes", &vm.node, "qemu", &vmid, "snapshot", name];
-        upid(self.call(Method::DELETE, &path, None).await?)
+        let path = ["nodes", &vm.node, vm.kind.as_str(), &vmid, "snapshot", name];
+        upid(self.call(Method::DELETE, &path, &[], None).await?)
     }
 
     pub async fn rollback_snapshot(&self, vm: &VmRef, name: &str) -> Result<String, SnapshotError> {
         let vmid = vm.vmid.to_string();
         let path = [
-            "nodes", &vm.node, "qemu", &vmid, "snapshot", name, "rollback",
+            "nodes",
+            &vm.node,
+            vm.kind.as_str(),
+            &vmid,
+            "snapshot",
+            name,
+            "rollback",
         ];
-        upid(self.call(Method::POST, &path, None).await?)
+        upid(self.call(Method::POST, &path, &[], None).await?)
     }
 
     /// Snapshots of `vm`, without the `current` pseudo-snapshot.
     pub async fn list_snapshots(&self, vm: &VmRef) -> Result<Vec<ListedSnapshot>, SnapshotError> {
         let vmid = vm.vmid.to_string();
-        let path = ["nodes", &vm.node, "qemu", &vmid, "snapshot"];
-        let data = self.call(Method::GET, &path, None).await?;
+        let path = ["nodes", &vm.node, vm.kind.as_str(), &vmid, "snapshot"];
+        let data = self.call(Method::GET, &path, &[], None).await?;
         let mut list: Vec<ListedSnapshot> = serde_json::from_value(data)
             .map_err(|e| SnapshotError::InvalidResponse(bounded(&e.to_string())))?;
         list.retain(|s| s.name != "current");
         Ok(list)
+    }
+
+    /// Whether Proxmox can snapshot `vm` as it is configured now: every
+    /// volume on storage that takes snapshots, no mount point it cannot
+    /// snapshot.
+    pub async fn can_snapshot(&self, vm: &VmRef) -> Result<bool, SnapshotError> {
+        let vmid = vm.vmid.to_string();
+        let path = ["nodes", &vm.node, vm.kind.as_str(), &vmid, "feature"];
+        let data = self
+            .call(Method::GET, &path, &[("feature", "snapshot")], None)
+            .await?;
+        match data.get("hasFeature") {
+            Some(Value::Bool(b)) => Ok(*b),
+            Some(Value::Number(n)) => Ok(n.as_i64() != Some(0)),
+            _ => Err(SnapshotError::InvalidResponse(
+                "no `hasFeature` in the answer".into(),
+            )),
+        }
+    }
+
+    /// The configuration of `vm`: its volumes and mount points.
+    pub async fn guest_config(
+        &self,
+        vm: &VmRef,
+    ) -> Result<serde_json::Map<String, Value>, SnapshotError> {
+        let vmid = vm.vmid.to_string();
+        let path = ["nodes", &vm.node, vm.kind.as_str(), &vmid, "config"];
+        match self.call(Method::GET, &path, &[], None).await? {
+            Value::Object(config) => Ok(config),
+            _ => Err(SnapshotError::InvalidResponse(
+                "the configuration is not an object".into(),
+            )),
+        }
+    }
+
+    /// The type of each storage `node` shows the token, like `dir` or
+    /// `zfspool`.
+    pub async fn storage_types(&self, node: &str) -> Result<HashMap<String, String>, SnapshotError> {
+        #[derive(Deserialize)]
+        struct Storage {
+            storage: String,
+            #[serde(rename = "type")]
+            kind: String,
+        }
+        let data = self
+            .call(Method::GET, &["nodes", node, "storage"], &[], None)
+            .await?;
+        let list: Vec<Storage> = serde_json::from_value(data)
+            .map_err(|e| SnapshotError::InvalidResponse(bounded(&e.to_string())))?;
+        Ok(list.into_iter().map(|s| (s.storage, s.kind)).collect())
     }
 
     /// Polls task `upid` on `node` until it stops: `OK` or warnings
@@ -200,7 +258,12 @@ impl ProxmoxClient {
         let deadline = tokio::time::Instant::now() + self.options.task_timeout;
         loop {
             let data = self
-                .call(Method::GET, &["nodes", node, "tasks", upid, "status"], None)
+                .call(
+                    Method::GET,
+                    &["nodes", node, "tasks", upid, "status"],
+                    &[],
+                    None,
+                )
                 .await?;
             let status: Status = serde_json::from_value(data)
                 .map_err(|e| SnapshotError::InvalidResponse(bounded(&e.to_string())))?;
@@ -222,11 +285,12 @@ impl ProxmoxClient {
     }
 
     /// Sends one request under `/api2/json/` and returns the answer's
-    /// `data`. Every segment is percent-encoded.
+    /// `data`. Every segment and query value is percent-encoded.
     async fn call(
         &self,
         method: Method,
         segments: &[&str],
+        query: &[(&str, &str)],
         form: Option<&[(&str, &str)]>,
     ) -> Result<Value, SnapshotError> {
         let mut url = self.base.clone();
@@ -235,6 +299,9 @@ impl ProxmoxClient {
             .pop_if_empty()
             .extend(["api2", "json"])
             .extend(segments);
+        if !query.is_empty() {
+            url.query_pairs_mut().extend_pairs(query);
+        }
         let mut request = self
             .http
             .request(method, url)
@@ -296,14 +363,18 @@ pub async fn read_secret(path: &Path) -> Result<Secret, SnapshotError> {
     Ok(Secret::new(secret))
 }
 
-/// [`Snapshotter`] over Proxmox VE: servers mapped to VMs in
-/// `server_proxmox_vms`, snapshots recorded in `proxmox_snapshots`.
+/// [`Snapshotter`] over Proxmox VE: servers mapped to VMs and containers
+/// in `server_proxmox_vms`, snapshots recorded in `proxmox_snapshots`.
+#[derive(Clone)]
 pub struct ProxmoxSnapshotter {
     pool: PgPool,
     clusters: HashMap<String, ProxmoxClient>,
-    /// Snapshots kept per VM, at least 1.
+    /// Snapshots kept per guest, at least 1.
     keep: usize,
 }
+
+/// Mappings one [`ProxmoxSnapshotter::check_due`] pass checks at most.
+const CHECKS_PER_PASS: i64 = 50;
 
 impl ProxmoxSnapshotter {
     /// With no cluster, every server is [`super::Unsupported::Disabled`].
@@ -328,6 +399,7 @@ impl ProxmoxSnapshotter {
         Ok(Self::new(pool, clusters, config.keep_snapshots as usize))
     }
 
+    /// The guest to snapshot, when [`Snapshotter::support`] allows it.
     async fn vm(&self, server: Uuid) -> Result<(VmRef, &ProxmoxClient), SnapshotError> {
         match self.support(server).await? {
             Support::Available(vm) => {
@@ -336,6 +408,80 @@ impl ProxmoxSnapshotter {
             }
             Support::Unavailable(reason) => Err(SnapshotError::Unsupported(reason)),
         }
+    }
+
+    /// The guest to list or roll back, even when Proxmox no longer takes
+    /// new snapshots of it: those already taken may still be there.
+    async fn mapped(&self, server: Uuid) -> Result<(VmRef, &ProxmoxClient), SnapshotError> {
+        match self.support(server).await? {
+            Support::Available(vm) => Ok((vm.clone(), &self.clusters[&vm.cluster])),
+            Support::Unavailable(super::Unsupported::CannotSnapshot(_)) => {
+                let vm = store::mapping(&self.pool, server)
+                    .await?
+                    .ok_or(SnapshotError::Unsupported(super::Unsupported::NotMapped))?
+                    .vm;
+                let client = self.clusters.get(&vm.cluster).ok_or(SnapshotError::Unsupported(
+                    super::Unsupported::UnknownCluster,
+                ))?;
+                Ok((vm, client))
+            }
+            Support::Unavailable(reason) => Err(SnapshotError::Unsupported(reason)),
+        }
+    }
+
+    /// Names of the configured clusters.
+    pub fn clusters(&self) -> Vec<String> {
+        self.clusters.keys().cloned().collect()
+    }
+
+    /// Asks Proxmox whether `vm`, `server`'s guest, can be snapshotted and
+    /// what a snapshot leaves out, and records the answer.
+    pub async fn check(&self, server: Uuid, vm: &VmRef) -> Result<Check, SnapshotError> {
+        let client = self
+            .clusters
+            .get(&vm.cluster)
+            .ok_or(SnapshotError::Unsupported(super::Unsupported::UnknownCluster))?;
+        let can = client.can_snapshot(vm).await?;
+        let config = client.guest_config(vm).await?;
+        // Only to name the storage at fault; the token may not see it.
+        let types = if can {
+            HashMap::new()
+        } else {
+            client.storage_types(&vm.node).await.unwrap_or_default()
+        };
+        let found = check::explain(vm.kind, can, &config, &types);
+        store::record_check(
+            &self.pool,
+            server,
+            vm,
+            found.cannot_snapshot.as_deref(),
+            found.left_out.as_deref(),
+        )
+        .await?;
+        Ok(found)
+    }
+
+    /// Checks the mappings not checked for `every`, a bounded number at a
+    /// time. A guest Proxmox cannot be asked about keeps its last answer
+    /// and is asked again at the next pass.
+    pub async fn check_due(&self, every: Duration) -> Result<usize, sqlx::Error> {
+        let due = store::due_checks(&self.pool, &self.clusters(), every, CHECKS_PER_PASS).await?;
+        let mut checked = 0;
+        for (server, vm) in due {
+            match self.check(server, &vm).await {
+                Ok(found) => {
+                    checked += 1;
+                    if let Some(why) = &found.cannot_snapshot {
+                        tracing::info!(cluster = %vm.cluster, vmid = vm.vmid, %why, "Proxmox cannot snapshot a mapped guest");
+                    }
+                }
+                Err(SnapshotError::Database(e)) => return Err(e),
+                Err(error) => {
+                    tracing::warn!(cluster = %vm.cluster, vmid = vm.vmid, %error, "cannot check a Proxmox guest")
+                }
+            }
+        }
+        Ok(checked)
     }
 
     async fn audit(&self, action: &str, server: Uuid, details: Value) -> Result<(), sqlx::Error> {
@@ -350,6 +496,28 @@ impl ProxmoxSnapshotter {
             },
         )
         .await
+    }
+
+    /// Takes snapshot `name` of `vm`, or adopts it when a task that
+    /// outlived its timeout took it with this `description`.
+    async fn create(
+        &self,
+        vm: &VmRef,
+        client: &ProxmoxClient,
+        name: &SnapshotName,
+        description: &str,
+    ) -> Result<(), SnapshotError> {
+        let existing = client.list_snapshots(vm).await?;
+        match existing.iter().find(|s| s.name == name.as_str()) {
+            Some(s) if s.description.trim() == description => Ok(()),
+            Some(_) => Err(SnapshotError::NameTaken(name.to_string())),
+            None => {
+                let upid = client
+                    .create_snapshot(vm, name.as_str(), description)
+                    .await?;
+                client.wait_task(&vm.node, &upid).await
+            }
+        }
     }
 
     /// Deletes MonitorFlow's snapshots of `vm` beyond the newest `keep`.
@@ -384,7 +552,7 @@ impl ProxmoxSnapshotter {
             self.audit(
                 "proxmox.snapshot.delete",
                 server,
-                json!({ "cluster": vm.cluster, "node": vm.node, "vmid": vm.vmid,
+                json!({ "cluster": vm.cluster, "node": vm.node, "vmid": vm.vmid, "kind": vm.kind,
                         "name": name, "present": present.contains(name) }),
             )
             .await?;
@@ -397,7 +565,7 @@ impl ProxmoxSnapshotter {
 #[async_trait]
 impl Snapshotter for ProxmoxSnapshotter {
     async fn support(&self, server: Uuid) -> Result<Support, SnapshotError> {
-        let names: Vec<String> = self.clusters.keys().cloned().collect();
+        let names = self.clusters();
         let mapping = store::mapping(&self.pool, server).await?;
         Ok(Support::of(!names.is_empty(), &names, mapping))
     }
@@ -419,25 +587,23 @@ impl Snapshotter for ProxmoxSnapshotter {
         if let Some(at) = store::recorded(&self.pool, &vm, name.as_str()).await? {
             return Ok(ours(at));
         }
-        // A task that outlived its timeout may have finished since: adopt
-        // the snapshot when it carries this step's description.
-        let existing = client.list_snapshots(&vm).await?;
-        match existing.iter().find(|s| s.name == name.as_str()) {
-            Some(s) if s.description.trim() == description => {}
-            Some(_) => return Err(SnapshotError::NameTaken(name.to_string())),
-            None => {
-                let upid = client
-                    .create_snapshot(&vm, name.as_str(), &description)
-                    .await?;
-                client.wait_task(&vm.node, &upid).await?;
+        if let Err(error) = self.create(&vm, client, &name, &description).await {
+            // Storage changed, a bind mount added: the next pass asks
+            // Proxmox again, so the interface says so before the next change.
+            if matches!(
+                error,
+                SnapshotError::TaskFailed(_) | SnapshotError::Api { .. }
+            ) {
+                store::check_soon(&self.pool, server).await?;
             }
+            return Err(error);
         }
         let at = store::record(&self.pool, &vm, server, name.as_str()).await?;
         self.audit(
             "proxmox.snapshot.create",
             server,
-            json!({ "cluster": vm.cluster, "node": vm.node, "vmid": vm.vmid, "name": name,
-                    "incident": request.incident, "step": request.step }),
+            json!({ "cluster": vm.cluster, "node": vm.node, "vmid": vm.vmid, "kind": vm.kind,
+                    "name": name, "incident": request.incident, "step": request.step }),
         )
         .await?;
         tracing::info!(cluster = %vm.cluster, vmid = vm.vmid, %name, "took snapshot before a change");
@@ -449,7 +615,7 @@ impl Snapshotter for ProxmoxSnapshotter {
     }
 
     async fn list(&self, server: Uuid) -> Result<Vec<Snapshot>, SnapshotError> {
-        let (vm, client) = self.vm(server).await?;
+        let (vm, client) = self.mapped(server).await?;
         let managed: HashSet<String> = store::live(&self.pool, &vm).await?.into_iter().collect();
         let mut list: Vec<Snapshot> = client
             .list_snapshots(&vm)
@@ -469,7 +635,7 @@ impl Snapshotter for ProxmoxSnapshotter {
     }
 
     async fn rollback(&self, server: Uuid, name: &SnapshotName) -> Result<(), SnapshotError> {
-        let (vm, client) = self.vm(server).await?;
+        let (vm, client) = self.mapped(server).await?;
         if store::recorded(&self.pool, &vm, name.as_str())
             .await?
             .is_none()
@@ -481,7 +647,8 @@ impl Snapshotter for ProxmoxSnapshotter {
         self.audit(
             "proxmox.snapshot.rollback",
             server,
-            json!({ "cluster": vm.cluster, "node": vm.node, "vmid": vm.vmid, "name": name }),
+            json!({ "cluster": vm.cluster, "node": vm.node, "vmid": vm.vmid, "kind": vm.kind,
+                    "name": name }),
         )
         .await?;
         tracing::warn!(cluster = %vm.cluster, vmid = vm.vmid, %name, "rolled a server back to a snapshot");

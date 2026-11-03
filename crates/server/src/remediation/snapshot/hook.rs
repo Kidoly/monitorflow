@@ -13,7 +13,7 @@ use crate::remediation::runner::hook::{self, Change, ChangeHook};
 /// Snapshots through `snapshotter` before each change.
 ///
 /// A server without support (integration off, not mapped, cluster not
-/// configured) gets `method: "none"` and the command runs, as the approver
+/// configured, a guest Proxmox cannot snapshot) gets `method: "none"` and the command runs, as the approver
 /// was shown. A server with support whose snapshot fails gets an error, so
 /// the incident escalates without running the command.
 #[derive(Clone)]
@@ -65,9 +65,10 @@ impl ChangeHook for SnapshotHook {
             Ok(snapshot) => Ok(hook::Snapshot {
                 method: self.method.into(),
                 detail: format!(
-                    "{} snapshot {} of VM {} on {}/{}, before a {} command",
+                    "{} snapshot {} of {} {} on {}/{}, before a {} command",
                     self.method,
                     snapshot.name,
+                    vm.kind.noun(),
                     vm.vmid,
                     vm.cluster,
                     vm.node,
