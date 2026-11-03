@@ -5,6 +5,9 @@
 # files, then updates through the API as the web interface does: check,
 # update. Checks that the new version runs, the data is kept, the backup
 # exists, the agent release is cached and the updater replaced itself.
+# The deployment starts on a compose file without TLS to the metric and
+# log stores, as an older release had, and the new updater moves it to
+# its own by itself, data kept (ADR-0087).
 # Then a release whose server image cannot start is rolled back, and a
 # downgrade and a release signed by another key are refused. Last, a
 # backup taken with "Back up now" is downloaded and restored with
@@ -98,6 +101,10 @@ serve() { find "$work/serve" -mindepth 1 -delete; cp "$work/releases/$1"/* "$wor
 # and a plain HTTP file server as the release source.
 cp -r "$repo/deploy" "$work/deploy"
 rm -f "$work/deploy/.env"
+# The compose file of a release before ADR-0087: plain HTTP to the stores.
+sed -e '/^  storage-certs:$/,/^$/d' -e '/^    depends_on:$/{N;/storage-certs/d;}' -e '/^      - -tls/d' \
+    -e '/^      - -httpAuth\./d' -e 's#https://victoria#http://victoria#' -e '/MONITORFLOW_STORAGE_TLS_DIR/d' \
+    "$repo/deploy/docker-compose.yml" >"$work/deploy/docker-compose.yml"
 cat >"$work/deploy/.env" <<EOF
 DOMAIN=127.0.0.1
 SERVER_NAMES=localhost
@@ -167,6 +174,16 @@ update() {
     echo timeout
 }
 server_version() { compose exec -T server monitorflow-server --version; }
+
+# A sample written in plain HTTP, read back once the stores use TLS.
+compose exec -T server bash -c 'body="mf_update_kept 7 $(( $(date +%s) - 60 ))000"
+    exec 3<>/dev/tcp/victoriametrics/8428
+    printf "POST /api/v1/import/prometheus HTTP/1.0\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" >&3
+    head -n1 <&3' >/dev/null
+compose exec -T server bash -c 'exec 3<>/dev/tcp/victoriametrics/8428 && printf "GET /internal/force_flush HTTP/1.0\r\n\r\n" >&3 && cat <&3' >/dev/null
+# Without the files only a checkout has, the directory is what the
+# installer makes. The base updater has looked at it already, at its start.
+rm -f "$work/deploy/docker/"*.Dockerfile
 pinned() { grep -qx "SERVER_IMAGE=$1" "$work/deploy/.env"; }
 
 echo "updating to $NEXT"
@@ -192,6 +209,22 @@ check "the release's installer is served for installs" \
     curl -fsSk -o /dev/null "https://127.0.0.1:$HTTPS_PORT/agent/$NEXT/install.sh"
 updater_replaced() { [ "$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q updater)")" = "$next_updater" ]; }
 check "the updater replaced itself" until_true 120 updater_replaced
+same_compose() { cmp -s "$repo/deploy/docker-compose.yml" "$work/deploy/docker-compose.yml"; }
+check "it put the release's compose file in place" until_true 300 same_compose
+stores_reached() { compose exec -T server monitorflow-server storage-check; }
+check "the server reaches both stores over TLS" until_true 300 stores_reached
+tls_flag() { docker inspect --format '{{json .Config.Cmd}}' "$(compose ps -q "$1")" | grep -q '"-tls"'; }
+check "VictoriaMetrics runs with TLS" tls_flag victoriametrics
+check "VictoriaLogs runs with TLS" tls_flag victorialogs
+kept_sample() {
+    compose exec -T server bash -c 'auth=$(printf "monitorflow:%s" "$(cat /var/lib/monitorflow/storage-tls/password)" | base64 -w0)
+        printf "GET /api/v1/query?query=mf_update_kept HTTP/1.0\r\nHost: victoriametrics\r\nAuthorization: Basic %s\r\n\r\n" "$auth" \
+        | openssl s_client -quiet -verify_return_error -CAfile /var/lib/monitorflow/server/ca/ca-cert.pem \
+            -servername victoriametrics -connect victoriametrics:8428 2>/dev/null' | grep -q '"7"'
+}
+check "metrics written before the switch are kept" until_true 60 kept_sample
+compose_noted() { get server-update | jq -e '.update.steps | any(.message | test("compose file of this release in place"))'; }
+check "the update page says so" until_true 60 compose_noted
 check "the new updater reports $NEXT" until_true 120 sh -c "curl -fsSk -b '$work/cookies' '$api/server-update' | jq -e '.updater.alive and .updater.version == \"$NEXT\"'"
 
 check "a downgrade is refused" test "$(post server-update '{"version": "0.0.1"}')" = 400

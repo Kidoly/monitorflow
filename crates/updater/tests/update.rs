@@ -15,6 +15,7 @@ use monitorflow_common::server_update::retention::RetentionRequest;
 use monitorflow_common::server_update::{
     ImageRef, Request, Status, UpdateState, REQUEST_FILE, STATUS_FILE,
 };
+use monitorflow_updater::compose_file;
 use monitorflow_updater::env_file::{EnvFile, Pins};
 use monitorflow_updater::host::{Host, HostError};
 use monitorflow_updater::source::{self, Source};
@@ -118,6 +119,8 @@ struct HostState {
     dump_fails: bool,
     /// The next recreation of the stores fails.
     stores_fail: bool,
+    /// The next check of the stores fails.
+    check_fails: bool,
     /// What a restore loaded, and what it stopped and started.
     restored: Option<Vec<u8>>,
     calls: Vec<&'static str>,
@@ -227,6 +230,20 @@ impl Host for FakeHost {
         state.calls.push("stores");
         if std::mem::take(&mut state.stores_fail) {
             return Err(HostError("the stores did not start".into()));
+        }
+        Ok(())
+    }
+
+    async fn apply_compose(&self) -> Result<(), HostError> {
+        self.state().calls.push("apply");
+        Ok(())
+    }
+
+    async fn check_stores(&self) -> Result<(), HostError> {
+        let mut state = self.state();
+        state.calls.push("check");
+        if std::mem::take(&mut state.check_fails) {
+            return Err(HostError("VictoriaMetrics does not answer".into()));
         }
         Ok(())
     }
@@ -913,4 +930,131 @@ async fn retention_changes_reach_the_env_file_and_failures_undo_them() {
     let written = std::fs::read_to_string(&volumes.env).unwrap();
     assert!(written.contains("UI_METRICS_RETENTION=60d\n"), "{written}");
     assert!(!written.contains("UI_LOGS_RETENTION"), "{written}");
+}
+
+/// The bundle of the updater image and a deploy directory holding an older
+/// release's files (ADR-0087).
+struct ComposeDirs {
+    bundle: TempDir,
+    deploy: PathBuf,
+    files: Vec<PathBuf>,
+}
+
+impl ComposeDirs {
+    fn new(volumes: &Volumes) -> Self {
+        let bundle = TempDir::new().unwrap();
+        let deploy = volumes.env.parent().unwrap().to_owned();
+        for (dir, text) in [(bundle.path(), "tls"), (deploy.as_path(), "plain")] {
+            for file in compose_file::FILES {
+                let path = dir.join(file);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, format!("{file}: {text}\n")).unwrap();
+            }
+        }
+        let files = vec![deploy.join("docker-compose.yml")];
+        Self {
+            bundle,
+            deploy,
+            files,
+        }
+    }
+
+    fn compose(&self) -> String {
+        std::fs::read_to_string(self.deploy.join("docker-compose.yml")).unwrap()
+    }
+}
+
+#[tokio::test]
+async fn the_compose_file_follows_the_release() {
+    let volumes = Volumes::new();
+    let dirs = ComposeDirs::new(&volumes);
+    let host = FakeHost::new(&volumes.env, monitorflow_common::VERSION);
+    let source = source::Dir {
+        dir: dirs.bundle.path().to_owned(),
+        keys: vec![],
+    };
+    let mut updater = volumes.updater(&host, &source);
+
+    updater
+        .refresh_compose(dirs.bundle.path(), &dirs.deploy, &dirs.files)
+        .await;
+    assert_eq!(dirs.compose(), "docker-compose.yml: tls\n");
+    assert_eq!(host.state().calls, ["apply", "check"]);
+    assert!(!compose_file::pending(&volumes.state));
+
+    // Nothing more to do on the next start.
+    updater
+        .refresh_compose(dirs.bundle.path(), &dirs.deploy, &dirs.files)
+        .await;
+    assert_eq!(host.state().calls, ["apply", "check"]);
+}
+
+#[tokio::test]
+async fn a_compose_file_that_does_not_work_is_put_back() {
+    let signer = Signer::new();
+    let release = signer.release(monitorflow_common::VERSION, None);
+    let volumes = Volumes::new();
+    let dirs = ComposeDirs::new(&volumes);
+    let host = FakeHost::new(&volumes.env, monitorflow_common::VERSION);
+    let source = dir_source(&release, signer.public());
+    let mut updater = volumes.updater(&host, &source);
+    // A last update, whose steps an administrator reads.
+    updater
+        .update(
+            &request(monitorflow_common::VERSION),
+            &v(monitorflow_common::VERSION),
+        )
+        .await;
+    host.state().check_fails = true;
+    host.state().calls.clear();
+
+    updater
+        .refresh_compose(dirs.bundle.path(), &dirs.deploy, &dirs.files)
+        .await;
+    assert_eq!(dirs.compose(), "docker-compose.yml: plain\n");
+    assert_eq!(host.state().calls, ["apply", "check", "apply"]);
+    assert!(!compose_file::pending(&volumes.state));
+    let steps = volumes.status().update.unwrap().steps;
+    let last = &steps.last().unwrap().message;
+    assert!(
+        last.contains("did not work (VictoriaMetrics does not answer); the previous one is back"),
+        "{last}"
+    );
+}
+
+#[tokio::test]
+async fn an_older_updater_leaves_the_compose_file_alone() {
+    let volumes = Volumes::new();
+    let dirs = ComposeDirs::new(&volumes);
+    let host = FakeHost::new(&volumes.env, "99.0.0");
+    let source = source::Dir {
+        dir: dirs.bundle.path().to_owned(),
+        keys: vec![],
+    };
+    let mut updater = volumes.updater(&host, &source);
+    updater
+        .refresh_compose(dirs.bundle.path(), &dirs.deploy, &dirs.files)
+        .await;
+    assert_eq!(dirs.compose(), "docker-compose.yml: plain\n");
+    assert!(host.state().calls.is_empty());
+}
+
+#[tokio::test]
+async fn an_interrupted_compose_change_is_finished_on_restart() {
+    let volumes = Volumes::new();
+    let dirs = ComposeDirs::new(&volumes);
+    // Killed after saving the files and writing the new ones.
+    compose_file::save_previous(&dirs.deploy, &volumes.state).unwrap();
+    compose_file::install(dirs.bundle.path(), &dirs.deploy).unwrap();
+    let host = FakeHost::new(&volumes.env, monitorflow_common::VERSION);
+    let source = source::Dir {
+        dir: dirs.bundle.path().to_owned(),
+        keys: vec![],
+    };
+    let mut updater = volumes.updater(&host, &source);
+    updater
+        .refresh_compose(dirs.bundle.path(), &dirs.deploy, &dirs.files)
+        .await;
+    assert_eq!(host.state().calls, ["apply", "check"]);
+    assert!(!compose_file::pending(&volumes.state));
 }

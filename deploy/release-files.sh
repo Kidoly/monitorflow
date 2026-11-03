@@ -38,6 +38,7 @@ for installer in install.sh install-server.sh; do
     chmod 0755 "$dir/$installer"
 done
 # Installed as <root>/deploy, so commands that name deploy/ work there too.
+# deploy/docker/updater.Dockerfile copies the same files (ADR-0087).
 tar -czf "$dir/monitorflow-server-compose.tar.gz" -C "$deploy/.." --owner=0 --group=0 --numeric-owner \
     deploy/docker-compose.yml deploy/docker/pg_hba.conf deploy/restore.sh deploy/.env.example
 install -m 0644 "$deploy/systemd/monitorflow-agent.service" "$dir/monitorflow-agent.service"

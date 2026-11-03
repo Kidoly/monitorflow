@@ -8,6 +8,7 @@
 //! updater writes.
 
 pub mod backup;
+pub mod compose_file;
 pub mod env_file;
 pub mod host;
 pub mod project;
@@ -185,10 +186,14 @@ pub fn take_retention_request(update_dir: &Path) -> Option<Result<RetentionReque
     Some(bytes.and_then(|bytes| RetentionRequest::parse(&bytes)))
 }
 
-/// Serves requests and takes the daily backup until `stop` resolves.
+/// Serves requests and takes the daily backup until `stop` resolves. At
+/// start it finishes what a restart interrupted and puts the compose
+/// files of this release in place; `compose_files` are those the project
+/// runs, as this container sees them.
 pub async fn serve(
     updater: &mut Updater<'_>,
     settings: &Settings,
+    compose_files: &[PathBuf],
     stop: impl std::future::Future<Output = ()>,
 ) {
     tokio::pin!(stop);
@@ -198,6 +203,13 @@ pub async fn serve(
             tracing::info!(?state, "interrupted update finished");
         }
         updater.recover_backup();
+        updater
+            .refresh_compose(
+                Path::new(compose_file::BUNDLE_DIR),
+                &settings.deploy_dir,
+                compose_files,
+            )
+            .await;
     }
     let started = Utc::now();
     updater.read_retention();

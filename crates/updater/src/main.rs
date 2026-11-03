@@ -178,7 +178,14 @@ async fn main() -> anyhow::Result<()> {
                     _ = tokio::signal::ctrl_c() => {}
                 }
             };
-            serve(&mut updater, &settings, stop).await;
+            // The files the project runs, as this container sees them.
+            let compose_files: Vec<PathBuf> = compose
+                .project
+                .config_files
+                .iter()
+                .map(|file| compose.project.local(file))
+                .collect();
+            serve(&mut updater, &settings, &compose_files, stop).await;
         }
     }
     Ok(())

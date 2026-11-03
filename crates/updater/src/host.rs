@@ -63,6 +63,13 @@ pub trait Host: Send + Sync {
     /// Recreates the metrics and log stores whose settings in `.env`
     /// changed; their data stays in their volumes (ADR-0069).
     async fn recreate_stores(&self) -> Result<(), HostError>;
+    /// Brings every service but the updater to the compose file, pulling
+    /// images it does not have, and waits until they are healthy
+    /// (ADR-0087). Data stays in the volumes.
+    async fn apply_compose(&self) -> Result<(), HostError>;
+    /// `monitorflow-server storage-check` in the server: it reaches the
+    /// metrics and log stores as it is configured to.
+    async fn check_stores(&self) -> Result<(), HostError>;
 }
 
 /// The Docker CLI and its compose plugin, on the project of [`Project`].
@@ -381,6 +388,35 @@ impl Host for Compose {
         let timeout = self.timeout.as_secs().to_string();
         let args = stores_up_args(&timeout);
         self.output(true, &args).await.map(drop)
+    }
+
+    async fn apply_compose(&self) -> Result<(), HostError> {
+        let services = self.output(true, &["config", "--services"]).await?;
+        let timeout = self.timeout.as_secs().to_string();
+        let mut args = vec![
+            "up",
+            "--detach",
+            "--no-build",
+            "--pull",
+            "missing",
+            "--wait",
+            "--wait-timeout",
+            &timeout,
+        ];
+        // A process cannot recreate its own container: the next update
+        // replaces the updater with the file in place.
+        args.extend(
+            services
+                .lines()
+                .filter(|s| !s.is_empty() && *s != "updater"),
+        );
+        self.output(true, &args).await.map(drop)
+    }
+
+    async fn check_stores(&self) -> Result<(), HostError> {
+        self.exec("server", &["monitorflow-server", "storage-check"])
+            .await
+            .map(drop)
     }
 }
 
