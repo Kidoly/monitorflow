@@ -328,7 +328,8 @@ impl Engine {
 
     fn forget(&mut self, peer: &str) {
         if let Some(Some(server)) = self.rules.remove(peer) {
-            self.series.retain(|key, _| key.server_id != server.server_id);
+            self.series
+                .retain(|key, _| key.server_id != server.server_id);
         }
     }
 
@@ -351,7 +352,8 @@ impl Engine {
         match loaded {
             Ok(Some((server, states))) => {
                 let server = Arc::new(server);
-                self.series.retain(|key, _| key.server_id != server.server_id);
+                self.series
+                    .retain(|key, _| key.server_id != server.server_id);
                 self.series.extend(states.into_iter().map(|s| {
                     let tracked = Tracked {
                         state: s.state,

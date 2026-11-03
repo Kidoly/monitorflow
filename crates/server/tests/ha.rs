@@ -80,8 +80,7 @@ impl Harness {
             .await
             .unwrap();
         let dir = TempDir::new().unwrap();
-        CertificateAuthority::open_or_create(&dir.path().join("ca"), CaOptions::default())
-            .unwrap();
+        CertificateAuthority::open_or_create(&dir.path().join("ca"), CaOptions::default()).unwrap();
         Self {
             pool,
             dir,
@@ -101,8 +100,12 @@ impl Harness {
             CertificateAuthority::open_or_create(&dir.join("ca"), CaOptions::default()).unwrap(),
         );
         let paths = tls_paths(&dir, "server");
-        server_cert::ensure(&ca, &paths, &server_cert::parse_names(&["localhost".into()]))
-            .unwrap();
+        server_cert::ensure(
+            &ca,
+            &paths,
+            &server_cert::parse_names(&["localhost".into()]),
+        )
+        .unwrap();
         let (crl, tls_config) = CrlPublisher::start(ca.clone(), Identity::load(&paths).unwrap())
             .await
             .unwrap();

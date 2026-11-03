@@ -299,9 +299,24 @@ impl Cluster {
                          agent_version = EXCLUDED.agent_version, hostname = EXCLUDED.hostname",
             )
             .bind(self.inner.id)
-            .bind(changed.iter().map(|((r, _), _)| r.as_str()).collect::<Vec<_>>())
-            .bind(changed.iter().map(|((_, id), _)| id.as_str()).collect::<Vec<_>>())
-            .bind(changed.iter().map(|(_, s)| s.connected_at).collect::<Vec<_>>())
+            .bind(
+                changed
+                    .iter()
+                    .map(|((r, _), _)| r.as_str())
+                    .collect::<Vec<_>>(),
+            )
+            .bind(
+                changed
+                    .iter()
+                    .map(|((_, id), _)| id.as_str())
+                    .collect::<Vec<_>>(),
+            )
+            .bind(
+                changed
+                    .iter()
+                    .map(|(_, s)| s.connected_at)
+                    .collect::<Vec<_>>(),
+            )
             .bind(
                 changed
                     .iter()
