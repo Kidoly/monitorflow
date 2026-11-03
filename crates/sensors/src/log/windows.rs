@@ -107,7 +107,8 @@ pub fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
 
 /// Whether the file was deleted. Before POSIX delete semantics, the name
 /// stays taken while a handle is open, so the writer could not create its
-/// file again until the sensor lets go.
+/// file again until the sensor lets go. With them, NTFS moves the file
+/// under `\$Extend\$Deleted` until the last handle closes.
 pub fn deleted(file: &File) -> io::Result<bool> {
     let mut info = FILE_STANDARD_INFO::default();
     // SAFETY: an open handle, and a buffer of the class's type and size.
@@ -122,5 +123,16 @@ pub fn deleted(file: &File) -> io::Result<bool> {
     if ok == 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(info.DeletePending || info.NumberOfLinks == 0)
+    if info.DeletePending || info.NumberOfLinks == 0 {
+        return Ok(true);
+    }
+    Ok(match final_path(file) {
+        Ok(Some(path)) => path
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .contains(r"\$extend\$deleted\"),
+        Ok(None) => false,
+        // No name left to give.
+        Err(_) => true,
+    })
 }
