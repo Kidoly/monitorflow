@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use monitorflow_common::proto::v1::{ApplyUpdates, Package};
+use monitorflow_common::proto::v1::{ApplyUpdates, Package, WindowsUpdateSource};
 use prost::Message;
 
 use super::{describe, to_packages, Installed, Reply, Request, Scan, Status};
@@ -60,6 +60,28 @@ impl PackageManager for WindowsUpdates {
 
     async fn reboot_required(&self) -> Result<bool, PackageError> {
         Ok(status(self.service.as_ref()).await?.reboot_required)
+    }
+
+    /// Read by the agent itself: anyone may read the policy keys, so the
+    /// update service needs no new request.
+    async fn windows_update_source(&self) -> Option<WindowsUpdateSource> {
+        #[cfg(windows)]
+        {
+            let read = tokio::task::spawn_blocking(super::source::read).await;
+            match read {
+                Ok(Ok(source)) => Some(source),
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "cannot read the Windows Update policy; no update source in the report");
+                    None
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "reading the Windows Update policy panicked");
+                    None
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        None
     }
 }
 
@@ -233,6 +255,43 @@ mod tests {
         assert_eq!(packages[0].name, "KB5034441");
         assert_eq!(packages[0].upgradable_version, "200");
         assert!(manager.reboot_required().await.unwrap());
+        // Read from this host's registry on Windows only.
+        assert_eq!(
+            manager.windows_update_source().await.is_some(),
+            cfg!(windows)
+        );
+    }
+
+    /// No updates, and WSUS as the source.
+    struct OnWsus;
+
+    #[async_trait::async_trait]
+    impl PackageManager for OnWsus {
+        async fn inventory(&self) -> Result<Vec<Package>, PackageError> {
+            Ok(Vec::new())
+        }
+
+        async fn reboot_required(&self) -> Result<bool, PackageError> {
+            Ok(false)
+        }
+
+        async fn windows_update_source(&self) -> Option<WindowsUpdateSource> {
+            Some(WindowsUpdateSource {
+                wsus_url: "http://wsus.example:8530".into(),
+                ..WindowsUpdateSource::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn reports_carry_the_update_source() {
+        let (reports, latest) = Reports::new(Arc::new(OnWsus));
+        assert!(reports.collect().await);
+        let report = latest.borrow().clone().unwrap();
+        assert_eq!(
+            report.windows_update_source.unwrap().wsus_url,
+            "http://wsus.example:8530"
+        );
     }
 
     /// Unreachable for its first `down` calls.

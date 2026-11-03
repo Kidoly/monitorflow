@@ -4,13 +4,15 @@
 //! A command is `queued`, then `sent` on the agent's stream, `running` once
 //! the agent says it started, and ends `succeeded`, `failed`, `expired` or
 //! `cancelled`. At most one command per server is `sent` or `running`.
-//! Package reports from agents are stored here too.
+//! Package reports from agents are stored here too, with the update
+//! source of Windows servers ([`update_source`]).
 
 pub mod acceptance;
 mod dispatcher;
 mod packages;
 pub mod sources;
 mod store;
+pub mod update_source;
 
 use chrono::{DateTime, Utc};
 use monitorflow_common::proto::v1::{CommandResult, CommandStatus};

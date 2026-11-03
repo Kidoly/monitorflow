@@ -4,7 +4,8 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use monitorflow_common::proto::v1::{ApplyUpdates, Package, PackageReport};
+use monitorflow_common::proto::v1::windows_update_source::{Automatic, Origin};
+use monitorflow_common::proto::v1::{ApplyUpdates, Package, PackageReport, WindowsUpdateSource};
 use monitorflow_common::redact::Secret;
 use monitorflow_server::agent_releases::ReleaseCache;
 use monitorflow_server::api::auth::CSRF_HEADER;
@@ -244,6 +245,7 @@ db_tests! {
             packages: vec![package("old", "")],
             reboot_required: false,
             collected_at_unix_ms: 1_800_000_000_000,
+            windows_update_source: None,
         };
         assert!(store.replace("agent-1", &first).await.unwrap());
         let report = PackageReport {
@@ -256,6 +258,7 @@ db_tests! {
             ],
             reboot_required: true,
             collected_at_unix_ms: 1_800_000_060_000,
+            windows_update_source: None,
         };
         assert!(store.replace("agent-1", &report).await.unwrap());
         // Older or unknown: ignored.
@@ -457,8 +460,52 @@ db_tests! {
             }],
             reboot_required: false,
             collected_at_unix_ms: 1_800_000_000_000,
+            windows_update_source: None,
+        };
+        // Agents before ADR-0086 say nothing of the update source.
+        assert!(PackageStore::new(pool.clone()).replace("agent-2", &report).await.unwrap());
+        let (status, body) = h.send("GET", &sources, &admin, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["windows_update_source"], Value::Null);
+        assert_eq!(body["problem"], "Mirrors carry Linux packages only. It keeps its own package sources.");
+
+        let report = PackageReport {
+            collected_at_unix_ms: 1_800_000_000_001,
+            windows_update_source: Some(WindowsUpdateSource {
+                origin: Origin::Wsus.into(),
+                wsus_url: "http://wsus.example:8530".into(),
+                managed: true,
+                automatic: Automatic::Download.into(),
+                quality_from_microsoft: true,
+                quality_deferral_days: 7,
+                ..WindowsUpdateSource::default()
+            }),
+            ..report
         };
         assert!(PackageStore::new(pool.clone()).replace("agent-2", &report).await.unwrap());
+        let (_, body) = h.send("GET", &sources, &admin, None).await;
+        assert_eq!(
+            body["windows_update_source"],
+            json!({"origin": "wsus", "wsus_url": "http://wsus.example:8530", "status_url": null,
+                   "download_url": null, "managed": true, "automatic": "download", "no_internet": false,
+                   "quality_from_microsoft": true, "feature_from_microsoft": false,
+                   "quality_deferral_days": 7, "feature_deferral_days": 0})
+        );
+        let (_, site) = h.send("GET", &format!("/api/sites/{}/sources", h.site), &admin, None).await;
+        let row = |id: Uuid| site["servers"].as_array().unwrap().iter().find(|s| s["id"] == json!(id)).unwrap().clone();
+        assert_eq!(row(windows)["windows_update_source"]["origin"], "wsus");
+        assert_eq!(row(windows)["os_family"], "windows");
+        assert_eq!(row(h.server)["windows_update_source"], Value::Null);
+
+        // A report without it, as after a downgrade, clears it.
+        let report = PackageReport {
+            collected_at_unix_ms: 1_800_000_000_002,
+            windows_update_source: None,
+            ..report
+        };
+        assert!(PackageStore::new(pool.clone()).replace("agent-2", &report).await.unwrap());
+        let (_, body) = h.send("GET", &sources, &admin, None).await;
+        assert_eq!(body["windows_update_source"], Value::Null);
         let (_, list) = h.send("GET", &format!("/api/servers/{windows}/packages"), &admin, None).await;
         assert_eq!(
             list["packages"],

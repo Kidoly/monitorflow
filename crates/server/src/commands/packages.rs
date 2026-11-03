@@ -1,10 +1,13 @@
 //! Package reports from agents (ADR-0031): the latest one per server in
 //! `server_packages`, with `servers.reboot_required` and
 //! `servers.packages_reported_at`. Windows agents report their updates
-//! with a title, classification, severity and size (ADR-0049).
+//! with a title, classification, severity and size (ADR-0049), and where
+//! they come from in `servers.windows_update_source` (ADR-0086).
 
 use monitorflow_common::proto::v1::{Package, PackageReport};
 use sqlx::PgPool;
+
+use super::update_source::UpdateSource;
 
 /// Packages kept from one report; a Debian or RHEL host has a few
 /// thousand.
@@ -100,12 +103,20 @@ impl PackageStore {
         .await?;
         sqlx::query(
             "UPDATE servers SET reboot_required = $2,
-                 packages_reported_at = COALESCE(to_timestamp($3), now())
+                 packages_reported_at = COALESCE(to_timestamp($3), now()),
+                 windows_update_source = $4
              WHERE id = $1",
         )
         .bind(server)
         .bind(report.reboot_required)
         .bind(collected_at)
+        .bind(
+            report
+                .windows_update_source
+                .as_ref()
+                .and_then(UpdateSource::from_report)
+                .map(sqlx::types::Json),
+        )
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;

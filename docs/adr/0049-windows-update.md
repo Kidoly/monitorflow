@@ -1,7 +1,7 @@
 # ADR-0049: Windows Update
 
 Date: 2026-10-30
-Status: accepted
+Status: accepted; the update source is reported since ADR-0086
 
 ## Context
 
@@ -117,4 +117,4 @@ The service accepts the license terms of the selected updates, as unattended ins
 - Inventories of Windows servers list installed updates that the source still knows, not the full history. An update whose installation is superseded drops out of the list.
 - The service runs searches online. A scan that cannot reach WSUS or Windows Update fails, and no report is sent.
 - Killing the agent while an install runs does not stop the service. The install finishes, and the journal reports the command as interrupted (ADR-0031).
-- Follow-ups: report the configured update source (WSUS URL or Windows Update) in the inventory, driver updates as an opt-in, and a per-update install timeout.
+- Follow-ups: report the configured update source (WSUS URL or Windows Update) in the inventory, done in ADR-0086; driver updates as an opt-in, and a per-update install timeout.

@@ -1523,11 +1523,40 @@ export interface SourcesStatus {
   problem: string | null;
   /** The fix is adding `distribution` on the Mirrors page. */
   add_mirror: boolean;
+  /**
+   * Windows servers: where Windows Update takes updates from (ADR-0086).
+   * `null` on Linux and until an agent that reports it sent its updates.
+   */
+  windows_update_source: WindowsUpdateSource | null;
+}
+
+/** Where a Windows server takes its updates from, as its policy sets it. */
+export interface WindowsUpdateSource {
+  /** `wsus_without_url`: policy turns WSUS on without naming a server. */
+  origin: "microsoft" | "wsus" | "wsus_without_url";
+  /** With `microsoft`, a server policy names but doesn't turn on. */
+  wsus_url: string | null;
+  /** Where it reports to, when not the WSUS server. */
+  status_url: string | null;
+  /** Where downloads come from, when not the WSUS server. */
+  download_url: string | null;
+  /** Any Windows Update policy is set. */
+  managed: boolean;
+  /** `null` when policy leaves it to Windows. */
+  automatic: "off" | "notify" | "download" | "install" | "local_choice" | null;
+  /** With WSUS: policy forbids Windows Update Internet locations. */
+  no_internet: boolean;
+  /** With WSUS: these come from Microsoft instead, by policy. */
+  quality_from_microsoft: boolean;
+  feature_from_microsoft: boolean;
+  /** Deferrals of updates from Microsoft, in days; 0 for none. */
+  quality_deferral_days: number;
+  feature_deferral_days: number;
 }
 
 /** `GET /api/sites/{id}/sources`, by host name. */
 export interface SiteSourcesList {
-  servers: (SourcesStatus & { id: string; hostname: string })[];
+  servers: (SourcesStatus & { id: string; hostname: string; os_family: string })[];
 }
 
 /** What a change of a whole site did. */

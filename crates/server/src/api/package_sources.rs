@@ -4,6 +4,8 @@
 //! Built on what campaigns use: the same spec, relay choice and commands
 //! (ADR-0035, ADR-0038). Reading needs a role on the site, changing needs
 //! an administrator of its customer, the rule of [`super::sources`].
+//! Windows servers have no mirror: their status carries where Windows
+//! Update takes their updates from instead (ADR-0086).
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -27,6 +29,7 @@ use super::sensors::parse_id;
 use super::sources::signing_key;
 use super::{ApiError, ApiState};
 use crate::commands::sources::{self, ArchiveKey, Selected, CURRENT};
+use crate::commands::update_source::UpdateSource;
 use crate::commands::State as CommandState;
 use crate::mirror::catalog::{self, Distribution};
 use crate::mirror::relays;
@@ -73,6 +76,10 @@ pub struct SourcesStatus {
     pub problem: Option<String>,
     /// The fix is adding [`Self::distribution`] on the Mirrors page.
     pub add_mirror: bool,
+    /// Windows servers: where Windows Update takes updates from, from the
+    /// latest package report. `null` on Linux and until an agent that
+    /// reports it sends a report (ADR-0086).
+    pub windows_update_source: Option<UpdateSource>,
 }
 
 impl SourcesStatus {
@@ -102,6 +109,8 @@ impl SourcesStatus {
 pub struct SiteServer {
     pub id: Uuid,
     pub hostname: String,
+    /// As in the server listing, so Windows rows read differently.
+    pub os_family: String,
     #[serde(flatten)]
     pub status: SourcesStatus,
 }
@@ -135,6 +144,7 @@ struct Host {
     os_family: String,
     os_version: Option<String>,
     package_updates: bool,
+    windows_update_source: Option<sqlx::types::Json<UpdateSource>>,
 }
 
 impl Host {
@@ -149,7 +159,8 @@ impl Host {
     }
 }
 
-const HOST_COLUMNS: &str = "id, site_id, peer_id, hostname, os_family, os_version, package_updates";
+const HOST_COLUMNS: &str =
+    "id, site_id, peer_id, hostname, os_family, os_version, package_updates, windows_update_source";
 
 /// The last source commands of a server, one for each outcome.
 #[derive(Debug, Default)]
@@ -378,6 +389,11 @@ impl<'a> Fit<'a> {
                 distribution,
                 problem,
                 add_mirror,
+                windows_update_source: host
+                    .windows_update_source
+                    .as_ref()
+                    .filter(|_| host.os_family == "windows")
+                    .map(|source| source.0.clone()),
             });
         }
         Ok(statuses)
@@ -490,6 +506,7 @@ pub async fn site(
         .map(|(host, status)| SiteServer {
             id: host.id,
             hostname: host.hostname,
+            os_family: host.os_family,
             status,
         })
         .collect();
@@ -690,6 +707,7 @@ mod tests {
             distribution: Some("Debian 12 (bookworm)"),
             problem: None,
             add_mirror: false,
+            windows_update_source: None,
         };
         assert_eq!(status.refusal(), None);
         status.problem = Some("no".into());

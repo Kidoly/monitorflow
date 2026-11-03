@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { ServerDetail, Site, SourcesStatus } from "@/lib/api";
+import type { ServerDetail, Site, SourcesStatus, WindowsUpdateSource } from "@/lib/api";
 import { As, me, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 
@@ -25,6 +25,7 @@ const own: SourcesStatus = {
   distribution: "Debian 12 (bookworm)",
   problem: null,
   add_mirror: false,
+  windows_update_source: null,
 };
 const onMirror: SourcesStatus = {
   ...own,
@@ -33,6 +34,19 @@ const onMirror: SourcesStatus = {
     { name: "debian-12", snapshot: "current" },
     { name: "debian-12-security", snapshot: "s1" },
   ],
+};
+const WSUS: WindowsUpdateSource = {
+  origin: "wsus",
+  wsus_url: "http://wsus.example:8530",
+  status_url: null,
+  download_url: null,
+  managed: true,
+  automatic: null,
+  no_internet: false,
+  quality_from_microsoft: false,
+  feature_from_microsoft: false,
+  quality_deferral_days: 0,
+  feature_deferral_days: 0,
 };
 const PATH = `/api/servers/${ID}/sources`;
 const ok = (body: unknown) => ({ status: 200, body });
@@ -133,9 +147,53 @@ describe("PackageSources", () => {
   });
 });
 
+describe("PackageSources on Windows", () => {
+  const win = { ...server, hostname: "win-1", os_family: "windows" } as ServerDetail;
+  const windows = { ...own, distribution: null, problem: "Mirrors carry Linux packages only." };
+
+  function showWindows() {
+    return render(
+      <As user={globalAdmin}>
+        <PackageSources server={win} />
+      </As>,
+    );
+  }
+
+  it("shows the update source in place of package sources, with no mirror to offer", async () => {
+    stubFetch({ [`GET ${PATH}`]: ok({ ...windows, windows_update_source: { ...WSUS, automatic: "download" } }) });
+    showWindows();
+    expect(await screen.findByRole("heading", { name: "Update source" })).toBeInTheDocument();
+    expect(screen.getByText("WSUS")).toBeInTheDocument();
+    expect(screen.getByText("Updates come from WSUS at http://wsus.example:8530.")).toBeInTheDocument();
+    expect(screen.getByText(/downloads updates on its own and waits/)).toBeInTheDocument();
+    expect(screen.queryByText(/Linux packages/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("says nothing misleading for an agent that doesn't report it", async () => {
+    stubFetch({ [`GET ${PATH}`]: ok(windows) });
+    showWindows();
+    expect(await screen.findByText("Not known yet")).toBeInTheDocument();
+    expect(screen.queryByText(/WSUS|Microsoft/)).not.toBeInTheDocument();
+  });
+
+  it("warns when settings contradict each other", async () => {
+    const source = { ...WSUS, origin: "wsus_without_url" as const, wsus_url: null };
+    stubFetch({ [`GET ${PATH}`]: ok({ ...windows, windows_update_source: source }) });
+    showWindows();
+    expect(await screen.findByText("WSUS without a server")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/Specify intranet Microsoft update service location/);
+  });
+});
+
 describe("SiteSources", () => {
   const path = `/api/sites/${SITE}/sources`;
-  const row = (id: string, hostname: string, status: SourcesStatus) => ({ id, hostname, ...status });
+  const row = (id: string, hostname: string, status: SourcesStatus, os_family = "debian") => ({
+    id,
+    hostname,
+    os_family,
+    ...status,
+  });
   const servers = [
     row("a", "db-1", own),
     row("b", "web-1", onMirror),
@@ -170,6 +228,35 @@ describe("SiteSources", () => {
     await userEvent.click(screen.getByRole("button", { name: "Use mirrors on 1 server" }));
     expect(await screen.findByText(/Sent to 1 server\. Each one changes at its next contact\./)).toBeInTheDocument();
     expect(screen.getByText("old-1: MonitorFlow has no mirror for debian 11.")).toBeInTheDocument();
+  });
+
+  it("says where Windows servers take their updates from, and offers them no mirror", async () => {
+    const windows = { ...own, distribution: null, problem: "Mirrors carry Linux packages only." };
+    const microsoft = { ...WSUS, origin: "microsoft" as const };
+    stubFetch({
+      [`GET ${path}`]: ok({
+        servers: [
+          row("w1", "win-1", { ...windows, windows_update_source: WSUS }, "windows"),
+          row("w2", "win-2", { ...windows, windows_update_source: microsoft }, "windows"),
+          row("w3", "win-3", windows, "windows"),
+        ],
+      }),
+    });
+    showSite();
+    const table = await screen.findByRole("table", { name: "Package sources of the site's servers" });
+    const cells = (name: string) =>
+      within(within(table).getByRole("link", { name }).closest("tr")!)
+        .getAllByRole("cell")
+        .map((c) => c.textContent);
+    expect(cells("win-1")).toEqual(["win-1", "WSUS", "Updates come from WSUS at http://wsus.example:8530."]);
+    expect(cells("win-2")).toEqual([
+      "win-2",
+      "Microsoft",
+      "Updates come from Microsoft (Windows Update). " +
+        "Policy names the WSUS server http://wsus.example:8530 but doesn't turn it on, so Windows ignores it.",
+    ]);
+    expect(cells("win-3")[1]).toBe("Not known yet");
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("goes back on the servers that use a mirror", async () => {
