@@ -196,6 +196,38 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn requests_refresh_the_idle_timer_once_a_minute(pool: PgPool) {
+        add_user(&pool, "alice", Role::Viewer).await;
+        let cookie = login(&pool, "alice").await;
+        let age = |pool: PgPool| async move {
+            let seconds: f64 = sqlx::query_scalar(
+                "SELECT extract(epoch FROM now() - last_seen_at)::float8 FROM sessions",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            seconds
+        };
+        let me = || call(app(pool.clone()), with_cookie("GET", "/api/auth/me", &cookie));
+
+        // Seen 20 s ago: the request reads the session without writing it.
+        sqlx::query("UPDATE sessions SET last_seen_at = now() - interval '20 seconds'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(me().await.0, StatusCode::OK);
+        assert!(age(pool.clone()).await >= 19.0);
+
+        // Seen 2 minutes ago: the request refreshes it.
+        sqlx::query("UPDATE sessions SET last_seen_at = now() - interval '2 minutes'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(me().await.0, StatusCode::OK);
+        assert!(age(pool.clone()).await < 5.0);
+    }
+
+    #[sqlx::test]
     async fn sessions_expire_after_idle_timeout_or_lifetime(pool: PgPool) {
         add_user(&pool, "alice", Role::Viewer).await;
         let me = |cookie: String| {

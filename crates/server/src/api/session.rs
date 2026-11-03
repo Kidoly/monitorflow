@@ -3,6 +3,7 @@
 //! idle timeout checked on every request.
 
 use std::fmt;
+use std::time::Duration;
 
 use axum::http::header::COOKIE;
 use axum::http::{HeaderMap, HeaderValue};
@@ -128,23 +129,42 @@ pub async fn create(
 
 /// The user of a live session, refreshing its idle timer. Expired or idle
 /// sessions, and sessions of disabled users, resolve to `None`.
+///
+/// The timer is written at most once per [`touch_every`]: a page sends
+/// several requests at once, and each writing the same row made them wait
+/// on its lock, holding pool connections (docs/load-test.md).
 pub async fn resolve(
     pool: &PgPool,
     token: &SessionToken,
     settings: &ApiSettings,
 ) -> Result<Option<Uuid>, sqlx::Error> {
+    let idle = settings.live.session_idle_timeout();
     sqlx::query_scalar(
-        "UPDATE sessions s SET last_seen_at = now()
-         FROM users u
-         WHERE s.token_hash = $1 AND u.id = s.user_id AND u.disabled_at IS NULL
-           AND s.expires_at > now()
-           AND s.last_seen_at > now() - make_interval(secs => $2)
-         RETURNING s.user_id",
+        "WITH live AS (
+             SELECT s.token_hash, s.user_id, s.last_seen_at
+             FROM sessions s JOIN users u ON u.id = s.user_id
+             WHERE s.token_hash = $1 AND u.disabled_at IS NULL
+               AND s.expires_at > now()
+               AND s.last_seen_at > now() - make_interval(secs => $2)),
+         touched AS (
+             UPDATE sessions s SET last_seen_at = now()
+             FROM live
+             WHERE s.token_hash = live.token_hash
+               AND live.last_seen_at <= now() - make_interval(secs => $3))
+         SELECT user_id FROM live",
     )
     .bind(token.hash())
-    .bind(settings.live.session_idle_timeout().as_secs_f64())
+    .bind(idle.as_secs_f64())
+    .bind(touch_every(idle).as_secs_f64())
     .fetch_optional(pool)
     .await
+}
+
+/// How stale `last_seen_at` may get before a request writes it: a minute,
+/// or a tenth of a shorter idle timeout, so a session never expires early
+/// by more than that.
+pub fn touch_every(idle_timeout: Duration) -> Duration {
+    (idle_timeout / 10).min(Duration::from_secs(60))
 }
 
 /// Ends the session of `token`. Returns whether it existed.
@@ -171,6 +191,14 @@ pub async fn prune(db: impl PgExecutor<'_>, settings: &ApiSettings) -> Result<u6
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_timers_are_written_once_a_minute_at_most() {
+        let minutes = |m: u64| Duration::from_secs(m * 60);
+        assert_eq!(touch_every(minutes(30)), minutes(1));
+        assert_eq!(touch_every(minutes(5)), Duration::from_secs(30));
+        assert_eq!(touch_every(Duration::from_secs(1)), Duration::from_millis(100));
+    }
 
     #[test]
     fn tokens_are_random_hex_and_hash_to_sha256() {

@@ -194,7 +194,7 @@ impl Fleet {
                         true
                     }
                     Err(error) => {
-                        tracing::warn!(agent = index, %error, "renewal failed");
+                        tracing::debug!(agent = index, %error, "renewal failed");
                         false
                     }
                 }
