@@ -15,6 +15,10 @@ import styles from "./InlineConfirm.module.css";
  * trigger on cancel. `onConfirm` rejecting keeps the box open with
  * `describeError`'s text.
  *
+ * `acknowledge` adds a checkbox the user must tick first, for actions
+ * with lasting effects (an emergency change of certificate authority).
+ * `confirmVariant="k"` draws the confirm button black, for a safe action.
+ *
  * `layout="row"` is the compact form inside a table row (enrollment tokens):
  * one line with the question, Cancel and the danger button, all 30 px.
  */
@@ -30,6 +34,8 @@ export function InlineConfirm<R extends string>({
   layout = "box",
   triggerVariant = "danger",
   triggerName,
+  acknowledge,
+  confirmVariant = "danger",
 }: {
   /** Label of the trigger button: "Revoke web-01…". */
   trigger: string;
@@ -47,19 +53,24 @@ export function InlineConfirm<R extends string>({
   pendingLabel?: string;
   onConfirm: (reason: R | null) => Promise<void> | void;
   describeError?: (error: unknown) => string;
+  /** Label of a checkbox that must be ticked before confirming. */
+  acknowledge?: string;
+  confirmVariant?: "danger" | "k";
 }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState<R | "">("");
+  const [acknowledged, setAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const selectRef = useRef<HTMLSelectElement>(null);
+  const checkRef = useRef<HTMLInputElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   // Focus moves only after the user opened or cancelled, not on first render.
   const moved = useRef<"open" | "closed" | null>(null);
 
   useEffect(() => {
-    if (moved.current === "open") (selectRef.current ?? confirmRef.current)?.focus();
+    if (moved.current === "open") (selectRef.current ?? checkRef.current ?? confirmRef.current)?.focus();
     if (moved.current === "closed") triggerRef.current?.focus();
     moved.current = null;
   }, [open]);
@@ -73,12 +84,13 @@ export function InlineConfirm<R extends string>({
     moved.current = "closed";
     setOpen(false);
     setReason("");
+    setAcknowledged(false);
     setError(null);
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (reasons && !reason) return;
+    if ((reasons && !reason) || (acknowledge && !acknowledged)) return;
     setBusy(true);
     setError(null);
     try {
@@ -150,6 +162,18 @@ export function InlineConfirm<R extends string>({
           </select>
         </label>
       )}
+      {acknowledge && (
+        <label className={styles.acknowledge}>
+          <input
+            ref={checkRef}
+            type="checkbox"
+            checked={acknowledged}
+            onChange={(e) => setAcknowledged(e.target.checked)}
+            disabled={busy}
+          />
+          <span>{acknowledge}</span>
+        </label>
+      )}
       <div className={styles.buttons}>
         <Button onClick={cancel} disabled={busy}>
           Cancel
@@ -157,8 +181,8 @@ export function InlineConfirm<R extends string>({
         <button
           ref={confirmRef}
           type="submit"
-          className={buttonClass({ variant: "danger" })}
-          disabled={busy || (reasons !== undefined && !reason)}
+          className={buttonClass({ variant: confirmVariant })}
+          disabled={busy || (reasons !== undefined && !reason) || (acknowledge !== undefined && !acknowledged)}
         >
           {busy ? pendingLabel : confirmLabel}
         </button>

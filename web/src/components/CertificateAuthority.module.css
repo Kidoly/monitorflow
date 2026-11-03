@@ -1,0 +1,69 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* As FactsBox's box. */
+.box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.subtitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.note {
+  margin: 0;
+  color: var(--muted);
+}
+
+.sentence {
+  margin: 0;
+}
+
+.start {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The planned change first; the emergency one beside it, or under it when an open box needs the room. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress progress {
+  flex: 1 1 auto;
+  max-width: 480px;
+}
+
+.name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}

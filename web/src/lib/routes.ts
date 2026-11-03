@@ -62,6 +62,8 @@ export const AI_SETTINGS_PATH = "/admin/ai/";
 export const SERVER_UPDATE_PATH = "/admin/server-update/";
 /** Backups of the server (ADR-0058). */
 export const BACKUPS_PATH = "/admin/backups/";
+/** Changing the certificate authority of the server (ADR-0088). */
+export const CERTIFICATE_AUTHORITY_PATH = "/admin/certificate-authority/";
 
 /** Where the browser downloads the backup `name`: a plain GET with the session cookie. */
 export function backupDownloadHref(name: string): string {

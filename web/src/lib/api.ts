@@ -845,6 +845,60 @@ export interface BackupsView {
   files: BackupFile[];
 }
 
+/** A server or relay during a change of certificate authority (ADR-0088). */
+export interface CaPeerState {
+  /** `agent` is a server on screen. */
+  role: "agent" | "relay";
+  peer_id: string;
+  name: string;
+  last_seen_at: string | null;
+  /** Its certificate expires then: it stops being waited for. */
+  not_after: string;
+  /** Its certificate comes from the authority that issues now. */
+  moved: boolean;
+  /** It trusts every authority the server trusts. */
+  trusts_all: boolean;
+  /** Its version cannot follow the change: it updates itself first. */
+  too_old: boolean;
+  /** Its certificate comes from an authority no longer trusted: it needs a new install. */
+  cut_off: boolean;
+}
+
+/** A change of certificate authority under way. */
+export interface CaRotation {
+  stage: "introduced" | "switched";
+  emergency: boolean;
+  started_at: string;
+  switched_at: string | null;
+  /** Emergency only: when the old authority stops being trusted. */
+  distrust_at: string | null;
+  /** The new authority while introduced, the old one once switched. */
+  other_fingerprint: string | null;
+  /** Servers and relays with a valid certificate. */
+  total: number;
+  /** Those done with the current step. */
+  done: number;
+  /** Those not done, up to 50, last seen first. */
+  waiting: CaPeerState[];
+}
+
+/** `GET /api/certificate-authority`; global administrators only (ADR-0088). */
+export interface CertificateAuthorityView {
+  /** SHA-256, hex. */
+  fingerprint: string;
+  created_at: string;
+  expires_at: string;
+  /** Less than a year left. */
+  expires_soon: boolean;
+  /** A planned change starts by itself then if nobody starts one. */
+  auto_change_at: string;
+  /** A restore brought back an authority this server retired then. */
+  restored_retired_at: string | null;
+  /** Machines that missed an emergency change, up to 50. */
+  cut_off: CaPeerState[];
+  rotation: CaRotation | null;
+}
+
 /** `POST /api/agent-releases/import` and `/import-url`. */
 export interface ReleaseImported {
   version: string;
@@ -2586,6 +2640,20 @@ export const api = {
     request<{ id: string }>("/api/backups", { method: "POST" }),
   checkServerUpdate: () =>
     request<ServerUpdateCheck>("/api/server-update/check", { method: "POST" }),
+
+  /** The certificate authority and its changes; global administrators only (ADR-0088). */
+  certificateAuthority: (signal?: AbortSignal) =>
+    request<CertificateAuthorityView>("/api/certificate-authority", { signal }),
+  startCertificateAuthorityChange: (emergency: boolean) =>
+    request<CertificateAuthorityView>("/api/certificate-authority/rotation", {
+      method: "POST",
+      body: { emergency },
+    }),
+  nextCertificateAuthorityStep: () =>
+    request<CertificateAuthorityView>("/api/certificate-authority/rotation/next", {
+      method: "POST",
+      body: {},
+    }),
 
   startServerUpdate: (version: string) =>
     request<{ id: string }>("/api/server-update", {

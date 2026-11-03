@@ -28,5 +28,7 @@ describe("visibleNavigation", () => {
     expect(customerAdmin).not.toContain("Settings");
     expect(labels(as(null))).toContain("Backups");
     expect(customerAdmin).not.toContain("Backups");
+    expect(labels(as(null))).toContain("Certificate authority");
+    expect(customerAdmin).not.toContain("Certificate authority");
   });
 });
