@@ -555,8 +555,7 @@ fn authorize_sharing(user: &CurrentUser, sharing: Sharing) -> Result<(), ApiErro
     let seen = match sharing {
         Sharing::Personal => true,
         Sharing::Site { id } => user.readable_sites().contains(id),
-        // A customer with a readable site is known to the user; the
-        // refusal is then 403 rather than 404.
+        // Seen as a whole, as for who sees its dashboards.
         Sharing::Customer { id } => user.visible_customers().contains(id),
     };
     if !seen {

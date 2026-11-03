@@ -53,7 +53,7 @@ Changing who a dashboard is shared with needs the right to edit it under both th
 - Users build pages of charts, figures, top lists and alerts without a query, shared with a site or customer by the same roles as everything else.
 - Tenancy holds on display whatever is stored, and is checked on save so stored dashboards make sense to those they are shared with.
 - No new setting, no new service. One table.
-- Not in this change: tags on servers (and so panels by tag), panels of logs (ADR-0091's journald work may add them), thresholds drawn on dashboard charts, a dashboard as the home page, and exporting a dashboard as a file.
+- Not in this change: tags on servers (and so panels by tag), panels of logs (once the journald work of phase 13 lands), thresholds drawn on dashboard charts, a dashboard as the home page, and exporting a dashboard as a file.
 
 ## Alternatives considered
 
