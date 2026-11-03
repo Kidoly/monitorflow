@@ -20,7 +20,7 @@ The owner's rule applies: as simple as possible to use, the interface doing the 
 | Top list | The servers or disks with the highest or lowest value now: "5 fullest disks" | Servers, metric, what it watches, highest or lowest, how many (1 to 20) |
 | Open alerts | The open alerts of the servers, worst first | Servers, how many (1 to 20) |
 
-Servers are every server of the dashboard (the default), a site, a customer, or chosen servers (at most 50). Metrics are picked from those the chosen servers report (VictoriaMetrics' label values over the last day, filtered to those servers), with plain titles for the built-in ones. "One line each" draws the 8 worst series, `topk_max(8, …)` or `bottomk_min` for metrics where low is bad (available, free), the same rule as the rollups of ADR-0020, because the chart has 8 colours and a line per server of a thousand is noise.
+Servers are every server of the dashboard (the default), a site, a customer, or chosen servers (at most 50). Metrics are picked from those the dashboard's servers reported in the last day (VictoriaMetrics' label values, filtered to the sites the dashboard covers and the user reads), with plain titles for the built-in ones. "One line each" draws the 8 worst series, `topk_max(8, …)` or `bottomk_min` for metrics where low is bad (available, free), the same rule as the rollups of ADR-0020, because the chart has 8 colours and a line per server of a thousand is noise.
 
 Servers have no tags yet, so "servers with tag X" is not offered. The servers choice is a tagged object (`{"kind": "site", "id": …}`), so a `tag` kind can be added later without a new schema version.
 
