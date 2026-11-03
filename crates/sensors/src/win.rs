@@ -100,7 +100,7 @@ const ACCESS_DENIED: [u8; 4] = [1, 6, 10, 12];
 const ACE_MASK_END: usize = 8;
 
 /// Closes a handle when dropped.
-struct Owned(HANDLE);
+pub(crate) struct Owned(pub(crate) HANDLE);
 
 impl Drop for Owned {
     fn drop(&mut self) {
