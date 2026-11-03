@@ -982,6 +982,11 @@ pub struct ServerConfig {
     pub database_url: DatabaseUrl,
     pub victoriametrics_url: String,
     pub victorialogs_url: String,
+    /// Directory shared with VictoriaMetrics and VictoriaLogs (ADR-0087).
+    /// Set, the server keeps their certificate and password there, its
+    /// clients trust the built-in CA alone and log in, and both URLs must be
+    /// https. Unset, the clients trust public CAs and send no password.
+    pub storage_tls_dir: Option<PathBuf>,
     pub data_dir: PathBuf,
     /// Seconds without any message after which a peer's stream is closed.
     pub heartbeat_timeout: u64,
@@ -1113,6 +1118,7 @@ impl Default for ServerConfig {
             database_url: DatabaseUrl::default(),
             victoriametrics_url: "http://localhost:8428".into(),
             victorialogs_url: "http://localhost:9428".into(),
+            storage_tls_dir: None,
             data_dir: "/var/lib/monitorflow/server".into(),
             // Three missed heartbeats at the agent's default interval.
             heartbeat_timeout: 3 * DEFAULT_HEARTBEAT_INTERVAL,
@@ -1564,6 +1570,7 @@ impl LoadConfig for ServerConfig {
         env.set_opt("release_url", &mut self.release_url)?;
         env.set_opt("server_update_dir", &mut self.server_update_dir)?;
         env.set_opt("backup_dir", &mut self.backup_dir)?;
+        env.set_opt("storage_tls_dir", &mut self.storage_tls_dir)?;
         env.set_opt("agent_install_source", &mut self.agent_install_source)?;
         self.mirror.apply_env(env)?;
         self.ai.apply_env(env)?;

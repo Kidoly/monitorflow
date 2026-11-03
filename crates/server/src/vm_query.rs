@@ -12,6 +12,8 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use crate::storage_tls::{StorageAuth, StorageTlsError};
+
 /// Time allowed for one query, connection included.
 pub const QUERY_TIMEOUT: Duration = Duration::from_secs(15);
 /// Largest response body read, in bytes.
@@ -43,16 +45,30 @@ pub struct VmQuery {
 }
 
 impl VmQuery {
-    pub fn new(base: &str) -> Result<Self, reqwest::Error> {
+    pub fn new(base: &str) -> Result<Self, StorageTlsError> {
         Self::with_timeout(base, QUERY_TIMEOUT)
     }
 
-    pub fn with_timeout(base: &str, timeout: Duration) -> Result<Self, reqwest::Error> {
-        let client = reqwest::Client::builder()
+    pub fn with_timeout(base: &str, timeout: Duration) -> Result<Self, StorageTlsError> {
+        Self::with_auth(base, timeout, None)
+    }
+
+    /// With the CA and password of the store (ADR-0087).
+    pub fn with_auth(
+        base: &str,
+        timeout: Duration,
+        auth: Option<&StorageAuth>,
+    ) -> Result<Self, StorageTlsError> {
+        let mut builder = reqwest::Client::builder()
             .timeout(timeout)
             .connect_timeout(Duration::from_secs(5).min(timeout))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+            .redirect(reqwest::redirect::Policy::none());
+        if let Some(auth) = auth {
+            builder = auth.apply(builder)?;
+        }
+        let client = builder
+            .build()
+            .map_err(|e| StorageTlsError::Client(e.to_string()))?;
         Ok(Self {
             base: base.trim_end_matches('/').to_owned(),
             client,

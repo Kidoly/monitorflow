@@ -106,6 +106,9 @@ services:
   db-certs:
     build:
       args: { RELEASE_KEYS: "${MF_E2E_RELEASE_KEYS}" }
+  storage-certs:
+    build:
+      args: { RELEASE_KEYS: "${MF_E2E_RELEASE_KEYS}" }
   server:
     build:
       args: { RELEASE_KEYS: "${MF_E2E_RELEASE_KEYS}" }

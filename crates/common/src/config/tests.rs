@@ -425,6 +425,10 @@ fn server_update_settings() {
             "/var/lib/monitorflow/update",
         ),
         ("MONITORFLOW_BACKUP_DIR", "/var/lib/monitorflow/backups"),
+        (
+            "MONITORFLOW_STORAGE_TLS_DIR",
+            "/var/lib/monitorflow/storage-tls",
+        ),
     ]);
     let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
     assert_eq!(server.release_url.as_deref(), Some("http://files:8080/mf/"));
@@ -435,6 +439,10 @@ fn server_update_settings() {
     assert_eq!(
         server.backup_dir.as_deref(),
         Some(Path::new("/var/lib/monitorflow/backups"))
+    );
+    assert_eq!(
+        server.storage_tls_dir.as_deref(),
+        Some(Path::new("/var/lib/monitorflow/storage-tls"))
     );
     for bad in ["ftp://files", "https://u:p@files", "https://files/?x"] {
         let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_RELEASE_URL", bad)]);

@@ -10,6 +10,13 @@ x-server-build: &server-build
   context: ..
   dockerfile: deploy/docker/server.Dockerfile
 
+# The links to the metric and log stores: TLS with a certificate of the
+# server's CA, and a password (ADR-0087).
+x-storage-tls: &storage-tls
+  MONITORFLOW_VICTORIAMETRICS_URL: https://victoriametrics:8428
+  MONITORFLOW_VICTORIALOGS_URL: https://victorialogs:9428
+  MONITORFLOW_STORAGE_TLS_DIR: /var/lib/monitorflow/storage-tls
+
 services:
   # One-shot: the CA and certificate of the PostgreSQL link, on first start.
   db-certs:
@@ -19,6 +26,19 @@ services:
     user: "0"
     network_mode: none
     volumes: ["dbcerts:/certs"]
+
+  # One-shot: the certificate and password of the metric and log stores,
+  # issued by the server's CA before they start (ADR-0087). The server
+  # renews the certificate while it runs.
+  storage-certs:
+    build: *server-build
+    image: ${SERVER_IMAGE:-monitorflow-server:local}
+    command: ["storage-certs"]
+    environment: *storage-tls
+    network_mode: none
+    volumes:
+      - serverdata:/var/lib/monitorflow/server
+      - storagetls:/var/lib/monitorflow/storage-tls
 
   postgres:
     image: postgres:17
@@ -52,16 +72,39 @@ services:
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.155.0
     # UI_*: set by the updater for Administration > Settings (ADR-0069).
-    command: ["-storageDataPath=/storage", "-retentionPeriod=${METRICS_RETENTION:-${UI_METRICS_RETENTION:-90d}}"]
-    volumes: ["vmdata:/storage"]
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=${METRICS_RETENTION:-${UI_METRICS_RETENTION:-90d}}
+      # TLS and a password (ADR-0087). The certificate is read again every
+      # second: renewing it needs no restart.
+      - -tls
+      - -tlsCertFile=/tls/cert.pem
+      - -tlsKeyFile=/tls/key.pem
+      - -tlsMinVersion=TLS13
+      - -httpAuth.username=monitorflow
+      - -httpAuth.password=file:///tls/password
+    volumes: ["vmdata:/storage", "storagetls:/tls:ro"]
     networks: [storage]
+    depends_on:
+      storage-certs: { condition: service_completed_successfully }
     restart: unless-stopped
 
   victorialogs:
     image: victoriametrics/victoria-logs:v1.53.0
-    command: ["-storageDataPath=/storage", "-retentionPeriod=${LOGS_RETENTION:-${UI_LOGS_RETENTION:-30d}}"]
-    volumes: ["vldata:/storage"]
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=${LOGS_RETENTION:-${UI_LOGS_RETENTION:-30d}}
+      # As VictoriaMetrics.
+      - -tls
+      - -tlsCertFile=/tls/cert.pem
+      - -tlsKeyFile=/tls/key.pem
+      - -tlsMinVersion=TLS13
+      - -httpAuth.username=monitorflow
+      - -httpAuth.password=file:///tls/password
+    volumes: ["vldata:/storage", "storagetls:/tls:ro"]
     networks: [storage]
+    depends_on:
+      storage-certs: { condition: service_completed_successfully }
     restart: unless-stopped
 
   server:
@@ -69,8 +112,7 @@ services:
     image: ${SERVER_IMAGE:-monitorflow-server:local}
     environment:
       MONITORFLOW_DATABASE_URL: "postgres://monitorflow:${POSTGRES_PASSWORD}@postgres:5432/monitorflow?sslmode=verify-full&sslrootcert=/certs/ca.pem"
-      MONITORFLOW_VICTORIAMETRICS_URL: http://victoriametrics:8428
-      MONITORFLOW_VICTORIALOGS_URL: http://victorialogs:9428
+      <<: *storage-tls
       # Reached by the web service only: the port is not published (ADR-0006).
       MONITORFLOW_API_LISTEN_ADDR: 0.0.0.0:7444
       MONITORFLOW_SERVER_NAMES: ${SERVER_NAMES:?set SERVER_NAMES in .env}
@@ -101,6 +143,7 @@ services:
       - serverdata:/var/lib/monitorflow/server
       - mirrors:/var/lib/monitorflow/server/mirrors
       - dbcerts:/certs:ro
+      - storagetls:/var/lib/monitorflow/storage-tls
       # Requests go to its inbox; the rest belongs to the updater.
       - update:/var/lib/monitorflow/update
       - ${BACKUP_DIR:-backups}:/var/lib/monitorflow/backups:ro
@@ -189,7 +232,8 @@ services:
     restart: unless-stopped
 
 networks:
-  # The databases: no published port, no route out (ADR-0051).
+  # The databases: no published port, no route out (ADR-0051), and TLS
+  # to each (ADR-0087).
   storage:
     internal: true
   front:
@@ -198,6 +242,8 @@ networks:
 
 volumes:
   dbcerts:
+  # The stores' certificate, key and password; issued again if lost.
+  storagetls:
   pgdata:
   vmdata:
   vldata:

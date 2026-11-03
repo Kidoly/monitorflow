@@ -7,6 +7,10 @@ services:
     build:
       args:
         MONITORFLOW_BUILD_VERSION: ${MF_TEST_SERVER_VERSION:-}
+  storage-certs:
+    build:
+      args:
+        MONITORFLOW_BUILD_VERSION: ${MF_TEST_SERVER_VERSION:-}
   server:
     build:
       args:

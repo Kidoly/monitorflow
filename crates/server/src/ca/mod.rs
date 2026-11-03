@@ -368,11 +368,6 @@ impl CertificateAuthority {
         server_names: &[ServerName],
     ) -> Result<IssuedCert, CaError> {
         let invalid = |why: String| CaError::InvalidRequest(why);
-        let csr = CertificateSigningRequestParams::from_pem(csr_pem).map_err(|e| match e {
-            rcgen::Error::InvalidCertificationRequestSignature => CaError::CsrSignature,
-            other => CaError::InvalidCsr(other.to_string()),
-        })?;
-
         let is_server = identity.role() == PeerRole::Server;
         if is_server && server_names.is_empty() {
             return Err(invalid(
@@ -387,16 +382,56 @@ impl CertificateAuthority {
         }
         let uri = identity.uri().try_into().map_err(CaError::signing)?;
         let mut sans = vec![SanType::URI(uri)];
-        for name in server_names {
-            sans.push(match name {
-                ServerName::Dns(dns) => SanType::DnsName(
-                    dns.as_str()
-                        .try_into()
-                        .map_err(|_| invalid(format!("invalid DNS name `{dns}`")))?,
-                ),
-                ServerName::Ip(ip) => SanType::IpAddress(*ip),
-            });
+        sans.extend(name_sans(server_names)?);
+        let mut usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+        if !server_names.is_empty() {
+            usages.push(ExtendedKeyUsagePurpose::ServerAuth);
         }
+        let issued = self.sign(csr_pem, identity.id(), sans, usages, validity)?;
+        debug!(peer = %identity, serial = %issued.serial, "issued a certificate");
+        Ok(issued)
+    }
+
+    /// Signs the public key of `csr_pem` for a TLS server that is not a
+    /// peer, like the metric and log stores (ADR-0087): `names` as SANs,
+    /// the first as CN, `serverAuth` only and no `monitorflow://` URI, so
+    /// the certificate can never authenticate a client to the server's
+    /// listeners. Same CSR and validity rules as [`Self::issue`].
+    pub fn issue_tls_server(
+        &self,
+        csr_pem: &str,
+        names: &[ServerName],
+        validity: Option<Duration>,
+    ) -> Result<IssuedCert, CaError> {
+        let common_name = match names.first() {
+            Some(ServerName::Dns(dns)) => dns.clone(),
+            Some(ServerName::Ip(ip)) => ip.to_string(),
+            None => {
+                return Err(CaError::InvalidRequest(
+                    "a TLS server certificate needs a DNS name or an IP address".into(),
+                ))
+            }
+        };
+        let sans = name_sans(names)?;
+        let usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        let issued = self.sign(csr_pem, &common_name, sans, usages, validity)?;
+        debug!(name = %common_name, serial = %issued.serial, "issued a TLS server certificate");
+        Ok(issued)
+    }
+
+    fn sign(
+        &self,
+        csr_pem: &str,
+        common_name: &str,
+        sans: Vec<SanType>,
+        usages: Vec<ExtendedKeyUsagePurpose>,
+        validity: Option<Duration>,
+    ) -> Result<IssuedCert, CaError> {
+        let invalid = |why: String| CaError::InvalidRequest(why);
+        let csr = CertificateSigningRequestParams::from_pem(csr_pem).map_err(|e| match e {
+            rcgen::Error::InvalidCertificationRequestSignature => CaError::CsrSignature,
+            other => CaError::InvalidCsr(other.to_string()),
+        })?;
 
         let validity = validity.unwrap_or(self.options.cert_validity);
         let now = now();
@@ -416,19 +451,14 @@ impl CertificateAuthority {
         params.distinguished_name = DistinguishedName::new();
         params
             .distinguished_name
-            .push(DnType::CommonName, identity.id());
+            .push(DnType::CommonName, common_name);
         params.subject_alt_names = sans;
         params.serial_number = Some(SerialNumber::from_slice(serial.as_bytes()));
         params.not_before = not_before;
         params.not_after = not_after;
         params.is_ca = IsCa::ExplicitNoCa;
         params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-        if !server_names.is_empty() {
-            params
-                .extended_key_usages
-                .push(ExtendedKeyUsagePurpose::ServerAuth);
-        }
+        params.extended_key_usages = usages;
         params.use_authority_key_identifier_extension = true;
         let cert = CertificateSigningRequestParams {
             params,
@@ -437,7 +467,6 @@ impl CertificateAuthority {
         .signed_by(&self.issuer)
         .map_err(CaError::signing)?;
 
-        debug!(peer = %identity, %serial, "issued a certificate");
         Ok(IssuedCert {
             cert_pem: cert.pem(),
             serial,
@@ -445,6 +474,21 @@ impl CertificateAuthority {
             not_after: not_after.into(),
         })
     }
+}
+
+/// `names` as subject alternative names.
+fn name_sans(names: &[ServerName]) -> Result<Vec<SanType>, CaError> {
+    names
+        .iter()
+        .map(|name| match name {
+            ServerName::Dns(dns) => dns
+                .as_str()
+                .try_into()
+                .map(SanType::DnsName)
+                .map_err(|_| CaError::InvalidRequest(format!("invalid DNS name `{dns}`"))),
+            ServerName::Ip(ip) => Ok(SanType::IpAddress(*ip)),
+        })
+        .collect()
 }
 
 fn incomplete(present: PathBuf, missing: PathBuf) -> CaError {
