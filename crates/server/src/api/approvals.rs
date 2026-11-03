@@ -230,7 +230,8 @@ pub async fn list(
                 }),
                 _ => None,
             };
-            let snapshots = SnapshotSupport::of(settings, mapping, row.left_out);
+            let clusters = settings.proxmox_clusters_for(row.customer_id, row.site_id);
+            let snapshots = SnapshotSupport::of(settings, &clusters, mapping, row.left_out);
             Ok(PendingView {
                 id: row.id,
                 incident_id: row.incident_id,

@@ -1,5 +1,6 @@
 //! Proxmox VM and container mappings through the API (ADR-0044,
-//! ADR-0093): access, validation, snapshot availability and the audit log. Ignored without
+//! ADR-0093): access, validation, snapshot availability, discovery's
+//! matches and how people correct them, and the audit log. Ignored without
 //! `DATABASE_URL`.
 
 use axum::body::Body;
@@ -9,6 +10,7 @@ use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::grpc::Registry;
+use monitorflow_server::remediation::snapshot::discovery::Owner;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -214,7 +216,7 @@ db_tests! {
         assert_eq!(actions, ["server.proxmox.set", "server.proxmox.set", "server.proxmox.clear"]);
         assert!(audit.iter().all(|a| a.1 == h.servers[0].to_string()));
         assert_eq!(audit[0].2["previous"], Value::Null);
-        assert_eq!(audit[1].2["previous"], json!({ "cluster": "pve", "node": "pve1", "vmid": 101, "kind": "qemu" }));
+        assert_eq!(audit[1].2["previous"], json!({ "cluster": "pve", "node": "pve1", "vmid": 101, "kind": "qemu", "matched_by": null }));
         assert_eq!(audit[2].2["node"], "pve2");
     }
 
@@ -262,6 +264,95 @@ db_tests! {
         )
         .fetch_all(&pool).await.unwrap();
         assert_eq!(kinds, ["lxc", "lxc"]);
+    }
+
+    #[sqlx::test]
+    async fn discovered_matches_show_and_people_correct_them(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let admin = h.login("boss", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let uri = format!("/api/servers/{}/proxmox", h.servers[0]);
+        sqlx::query(
+            "INSERT INTO proxmox_guests (cluster, vmid, node, kind, name) VALUES
+             ('pve', 104, 'pve2', 'lxc', 'files-1'), ('pve', 105, 'pve1', 'qemu', 'files-1-old')",
+        )
+        .execute(&pool).await.unwrap();
+        // What a discovery pass records: a match, then two candidates.
+        sqlx::query("INSERT INTO server_proxmox_vms (server_id, cluster, node, vmid, kind, matched_by) VALUES ($1, 'pve', 'pve2', 104, 'lxc', 'mac')")
+            .bind(h.servers[0]).execute(&pool).await.unwrap();
+        let (_, body) = h.call("GET", &uri, &admin, None).await;
+        assert_eq!(body["mapping"]["matched_by"], "mac");
+        assert_eq!(body["mapping"]["name"], "files-1");
+        assert_eq!(body["candidates"], json!([]));
+
+        // "Not this one": unmapped, and never matched to it again.
+        assert_eq!(h.call("DELETE", &uri, &admin, None).await.0, StatusCode::NO_CONTENT);
+        let rejected: Vec<(i32, Option<Uuid>)> = sqlx::query_as("SELECT vmid, rejected_by FROM server_proxmox_rejections")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(rejected.len(), 1);
+        assert_eq!(rejected[0].0, 104);
+        assert!(rejected[0].1.is_some());
+
+        sqlx::query("INSERT INTO server_proxmox_candidates (server_id, cluster, vmid, matched_by) VALUES ($1, 'pve', 104, 'hostname'), ($1, 'pve', 105, 'hostname')")
+            .bind(h.servers[0]).execute(&pool).await.unwrap();
+        let (_, body) = h.call("GET", &uri, &admin, None).await;
+        assert_eq!(body["mapping"], Value::Null);
+        let candidates: Vec<(u64, &str, &str)> = body["candidates"].as_array().unwrap().iter()
+            .map(|c| (c["vmid"].as_u64().unwrap(), c["kind"].as_str().unwrap(), c["matched_by"].as_str().unwrap()))
+            .collect();
+        assert_eq!(candidates, [(104, "lxc", "hostname"), (105, "qemu", "hostname")]);
+
+        // Choosing one maps it by hand, which discovery leaves alone.
+        let chosen = json!({ "cluster": "pve", "node": "pve2", "vmid": 104, "kind": "lxc" });
+        let (status, body) = h.call("PUT", &uri, &admin, Some(chosen)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["mapping"]["matched_by"], Value::Null);
+        assert_eq!(body["candidates"], json!([]));
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM server_proxmox_rejections").fetch_one(&pool).await.unwrap();
+        assert_eq!(left, 0, "mapping the guest by hand lifts its rejection");
+        let cleared: String = sqlx::query_scalar("SELECT details->>'matched_by' FROM audit_log WHERE action = 'server.proxmox.clear'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(cleared, "mac");
+    }
+
+    #[sqlx::test]
+    async fn clusters_serve_only_their_customer_and_guests_list_accordingly(pool: PgPool) {
+        let mut h = Harness::new(&pool).await;
+        let admin = h.login("boss", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let global = h.login("root", Role::Administrator, GrantScope::Global).await;
+        let uri = format!("/api/servers/{}/proxmox", h.servers[0]);
+        let guests = format!("{uri}/guests");
+        sqlx::query("INSERT INTO proxmox_guests (cluster, vmid, node, kind, name) VALUES ('pve', 101, 'pve1', 'qemu', 'web-1'), ('pve', 102, 'pve1', 'qemu', 'web-2')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO server_proxmox_vms (server_id, cluster, node, vmid) VALUES ($1, 'pve', 'pve1', 102)")
+            .bind(h.servers[1]).execute(&pool).await.unwrap();
+
+        // Serving everyone: its guests belong to all customers, so only a
+        // global administrator gets the list.
+        let (status, body) = h.call("GET", &guests, &admin, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["guests"], json!([]));
+        let (_, body) = h.call("GET", &guests, &global, None).await;
+        let listed: Vec<(u64, bool)> = body["guests"].as_array().unwrap().iter()
+            .map(|g| (g["vmid"].as_u64().unwrap(), g["taken"].as_bool().unwrap())).collect();
+        assert_eq!(listed, [(101, false), (102, true)]);
+
+        // The customer's own cluster: listed to its administrators.
+        h.settings.proxmox_owners = [("pve".to_owned(), Owner::Customer(h.customer))].into();
+        let (_, body) = h.call("GET", &guests, &admin, None).await;
+        assert_eq!(body["guests"].as_array().unwrap().len(), 2);
+
+        // Another customer's cluster: as if it did not exist.
+        h.settings.proxmox_owners = [("pve".to_owned(), Owner::Customer(h.other_customer))].into();
+        let (_, body) = h.call("GET", &uri, &admin, None).await;
+        assert_eq!(body["clusters"], json!([]));
+        let (_, body) = h.call("GET", &guests, &global, None).await;
+        assert_eq!(body["guests"], json!([]));
+        let vm = json!({ "cluster": "pve", "node": "pve1", "vmid": 101 });
+        let (status, body) = h.call("PUT", &uri, &admin, Some(vm)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("unknown Proxmox cluster"), "{body}");
+        let (_, body) = h.call("GET", &format!("/api/servers/{}/proxmox", h.servers[1]), &admin, None).await;
+        assert_eq!(body["snapshots"]["reason"], "unknown_cluster");
     }
 
     #[sqlx::test]

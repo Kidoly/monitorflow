@@ -844,6 +844,7 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(ctx.status(method, &uri, body).await, not_found);
         }
         ("GET", "/api/servers/{id}/proxmox")
+        | ("GET", "/api/servers/{id}/proxmox/guests")
         | ("PUT", "/api/servers/{id}/proxmox")
         | ("DELETE", "/api/servers/{id}/proxmox") => {
             let uri = path.replace("{id}", &b.server.to_string());
