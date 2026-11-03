@@ -10,7 +10,7 @@ scripts/load-test.sh --agents 100 --steady 60         # a quick look
 scripts/load-test.sh --agents 1000 --hold 900         # then look at the web interface for 15 minutes
 ```
 
-It needs Docker, the Rust toolchain and about 2 GB of memory. The script starts PostgreSQL 17, VictoriaMetrics and VictoriaLogs at the production versions in a compose project of their own (`monitorflow-loadtest`, loopback ports 25432, 28428 and 29428, set with `LOADTEST_POSTGRES_PORT`, `LOADTEST_VICTORIAMETRICS_PORT` and `LOADTEST_VICTORIALOGS_PORT`), builds the release server, relay and `monitorflow-loadtest`, runs them, prints the report, and removes the containers and their data. The report is also in `target/loadtest/report.md`, next to the server's and relays' logs, the agents' identities, and PostgreSQL's log in `target/load-test-postgres.log`. `monitorflow-loadtest --help` lists the options: number of agents, share behind relays, number of relays, ramp rate, length of the steady state, phases, and `--strict`, which fails the run when a goal is missed.
+It needs Docker, the Rust toolchain and about 2 GB of memory. The script first issues the stores' certificate and password with `monitorflow-server storage-certs`, as the production compose's `storage-certs` service does (ADR-0087), then starts PostgreSQL 17, and VictoriaMetrics and VictoriaLogs over TLS with basic auth, at the production versions, in a compose project of their own (`monitorflow-loadtest`, loopback ports 25432, 28428 and 29428, set with `LOADTEST_POSTGRES_PORT`, `LOADTEST_VICTORIAMETRICS_PORT` and `LOADTEST_VICTORIALOGS_PORT`), builds the release server, relay and `monitorflow-loadtest`, runs them, prints the report, and removes the containers and their data. The report is also in `target/loadtest/report.md`, next to the server's and relays' logs, the agents' identities, and PostgreSQL's log in `target/load-test-postgres.log`. `monitorflow-loadtest --help` lists the options: number of agents, share behind relays, number of relays, ramp rate, length of the steady state, phases, and `--strict`, which fails the run when a goal is missed.
 
 CI runs 100 agents with a 30-second steady state, a command to each and a server restart, on debug builds, with `--strict` (the `load-test` job, about ten minutes, its report kept as an artifact).
 
@@ -35,34 +35,34 @@ Every 5 seconds it samples the CPU and resident memory of the server, the relays
 
 - Intel Core i5-14600K (14 cores, 20 threads), 63 GB of memory, NVMe SSD (WD_BLACK SN850X) under btrfs on LUKS; Arch Linux, kernel 7.2, Docker 29.
 - Server, relay, stores and generator on that one host, which other work shared during the runs. PostgreSQL in Docker managed about 1,000 `fdatasync` a second (`pg_test_fsync`).
-- Release builds of commit `725d0f4`, PostgreSQL 17, VictoriaMetrics v1.155.0, VictoriaLogs v1.53.0, all with their default settings; the server with its 16-connection pool.
+- Release builds of commit `725d0f4` for the first three columns, and of this branch rebased on high availability and store TLS for the last one; PostgreSQL 17, VictoriaMetrics v1.155.0, VictoriaLogs v1.53.0, all with their default settings; the server with its 16-connection pool.
 - One relay; 20 % of the agents behind it.
 
 ## Results
 
-With the fixes below. Means over the phase, maximum in brackets; CPU in percent of one core.
+With the fixes below. Means over the phase, maximum in brackets; CPU in percent of one core. The first three columns ran before high availability (ADR-0089) and TLS to the stores (ADR-0087) were merged, with the stores over plain HTTP; the last one ran the same 1,000-agent test on top of both, one server instance, the stores over TLS with basic auth as in production.
 
-| | 100 agents | 500 agents | 1,000 agents |
-| --- | --- | --- | --- |
-| All connected (50 new agents a second) | 3 s | 10 s | 20 s |
-| Server CPU during enrollment | under 5 s of samples | 39 (41) | 40 (41) |
-| Server CPU, steady state | 1 (17) | 1 (8) | 2 (9) |
-| Server memory, steady state | 43 MiB | 84 MiB | 136 MiB (142) |
-| Relay CPU and memory, steady state | 0, 18 MiB | 0, 32 MiB | 0 (2), 49 MiB |
-| Samples into VictoriaMetrics | 42 a second | 216 a second | 433 a second (502) |
-| PostgreSQL connections, of which active | 17, 0 | 17, 0 | 17, 0 (1) |
-| Fleet overview API calls | 15 ms p50, 20 ms p95 | 42 ms, 54 ms | 83 ms, 90 ms |
-| Incident list API calls | 15 ms, 17 ms | 42 ms, 48 ms | 85 ms, 95 ms |
-| A command to every server: all results in | 3.1 s | 4.3 s | 5.6 s (p95 4.6 s per command) |
-| Server CPU while commands run | | 35 | 50 |
-| Restart: every stream open again at the server | 1.9 s (p95 1.0 s) | 1.6 s (1.0 s) | 2.0 s (1.0 s) |
-| Restart: first batch of a direct agent | p50 20 s, max 51 s | p50 11 s, max 51 s | p50 11 s, max 61 s |
-| Server CPU during the reconnection storm | 0 (1) | 1 (2) | 4 (32) |
-| Alert storm: every incident open after the breach | 185 s | 184 s | 186 s |
-| Opening notifications: outbox to sent | p95 60 s | p95 65 s | p50 10 s, p95 15 s, max 60 s |
-| Resolutions: outbox to sent | p95 60 s | p95 51 s | p50 54 s, p95 59 s |
-| Every webhook delivered after the breach | 209 s | 229 s | 203 s |
-| Errors and warnings in the server's log | none | none | none |
+| | 100 agents | 500 agents | 1,000 agents | 1,000, after HA and store TLS |
+| --- | --- | --- | --- | --- |
+| All connected (50 new agents a second) | 3 s | 10 s | 20 s | 20 s |
+| Server CPU during enrollment | under 5 s of samples | 39 (41) | 40 (41) | 23 (28) |
+| Server CPU, steady state | 1 (17) | 1 (8) | 2 (9) | 2 (3) |
+| Server memory, steady state | 43 MiB | 84 MiB | 136 MiB (142) | 138 MiB (143) |
+| Relay CPU and memory, steady state | 0, 18 MiB | 0, 32 MiB | 0 (2), 49 MiB | 0 (2), 48 MiB |
+| Samples into VictoriaMetrics | 42 a second | 216 a second | 433 a second (502) | 433 a second (485), over TLS |
+| PostgreSQL connections, of which active | 17, 0 | 17, 0 | 17, 0 (1) | 17, 0.1 (1) |
+| Fleet overview API calls | 15 ms p50, 20 ms p95 | 42 ms, 54 ms | 83 ms, 90 ms | 20 ms, 40 ms; 89 ms, 97 ms after the storm |
+| Incident list API calls | 15 ms, 17 ms | 42 ms, 48 ms | 85 ms, 95 ms | 20 ms, 32 ms; 86 ms, 95 ms after the storm |
+| A command to every server: all results in | 3.1 s | 4.3 s | 5.6 s (p95 4.6 s per command) | 11.4 s (p95 9.8 s), see below |
+| Server CPU while commands run | | 35 | 50 | 23 (42) |
+| Restart: every stream open again at the server | 1.9 s (p95 1.0 s) | 1.6 s (1.0 s) | 2.0 s (1.0 s) | 1.9 s (1.0 s) |
+| Restart: first batch of a direct agent | p50 20 s, max 51 s | p50 11 s, max 51 s | p50 11 s, max 61 s | p50 11 s, max 61 s |
+| Server CPU during the reconnection storm | 0 (1) | 1 (2) | 4 (32) | 1 (2) |
+| Alert storm: every incident open after the breach | 185 s | 184 s | 186 s | 185 s |
+| Opening notifications: outbox to sent | p95 60 s | p95 65 s | p50 10 s, p95 15 s, max 60 s | p50 10 s, p95 14 s, max 14 s |
+| Resolutions: outbox to sent | p95 60 s | p95 51 s | p50 54 s, p95 59 s | p50 45 s, p95 50 s |
+| Every webhook delivered after the breach | 209 s | 229 s | 203 s | 194 s |
+| Errors and warnings in the server's log | none | none | none | 8 slow single-row writes (1 to 6 s), no timeout |
 
 Reading the table:
 
@@ -71,6 +71,7 @@ Reading the table:
 - **The API grows linearly with the fleet**, as the pages fetch every server: 85 ms for the fleet overview's calls at 1,000. The servers list itself takes 5 ms in PostgreSQL for a page of 500.
 - **Reconnection storm**: the agents' backoff (full jitter from 1 s, ADR-0009) spreads 1,000 reconnections over 2 seconds, and no stream was refused. The first batch after the restart waits for the next sensor collection (every 60 s) and the next flush (10 s): no sample is lost meanwhile, the agents keep them. Agents behind the relay kept their stream to it; the relay reopened their upstream streams and replayed what it buffered.
 - **Alert storm**: 186 s is the threshold's design, not a delay: up to 60 s until the next collection sees 97 %, 60 s for the threshold's duration, up to 60 s until the next collection confirms it. The threshold engine evaluated all of it on one task without falling behind. Notifications follow the grouping of ADR-0080: a customer's events go together after 10 s of quiet, then at most once a minute, so the opening of 1,000 incidents at once reached the webhook within a minute, most within 15 s. Each webhook gets one request per event (1,000 requests); chat and email would get grouped messages.
+- **After high availability and store TLS** (last column), the server's work is the same: its 5-second instance heartbeat and `peer_streams` writes (only the streams that changed) are a few statements a minute, and per-agent threshold state loaded when a stream arrives did not show in the reconnection storm. HTTPS to VictoriaMetrics cost nothing visible. One number moved: a command to every server took 11.4 s instead of 5.6 s. 852 of the 1,000 commands went out within 2 s; the other 148 waited for the dispatcher's 10-second sweep. Each queued command now wakes the dispatcher twice, from the API and from its NOTIFY (ADR-0089), and 2,000 wakes overflow its queue of 1,024, so the excess waits for the sweep; listed below. Eight single-row writes took 1 to 6 s during the steady state, this shared host's disk stalling; with the single `last_seen_at` writer nothing piled up and no request waited for the pool.
 - **Renewal**: the server issues a peer a certificate at most once an hour (ADR-0010), so right after enrollment every `Renew` was refused, 1,000 in 0.3 s. A real renewal wave happens in the last third of the certificates' 7 days, spread by each agent's hourly check with 5 minutes of jitter; a run long enough to renew was not done.
 
 ### The web interface at 1,000 servers
@@ -103,9 +104,9 @@ Not fixed here, in order of interest:
 
 - **The notification dispatcher claims at most 100 events a pass**, every 5 s. 1,000 events take ten passes; with the one-minute window of ADR-0080 this stayed under a minute, but a fleet of several thousand opening at once would see the last notifications minutes late. Belongs with the notification work, not a constant to raise blindly.
 - **The threshold engine writes each transition in its own transaction, on one task** (ADR-0017). At 1,000 incidents opening within a minute that was 2,000 transitions in short transactions, fine here; it is the first thing to batch beyond a few thousand servers.
-- **The command dispatcher is one task**: wakes from streams and the API are handled one after the other, and its wake queue holds 1,024 agents; more reconnecting at once rely on the 10-second sweep. Command dispatch changes with the high availability work (Phase 12), which is the place for this.
-- **The background loops** (offline check, sensor configuration and threshold watchers, campaign runner, dispatchers) each poll on their own timer on one server. High availability moves them behind leader election; their statements took 1 to 3 ms a pass each at 1,000 servers.
+- **The command dispatcher is one task** with a wake queue of 1,024 agents. Since ADR-0089 a queued command wakes it twice (the API, then its NOTIFY), so 1,000 commands queued at once overflow the queue and about 15 % wait for the 10-second sweep. Skipping the API's wake when the NOTIFY listener runs, or a larger queue of distinct agents, would fix it; it is ADR-0089's design, so it is listed here rather than changed.
+- **The background loops** (offline check, sensor configuration and threshold watchers, campaign runner, dispatchers) each poll on their own timer; since ADR-0089 the offline check, the notification dispatcher and automatic updates run on the leader only. Their statements took 1 to 3 ms a pass each at 1,000 servers. Two server instances were not load tested.
 - **Each relay opens one upstream stream per agent** (ADR-0025): 200 agents behind one relay meant 200 streams from it, 49 MiB for the relay. Multiplexing them is the `relay-mux` TODO in `grpc/service.rs`.
 - **`last_seen_at` is still one write a minute per agent**, now batched opportunistically; at 1,000 agents about 17 small statements a second.
 
-Not tested: Windows agents (same protocol, other sensors), chained relays, the AI remediation loop, update campaigns in waves, email and chat channels, mirrors, several thousand agents, a server on its own host, a renewal wave, and the other pages of the web interface.
+Not tested: two server instances (ADR-0089) under load, Windows agents (same protocol, other sensors), chained relays, the AI remediation loop, update campaigns in waves, email and chat channels, mirrors, several thousand agents, a server on its own host, a renewal wave, and the other pages of the web interface.
