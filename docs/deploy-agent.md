@@ -57,6 +57,14 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
 
 **Ansible and other tools.** Run the site's install command as it is on every server: it adds new servers and upgrades the others.
 
+## System logs
+
+On Linux, the agent forwards the warnings and errors of the systemd journal (priority warning and above, every unit and the kernel) to the central server, where they show in the Logs tab of the server's page and in the context AI remediation reads[^0091]. There is nothing to set up. The unit puts the agent's user in the `systemd-journal` group, which may read the journal and nothing else. An agent installed before this release forwards only its own lines and says so in the Logs tab until you run the install command again, or `usermod -aG systemd-journal monitorflow` and restart it.
+
+The agent remembers where it stopped in `/var/lib/monitorflow/agent/journal.cursor`, so lines written while it was stopped or updating are sent at the next start, within a day. Each agent sends at most 1,000 lines at once, then 10 a second; lines over that are dropped, and the Logs tab says how many. While the central server cannot be reached, the agent stops reading and the journal keeps the lines. The server removes passwords, keys and tokens it recognises from the lines before it stores them, and keeps them as long as its other logs (Administration › Settings, "Keep logs").
+
+To stop forwarding on one server, remove the group with a drop-in: `systemctl edit monitorflow-agent`, then add `[Service]` and an empty `SupplementaryGroups=`. The agent then sends only its own lines. Windows event logs are not forwarded yet.
+
 ## Install sources
 
 The Add servers page offers the commands from three sources[^0054]. A global administrator picks the default under Administration › Settings; any command can use another. The configuration can fix the default instead: `agent_install_source` (`AGENT_INSTALL_SOURCE` in the compose `.env`), and `agent_download_url` (`AGENT_DOWNLOAD_URL`) for the custom URL.
@@ -313,3 +321,4 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0073]: [ADR-0073: Reusable install keys per site](adr/0073-reusable-install-keys.md)
 [^0084]: [ADR-0084: AI remediation on Windows](adr/0084-windows-remediation.md)
 [^0086]: [ADR-0086: Where Windows servers take their updates from](adr/0086-windows-update-source.md)
+[^0091]: [ADR-0091: System logs](adr/0091-system-logs.md)

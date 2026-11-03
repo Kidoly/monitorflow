@@ -16,7 +16,7 @@ use std::time::Duration;
 use chrono::Utc;
 use monitorflow_common::proto::v1::agent_service_server::AgentService;
 use monitorflow_common::proto::v1::envelope::Payload;
-use monitorflow_common::proto::v1::{Envelope, Hello, SampleBatch, SensorConfigAck};
+use monitorflow_common::proto::v1::{Envelope, Hello, LogBatch, SampleBatch, SensorConfigAck};
 use monitorflow_common::release::Version;
 use monitorflow_common::tls::{self, PeerIdentity, PeerRole};
 use monitorflow_common::via::Via;
@@ -479,6 +479,8 @@ impl AgentService for AgentStreamService {
             relay_commands: self.relay_commands.clone(),
             event,
             invalid_logged: None,
+            log_limit: ingest::journal::LogLimit::default(),
+            invalid_logs_logged: None,
         };
         tokio::spawn(connection.run(
             inbound,
@@ -537,6 +539,10 @@ struct Connection {
     event: StreamEvent,
     /// When invalid samples were last logged.
     invalid_logged: Option<Instant>,
+    /// This stream's log line rate limit (ADR-0091).
+    log_limit: ingest::journal::LogLimit,
+    /// When invalid log lines were last logged.
+    invalid_logs_logged: Option<Instant>,
 }
 
 /// Fields of the stream events recorded in VictoriaLogs. Identifiers only.
@@ -697,6 +703,42 @@ impl Connection {
         );
     }
 
+    /// Checks a batch of agent log lines, then redacts and queues them for
+    /// VictoriaLogs on the blocking pool (ADR-0091). Only agents send
+    /// them; a relay's own stream has no journal of its agents.
+    fn logs(&mut self, batch: LogBatch) {
+        if self.role != PeerRole::Agent {
+            tracing::debug!(agent_id = %self.id, "ignoring log lines from a relay");
+            return;
+        }
+        self.counters.log_lines += batch.entries.len() as u64;
+        let checked = ingest::journal::check_logs(
+            &self.identity,
+            batch,
+            Utc::now().timestamp_millis(),
+            &mut self.log_limit,
+        );
+        self.counters.dropped_log_lines += checked.invalid + checked.rate_limited;
+        if let Some(error) = checked.first_error {
+            let now = Instant::now();
+            if self
+                .invalid_logs_logged
+                .is_none_or(|at| now.duration_since(at) >= INVALID_SAMPLE_LOG_INTERVAL)
+            {
+                self.invalid_logs_logged = Some(now);
+                tracing::warn!(agent_id = %self.id, invalid = checked.invalid, %error, "dropped invalid log lines");
+            }
+        }
+        let (ingest, mut records) = (self.ingest.clone(), checked.records);
+        if records.is_empty() {
+            return;
+        }
+        tokio::task::spawn_blocking(move || {
+            ingest::journal::redact(&mut records);
+            ingest.logs(records);
+        });
+    }
+
     /// Records the revision an agent applied. Refused specs are logged:
     /// the operator fixes them in the configuration.
     fn sensor_config_ack(&mut self, sequence: u64, ack: SensorConfigAck) {
@@ -739,6 +781,10 @@ impl Connection {
             Some(Payload::Samples(batch)) => {
                 tracing::debug!(agent_id = %id, sequence, samples = batch.samples.len(), "sample batch");
                 self.samples(batch);
+            }
+            Some(Payload::Logs(batch)) => {
+                tracing::debug!(agent_id = %id, sequence, lines = batch.entries.len(), "log batch");
+                self.logs(batch);
             }
             Some(Payload::SensorConfigAck(ack)) => self.sensor_config_ack(sequence, ack),
             Some(Payload::SensorConfig(_)) => {

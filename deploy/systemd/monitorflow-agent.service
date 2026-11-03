@@ -13,6 +13,8 @@ User=monitorflow
 # "-" ignores machines without one.
 RuntimeDirectory=monitorflow-agent
 ExecStartPre=+-/usr/bin/install -m 0444 /sys/class/dmi/id/product_uuid /run/monitorflow-agent/product_uuid
+# Reads the system journal to forward its warnings and errors (ADR-0091).
+SupplementaryGroups=systemd-journal
 ExecStart=/usr/bin/monitorflow-agent --config /etc/monitorflow/agent.toml
 # The enrollment token for the first start only (ADR-0007, ADR-0052):
 # root-only, read by systemd before it drops to the agent's user, and

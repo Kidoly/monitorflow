@@ -50,6 +50,10 @@ pub struct Counters {
     /// Valid samples dropped because the metrics queue was full.
     pub dropped_samples: u64,
     pub command_results: u64,
+    /// Agent log lines received (ADR-0091).
+    pub log_lines: u64,
+    /// Log lines dropped by validation or this server's rate limit.
+    pub dropped_log_lines: u64,
 }
 
 /// A snapshot of one registered peer.

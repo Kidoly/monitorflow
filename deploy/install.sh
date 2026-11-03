@@ -402,6 +402,11 @@ install -d -o root -g root -m 0755 "$CONF_DIR"
 install -o root -g root -m 0755 "$tmp/$asset" "$BIN.new"
 mv -f "$BIN.new" "$BIN"
 install_sudoers
+# systemd refuses to start a unit whose group is missing; every systemd
+# creates this one, but a trimmed image may not have it (ADR-0091).
+if ! getent group systemd-journal >/dev/null; then
+    sed -i '/^SupplementaryGroups=systemd-journal$/d' "$tmp/$SERVICE.service"
+fi
 install -o root -g root -m 0644 "$tmp/$SERVICE.service" "$UNIT"
 # A drop-in, so it outlives agent.toml edits and self-updates of the unit.
 if [ "$MF_ALLOW_COMMANDS" = 1 ]; then

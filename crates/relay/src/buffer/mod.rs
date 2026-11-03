@@ -1,6 +1,6 @@
-//! Store-and-forward buffer (ADR-0027): `SampleBatch` envelopes kept on
-//! disk while an agent has no working upstream stream, replayed oldest
-//! first once it has one.
+//! Store-and-forward buffer (ADR-0027): `SampleBatch` and `LogBatch`
+//! envelopes kept on disk while an agent has no working upstream stream,
+//! replayed oldest first once it has one.
 //!
 //! [`Buffer`] runs the synchronous [`Store`] on the blocking pool, and
 //! [`Buffer::run`] syncs it to disk every `fsync_interval`, drops expired
