@@ -423,6 +423,11 @@ async fn main() -> anyhow::Result<()> {
         ),
         None => None,
     };
+    // The stores' certificate moves with the CA too.
+    let rotator = match &config.storage_tls_dir {
+        Some(dir) => rotator.with_storage(dir.clone(), storage_tls::names(&storage_urls(&config))?),
+        None => rotator,
+    };
     // Storage writers (ADR-0013). Streams only push to their queues.
     let writer_settings = WriterSettings::from_config(&config.ingest);
     let metrics = Writer::spawn(

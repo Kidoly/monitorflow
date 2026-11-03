@@ -57,7 +57,9 @@ The page shows when the CA was created and expires. A year before expiry it says
 - **Relays offline during the switch** are waited for like agents, and their agents with them: an agent behind an offline relay cannot renew, so it is still waiting when the relay returns, and moves then.
 - **Windows agents** keep their CAs in their own `ca.pem` under `C:\ProgramData\MonitorFlow\agent\tls`, written with the same ACL as before, not in the Windows certificate store. Nothing differs from Linux.
 - **Install commands.** Tokens and install keys pin the CA that was active when they were made (ADR-0007, ADR-0073). Peers check the pin against the certificate the enrollment listener presents, so commands made before the switch stop working after it, and the page says so. New ones pin the new CA.
-- **Other certificates from the CA.** Anything else the server issues from its CA follows the same rule as its own certificate: issue it again from the active CA when the one it has comes from another.
+- **Metric and log stores (ADR-0087).** Their certificate follows the server's own rule: a certificate from a CA that is still trusted but no longer issues is stale. The server issues it again from the new CA at the switch, in the same step as its own, and the stores re-read it within a second. The server's clients of the stores verify against the CAs the server trusts at each handshake, both during the change, so they reach the stores before and after the new certificate lands. At retirement the stores already hold a certificate of the new CA. `monitorflow-server storage-check` reads the active CA's certificate, which is the stores' issuer at every step.
+- **Several server instances (ADR-0089).** Each instance keeps its own copy of the CA files, and ADR-0089 keeps the keys out of the database so that a database leak is not a CA leak. A step taken on one instance would leave the others presenting, issuing and signing with the old CA. So a change starts, and each step is taken, only while one instance is alive (heartbeat in the last 30 s in `server_instances`). With more, the button answers that the others must be stopped, the change done on one, and `serverdata/ca` copied to the others before they start again, the way ADR-0089 copies it when a server is added; an automatic change waits. A second instance cannot be installed with one command yet (ADR-0089), so this costs nothing today.
+- **Revocation sync across instances (ADR-0089).** Each instance applies revocations recorded in the database through its CRL publisher, which signs one CRL per trusted CA from the shared list: a serial revoked on another instance during a change is in both CRLs (tested).
 
 ## Alternatives rejected
 
@@ -72,10 +74,11 @@ The page shows when the CA was created and expires. A year before expiry it says
 - An administrator changes the CA in one click, and the server can do it by itself before it expires; no machine needs a visit unless it stays offline for more than a week or misses an emergency.
 - Every peer makes one more unary call an hour, with a fresh key and CSR: about 0.3 calls a second for 1,000 agents, almost all answered without touching the CA.
 - Install commands made before a switch must be copied again.
-- High availability must share `ca/` between servers and make the others reload when one takes a step. Today one server drives the change.
+- With several server instances, a change needs them stopped but one, and `serverdata/ca` copied afterwards.
 
 Not done yet, for later:
 
 - Cross-signing for the enrollment listener, so that install commands survive a planned switch.
+- A change across several running instances: publish each step through the database, with the new CA's key sealed under a key derived from the current CA's, so that every instance can apply it while a database leak alone still reveals no CA key; then a change runs on the leader and the others follow within seconds, as revocations do.
 - A notification when a change starts by itself or an emergency window is about to close, besides the page and the audit log.
 - A test with a real Windows agent across a change; the code path is the one Linux uses.

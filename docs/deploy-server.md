@@ -96,7 +96,7 @@ The updater backs up the database and `serverdata` every day and keeps the 7 new
 
 To restore one, on a fresh install or on this one: `deploy/restore.sh <file>`. A backup taken before the certificate authority changed brings the old one back, and the restore says so: servers and relays that moved cannot connect to it.
 
-The certificate authority in `serverdata` lasts 10 years. **Administration, Certificate authority** changes it in one click, and the server starts a change by itself six months before it expires; every server and relay moves to the new one over its own connection, with nothing to do on them[^0088]. Use **Emergency change** if its key may have leaked. Install commands made before a change stop working after it: copy new ones.
+The certificate authority in `serverdata` lasts 10 years. **Administration, Certificate authority** changes it in one click, and the server starts a change by itself six months before it expires; every server and relay moves to the new one over its own connection, with nothing to do on them[^0088]. Use **Emergency change** if its key may have leaked. Install commands made before a change stop working after it: copy new ones. With several server instances, stop all but one before changing it, then copy `serverdata/ca` to the others.
 
 ## Updating
 

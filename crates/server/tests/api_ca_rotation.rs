@@ -218,6 +218,27 @@ db_tests! {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    async fn several_server_instances_wait_for_one(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let root = h.login("root", Role::Administrator, GrantScope::Global).await;
+        // Two live instances (ADR-0089), each with its own copy of the CA.
+        sqlx::query(
+            "INSERT INTO server_instances (id, hostname, version)
+             VALUES (gen_random_uuid(), 'a', 'test'), (gen_random_uuid(), 'b', 'test')",
+        )
+        .execute(&pool).await.unwrap();
+        let (status, body) = h.post("/api/certificate-authority/rotation", &root, json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body.to_string().contains("2 server instances are running"), "{body}");
+        assert!(h.ca.rotation().is_none());
+        // A silent instance does not count.
+        sqlx::query("UPDATE server_instances SET heartbeat_at = now() - interval '1 minute' WHERE hostname = 'b'")
+            .execute(&pool).await.unwrap();
+        let (status, body) = h.post("/api/certificate-authority/rotation", &root, json!({})).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
     async fn peers_of_every_version_renew_during_a_change(pool: PgPool) {
         let h = Harness::new(&pool).await;
         let renewer = Renewer::new(pool.clone(), h.ca.clone());

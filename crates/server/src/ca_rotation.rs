@@ -16,6 +16,7 @@
 //! the certificate validity (7 days). After each step the server reissues
 //! its own certificate if needed and reloads its listeners.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -32,6 +33,7 @@ use crate::ca::{CaError, CertificateAuthority, Rotation, ServerName, Stage};
 use crate::crl::CrlPublisher;
 use crate::enroll::server_cert;
 use crate::renew::{from_hex, hex};
+use crate::storage_tls;
 
 /// Time between two looks at the fleet.
 pub const POLL: Duration = Duration::from_secs(5 * 60);
@@ -194,6 +196,8 @@ pub struct Rotator {
     crl: Arc<CrlPublisher>,
     tls_paths: TlsPaths,
     names: Vec<ServerName>,
+    /// The directory and names of the stores' certificate (ADR-0087).
+    storage: Option<(PathBuf, Vec<ServerName>)>,
     wake: Arc<Notify>,
 }
 
@@ -211,8 +215,37 @@ impl Rotator {
             crl,
             tls_paths,
             names,
+            storage: None,
             wake: Arc::new(Notify::new()),
         }
+    }
+
+    /// Also moves the certificate of the metric and log stores in `dir`,
+    /// for `names`, to the CA that issues (ADR-0087).
+    pub fn with_storage(mut self, dir: PathBuf, names: Vec<ServerName>) -> Self {
+        self.storage = Some((dir, names));
+        self
+    }
+
+    /// Refuses a step while several server instances run: each holds its
+    /// own copy of the CA files, and a step on one would leave the others
+    /// on the old CA (ADR-0088, ADR-0089).
+    async fn check_single_instance(&self) -> Result<(), RotationError> {
+        let live: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM server_instances
+             WHERE heartbeat_at > now() - interval '30 seconds'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if live > 1 {
+            return Err(CaError::InvalidRequest(format!(
+                "{live} server instances are running, each with its own copy of the certificate \
+                 authority: stop all but one, change it there, then copy serverdata/ca to the \
+                 others before starting them again"
+            ))
+            .into());
+        }
+        Ok(())
     }
 
     pub fn ca(&self) -> &Arc<CertificateAuthority> {
@@ -245,6 +278,7 @@ impl Rotator {
     /// Starts a change: planned, or `emergency` after a suspected
     /// compromise. Audited.
     pub async fn start(&self, emergency: bool, actor: Actor<'_>) -> Result<(), RotationError> {
+        self.check_single_instance().await?;
         let ca = self.ca.clone();
         let before = ca.fingerprint();
         let rotation = tokio::task::spawn_blocking(move || ca.start_rotation(emergency)).await??;
@@ -272,6 +306,7 @@ impl Rotator {
     /// Takes the next step now, whoever has not moved: switch to the new
     /// CA, or retire the old one. Audited.
     pub async fn finish_now(&self, actor: Actor<'_>) -> Result<(), RotationError> {
+        self.check_single_instance().await?;
         let waiting = self.waiting().await?;
         self.step(actor, waiting).await
     }
@@ -339,6 +374,7 @@ impl Rotator {
         let due = step_due(&rotation, DateTime::<Utc>::from(now).timestamp(), left);
         if waiting == 0 || due {
             tracing::info!(stage = ?rotation.stage, waiting, "taking the next step of the change of certificate authority");
+            self.check_single_instance().await?;
             self.step(Actor::System, waiting).await?;
         }
         Ok(())
@@ -367,8 +403,15 @@ impl Rotator {
     /// listeners to it and to the current CAs.
     async fn reload(&self) -> Result<(), RotationError> {
         let (ca, paths, names) = (self.ca.clone(), self.tls_paths.clone(), self.names.clone());
+        let storage = self.storage.clone();
         let identity = tokio::task::spawn_blocking(move || {
             server_cert::ensure(&ca, &paths, &names)?;
+            // The stores re-read their certificate every second; the
+            // server's clients already trust both CAs.
+            if let Some((dir, names)) = storage {
+                storage_tls::ensure(&ca, &dir, &names)
+                    .map_err(|e| CaError::Signing(e.to_string()))?;
+            }
             Identity::load(&paths).map_err(|e| CaError::Signing(e.to_string()))
         })
         .await??;

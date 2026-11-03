@@ -164,6 +164,67 @@ async fn build(
 mod tests {
     use super::*;
 
+    /// What the revocation sync of several instances does (ADR-0089), in
+    /// the middle of a change of certificate authority (ADR-0088): each
+    /// CA's CRL lists the serial, whichever CA issued it.
+    #[tokio::test]
+    async fn a_revocation_during_a_change_reaches_both_crls() {
+        use monitorflow_common::config::TlsPaths;
+        use monitorflow_common::tls::{PeerIdentity, PeerRole};
+        use x509_parser::prelude::FromDer;
+        use x509_parser::revocation_list::CertificateRevocationList;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let ca = Arc::new(
+            CertificateAuthority::open_or_create(&dir.path().join("ca"), CaOptions::default())
+                .unwrap(),
+        );
+        let csr = || {
+            rcgen::CertificateParams::default()
+                .serialize_request(&rcgen::KeyPair::generate().unwrap())
+                .unwrap()
+                .pem()
+                .unwrap()
+        };
+        let agent = PeerIdentity::new(PeerRole::Agent, "web-01").unwrap();
+        let old = ca.issue(&csr(), &agent, None, &[]).unwrap();
+        let paths = TlsPaths {
+            ca_cert: dir.path().join("ca.pem"),
+            cert: dir.path().join("cert.pem"),
+            key: dir.path().join("key.pem"),
+        };
+        let localhost = [crate::ca::ServerName::Dns("localhost".into())];
+        crate::enroll::server_cert::ensure(&ca, &paths, &localhost).unwrap();
+        let (publisher, _rx) = CrlPublisher::start(ca.clone(), Identity::load(&paths).unwrap())
+            .await
+            .unwrap();
+        ca.start_rotation(false).unwrap();
+        ca.switch().unwrap();
+        crate::enroll::server_cert::ensure(&ca, &paths, &localhost).unwrap();
+        publisher
+            .reload(Identity::load(&paths).unwrap())
+            .await
+            .unwrap();
+        let new = ca.issue(&csr(), &agent, None, &[]).unwrap();
+
+        for serial in [&old.serial, &new.serial] {
+            publisher
+                .revoke(serial.clone(), RevocationReason::KeyCompromise)
+                .await
+                .unwrap();
+        }
+        let crls = publisher.subscribe().borrow().clone();
+        assert_eq!(crls.len(), 2);
+        for crl in crls.iter() {
+            let (_, parsed) = CertificateRevocationList::from_der(crl).unwrap();
+            let listed: Vec<_> = parsed
+                .iter_revoked_certificates()
+                .map(|r| Serial::from_bytes(r.raw_serial()))
+                .collect();
+            assert!(listed.contains(&old.serial) && listed.contains(&new.serial));
+        }
+    }
+
     #[test]
     fn refresh_leaves_room_before_expiry() {
         assert_eq!(

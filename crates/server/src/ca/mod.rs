@@ -365,6 +365,11 @@ impl CertificateAuthority {
             .concat()
     }
 
+    /// The certificates of [`Self::trust_bundle_pem`], in DER.
+    pub fn trusted_certs(&self) -> Vec<CertificateDer<'static>> {
+        self.state().trusted().map(|g| g.cert_der.clone()).collect()
+    }
+
     /// What a peer gets with a certificate issued now, read at once.
     pub fn trust(&self) -> Trust {
         let state = self.state();
