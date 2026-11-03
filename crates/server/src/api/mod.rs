@@ -435,15 +435,19 @@
 //!
 //! # Proxmox VM mappings
 //!
-//! The Proxmox VE VM of a server, snapshotted before change-tier
-//! commands (ADR-0044), with the same access rules as revocation. The
-//! view is `{"server_id", "mapping": null | {"cluster", "node", "vmid",
-//! "updated_by", "updated_at"}, "snapshots": {"available", "reason"}}`;
-//! `available` needs `[proxmox]` enabled, a mapping and its cluster
-//! configured, else `reason` is `disabled`, `not_mapped` or
-//! `unknown_cluster` and rollback is limited. `PUT` takes `{"cluster",
-//! "node", "vmid"}`: a configured cluster name, the node's host name and
-//! a VM ID from 100 to 999999999, else 400; a VM already mapped to
+//! The Proxmox VE VM or container of a server, snapshotted before
+//! change-tier commands (ADR-0044, ADR-0093), with the same access rules
+//! as revocation. The view is `{"server_id", "mapping": null |
+//! {"cluster", "node", "vmid", "kind", "updated_by", "updated_at",
+//! "checked_at", "cannot_snapshot", "left_out"}, "snapshots":
+//! {"available", "reason", "kind", "detail", "left_out"}, "clusters"}`;
+//! `available` needs `[proxmox]` enabled, a mapping, its cluster
+//! configured and Proxmox not refusing snapshots of the guest, else
+//! `reason` is `disabled`, `not_mapped`, `unknown_cluster` or
+//! `cannot_snapshot` (with `detail` saying why) and rollback is limited.
+//! `PUT` takes `{"cluster", "node", "vmid", "kind"}`: a configured
+//! cluster name, the node's host name, a VM ID from 100 to 999999999 and
+//! `qemu` (the default) or `lxc`, else 400; a guest already mapped to
 //! another server is 409. Changes are audited (`server.proxmox.set` with
 //! the `previous` mapping, `server.proxmox.clear`).
 //!

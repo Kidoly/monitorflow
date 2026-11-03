@@ -101,15 +101,17 @@ pub async fn mapping(db: impl PgExecutor<'_>, server: Uuid) -> Result<Option<Map
     .bind(server)
     .fetch_optional(db)
     .await?;
-    Ok(row.map(|(cluster, node, vmid, kind, cannot_snapshot)| Mapped {
-        vm: VmRef {
-            cluster,
-            node,
-            vmid: vmid as u32,
-            kind: GuestKind::parse(&kind).unwrap_or_default(),
-        },
-        cannot_snapshot,
-    }))
+    Ok(
+        row.map(|(cluster, node, vmid, kind, cannot_snapshot)| Mapped {
+            vm: VmRef {
+                cluster,
+                node,
+                vmid: vmid as u32,
+                kind: GuestKind::parse(&kind).unwrap_or_default(),
+            },
+            cannot_snapshot,
+        }),
+    )
 }
 
 /// Mappings to check again: never checked, or not for `every`, on
@@ -136,7 +138,15 @@ pub async fn due_checks(
         .into_iter()
         .map(|(server, cluster, node, vmid, kind)| {
             let kind = GuestKind::parse(&kind).unwrap_or_default();
-            (server, VmRef { cluster, node, vmid: vmid as u32, kind })
+            (
+                server,
+                VmRef {
+                    cluster,
+                    node,
+                    vmid: vmid as u32,
+                    kind,
+                },
+            )
         })
         .collect())
 }

@@ -276,10 +276,17 @@ function ApprovalDetail({
               <Label tone="warn" small>
                 Rollback limited
               </Label>{" "}
-              No snapshot before this change: {snapshotReason(item.snapshots.reason)}
+              No snapshot before this change: {snapshotReason(item.snapshots.reason, item.snapshots.kind)}
+              {item.snapshots.detail && <span className={styles.dim}> ({item.snapshots.detail}.)</span>}
             </>
           ) : (
-            "A Proxmox snapshot of the VM is taken before the command runs."
+            <>
+              A Proxmox snapshot of the {item.snapshots.kind === "lxc" ? "container" : "VM"} is taken before the command
+              runs.
+              {item.snapshots.left_out && (
+                <span className={styles.dim}> It leaves out {item.snapshots.left_out}: a rollback does not restore it.</span>
+              )}
+            </>
           )}
         </dd>
         <dt>Deadline</dt>

@@ -67,6 +67,8 @@ describe("approval helpers", () => {
   it("names tiers, snapshot reasons and chain reports", () => {
     expect(riskWord("high_impact")).toBe("high-impact");
     expect(snapshotReason("not_mapped")).toBe("the server is not mapped to a Proxmox VM.");
+    expect(snapshotReason("cannot_snapshot", "lxc")).toBe("the container's storage cannot take snapshots.");
+    expect(snapshotReason("cannot_snapshot", "qemu")).toBe("the VM's storage cannot take snapshots.");
     expect(chainSummary({ valid: true, events: 3, broken_at: null, reason: null, head_hash: "abcdef0123456789" })).toBe(
       "Hash chain verified: 3 events, head abcdef012345.",
     );

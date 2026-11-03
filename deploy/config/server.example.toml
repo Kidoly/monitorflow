@@ -165,14 +165,14 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # Seconds one command may take from queueing to its result (at most 3600).
 # command_timeout = 120
 
-# Proxmox VE VM snapshots before change-tier remediation commands
-# (ADR-0044). Off by default. Map servers to VMs with
-# PUT /api/servers/{id}/proxmox; servers without a mapping run commands
-# with limited rollback.
+# Proxmox VE snapshots of VMs and containers before change-tier
+# remediation commands (ADR-0044, ADR-0093). Off by default. Map servers
+# on their page in the web interface, under Rollback; servers without a
+# mapping run commands with limited rollback.
 [proxmox]
 # enabled = false
-# Snapshots kept per VM; older ones MonitorFlow took are deleted. Snapshots
-# made by anyone else are never touched.
+# Snapshots kept per VM or container; older ones MonitorFlow took are
+# deleted. Snapshots made by anyone else are never touched.
 # keep_snapshots = 3
 # Seconds one HTTP request may take.
 # request_timeout = 30
@@ -180,7 +180,8 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # task_timeout = 600
 
 # One entry per cluster; any node's API URL works. The token needs
-# VM.Snapshot, VM.Snapshot.Rollback and VM.Audit on the mapped VMs.
+# VM.Snapshot, VM.Snapshot.Rollback and VM.Audit on the mapped VMs and
+# containers, and Datastore.Audit to name a storage that cannot snapshot.
 # [[proxmox.clusters]]
 # name = "pve"
 # url = "https://pve1.example.net:8006"

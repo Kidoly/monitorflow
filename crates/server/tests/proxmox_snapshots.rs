@@ -168,8 +168,12 @@ fn wrong_kind(f: &Fake, node: &str, kind: &str, vmid: u32) -> Option<Response> {
     let actual = *f.kind.lock().unwrap();
     (kind != actual).then(|| {
         let dir = if kind == "qemu" { "qemu-server" } else { kind };
-        let message = format!("Configuration file 'nodes/{node}/{dir}/{vmid}.conf' does not exist\n");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "data": null, "message": message })))
+        let message =
+            format!("Configuration file 'nodes/{node}/{dir}/{vmid}.conf' does not exist\n");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "data": null, "message": message })),
+        )
             .into_response()
     })
 }
@@ -282,7 +286,13 @@ async fn feature(
     axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(r) = check(&f, Method::GET, format!("{node}/{kind}/{vmid}/feature"), &headers, query.clone()) {
+    if let Err(r) = check(
+        &f,
+        Method::GET,
+        format!("{node}/{kind}/{vmid}/feature"),
+        &headers,
+        query.clone(),
+    ) {
         return *r;
     }
     if let Some(r) = wrong_kind(&f, &node, &kind, vmid) {
@@ -299,7 +309,13 @@ async fn config(
     Path((node, kind, vmid)): Path<(String, String, u32)>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(r) = check(&f, Method::GET, format!("{node}/{kind}/{vmid}/config"), &headers, HashMap::new()) {
+    if let Err(r) = check(
+        &f,
+        Method::GET,
+        format!("{node}/{kind}/{vmid}/config"),
+        &headers,
+        HashMap::new(),
+    ) {
         return *r;
     }
     if let Some(r) = wrong_kind(&f, &node, &kind, vmid) {
@@ -308,8 +324,18 @@ async fn config(
     data(f.config.lock().unwrap().clone())
 }
 
-async fn storage(State(f): State<Shared>, Path(node): Path<String>, headers: HeaderMap) -> Response {
-    if let Err(r) = check(&f, Method::GET, format!("{node}/storage"), &headers, HashMap::new()) {
+async fn storage(
+    State(f): State<Shared>,
+    Path(node): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = check(
+        &f,
+        Method::GET,
+        format!("{node}/storage"),
+        &headers,
+        HashMap::new(),
+    ) {
         return *r;
     }
     data(f.storage.lock().unwrap().clone())
@@ -417,7 +443,10 @@ impl Harness {
                 "/api2/json/nodes/{node}/{kind}/{vmid}/snapshot/{name}/rollback",
                 post(rollback),
             )
-            .route("/api2/json/nodes/{node}/{kind}/{vmid}/feature", get(feature))
+            .route(
+                "/api2/json/nodes/{node}/{kind}/{vmid}/feature",
+                get(feature),
+            )
             .route("/api2/json/nodes/{node}/{kind}/{vmid}/config", get(config))
             .route("/api2/json/nodes/{node}/storage", get(storage))
             .route("/api2/json/nodes/{node}/tasks/{upid}/status", get(status))

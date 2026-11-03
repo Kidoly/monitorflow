@@ -232,7 +232,10 @@ impl ProxmoxClient {
 
     /// The type of each storage `node` shows the token, like `dir` or
     /// `zfspool`.
-    pub async fn storage_types(&self, node: &str) -> Result<HashMap<String, String>, SnapshotError> {
+    pub async fn storage_types(
+        &self,
+        node: &str,
+    ) -> Result<HashMap<String, String>, SnapshotError> {
         #[derive(Deserialize)]
         struct Storage {
             storage: String,
@@ -420,9 +423,12 @@ impl ProxmoxSnapshotter {
                     .await?
                     .ok_or(SnapshotError::Unsupported(super::Unsupported::NotMapped))?
                     .vm;
-                let client = self.clusters.get(&vm.cluster).ok_or(SnapshotError::Unsupported(
-                    super::Unsupported::UnknownCluster,
-                ))?;
+                let client = self
+                    .clusters
+                    .get(&vm.cluster)
+                    .ok_or(SnapshotError::Unsupported(
+                        super::Unsupported::UnknownCluster,
+                    ))?;
                 Ok((vm, client))
             }
             Support::Unavailable(reason) => Err(SnapshotError::Unsupported(reason)),
@@ -440,7 +446,9 @@ impl ProxmoxSnapshotter {
         let client = self
             .clusters
             .get(&vm.cluster)
-            .ok_or(SnapshotError::Unsupported(super::Unsupported::UnknownCluster))?;
+            .ok_or(SnapshotError::Unsupported(
+                super::Unsupported::UnknownCluster,
+            ))?;
         let can = client.can_snapshot(vm).await?;
         let config = client.guest_config(vm).await?;
         // Only to name the storage at fault; the token may not see it.

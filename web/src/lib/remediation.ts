@@ -1,6 +1,7 @@
 import type {
   ActorKind,
   ChainReport,
+  GuestKind,
   RemediationEvent,
   RemediationEventKind,
   RemediationEventQuery,
@@ -131,8 +132,10 @@ export function eventSummary(event: Pick<RemediationEvent, "kind" | "actor_kind"
 }
 
 /** Why rollback is limited on a server, for the approval detail. */
-export function snapshotReason(reason: SnapshotUnsupported | null): string {
+export function snapshotReason(reason: SnapshotUnsupported | null, kind?: GuestKind | null): string {
   switch (reason) {
+    case "cannot_snapshot":
+      return `the ${kind === "lxc" ? "container" : "VM"}'s storage cannot take snapshots.`;
     case "disabled":
       return "Proxmox snapshots are not enabled on this MonitorFlow server.";
     case "not_mapped":

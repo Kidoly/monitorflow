@@ -292,9 +292,15 @@ mod tests {
         }));
         let found = explain(GuestKind::Lxc, true, &c, &HashMap::new());
         assert_eq!(found.cannot_snapshot, None);
-        assert_eq!(found.left_out.as_deref(), Some("mp0 at /shared, a bind mount"));
+        assert_eq!(
+            found.left_out.as_deref(),
+            Some("mp0 at /shared, a bind mount")
+        );
         let plain = config(json!({ "rootfs": "local-zfs:subvol-104-disk-0,size=8G" }));
-        assert_eq!(explain(GuestKind::Lxc, true, &plain, &HashMap::new()), Check::default());
+        assert_eq!(
+            explain(GuestKind::Lxc, true, &plain, &HashMap::new()),
+            Check::default()
+        );
     }
 
     #[test]
@@ -302,18 +308,23 @@ mod tests {
         let t = types(&[("local", "dir"), ("san", "lvm"), ("fast", "lvmthin")]);
         let qcow = config(json!({ "scsi0": "local:101/vm-101-disk-0.qcow2,size=32G" }));
         let raw = config(json!({ "scsi0": "local:101/vm-101-disk-0.raw,size=32G" }));
-        let lvm = config(json!({ "virtio0": "fast:vm-101-disk-0", "virtio1": "san:vm-101-disk-1" }));
+        let lvm =
+            config(json!({ "virtio0": "fast:vm-101-disk-0", "virtio1": "san:vm-101-disk-1" }));
         // Proxmox said no, for a reason the configuration does not show.
         assert!(explain(GuestKind::Qemu, false, &qcow, &t)
             .cannot_snapshot
             .unwrap()
             .starts_with("Proxmox reports that the VM's"));
         assert_eq!(
-            explain(GuestKind::Qemu, false, &raw, &t).cannot_snapshot.as_deref(),
+            explain(GuestKind::Qemu, false, &raw, &t)
+                .cannot_snapshot
+                .as_deref(),
             Some("scsi0 is on storage local (dir), which cannot take snapshots")
         );
         assert_eq!(
-            explain(GuestKind::Qemu, false, &lvm, &t).cannot_snapshot.as_deref(),
+            explain(GuestKind::Qemu, false, &lvm, &t)
+                .cannot_snapshot
+                .as_deref(),
             Some("virtio1 is on storage san (lvm), which cannot take snapshots")
         );
         // The VM's disks are not host paths, whatever Proxmox says.
@@ -323,7 +334,12 @@ mod tests {
     #[test]
     fn unknown_storage_types_fall_back_to_proxmox_s_word() {
         let c = config(json!({ "rootfs": "custom:vol,size=8G" }));
-        let found = explain(GuestKind::Lxc, false, &c, &types(&[("custom", "someplugin")]));
+        let found = explain(
+            GuestKind::Lxc,
+            false,
+            &c,
+            &types(&[("custom", "someplugin")]),
+        );
         assert_eq!(
             found.cannot_snapshot.as_deref(),
             Some("Proxmox reports that the container's volumes cannot take snapshots")
