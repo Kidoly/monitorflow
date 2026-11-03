@@ -130,9 +130,9 @@ Bring Windows to the level of Linux after Phase 6. The Windows updates list alre
 Needed before real customers. Daily backups and restore shipped in Phase 8 (ADR-0058).
 
 - [ ] High availability for the server.
-- [ ] CA key rotation.
-- [ ] TLS between the server and VictoriaMetrics and VictoriaLogs (ADR-0051).
-- [ ] Load test on about 1,000 agents.
+- [x] CA key rotation.
+- [x] TLS between the server and VictoriaMetrics and VictoriaLogs (ADR-0051).
+- [x] Load test on about 1,000 agents.
 
 ## Phase 13 — Monitoring depth
 
