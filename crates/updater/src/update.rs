@@ -25,6 +25,13 @@ use crate::source::Source;
 const PENDING_FILE: &str = "pending.json";
 /// Release files staged for the agent cache, under the update volume.
 const RELEASE_DIR: &str = "release";
+/// The ID of the last update after which the compose file was looked at,
+/// in the updater's volume (ADR-0087).
+const COMPOSE_CHECKED_FILE: &str = "compose-checked";
+/// Who asks for the updates run with `monitorflow-updater update`: the
+/// installer, which puts the compose files in place itself, and the
+/// offline path.
+pub const COMMAND_LINE: &str = "command line";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Pending {
@@ -163,13 +170,14 @@ pub struct Updater<'a> {
 }
 
 impl Updater<'_> {
-    /// Puts the compose files of this release in `deploy` when they differ,
-    /// applies them and checks that the server reaches its stores; puts
-    /// the previous files back and applies them again when that fails
-    /// (ADR-0087). Runs at start, before any request, so after an update
-    /// that replaced the updater. A change a restart interrupted is
-    /// finished the same way. `compose_files` are those the project runs,
-    /// in this container.
+    /// After an update to this release requested from the web interface,
+    /// puts the release's compose files in `deploy` when they differ,
+    /// applies them and checks that the server reaches its stores; puts the
+    /// previous files back and applies them again when that fails
+    /// (ADR-0087). Once per update: runs at start, before any request, so
+    /// in the updater that update put in place. A change a restart
+    /// interrupted is finished the same way. `compose_files` are those the
+    /// project runs, in this container.
     pub async fn refresh_compose(
         &mut self,
         bundle: &Path,
@@ -177,6 +185,13 @@ impl Updater<'_> {
         compose_files: &[PathBuf],
     ) {
         if !compose_file::pending(&self.state_dir) {
+            let Some(id) = self.compose_due() else {
+                return;
+            };
+            if let Err(e) = std::fs::write(self.state_dir.join(COMPOSE_CHECKED_FILE), &id) {
+                tracing::warn!(error = %e, "compose file left as is: cannot write the updater's state");
+                return;
+            }
             match compose_file::plan(bundle, deploy, compose_files) {
                 Ok(Plan::Install) => {}
                 Ok(plan) => {
@@ -185,19 +200,6 @@ impl Updater<'_> {
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "cannot compare the compose file with this release's");
-                    return;
-                }
-            }
-            // An updater older than the server must not take the files back.
-            let own: Option<Version> = monitorflow_common::VERSION.parse().ok();
-            match self.host.image_version().await {
-                Ok(server) if Some(&server) == own.as_ref() => {}
-                Ok(server) => {
-                    tracing::info!(%server, "compose file left as is: the server runs another release");
-                    return;
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "compose file left as is: no server version");
                     return;
                 }
             }
@@ -237,6 +239,19 @@ impl Updater<'_> {
         if let Err(e) = compose_file::finish(&self.state_dir) {
             tracing::warn!(error = %e, "cannot remove the saved compose file");
         }
+    }
+
+    /// The ID of the last update when it put this release in place at the
+    /// web interface's request and the compose file was not looked at
+    /// since.
+    fn compose_due(&self) -> Option<String> {
+        let run = self.reporter.status.update.as_ref()?;
+        let due = run.state == UpdateState::Succeeded
+            && run.to == monitorflow_common::VERSION
+            && run.requested_by != COMMAND_LINE;
+        let checked =
+            std::fs::read_to_string(self.state_dir.join(COMPOSE_CHECKED_FILE)).unwrap_or_default();
+        (due && checked != run.id).then(|| run.id.clone())
     }
 
     /// Reports the retention `.env` sets, keeping the last failure.
