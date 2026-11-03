@@ -275,25 +275,24 @@ async fn back_online(pool: &PgPool, peer: Peer, incident: Uuid) {
     offline::apply(pool, peer, &action, AFTER).await.unwrap();
 }
 
-/// A daily schedule for `coverage`, handing off at `handoff` UTC, whose
-/// first member took over at the hand-off of `anchor`.
+/// A daily schedule for `coverage` handing off at the time of day of
+/// `since` UTC, its first member having taken over at `since`.
 async fn schedule(
     pool: &PgPool,
     coverage: Coverage,
-    handoff: &str,
-    anchor: chrono::NaiveDate,
+    since: DateTime<Utc>,
     members: &[Uuid],
 ) -> Uuid {
     let (customer, site) = coverage.columns();
     let id = sqlx::query_scalar(
         "INSERT INTO on_call_schedules (name, customer_id, site_id, time_zone, rotation,
                                         handoff_time, anchor_date)
-         VALUES ('Ops', $1, $2, 'UTC', 'daily', $3::time, $4) RETURNING id",
+         VALUES ('Ops', $1, $2, 'UTC', 'daily', $3, $4) RETURNING id",
     )
     .bind(customer)
     .bind(site)
-    .bind(handoff)
-    .bind(anchor)
+    .bind(since.time())
+    .bind(since.date_naive())
     .fetch_one(pool)
     .await
     .unwrap();
@@ -311,10 +310,10 @@ async fn schedule(
     id
 }
 
-/// Today, UTC: a daily schedule anchored here at 00:00 has its first member
-/// on call now.
-fn today() -> chrono::NaiveDate {
-    Utc::now().date_naive()
+/// 12 hours ago: a daily schedule starting then has its first member on
+/// call now, and no hand-off near, whatever the time of day.
+fn earlier() -> DateTime<Utc> {
+    Utc::now() - TimeDelta::hours(12)
 }
 
 /// Opens a critical incident on a new disk of `server`.
@@ -350,8 +349,8 @@ db_tests! {
         let inbox = Inbox::start().await;
         inbox.slack(&pool, alice, "alice").await;
         inbox.contact(&pool, bob, "bob").await;
-        schedule(&pool, Coverage::Customer(a.customer), "00:00", today(), &[alice]).await;
-        schedule(&pool, Coverage::Site(a.site), "00:00", today(), &[bob]).await;
+        schedule(&pool, Coverage::Customer(a.customer), earlier(), &[alice]).await;
+        schedule(&pool, Coverage::Site(a.site), earlier(), &[bob]).await;
         let dispatcher = grouping(&pool);
         let mut down = Vec::new();
         for n in 0..30 {
@@ -391,7 +390,7 @@ db_tests! {
         let inbox = Inbox::start().await;
         inbox.slack(&pool, alice, "alice").await;
         inbox.slack(&pool, bob, "bob").await;
-        let id = schedule(&pool, Coverage::Customer(a.customer), "00:00", today(), &[alice, bob]).await;
+        let id = schedule(&pool, Coverage::Customer(a.customer), earlier(), &[alice, bob]).await;
         let dispatcher = grouping(&pool);
         for n in 0..5 {
             offline_server(&pool, a.site, &format!("web-{n}")).await;
@@ -418,7 +417,7 @@ db_tests! {
         let inbox = Inbox::start().await;
         inbox.slack(&pool, alice, "alice").await;
         inbox.channel(&pool, "team", Coverage::Customer(a.customer)).await;
-        schedule(&pool, Coverage::Customer(a.customer), "00:00", today(), &[alice]).await;
+        schedule(&pool, Coverage::Customer(a.customer), earlier(), &[alice]).await;
         let silence: Uuid = sqlx::query_scalar(
             "INSERT INTO silences (customer_id, starts_at, ends_at, reason)
              VALUES ($1, now() - interval '1 minute', now() + interval '1 hour', 'x') RETURNING id",
@@ -475,8 +474,8 @@ db_tests! {
             inbox.contact(&pool, id, name).await;
         }
         inbox.channel(&pool, "team", Coverage::Everything).await;
-        schedule(&pool, Coverage::Customer(a.customer), "00:00", today(), &[alice, bob]).await;
-        schedule(&pool, Coverage::Site(b.site), "00:00", today(), &[carol]).await;
+        schedule(&pool, Coverage::Customer(a.customer), earlier(), &[alice, bob]).await;
+        schedule(&pool, Coverage::Site(b.site), earlier(), &[carol]).await;
 
         open(&pool, a.server).await;
         open(&pool, b.server).await;
@@ -512,8 +511,8 @@ db_tests! {
         let inbox = Inbox::start().await;
         inbox.contact(&pool, alice, "alice").await;
         inbox.contact(&pool, bob, "bob").await;
-        let anchor: chrono::NaiveDate = "2026-11-02".parse().unwrap();
-        schedule(&pool, Coverage::Customer(a.customer), "09:00", anchor, &[alice, bob]).await;
+        let since: DateTime<Utc> = "2026-11-02T09:00:00Z".parse().unwrap();
+        schedule(&pool, Coverage::Customer(a.customer), since, &[alice, bob]).await;
         let event = notify::Event {
             id: 1,
             event: "incident.opened".into(),
@@ -548,7 +547,7 @@ db_tests! {
         inbox.contact(&pool, boss, "boss").await;
         inbox.contact(&pool, root, "root").await;
         inbox.channel(&pool, "team", Coverage::Customer(a.customer)).await;
-        schedule(&pool, Coverage::Site(a.site), "00:00", today(), &[bob]).await;
+        schedule(&pool, Coverage::Site(a.site), earlier(), &[bob]).await;
         let pass = || async {
             open(&pool, a.server).await;
             dispatcher(&pool).pass().await.unwrap();
@@ -599,7 +598,7 @@ db_tests! {
         let inbox = Inbox::start().await;
         inbox.contact(&pool, alice, "alice").await;
         inbox.contact(&pool, bob, "bob").await;
-        let id = schedule(&pool, Coverage::Customer(a.customer), "00:00", today(), &[alice, bob]).await;
+        let id = schedule(&pool, Coverage::Customer(a.customer), earlier(), &[alice, bob]).await;
         let silence: Uuid = sqlx::query_scalar(
             "INSERT INTO silences (customer_id, starts_at, ends_at, reason)
              VALUES ($1, now() - interval '1 minute', now() + interval '1 hour', 'x') RETURNING id",
@@ -753,7 +752,7 @@ db_tests! {
         let staff = user(&pool, "staff", Role::Operator, GrantScope::Global).await;
         let carol = user(&pool, "carol", Role::Operator, GrantScope::Customer(b.customer)).await;
         user(&pool, "eve", Role::Operator, GrantScope::Customer(a.customer)).await;
-        let theirs = schedule(&pool, Coverage::Customer(b.customer), "00:00", today(), &[carol]).await;
+        let theirs = schedule(&pool, Coverage::Customer(b.customer), earlier(), &[carol]).await;
         let boss = login(&pool, "boss").await;
         let ask = |members: Vec<Uuid>, customer: Uuid| json!({
             "name": "Ops", "customer_id": customer, "time_zone": "UTC",
