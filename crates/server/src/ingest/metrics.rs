@@ -4,6 +4,7 @@
 use super::http;
 use super::validate::Series;
 use super::writer::{Sink, WriteError};
+use crate::storage_tls::{StorageAuth, StorageTlsError};
 
 /// The messages of Prometheus' `remote.proto` that the server sends, defined
 /// here so no `.proto` copy or code generation is needed.
@@ -83,9 +84,14 @@ pub struct RemoteWrite {
 
 impl RemoteWrite {
     /// `base_url` is `victoriametrics_url`, like `http://localhost:8428`.
-    pub fn new(base_url: &str) -> Result<Self, reqwest::Error> {
+    pub fn new(base_url: &str) -> Result<Self, StorageTlsError> {
+        Self::with_auth(base_url, None)
+    }
+
+    /// With the CA and password of the store (ADR-0087).
+    pub fn with_auth(base_url: &str, auth: Option<&StorageAuth>) -> Result<Self, StorageTlsError> {
         Ok(Self {
-            client: http::client()?,
+            client: http::client(auth)?,
             url: format!("{}/api/v1/write", base_url.trim_end_matches('/')),
         })
     }

@@ -21,4 +21,5 @@ pub mod release_check;
 pub mod remediation;
 pub mod renew;
 pub mod sensor_config;
+pub mod storage_tls;
 pub mod vm_query;

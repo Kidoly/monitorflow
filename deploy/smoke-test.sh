@@ -96,6 +96,45 @@ check "PostgreSQL not published" not_published postgres
 check "VictoriaMetrics not published" not_published victoriametrics
 check "VictoriaLogs not published" not_published victorialogs
 
+# The links to the stores (ADR-0087), seen from the server's container:
+# TLS with a certificate of the server's CA that the stores read again
+# when it is renewed, and a password.
+ca=/var/lib/monitorflow/server/tls/ca.pem
+in_server() { compose exec -T server bash -c "$1"; }
+# The first line of the answer of $1:$2 to a request without a password.
+plain_answer() { in_server "exec 3<>/dev/tcp/$1/$2 && printf 'GET /api/v1/query?query=1 HTTP/1.0\r\n\r\n' >&3 && head -n1 <&3"; }
+tls_answer() {
+    in_server "printf 'GET /api/v1/query?query=1 HTTP/1.0\r\nHost: $1\r\n\r\n' \
+        | openssl s_client -quiet -verify_return_error -CAfile $ca -servername $1 -connect $1:$2 2>/dev/null | head -n1"
+}
+# The serial of the certificate $1:$2 shows, verified against the CA.
+serial_of() {
+    in_server "openssl s_client -verify_return_error -CAfile $ca -servername $1 -connect $1:$2 </dev/null 2>/dev/null \
+        | openssl x509 -noout -serial"
+}
+# The output of the rest of the arguments holds $1.
+answers() { local want=$1; shift; "$@" | grep -qF "$want"; }
+check "the server reaches both stores over TLS" in_server "monitorflow-server storage-check"
+for store in victoriametrics:8428 victorialogs:9428; do
+    host=${store%:*} port=${store#*:}
+    check "$host: certificate from the server's CA" serial_of "$host" "$port"
+    check "$host: plain HTTP is refused" answers ' 400 ' plain_answer "$host" "$port"
+    check "$host: no password, no answer" answers ' 401 ' tls_answer "$host" "$port"
+done
+renewed() {
+    local before=$1 after
+    for _ in $(seq 10); do
+        after=$(serial_of victoriametrics 8428) && [ "$after" != "$before" ] && return 0
+        sleep 1
+    done
+    return 1
+}
+before=$(serial_of victoriametrics 8428 || true)
+compose exec -T server rm /var/lib/monitorflow/storage-tls/cert.pem
+compose run --rm -T storage-certs >/dev/null
+check "a renewed certificate is served without a restart" renewed "$before"
+check "and the server still reaches both stores" in_server "monitorflow-server storage-check"
+
 # Package mirrors (ADR-0067). The first check is the catalog as the
 # interface shows it, with the real tools. No distribution fits a CI disk:
 # what syncs here is a small signed upstream, in its own container on the

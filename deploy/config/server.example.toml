@@ -38,6 +38,10 @@ database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
 # Time series and log storage. http is accepted for development.
 # victoriametrics_url = "http://localhost:8428"
 # victorialogs_url = "http://localhost:9428"
+# Set, the built-in CA issues the stores' certificate and their password
+# into this directory, which they read, and both URLs must be https
+# (ADR-0087). The production compose file sets it.
+# storage_tls_dir = "/var/lib/monitorflow/storage-tls"
 
 # Certificate authority (<data_dir>/ca/), the server's own certificate
 # (<data_dir>/tls/ unless [tls] says otherwise), command signing key, mirrors.

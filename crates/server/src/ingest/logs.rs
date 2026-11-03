@@ -9,6 +9,7 @@ use serde_json::{Map, Value};
 
 use super::http;
 use super::writer::{Sink, WriteError};
+use crate::storage_tls::{StorageAuth, StorageTlsError};
 
 /// Fields that identify a log stream in VictoriaLogs.
 pub const STREAM_FIELDS: &str = "peer,site";
@@ -64,9 +65,14 @@ pub struct JsonLines {
 
 impl JsonLines {
     /// `base_url` is `victorialogs_url`, like `http://localhost:9428`.
-    pub fn new(base_url: &str) -> Result<Self, reqwest::Error> {
+    pub fn new(base_url: &str) -> Result<Self, StorageTlsError> {
+        Self::with_auth(base_url, None)
+    }
+
+    /// With the CA and password of the store (ADR-0087).
+    pub fn with_auth(base_url: &str, auth: Option<&StorageAuth>) -> Result<Self, StorageTlsError> {
         Ok(Self {
-            client: http::client()?,
+            client: http::client(auth)?,
             url: format!(
                 "{}/insert/jsonline?_stream_fields={STREAM_FIELDS}",
                 base_url.trim_end_matches('/')

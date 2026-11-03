@@ -17,7 +17,7 @@ use rustls::pki_types::{CertificateDer, UnixTime};
 use rustls::{CertificateError, RootCertStore};
 use x509_parser::prelude::{FromDer, X509Certificate};
 
-use crate::ca::{store, CaError, CertificateAuthority, ServerName};
+use crate::ca::{store, CaError, CertificateAuthority, IssuedCert, Serial, ServerName};
 
 /// ID in the server's `monitorflow://server/<id>` SAN.
 pub const SERVER_ID: &str = "central";
@@ -54,43 +54,62 @@ pub fn ensure(
     names: &[ServerName],
 ) -> Result<Outcome, CaError> {
     let write_ca = || write(&paths.ca_cert, ca.ca_cert_pem().as_bytes(), 0o644);
-    match fs::read_to_string(&paths.cert) {
-        Ok(pem) if is_current(ca, paths, &pem, names)? => {
+    match fit(ca, &paths.cert, &paths.key, names, RENEW_BEFORE)? {
+        Fit::Current => {
             write_ca()?;
             return Ok(Outcome::Kept);
         }
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(io_error(&paths.cert, error)),
+        Fit::Foreign => {
+            return Err(CaError::Corrupt {
+                path: paths.cert.clone(),
+                reason: "not issued by the built-in CA; remove it and its key to let the server \
+                         issue one"
+                    .into(),
+            })
+        }
+        Fit::Missing | Fit::Stale => {}
     }
-    let signing = |e: rcgen::Error| CaError::Signing(e.to_string());
-    let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).map_err(signing)?;
-    let csr = CertificateParams::default()
-        .serialize_request(&key)
-        .and_then(|csr| csr.pem())
-        .map_err(signing)?;
     let identity = PeerIdentity::new(PeerRole::Server, SERVER_ID).expect("SERVER_ID is valid");
-    let issued = ca.issue(&csr, &identity, Some(VALIDITY), names)?;
-    // Key first: a crash before the certificate is written leaves a pair
-    // that does not match, which the next start replaces.
-    write(&paths.key, key.serialize_pem().as_bytes(), 0o600)?;
-    write(&paths.cert, issued.cert_pem.as_bytes(), 0o644)?;
+    let serial = issue_pair(&paths.cert, &paths.key, |csr| {
+        ca.issue(csr, &identity, Some(VALIDITY), names)
+    })?;
     write_ca()?;
-    tracing::info!(cert = %paths.cert.display(), serial = %issued.serial, "issued the server certificate");
+    tracing::info!(cert = %paths.cert.display(), %serial, "issued the server certificate");
     Ok(Outcome::Issued)
 }
 
-fn is_current(
+/// How the certificate at a path compares with what is needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Fit {
+    /// From the CA, for every name, with its key, and valid for longer
+    /// than the margin.
+    Current,
+    Missing,
+    /// Expiring, missing a name, or not matching its key.
+    Stale,
+    /// Signed by another CA.
+    Foreign,
+}
+
+/// Checks the certificate at `cert_path` and its key at `key_path`
+/// against `ca` and `names`; `renew_before` is the margin before expiry.
+pub(crate) fn fit(
     ca: &CertificateAuthority,
-    paths: &TlsPaths,
-    cert_pem: &str,
+    cert_path: &Path,
+    key_path: &Path,
     names: &[ServerName],
-) -> Result<bool, CaError> {
+    renew_before: Duration,
+) -> Result<Fit, CaError> {
+    let cert_pem = match fs::read_to_string(cert_path) {
+        Ok(pem) => pem,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Fit::Missing),
+        Err(error) => return Err(io_error(cert_path, error)),
+    };
     let corrupt = |reason: &str| CaError::Corrupt {
-        path: paths.cert.clone(),
+        path: cert_path.to_owned(),
         reason: reason.into(),
     };
-    let der = pem_der(cert_pem).ok_or_else(|| corrupt("not a PEM certificate"))?;
+    let der = pem_der(&cert_pem).ok_or_else(|| corrupt("not a PEM certificate"))?;
     let (_, cert) = X509Certificate::from_der(&der).map_err(|_| corrupt("invalid certificate"))?;
 
     let mut roots = RootCertStore::empty();
@@ -117,29 +136,52 @@ fn is_current(
             Ok(_) => {}
             Err(rustls::Error::InvalidCertificate(
                 CertificateError::UnknownIssuer | CertificateError::BadSignature,
-            )) => return Err(corrupt(
-                "not issued by the built-in CA; remove it and its key to let the server issue one",
-            )),
+            )) => return Ok(Fit::Foreign),
             // Expired or missing this name.
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(Fit::Stale),
         }
     }
-    let renew_at = cert.validity().not_after.timestamp() - RENEW_BEFORE.as_secs() as i64;
+    let renew_at = cert.validity().not_after.timestamp() - renew_before.as_secs() as i64;
     if time::OffsetDateTime::now_utc().unix_timestamp() >= renew_at {
-        return Ok(false);
+        return Ok(Fit::Stale);
     }
-    let key_matches = fs::read_to_string(&paths.key)
+    let key_matches = fs::read_to_string(key_path)
         .ok()
         .and_then(|pem| KeyPair::from_pem(&pem).ok())
         .is_some_and(|key| key.subject_public_key_info() == cert.public_key().raw);
-    Ok(key_matches)
+    Ok(if key_matches {
+        Fit::Current
+    } else {
+        Fit::Stale
+    })
+}
+
+/// Generates a key, has `issue` sign its CSR, and writes the key to
+/// `key_path` and the certificate to `cert_path`. Returns the serial.
+pub(crate) fn issue_pair(
+    cert_path: &Path,
+    key_path: &Path,
+    issue: impl FnOnce(&str) -> Result<IssuedCert, CaError>,
+) -> Result<Serial, CaError> {
+    let signing = |e: rcgen::Error| CaError::Signing(e.to_string());
+    let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).map_err(signing)?;
+    let csr = CertificateParams::default()
+        .serialize_request(&key)
+        .and_then(|csr| csr.pem())
+        .map_err(signing)?;
+    let issued = issue(&csr)?;
+    // Key first: a crash before the certificate is written leaves a pair
+    // that does not match, which the next check replaces.
+    write(key_path, key.serialize_pem().as_bytes(), 0o600)?;
+    write(cert_path, issued.cert_pem.as_bytes(), 0o644)?;
+    Ok(issued.serial)
 }
 
 fn pem_der(text: &str) -> Option<Vec<u8>> {
     pem::parse(text).ok().map(pem::Pem::into_contents)
 }
 
-fn write(path: &Path, contents: &[u8], mode: u32) -> Result<(), CaError> {
+pub(crate) fn write(path: &Path, contents: &[u8], mode: u32) -> Result<(), CaError> {
     if fs::read(path).is_ok_and(|current| current == contents) {
         return Ok(());
     }

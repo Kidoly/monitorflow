@@ -3,17 +3,25 @@
 use std::time::Duration;
 
 use super::writer::WriteError;
+use crate::storage_tls::{StorageAuth, StorageTlsError};
 
 /// Time allowed for one request, connection included.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Bytes of an error response kept in the error message.
 const MAX_ERROR_BODY: usize = 256;
 
-pub fn client() -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder()
+/// With `auth`, the client trusts the built-in CA alone and sends the
+/// stores' password (ADR-0087).
+pub fn client(auth: Option<&StorageAuth>) -> Result<reqwest::Client, StorageTlsError> {
+    let mut builder = reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
-        .connect_timeout(Duration::from_secs(5))
+        .connect_timeout(Duration::from_secs(5));
+    if let Some(auth) = auth {
+        builder = auth.apply(builder)?;
+    }
+    builder
         .build()
+        .map_err(|e| StorageTlsError::Client(e.to_string()))
 }
 
 /// Sends `request` and classifies the outcome. Error messages never carry

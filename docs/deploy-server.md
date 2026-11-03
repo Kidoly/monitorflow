@@ -37,7 +37,7 @@ Everything lives in `/opt/monitorflow/deploy`: the compose file, and `.env` with
 - **Removing it:** `curl … | sudo sh -s -- --uninstall` removes the containers and, on a terminal, asks whether to delete the data. Without a terminal, or if you press Enter, the data stays in Docker volumes and `.env` stays too, and running the installer brings all of it back. `--uninstall --purge` deletes them without asking. Docker stays installed.
 - It checks `SHA256SUMS.sig` against the release keys it carries, with OpenSSL 3, and so the compose files and the image digests of `images.json`[^0056]; a machine without OpenSSL 3 gets a warning and checks the checksums only. `MF_VERSION=0.2.0` installs a given release, and `MF_DOWNLOAD_URL` a copy of the release files on your own https server, which then also serves updates.
 
-On the first start the server creates its CA and its own certificate for `SERVER_NAMES` in the `serverdata` volume, and `db-certs` the certificates of the database link in `dbcerts`. A name added to `SERVER_NAMES` later gets a new server certificate at the next start.
+On the first start the server creates its CA and its own certificate for `SERVER_NAMES` in the `serverdata` volume, and `db-certs` the certificates of the database link in `dbcerts`. `storage-certs` has that CA issue the certificate of VictoriaMetrics and VictoriaLogs, and creates their password, in `storagetls`; the server renews the certificate by itself[^0087]. A name added to `SERVER_NAMES` later gets a new server certificate at the next start.
 
 ## Setup link
 
@@ -87,6 +87,7 @@ Volumes are prefixed with the project name, like `monitorflow_serverdata`.
 | `pgdata` | Inventory, configuration, campaigns, incidents, audit log |
 | `vmdata`, `vldata` | Metrics and logs |
 | `dbcerts` | Certificates of the database link, created again when the volume is empty |
+| `storagetls` | Certificate, key and password of the links to VictoriaMetrics and VictoriaLogs, created again when the volume is empty |
 | `caddydata` | Caddy's certificates and CA. Not in backups: after a restore on a new machine, devices trust the new CA from `/trust/` |
 | `backups` | Backups: daily, on request and before each update, the 7 newest kept; `BACKUP_DIR` in `deploy/.env` puts them in a directory of the machine instead |
 | `update`, `updater` | Update requests and status, and the updater's own state |
@@ -183,11 +184,12 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 
 ## Limits
 
-- VictoriaMetrics and VictoriaLogs are reached over plain HTTP on an internal Docker network that is never published[^0051]. PostgreSQL is reached over TLS.
+- VictoriaMetrics and VictoriaLogs are reached over TLS with a certificate of the built-in CA, and a password[^0087], on an internal Docker network that is never published[^0051]. PostgreSQL is reached over TLS.
 - The server image trusts the release keys of `deploy/release-keys.pem` at build time; imports of releases signed with another key are refused.
 
 [^0051]: [ADR-0051: Production compose and the server's storage links](adr/0051-production-compose.md)
 [^0053]: [ADR-0053: Signed releases and agent self-update](adr/0053-agent-self-update.md)
+[^0087]: [ADR-0087: TLS to the metric and log stores](adr/0087-tls-to-the-metric-and-log-stores.md)
 [^0054]: [ADR-0054: Agent install sources](adr/0054-agent-install-sources.md)
 [^0056]: [ADR-0056: Updating the central server from the web interface](adr/0056-server-update.md)
 [^0058]: [ADR-0058: Daily backups and restore](adr/0058-backups.md)

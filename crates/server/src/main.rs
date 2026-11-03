@@ -40,7 +40,8 @@ use monitorflow_server::remediation::snapshot::{ProxmoxSnapshotter, SnapshotHook
 use monitorflow_server::remediation::switch;
 use monitorflow_server::renew::Renewer;
 use monitorflow_server::sensor_config::{SensorConfigStore, SensorConfigs, WatcherSettings};
-use monitorflow_server::vm_query::VmQuery;
+use monitorflow_server::storage_tls::{self, StorageAuth};
+use monitorflow_server::vm_query::{VmQuery, QUERY_TIMEOUT};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch;
@@ -85,6 +86,13 @@ enum Command {
     /// the browser, replacing the previous one. Works only while no user
     /// exists.
     SetupLink,
+    /// Issue the certificate and password of VictoriaMetrics and
+    /// VictoriaLogs into `storage_tls_dir` if needed, then exit. The
+    /// compose file runs it before starting them (ADR-0087).
+    StorageCerts,
+    /// Send a query to VictoriaMetrics and VictoriaLogs as the server does,
+    /// and say whether each answered.
+    StorageCheck,
 }
 
 #[derive(Subcommand, Debug)]
@@ -345,6 +353,8 @@ async fn main() -> anyhow::Result<()> {
             return create_token(&config, args).await
         }
         Some(Command::AgentRelease(command)) => return agent_release_command(&config, command),
+        Some(Command::StorageCerts) => return storage_certs_command(&config).await,
+        Some(Command::StorageCheck) => return storage_check_command(&config).await,
         Some(
             Command::User { .. } | Command::Customer(_) | Command::Mirror(_) | Command::SetupLink,
         ) => {}
@@ -364,7 +374,13 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Customer(command)) => return customer_command(&pool, command).await,
         Some(Command::Mirror(command)) => return mirror_command(&config, pool, command).await,
         Some(Command::SetupLink) => return setup_link_command(&config, &pool).await,
-        Some(Command::Token(_) | Command::AgentRelease(_)) | None => {}
+        Some(
+            Command::Token(_)
+            | Command::AgentRelease(_)
+            | Command::StorageCerts
+            | Command::StorageCheck,
+        )
+        | None => {}
     }
     announce_setup(&config, &pool).await?;
 
@@ -394,14 +410,25 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("binding mirror listener on {}", config.mirror_listen_addr))?;
     let mirrors = open_mirrors(&config, pool.clone()).await?;
+    // TLS and a password on the links to the stores (ADR-0087).
+    let storage = match &config.storage_tls_dir {
+        Some(dir) => Some(
+            storage_tls::start(ca.clone(), dir.clone(), &storage_urls(&config))
+                .await
+                .context("preparing TLS to VictoriaMetrics and VictoriaLogs")?,
+        ),
+        None => None,
+    };
     // Storage writers (ADR-0013). Streams only push to their queues.
     let writer_settings = WriterSettings::from_config(&config.ingest);
     let metrics = Writer::spawn(
-        RemoteWrite::new(&config.victoriametrics_url).context("VictoriaMetrics client")?,
+        RemoteWrite::with_auth(&config.victoriametrics_url, storage.as_ref())
+            .context("VictoriaMetrics client")?,
         writer_settings.clone(),
     );
     let events = Writer::spawn(
-        JsonLines::new(&config.victorialogs_url).context("VictoriaLogs client")?,
+        JsonLines::with_auth(&config.victorialogs_url, storage.as_ref())
+            .context("VictoriaLogs client")?,
         writer_settings,
     );
     // Threshold engine (ADR-0017): open incidents and pending timers are
@@ -463,7 +490,8 @@ async fn main() -> anyhow::Result<()> {
         .with_relay_commands(relay_commands.clone());
     let api_state = ApiState::new(pool.clone(), registry, api_settings)
         .with_metrics(
-            VmQuery::new(&config.victoriametrics_url).context("VictoriaMetrics query client")?,
+            VmQuery::with_auth(&config.victoriametrics_url, QUERY_TIMEOUT, storage.as_ref())
+                .context("VictoriaMetrics query client")?,
         )
         .with_enrollment(EnrollmentSettings::from_config(
             &config,
@@ -474,7 +502,8 @@ async fn main() -> anyhow::Result<()> {
         .with_relay_commands(relay_commands.clone())
         .with_mirrors(mirrors.clone())
         .with_campaigns(campaigns.clone());
-    let remediation = remediation_loop(&config, pool.clone(), commands.clone()).await?;
+    let remediation =
+        remediation_loop(&config, storage.as_ref(), pool.clone(), commands.clone()).await?;
     let remediation_pool = pool.clone();
     // Notifications (ADR-0060): the outbox the database triggers fill.
     let notify_pool = pool.clone();
@@ -577,6 +606,7 @@ async fn main() -> anyhow::Result<()> {
                         |wanted| {
                             start_from_settings(
                                 &config,
+                                storage.as_ref(),
                                 remediation_pool.clone(),
                                 commands.clone(),
                                 wanted,
@@ -626,6 +656,7 @@ async fn main() -> anyhow::Result<()> {
 /// The AI remediation loop (ADR-0043), when `[ai]` is enabled.
 async fn remediation_loop(
     config: &ServerConfig,
+    storage: Option<&StorageAuth>,
     pool: sqlx::PgPool,
     commands: Commands,
 ) -> anyhow::Result<Option<Remediation>> {
@@ -637,7 +668,7 @@ async fn remediation_loop(
         return Ok(None);
     };
     let model = config.ai.model.clone();
-    build_remediation(config, provider, &model, pool, commands)
+    build_remediation(config, storage, provider, &model, pool, commands)
         .await
         .map(Some)
 }
@@ -645,6 +676,7 @@ async fn remediation_loop(
 /// The AI remediation loop on the settings of the web interface.
 async fn start_from_settings(
     config: &ServerConfig,
+    storage: Option<&StorageAuth>,
     pool: sqlx::PgPool,
     commands: Commands,
     wanted: switch::Wanted,
@@ -652,11 +684,12 @@ async fn start_from_settings(
     let mut options = ClaudeOptions::from_config(wanted.api_key, &config.ai);
     options.model.clone_from(&wanted.model);
     let provider = Arc::new(ClaudeProvider::new(options).context("AI provider")?);
-    build_remediation(config, provider, &wanted.model, pool, commands).await
+    build_remediation(config, storage, provider, &wanted.model, pool, commands).await
 }
 
 async fn build_remediation(
     config: &ServerConfig,
+    storage: Option<&StorageAuth>,
     provider: Arc<dyn monitorflow_ai::AiProvider>,
     model: &str,
     pool: sqlx::PgPool,
@@ -676,9 +709,13 @@ async fn build_remediation(
     let backends = Backends {
         pool,
         metrics: Some(
-            VmQuery::new(&config.victoriametrics_url).context("VictoriaMetrics query client")?,
+            VmQuery::with_auth(&config.victoriametrics_url, QUERY_TIMEOUT, storage)
+                .context("VictoriaMetrics query client")?,
         ),
-        logs: Some(VmQuery::new(&config.victorialogs_url).context("VictoriaLogs query client")?),
+        logs: Some(
+            VmQuery::with_auth(&config.victorialogs_url, QUERY_TIMEOUT, storage)
+                .context("VictoriaLogs query client")?,
+        ),
     };
     let remediation = Remediation::new(
         provider,
@@ -921,6 +958,78 @@ fn read_password() -> anyhow::Result<Secret> {
 }
 
 /// Opens `<data_dir>/ca/`, creating the CA on first use.
+fn storage_urls(config: &ServerConfig) -> [&str; 2] {
+    [&config.victoriametrics_url, &config.victorialogs_url]
+}
+
+async fn storage_certs_command(config: &ServerConfig) -> anyhow::Result<()> {
+    let dir = config
+        .storage_tls_dir
+        .clone()
+        .context("storage_tls_dir is not set")?;
+    let names = storage_tls::names(&storage_urls(config))?;
+    let ca = open_ca(config).await?;
+    let outcome =
+        tokio::task::spawn_blocking(move || storage_tls::ensure(&ca, &dir, &names)).await??;
+    match outcome {
+        storage_tls::Outcome::Issued => println!("storage certificate issued"),
+        storage_tls::Outcome::Kept => println!("storage certificate already valid"),
+    }
+    Ok(())
+}
+
+async fn storage_check_command(config: &ServerConfig) -> anyhow::Result<()> {
+    let storage = match &config.storage_tls_dir {
+        Some(dir) => {
+            let ca_cert = config
+                .data_dir
+                .join("ca")
+                .join(monitorflow_server::ca::CERT_FILE);
+            let dir = dir.clone();
+            let auth = tokio::task::spawn_blocking(move || {
+                let ca = std::fs::read_to_string(&ca_cert)
+                    .with_context(|| format!("reading {}", ca_cert.display()))?;
+                anyhow::Ok(StorageAuth::load(ca, &dir)?)
+            })
+            .await??;
+            Some(auth)
+        }
+        None => None,
+    };
+    let checks = [
+        (
+            "VictoriaMetrics",
+            &config.victoriametrics_url,
+            "/api/v1/query",
+            vec![("query", "1".to_owned())],
+        ),
+        (
+            "VictoriaLogs",
+            &config.victorialogs_url,
+            "/select/logsql/query",
+            vec![("query", "*".to_owned()), ("limit", "1".to_owned())],
+        ),
+    ];
+    let mut failed = false;
+    for (name, url, path, params) in checks {
+        let client = VmQuery::with_auth(url, QUERY_TIMEOUT, storage.as_ref())?;
+        let tls = if storage.is_some() {
+            "TLS, signed by the built-in CA"
+        } else {
+            "no TLS"
+        };
+        match client.get_raw(path, &params).await {
+            Ok(_) => println!("{name} answers ({tls})"),
+            Err(e) => {
+                println!("{name} does not answer: {e}");
+                failed = true;
+            }
+        }
+    }
+    anyhow::ensure!(!failed, "a store does not answer");
+    Ok(())
+}
+
 async fn open_ca(config: &ServerConfig) -> anyhow::Result<CertificateAuthority> {
     let dir = config.data_dir.join("ca");
     tokio::task::spawn_blocking(move || {
