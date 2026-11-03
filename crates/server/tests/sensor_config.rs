@@ -155,9 +155,9 @@ db_tests! {
                 ("service", "nginx", 15_000)
             ]
         );
-        let port = &web.sensors[2];
+        let port = &web.sensors[3];
         assert_eq!((port.params["port"].as_str(), port.params["host"].as_str()), ("22", "localhost"));
-        assert_eq!(web.sensors[3].params["unit"], "nginx");
+        assert_eq!(web.sensors[4].params["unit"], "nginx");
 
         // Another server of the site sees the site rows only.
         let db = store.load("db-01").await.unwrap().unwrap();

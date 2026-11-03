@@ -399,7 +399,7 @@ db_tests! {
             .map(|s| (s["name"].as_str().unwrap(), s["origin"].as_str().unwrap()))
             .collect();
         assert_eq!(sensors, [("cpu", "default"), ("diskio", "default"), ("memory", "default"), ("port_443", "site")]);
-        assert_eq!(body["sensors"][2]["params"], json!({ "port": "443" }));
+        assert_eq!(body["sensors"][3]["params"], json!({ "port": "443" }));
 
         for uri in [
             format!("/api/sites/{}/sensors", f.lyon),
