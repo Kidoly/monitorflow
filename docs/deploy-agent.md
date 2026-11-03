@@ -263,9 +263,22 @@ Updates come from the source the machine is configured for: Windows Update, Micr
 | Update reports | Pending and installed software updates by KB number, with title, classification, MSRC severity, size and restart state, plus whether Windows waits for a restart. Needs the update service (above) |
 | `apply_updates`, update campaigns | Through the update service. All pending updates except feature upgrades, `security_only` for the Security Updates classification, or named KB numbers or update IDs (`KB5034441`). Restarts only with `allow_reboot`, one minute after the result. Windows servers may join any campaign: pinned mirror snapshots do not apply to them |
 | `configure_sources`, `revert_sources` | Refused by the API for Windows servers, and by the agent with "package sources are not supported on Windows yet" |
-| `shell` (AI remediation) | Refused even with `commands.shell = true`, so the Windows installer has no `MF_ALLOW_COMMANDS`: the server's risk rules assume `/bin/sh`[^0047], so a remediation on a Windows server escalates at its first command |
+| `shell` (AI remediation) | Off until turned on ([below](#ai-commands-on-windows)). Commands run in Windows PowerShell 5.1 as the agent's account, and the server classifies them by rules written for PowerShell[^0084] |
 
 There are no sudo rules on Windows. The only privileged part is the update service, which accepts typed requests from the agent alone.
+
+### AI commands on Windows
+
+AI remediation sends a Windows server PowerShell commands[^0084]. The agent refuses them until an administrator allows them on that server. In an elevated PowerShell:
+
+```powershell
+& "$env:ProgramFiles\MonitorFlow\monitorflow-agent.exe" ai-commands on
+Restart-Service MonitorFlowAgent
+```
+
+The first line sets `[commands] shell = true` in `agent.toml` and leaves the rest of the file as it is; the setting is kept across upgrades. `ai-commands off` takes it back. The server's page shows the change once the agent is back, and gives these lines on its Commands tab and under Administration › AI.
+
+Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SERVICE\MonitorFlowAgent`, from `C:\`, with the system `PATH`, and is stopped with everything it started at the time limit. That account is not an administrator: it reads services, processes, the System and Application event logs, disks and network state, but cannot restart most services. To let AI restart one service after approval, grant the account that right on that service, for example with `sc.exe sdshow` and `sc.exe sdset`, adding `(A;;RPWPLCRC;;;S-1-5-80-546755567-1596817566-60379001-3258130523-3598288828)` (the service SID of `MonitorFlowAgent`). Without it, the command fails with "access denied" and the incident goes to a person.
 
 [^0007]: [ADR-0007: Enrollment bootstrap](adr/0007-enrollment-bootstrap.md)
 [^0025]: [ADR-0025: Relay forwarding model](adr/0025-relay-forwarding.md)
@@ -285,3 +298,4 @@ There are no sudo rules on Windows. The only privileged part is the update servi
 [^0063]: [ADR-0063: Agent on any Linux](adr/0063-agent-on-any-linux.md)
 [^0064]: [ADR-0064: AI setup in the interface](adr/0064-ai-setup-in-the-interface.md)
 [^0073]: [ADR-0073: Reusable install keys per site](adr/0073-reusable-install-keys.md)
+[^0084]: [ADR-0084: AI remediation on Windows](adr/0084-windows-remediation.md)

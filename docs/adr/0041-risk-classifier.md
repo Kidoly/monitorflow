@@ -1,7 +1,7 @@
 # ADR-0041: Rule-based risk classifier for proposed commands
 
 Date: 2026-10-26
-Status: accepted
+Status: accepted; rules for Windows PowerShell in ADR-0084
 
 ## Context
 

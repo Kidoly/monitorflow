@@ -1,7 +1,7 @@
 # ADR-0043: The remediation incident loop
 
 Date: 2026-10-27
-Status: accepted
+Status: accepted; Windows servers in ADR-0084
 
 ## Context
 

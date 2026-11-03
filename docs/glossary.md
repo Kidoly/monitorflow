@@ -17,7 +17,7 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Last contact | When a server or relay last reported | heartbeat | `last_heartbeat` |
 | Configuration up to date | The agent runs the current configuration | revision, in sync, drift | `revision`, `in_sync` |
 | Accepts commands | What a server's agent will run if it is asked. Say which commands: "AI commands", "package updates", "agent updates" | capability, opt-in, handler | `command_kinds` |
-| AI commands | The commands AI remediation sends a server. On, Off, Not available, or Not known yet while the agent or its relay has not updated | shell commands | `shell`, `commands.shell`, `MF_ALLOW_COMMANDS` |
+| AI commands | The commands AI remediation sends a server: shell commands on Linux, PowerShell on Windows. On, Off, Not available (an agent too old for them, which updates by itself), or Not known yet while the agent or its relay has not updated | shell commands | `shell`, `commands.shell`, `MF_ALLOW_COMMANDS`, `ai-commands on` |
 | Watches | The disk, port or service a sensor measures | instance | `instance` |
 | Recovery margin | How far past the threshold a value must return before the incident resolves; under Details | hysteresis | `hysteresis` |
 | Set by | Where a setting comes from; under Details | origin | `origin` |

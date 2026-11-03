@@ -1,7 +1,7 @@
 # ADR-0076: Each server says whether it accepts commands
 
 Date: 2026-11-01
-Status: accepted
+Status: accepted; Windows agents accept `shell` since ADR-0084
 
 ## Context
 
