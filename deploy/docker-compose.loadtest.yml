@@ -1,0 +1,31 @@
+# The stores of the load test (scripts/load-test.sh, docs/load-test.md):
+# the production images and versions, on loopback ports of their own, data
+# in anonymous volumes removed with `down -v`. Not for production.
+services:
+  postgres:
+    image: postgres:17
+    # pg_stat_statements: the load test reports the slowest statements.
+    command: ["-c", "shared_preload_libraries=pg_stat_statements", "-c", "pg_stat_statements.track=top"]
+    environment:
+      POSTGRES_USER: monitorflow
+      POSTGRES_PASSWORD: monitorflow
+      POSTGRES_DB: monitorflow
+    ports: ["127.0.0.1:${LOADTEST_POSTGRES_PORT:-25432}:5432"]
+    volumes: ["/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monitorflow -d monitorflow"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.155.0
+    command: ["-storageDataPath=/storage"]
+    ports: ["127.0.0.1:${LOADTEST_VICTORIAMETRICS_PORT:-28428}:8428"]
+    volumes: ["/storage"]
+
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.53.0
+    command: ["-storageDataPath=/storage"]
+    ports: ["127.0.0.1:${LOADTEST_VICTORIALOGS_PORT:-29428}:9428"]
+    volumes: ["/storage"]

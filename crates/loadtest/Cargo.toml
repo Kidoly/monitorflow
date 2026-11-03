@@ -1,0 +1,30 @@
+[package]
+name = "monitorflow-loadtest"
+description = "Load generator: simulated agents against a real server. Test-only, not shipped."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "monitorflow-loadtest"
+path = "src/main.rs"
+
+# Unix only, like the server it drives: it reads /proc and sends signals.
+[dependencies]
+monitorflow-agent = { path = "../agent" }
+monitorflow-common.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+serde_json.workspace = true
+reqwest = { workspace = true, features = ["json", "cookies"] }
+sqlx.workspace = true
+axum.workspace = true
+rustix = { workspace = true, features = ["process", "param"] }
+
+[dev-dependencies]
+tempfile.workspace = true
