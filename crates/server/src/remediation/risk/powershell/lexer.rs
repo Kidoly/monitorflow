@@ -17,6 +17,16 @@ pub struct Word {
 }
 
 impl Word {
+    /// An unquoted word starting with `-` that is not a number: a
+    /// parameter, or a form such as `--name` the rules do not read.
+    pub fn dashed(&self) -> bool {
+        !self.quoted
+            && self.text.starts_with('-')
+            && !self.text[1..]
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '.')
+    }
+
     /// The parameter this word names, lower case, with its inline value
     /// (`-Name:value`), if it is an unquoted `-name`.
     pub fn parameter(&self) -> Option<(String, Option<&str>)> {

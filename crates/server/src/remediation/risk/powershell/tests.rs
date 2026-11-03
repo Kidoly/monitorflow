@@ -98,6 +98,11 @@ fn read_only_diagnosis() {
         ("gc 'C:\\Windows\\System32\\LogFiles\\HTTPERR\\httperr1.log' -Tail 50", R, "readonly.log_file"),
         ("Get-Content C:\\inetpub\\logs\\LogFiles\\W3SVC1\\*.log -Tail 20", R, "readonly.log_file"),
         ("Select-String -Path C:\\Windows\\Logs\\CBS\\CBS.log -Pattern 'error' -SimpleMatch", R, "readonly.log_file"),
+        ("Select-String error C:\\Windows\\Logs\\CBS\\CBS.log", R, "readonly.log_file"),
+        ("Select-String -Pattern error C:\\Windows\\Logs\\CBS\\CBS.log", R, "readonly.log_file"),
+        ("Get-ChildItem -Path C:\\inetpub\\logs *.log -Recurse", R, "readonly.list"),
+        ("Get-Process -Id 4", R, "readonly.cmdlet"),
+        ("Get-Counter -MaxSamples -1", R, "readonly.cmdlet"),
         ("Get-Process | Measure-Object WorkingSet -Sum", R, "readonly.cmdlet"),
         ("Get-Service | Group-Object Status -NoElement", R, "readonly.cmdlet"),
         ("Get-Service | ConvertTo-Json -Depth 2", R, "readonly.cmdlet"),
@@ -493,4 +498,40 @@ fn the_same_text_is_classified_by_its_shell() {
     assert_eq!(Shell::of("windows"), Shell::PowerShell);
     assert_eq!(Shell::of("debian"), Shell::Posix);
     assert_eq!(Shell::of("unknown"), Shell::Posix);
+}
+
+#[test]
+fn what_binds_to_a_path_is_checked() {
+    check(&[
+        (
+            "Select-String -Pattern x C:\\app\\secret.txt",
+            H,
+            "default.unknown",
+        ),
+        (
+            "Select-String -Pattern x C:\\app\\secret.txt C:\\Windows\\Logs\\a.log",
+            H,
+            "default.unknown",
+        ),
+        (
+            "Select-String x C:\\Windows\\Logs\\a.log C:\\app\\secret.txt",
+            H,
+            "default.unknown",
+        ),
+        (
+            "Get-Content -Path C:\\Windows\\Logs\\a.log C:\\app\\secret.txt",
+            H,
+            "default.unknown",
+        ),
+        // Forms the rules do not read, and parameters that write or reach
+        // another computer.
+        ("Get-Service --ComputerName db1", H, "default.unknown"),
+        ("Get-Service -- -ComputerName", H, "default.unknown"),
+        (
+            "Get-WindowsFeature -LogPath C:\\x.log",
+            H,
+            "default.unknown",
+        ),
+        ("Get-ClusterNode -Cluster other", H, "default.unknown"),
+    ]);
 }

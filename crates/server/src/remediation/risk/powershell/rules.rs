@@ -460,6 +460,10 @@ const DENIED_PARAMETERS: &[&str] = &[
     "filepath",
     "pspath",
     "lp",
+    "logpath",
+    "outfile",
+    "vhd",
+    "cluster",
 ];
 
 fn denied_parameter(name: &str) -> bool {
@@ -469,10 +473,10 @@ fn denied_parameter(name: &str) -> bool {
 /// A cmdlet's verdict, or `None` when no rule decides it.
 fn cmdlet(name: &str, args: &[Word]) -> Option<Verdict> {
     if GENERIC_READ.contains(&name) {
-        let ok = args
-            .iter()
-            .filter_map(Word::parameter)
-            .all(|(p, _)| !denied_parameter(&p));
+        let ok = args.iter().all(|a| match a.parameter() {
+            Some((p, _)) => !denied_parameter(&p),
+            None => !a.dashed(),
+        });
         return ok.then(|| {
             read_only(
                 "readonly.cmdlet",
@@ -482,27 +486,32 @@ fn cmdlet(name: &str, args: &[Word]) -> Option<Verdict> {
     }
     match name {
         "get-childitem" => parse(args, &GET_CHILD_ITEM)
-            .is_some_and(|p| p.paths(1).all(|path| fs_path(path).is_some()))
+            .is_some_and(|p| p.paths(&[]).iter().all(|path| fs_path(path).is_some()))
             .then(|| read_only("readonly.list", "lists a directory")),
         "get-item" => parse(args, &GET_ITEM)
-            .is_some_and(|p| p.has_path(1) && p.paths(1).all(|path| fs_path(path).is_some()))
+            .is_some_and(|p| {
+                let paths = p.paths(&[]);
+                !paths.is_empty() && paths.iter().all(|path| fs_path(path).is_some())
+            })
             .then(|| read_only("readonly.list", "describes a file or directory")),
         "get-content" => {
             let parsed = parse(args, &GET_CONTENT)?;
-            let ok = parsed.has_path(1)
-                && parsed.paths(1).all(log_path)
+            let paths = parsed.paths(&[]);
+            let ok = !paths.is_empty()
+                && paths.iter().all(|path| log_path(path))
                 && parsed.numbers(&["tail", "totalcount", "head", "first", "last"]);
             ok.then(|| read_only("readonly.log_file", "reads log files"))
         }
         "select-string" => {
             let parsed = parse(args, &SELECT_STRING)?;
-            let ok = parsed.has_path(2) && parsed.paths(2).all(log_path);
+            let paths = parsed.paths(&["pattern"]);
+            let ok = !paths.is_empty() && paths.iter().all(|path| log_path(path));
             ok.then(|| read_only("readonly.log_file", "searches log files"))
         }
         "restart-service" | "start-service" => Some(service_start(name, args)),
         "restart-webapppool" | "start-webapppool" | "start-website" => {
             let parsed = parse(args, &NAMED)?;
-            let names = parsed.names(1);
+            let names = parsed.paths(&[]);
             (names.len() == 1 && names.iter().all(|n| !wildcard(n))).then(|| {
                 low(
                     "low.iis",
@@ -682,7 +691,7 @@ fn service_start(name: &str, args: &[Word]) -> Verdict {
             "`{name}` with these arguments matches no rule; unknown commands are high impact"
         ));
     };
-    let names = parsed.names(1);
+    let names = parsed.paths(&[]);
     if names.is_empty() {
         return Verdict::Unknown(format!("`{name}` without a service name matches no rule"));
     }
@@ -753,12 +762,14 @@ fn wildcard(text: &str) -> bool {
     text.contains(['*', '?', '[', ']'])
 }
 
-/// Parameters a rule accepts: switches, parameters taking a value, how
-/// many positional arguments, and which parameters hold paths or names.
+/// Parameters a rule accepts: switches, parameters taking a value, the
+/// order of positional ones, and which parameters hold paths or names.
 struct Spec {
     switches: &'static [&'static str],
     valued: &'static [&'static str],
-    positional: usize,
+    /// Parameters positional arguments bind to, in order; `path` stands
+    /// for `literalpath` too.
+    positional: &'static [&'static str],
     /// Parameters whose values are paths (or names, for [`NAMED`]).
     paths: &'static [&'static str],
 }
@@ -782,14 +793,14 @@ const GET_CHILD_ITEM: Spec = Spec {
         "exclude",
         "depth",
     ],
-    positional: 2,
+    positional: &["path", "filter"],
     paths: &["path", "literalpath"],
 };
 
 const GET_ITEM: Spec = Spec {
     switches: &["force"],
     valued: &["path", "literalpath"],
-    positional: 1,
+    positional: &["path"],
     paths: &["path", "literalpath"],
 };
 
@@ -805,7 +816,7 @@ const GET_CONTENT: Spec = Spec {
         "last",
         "encoding",
     ],
-    positional: 1,
+    positional: &["path"],
     paths: &["path", "literalpath"],
 };
 
@@ -819,14 +830,14 @@ const SELECT_STRING: Spec = Spec {
         "list",
     ],
     valued: &["path", "literalpath", "pattern", "context", "encoding"],
-    positional: 2,
+    positional: &["pattern", "path"],
     paths: &["path", "literalpath"],
 };
 
 const NAMED: Spec = Spec {
     switches: &[],
     valued: &["name"],
-    positional: 1,
+    positional: &["name"],
     paths: &["name"],
 };
 
@@ -869,30 +880,44 @@ fn parse<'a>(args: &'a [Word], spec: &'a Spec) -> Option<Parsed<'a>> {
                 parsed.params.push((name, Some(value)));
             }
             Some(_) => return None,
+            None if arg.dashed() => return None,
             None => parsed.positional.push(&arg.text),
         }
     }
-    (parsed.positional.len() <= spec.positional).then_some(parsed)
+    // A positional argument binds to the first positional parameter not
+    // given by name; one left over makes PowerShell fail, and the rules
+    // do not guess.
+    let free = spec
+        .positional
+        .iter()
+        .filter(|p| !parsed.named(p) && !(**p == "path" && parsed.named("literalpath")))
+        .count();
+    (parsed.positional.len() <= free).then_some(parsed)
 }
 
 impl<'a> Parsed<'a> {
-    /// Values of the path (or name) parameters and of the `position`-th
-    /// positional argument (1-based), each comma-separated list split.
-    fn paths(&self, position: usize) -> impl Iterator<Item = &'a str> + '_ {
-        self.params
+    fn named(&self, name: &str) -> bool {
+        self.params.iter().any(|(n, _)| n == name)
+    }
+
+    /// Values of the path (or name) parameters, each comma-separated list
+    /// split. When none is named, the positional argument PowerShell binds
+    /// to the path instead: the first one, or the next after the
+    /// positional parameters `before` it that are not named.
+    fn paths(&self, before: &[&str]) -> Vec<&'a str> {
+        let named: Vec<&'a str> = self
+            .params
             .iter()
             .filter(|(name, _)| self.spec.paths.contains(&name.as_str()))
             .filter_map(|(_, value)| *value)
-            .chain(self.positional.get(position - 1).copied())
-            .flat_map(|list| list.split(','))
-    }
-
-    fn has_path(&self, position: usize) -> bool {
-        self.paths(position).next().is_some()
-    }
-
-    fn names(&self, position: usize) -> Vec<&'a str> {
-        self.paths(position).collect()
+            .collect();
+        let values = if named.is_empty() {
+            let position = before.iter().filter(|p| !self.named(p)).count();
+            self.positional.get(position).copied().into_iter().collect()
+        } else {
+            named
+        };
+        values.iter().flat_map(|list| list.split(',')).collect()
     }
 
     /// Whether the values of `names` are small whole numbers.
@@ -988,14 +1013,14 @@ const SELECT_OBJECT: Spec = Spec {
         "skip",
         "index",
     ],
-    positional: 1,
+    positional: &["property"],
     paths: &[],
 };
 
 const SORT_OBJECT: Spec = Spec {
     switches: &["descending", "unique", "casesensitive"],
     valued: &["property"],
-    positional: 1,
+    positional: &["property"],
     paths: &[],
 };
 
@@ -1023,28 +1048,28 @@ const WHERE_OBJECT: Spec = Spec {
         "not",
     ],
     valued: &["property", "value"],
-    positional: 2,
+    positional: &["property", "value"],
     paths: &[],
 };
 
 const FORMAT_TABLE: Spec = Spec {
     switches: &["autosize", "wrap", "hidetableheaders"],
     valued: &["property", "groupby"],
-    positional: 1,
+    positional: &["property"],
     paths: &[],
 };
 
 const FORMAT_LIST: Spec = Spec {
     switches: &[],
     valued: &["property", "groupby", "column"],
-    positional: 1,
+    positional: &["property"],
     paths: &[],
 };
 
 const OUT_STRING: Spec = Spec {
     switches: &["stream"],
     valued: &["width"],
-    positional: 0,
+    positional: &[],
     paths: &[],
 };
 
@@ -1059,7 +1084,7 @@ const MEASURE_OBJECT: Spec = Spec {
         "character",
     ],
     valued: &["property"],
-    positional: 1,
+    positional: &["property"],
     paths: &[],
 };
 
@@ -1072,27 +1097,27 @@ const SELECT_STRING_FILTER: Spec = Spec {
         "quiet",
     ],
     valued: &["pattern", "context"],
-    positional: 1,
+    positional: &["pattern"],
     paths: &[],
 };
 
 const GROUP_OBJECT: Spec = Spec {
     switches: &["noelement"],
     valued: &["property"],
-    positional: 1,
+    positional: &["property"],
     paths: &[],
 };
 
 const CONVERTTO_JSON: Spec = Spec {
     switches: &["compress"],
     valued: &["depth"],
-    positional: 0,
+    positional: &[],
     paths: &[],
 };
 
 const CONVERTTO_CSV: Spec = Spec {
     switches: &["notypeinformation"],
     valued: &["delimiter"],
-    positional: 0,
+    positional: &[],
     paths: &[],
 };
