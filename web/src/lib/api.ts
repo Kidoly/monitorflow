@@ -96,6 +96,118 @@ export interface ServerList {
   next_cursor: string | null;
 }
 
+/** Time ranges of charts and dashboards (ADR-0020). */
+export type TimeRangeLabel = "1h" | "6h" | "24h" | "7d" | "30d";
+
+/** Which servers a dashboard panel shows, within the dashboard's sharing (ADR-0095). */
+export type PanelServers =
+  | { kind: "all" }
+  | { kind: "site"; id: string }
+  | { kind: "customer"; id: string }
+  | { kind: "list"; ids: string[] };
+
+export type PanelKind = "chart" | "figure" | "top" | "alerts";
+export type Combine = "each" | "avg" | "max" | "min" | "sum" | "count";
+
+/** One panel of a dashboard; fields not of its kind are absent. */
+export interface Panel {
+  id: string;
+  title: string;
+  kind: PanelKind;
+  /** Columns of the three-column grid. */
+  width: 1 | 2 | 3;
+  servers: PanelServers;
+  metric?: string;
+  instance?: string;
+  combine?: Combine;
+  order?: "highest" | "lowest";
+  count?: number;
+}
+
+export interface DashboardSpec {
+  version: 1;
+  range: TimeRangeLabel;
+  panels: Panel[];
+}
+
+/** Who sees a dashboard: only its owner, a site, or a customer. */
+export type Sharing = { kind: "personal" } | { kind: "site"; id: string } | { kind: "customer"; id: string };
+
+export interface DashboardSummary {
+  id: string;
+  name: string;
+  /** With the site's or customer's `name`. */
+  shared_with: Sharing & { name?: string };
+  panels: number;
+  updated_at: string;
+  updated_by_username: string | null;
+  can_edit: boolean;
+}
+
+export interface Dashboard extends DashboardSummary {
+  spec: DashboardSpec;
+  /** Pass back when saving. */
+  revision: number;
+}
+
+export interface DashboardRequest {
+  name: string;
+  shared_with: Sharing;
+  spec: DashboardSpec;
+  revision?: number;
+}
+
+export interface ChartLine {
+  label: string;
+  server_id?: string;
+  points: [number, number | null][];
+}
+
+export interface TopRow {
+  server_id: string;
+  hostname: string;
+  instance: string | null;
+  value: number | null;
+}
+
+export interface PanelAlert {
+  id: string;
+  server_id: string;
+  hostname: string;
+  metric: string;
+  instance: string;
+  severity: "warning" | "critical";
+  opened_at: string;
+}
+
+/** What one panel shows; `error` is a sentence for the panel. */
+export type PanelData = { id: string; servers: number; unavailable: number } & (
+  | { kind: "chart"; series: ChartLine[] }
+  | { kind: "figure"; value: number | null }
+  | { kind: "top"; rows: TopRow[] }
+  | { kind: "alerts"; alerts: PanelAlert[] }
+  | { kind: "error"; error: string }
+);
+
+/** `POST /api/dashboard-data`. */
+export interface DashboardData {
+  start: number;
+  end: number;
+  step: number;
+  /** When figures and top lists were read, unix seconds. */
+  at: number;
+  panels: PanelData[];
+}
+
+/** `within` of `POST /api/dashboard-data`: the dashboard's sharing, or everything. */
+export type Within = { kind: "all" } | { kind: "site"; id: string } | { kind: "customer"; id: string };
+
+/** Metrics panels can show, and what one of them watches. */
+export interface DashboardCatalog {
+  metrics: string[];
+  instances: string[];
+}
+
 /** One metric of `GET /api/servers/{id}/metrics`, with the instances seen. */
 export interface MetricInfo {
   /** Full name, like `monitorflow_cpu_usage_ratio`. */
@@ -2741,6 +2853,36 @@ export const api = {
         signal,
       },
     );
+  },
+
+  /** Dashboards the user sees, by name (ADR-0095). */
+  dashboards: (signal?: AbortSignal) =>
+    request<{ dashboards: DashboardSummary[] }>("/api/dashboards", { signal }),
+
+  dashboard: (id: string, signal?: AbortSignal) =>
+    request<Dashboard>(`/api/dashboards/${encodeURIComponent(id)}`, { signal }),
+
+  createDashboard: (body: DashboardRequest) =>
+    request<Dashboard>("/api/dashboards", { method: "POST", body }),
+
+  /** 409 when someone saved since `body.revision`. */
+  updateDashboard: (id: string, body: DashboardRequest) =>
+    request<Dashboard>(`/api/dashboards/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteDashboard: (id: string) =>
+    request<void>(`/api/dashboards/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Every panel at once, for the servers the user reads within `within`. */
+  dashboardData: (body: { range: TimeRangeLabel; within: Within; panels: Panel[] }, signal?: AbortSignal) =>
+    request<DashboardData>("/api/dashboard-data", { method: "POST", body, signal }),
+
+  dashboardCatalog: (query: { siteId?: string; customerId?: string; metric?: string }, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (query.siteId) params.set("site_id", query.siteId);
+    if (query.customerId) params.set("customer_id", query.customerId);
+    if (query.metric) params.set("metric", query.metric);
+    const search = params.toString();
+    return request<DashboardCatalog>(`/api/dashboard-metrics${search ? `?${search}` : ""}`, { signal });
   },
 
   /** The latest value of each series of `metric`, as of now. */

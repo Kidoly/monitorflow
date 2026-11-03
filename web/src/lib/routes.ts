@@ -34,6 +34,19 @@ export function incidentHref(id: string): string {
   return `/incidents/view/?id=${encodeURIComponent(id)}`;
 }
 
+/** Dashboards (ADR-0095). */
+export const DASHBOARDS_PATH = "/dashboards/";
+
+/** Link to the dashboard `id`. */
+export function dashboardHref(id: string): string {
+  return `/dashboards/view/?id=${encodeURIComponent(id)}`;
+}
+
+/** Link to a ready-made dashboard, like `overview`. */
+export function readyMadeHref(id: string): string {
+  return `/dashboards/view/?ready=${encodeURIComponent(id)}`;
+}
+
 /** Active and upcoming silences (ADR-0079). */
 export const SILENCES_PATH = "/silences/";
 

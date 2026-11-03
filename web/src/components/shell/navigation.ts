@@ -8,6 +8,7 @@ import {
   BACKUPS_PATH,
   CAMPAIGNS_PATH,
   CERTIFICATE_AUTHORITY_PATH,
+  DASHBOARDS_PATH,
   MIRRORS_PATH,
   NOTIFICATIONS_PATH,
   ON_CALL_PATH,
@@ -53,6 +54,7 @@ export const NAVIGATION: NavSection[] = [
     heading: "Monitoring",
     items: [
       { label: "Fleet", href: "/", icon: "fleet", alsoCurrent: ["/servers/"] },
+      { label: "Dashboards", href: DASHBOARDS_PATH, icon: "dashboards" },
       { label: "Incidents", href: "/incidents/", icon: "incidents", incidentCount: true },
       { label: "Silences", href: SILENCES_PATH, icon: "bell" },
       { label: "On call", href: ON_CALL_PATH, icon: "users" },

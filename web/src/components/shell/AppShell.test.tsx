@@ -128,6 +128,7 @@ describe("AppShell", () => {
     expect(links).toEqual([
       "MonitorFlowMF",
       "Fleet",
+      "Dashboards",
       "Incidents",
       "Silences",
       "On call",
