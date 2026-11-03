@@ -181,6 +181,16 @@ impl AlertStore {
     /// Every series that is pending or has an open incident. The severity
     /// comes from the incident, the timers from `alert_states`.
     pub async fn load_states(&self) -> Result<Vec<Stored>, sqlx::Error> {
+        self.states(None).await
+    }
+
+    /// [`Self::load_states`] of one server, as the engine reads them when
+    /// its agent's stream comes to this instance (ADR-0089).
+    pub async fn load_server_states(&self, server_id: Uuid) -> Result<Vec<Stored>, sqlx::Error> {
+        self.states(Some(server_id)).await
+    }
+
+    async fn states(&self, server_id: Option<Uuid>) -> Result<Vec<Stored>, sqlx::Error> {
         type Line = (
             Uuid,
             String,
@@ -199,8 +209,10 @@ impl AlertStore {
              FROM alert_states a
              -- Offline incidents belong to their own task (ADR-0072).
              FULL JOIN (SELECT * FROM incidents WHERE state = 'open' AND metric <> 'offline') i
-                 USING (server_id, metric, instance)",
+                 USING (server_id, metric, instance)
+             WHERE $1::uuid IS NULL OR server_id = $1",
         )
+        .bind(server_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(lines
@@ -252,7 +264,7 @@ impl AlertStore {
                 (inserted || !matches!(step.transition, Some(Transition::Opened(_)))).then_some(id)
             }
             IncidentStep::Update { id, severity, peak } => {
-                sqlx::query(
+                let updated = sqlx::query(
                     "UPDATE incidents SET severity = $2, last_value = $3, last_value_at = $4,
                                           peak_value = $5
                      WHERE id = $1 AND state = 'open'",
@@ -264,10 +276,12 @@ impl AlertStore {
                 .bind(peak)
                 .execute(&mut *tx)
                 .await?;
-                Some(id)
+                // Resolved meanwhile, as by another server instance
+                // (ADR-0089): no event for what did not happen.
+                (updated.rows_affected() > 0).then_some(id)
             }
             IncidentStep::Resolve { id } => {
-                sqlx::query(
+                let resolved = sqlx::query(
                     "UPDATE incidents SET state = 'resolved', resolved_at = GREATEST($2, opened_at),
                                           last_value = COALESCE($3, last_value),
                                           last_value_at = GREATEST($2, last_value_at)
@@ -278,7 +292,7 @@ impl AlertStore {
                 .bind(value)
                 .execute(&mut *tx)
                 .await?;
-                Some(id)
+                (resolved.rows_affected() > 0).then_some(id)
             }
         };
         if let (Some(id), Some(transition)) = (incident, step.transition) {

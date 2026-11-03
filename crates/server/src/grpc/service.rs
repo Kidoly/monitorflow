@@ -427,6 +427,10 @@ impl AgentService for AgentStreamService {
         }
         drop(outbound_tx);
         tracing::info!(%peer, agent_id = %id, connection = registration.connection, "stream opened");
+        if let (Some(alerts), PeerRole::Agent) = (&self.alerts, role) {
+            // Another instance may have held this stream until now (ADR-0089).
+            alerts.forget(&id);
+        }
         if let (Some(commands), PeerRole::Agent) = (&self.commands, role) {
             commands.dispatch(&id);
         }
@@ -603,7 +607,11 @@ impl Connection {
             }
         };
         // Remove first, so a peer that sees the stream end is already gone.
-        self.registry.remove(&self.id, self.number);
+        if self.registry.remove(&self.id, self.number) && self.role == PeerRole::Agent {
+            if let Some(alerts) = &self.alerts {
+                alerts.forget(&self.id);
+            }
+        }
         self.ingest
             .event(self.event.record("stream closed", Some(reason)));
         if let Some(status) = status {
