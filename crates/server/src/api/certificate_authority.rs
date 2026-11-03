@@ -104,7 +104,7 @@ async fn view(rotator: &Rotator) -> Result<CaView, ApiError> {
             .filter(|p| ca_rotation::is_waiting(rotation.stage, p))
             .collect();
         let done = total - waiting.len();
-        waiting.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
+        waiting.sort_by_key(|p| std::cmp::Reverse(p.last_seen_at));
         waiting.truncate(MAX_LISTED);
         RotationView {
             stage: rotation.stage,
