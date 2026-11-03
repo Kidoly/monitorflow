@@ -59,8 +59,10 @@ describe("ProxmoxRollback", () => {
       />,
     );
     expect(screen.getByText("Rollback limited")).toBeInTheDocument();
-    expect(screen.getByText(/the container's storage cannot take snapshots\./)).toBeInTheDocument();
-    expect(screen.getByText(/Rootfs is on storage local \(dir\), which cannot take snapshots\./)).toBeInTheDocument();
+    expect(screen.getByText(/The container's storage cannot take snapshots\./)).toBeInTheDocument();
+    expect(
+      screen.getByText("Container 104 on pve2, cluster pve: rootfs is on storage local (dir), which cannot take snapshots."),
+    ).toBeInTheDocument();
   });
 
   it("maps an unmapped server to a container by hand", async () => {

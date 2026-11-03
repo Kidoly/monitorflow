@@ -55,10 +55,10 @@ export function ProxmoxRollback({ view, onChanged }: { view: ProxmoxView; onChan
     return (
       <>
         <Label tone="warn">Rollback limited</Label>{" "}
-        {snapshotReason(snapshots.reason, snapshots.kind ?? mapping.kind)}{" "}
+        {capitalize(snapshotReason(snapshots.reason, snapshots.kind ?? mapping.kind))}{" "}
         <span className={styles.muted}>
-          {snapshots.detail && `${capitalize(snapshots.detail)}. `}
-          {guest}, cluster {mapping.cluster}.
+          {capitalize(guest)}, cluster {mapping.cluster}
+          {snapshots.detail ? `: ${snapshots.detail}.` : "."}
         </span>{" "}
         {change}
       </>
