@@ -1,7 +1,8 @@
-//! Proxmox VE snapshots (ADR-0044) against a fake Proxmox API served over
-//! TLS with a test CA: tasks, failures, timeouts, authentication and
-//! retention, and the remediation loop's hook over them. Never contacts a real Proxmox. Database tests are ignored
-//! without `DATABASE_URL`.
+//! Proxmox VE snapshots of VMs and containers (ADR-0044, ADR-0093)
+//! against a fake Proxmox API served over TLS with a test CA: tasks,
+//! failures, timeouts, authentication, retention, storage that cannot
+//! snapshot, and the remediation loop's hook over them. Never contacts a
+//! real Proxmox. Database tests are ignored without `DATABASE_URL`.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -17,8 +18,8 @@ use monitorflow_common::redact::Secret;
 use monitorflow_server::remediation::risk::Tier;
 use monitorflow_server::remediation::runner::hook::{Change, ChangeHook};
 use monitorflow_server::remediation::snapshot::{
-    ProxmoxClient, ProxmoxOptions, ProxmoxSnapshotter, SnapshotError, SnapshotHook, SnapshotName,
-    SnapshotRequest, Snapshotter, Unsupported, VmRef,
+    GuestKind, ProxmoxClient, ProxmoxOptions, ProxmoxSnapshotter, SnapshotError, SnapshotHook,
+    SnapshotName, SnapshotRequest, Snapshotter, Unsupported, VmRef,
 };
 use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair};
 use serde_json::{json, Value};
@@ -67,7 +68,15 @@ struct Seen {
 }
 
 struct Fake {
-    /// Snapshots of VM 101 on node `pve1`: name, description, snaptime.
+    /// What the one guest on node `pve1` is: `qemu` or `lxc`. Paths of the
+    /// other kind fail as Proxmox fails them.
+    kind: Mutex<&'static str>,
+    /// Its answer to `feature?feature=snapshot`.
+    feature: Mutex<bool>,
+    /// Its configuration, and the node's storage list.
+    config: Mutex<Value>,
+    storage: Mutex<Value>,
+    /// Snapshots of the guest: name, description, snaptime.
     snapshots: Mutex<Vec<(String, String, i64)>>,
     tasks: Mutex<HashMap<String, Task>>,
     outcome: Mutex<Outcome>,
@@ -154,19 +163,33 @@ fn data(value: Value) -> Response {
     Json(json!({ "data": value })).into_response()
 }
 
+/// Proxmox's answer to a path of the wrong kind: no such configuration.
+fn wrong_kind(f: &Fake, node: &str, kind: &str, vmid: u32) -> Option<Response> {
+    let actual = *f.kind.lock().unwrap();
+    (kind != actual).then(|| {
+        let dir = if kind == "qemu" { "qemu-server" } else { kind };
+        let message = format!("Configuration file 'nodes/{node}/{dir}/{vmid}.conf' does not exist\n");
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "data": null, "message": message })))
+            .into_response()
+    })
+}
+
 async fn list(
     State(f): State<Shared>,
-    Path((node, vmid)): Path<(String, u32)>,
+    Path((node, kind, vmid)): Path<(String, String, u32)>,
     headers: HeaderMap,
 ) -> Response {
     if let Err(r) = check(
         &f,
         Method::GET,
-        format!("{node}/{vmid}/snapshot"),
+        format!("{node}/{kind}/{vmid}/snapshot"),
         &headers,
         HashMap::new(),
     ) {
         return *r;
+    }
+    if let Some(r) = wrong_kind(&f, &node, &kind, vmid) {
+        return r;
     }
     let mut items: Vec<Value> = f.snapshots.lock().unwrap().iter()
         .map(|(name, description, t)| json!({ "name": name, "description": format!("{description}\n"), "snaptime": t }))
@@ -177,18 +200,21 @@ async fn list(
 
 async fn create(
     State(f): State<Shared>,
-    Path((node, vmid)): Path<(String, u32)>,
+    Path((node, kind, vmid)): Path<(String, String, u32)>,
     headers: HeaderMap,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     if let Err(r) = check(
         &f,
         Method::POST,
-        format!("{node}/{vmid}/snapshot"),
+        format!("{node}/{kind}/{vmid}/snapshot"),
         &headers,
         form.clone(),
     ) {
         return *r;
+    }
+    if let Some(r) = wrong_kind(&f, &node, &kind, vmid) {
+        return r;
     }
     let name = form["snapname"].clone();
     if f.names().contains(&name) {
@@ -211,17 +237,20 @@ async fn create(
 
 async fn delete(
     State(f): State<Shared>,
-    Path((node, vmid, name)): Path<(String, u32, String)>,
+    Path((node, kind, vmid, name)): Path<(String, String, u32, String)>,
     headers: HeaderMap,
 ) -> Response {
     if let Err(r) = check(
         &f,
         Method::DELETE,
-        format!("{node}/{vmid}/snapshot/{name}"),
+        format!("{node}/{kind}/{vmid}/snapshot/{name}"),
         &headers,
         HashMap::new(),
     ) {
         return *r;
+    }
+    if let Some(r) = wrong_kind(&f, &node, &kind, vmid) {
+        return r;
     }
     f.snapshots.lock().unwrap().retain(|s| s.0 != name);
     data(json!(f.start_task()))
@@ -229,19 +258,61 @@ async fn delete(
 
 async fn rollback(
     State(f): State<Shared>,
-    Path((node, vmid, name)): Path<(String, u32, String)>,
+    Path((node, kind, vmid, name)): Path<(String, String, u32, String)>,
     headers: HeaderMap,
 ) -> Response {
     if let Err(r) = check(
         &f,
         Method::POST,
-        format!("{node}/{vmid}/snapshot/{name}/rollback"),
+        format!("{node}/{kind}/{vmid}/snapshot/{name}/rollback"),
         &headers,
         HashMap::new(),
     ) {
         return *r;
     }
+    if let Some(r) = wrong_kind(&f, &node, &kind, vmid) {
+        return r;
+    }
     data(json!(f.start_task()))
+}
+
+async fn feature(
+    State(f): State<Shared>,
+    Path((node, kind, vmid)): Path<(String, String, u32)>,
+    axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = check(&f, Method::GET, format!("{node}/{kind}/{vmid}/feature"), &headers, query.clone()) {
+        return *r;
+    }
+    if let Some(r) = wrong_kind(&f, &node, &kind, vmid) {
+        return r;
+    }
+    assert_eq!(query.get("feature").map(String::as_str), Some("snapshot"));
+    let has = *f.feature.lock().unwrap();
+    // Containers answer 0 or 1, as Proxmox does.
+    data(json!({ "hasFeature": u8::from(has) }))
+}
+
+async fn config(
+    State(f): State<Shared>,
+    Path((node, kind, vmid)): Path<(String, String, u32)>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = check(&f, Method::GET, format!("{node}/{kind}/{vmid}/config"), &headers, HashMap::new()) {
+        return *r;
+    }
+    if let Some(r) = wrong_kind(&f, &node, &kind, vmid) {
+        return r;
+    }
+    data(f.config.lock().unwrap().clone())
+}
+
+async fn storage(State(f): State<Shared>, Path(node): Path<String>, headers: HeaderMap) -> Response {
+    if let Err(r) = check(&f, Method::GET, format!("{node}/storage"), &headers, HashMap::new()) {
+        return *r;
+    }
+    data(f.storage.lock().unwrap().clone())
 }
 
 async fn status(
@@ -323,6 +394,10 @@ impl Harness {
             .unwrap();
 
         let fake = Arc::new(Fake {
+            kind: Mutex::new("qemu"),
+            feature: Mutex::new(true),
+            config: Mutex::new(json!({ "scsi0": "local-lvm:vm-101-disk-0,size=32G" })),
+            storage: Mutex::new(json!([{ "storage": "local-lvm", "type": "lvmthin" }])),
             snapshots: Mutex::default(),
             tasks: Mutex::default(),
             outcome: Mutex::new(Outcome::Ok(2)),
@@ -331,17 +406,20 @@ impl Harness {
         });
         let app = Router::new()
             .route(
-                "/api2/json/nodes/{node}/qemu/{vmid}/snapshot",
+                "/api2/json/nodes/{node}/{kind}/{vmid}/snapshot",
                 get(list).post(create),
             )
             .route(
-                "/api2/json/nodes/{node}/qemu/{vmid}/snapshot/{name}",
+                "/api2/json/nodes/{node}/{kind}/{vmid}/snapshot/{name}",
                 axum::routing::delete(delete),
             )
             .route(
-                "/api2/json/nodes/{node}/qemu/{vmid}/snapshot/{name}/rollback",
+                "/api2/json/nodes/{node}/{kind}/{vmid}/snapshot/{name}/rollback",
                 post(rollback),
             )
+            .route("/api2/json/nodes/{node}/{kind}/{vmid}/feature", get(feature))
+            .route("/api2/json/nodes/{node}/{kind}/{vmid}/config", get(config))
+            .route("/api2/json/nodes/{node}/storage", get(storage))
             .route("/api2/json/nodes/{node}/tasks/{upid}/status", get(status))
             .with_state(fake.clone());
         let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -396,6 +474,15 @@ fn vm() -> VmRef {
         cluster: "pve".into(),
         node: "pve1".into(),
         vmid: 101,
+        kind: GuestKind::Qemu,
+    }
+}
+
+fn container() -> VmRef {
+    VmRef {
+        vmid: 104,
+        kind: GuestKind::Lxc,
+        ..vm()
     }
 }
 
@@ -412,7 +499,7 @@ async fn a_snapshot_is_created_with_the_token_and_its_task_awaited() {
 
     let posts = h.fake.seen(Method::POST);
     assert_eq!(posts.len(), 1);
-    assert_eq!(posts[0].path, "pve1/101/snapshot");
+    assert_eq!(posts[0].path, "pve1/qemu/101/snapshot");
     assert_eq!(posts[0].auth, format!("PVEAPIToken={TOKEN_ID}={SECRET}"));
     assert_eq!(posts[0].form["snapname"], "mf-0123abcdef45-1");
     assert_eq!(posts[0].form["description"], "before step 1");
@@ -560,8 +647,8 @@ async fn server(pool: &PgPool, mapped: Option<VmRef>) -> Uuid {
     )
     .bind(site).fetch_one(pool).await.unwrap();
     if let Some(vm) = mapped {
-        sqlx::query("INSERT INTO server_proxmox_vms (server_id, cluster, node, vmid) VALUES ($1, $2, $3, $4)")
-            .bind(server).bind(&vm.cluster).bind(&vm.node).bind(vm.vmid as i32)
+        sqlx::query("INSERT INTO server_proxmox_vms (server_id, cluster, node, vmid, kind) VALUES ($1, $2, $3, $4, $5)")
+            .bind(server).bind(&vm.cluster).bind(&vm.node).bind(vm.vmid as i32).bind(vm.kind.as_str())
             .execute(pool).await.unwrap();
     }
     server
@@ -605,7 +692,7 @@ db_tests! {
         assert_eq!(names, ["before-upgrade", "mf-00000000feed-1", "mf-0123abcdef45-3", "mf-0123abcdef45-4"]);
         assert_eq!(
             h.fake.seen(Method::DELETE).iter().map(|s| s.path.as_str()).collect::<Vec<_>>(),
-            ["pve1/101/snapshot/mf-0123abcdef45-1", "pve1/101/snapshot/mf-0123abcdef45-2"]
+            ["pve1/qemu/101/snapshot/mf-0123abcdef45-1", "pve1/qemu/101/snapshot/mf-0123abcdef45-2"]
         );
         let live: Vec<String> = sqlx::query_scalar("SELECT name FROM proxmox_snapshots WHERE deleted_at IS NULL ORDER BY id")
             .fetch_all(&pool).await.unwrap();
@@ -669,7 +756,7 @@ db_tests! {
         snapshots.rollback(server, &request.name()).await.unwrap();
         let rollbacks: Vec<_> = h.fake.seen(Method::POST).into_iter().filter(|s| s.path.ends_with("/rollback")).collect();
         assert_eq!(rollbacks.len(), 1);
-        assert_eq!(rollbacks[0].path, format!("pve1/101/snapshot/{}/rollback", request.name()));
+        assert_eq!(rollbacks[0].path, format!("pve1/qemu/101/snapshot/{}/rollback", request.name()));
 
         let foreign = SnapshotName::for_step(Uuid::from_u128(0xfeed << 80), 1);
         h.add_foreign(foreign.as_str(), "manual");
@@ -739,5 +826,139 @@ db_tests! {
         assert_eq!(recorded.method, "none");
         assert!(recorded.detail.ends_with("rollback is limited"), "{}", recorded.detail);
         assert_eq!(h.fake.seen.lock().unwrap().len(), requests);
+    }
+
+    #[sqlx::test]
+    async fn containers_are_snapshotted_rolled_back_and_pruned_through_lxc_paths(pool: PgPool) {
+        let h = Harness::start().await;
+        *h.fake.kind.lock().unwrap() = "lxc";
+        let server = server(&pool, Some(container())).await;
+        let snapshots = snapshotter(&h, &pool, 2);
+        let incident = Uuid::from_u128(0x0123_abcd_ef45 << 80);
+        for step in 1..=3 {
+            snapshots.take(server, SnapshotRequest { incident, step }).await.unwrap();
+        }
+        let posts = h.fake.seen(Method::POST);
+        assert!(posts.iter().all(|s| s.path == "pve1/lxc/104/snapshot"), "{posts:?}");
+        assert!(posts.iter().all(|s| !s.form.contains_key("vmstate")));
+        assert_eq!(
+            h.fake.seen(Method::DELETE).iter().map(|s| s.path.as_str()).collect::<Vec<_>>(),
+            ["pve1/lxc/104/snapshot/mf-0123abcdef45-1"]
+        );
+        assert_eq!(h.fake.names(), ["mf-0123abcdef45-2", "mf-0123abcdef45-3"]);
+
+        snapshots.rollback(server, &SnapshotName::for_step(incident, 3)).await.unwrap();
+        let rollbacks: Vec<_> = h.fake.seen(Method::POST).into_iter().filter(|s| s.path.ends_with("/rollback")).collect();
+        assert_eq!(rollbacks.len(), 1);
+        assert_eq!(rollbacks[0].path, "pve1/lxc/104/snapshot/mf-0123abcdef45-3/rollback");
+        let listed = snapshots.list(server).await.unwrap();
+        assert_eq!(listed.iter().filter(|s| s.managed).count(), 2);
+
+        let kinds: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT details->>'kind' FROM audit_log WHERE action LIKE 'proxmox.snapshot.%'",
+        )
+        .fetch_all(&pool).await.unwrap();
+        assert_eq!(kinds, ["lxc"]);
+
+        let hook = SnapshotHook::new(Arc::new(snapshotter(&h, &pool, 2)), "proxmox");
+        let change = Change {
+            incident_id: incident,
+            server_id: server,
+            step: 4,
+            command: "systemctl restart nginx",
+            tier: Tier::LowImpact,
+        };
+        let recorded = hook.before_change(&change).await.unwrap();
+        assert_eq!(recorded.method, "proxmox");
+        assert!(recorded.detail.contains("of container 104 on pve/pve1"), "{}", recorded.detail);
+    }
+
+    #[sqlx::test]
+    async fn a_container_on_storage_without_snapshots_limits_rollback(pool: PgPool) {
+        let h = Harness::start().await;
+        *h.fake.kind.lock().unwrap() = "lxc";
+        *h.fake.feature.lock().unwrap() = false;
+        *h.fake.config.lock().unwrap() = json!({
+            "hostname": "web-1",
+            "rootfs": "local:104/vm-104-disk-0.raw,size=8G",
+            "unprivileged": 1,
+        });
+        *h.fake.storage.lock().unwrap() = json!([
+            { "storage": "local", "type": "dir" },
+            { "storage": "local-zfs", "type": "zfspool" },
+        ]);
+        let server = server(&pool, Some(container())).await;
+        let snapshots = snapshotter(&h, &pool, 3);
+        // Not known before Proxmox is asked: a real attempt would tell.
+        assert!(snapshots.support(server).await.unwrap().is_available());
+
+        assert_eq!(snapshots.check_due(Duration::from_secs(3600)).await.unwrap(), 1);
+        assert_eq!(
+            snapshots.support(server).await.unwrap().reason(),
+            Some(Unsupported::CannotSnapshot(GuestKind::Lxc))
+        );
+        let why: Option<String> = sqlx::query_scalar("SELECT cannot_snapshot FROM server_proxmox_vms")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(why.as_deref(), Some("rootfs is on storage local (dir), which cannot take snapshots"));
+        // Checked an hour at most ago: not due again.
+        assert_eq!(snapshots.check_due(Duration::from_secs(3600)).await.unwrap(), 0);
+
+        // The change runs, with rollback limited, as the approver was shown.
+        let hook = SnapshotHook::new(Arc::new(snapshotter(&h, &pool, 3)), "proxmox");
+        let change = Change {
+            incident_id: Uuid::from_u128(5 << 80),
+            server_id: server,
+            step: 1,
+            command: "systemctl restart nginx",
+            tier: Tier::LowImpact,
+        };
+        let recorded = hook.before_change(&change).await.unwrap();
+        assert_eq!((recorded.method.as_str(), recorded.name), ("none", None));
+        assert_eq!(recorded.detail, "the container's storage cannot take snapshots; rollback is limited");
+        assert!(h.fake.seen(Method::POST).is_empty());
+
+        // Moved to ZFS, with a bind mount: snapshots again, which leave
+        // the bind mount out.
+        *h.fake.feature.lock().unwrap() = true;
+        *h.fake.config.lock().unwrap() = json!({
+            "rootfs": "local-zfs:subvol-104-disk-0,size=8G",
+            "mp0": "/srv/shared,mp=/shared",
+        });
+        let found = snapshots.check(server, &container()).await.unwrap();
+        assert_eq!(found.cannot_snapshot, None);
+        assert_eq!(found.left_out.as_deref(), Some("mp0 at /shared, a bind mount"));
+        assert!(snapshots.support(server).await.unwrap().is_available());
+        let left_out: Option<String> = sqlx::query_scalar("SELECT left_out FROM server_proxmox_vms")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(left_out.as_deref(), Some("mp0 at /shared, a bind mount"));
+    }
+
+    #[sqlx::test]
+    async fn a_failed_snapshot_has_the_guest_checked_again(pool: PgPool) {
+        let h = Harness::start().await;
+        let server = server(&pool, Some(vm())).await;
+        let snapshots = snapshotter(&h, &pool, 3);
+        assert_eq!(snapshots.check_due(Duration::from_secs(3600)).await.unwrap(), 1);
+        assert_eq!(snapshots.check_due(Duration::from_secs(3600)).await.unwrap(), 0);
+
+        h.outcome(Outcome::Fail("snapshot feature is not available"));
+        let request = SnapshotRequest { incident: Uuid::from_u128(3 << 80), step: 1 };
+        let error = snapshots.take(server, request).await.unwrap_err();
+        assert!(matches!(error, SnapshotError::TaskFailed(_)), "{error:?}");
+        assert_eq!(snapshots.check_due(Duration::from_secs(3600)).await.unwrap(), 1, "checked again at once");
+
+        // A mapping of the wrong kind fails as Proxmox fails it.
+        sqlx::query("UPDATE server_proxmox_vms SET kind = 'lxc'").execute(&pool).await.unwrap();
+        h.outcome(Outcome::Ok(0));
+        let error = snapshots.take(server, SnapshotRequest { step: 2, ..request }).await.unwrap_err();
+        match error {
+            SnapshotError::Api { status: 500, message } => {
+                assert_eq!(message, "Configuration file 'nodes/pve1/lxc/101.conf' does not exist")
+            }
+            other => panic!("{other:?}"),
+        }
+        let checked: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT checked_at FROM server_proxmox_vms").fetch_one(&pool).await.unwrap();
+        assert_eq!(checked, None);
     }
 }
