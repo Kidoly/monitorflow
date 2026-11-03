@@ -73,6 +73,15 @@ Reading the table:
 - **Alert storm**: 186 s is the threshold's design, not a delay: up to 60 s until the next collection sees 97 %, 60 s for the threshold's duration, up to 60 s until the next collection confirms it. The threshold engine evaluated all of it on one task without falling behind. Notifications follow the grouping of ADR-0080: a customer's events go together after 10 s of quiet, then at most once a minute, so the opening of 1,000 incidents at once reached the webhook within a minute, most within 15 s. Each webhook gets one request per event (1,000 requests); chat and email would get grouped messages.
 - **Renewal**: the server issues a peer a certificate at most once an hour (ADR-0010), so right after enrollment every `Renew` was refused, 1,000 in 0.3 s. A real renewal wave happens in the last third of the certificates' 7 days, spread by each agent's hourly check with 5 minutes of jitter; a run long enough to renew was not done.
 
+### The web interface at 1,000 servers
+
+Measured once in headless Chromium against the production build (`npm run build`), served with the API behind a local proxy as Caddy does, on a run held with `--hold` after an alert storm (1,000 servers online, 1,000 resolved incidents), from navigation to the data on screen, five loads after a first one:
+
+- Fleet overview: 160 to 200 ms median, 300 ms at most. It lists the servers with problems first and folds the healthy ones; showing all 1,000 (50 rows a page) takes 80 ms more.
+- Incident list: 80 to 110 ms median, 280 ms at most, 50 rows.
+
+The test script is not in the repository: it needs a browser and Node.js next to Rust, for one measure that the API timings of every run follow closely.
+
 ## What the test found, and what was fixed
 
 1. **Every API request wrote its session row** (`UPDATE sessions SET last_seen_at`). The web interface sends several requests at once, so they queued on that row's lock, each holding a pool connection. During the first 1,000-agent alert storm, the incident list's calls took 4.9 s at p95 (5.8 s max), the statement 188 ms on average and 5.7 s at worst, and all 16 pool connections were busy. Fixed: the idle timer is written when it is a minute old (or a tenth of a shorter idle timeout); other requests only read. Same storm afterwards: 99 ms at p95, at most 2 statements active.
@@ -99,4 +108,4 @@ Not fixed here, in order of interest:
 - **Each relay opens one upstream stream per agent** (ADR-0025): 200 agents behind one relay meant 200 streams from it, 49 MiB for the relay. Multiplexing them is the `relay-mux` TODO in `grpc/service.rs`.
 - **`last_seen_at` is still one write a minute per agent**, now batched opportunistically; at 1,000 agents about 17 small statements a second.
 
-Not tested: Windows agents (same protocol, other sensors), chained relays, the AI remediation loop, update campaigns in waves, email and chat channels, mirrors, several thousand agents, a server on its own host, a renewal wave, and the web interface's own rendering beyond the measure below.
+Not tested: Windows agents (same protocol, other sensors), chained relays, the AI remediation loop, update campaigns in waves, email and chat channels, mirrors, several thousand agents, a server on its own host, a renewal wave, and the other pages of the web interface.
