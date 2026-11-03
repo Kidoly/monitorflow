@@ -197,8 +197,14 @@ updater_replaced() { [ "$(docker inspect --format '{{.Config.Image}}' "$(compose
 check "the updater replaced itself" until_true 120 updater_replaced
 same_compose() { cmp -s "$repo/deploy/docker-compose.yml" "$work/deploy/docker-compose.yml"; }
 check "it put the release's compose file in place" until_true 300 same_compose
+# The file is written before the stack restarts: until the updater notes
+# the end of the switch, the old containers still run with plain HTTP.
+compose_switched() { get server-update | jq -e '.update.steps | any(.message | test("compose file of this release (in place|did not work)"))'; }
+check "the updater restarted the stack with it" until_true 300 compose_switched
+compose_noted() { get server-update | jq -e '.update.steps | any(.message | test("compose file of this release in place"))'; }
+check "the update page says so" compose_noted
 stores_reached() { compose exec -T server monitorflow-server storage-check; }
-check "the server reaches both stores over TLS" until_true 300 stores_reached
+check "the server reaches both stores over TLS" until_true 60 stores_reached
 tls_flag() { docker inspect --format '{{json .Config.Cmd}}' "$(compose ps -q "$1")" | grep -q '"-tls"'; }
 check "VictoriaMetrics runs with TLS" tls_flag victoriametrics
 check "VictoriaLogs runs with TLS" tls_flag victorialogs
@@ -210,8 +216,6 @@ kept_sample() {
             -servername victoriametrics -connect victoriametrics:8428 2>/dev/null' | grep -q '"7"'
 }
 check "metrics written before the switch are kept" until_true 60 kept_sample
-compose_noted() { get server-update | jq -e '.update.steps | any(.message | test("compose file of this release in place"))'; }
-check "the update page says so" until_true 60 compose_noted
 check "the server runs $NEXT" test "$(server_version)" = "monitorflow-server $NEXT"
 check "the API reports $NEXT" sh -c "curl -fsSk -b '$work/cookies' '$api/server-update' | jq -e '.running_version == \"$NEXT\"'"
 check ".env pins the release's images" pinned "$next_server"
