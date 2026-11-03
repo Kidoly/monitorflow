@@ -25,6 +25,8 @@ rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+# `ai-commands on|off` edits agent.toml, keeping its comments (ADR-0084).
+toml_edit.workspace = true
 thiserror.workspace = true
 monitorflow-sensors.workspace = true
 prost.workspace = true

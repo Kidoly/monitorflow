@@ -69,6 +69,14 @@ enum Command {
     /// service control manager starts it this way.
     #[cfg(windows)]
     UpdateService,
+    /// Let this agent run the commands AI remediation sends, or stop it
+    /// (ADR-0084): sets `commands.shell` in `--config`, keeping the rest
+    /// of the file. Restart the MonitorFlowAgent service afterwards.
+    #[cfg(windows)]
+    AiCommands {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
     /// Write the configuration file `--config` with these keys, unless it
     /// already exists; the MSI package runs this (ADR-0050). Empty values
     /// count as unset.
@@ -80,6 +88,13 @@ enum Command {
         #[arg(long, default_value = "")]
         enrollment_token: String,
     },
+}
+
+#[cfg(windows)]
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum OnOff {
+    On,
+    Off,
 }
 
 #[cfg(unix)]
@@ -176,6 +191,23 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
         #[cfg(windows)]
         Some(Command::Service | Command::UpdateService) => {
             unreachable!("started before the runtime")
+        }
+        #[cfg(windows)]
+        Some(Command::AiCommands { state }) => {
+            use monitorflow_agent::ai_commands::{self, Outcome};
+            let on = state == OnOff::On;
+            let path = cli.config.clone();
+            let outcome =
+                tokio::task::spawn_blocking(move || ai_commands::set(&path, on)).await??;
+            let word = if on { "on" } else { "off" };
+            match outcome {
+                Outcome::Changed => println!(
+                    "AI commands are {word} in {}; restart the agent to apply it: Restart-Service MonitorFlowAgent",
+                    cli.config.display()
+                ),
+                Outcome::Unchanged => println!("AI commands were already {word} in {}", cli.config.display()),
+            }
+            return Ok(());
         }
         Some(Command::InitConfig {
             upstream_url,
@@ -370,8 +402,8 @@ fn platform_handlers(
 }
 
 /// Windows Update reports and `apply_updates` through the update service
-/// (ADR-0049); the source and `shell` commands are refused as unsupported
-/// (ADR-0047).
+/// (ADR-0049), `shell` with Windows PowerShell (ADR-0084); the source
+/// commands are refused as unsupported (ADR-0047).
 #[cfg(windows)]
 fn platform_handlers(
     config: &AgentConfig,
@@ -379,6 +411,7 @@ fn platform_handlers(
     handlers: &mut Handlers,
     stop: &Shutdown,
 ) -> Option<tokio::sync::watch::Receiver<Option<monitorflow_common::proto::v1::PackageReport>>> {
+    use monitorflow_agent::commands::shell::ShellHandler;
     use monitorflow_agent::commands::unsupported::Unsupported;
     use monitorflow_agent::packages::windows_update::client::{
         WindowsApplyHandler, WindowsUpdates,
@@ -403,15 +436,13 @@ fn platform_handlers(
             data_dir: config.data_dir.clone(),
         })),
     );
-    if config.commands.shell {
-        tracing::warn!(
-            "commands.shell is ignored: shell commands are not supported on Windows yet"
-        );
-    }
+    handlers.register(
+        command::SHELL,
+        Arc::new(ShellHandler::new(config.commands.shell)),
+    );
     for (kind, what) in [
         (command::CONFIGURE_SOURCES, "package sources"),
         (command::REVERT_SOURCES, "package sources"),
-        (command::SHELL, "shell commands"),
     ] {
         handlers.register(kind, Arc::new(Unsupported::new(what, "Windows")));
     }
