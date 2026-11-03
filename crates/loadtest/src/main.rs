@@ -92,8 +92,9 @@ struct Cli {
     #[arg(long)]
     strict: bool,
     /// Seconds to keep everything running after the last phase, to look
-    /// at the web interface with the whole fleet; the API's address and
-    /// the administrator's password are printed.
+    /// at the web interface with the whole fleet; the API's address is
+    /// printed, the administrator's password is in
+    /// `<work_dir>/admin-password`.
     #[arg(long, default_value_t = 0)]
     hold: u64,
 }
@@ -243,10 +244,24 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         tracing::error!(%error, "run stopped early");
     }
     if run.cli.hold > 0 {
+        // The password goes to a file only the user reads, never the output.
+        let file = work.join("admin-password");
+        {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut out = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&file)?;
+            writeln!(out, "{password}")?;
+        }
         eprintln!(
-            "holding for {} s: API at {}, user {ADMIN}, password {password}",
+            "holding for {} s: API at {}, user {ADMIN}, password in {}",
             run.cli.hold,
-            run.server.ports.api_url()
+            run.server.ports.api_url(),
+            file.display()
         );
         tokio::time::sleep(Duration::from_secs(run.cli.hold)).await;
     }
