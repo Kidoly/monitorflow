@@ -1,7 +1,7 @@
 # ADR-0048: Windows sensors
 
 Date: 2026-10-29
-Status: accepted; the `log` sensor runs on Windows since ADR-0085
+Status: accepted; the `log` sensor runs on Windows since ADR-0085, disk I/O since ADR-0092
 
 ## Context
 

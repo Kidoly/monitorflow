@@ -1,7 +1,7 @@
 # ADR-0015: Built-in sensors, metric names and the sensor registry
 
 Date: 2026-10-19
-Status: accepted
+Status: accepted; disk I/O added in ADR-0092
 
 ## Context
 

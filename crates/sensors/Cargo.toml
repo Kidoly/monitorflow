@@ -28,6 +28,8 @@ windows-sys = { workspace = true, features = [
     "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_EventLog",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
     "Win32_System_JobObjects",
     "Win32_System_Services",
     "Win32_System_SystemInformation",

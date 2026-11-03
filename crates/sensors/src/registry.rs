@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 use crate::cpu::CpuSensor;
 use crate::disk::DiskSensor;
+use crate::diskio::DiskIoSensor;
 use crate::eventlog::{self, EventLogSensor};
 use crate::log::{self, LogSensor};
 use crate::memory::MemorySensor;
@@ -39,6 +40,7 @@ use crate::Sensor;
 pub const KINDS: &[&str] = &[
     "cpu",
     "disk",
+    "diskio",
     "eventlog",
     "log",
     "memory",
@@ -137,6 +139,7 @@ fn build_with(
     let sensor: Arc<dyn Sensor> = match params.kind {
         "cpu" => Arc::new(CpuSensor::new(params.bool("per_core", true)?)),
         "disk" => Arc::new(DiskSensor::from_params(&mut params)?),
+        "diskio" => Arc::new(DiskIoSensor::default()),
         "eventlog" => Arc::new(EventLogSensor::from_params(&mut params, local)?),
         "log" => Arc::new(LogSensor::from_params(&mut params, local)?),
         "memory" => Arc::new(MemorySensor),
@@ -265,7 +268,7 @@ mod tests {
         let error = build("gpu", &BTreeMap::new()).err().unwrap();
         assert_eq!(error, BuildError::UnknownKind("gpu".into()));
         assert!(error.to_string().contains(
-            "expected one of: cpu, disk, eventlog, log, memory, port, script, systemd, windows_service"
+            "expected one of: cpu, disk, diskio, eventlog, log, memory, port, script, systemd, windows_service"
         ));
         assert_eq!(
             build("cpu", &params(&[("per_cores", "true")])).err(),
