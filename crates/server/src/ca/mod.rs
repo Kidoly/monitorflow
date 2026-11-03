@@ -21,6 +21,8 @@ pub mod rotation;
 pub(crate) mod store;
 
 #[cfg(test)]
+mod rotation_tests;
+#[cfg(test)]
 mod tests;
 
 use std::fmt;
