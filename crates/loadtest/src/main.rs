@@ -91,6 +91,11 @@ struct Cli {
     /// Fail when an agent did not connect, or a phase missed its goal.
     #[arg(long)]
     strict: bool,
+    /// Seconds to keep everything running after the last phase, to look
+    /// at the web interface with the whole fleet; the API's address and
+    /// the administrator's password are printed.
+    #[arg(long, default_value_t = 0)]
+    hold: u64,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -236,6 +241,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let outcome = run.phases().await;
     if let Err(error) = &outcome {
         tracing::error!(%error, "run stopped early");
+    }
+    if run.cli.hold > 0 {
+        eprintln!(
+            "holding for {} s: API at {}, user {ADMIN}, password {password}",
+            run.cli.hold,
+            run.server.ports.api_url()
+        );
+        tokio::time::sleep(Duration::from_secs(run.cli.hold)).await;
     }
     let Run {
         cli,
