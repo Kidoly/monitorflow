@@ -94,8 +94,8 @@ pub fn check_logs(
             identity,
             first.clamp(now_ms - MAX_AGE.as_millis() as i64, now_ms),
             format!(
-                "The agent dropped {} log lines: they came faster than {AGENT_RATE} a second.",
-                batch.rate_limited
+                "The agent dropped {}: they came faster than {AGENT_RATE} a second.",
+                lines(batch.rate_limited)
             ),
         ));
     }
@@ -114,12 +114,21 @@ pub fn check_logs(
             identity,
             now_ms,
             format!(
-                "The server dropped {} log lines of this agent: more than {RATE_PER_SECOND} a second.",
-                checked.rate_limited
+                "The server dropped {} of this agent: more than {RATE_PER_SECOND} a second.",
+                lines(checked.rate_limited)
             ),
         ));
     }
     checked
+}
+
+/// "1 log line", "3 log lines".
+fn lines(n: u64) -> String {
+    if n == 1 {
+        "1 log line".into()
+    } else {
+        format!("{n} log lines")
+    }
 }
 
 fn check_entry(entry: &LogEntry, now_ms: i64) -> Result<(), InvalidEntry> {
@@ -374,12 +383,16 @@ mod tests {
             &identity(),
             LogBatch {
                 entries: vec![],
-                rate_limited: 7,
+                rate_limited: 1,
             },
             NOW,
             &mut LogLimit::default(),
         );
         assert_eq!(alone.records.len(), 1);
+        assert_eq!(
+            alone.records[0].msg,
+            "The agent dropped 1 log line: they came faster than 10 a second."
+        );
     }
 
     #[test]
