@@ -3,9 +3,10 @@
 //! One task for the whole server. It looks at an agent when its stream
 //! opens, when a command is queued for it, when one of its commands ends,
 //! and every [`DispatcherSettings::poll_interval`] at every connected
-//! agent, after expiring stale commands. A command in flight that was not
-//! sent on the agent's current connection is sent again: the agent answers
-//! a command it already ran from its journal (ADR-0031).
+//! agent with a command, after expiring stale commands. A command in
+//! flight that was not sent on the agent's current connection is sent
+//! again: the agent answers a command it already ran from its journal
+//! (ADR-0031).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -189,8 +190,17 @@ impl Dispatcher {
             .filter(|p| p.role == PeerRole::Agent)
             .map(|p| p.id)
             .collect();
-        self.delivered.retain(|id, _| agents.contains(id));
-        for id in agents {
+        let connected: std::collections::HashSet<&String> = agents.iter().collect();
+        self.delivered.retain(|id, _| connected.contains(id));
+        // One query for the sweep, not one per connected agent.
+        let busy = match self.store.with_commands(&agents).await {
+            Ok(busy) => busy,
+            Err(error) => {
+                tracing::warn!(%error, "could not look for commands; will retry");
+                return;
+            }
+        };
+        for id in busy {
             self.dispatch(&id).await;
         }
     }

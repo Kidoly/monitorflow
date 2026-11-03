@@ -126,6 +126,21 @@ impl CommandStore {
         .await
     }
 
+    /// The agents among `peer_ids` that [`Self::next`] has a command for,
+    /// in one query: the dispatcher's sweep looks only at them.
+    pub async fn with_commands(&self, peer_ids: &[String]) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT DISTINCT s.peer_id FROM commands c
+             JOIN servers s ON s.id = c.server_id
+             WHERE s.peer_id = ANY($1) AND s.revoked_at IS NULL
+               AND (c.state IN ('sent', 'running')
+                    OR (c.state = 'queued' AND c.expires_at > now()))",
+        )
+        .bind(peer_ids)
+        .fetch_all(&self.pool)
+        .await
+    }
+
     /// Moves a queued, unexpired command to `sent`. False when it is no
     /// longer queued or another command of the server is in flight.
     pub async fn mark_sent(&self, id: Uuid) -> Result<bool, sqlx::Error> {

@@ -52,8 +52,8 @@ pub trait Inventory: Send + Sync + 'static {
     /// Records a Hello and returns the name of the peer's site, the `site`
     /// label of its series (ADR-0013). An error refuses the stream.
     async fn hello(&self, hello: AcceptedHello<'_>) -> Result<String, InventoryError>;
-    /// Records that the peer `id` with `role` is still connected.
-    async fn seen(&self, role: PeerRole, id: &str) -> Result<(), InventoryError>;
+    /// Records that the peers `ids` with `role` are still connected.
+    async fn seen(&self, role: PeerRole, ids: &[String]) -> Result<(), InventoryError>;
     /// Records the mirrors the relay `id` serves, received at
     /// `received_at` (ADR-0037). An invalid report clears them.
     async fn relay_mirrors(
@@ -77,7 +77,7 @@ impl Inventory for NoInventory {
         Ok(String::new())
     }
 
-    async fn seen(&self, _role: PeerRole, _id: &str) -> Result<(), InventoryError> {
+    async fn seen(&self, _role: PeerRole, _ids: &[String]) -> Result<(), InventoryError> {
         Ok(())
     }
 }
@@ -108,16 +108,18 @@ impl Inventory for DbInventory {
         Ok(site)
     }
 
-    async fn seen(&self, role: PeerRole, id: &str) -> Result<(), InventoryError> {
+    async fn seen(&self, role: PeerRole, ids: &[String]) -> Result<(), InventoryError> {
         let sql = match role {
             PeerRole::Relay => {
-                "UPDATE relays SET last_seen_at = now() WHERE peer_id = $1 AND revoked_at IS NULL"
+                "UPDATE relays SET last_seen_at = now()
+                 WHERE peer_id = ANY($1) AND revoked_at IS NULL"
             }
             _ => {
-                "UPDATE servers SET last_seen_at = now() WHERE peer_id = $1 AND revoked_at IS NULL"
+                "UPDATE servers SET last_seen_at = now()
+                 WHERE peer_id = ANY($1) AND revoked_at IS NULL"
             }
         };
-        sqlx::query(sql).bind(id).execute(&self.pool).await?;
+        sqlx::query(sql).bind(ids).execute(&self.pool).await?;
         Ok(())
     }
 
@@ -327,6 +329,9 @@ mod tests {
             role: PeerRole::Agent,
         };
         assert_eq!(NoInventory.hello(accepted).await.unwrap(), "");
-        assert!(NoInventory.seen(PeerRole::Agent, "web-01").await.is_ok());
+        assert!(NoInventory
+            .seen(PeerRole::Agent, &["web-01".into()])
+            .await
+            .is_ok());
     }
 }

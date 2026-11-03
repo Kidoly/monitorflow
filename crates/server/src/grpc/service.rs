@@ -9,7 +9,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -29,6 +29,7 @@ use tonic::{Request, Response, Status, Streaming};
 use super::inventory::{AcceptedHello, Inventory, InventoryError, NoInventory};
 use super::policy::RelayPolicy;
 use super::registry::{CloseReason, Counters, PeerInfo, Registry};
+use super::seen::SeenWriter;
 use super::StreamSettings;
 use crate::alerting::Alerts;
 use crate::commands::Commands;
@@ -186,6 +187,8 @@ pub struct AgentStreamService {
     commands: Option<Commands>,
     relay_commands: Option<RelayCommands>,
     settings: StreamSettings,
+    /// Started by the first stream, which runs on the runtime.
+    seen: Arc<OnceLock<SeenWriter>>,
 }
 
 impl AgentStreamService {
@@ -202,6 +205,7 @@ impl AgentStreamService {
             commands: None,
             relay_commands: None,
             settings,
+            seen: Arc::default(),
         }
     }
 
@@ -241,6 +245,7 @@ impl AgentStreamService {
 
     pub fn with_inventory(mut self, inventory: Arc<dyn Inventory>) -> Self {
         self.inventory = inventory;
+        self.seen = Arc::default();
         self
     }
 
@@ -459,6 +464,10 @@ impl AgentService for AgentStreamService {
             last_sequence: sequence,
             counters: Counters::default(),
             inventory: self.inventory.clone(),
+            seen: self
+                .seen
+                .get_or_init(|| SeenWriter::spawn(self.inventory.clone()))
+                .clone(),
             // The Hello just wrote last_seen_at.
             last_recorded: Instant::now(),
             last_seen_interval: self.settings.last_seen_interval,
@@ -515,6 +524,7 @@ struct Connection {
     last_sequence: u64,
     counters: Counters,
     inventory: Arc<dyn Inventory>,
+    seen: SeenWriter,
     last_recorded: Instant,
     last_seen_interval: Duration,
     /// The `peer` and `site` labels of this stream's series.
@@ -644,21 +654,16 @@ impl Connection {
     }
 
     /// Writes `last_seen_at` at most once per `last_seen_interval`. Any
-    /// accepted envelope counts, not only heartbeats. The write runs in its
-    /// own task so a slow database never stalls the stream; a failure is
-    /// logged and the next interval tries again.
+    /// accepted envelope counts, not only heartbeats. The write goes
+    /// through the [`SeenWriter`], so a slow database never stalls the
+    /// stream; a failure is logged and the next interval tries again.
     fn record_seen(&mut self) {
         let now = Instant::now();
         if now.duration_since(self.last_recorded) < self.last_seen_interval {
             return;
         }
         self.last_recorded = now;
-        let (inventory, role, id) = (self.inventory.clone(), self.role, self.id.clone());
-        tokio::spawn(async move {
-            if let Err(error) = inventory.seen(role, &id).await {
-                tracing::warn!(agent_id = %id, %role, %error, "could not record last_seen_at");
-            }
-        });
+        self.seen.record(self.role, &self.id);
     }
 
     /// Validates a batch and queues it for VictoriaMetrics. Invalid

@@ -442,7 +442,7 @@ impl Inventory for OneSite {
         Ok(self.0.to_owned())
     }
 
-    async fn seen(&self, _role: PeerRole, _id: &str) -> Result<(), InventoryError> {
+    async fn seen(&self, _role: PeerRole, _ids: &[String]) -> Result<(), InventoryError> {
         Ok(())
     }
 }
