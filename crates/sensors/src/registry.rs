@@ -330,6 +330,8 @@ mod tests {
         let sensor = build("windows_service", &services).unwrap();
         assert!(sensor.collect(deadline).await.unwrap_err().is_permanent());
         assert!(build("windows_service", &params(&[("services", "a\\b")])).is_err());
+        let log = params(&[("path", r"C:\Logs\app.log"), ("pattern", "x")]);
+        assert!(build("log", &log).is_ok());
     }
 
     #[test]

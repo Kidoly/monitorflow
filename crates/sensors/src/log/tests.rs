@@ -148,7 +148,10 @@ fn paths_outside_the_log_directories_are_refused() {
     let error = build(&allowed.path().join("x"), &[], &[outside.path()])
         .err()
         .unwrap();
-    assert!(error.to_string().contains("not under"), "{error}");
+    assert!(
+        error.to_string().contains("not in the agent's log folders"),
+        "{error}"
+    );
     // A missing file under an allowed directory is fine; it may appear.
     assert!(build(&allowed.path().join("later.log"), &[], &[allowed.path()]).is_ok());
 }
@@ -182,7 +185,7 @@ async fn a_symlink_escaping_the_log_directories_is_refused() {
     assert!(
         error
             .to_string()
-            .contains("outside the agent's log directories"),
+            .contains("outside the agent's log folders"),
         "{error}"
     );
 

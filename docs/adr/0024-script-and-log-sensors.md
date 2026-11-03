@@ -1,7 +1,7 @@
 # ADR-0024: Script and log sensors, and what the server may make an agent do
 
 Date: 2026-10-19
-Status: accepted
+Status: accepted; log reading amended by ADR-0085 (positions kept across restarts, late writers, rewritten files, access denied is permanent)
 
 ## Context
 

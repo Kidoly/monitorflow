@@ -168,7 +168,7 @@ pub fn resolve(path: &Path, dirs: &[PathBuf]) -> Result<Option<PathBuf>, String>
     };
     if !allowed(&real, dirs) {
         return Err(format!(
-            "{} resolves to {}, outside the agent's log directories",
+            "{} resolves to {}, outside the agent's log folders",
             path.display(),
             real.display()
         ));
@@ -380,7 +380,7 @@ impl LogSensor {
             }
             if !dirs.iter().any(|d| under(&path, d)) {
                 return Err(params.refused(format!(
-                    "{} is not under the agent's log directories (sensors.log_dirs)",
+                    "{} is not in the agent's log folders (sensors.log_dirs)",
                     path.display()
                 )));
             }
@@ -514,7 +514,7 @@ impl Reader {
         if let Some(opened) = sys::final_path(&file).map_err(fail)? {
             if !allowed(&opened, &self.dirs) {
                 return Err(SensorError::Permanent(format!(
-                    "{} was replaced by a link to {}, outside the agent's log directories",
+                    "{} was replaced by a link to {}, outside the agent's log folders",
                     self.path.display(),
                     opened.display()
                 )));

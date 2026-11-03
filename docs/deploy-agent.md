@@ -236,6 +236,18 @@ Get-Content "$data\agent\logs\agent.log" -Wait
 
 As a service, the agent logs to `<data_dir>\logs\agent.log`. At 16 MiB the file moves to `agent.log.1`, replacing the older one. If the service stops at once, for example because the configuration is invalid, the System event log has the control manager's event 7024 with service-specific error 1, and `agent.log` has the reason when logging had started. `Stop-Service MonitorFlowAgent` stops the agent cleanly. `sc.exe delete MonitorFlowAgent` removes the service.
 
+### Log files
+
+The "A log file gets a line" check reads only files in the folders listed in `log_dirs`, which is empty on Windows: there is no common folder of text logs. List the folders in `agent.toml`, give the service read access to them, and restart the agent:
+
+```powershell
+# In agent.toml, under [sensors]: log_dirs = ['D:\Logs\MyApp']
+icacls D:\Logs\MyApp /grant "NT SERVICE\MonitorFlowAgent:(OI)(CI)RX"
+Restart-Service MonitorFlowAgent
+```
+
+The agent opens log files so that their program can still write, rename and delete them. It follows a file renamed or truncated by its rotation, reads UTF-8 and UTF-16 files with a byte order mark, and resumes where it stopped after a restart. Paths start with a drive letter: shares (`\\server\share`) and wildcards are not supported, so logs named by date, like IIS's, cannot be watched yet[^0085].
+
 Make the first connection and run the agent through the service only. Started from an elevated console, the agent writes its identity as `Administrators`, and the service can then not read it. If that happened, delete `$data\agent\tls` and connect again with a new token. Without the `service` argument, `monitorflow-agent.exe` runs in the console until Ctrl+C. That is meant for `sensors probe`, for example `monitorflow-agent.exe sensors probe port --param port=3389`.
 
 ### Windows Update service
@@ -259,7 +271,7 @@ Updates come from the source the machine is configured for: Windows Update, Micr
 | Feature | State |
 | --- | --- |
 | First connection, certificate renewal, stream, inventory | As on Linux; `os_family` is `windows`, the version comes from the registry, like `Windows Server 2022 Datacenter 21H2 build 20348.2849` |
-| Sensors | `cpu`, `memory`, `disk`, `port`, `script` (PowerShell or a program), `windows_service` and `eventlog`[^0048]. `systemd` and `log` are refused as "not supported on this platform" in the agent's configuration acknowledgement |
+| Sensors | `cpu`, `memory`, `disk`, `port`, `script` (PowerShell or a program), `log`, `windows_service` and `eventlog`[^0048]. `systemd` is refused as "not supported on this platform" in the agent's configuration acknowledgement |
 | Update reports | Pending and installed software updates by KB number, with title, classification, MSRC severity, size and restart state, plus whether Windows waits for a restart. Needs the update service (above) |
 | `apply_updates`, update campaigns | Through the update service. All pending updates except feature upgrades, `security_only` for the Security Updates classification, or named KB numbers or update IDs (`KB5034441`). Restarts only with `allow_reboot`, one minute after the result. Windows servers may join any campaign: pinned mirror snapshots do not apply to them |
 | `configure_sources`, `revert_sources` | Refused by the API for Windows servers, and by the agent with "package sources are not supported on Windows yet" |
@@ -276,6 +288,7 @@ There are no sudo rules on Windows. The only privileged part is the update servi
 [^0037]: [ADR-0037: Relay mirror URLs](adr/0037-relay-mirror-urls.md)
 [^0047]: [ADR-0047: Windows agent](adr/0047-windows-agent.md)
 [^0048]: [ADR-0048: Windows sensors](adr/0048-windows-sensors.md)
+[^0085]: [ADR-0085: The log file sensor on Windows, and positions kept across restarts](adr/0085-log-file-sensor-on-windows.md)
 [^0049]: [ADR-0049: Windows Update](adr/0049-windows-update.md)
 [^0050]: [ADR-0050: Windows agent MSI](adr/0050-windows-agent-msi.md)
 [^0052]: [ADR-0052: Agent releases and the Linux installer](adr/0052-agent-releases.md)
