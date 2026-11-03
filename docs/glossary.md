@@ -19,6 +19,7 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Accepts commands | What a server's agent will run if it is asked. Say which commands: "AI commands", "package updates", "agent updates" | capability, opt-in, handler | `command_kinds` |
 | AI commands | The commands AI remediation sends a server: shell commands on Linux, PowerShell on Windows. On, Off, Not available (an agent too old for them, which updates by itself), or Not known yet while the agent or its relay has not updated | shell commands | `shell`, `commands.shell`, `MF_ALLOW_COMMANDS`, `ai-commands on` |
 | Watches | The disk, port or service a sensor measures | instance | `instance` |
+| Log folders | The folders whose files a server's log checks may read, set by its administrator in `agent.toml`: `/var/log` on Linux by default, none on Windows | log directories, allowlist | `sensors.log_dirs` |
 | Recovery margin | How far past the threshold a value must return before the incident resolves; under Details | hysteresis | `hysteresis` |
 | Set by | Where a setting comes from; under Details | origin | `origin` |
 | Batch | Part of the servers of a campaign, updated together | wave | `waves` |

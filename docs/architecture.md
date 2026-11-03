@@ -90,12 +90,12 @@ gRPC over HTTP/2 with mutual TLS on every link: agent ↔ relay, relay ↔ relay
 | Disk | Space and inodes per mount, or per fixed drive on Windows; I/O later | Free space below a percentage |
 | Service | systemd unit state; Windows service state (`windows_service`) | Unit not active |
 | Port | TCP/UDP reachability, local or remote | Closed or timeout |
-| Log | Pattern matches in files under the agent's log directories (journald later); events of allowed Windows Event Log channels (`eventlog`) | Match count above N in a window |
+| Log | Pattern matches in files under the agent's log directories, on Linux and Windows (journald later); events of allowed Windows Event Log channels (`eventlog`) | Match count above N in a window |
 | Custom script | A script installed on the host by its administrator (PowerShell or a program on Windows): Nagios exit code and `name=value` perfdata | Status WARNING or CRITICAL |
 
 Each sensor has a collection interval and one or more thresholds (warning, critical) with a duration, to avoid alerting on short spikes. Sensors implement one trait in `crates/sensors` and produce `Sample` values; the agent schedules them and ships samples upstream in batches. Sensors configured by the server only touch what the agent's own configuration allows (scripts it installed, log directories, Event Log channels), see ADR-0024.
 
-The same crate serves Windows agents (ADR-0048): `cpu`, `memory`, `disk`, `port` and `script` keep their kind and metrics with Win32 implementations; `windows_service` and `eventlog` are Windows kinds, `systemd` and `log` Unix kinds. An agent refuses a kind its platform does not run as unsupported, while the server validates every kind's parameters whatever the agent's platform.
+The same crate serves Windows agents (ADR-0048): `cpu`, `memory`, `disk`, `port`, `script` and `log` keep their kind and metrics with Win32 implementations (ADR-0085 for `log`, which follows files by volume serial number and file index and reads UTF-16); `windows_service` and `eventlog` are Windows kinds, `systemd` a Unix kind. An agent refuses a kind its platform does not run as unsupported, while the server validates every kind's parameters whatever the agent's platform.
 
 ### Threshold engine
 
@@ -294,6 +294,7 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Sensor scheduling | One task per sensor, jittered first tick, timeout within the interval, missed ticks skipped, full channel drops new samples (ADR-0012) |
 | Windows packaging | WiX v5 MSI: per-machine, service under its virtual account with restart actions, protected ACLs by SID on `%ProgramData%\MonitorFlow`; `agent.toml` written from `UPSTREAM_URL` and a hidden `ENROLLMENT_TOKEN` by `monitorflow-agent init-config` only when absent; data kept on upgrade and uninstall unless `REMOVE_DATA=1`; an Event Log source for the service's fatal error; `AgentHelpers` component group for ADR-0049 (ADR-0050) |
 | Windows sensors | Same kinds where the measure is the same; `windows_service` and `eventlog` as Windows kinds; agents refuse other platforms' kinds (ADR-0048) |
+| Log files | Files followed by ID through rename and copytruncate, the old file read until its writer stops; opened with full sharing on Windows; UTF-8 and UTF-16 with a byte order mark; position saved under `data_dir` and resumed after a restart within a day; Windows paths with a drive letter only, `log_dirs` empty by default there (ADR-0085) |
 | Windows Update | WUA COM API in a LocalSystem service (`update-service` of the agent binary) behind a named pipe for the agent's service SID only; machine's own source (WU or WSUS) respected; updates reported as packages by KB number with classification and severity; `apply_updates` kinds map to all but feature upgrades, the Security Updates classification, or named KBs; reboot only with `allow_reboot`; Windows campaign targets skip pinned sources (ADR-0049) |
 | Sensor configuration | Built-in defaults, then site rows, then server rows in PostgreSQL; pushed after Hello and on revision change, polled every 10 s; agents acknowledge and persist it (ADR-0016) |
 | Threshold engine | Thresholds per metric with site and server layers over built-in defaults; per-severity timers on sample time with hysteresis; one open incident per series by partial unique index; state in `alert_states` reloaded at start (ADR-0017) |

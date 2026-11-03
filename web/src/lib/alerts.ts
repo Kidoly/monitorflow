@@ -195,6 +195,8 @@ export interface CheckType {
   /** Which servers run it: `null` for every one. */
   os: "linux" | "windows" | null;
   fields: CheckField[];
+  /** Field texts that differ on one system, by field key; a site shows the plain ones. */
+  on?: Partial<Record<"linux" | "windows", Record<string, Partial<CheckField>>>>;
   /** Parameters the form does not ask for. */
   fixed?: Record<string, string>;
   /** The field the check's name is made from. */
@@ -241,17 +243,21 @@ export const CHECK_TYPES: CheckType[] = [
   {
     kind: "log",
     label: "A log file gets a line",
-    os: "linux",
+    os: null,
     fields: [
       {
         key: "path",
         label: "Log file",
         placeholder: "/var/log/syslog",
-        hint: "Under /var/log unless the agent allows more.",
-        check: (v) => (v.startsWith("/") ? null : "Enter a full path, starting with /."),
+        hint: "Under /var/log on Linux unless the agent allows more. On Windows, in one of the log folders set in agent.toml (log_dirs).",
+        check: (v) => (/^(\/|[A-Za-z]:\\)/.test(v) ? null : "Enter a full path, like /var/log/syslog or C:\\Logs\\app.log."),
       },
       { key: "pattern", label: "Lines containing", placeholder: "error|failed", hint: "Text or a regular expression." },
     ],
+    on: {
+      linux: { path: { hint: "Under /var/log unless the agent allows more." } },
+      windows: { path: { placeholder: "C:\\Logs\\app.log", hint: "In one of the log folders set in the agent's agent.toml (log_dirs)." } },
+    },
     nameFrom: "path",
     severity: "warning",
     duration_s: 0,
@@ -289,7 +295,10 @@ export const CHECK_TYPES: CheckType[] = [
 export function checkTypesFor(osFamily: string | null): CheckType[] {
   if (osFamily === null) return CHECK_TYPES;
   const os = osFamily === "windows" ? "windows" : "linux";
-  return CHECK_TYPES.filter((t) => t.os === null || t.os === os);
+  return CHECK_TYPES.filter((t) => t.os === null || t.os === os).map((t) => {
+    const texts = t.on?.[os];
+    return texts ? { ...t, fields: t.fields.map((f) => ({ ...f, ...texts[f.key] })) } : t;
+  });
 }
 
 /** Longest sensor name the agent accepts (ADR-0012). */
@@ -298,7 +307,7 @@ const MAX_NAME = 64;
 /** "service_nginx": a sensor name for the check, which prefixes its metrics. */
 export function checkName(type: CheckType, values: Record<string, string>): string {
   const prefix = type.kind === "systemd" || type.kind === "windows_service" ? "service" : type.kind;
-  const source = (values[type.nameFrom] ?? "").split("/").pop() ?? "";
+  const source = (values[type.nameFrom] ?? "").split(/[/\\]/).pop() ?? "";
   const slug = source
     .toLowerCase()
     .replace(/\.(service|log|sh|ps1)$/, "")

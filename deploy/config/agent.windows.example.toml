@@ -51,8 +51,16 @@ script_dir = 'C:\ProgramData\MonitorFlow\scripts.d'
 
 # Event Log channels the `eventlog` sensor may read (ADR-0048). Match
 # counts of `Security` reveal logon activity; add it deliberately. An empty
-# list disables the sensor. The `log` sensor does not run on Windows.
+# list disables the sensor.
 # event_channels = ["Application", "System"]
+
+# Folders the `log` sensor may read files under (ADR-0085). A server
+# configuration names a file; it is read only if it resolves, links
+# included, under one of these. Only match counts go upstream, but a
+# pattern still reveals whether matching lines exist, so keep this to logs
+# the monitoring admins may see. Empty by default: list your applications'
+# log folders, and give NT SERVICE\MonitorFlowAgent read access to them.
+# log_dirs = ['D:\Logs\MyApp']
 
 [commands]
 # Ignored on Windows: `shell` commands are refused, because the server's

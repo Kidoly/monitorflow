@@ -1,7 +1,7 @@
 # ADR-0048: Windows sensors
 
 Date: 2026-10-29
-Status: accepted
+Status: accepted; the `log` sensor runs on Windows since ADR-0085
 
 ## Context
 
@@ -80,4 +80,4 @@ icacls C:\ProgramData\MonitorFlow\scripts.d /inheritance:r /grant:r "*S-1-5-18:(
 - The server validates Windows rows on Linux, so the web interface and the API need no platform knowledge; the web labels the two new kinds.
 - `sensors.event_channels` is a new agent setting (`MONITORFLOW_SENSORS_EVENT_CHANNELS`), ignored on Linux.
 - Linux tests are unchanged; Windows tests read the real APIs (services, the Event Log with `eventcreate`, ACLs with `icacls`, PowerShell) and run in the `windows-sensors` CI job.
-- Follow-ups: the file `log` sensor on Windows (rotation follows file IDs instead of inodes), PowerShell 7 (`pwsh`) as an option, volumes mounted in folders, per-core counters beyond the first processor group, and disk I/O counters on both platforms.
+- Follow-ups: the file `log` sensor on Windows (rotation follows file IDs instead of inodes; done in ADR-0085), PowerShell 7 (`pwsh`) as an option, volumes mounted in folders, per-core counters beyond the first processor group, and disk I/O counters on both platforms.
