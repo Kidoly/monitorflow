@@ -1,6 +1,7 @@
 # Smoke test of the MSI package (ADR-0050), run by CI on a throwaway
 # Windows runner as an administrator: silent install, the agent and update
-# services (ADR-0049, ADR-0053) and ACLs, upgrade, the Event Log source,
+# services (ADR-0049, ADR-0053) and ACLs, turning AI commands on
+# (ADR-0084), upgrade, the Event Log source,
 # uninstall and cleanup. It changes the
 # machine; do not run it on a server you care about.
 #
@@ -125,6 +126,19 @@ for ($i = 0; $i -lt 30 -and -not (Select-String -Path $agentLog -SimpleMatch "en
 }
 Get-Content $agentLog -ErrorAction SilentlyContinue | Write-Host
 Check (Select-String -Path $agentLog -SimpleMatch "enrollment attempt failed" -Quiet) "the service read agent.toml and writes its log in $data\agent"
+
+Write-Host "== AI commands (ADR-0084)"
+# The lines the web interface shows, as an administrator would paste them.
+& "$env:ProgramFiles\MonitorFlow\monitorflow-agent.exe" ai-commands on
+Check ($LASTEXITCODE -eq 0) "ai-commands on succeeds"
+Restart-Service MonitorFlowAgent
+$config = Get-Content -Raw "$data\agent.toml"
+Check ($config -match '(?m)^\[commands\]\r?\nshell = true') "agent.toml allows AI commands"
+Check ($config.Contains($token)) "agent.toml keeps its other keys"
+Check (-not (Dacl "$data\agent.toml").Protected) "agent.toml keeps the ACL of $data"
+Check (Wait-Status "Running") "the service runs with AI commands on"
+$again = & "$env:ProgramFiles\MonitorFlow\monitorflow-agent.exe" ai-commands on
+Check ("$again" -match "already on") "a second run changes nothing (got $again)"
 
 Write-Host "== upgrade"
 $configHash = (Get-FileHash "$data\agent.toml").Hash
