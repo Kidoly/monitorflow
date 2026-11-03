@@ -11,6 +11,7 @@
 //! engine owns the others.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -306,24 +307,34 @@ pub async fn check(
     Ok(written)
 }
 
-/// Starts the task, which checks until the process exits.
-pub fn spawn(pool: PgPool, registry: Registry, settings: OfflineSettings) {
+/// Checks every `settings.poll` until `stop` resolves. The streams are
+/// every server instance's (ADR-0089), so one instance runs this, and two
+/// for a moment write nothing twice: opening and resolving are each one
+/// conditional write.
+pub async fn run(
+    pool: PgPool,
+    registry: Registry,
+    settings: OfflineSettings,
+    stop: impl Future<Output = ()>,
+) {
     let started = Utc::now();
-    tokio::spawn(async move {
-        let mut tick = interval(settings.poll);
-        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        loop {
-            tick.tick().await;
-            let online = registry
-                .connected()
-                .into_iter()
-                .map(|p| ((p.role, p.id), p.connected_at))
-                .collect();
-            if let Err(error) = check(&pool, &online, started, &settings).await {
-                tracing::warn!(%error, "could not check offline peers; will retry");
-            }
+    tokio::pin!(stop);
+    let mut tick = interval(settings.poll);
+    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = &mut stop => return,
+            _ = tick.tick() => {}
         }
-    });
+        let online = registry
+            .live_all()
+            .into_iter()
+            .map(|p| ((p.role, p.id), p.connected_at))
+            .collect();
+        if let Err(error) = check(&pool, &online, started, &settings).await {
+            tracing::warn!(%error, "could not check offline peers; will retry");
+        }
+    }
 }
 
 #[cfg(test)]

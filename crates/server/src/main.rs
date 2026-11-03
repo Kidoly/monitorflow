@@ -20,6 +20,7 @@ use monitorflow_server::api::{
 use monitorflow_server::auto_update::AutoUpdate;
 use monitorflow_server::ca::{CaOptions, CertificateAuthority};
 use monitorflow_server::campaign::{self, Runner};
+use monitorflow_server::cluster::{self, Cluster, Links};
 use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings};
 use monitorflow_server::crl::{self, CrlPublisher};
 use monitorflow_server::db;
@@ -452,10 +453,23 @@ async fn main() -> anyhow::Result<()> {
         ca.clone(),
         DispatcherSettings::default(),
     );
-    // Servers and relays that stop reporting open incidents (ADR-0072).
-    offline::spawn(pool.clone(), registry.clone(), OfflineSettings::default());
     // Relays' own self-updates (ADR-0055).
     let relay_commands = RelayCommands::spawn(pool.clone(), registry.clone(), ca.clone());
+    // One of maybe several instances on this database (ADR-0089).
+    let cluster = Cluster::join(
+        pool.clone(),
+        registry.clone(),
+        Links {
+            commands: Some(commands.clone()),
+            relay_commands: Some(relay_commands.clone()),
+            crl: Some(crl.clone()),
+        },
+        cluster::Settings::default(),
+    )
+    .await
+    .context("joining the server instances")?;
+    let offline_pool = pool.clone();
+    let offline_registry = registry.clone();
     // Settings of the web interface that apply without a restart (ADR-0069).
     let api_settings = ApiSettings::from_config(&config);
     api_settings
@@ -585,14 +599,33 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         },
         async {
-            auto_update
-                .clone()
-                .run(
+            cluster.clone().run(until_stopped()).await;
+            Ok(())
+        },
+        // The loops below need the whole fleet's view, or group and pace
+        // what they send: the leader runs them (ADR-0089).
+        async {
+            cluster::lead(cluster.leadership(), stopped.clone(), |until| {
+                // Servers and relays that stop reporting (ADR-0072).
+                offline::run(
+                    offline_pool.clone(),
+                    offline_registry.clone(),
+                    OfflineSettings::default(),
+                    until,
+                )
+            })
+            .await;
+            Ok(())
+        },
+        async {
+            cluster::lead(cluster.leadership(), stopped.clone(), |until| {
+                auto_update.clone().run(
                     commands.clone(),
                     Duration::from_secs(config.auto_update.interval),
-                    until_stopped(),
+                    until,
                 )
-                .await;
+            })
+            .await;
             Ok(())
         },
         async {
@@ -620,19 +653,24 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         },
         async {
-            notify::Dispatcher::new(notify_pool, config.web_base_url())
-                .with_status_dir(config.server_update_dir.clone())
-                .run(notify::dispatcher::POLL, until_stopped())
-                .await;
+            let dispatcher = notify::Dispatcher::new(notify_pool, config.web_base_url())
+                .with_status_dir(config.server_update_dir.clone());
+            cluster::lead(cluster.leadership(), stopped.clone(), |until| {
+                dispatcher.clone().run(notify::dispatcher::POLL, until)
+            })
+            .await;
             Ok(())
         },
         async {
-            release_check::run(
-                check_pool,
-                ServerUpdateSettings::from_config(&config),
-                release_check::AFTER_START,
-                until_stopped(),
-            )
+            let settings = ServerUpdateSettings::from_config(&config);
+            cluster::lead(cluster.leadership(), stopped.clone(), |until| {
+                release_check::run(
+                    check_pool.clone(),
+                    settings.clone(),
+                    release_check::AFTER_START,
+                    until,
+                )
+            })
             .await;
             Ok(())
         },

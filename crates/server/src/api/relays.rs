@@ -249,7 +249,7 @@ pub async fn detail(
     let servers = attached
         .into_iter()
         .map(|(id, peer_id, hostname)| {
-            let live = state.registry.get(&peer_id).is_some_and(|peer| {
+            let live = state.registry.live(&peer_id).is_some_and(|peer| {
                 peer.role == PeerRole::Agent && peer.via_relay.as_deref() == Some(&row.peer_id)
             });
             AttachedServer {
@@ -274,10 +274,10 @@ pub async fn detail(
     }))
 }
 
-/// Live agent streams per relay peer ID.
+/// Live agent streams per relay peer ID, on every server instance.
 fn forwarded_streams(state: &ApiState) -> HashMap<String, usize> {
     let mut counts = HashMap::new();
-    for peer in state.registry.connected() {
+    for peer in state.registry.live_all() {
         if let Some(relay) = peer.via_relay {
             *counts.entry(relay).or_default() += 1;
         }
@@ -294,7 +294,7 @@ impl RelayView {
     ) -> Self {
         let live = state
             .registry
-            .get(&row.peer_id)
+            .live(&row.peer_id)
             .filter(|peer| peer.role == PeerRole::Relay);
         Self {
             status: if live.is_some() {

@@ -154,7 +154,7 @@ impl AutoUpdate {
         };
         self.registry
             .as_ref()
-            .is_none_or(|registry| registry.get(peer_id).is_some_and(|p| p.role == role))
+            .is_none_or(|registry| registry.live(peer_id).is_some_and(|p| p.role == role))
     }
 
     /// Queues the agent updates due now; returns the agents that got one.

@@ -323,9 +323,10 @@ pub(super) async fn latest_certificate(
 impl ServerView {
     /// `row` with the live status of its agent, if connected.
     fn new(state: &ApiState, row: Row) -> Self {
+        // On any server instance (ADR-0089).
         let live = state
             .registry
-            .get(&row.peer_id)
+            .live(&row.peer_id)
             .filter(|peer| peer.role == PeerRole::Agent);
         match live {
             Some(peer) => Self {

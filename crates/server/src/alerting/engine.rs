@@ -5,6 +5,12 @@
 //! queue is full the batch is dropped and counted. One task evaluates
 //! batches in order, so no two writes for a series ever race. Thresholds
 //! are cached per agent and reloaded when their revision moves.
+//!
+//! The state of an agent's series is read from the database when its first
+//! batch arrives, and forgotten when its stream opens or closes here
+//! ([`Alerts::forget`]): with several server instances (ADR-0089), the
+//! instance holding the stream evaluates it from what the previous one
+//! wrote, never from an old copy.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -139,44 +145,46 @@ enum Message {
 #[derive(Clone)]
 pub struct Alerts {
     tx: mpsc::Sender<Message>,
+    /// Agents whose state to read again; never dropped, and taken before
+    /// any batch queued after them.
+    forget: mpsc::UnboundedSender<String>,
     counters: Arc<Counters>,
 }
 
 impl Alerts {
-    /// Reloads the stored state, then starts the engine task, which runs
-    /// until every handle is dropped.
+    /// Starts the engine task, which runs until every handle is dropped.
+    /// Stored states are read per agent, at its first batch.
     pub async fn start(
         store: AlertStore,
         settings: EngineSettings,
         notifier: Arc<dyn Notifier>,
     ) -> Result<Self, sqlx::Error> {
-        let series: HashMap<_, _> = store
-            .load_states()
-            .await?
-            .into_iter()
-            .map(|s| {
-                let tracked = Tracked {
-                    state: s.state,
-                    incident: s.incident,
-                };
-                (s.key, tracked)
-            })
-            .collect();
-        tracing::info!(series = series.len(), "threshold engine state loaded");
         let (tx, rx) = mpsc::channel(settings.queue_capacity);
+        let (forget, forget_rx) = mpsc::unbounded_channel();
         let counters = Arc::new(Counters::default());
         let engine = Engine {
             settings,
             rules: HashMap::new(),
-            series,
+            series: HashMap::new(),
             out: Output {
                 store,
                 notifier,
                 counters: counters.clone(),
             },
         };
-        tokio::spawn(engine.run(rx));
-        Ok(Self { tx, counters })
+        tokio::spawn(engine.run(rx, forget_rx));
+        Ok(Self {
+            tx,
+            forget,
+            counters,
+        })
+    }
+
+    /// Drops what the engine holds of the agent `peer`, whose stream
+    /// opened or closed here: its next batch reads the stored state, which
+    /// another instance may have moved meanwhile.
+    pub fn forget(&self, peer: &str) {
+        let _ = self.forget.send(peer.to_owned());
     }
 
     /// Queues the series of one stream's batch for evaluation. Returns
@@ -248,7 +256,11 @@ struct Engine {
 }
 
 impl Engine {
-    async fn run(mut self, mut rx: mpsc::Receiver<Message>) {
+    async fn run(
+        mut self,
+        mut rx: mpsc::Receiver<Message>,
+        mut forget: mpsc::UnboundedReceiver<String>,
+    ) {
         let mut poll = interval(self.settings.poll_interval);
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut report = interval(self.settings.report_interval);
@@ -256,6 +268,8 @@ impl Engine {
         let mut reported = Stats::default();
         loop {
             tokio::select! {
+                biased;
+                Some(peer) = forget.recv() => self.forget(&peer),
                 message = rx.recv() => match message {
                     Some(Message::Batch { peer, points }) => self.batch(&peer, points).await,
                     Some(Message::Flush(done)) => {
@@ -312,20 +326,49 @@ impl Engine {
         }
     }
 
-    /// The cached thresholds of `peer`, loaded on first use.
+    fn forget(&mut self, peer: &str) {
+        if let Some(Some(server)) = self.rules.remove(peer) {
+            self.series
+                .retain(|key, _| key.server_id != server.server_id);
+        }
+    }
+
+    /// The cached thresholds of `peer`, loaded on first use with the
+    /// stored state of its series.
     async fn server(&mut self, peer: &str) -> Option<Arc<ServerRules>> {
         if let Some(entry) = self.rules.get(peer) {
             return entry.clone();
         }
-        match self.out.store.load_rules(peer).await {
-            Ok(entry) => {
-                let entry = entry.map(Arc::new);
-                if let Some(server) = &entry {
-                    // States reloaded at start may belong to removed thresholds.
-                    self.drop_unmatched(peer, server).await;
-                }
-                self.rules.insert(peer.to_owned(), entry.clone());
-                entry
+        let loaded = match self.out.store.load_rules(peer).await {
+            Ok(Some(server)) => self
+                .out
+                .store
+                .load_server_states(server.server_id)
+                .await
+                .map(|states| Some((server, states))),
+            Ok(None) => Ok(None),
+            Err(error) => Err(error),
+        };
+        match loaded {
+            Ok(Some((server, states))) => {
+                let server = Arc::new(server);
+                self.series
+                    .retain(|key, _| key.server_id != server.server_id);
+                self.series.extend(states.into_iter().map(|s| {
+                    let tracked = Tracked {
+                        state: s.state,
+                        incident: s.incident,
+                    };
+                    (s.key, tracked)
+                }));
+                // Stored states may belong to removed thresholds.
+                self.drop_unmatched(peer, &server).await;
+                self.rules.insert(peer.to_owned(), Some(server.clone()));
+                Some(server)
+            }
+            Ok(None) => {
+                self.rules.insert(peer.to_owned(), None);
+                None
             }
             Err(error) => {
                 Counters::add(&self.out.counters.db_errors);

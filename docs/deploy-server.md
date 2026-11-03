@@ -187,6 +187,7 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 
 - VictoriaMetrics and VictoriaLogs are reached over TLS with a certificate of the built-in CA, and a password[^0087], on an internal Docker network that is never published[^0051]. PostgreSQL is reached over TLS.
 - The server image trusts the release keys of `deploy/release-keys.pem` at build time; imports of releases signed with another key are refused.
+- The server can run as several instances on one database[^0089], but the installer sets up one; adding a second server is not packaged yet.
 
 [^0051]: [ADR-0051: Production compose and the server's storage links](adr/0051-production-compose.md)
 [^0053]: [ADR-0053: Signed releases and agent self-update](adr/0053-agent-self-update.md)
@@ -197,3 +198,4 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 [^0068]: [ADR-0068: Browser certificate without a terminal](adr/0068-browser-certificate.md)
 [^0069]: [ADR-0069: Settings page](adr/0069-settings-page.md)
 [^0071]: [ADR-0071: First-run setup in the browser](adr/0071-first-run-setup.md)
+[^0089]: [ADR-0089: Several server instances](adr/0089-several-server-instances.md)

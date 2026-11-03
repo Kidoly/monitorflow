@@ -6,14 +6,16 @@
 //! connector. tonic still extracts peer certificates from those streams.
 
 use std::future::Future;
+use std::hash::{BuildHasher, RandomState};
 use std::io;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ServerConfig};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{lookup_host, TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch, Semaphore};
 use tokio::time::timeout;
 use tokio_rustls::{client, server, TlsAcceptor, TlsConnector};
@@ -176,9 +178,7 @@ async fn dial(
     let port = uri.port_u16().unwrap_or(DEFAULT_GRPC_PORT);
     let name = ServerName::try_from(host.to_owned())
         .map_err(|e| invalid(format!("{host}: invalid server name: {e}")))?;
-    let tcp = timeout(connect_timeout, TcpStream::connect((host, port)))
-        .await
-        .map_err(|_| timed_out("TCP connect"))??;
+    let tcp = connect_any(host, port, connect_timeout).await?;
     tcp.set_nodelay(true)?;
     let tls = timeout(connect_timeout, connector.connect(name, tcp))
         .await
@@ -186,9 +186,66 @@ async fn dial(
     Ok(TokioIo::new(tls))
 }
 
+/// Connects to one of the addresses `host` resolves to, each tried in
+/// turn with its own timeout, from a random one: a name with one address
+/// per server instance spreads its peers, and a dead instance costs one
+/// timeout, not every attempt (ADR-0089).
+async fn connect_any(host: &str, port: u16, connect_timeout: Duration) -> io::Result<TcpStream> {
+    let addresses: Vec<SocketAddr> = timeout(connect_timeout, lookup_host((host, port)))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "name lookup timed out"))??
+        .collect();
+    let mut last = io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("{host}: no address to connect to"),
+    );
+    for address in rotated(addresses, RandomState::new().hash_one(host)) {
+        match timeout(connect_timeout, TcpStream::connect(address)).await {
+            Ok(Ok(tcp)) => return Ok(tcp),
+            Ok(Err(error)) => last = error,
+            Err(_) => {
+                last = io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("TCP connect to {address} timed out"),
+                )
+            }
+        }
+    }
+    Err(last)
+}
+
+/// `items` starting at `start` modulo their count, wrapping around.
+fn rotated<T>(mut items: Vec<T>, start: u64) -> Vec<T> {
+    if let Ok(len) = u64::try_from(items.len()) {
+        if len > 0 {
+            // Lossless: the remainder is below `len`, a `usize`.
+            items.rotate_left((start % len) as usize);
+        }
+    }
+    items
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rotation_keeps_every_address_once() {
+        assert_eq!(rotated(vec![1, 2, 3], 4), [2, 3, 1]);
+        assert_eq!(rotated(vec![1, 2, 3], 0), [1, 2, 3]);
+        assert_eq!(rotated(Vec::<u8>::new(), 7), Vec::<u8>::new());
+    }
+
+    #[tokio::test]
+    async fn a_dead_address_does_not_stop_the_next_one() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // `localhost` may resolve to ::1 first, where nothing listens.
+        let tcp = connect_any("localhost", port, Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert_eq!(tcp.peer_addr().unwrap().port(), port);
+    }
 
     #[test]
     fn endpoint_makes_port_explicit() {
