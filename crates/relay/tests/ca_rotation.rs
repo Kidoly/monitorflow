@@ -157,8 +157,10 @@ db_tests! {
         wait_for("the online peers trust the new CA", || async {
             fleet(&server).await.iter().filter(|p| p.trusts_all).count() == 3
         }).await;
-        assert_eq!(web01_ids.borrow().ca_fingerprints.len(), 2);
-        assert_eq!(relay_ids.borrow().ca_fingerprints.len(), 2);
+        // The server records a certificate just before the peer stores it.
+        for ids in [&web01_ids, &relay_ids] {
+            wait_for("the peer stored both CAs", || async { ids.borrow().ca_fingerprints.len() == 2 }).await;
+        }
 
         // The offline agent holds the switch while its certificate is valid.
         server.rotator.advance().await.unwrap();
