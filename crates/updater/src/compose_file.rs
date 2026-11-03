@@ -83,9 +83,14 @@ pub fn save_previous(deploy: &Path, state: &Path) -> io::Result<()> {
 }
 
 /// Puts the bundle's files in the deploy directory, each atomically.
+/// Identical files stay as they are: a container that bind-mounts one,
+/// like PostgreSQL its `pg_hba.conf`, keeps the same file.
 pub fn install(bundle: &Path, deploy: &Path) -> io::Result<()> {
     for file in FILES {
-        copy_atomic(&bundle.join(file), &deploy.join(file))?;
+        let (from, to) = (bundle.join(file), deploy.join(file));
+        if fs::read(&to).ok() != Some(fs::read(&from)?) {
+            copy_atomic(&from, &to)?;
+        }
     }
     Ok(())
 }

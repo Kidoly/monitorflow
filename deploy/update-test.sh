@@ -191,23 +191,8 @@ echo "updating to $NEXT"
 state=$(update "$NEXT") || state=error
 get server-update | jq '.update' >"$work/next.json" || true
 check "update to $NEXT succeeded" test "$state" = succeeded
-check "the server runs $NEXT" test "$(server_version)" = "monitorflow-server $NEXT"
-check "the API reports $NEXT" sh -c "curl -fsSk -b '$work/cookies' '$api/server-update' | jq -e '.running_version == \"$NEXT\"'"
-check ".env pins the release's images" pinned "$next_server"
-check ".env pins the mirror image" grep -qx "MIRROR_IMAGE=$next_mirror" "$work/deploy/.env"
-mirror_updated() { [ "$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q mirror)")" = "$next_mirror" ]; }
-check "the mirror tools run the release's image" mirror_updated
-check "the session and the data are kept" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
-check "the update is audited" test "$(psql "SELECT count(*) FROM audit_log WHERE action = 'server.update'")" = 1
-backup=$(jq -r .backup "$work/next.json")
-check "a backup was taken before the update" grep -q '^monitorflow-backup-.*-update\.tar\.gz$' <<<"$backup"
-get "backups/$backup" >"$work/update-backup.tar.gz" || true
-check "it holds the database and the server's CA" \
-    sh -c "tar -tzf '$work/update-backup.tar.gz' | grep -qx 'serverdata/ca/ca-key.pem' && tar -tzf '$work/update-backup.tar.gz' | grep -qx database.dump"
-check "the backups page lists it" sh -c "curl -fsSk -b '$work/cookies' '$api/backups' | jq -e --arg b '$backup' '.files | map(.name) | index(\$b)'"
-check "the agent release is cached" sh -c "docker compose -p $project -f '$work/deploy/docker-compose.yml' -f '$work/deploy/docker-compose.test.yml' exec -T server monitorflow-server agent-release list | grep -qx $NEXT"
-check "the release's installer is served for installs" \
-    curl -fsSk -o /dev/null "https://127.0.0.1:$HTTPS_PORT/agent/$NEXT/install.sh"
+# The new updater then puts the release's compose file in place and
+# restarts what it changes: the checks below wait for it.
 updater_replaced() { [ "$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q updater)")" = "$next_updater" ]; }
 check "the updater replaced itself" until_true 120 updater_replaced
 same_compose() { cmp -s "$repo/deploy/docker-compose.yml" "$work/deploy/docker-compose.yml"; }
@@ -227,6 +212,23 @@ kept_sample() {
 check "metrics written before the switch are kept" until_true 60 kept_sample
 compose_noted() { get server-update | jq -e '.update.steps | any(.message | test("compose file of this release in place"))'; }
 check "the update page says so" until_true 60 compose_noted
+check "the server runs $NEXT" test "$(server_version)" = "monitorflow-server $NEXT"
+check "the API reports $NEXT" sh -c "curl -fsSk -b '$work/cookies' '$api/server-update' | jq -e '.running_version == \"$NEXT\"'"
+check ".env pins the release's images" pinned "$next_server"
+check ".env pins the mirror image" grep -qx "MIRROR_IMAGE=$next_mirror" "$work/deploy/.env"
+mirror_updated() { [ "$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q mirror)")" = "$next_mirror" ]; }
+check "the mirror tools run the release's image" mirror_updated
+check "the session and the data are kept" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
+check "the update is audited" test "$(psql "SELECT count(*) FROM audit_log WHERE action = 'server.update'")" = 1
+backup=$(jq -r .backup "$work/next.json")
+check "a backup was taken before the update" grep -q '^monitorflow-backup-.*-update\.tar\.gz$' <<<"$backup"
+get "backups/$backup" >"$work/update-backup.tar.gz" || true
+check "it holds the database and the server's CA" \
+    sh -c "tar -tzf '$work/update-backup.tar.gz' | grep -qx 'serverdata/ca/ca-key.pem' && tar -tzf '$work/update-backup.tar.gz' | grep -qx database.dump"
+check "the backups page lists it" sh -c "curl -fsSk -b '$work/cookies' '$api/backups' | jq -e --arg b '$backup' '.files | map(.name) | index(\$b)'"
+check "the agent release is cached" sh -c "docker compose -p $project -f '$work/deploy/docker-compose.yml' -f '$work/deploy/docker-compose.test.yml' exec -T server monitorflow-server agent-release list | grep -qx $NEXT"
+check "the release's installer is served for installs" \
+    curl -fsSk -o /dev/null "https://127.0.0.1:$HTTPS_PORT/agent/$NEXT/install.sh"
 check "the new updater reports $NEXT" until_true 120 sh -c "curl -fsSk -b '$work/cookies' '$api/server-update' | jq -e '.updater.alive and .updater.version == \"$NEXT\"'"
 
 check "a downgrade is refused" test "$(post server-update '{"version": "0.0.1"}')" = 400
