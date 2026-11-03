@@ -22,7 +22,7 @@
 //! with `GetDiskFreeSpaceExW` and no inodes; see [`windows`](self) and
 //! ADR-0048.
 //!
-//! TODO: I/O counters from `/proc/diskstats`.
+//! I/O per block device is the [`diskio`](crate::diskio) sensor's.
 
 use std::collections::{BTreeSet, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
