@@ -79,7 +79,14 @@ fn a_planned_change_introduces_switches_and_retires() {
     let status = ca.status();
     let other = der(&status.other.unwrap().cert_pem);
     let (_, cert) = X509Certificate::from_der(&other).unwrap();
-    let name = cert.subject().iter_common_name().next().unwrap().as_str().unwrap().to_owned();
+    let name = cert
+        .subject()
+        .iter_common_name()
+        .next()
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned();
     assert!(name.starts_with("MonitorFlow CA 20"), "{name}");
     // Reopened, the same state.
     assert_eq!(open(&ca_dir).trust(), ca.trust());
@@ -105,7 +112,10 @@ fn a_planned_change_introduces_switches_and_retires() {
 
     // Retired: only the new CA, the old key gone, its certificate kept.
     let retired = ca.retire().unwrap();
-    assert_eq!(retired.fingerprint, monitorflow_common::tls::fingerprint_hex(&old));
+    assert_eq!(
+        retired.fingerprint,
+        monitorflow_common::tls::fingerprint_hex(&old)
+    );
     assert_eq!(ca.trust().bundle, vec![new]);
     assert!(ca.rotation().is_none());
     assert!(!ca_dir.join(PREVIOUS_DIR).exists());
@@ -219,7 +229,11 @@ fn an_interrupted_switch_is_finished_at_the_next_start() {
         serde_json::from_slice(&fs::read(ca_dir.join(ROTATION_FILE)).unwrap()).unwrap();
     rotation.stage = Stage::Switched;
     rotation.switched_at = Some(rotation.started_at);
-    fs::write(ca_dir.join(ROTATION_FILE), serde_json::to_vec(&rotation).unwrap()).unwrap();
+    fs::write(
+        ca_dir.join(ROTATION_FILE),
+        serde_json::to_vec(&rotation).unwrap(),
+    )
+    .unwrap();
     fs::copy(ca_dir.join(NEXT_DIR).join(KEY_FILE), ca_dir.join(KEY_FILE)).unwrap();
 
     let ca = open(&ca_dir);
@@ -272,8 +286,10 @@ fn crls_of_both_cas_list_every_revocation() {
     ca.start_rotation(false).unwrap();
     ca.switch().unwrap();
     let after = issue(&ca, "web-02");
-    ca.revoke(&before.serial, RevocationReason::KeyCompromise).unwrap();
-    ca.revoke(&after.serial, RevocationReason::KeyCompromise).unwrap();
+    ca.revoke(&before.serial, RevocationReason::KeyCompromise)
+        .unwrap();
+    ca.revoke(&after.serial, RevocationReason::KeyCompromise)
+        .unwrap();
     let crls = ca.crls().unwrap();
     let bundle = ca.trust_bundle_pem();
     assert!(!accepted(&bundle, &crls, &before));

@@ -28,7 +28,7 @@ use sqlx::PgPool;
 use tokio::sync::Notify;
 
 use crate::api::audit::{self, Event};
-use crate::ca::{CaError, CertificateAuthority, ServerName, Stage};
+use crate::ca::{CaError, CertificateAuthority, Rotation, ServerName, Stage};
 use crate::crl::CrlPublisher;
 use crate::enroll::server_cert;
 use crate::renew::{from_hex, hex};
@@ -72,6 +72,9 @@ pub struct PeerState {
     pub trusts_all: bool,
     /// Its version takes no CA bundle: it must update first.
     pub too_old: bool,
+    /// Its certificate comes from a CA the server no longer trusts: it
+    /// missed an emergency change and must be installed again.
+    pub cut_off: bool,
 }
 
 /// Every peer with a valid certificate, as the fleet stands now.
@@ -117,6 +120,7 @@ pub async fn fleet(
                     moved: issuer == Some(trust.issuer),
                     trusts_all: trust.bundle.iter().all(|fp| fingerprints.contains(fp)),
                     too_old: trusted.is_none(),
+                    cut_off: !issuer.is_some_and(|fp| trust.bundle.contains(&fp)),
                 }
             },
         )
@@ -135,9 +139,27 @@ type FleetRow = (
 
 /// Whether a peer still holds up the current step.
 pub fn is_waiting(stage: Stage, peer: &PeerState) -> bool {
+    // Cut off by an earlier emergency: it waits for a new install, not
+    // for this change.
+    if peer.cut_off {
+        return false;
+    }
     match stage {
         Stage::Introduced => !peer.trusts_all,
         Stage::Switched => !peer.moved,
+    }
+}
+
+/// Whether the next step is due whoever is still waiting: the distrust
+/// time of an emergency, or, before the switch, an old CA with less than
+/// [`FORCE_BEFORE`] left (`left`).
+pub fn step_due(rotation: &Rotation, unix_now: i64, left: Duration) -> bool {
+    match rotation.stage {
+        Stage::Switched if rotation.emergency => {
+            rotation.distrust_at.is_some_and(|at| unix_now >= at)
+        }
+        Stage::Introduced => left < FORCE_BEFORE,
+        Stage::Switched => false,
     }
 }
 
@@ -308,18 +330,8 @@ impl Rotator {
             return Ok(());
         };
         let waiting = self.waiting().await?;
-        let unix_now = DateTime::<Utc>::from(now).timestamp();
-        let due = match rotation.stage {
-            Stage::Switched if rotation.emergency => {
-                rotation.distrust_at.is_some_and(|at| unix_now >= at)
-            }
-            Stage::Introduced => {
-                // The old CA is the active one and its end is near.
-                let left = self.ca.not_after().duration_since(now).unwrap_or_default();
-                left < FORCE_BEFORE
-            }
-            Stage::Switched => false,
-        };
+        let left = self.ca.not_after().duration_since(now).unwrap_or_default();
+        let due = step_due(&rotation, DateTime::<Utc>::from(now).timestamp(), left);
         if waiting == 0 || due {
             tracing::info!(stage = ?rotation.stage, waiting, "taking the next step of the change of certificate authority");
             self.step(Actor::System, waiting).await?;
@@ -396,6 +408,7 @@ mod tests {
             moved,
             trusts_all,
             too_old: false,
+            cut_off: false,
         }
     }
 
@@ -405,6 +418,36 @@ mod tests {
         assert!(!is_waiting(Stage::Introduced, &peer(true, true)));
         assert!(is_waiting(Stage::Switched, &peer(false, true)));
         assert!(!is_waiting(Stage::Switched, &peer(true, false)));
+    }
+
+    #[test]
+    fn deadlines_take_the_next_step_whoever_waits() {
+        let day = Duration::from_secs(86400);
+        let planned = Rotation {
+            stage: Stage::Introduced,
+            emergency: false,
+            started_at: 0,
+            switched_at: None,
+            distrust_at: None,
+        };
+        assert!(!step_due(&planned, 1000, 365 * day));
+        assert!(step_due(&planned, 1000, 10 * day));
+        let switched = Rotation {
+            stage: Stage::Switched,
+            switched_at: Some(10),
+            ..planned.clone()
+        };
+        assert!(
+            !step_due(&switched, 1000, 10 * day),
+            "the new CA has its life ahead"
+        );
+        let emergency = Rotation {
+            emergency: true,
+            distrust_at: Some(2000),
+            ..switched
+        };
+        assert!(!step_due(&emergency, 1999, 365 * day));
+        assert!(step_due(&emergency, 2000, 365 * day));
     }
 
     #[test]

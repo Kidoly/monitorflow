@@ -30,6 +30,10 @@ pub struct CaView {
     pub rotation: Option<RotationView>,
     /// Set when a restore brought back a CA this server had retired.
     pub restored_retired_at: Option<DateTime<Utc>>,
+    /// Servers and relays whose certificate comes from a CA no longer
+    /// trusted: they missed an emergency change and must be installed
+    /// again. Up to 50.
+    pub cut_off: Vec<PeerState>,
 }
 
 #[derive(Debug, Serialize)]
@@ -90,31 +94,30 @@ async fn view(rotator: &Rotator) -> Result<CaView, ApiError> {
         not_after,
         ..
     } = status.active;
-    let rotation = match status.rotation {
-        None => None,
-        Some(rotation) => {
-            let fleet = ca_rotation::fleet(rotator.pool(), rotator.ca()).await?;
-            let total = fleet.len();
-            let mut waiting: Vec<_> = fleet
-                .into_iter()
-                .filter(|p| ca_rotation::is_waiting(rotation.stage, p))
-                .collect();
-            let done = total - waiting.len();
-            waiting.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
-            waiting.truncate(MAX_LISTED);
-            Some(RotationView {
-                stage: rotation.stage,
-                emergency: rotation.emergency,
-                started_at: unix(rotation.started_at),
-                switched_at: rotation.switched_at.map(unix),
-                distrust_at: rotation.distrust_at.map(unix),
-                other_fingerprint: status.other.map(|o| hex(&o.fingerprint)),
-                total,
-                done,
-                waiting,
-            })
+    let fleet = ca_rotation::fleet(rotator.pool(), rotator.ca()).await?;
+    let mut cut_off: Vec<_> = fleet.iter().filter(|p| p.cut_off).cloned().collect();
+    cut_off.truncate(MAX_LISTED);
+    let rotation = status.rotation.map(|rotation| {
+        let total = fleet.iter().filter(|p| !p.cut_off).count();
+        let mut waiting: Vec<_> = fleet
+            .into_iter()
+            .filter(|p| ca_rotation::is_waiting(rotation.stage, p))
+            .collect();
+        let done = total - waiting.len();
+        waiting.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
+        waiting.truncate(MAX_LISTED);
+        RotationView {
+            stage: rotation.stage,
+            emergency: rotation.emergency,
+            started_at: unix(rotation.started_at),
+            switched_at: rotation.switched_at.map(unix),
+            distrust_at: rotation.distrust_at.map(unix),
+            other_fingerprint: status.other.map(|o| hex(&o.fingerprint)),
+            total,
+            done,
+            waiting,
         }
-    };
+    });
     let now = std::time::SystemTime::now();
     Ok(CaView {
         fingerprint: hex(&fingerprint),
@@ -124,6 +127,7 @@ async fn view(rotator: &Rotator) -> Result<CaView, ApiError> {
         auto_change_at: time(not_after - ca_rotation::AUTO_START_BEFORE),
         rotation,
         restored_retired_at: status.restored_retired.map(|r| unix(r.retired_at)),
+        cut_off,
     })
 }
 

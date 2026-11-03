@@ -5,8 +5,8 @@
 //! that copy to downstream relays (ADR-0028).
 //!
 //! [`TlsPublisher`] refetches the CRL every hour, retrying every minute
-//! after a failure, and rebuilds the configuration when the relay's
-//! certificate is renewed. Like the server, the listener enforces the CRL's
+//! after a failure, and refetches it and rebuilds the configuration when
+//! the relay's certificate is renewed. Like the server, the listener enforces the CRL's
 //! `next_update`: a relay that cannot refresh it for about a day refuses
 //! its agents.
 //!
@@ -226,6 +226,14 @@ impl TlsPublisher {
                 changed = self.identity.changed(), if !fixed => match changed {
                     Ok(()) => {
                         let current = self.identity.borrow_and_update().clone();
+                        // A new certificate may come with a new CA, whose
+                        // CRL the listener needs at once (ADR-0088).
+                        match fetch_crl(&current, &self.settings).await {
+                            Ok(crl) => {
+                                self.crl.send_replace(crl);
+                            }
+                            Err(error) => tracing::warn!(%error, "cannot refresh the CRL after a renewal; keeping the previous one"),
+                        }
                         self.publish(&current);
                     }
                     Err(_) => fixed = true,
