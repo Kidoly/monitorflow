@@ -1050,8 +1050,43 @@ export interface RemediationEventQuery {
 
 export type RiskTier = "read_only" | "low_impact" | "high_impact" | "forbidden";
 
-/** Why a server cannot be snapshotted before a change (ADR-0044). */
-export type SnapshotUnsupported = "disabled" | "not_mapped" | "unknown_cluster";
+/** Why a server cannot be snapshotted before a change (ADR-0044, ADR-0093). */
+export type SnapshotUnsupported = "disabled" | "not_mapped" | "unknown_cluster" | "cannot_snapshot";
+
+/** A Proxmox VM (`qemu`) or container (`lxc`). */
+export type GuestKind = "qemu" | "lxc";
+
+/** Whether a server is snapshotted before AI's changes. */
+export interface SnapshotSupport {
+  available: boolean;
+  reason: SnapshotUnsupported | null;
+  /** The mapped guest's kind; absent from servers before ADR-0093. */
+  kind?: GuestKind | null;
+  /** With `cannot_snapshot`: what Proxmox cannot snapshot, in words. */
+  detail?: string | null;
+  /** What a snapshot does not hold, like a bind mount. */
+  left_out?: string | null;
+}
+
+/** `GET /api/servers/{id}/proxmox`: the server's Proxmox guest; customer administrators. */
+export interface ProxmoxView {
+  server_id: string;
+  mapping: {
+    cluster: string;
+    node: string;
+    vmid: number;
+    kind: GuestKind;
+    updated_by: string | null;
+    updated_at: string;
+    /** Null until Proxmox said whether it can snapshot the guest. */
+    checked_at: string | null;
+    cannot_snapshot: string | null;
+    left_out: string | null;
+  } | null;
+  snapshots: SnapshotSupport;
+  /** Configured clusters; empty when Proxmox is off. */
+  clusters: string[];
+}
 
 /** One command waiting for approval (ADR-0045). */
 export interface PendingApproval {
@@ -1082,7 +1117,7 @@ export interface PendingApproval {
   /** What the user's roles allow; the API checks again. */
   can_approve: boolean;
   can_reject: boolean;
-  snapshots: { available: boolean; reason: SnapshotUnsupported | null };
+  snapshots: SnapshotSupport;
   /** `accepted`, `off` or `unsupported`; null or absent is unknown. Approving is refused when off or unsupported (ADR-0076). */
   shell_acceptance?: string | null;
   /** What runs the command: `posix` (/bin/sh on Linux) or `powershell` (Windows PowerShell); absent from older servers (ADR-0084). */
@@ -2165,6 +2200,17 @@ export const api = {
         body: { enabled },
       },
     ),
+
+  /** The server's Proxmox guest and whether it is snapshotted before changes (ADR-0044). */
+  serverProxmox: (id: string, signal?: AbortSignal) =>
+    request<ProxmoxView>(`/api/servers/${encodeURIComponent(id)}/proxmox`, { signal }),
+
+  /** Maps the server to a VM or container by hand. */
+  setServerProxmox: (id: string, guest: { cluster: string; node: string; vmid: number; kind: GuestKind }) =>
+    request<ProxmoxView>(`/api/servers/${encodeURIComponent(id)}/proxmox`, { method: "PUT", body: guest }),
+
+  clearServerProxmox: (id: string) =>
+    request<void>(`/api/servers/${encodeURIComponent(id)}/proxmox`, { method: "DELETE" }),
 
   /** Active and upcoming silences of what the user reads, or those covering one server, relay or site (ADR-0079). */
   silences: (filter: { server_id?: string; relay_id?: string; site_id?: string }, signal?: AbortSignal) => {

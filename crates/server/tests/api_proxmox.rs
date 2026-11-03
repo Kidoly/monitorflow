@@ -1,5 +1,5 @@
-//! Proxmox VM mappings through the API (ADR-0044): access, validation,
-//! snapshot availability and the audit log. Ignored without
+//! Proxmox VM and container mappings through the API (ADR-0044,
+//! ADR-0093): access, validation, snapshot availability and the audit log. Ignored without
 //! `DATABASE_URL`.
 
 use axum::body::Body;
@@ -153,14 +153,20 @@ db_tests! {
         let (status, body) = h.call("GET", &uri, &admin, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["mapping"], Value::Null);
-        assert_eq!(body["snapshots"], json!({ "available": false, "reason": "not_mapped" }));
+        assert_eq!(body["snapshots"]["available"], false);
+        assert_eq!(body["snapshots"]["reason"], "not_mapped");
+        assert_eq!(body["clusters"], json!(["pve"]));
 
         let vm = json!({ "cluster": "pve", "node": "pve1", "vmid": 101 });
         let (status, body) = h.call("PUT", &uri, &admin, Some(vm.clone())).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["mapping"]["vmid"], 101);
         assert_eq!(body["mapping"]["node"], "pve1");
-        assert_eq!(body["snapshots"], json!({ "available": true, "reason": null }));
+        assert_eq!(body["mapping"]["kind"], "qemu", "a VM unless told otherwise");
+        assert_eq!(body["mapping"]["checked_at"], Value::Null);
+        assert_eq!(body["snapshots"], json!({
+            "available": true, "reason": null, "kind": "qemu", "detail": null, "left_out": null,
+        }));
 
         // Moved to another node of the cluster.
         let moved = json!({ "cluster": "pve", "node": "pve2", "vmid": 101 });
@@ -188,7 +194,9 @@ db_tests! {
         assert_eq!(body["snapshots"]["reason"], "unknown_cluster");
         h.settings.proxmox_enabled = false;
         let (_, body) = h.call("GET", &uri, &admin, None).await;
-        assert_eq!(body["snapshots"], json!({ "available": false, "reason": "disabled" }));
+        assert_eq!(body["snapshots"]["reason"], "disabled");
+        assert_eq!(body["clusters"], json!([]));
+        h.settings.proxmox_enabled = true;
         h.settings.proxmox_clusters = vec!["pve".into()];
 
         assert_eq!(h.call("DELETE", &uri, &admin, None).await.0, StatusCode::NO_CONTENT);
@@ -206,8 +214,54 @@ db_tests! {
         assert_eq!(actions, ["server.proxmox.set", "server.proxmox.set", "server.proxmox.clear"]);
         assert!(audit.iter().all(|a| a.1 == h.servers[0].to_string()));
         assert_eq!(audit[0].2["previous"], Value::Null);
-        assert_eq!(audit[1].2["previous"], json!({ "cluster": "pve", "node": "pve1", "vmid": 101 }));
+        assert_eq!(audit[1].2["previous"], json!({ "cluster": "pve", "node": "pve1", "vmid": 101, "kind": "qemu" }));
         assert_eq!(audit[2].2["node"], "pve2");
+    }
+
+    #[sqlx::test]
+    async fn containers_are_mapped_and_say_why_they_cannot_be_snapshotted(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        let admin = h.login("boss", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let uri = format!("/api/servers/{}/proxmox", h.servers[0]);
+        let ct = json!({ "cluster": "pve", "node": "pve1", "vmid": 104, "kind": "lxc" });
+        let (status, body) = h.call("PUT", &uri, &admin, Some(ct.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["mapping"]["kind"], "lxc");
+        assert_eq!(body["snapshots"]["kind"], "lxc");
+        assert_eq!(body["snapshots"]["available"], true);
+
+        // What the check pass records (ADR-0093).
+        sqlx::query("UPDATE server_proxmox_vms SET checked_at = now(), cannot_snapshot = $1")
+            .bind("rootfs is on storage local (dir), which cannot take snapshots")
+            .execute(&pool).await.unwrap();
+        let (_, body) = h.call("GET", &uri, &admin, None).await;
+        assert_eq!(body["snapshots"], json!({
+            "available": false,
+            "reason": "cannot_snapshot",
+            "kind": "lxc",
+            "detail": "rootfs is on storage local (dir), which cannot take snapshots",
+            "left_out": null,
+        }));
+        assert!(body["mapping"]["checked_at"].is_string());
+
+        // Mapping again starts over: the pass checks the new guest.
+        let (_, body) = h.call("PUT", &uri, &admin, Some(ct)).await;
+        assert_eq!(body["snapshots"]["available"], true);
+        assert_eq!(body["mapping"]["checked_at"], Value::Null);
+        assert_eq!(body["mapping"]["cannot_snapshot"], Value::Null);
+
+        sqlx::query("UPDATE server_proxmox_vms SET left_out = 'mp0 at /shared, a bind mount'")
+            .execute(&pool).await.unwrap();
+        let (_, body) = h.call("GET", &uri, &admin, None).await;
+        assert_eq!(body["snapshots"]["left_out"], "mp0 at /shared, a bind mount");
+
+        let bad = json!({ "cluster": "pve", "node": "pve1", "vmid": 104, "kind": "openvz" });
+        assert_eq!(h.call("PUT", &uri, &admin, Some(bad)).await.0, StatusCode::BAD_REQUEST);
+        let kinds: Vec<String> = sqlx::query_scalar(
+            "SELECT details->>'kind' FROM audit_log WHERE action = 'server.proxmox.set' ORDER BY id",
+        )
+        .fetch_all(&pool).await.unwrap();
+        assert_eq!(kinds, ["lxc", "lxc"]);
     }
 
     #[sqlx::test]

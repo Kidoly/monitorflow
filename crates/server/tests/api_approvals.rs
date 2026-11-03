@@ -311,7 +311,8 @@ db_tests! {
         let deadline: chrono::DateTime<chrono::Utc> = serde_json::from_value(item["deadline"].clone()).unwrap();
         assert_eq!((deadline - opened).num_seconds(), 3600);
         assert_eq!((item["can_approve"].clone(), item["can_reject"].clone()), (json!(true), json!(true)));
-        assert_eq!(item["snapshots"], json!({ "available": false, "reason": "disabled" }));
+        assert_eq!(item["snapshots"]["available"], false);
+        assert_eq!(item["snapshots"]["reason"], "disabled");
         // High impact: an approver may only reject.
         assert_eq!((items[0]["can_approve"].clone(), items[0]["can_reject"].clone()), (json!(false), json!(true)));
 

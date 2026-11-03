@@ -26,7 +26,7 @@ use crate::commands::acceptance;
 use crate::remediation::approval::{self, check_command, check_reason, DecideError, Verdict};
 use crate::remediation::audit::AuditError;
 use crate::remediation::risk::{self, Shell, Tier};
-use crate::remediation::snapshot::{Support, VmRef};
+use crate::remediation::snapshot::{GuestKind, Mapped, VmRef};
 
 /// Most items of one listing. Every awaiting incident has at most one.
 pub const MAX_ITEMS: i64 = 500;
@@ -75,6 +75,9 @@ struct Row {
     cluster: Option<String>,
     node: Option<String>,
     vmid: Option<i32>,
+    kind: Option<String>,
+    cannot_snapshot: Option<String>,
+    left_out: Option<String>,
     shell_acceptance: Option<String>,
     os_family: String,
 }
@@ -184,7 +187,8 @@ pub async fn list(
                  WHERE e.incident_id = i.id AND e.kind = 'command_queued') AS commands_run,
                 i.max_commands, i.opened_at, p.created_at AS proposed_at,
                 i.opened_at + make_interval(secs => i.max_duration_s) AS deadline,
-                v.cluster, v.node, v.vmid, s.command_kinds->>'shell' AS shell_acceptance,
+                v.cluster, v.node, v.vmid, v.kind, v.cannot_snapshot, v.left_out,
+                s.command_kinds->>'shell' AS shell_acceptance,
                 s.os_family
          FROM remediation_pending_commands p
          JOIN remediation_incidents i ON i.id = p.incident_id
@@ -214,19 +218,19 @@ pub async fn list(
         .into_iter()
         .map(|row| {
             let tier = parse_tier(&row.tier)?;
-            let mapping = match (row.cluster, row.node, row.vmid) {
-                (Some(cluster), Some(node), Some(vmid)) => Some(VmRef {
-                    cluster,
-                    node,
-                    vmid: u32::try_from(vmid).unwrap_or_default(),
+            let mapping = match (row.cluster, row.node, row.vmid, row.kind) {
+                (Some(cluster), Some(node), Some(vmid), Some(kind)) => Some(Mapped {
+                    vm: VmRef {
+                        cluster,
+                        node,
+                        vmid: u32::try_from(vmid).unwrap_or_default(),
+                        kind: GuestKind::parse(&kind).unwrap_or_default(),
+                    },
+                    cannot_snapshot: row.cannot_snapshot,
                 }),
                 _ => None,
             };
-            let support = Support::of(
-                settings.proxmox_enabled,
-                &settings.proxmox_clusters,
-                mapping,
-            );
+            let snapshots = SnapshotSupport::of(settings, mapping, row.left_out);
             Ok(PendingView {
                 id: row.id,
                 incident_id: row.incident_id,
@@ -254,10 +258,7 @@ pub async fn list(
                 can_reject: rejecters.contains(row.site_id),
                 shell_acceptance: row.shell_acceptance,
                 shell: Shell::of(&row.os_family),
-                snapshots: SnapshotSupport {
-                    available: support.is_available(),
-                    reason: support.reason(),
-                },
+                snapshots,
             })
         })
         .collect::<Result<_, ApiError>>()?;

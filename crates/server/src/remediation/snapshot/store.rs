@@ -1,5 +1,6 @@
-//! Server to VM mappings and the snapshots MonitorFlow took, in
-//! `server_proxmox_vms` and `proxmox_snapshots` (ADR-0044).
+//! Server to guest mappings and the snapshots MonitorFlow took, in
+//! `server_proxmox_vms` and `proxmox_snapshots` (ADR-0044). A guest is a
+//! VM or a container (ADR-0093).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,14 +10,53 @@ use uuid::Uuid;
 /// Proxmox VE VMs IDs are 100 to 999,999,999.
 pub const VMID_RANGE: std::ops::RangeInclusive<u32> = 100..=999_999_999;
 
-/// A VM on a Proxmox cluster.
+/// What a Proxmox guest is, which picks its API path.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GuestKind {
+    /// A VM: `/nodes/{node}/qemu/{vmid}`.
+    #[default]
+    Qemu,
+    /// A container: `/nodes/{node}/lxc/{vmid}`.
+    Lxc,
+}
+
+impl GuestKind {
+    /// The API path segment, also stored in `server_proxmox_vms.kind`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Qemu => "qemu",
+            Self::Lxc => "lxc",
+        }
+    }
+
+    pub fn parse(kind: &str) -> Option<Self> {
+        match kind {
+            "qemu" => Some(Self::Qemu),
+            "lxc" => Some(Self::Lxc),
+            _ => None,
+        }
+    }
+
+    /// "VM" or "container", in sentences.
+    pub fn noun(self) -> &'static str {
+        match self {
+            Self::Qemu => "VM",
+            Self::Lxc => "container",
+        }
+    }
+}
+
+/// A VM or container on a Proxmox cluster.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VmRef {
     /// A `[[proxmox.clusters]]` name.
     pub cluster: String,
-    /// The node hosting the VM; the API addresses VMs through it.
+    /// The node hosting the guest; the API addresses guests through it.
     pub node: String,
     pub vmid: u32,
+    #[serde(default)]
+    pub kind: GuestKind,
 }
 
 impl VmRef {
@@ -44,18 +84,105 @@ fn valid_node(node: &str) -> bool {
         && !node.ends_with('-')
 }
 
-/// The VM of `server`, if mapped.
-pub async fn mapping(db: impl PgExecutor<'_>, server: Uuid) -> Result<Option<VmRef>, sqlx::Error> {
-    let row: Option<(String, String, i32)> =
-        sqlx::query_as("SELECT cluster, node, vmid FROM server_proxmox_vms WHERE server_id = $1")
-            .bind(server)
-            .fetch_optional(db)
-            .await?;
-    Ok(row.map(|(cluster, node, vmid)| VmRef {
-        cluster,
-        node,
-        vmid: vmid as u32,
-    }))
+/// A server's guest, with what the last check found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mapped {
+    pub vm: VmRef,
+    /// Why Proxmox refuses snapshots of the guest, if it does.
+    pub cannot_snapshot: Option<String>,
+}
+
+/// The guest of `server`, if mapped.
+pub async fn mapping(db: impl PgExecutor<'_>, server: Uuid) -> Result<Option<Mapped>, sqlx::Error> {
+    let row: Option<(String, String, i32, String, Option<String>)> = sqlx::query_as(
+        "SELECT cluster, node, vmid, kind, cannot_snapshot
+         FROM server_proxmox_vms WHERE server_id = $1",
+    )
+    .bind(server)
+    .fetch_optional(db)
+    .await?;
+    Ok(
+        row.map(|(cluster, node, vmid, kind, cannot_snapshot)| Mapped {
+            vm: VmRef {
+                cluster,
+                node,
+                vmid: vmid as u32,
+                kind: GuestKind::parse(&kind).unwrap_or_default(),
+            },
+            cannot_snapshot,
+        }),
+    )
+}
+
+/// Mappings to check again: never checked, or not for `every`, on
+/// `clusters`, at most `limit`, the oldest check first.
+pub async fn due_checks(
+    db: impl PgExecutor<'_>,
+    clusters: &[String],
+    every: std::time::Duration,
+    limit: i64,
+) -> Result<Vec<(Uuid, VmRef)>, sqlx::Error> {
+    let rows: Vec<(Uuid, String, String, i32, String)> = sqlx::query_as(
+        "SELECT server_id, cluster, node, vmid, kind FROM server_proxmox_vms
+         WHERE cluster = ANY($1)
+           AND (checked_at IS NULL OR checked_at < now() - make_interval(secs => $2))
+         ORDER BY checked_at NULLS FIRST, server_id
+         LIMIT $3",
+    )
+    .bind(clusters)
+    .bind(every.as_secs_f64())
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(server, cluster, node, vmid, kind)| {
+            let kind = GuestKind::parse(&kind).unwrap_or_default();
+            (
+                server,
+                VmRef {
+                    cluster,
+                    node,
+                    vmid: vmid as u32,
+                    kind,
+                },
+            )
+        })
+        .collect())
+}
+
+/// What a check of `vm` found, for `server`. Ignored if the mapping
+/// changed since.
+pub async fn record_check(
+    db: impl PgExecutor<'_>,
+    server: Uuid,
+    vm: &VmRef,
+    cannot_snapshot: Option<&str>,
+    left_out: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE server_proxmox_vms
+         SET checked_at = now(), cannot_snapshot = $5, left_out = $6
+         WHERE server_id = $1 AND cluster = $2 AND vmid = $3 AND kind = $4",
+    )
+    .bind(server)
+    .bind(&vm.cluster)
+    .bind(vm.vmid as i32)
+    .bind(vm.kind.as_str())
+    .bind(cannot_snapshot)
+    .bind(left_out)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Has the next pass check `server`'s guest again, after a failure.
+pub async fn check_soon(db: impl PgExecutor<'_>, server: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE server_proxmox_vms SET checked_at = NULL WHERE server_id = $1")
+        .bind(server)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// When MonitorFlow took `name` of `vm`, if it did and retention has not
