@@ -1,4 +1,4 @@
-// MonitorFlow package payloads, version 1. See ADR-0031 and ADR-0049.
+// MonitorFlow package payloads, version 1. See ADR-0031, ADR-0049 and ADR-0086.
 //
 // Rules: changes are additive only. Never renumber or reuse a field number.
 
@@ -22,6 +22,63 @@ message PackageReport {
   repeated Package packages = 1;
   bool reboot_required = 2;
   int64 collected_at_unix_ms = 3;
+  // Windows only (ADR-0086): where Windows Update takes updates from, as
+  // policy sets it. Absent on Linux, from agents before ADR-0086, and when
+  // the agent could not read the policy.
+  WindowsUpdateSource windows_update_source = 4;
+}
+
+// The update source of a Windows host, read from the Windows Update
+// policy in the registry (Group Policy, or MDM where Group Policy is
+// silent) and already interpreted the way Windows does (ADR-0086).
+message WindowsUpdateSource {
+  enum Origin {
+    ORIGIN_UNSPECIFIED = 0;
+    // Microsoft directly: Windows Update, or Microsoft Update when
+    // registered.
+    ORIGIN_MICROSOFT = 1;
+    // The WSUS server `wsus_url`.
+    ORIGIN_WSUS = 2;
+    // Policy turns WSUS on without naming a server.
+    ORIGIN_WSUS_WITHOUT_URL = 3;
+  }
+  enum Automatic {
+    // Not set by policy: Windows decides.
+    AUTOMATIC_UNSPECIFIED = 0;
+    AUTOMATIC_OFF = 1;
+    // Windows tells about updates before downloading them (AUOptions 2).
+    AUTOMATIC_NOTIFY = 2;
+    // Windows downloads updates and waits to install them (AUOptions 3, 7).
+    AUTOMATIC_DOWNLOAD = 3;
+    // Windows installs updates on a schedule (AUOptions 4).
+    AUTOMATIC_INSTALL = 4;
+    // Local administrators choose (AUOptions 5).
+    AUTOMATIC_LOCAL_CHOICE = 5;
+  }
+  Origin origin = 1;
+  // The WSUS server policy names, without user information. Also set with
+  // ORIGIN_MICROSOFT when policy names a server but does not turn WSUS on,
+  // so Windows ignores it.
+  string wsus_url = 2;
+  // Where the client reports its status, when WSUS is used and this
+  // differs from `wsus_url`.
+  string status_url = 3;
+  // Where downloads come from instead of the WSUS server, when WSUS is
+  // used and policy names one.
+  string download_url = 4;
+  // Any Windows Update policy is set.
+  bool managed = 5;
+  Automatic automatic = 6;
+  // With WSUS: policy forbids Windows Update Internet locations.
+  bool no_internet = 7;
+  // With WSUS: policy takes these classes from Microsoft instead
+  // (policy-driven update source, Windows Server 2022 and later).
+  bool quality_from_microsoft = 8;
+  bool feature_from_microsoft = 9;
+  // Deferrals of Windows Update for Business, in days, when updates of the
+  // class come from Microsoft; zero when none or not applied.
+  uint32 quality_deferral_days = 10;
+  uint32 feature_deferral_days = 11;
 }
 
 message Package {

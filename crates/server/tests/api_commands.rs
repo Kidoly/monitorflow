@@ -244,6 +244,7 @@ db_tests! {
             packages: vec![package("old", "")],
             reboot_required: false,
             collected_at_unix_ms: 1_800_000_000_000,
+            windows_update_source: None,
         };
         assert!(store.replace("agent-1", &first).await.unwrap());
         let report = PackageReport {
@@ -256,6 +257,7 @@ db_tests! {
             ],
             reboot_required: true,
             collected_at_unix_ms: 1_800_000_060_000,
+            windows_update_source: None,
         };
         assert!(store.replace("agent-1", &report).await.unwrap());
         // Older or unknown: ignored.
@@ -457,6 +459,7 @@ db_tests! {
             }],
             reboot_required: false,
             collected_at_unix_ms: 1_800_000_000_000,
+            windows_update_source: None,
         };
         assert!(PackageStore::new(pool.clone()).replace("agent-2", &report).await.unwrap());
         let (_, list) = h.send("GET", &format!("/api/servers/{windows}/packages"), &admin, None).await;

@@ -28,7 +28,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use monitorflow_common::command;
-use monitorflow_common::proto::v1::{Package, PackageReport};
+use monitorflow_common::proto::v1::{Package, PackageReport, WindowsUpdateSource};
 use tokio::sync::watch;
 
 #[cfg(unix)]
@@ -103,6 +103,11 @@ pub trait PackageManager: Send + Sync + 'static {
     /// metadata.
     async fn inventory(&self) -> Result<Vec<Package>, PackageError>;
     async fn reboot_required(&self) -> Result<bool, PackageError>;
+    /// Where Windows Update takes updates from (ADR-0086); `None` on
+    /// Linux, and when it cannot be read.
+    async fn windows_update_source(&self) -> Option<WindowsUpdateSource> {
+        None
+    }
 }
 
 /// apt on the Debian family, dnf on the RHEL family, none elsewhere.
@@ -164,10 +169,12 @@ impl Reports {
             reboot_required,
             "package report collected"
         );
+        let windows_update_source = self.manager.windows_update_source().await;
         self.latest.send_replace(Some(PackageReport {
             packages,
             reboot_required,
             collected_at_unix_ms: unix_ms(),
+            windows_update_source,
         }));
         true
     }

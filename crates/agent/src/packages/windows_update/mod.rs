@@ -9,11 +9,13 @@
 //! checks, which pending updates a request selects, how updates become
 //! [`Package`]s, the pipe's DACL and the service SID it names. [`client`]
 //! holds the agent's side; the COM calls and the pipe itself are in
-//! `wua` and `pipe`, Windows only.
+//! `wua` and `pipe`, Windows only. [`source`] reads where updates come
+//! from (ADR-0086).
 
 pub mod client;
 #[cfg(windows)]
 pub mod pipe;
+pub mod source;
 #[cfg(windows)]
 pub mod wua;
 
