@@ -37,6 +37,10 @@ COPY --from=docker /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker /usr/local/libexec/docker/cli-plugins/docker-compose \
     /usr/local/libexec/docker/cli-plugins/docker-compose
 COPY --from=build /usr/local/bin/monitorflow-updater /usr/local/bin/
+# The files of monitorflow-server-compose.tar.gz (deploy/release-files.sh):
+# the updater puts them in the deploy directory when they differ (ADR-0087).
+COPY deploy/docker-compose.yml deploy/restore.sh deploy/.env.example /usr/share/monitorflow/deploy/
+COPY deploy/docker/pg_hba.conf /usr/share/monitorflow/deploy/docker/
 # Root: the Docker socket is root's anyway, and the updater keeps the
 # update volume's root owned by root (crates/updater/src/lib.rs).
 ENTRYPOINT ["monitorflow-updater"]

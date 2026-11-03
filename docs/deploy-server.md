@@ -112,13 +112,14 @@ In **Administration, Server update** (global administrators):
    - pins the images in `deploy/.env` (`SERVER_IMAGE`, `WEB_IMAGE`, `UPDATER_IMAGE`);
    - recreates `server` and `web` and waits until the server is healthy and reports the new version;
    - adds the release's agents to the server's cache, so agents can follow[^0053];
-   - replaces itself last.
+   - replaces itself last;
+   - when the release changes `docker-compose.yml`, the new updater puts it in place, restarts what it changes, and checks that the server reaches its metrics and logs. If that fails, it puts the previous file back, and the page says so[^0087].
 
 The update is audited (`server.update`). The page follows it, keeps the last status while the server and the web interface restart, and shows the result; reload the page afterwards to get the new web interface. Agents and relays reconnect by themselves.
 
 A deployment built from a checkout ([below](#from-a-checkout)) updates the same way: the first update switches it to the published images.
 
-The updater changes images only. When a release changes `docker-compose.yml` itself, its notes say so: run the installer again, which updates the file. From a checkout: `git pull`, then `docker compose -f deploy/docker-compose.yml up -d --wait`.
+The compose file follows the release, data kept; local changes belong in `docker-compose.override.yml`. A checkout keeps its own: `git pull`, then `docker compose -f deploy/docker-compose.yml up -d --wait`.
 
 ### When an update fails
 

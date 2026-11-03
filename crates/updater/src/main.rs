@@ -13,7 +13,7 @@ use monitorflow_updater::env_file::EnvFile;
 use monitorflow_updater::host::{self, Compose};
 use monitorflow_updater::project::Project;
 use monitorflow_updater::source::{self, Source};
-use monitorflow_updater::update::{Reporter, Updater};
+use monitorflow_updater::update::{self, Reporter, Updater};
 use monitorflow_updater::{restore, serve, Lock, Settings};
 use tokio::signal::unix::{signal, SignalKind};
 
@@ -143,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
             let request = Request {
                 id: format!("cli-{}", chrono::Utc::now().format("%Y%m%d%H%M%S")),
                 version: version.to_string(),
-                requested_by: "command line".into(),
+                requested_by: update::COMMAND_LINE.into(),
                 requested_at: chrono::Utc::now(),
             };
             let _lock = Lock::acquire(&settings.state_dir)?;
@@ -178,7 +178,14 @@ async fn main() -> anyhow::Result<()> {
                     _ = tokio::signal::ctrl_c() => {}
                 }
             };
-            serve(&mut updater, &settings, stop).await;
+            // The files the project runs, as this container sees them.
+            let compose_files: Vec<PathBuf> = compose
+                .project
+                .config_files
+                .iter()
+                .map(|file| compose.project.local(file))
+                .collect();
+            serve(&mut updater, &settings, &compose_files, stop).await;
         }
     }
     Ok(())

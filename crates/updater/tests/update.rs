@@ -13,12 +13,13 @@ use monitorflow_common::server_update::backup::{
 };
 use monitorflow_common::server_update::retention::RetentionRequest;
 use monitorflow_common::server_update::{
-    ImageRef, Request, Status, UpdateState, REQUEST_FILE, STATUS_FILE,
+    ImageRef, Request, Status, UpdateRun, UpdateState, REQUEST_FILE, STATUS_FILE,
 };
+use monitorflow_updater::compose_file;
 use monitorflow_updater::env_file::{EnvFile, Pins};
 use monitorflow_updater::host::{Host, HostError};
 use monitorflow_updater::source::{self, Source};
-use monitorflow_updater::update::{Reporter, Updater};
+use monitorflow_updater::update::{Reporter, Updater, COMMAND_LINE};
 use monitorflow_updater::{restore, take_backup_request, take_request, INBOX};
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair};
@@ -118,6 +119,8 @@ struct HostState {
     dump_fails: bool,
     /// The next recreation of the stores fails.
     stores_fail: bool,
+    /// The next check of the stores fails.
+    check_fails: bool,
     /// What a restore loaded, and what it stopped and started.
     restored: Option<Vec<u8>>,
     calls: Vec<&'static str>,
@@ -227,6 +230,20 @@ impl Host for FakeHost {
         state.calls.push("stores");
         if std::mem::take(&mut state.stores_fail) {
             return Err(HostError("the stores did not start".into()));
+        }
+        Ok(())
+    }
+
+    async fn apply_compose(&self) -> Result<(), HostError> {
+        self.state().calls.push("apply");
+        Ok(())
+    }
+
+    async fn check_stores(&self) -> Result<(), HostError> {
+        let mut state = self.state();
+        state.calls.push("check");
+        if std::mem::take(&mut state.check_fails) {
+            return Err(HostError("VictoriaMetrics does not answer".into()));
         }
         Ok(())
     }
@@ -913,4 +930,147 @@ async fn retention_changes_reach_the_env_file_and_failures_undo_them() {
     let written = std::fs::read_to_string(&volumes.env).unwrap();
     assert!(written.contains("UI_METRICS_RETENTION=60d\n"), "{written}");
     assert!(!written.contains("UI_LOGS_RETENTION"), "{written}");
+}
+
+/// The bundle of the updater image and a deploy directory holding an older
+/// release's files (ADR-0087).
+struct ComposeDirs {
+    bundle: TempDir,
+    deploy: PathBuf,
+    files: Vec<PathBuf>,
+}
+
+impl ComposeDirs {
+    fn new(volumes: &Volumes) -> Self {
+        let bundle = TempDir::new().unwrap();
+        let deploy = volumes.env.parent().unwrap().to_owned();
+        for (dir, text) in [(bundle.path(), "tls"), (deploy.as_path(), "plain")] {
+            for file in compose_file::FILES {
+                let path = dir.join(file);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, format!("{file}: {text}\n")).unwrap();
+            }
+        }
+        let files = vec![deploy.join("docker-compose.yml")];
+        Self {
+            bundle,
+            deploy,
+            files,
+        }
+    }
+
+    fn compose(&self) -> String {
+        std::fs::read_to_string(self.deploy.join("docker-compose.yml")).unwrap()
+    }
+
+    async fn refresh(&self, volumes: &Volumes, host: &FakeHost) {
+        let source = source::Dir {
+            dir: self.bundle.path().to_owned(),
+            keys: vec![],
+        };
+        let mut updater = volumes.updater(host, &source);
+        updater
+            .refresh_compose(self.bundle.path(), &self.deploy, &self.files)
+            .await;
+    }
+}
+
+/// The status an update to this release left, as the next updater reads it.
+fn last_update(volumes: &Volumes, requested_by: &str) {
+    let status = Status {
+        updater_version: "0.1.0".into(),
+        heartbeat_at: Utc::now(),
+        running: None,
+        update: Some(UpdateRun {
+            id: "web-1".into(),
+            from: Some("0.1.0".into()),
+            to: monitorflow_common::VERSION.into(),
+            requested_by: requested_by.into(),
+            state: UpdateState::Succeeded,
+            steps: Vec::new(),
+            error: None,
+            backup: None,
+            migrated: false,
+            started_at: Utc::now(),
+            finished_at: Some(Utc::now()),
+        }),
+        backups: Default::default(),
+        retention: None,
+    };
+    std::fs::write(
+        volumes.update.join(STATUS_FILE),
+        serde_json::to_vec(&status).unwrap(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn the_compose_file_follows_an_update_from_the_web_interface() {
+    let volumes = Volumes::new();
+    let dirs = ComposeDirs::new(&volumes);
+    let host = FakeHost::new(&volumes.env, monitorflow_common::VERSION);
+    last_update(&volumes, "admin");
+
+    dirs.refresh(&volumes, &host).await;
+    assert_eq!(dirs.compose(), "docker-compose.yml: tls\n");
+    assert_eq!(host.state().calls, ["apply", "check"]);
+    assert!(!compose_file::pending(&volumes.state));
+    let steps = volumes.status().update.unwrap().steps;
+    assert!(steps
+        .iter()
+        .any(|s| s.message.contains("compose file of this release in place")));
+
+    // Once per update: a restart changes nothing, even if the file did.
+    std::fs::write(dirs.deploy.join("docker-compose.yml"), "edited\n").unwrap();
+    dirs.refresh(&volumes, &host).await;
+    assert_eq!(dirs.compose(), "edited\n");
+    assert_eq!(host.state().calls, ["apply", "check"]);
+}
+
+#[tokio::test]
+async fn a_compose_file_that_does_not_work_is_put_back() {
+    let volumes = Volumes::new();
+    let dirs = ComposeDirs::new(&volumes);
+    let host = FakeHost::new(&volumes.env, monitorflow_common::VERSION);
+    last_update(&volumes, "admin");
+    host.state().check_fails = true;
+
+    dirs.refresh(&volumes, &host).await;
+    assert_eq!(dirs.compose(), "docker-compose.yml: plain\n");
+    assert_eq!(host.state().calls, ["apply", "check", "apply"]);
+    assert!(!compose_file::pending(&volumes.state));
+    let steps = volumes.status().update.unwrap().steps;
+    let last = &steps.last().unwrap().message;
+    assert!(
+        last.contains("did not work (VictoriaMetrics does not answer); the previous one is back"),
+        "{last}"
+    );
+    // Not tried again at each restart.
+    dirs.refresh(&volumes, &host).await;
+    assert_eq!(host.state().calls, ["apply", "check", "apply"]);
+}
+
+#[tokio::test]
+async fn the_installer_and_the_offline_path_keep_their_compose_file() {
+    let volumes = Volumes::new();
+    let dirs = ComposeDirs::new(&volumes);
+    let host = FakeHost::new(&volumes.env, monitorflow_common::VERSION);
+    dirs.refresh(&volumes, &host).await;
+    last_update(&volumes, COMMAND_LINE);
+    dirs.refresh(&volumes, &host).await;
+    assert_eq!(dirs.compose(), "docker-compose.yml: plain\n");
+    assert!(host.state().calls.is_empty());
+}
+
+#[tokio::test]
+async fn an_interrupted_compose_change_is_finished_on_restart() {
+    let volumes = Volumes::new();
+    let dirs = ComposeDirs::new(&volumes);
+    // Killed after saving the files and writing the new ones.
+    compose_file::save_previous(&dirs.deploy, &volumes.state).unwrap();
+    compose_file::install(dirs.bundle.path(), &dirs.deploy).unwrap();
+    let host = FakeHost::new(&volumes.env, monitorflow_common::VERSION);
+    dirs.refresh(&volumes, &host).await;
+    assert_eq!(host.state().calls, ["apply", "check"]);
+    assert!(!compose_file::pending(&volumes.state));
 }
