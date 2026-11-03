@@ -328,18 +328,31 @@ async fn due(pool: &PgPool) {
     .unwrap();
 }
 
-/// A daily schedule for `coverage` handing off at 00:00 UTC, its first
-/// member on call today.
+/// A daily schedule for `coverage`, its first member on call since 12
+/// hours ago: no hand-off falls within the minutes a test looks ahead,
+/// whatever the time of day.
 async fn schedule(pool: &PgPool, coverage: Coverage, members: &[Uuid]) -> Uuid {
+    schedule_since(pool, coverage, members, Utc::now() - TimeDelta::hours(12)).await
+}
+
+/// A daily schedule for `coverage` handing off at the time of day of
+/// `since`, its first member having taken over at `since`.
+async fn schedule_since(
+    pool: &PgPool,
+    coverage: Coverage,
+    members: &[Uuid],
+    since: DateTime<Utc>,
+) -> Uuid {
     let (customer, site) = coverage.columns();
     let id = sqlx::query_scalar(
         "INSERT INTO on_call_schedules (name, customer_id, site_id, time_zone, rotation,
                                         handoff_time, anchor_date)
-         VALUES ('Ops', $1, $2, 'UTC', 'daily', '00:00', $3) RETURNING id",
+         VALUES ('Ops', $1, $2, 'UTC', 'daily', $3, $4) RETURNING id",
     )
     .bind(customer)
     .bind(site)
-    .bind(Utc::now().date_naive())
+    .bind(since.time())
+    .bind(since.date_naive())
     .fetch_one(pool)
     .await
     .unwrap();
@@ -611,6 +624,40 @@ db_tests! {
         resolve(&pool, incident).await;
         dispatcher.pass().await.unwrap();
         assert_eq!(inbox.who(), ["alice", "bob", "managers", "team"]);
+    }
+
+    #[sqlx::test]
+    async fn the_page_names_who_is_on_call_at_the_step_s_time(pool: PgPool) {
+        let a = place(&pool, "acme").await;
+        let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
+        let bob = user(&pool, "bob", Role::Operator, GrantScope::Customer(a.customer)).await;
+        user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
+        let inbox = Inbox::start().await;
+        inbox.contact(&pool, alice, "alice").await;
+        inbox.contact(&pool, bob, "bob").await;
+        // Alice hands off to Bob in 3 minutes, before the step's 5.
+        let handoff = Utc::now() + TimeDelta::minutes(3);
+        let ops = schedule_since(&pool, Coverage::Customer(a.customer), &[alice, bob], handoff - TimeDelta::days(1)).await;
+        let cookie = login(&pool, "boss").await;
+        let policy = json!({
+            "customer_id": a.customer,
+            "steps": [{ "after_minutes": 5, "on_call": [ops] }],
+        });
+        let (status, view) = call(&pool, "PUT", "/api/follow-up/policies", Some(&cookie), Some(policy)).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+
+        let incident = disk(&pool, a.site, "db-1", "critical").await;
+        let dispatcher = dispatcher(&pool);
+        dispatcher.pass().await.unwrap();
+        assert_eq!(inbox.who(), ["alice"]);
+        let (_, detail) = call(&pool, "GET", &format!("/api/incidents/{incident}"), Some(&cookie), None).await;
+        assert_eq!(detail["follow_up"]["next"], json!(["bob"]));
+
+        // Sent early, before the hand-off, the step goes to Alice: whoever
+        // is on call when it is sent.
+        due(&pool).await;
+        dispatcher.pass().await.unwrap();
+        assert_eq!(inbox.who(), ["alice"]);
     }
 
     #[sqlx::test]
