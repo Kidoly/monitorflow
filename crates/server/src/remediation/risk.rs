@@ -30,10 +30,16 @@
 //!    (`default.unknown`). Allow rules never lower a command the built-in
 //!    rules classified, so they cannot unlock shells, `sudo`, packages,
 //!    `kill` or reboots.
+//!
+//! Windows servers run commands with PowerShell, which parses the same
+//! text differently, so [`classify_for`] with [`Shell::PowerShell`] uses
+//! rules of its own ([`powershell`], ADR-0084) after the same length
+//! checks. Administrator rules apply to both.
 
 mod builtin;
 mod lexer;
 mod pattern;
+pub mod powershell;
 pub mod store;
 #[cfg(test)]
 mod tests;
@@ -157,9 +163,37 @@ pub struct RuleSet {
     pub cache_dirs: Vec<CacheDir>,
 }
 
-/// Classifies `command`, a shell command line, with the built-in rules
-/// and `rules`. See the module documentation for the steps.
+/// The shell that runs a server's commands, which decides the rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Shell {
+    /// `/bin/sh -c`, on Linux (ADR-0043).
+    #[default]
+    Posix,
+    /// Windows PowerShell 5.1, on Windows (ADR-0084).
+    #[serde(rename = "powershell")]
+    PowerShell,
+}
+
+impl Shell {
+    /// The shell of a server whose agent reported `os_family`.
+    pub fn of(os_family: &str) -> Self {
+        if os_family == "windows" {
+            Self::PowerShell
+        } else {
+            Self::Posix
+        }
+    }
+}
+
+/// Classifies `command`, a shell command line, with the built-in POSIX
+/// rules and `rules`. See the module documentation for the steps.
 pub fn classify(command: &str, rules: &RuleSet) -> Decision {
+    classify_for(Shell::Posix, command, rules)
+}
+
+/// Classifies `command` with the rules of `shell` and `rules`.
+pub fn classify_for(shell: Shell, command: &str, rules: &RuleSet) -> Decision {
     let command = command.trim_matches(|c: char| c.is_ascii_whitespace());
     if command.is_empty() {
         return Decision::high("syntax.empty", "the command is empty");
@@ -170,20 +204,33 @@ pub fn classify(command: &str, rules: &RuleSet) -> Decision {
             format!("the command is longer than {MAX_COMMAND_LEN} bytes"),
         );
     }
+    match shell {
+        Shell::Posix => posix(command, rules),
+        Shell::PowerShell => powershell::classify(command, rules),
+    }
+}
+
+/// Non-ASCII characters, which can hide lookalikes, or control
+/// characters other than newline and tab: high impact.
+fn charset(command: &str) -> Option<Decision> {
+    if !command.is_ascii() {
+        return Some(Decision::high(
+            "syntax.non_ascii",
+            "the command has non-ASCII characters, which can hide lookalikes",
+        ));
+    }
+    command
+        .chars()
+        .any(|c| c.is_ascii_control() && c != '\n' && c != '\t')
+        .then(|| Decision::high("syntax.control", "the command has control characters"))
+}
+
+fn posix(command: &str, rules: &RuleSet) -> Decision {
     if let Some(decision) = deny(command, rules) {
         return decision;
     }
-    if !command.is_ascii() {
-        return Decision::high(
-            "syntax.non_ascii",
-            "the command has non-ASCII characters, which can hide lookalikes",
-        );
-    }
-    if command
-        .chars()
-        .any(|c| c.is_ascii_control() && c != '\n' && c != '\t')
-    {
-        return Decision::high("syntax.control", "the command has control characters");
+    if let Some(decision) = charset(command) {
+        return decision;
     }
     let stages = match lexer::lex(command) {
         Ok(stages) => stages,

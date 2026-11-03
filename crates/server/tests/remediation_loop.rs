@@ -109,6 +109,11 @@ struct Harness {
 
 impl Harness {
     async fn start(test_pool: &PgPool, script: &[(&str, Reply)]) -> Self {
+        Self::start_on(test_pool, script, "debian").await
+    }
+
+    /// [`Harness::start`] with a server and agent of `os_family`.
+    async fn start_on(test_pool: &PgPool, script: &[(&str, Reply)], os_family: &str) -> Self {
         // Spawned tasks get a pool of their own. A `#[sqlx::test]` pool
         // borrows its connection permits from sqlx's master pool, 20 for
         // the whole binary, and returns them only when its last clone
@@ -134,10 +139,11 @@ impl Harness {
         .unwrap();
         let server: Uuid = sqlx::query_scalar(
             "INSERT INTO servers (peer_id, site_id, hostname, os_family)
-             VALUES ($1, $2, 'web-01', 'debian') RETURNING id",
+             VALUES ($1, $2, 'web-01', $3) RETURNING id",
         )
         .bind(PEER)
         .bind(site)
+        .bind(os_family)
         .fetch_one(pool)
         .await
         .unwrap();
@@ -205,8 +211,8 @@ impl Harness {
                 protocol_version: PROTOCOL_VERSION.into(),
                 agent_version: "0.1.0".into(),
                 hostname: "web-01".into(),
-                os_family: "debian".into(),
-                os_version: "debian 12".into(),
+                os_family: os_family.into(),
+                os_version: format!("{os_family} 12"),
                 no_package_manager: false,
                 command_kinds: Vec::new(),
             })),
@@ -880,6 +886,49 @@ db_tests! {
             .await
             .unwrap();
         assert_eq!(commands, 0);
+        h.close().await;
+    }
+
+    /// ADR-0084: a Windows server's AI is told about PowerShell, and its
+    /// commands are classified by the PowerShell rules, the Windows deny
+    /// rules included.
+    #[sqlx::test]
+    async fn windows_servers_get_powershell_rules_and_prompt(pool: PgPool) {
+        let script = [("Get-Volume", Reply::Run { exit_code: 0, stdout: "C NTFS 97%" })];
+        let h = Harness::start_on(&pool, &script, "windows").await;
+        let ai = Arc::new(MockProvider::new([
+            Step::run("the disk is full", "Get-Volume", "see usage"),
+            Step::run("old files", "Remove-Item C:\\Windows\\System32\\LogFiles -Recurse", "free space"),
+        ]));
+        let running = h.remediation(&ai, settings());
+        h.wait_state("escalated").await;
+        running.stop().await;
+        assert_eq!(h.agent.seen(), ["Get-Volume"]);
+        let events = h.events().await;
+        let classifications = of_kind(&events, "classification");
+        assert_eq!(classifications[0]["tier"], "read_only");
+        assert_eq!(classifications[0]["rule"]["id"], "readonly.cmdlet");
+        assert_eq!(classifications[1]["tier"], "forbidden");
+        assert_eq!(classifications[1]["rule"]["id"], "forbidden.system_files");
+        assert!(last_escalation(&h).await.contains("forbidden"));
+        let prompt = &ai.requests()[0].system_prompt;
+        assert!(prompt.contains("one Windows server") && prompt.contains("Windows PowerShell 5.1"));
+        assert!(!prompt.contains("/bin/sh"), "{prompt}");
+        h.close().await;
+    }
+
+    /// A Linux command proposed for a Windows server is unknown there, so
+    /// it waits for a person rather than running.
+    #[sqlx::test]
+    async fn linux_commands_wait_on_windows(pool: PgPool) {
+        let h = Harness::start_on(&pool, &[], "windows").await;
+        let ai = Arc::new(MockProvider::new([Step::run("full", "df -h", "usage")]));
+        let running = h.remediation(&ai, settings());
+        h.wait_state("awaiting_approval").await;
+        running.stop().await;
+        let events = h.events().await;
+        assert_eq!(of_kind(&events, "classification")[0]["tier"], "high_impact");
+        assert!(h.agent.seen().is_empty());
         h.close().await;
     }
 

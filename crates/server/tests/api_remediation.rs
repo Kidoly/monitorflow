@@ -424,6 +424,28 @@ db_tests! {
             .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(answer["tier"], "read_only");
+        // Windows servers' rules (ADR-0084), with the same administrator rules.
+        let windows = |command: &str| {
+            json!({"customer_id": h.customer, "site_id": h.paris, "command": command, "shell": "powershell"})
+        };
+        let (status, answer) = h
+            .send("POST", "/api/remediation/classify", &viewer, Some(windows("Get-Service W3SVC")))
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(answer["tier"], "read_only");
+        let (_, answer) = h
+            .send("POST", "/api/remediation/classify", &viewer, Some(windows("df -h")))
+            .await;
+        assert_eq!(answer["tier"], "high_impact");
+        let (_, answer) = h
+            .send("POST", "/api/remediation/classify", &viewer, Some(windows("Format-Volume -DriveLetter D")))
+            .await;
+        assert_eq!(answer["rule"], json!({"source": "builtin", "id": "forbidden.format"}));
+        let (status, _) = h
+            .send("POST", "/api/remediation/classify", &viewer,
+                  Some(json!({"customer_id": h.customer, "command": "x", "shell": "cmd"})))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
         let other = h.login("other", Role::Administrator, GrantScope::Customer(h.other_customer)).await;
         let (status, _) = h
             .send("POST", "/api/remediation/classify", &other, Some(classify(None, "df -h")))

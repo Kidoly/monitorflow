@@ -195,6 +195,7 @@ async fn ask(shared: &Shared, incident: &Incident, progress: Progress) -> Result
                 .max_commands()
                 .saturating_sub(progress.commands_queued),
             command_timeout: shared.settings.command_timeout,
+            shell: incident.shell(),
         }),
         context: vec![prompt::context_block(
             progress.context.as_deref().unwrap_or_default(),
@@ -265,7 +266,7 @@ async fn route(
     command: &str,
     reasoning: &str,
 ) -> Result<Pass, DriveError> {
-    let decision = risk::classify(command, &rules(shared, incident).await?);
+    let decision = risk::classify_for(incident.shell(), command, &rules(shared, incident).await?);
     let automatic = automatic(shared, incident, &decision).await?;
     let Some(mut tx) = leased(shared, incident.id).await? else {
         return Ok(Pass::Done);
@@ -338,7 +339,7 @@ async fn run(
     // The rules again, on exactly what is about to run: an edited command
     // is still refused when forbidden, and a system approval needs a tier
     // that runs without one.
-    let decision = risk::classify(command, &rules(shared, incident).await?);
+    let decision = risk::classify_for(incident.shell(), command, &rules(shared, incident).await?);
     if decision.tier == Tier::Forbidden {
         let reason = format!("the approved command is forbidden ({})", decision.reason);
         return finish(shared, incident, IncidentState::Escalated, &reason).await;

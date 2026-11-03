@@ -52,6 +52,20 @@ describe("ApprovalQueue", () => {
     expect(screen.getByRole("button", { name: "Reject…" })).toBeInTheDocument();
   });
 
+  it("says which shell runs the command", async () => {
+    stubFetch({ [LIST]: list(pending({ shell: "powershell", command: "Restart-Service W3SVC" })) });
+    render(<ApprovalQueue />);
+    await review();
+    expect(await screen.findByText("Runs in Windows PowerShell, as the agent's account.")).toBeInTheDocument();
+  });
+
+  it("says when an old Windows agent cannot run the command", async () => {
+    stubFetch({ [LIST]: list(pending({ shell_acceptance: "unsupported", shell: "powershell" })) });
+    render(<ApprovalQueue />);
+    await review();
+    expect(await screen.findByText(/its agent is too old for AI commands on Windows/)).toBeInTheDocument();
+  });
+
   it("says when the server's system cannot run the command", async () => {
     stubFetch({ [LIST]: list(pending({ shell_acceptance: "unsupported" })) });
     render(<ApprovalQueue />);

@@ -233,11 +233,14 @@ function AllowCommands() {
     <section className={styles.panel} aria-label="Let AI run commands">
       <h2 className={styles.sectionTitle}>Let AI run commands on a server</h2>
       <p className={styles.footnote}>
-        Each server decides for itself. Run this once on every Linux server AI may work on; elsewhere AI&apos;s commands are
-        refused and the incident is handed to a person. Windows servers do not run AI commands yet.
+        Each server decides for itself. Run this once on every server AI may work on; elsewhere AI&apos;s commands are
+        refused and the incident is handed to a person.
       </p>
       {data && data.servers.length > 0 && <ServersAccepting servers={data.servers} />}
+      <p className={styles.footnote}>On Linux servers:</p>
       <AllowCommandsLine />
+      <p className={styles.footnote}>On Windows servers, in PowerShell as an administrator:</p>
+      <AllowCommandsLine osFamily="windows" />
     </section>
   );
 }
@@ -246,9 +249,9 @@ function AllowCommands() {
 function ServersAccepting({ servers }: { servers: Server[] }) {
   const named = (state: Acceptance) => servers.filter((s) => aiCommands(s) === state);
   const groups: [string, Server[]][] = [
-    ["Off, run the line below on them:", named("off")],
+    ["Off, run the line below for their system on them:", named("off")],
     ["Not known yet, they say once updated, which happens by itself:", named("unknown")],
-    ["Their system does not run AI commands yet:", named("unsupported")],
+    ["Their agent is too old for AI commands, it updates by itself:", named("unsupported")],
   ];
   return (
     <>

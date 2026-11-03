@@ -33,6 +33,11 @@ export function commandSummary(server: Reporting): string | null {
     .join(" ");
 }
 
-/** Why a server does not run AI commands although nothing can turn them on. */
+/**
+ * Why a server does not run AI commands although nothing on it can turn them on:
+ * on Windows, an agent from before AI commands came to Windows (ADR-0084).
+ */
 export const unsupportedReason = (osFamily: string) =>
-  osFamily === "windows" ? "Windows servers do not run AI commands yet." : "This system does not run AI commands yet.";
+  osFamily === "windows"
+    ? "Its agent is too old for AI commands on Windows. It updates by itself."
+    : "This system does not run AI commands yet.";

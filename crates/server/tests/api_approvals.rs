@@ -13,7 +13,7 @@ use monitorflow_server::api::users;
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::grpc::Registry;
 use monitorflow_server::remediation::audit::{self, IncidentState, NewEvent, NewIncident};
-use monitorflow_server::remediation::risk::{classify, RuleSet};
+use monitorflow_server::remediation::risk::{classify_for, RuleSet, Shell};
 use monitorflow_server::remediation::runner::store;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -200,7 +200,12 @@ async fn park(pool: &PgPool, server: Uuid, command: &str, max_duration: Duration
     )
     .await
     .unwrap();
-    let decision = classify(command, &RuleSet::default());
+    let os_family: String = sqlx::query_scalar("SELECT os_family FROM servers WHERE id = $1")
+        .bind(server)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let decision = classify_for(Shell::of(&os_family), command, &RuleSet::default());
     audit::append_in(
         &mut tx,
         incident,
@@ -431,6 +436,55 @@ db_tests! {
         let (_, same) = park(&pool, acme.servers[0], LOW, HOUR).await;
         let (_, body) = post(&pool, &approver, &approve_uri(same), json!({ "command": LOW })).await;
         assert_eq!(body["edited"], false);
+    }
+
+    /// ADR-0084: on a Windows server, edits are classified by the
+    /// PowerShell rules, the list says so, and a refusal says how to turn
+    /// AI commands on there.
+    #[sqlx::test]
+    async fn windows_servers_use_the_powershell_rules(pool: PgPool) {
+        let acme = tenant(&pool, "acme").await;
+        let server = acme.servers[0];
+        sqlx::query("UPDATE servers SET os_family = 'windows' WHERE id = $1")
+            .bind(server)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (_, pending) = park(&pool, server, "Restart-Service W3SVC", HOUR).await;
+        let approver = session(&pool, "approver", Role::Approver, Some(acme.customer), None).await;
+        let (_, body) = get(&pool, &approver, "/api/remediation/approvals").await;
+        let item = body["approvals"].as_array().unwrap().iter().find(|a| a["id"] == pending.to_string()).unwrap();
+        assert_eq!(item["shell"], "powershell");
+        assert_eq!(item["can_approve"], true);
+        for (command, status) in [
+            ("Stop-Service WinDefend", StatusCode::BAD_REQUEST),
+            ("Remove-Item C:\\Windows -Recurse", StatusCode::BAD_REQUEST),
+            // Read-only under sh, Set-Content in Windows PowerShell.
+            ("sc query W3SVC", StatusCode::FORBIDDEN),
+        ] {
+            let (got, body) = post(&pool, &approver, &approve_uri(pending), json!({ "command": command })).await;
+            assert_eq!(got, status, "{command}: {body}");
+        }
+        sqlx::query("UPDATE servers SET command_kinds = '{\"shell\": \"off\"}' WHERE id = $1")
+            .bind(server)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, body) = post(&pool, &approver, &approve_uri(pending), json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body["error"].as_str().unwrap().contains("ai-commands on"), "{body}");
+        sqlx::query("UPDATE servers SET command_kinds = '{\"shell\": \"accepted\"}' WHERE id = $1")
+            .bind(server)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let edited = "Restart-WebAppPool DefaultAppPool";
+        let (status, body) = post(&pool, &approver, &approve_uri(pending), json!({ "command": edited })).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // Linux servers keep the POSIX rules.
+        park(&pool, acme.servers[1], LOW, HOUR).await;
+        let (_, body) = get(&pool, &approver, "/api/remediation/approvals").await;
+        assert!(body["approvals"].as_array().unwrap().iter().all(|a| a["shell"] == "posix"));
     }
 
     #[sqlx::test]

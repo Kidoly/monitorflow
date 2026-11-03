@@ -318,14 +318,32 @@ describe("ServerPage", () => {
       expect(screen.queryByLabelText("Command that allows AI commands")).not.toBeInTheDocument();
     });
 
-    it("says what Windows cannot do, with nothing to turn on", async () => {
+    it("gives Windows administrators the PowerShell line", async () => {
+      setUrl(`/servers/view/?id=${ID}&tab=commands`);
+      const windows = { ...off, configure_sources: "unsupported", revert_sources: "unsupported" };
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting(windows, { os_family: "windows" }) }));
+      render(
+        <As user={customerAdmin}>
+          <ServerPage id={ID} />
+        </As>,
+      );
+      await heading();
+      expect(screen.getByText(/AI commands are off on web-1/).parentElement).toHaveTextContent(
+        "run this once on the server, in PowerShell as an administrator.",
+      );
+      const line = await screen.findByLabelText("Command that allows AI commands");
+      expect(line).toHaveTextContent("ai-commands on");
+      expect(line).not.toHaveTextContent("MF_ALLOW_COMMANDS");
+    });
+
+    it("sends an old Windows agent to its update, with nothing to turn on", async () => {
       setUrl(`/servers/view/?id=${ID}&tab=commands`);
       const windows = { ...off, shell: "unsupported", configure_sources: "unsupported", revert_sources: "unsupported" };
       stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting(windows, { os_family: "windows" }) }));
       render(<ServerPage id={ID} />);
       await heading();
       expect(screen.getByText("Not available")).toBeInTheDocument();
-      expect(screen.getByText(/Windows servers do not run AI commands yet/)).toBeInTheDocument();
+      expect(screen.getByText(/Its agent is too old for AI commands on Windows/)).toBeInTheDocument();
       expect(screen.queryByRole("link", { name: "How to turn them on" })).not.toBeInTheDocument();
       expect(screen.queryByText(/AI commands are off/)).not.toBeInTheDocument();
     });

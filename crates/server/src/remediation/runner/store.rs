@@ -9,7 +9,7 @@ use sqlx::{PgExecutor, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::remediation::audit::{self, Actor, AuditError, IncidentState, NewEvent};
-use crate::remediation::risk::Decision;
+use crate::remediation::risk::{Decision, Shell};
 
 /// The incident row and what the loop needs of its server.
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -24,9 +24,16 @@ pub struct Incident {
     pub opened_at: DateTime<Utc>,
     pub max_commands: i32,
     pub max_duration_s: i32,
+    /// The server's, which decides the shell (ADR-0084).
+    pub os_family: String,
 }
 
 impl Incident {
+    /// The shell that runs this incident's commands.
+    pub fn shell(&self) -> Shell {
+        Shell::of(&self.os_family)
+    }
+
     /// When the duration limit escalates it.
     pub fn deadline(&self) -> DateTime<Utc> {
         self.opened_at + chrono::Duration::seconds(self.max_duration_s.into())
@@ -40,7 +47,7 @@ impl Incident {
 pub async fn incident(pool: &PgPool, id: Uuid) -> Result<Option<Incident>, sqlx::Error> {
     sqlx::query_as(
         "SELECT i.id, i.customer_id, s.site_id, i.server_id, s.peer_id, i.alert_incident_id,
-                i.state, i.opened_at, i.max_commands, i.max_duration_s
+                i.state, i.opened_at, i.max_commands, i.max_duration_s, s.os_family
          FROM remediation_incidents i JOIN servers s ON s.id = i.server_id
          WHERE i.id = $1",
     )

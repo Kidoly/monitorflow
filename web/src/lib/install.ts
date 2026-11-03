@@ -162,6 +162,16 @@ export function allowCommandsCommand(install: AgentInstall, address: PublicAddre
   return runInstaller(install, install.source, files.url, (download) => [...download, "MF_ALLOW_COMMANDS=1"].join(" "));
 }
 
+/**
+ * The lines that let an installed Windows agent run AI commands (ADR-0084), for
+ * an elevated PowerShell: the agent sets `commands.shell` in its configuration,
+ * and the service restarts to read it. Nothing to download.
+ */
+export const WINDOWS_ALLOW_COMMANDS = [
+  `& "$env:ProgramFiles\\MonitorFlow\\monitorflow-agent.exe" ai-commands on`,
+  `Restart-Service MonitorFlowAgent`,
+].join("\n");
+
 /** Fetches install.sh from `url` and runs it with `env` of the download variables. */
 function runInstaller(
   install: AgentInstall,

@@ -25,7 +25,7 @@ use super::{ApiError, ApiState};
 use crate::commands::acceptance;
 use crate::remediation::approval::{self, check_command, check_reason, DecideError, Verdict};
 use crate::remediation::audit::AuditError;
-use crate::remediation::risk::{self, Tier};
+use crate::remediation::risk::{self, Shell, Tier};
 use crate::remediation::snapshot::{Support, VmRef};
 
 /// Most items of one listing. Every awaiting incident has at most one.
@@ -76,6 +76,7 @@ struct Row {
     node: Option<String>,
     vmid: Option<i32>,
     shell_acceptance: Option<String>,
+    os_family: String,
 }
 
 /// One command waiting for approval. Field names and types are part of
@@ -123,6 +124,9 @@ pub struct PendingView {
     /// Whether a change on this server is snapshotted first (ADR-0044);
     /// when not, rollback is limited.
     pub snapshots: SnapshotSupport,
+    /// What runs the command: `posix` (`/bin/sh`) or `powershell`
+    /// (Windows PowerShell), from the server's system (ADR-0084).
+    pub shell: Shell,
 }
 
 /// Body of `GET /api/remediation/approvals`.
@@ -180,7 +184,8 @@ pub async fn list(
                  WHERE e.incident_id = i.id AND e.kind = 'command_queued') AS commands_run,
                 i.max_commands, i.opened_at, p.created_at AS proposed_at,
                 i.opened_at + make_interval(secs => i.max_duration_s) AS deadline,
-                v.cluster, v.node, v.vmid, s.command_kinds->>'shell' AS shell_acceptance
+                v.cluster, v.node, v.vmid, s.command_kinds->>'shell' AS shell_acceptance,
+                s.os_family
          FROM remediation_pending_commands p
          JOIN remediation_incidents i ON i.id = p.incident_id
          JOIN servers s ON s.id = i.server_id
@@ -248,6 +253,7 @@ pub async fn list(
                 can_approve: user.sites_with(approver_role(tier)).contains(row.site_id),
                 can_reject: rejecters.contains(row.site_id),
                 shell_acceptance: row.shell_acceptance,
+                shell: Shell::of(&row.os_family),
                 snapshots: SnapshotSupport {
                     available: support.is_available(),
                     reason: support.reason(),
@@ -275,7 +281,7 @@ pub async fn approve(
         check_command(command).map_err(|m| ApiError::Invalid(m.into()))?;
         let rules =
             risk::store::rule_set(&state.pool, target.customer_id, Some(target.site_id)).await?;
-        let decision = risk::classify(command, &rules);
+        let decision = risk::classify_for(target.shell, command, &rules);
         if decision.tier == Tier::Forbidden {
             return Err(ApiError::Invalid(format!(
                 "the edited command is forbidden: {}",
@@ -340,13 +346,14 @@ struct Target {
     server_id: Uuid,
     command: String,
     tier: Tier,
+    shell: Shell,
 }
 
 /// The pending command `id`, decided or not, if the user reads its site.
 async fn target(state: &ApiState, user: &CurrentUser, id: &str) -> Result<Target, ApiError> {
     let id = parse_id(id)?;
-    let row: Option<(Uuid, Uuid, Uuid, String, String)> = sqlx::query_as(
-        "SELECT i.customer_id, s.site_id, s.id, p.command, p.tier
+    let row: Option<(Uuid, Uuid, Uuid, String, String, String)> = sqlx::query_as(
+        "SELECT i.customer_id, s.site_id, s.id, p.command, p.tier, s.os_family
          FROM remediation_pending_commands p
          JOIN remediation_incidents i ON i.id = p.incident_id
          JOIN servers s ON s.id = i.server_id
@@ -356,7 +363,8 @@ async fn target(state: &ApiState, user: &CurrentUser, id: &str) -> Result<Target
     .fetch_optional(&state.pool)
     .await?;
     authorize(user, row.as_ref().map(|r| r.1), false)?;
-    let (customer_id, site_id, server_id, command, tier) = row.ok_or(ApiError::NotFound)?;
+    let (customer_id, site_id, server_id, command, tier, os_family) =
+        row.ok_or(ApiError::NotFound)?;
     Ok(Target {
         id,
         customer_id,
@@ -364,6 +372,7 @@ async fn target(state: &ApiState, user: &CurrentUser, id: &str) -> Result<Target
         server_id,
         command,
         tier: parse_tier(&tier)?,
+        shell: Shell::of(&os_family),
     })
 }
 
