@@ -455,7 +455,8 @@ impl Ctx {
                 Registry::default(),
                 ApiSettings::default(),
             )
-            .with_metrics(vm)
+            .with_metrics(vm.clone())
+            .with_logs(vm)
             .with_enrollment(EnrollmentSettings {
                 ca_fingerprint: [7; 32],
                 server_names: vec!["mf.example".into()],
@@ -1209,6 +1210,26 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 last.contains("site=\"site-a\"") && last.contains("extra_label=site=site-a"),
                 "{last}"
             );
+        }
+        // Log proxy (ADR-0091): B is 404 and never queried; A is queried
+        // on A's stream only, in the query and as a stream filter.
+        ("GET", "/api/servers/{id}/logs") => {
+            let before = ctx.vm.seen().len();
+            let uri = format!("/api/servers/{}/logs?level=error&q=x", b.server);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            assert_eq!(ctx.vm.seen().len(), before, "B's logs were queried");
+            let uri = format!("/api/servers/{}/logs?level=error&q=x", a.server);
+            assert_eq!(ctx.status(method, &uri, None).await, StatusCode::OK);
+            let seen = ctx.vm.seen();
+            assert_eq!(seen.len(), before + 2, "{seen:?}");
+            for query in &seen[before..] {
+                assert!(
+                    query.contains("site=\"site-a\"")
+                        && query.contains("extra_stream_filters={peer=")
+                        && !query.contains("site-b"),
+                    "{query}"
+                );
+            }
         }
         ("GET", "/api/silences") => {
             let body = ctx.call(method, path, None).await.1;

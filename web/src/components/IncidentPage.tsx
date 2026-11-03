@@ -20,7 +20,7 @@ import { metricsError } from "@/lib/charts";
 import { formatSeconds } from "@/lib/format";
 import { followUpLine, listNames, minutesText } from "@/lib/followUp";
 import { INCIDENT_MARGINS, OFFLINE_AFTER_S, incidentTitle, incidentWindow, isOffline, resolvesWhen } from "@/lib/incidents";
-import { incidentPeerHref, incidentsHref, sensorHref } from "@/lib/routes";
+import { incidentLogsHref, incidentPeerHref, incidentsHref, sensorHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue, seriesTitle } from "@/lib/sensors";
 import { SEVERITY_LABELS } from "@/lib/thresholds";
@@ -193,6 +193,11 @@ export function IncidentPage({ id }: { id: string | null }) {
           <>
             {incident.server_id && !offline && (
               <ButtonLink href={scopedHref(sensorHref(incident.server_id, incident.metric, incident.instance), scope)}>Open sensor</ButtonLink>
+            )}
+            {incident.server_id && (
+              <ButtonLink href={scopedHref(incidentLogsHref(incident.server_id, incident.opened_at, incident.resolved_at), scope)}>
+                Logs around this incident
+              </ButtonLink>
             )}
             <ButtonLink href={scopedHref(incidentPeerHref(incident), scope)}>Open {incident.hostname}</ButtonLink>
           </>

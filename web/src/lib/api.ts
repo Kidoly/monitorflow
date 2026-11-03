@@ -239,6 +239,39 @@ export interface RangeQuery {
 /** How each point of a range summarizes the samples of its step. */
 export type Rollup = "avg" | "max" | "min" | "last";
 
+/** One line of a server's system logs (ADR-0091). */
+export interface LogLine {
+  /** RFC 3339. */
+  time: string;
+  message: string;
+  /** syslog priority, 0 emergency to 7 debug; null when unknown. */
+  priority: number | null;
+  unit: string | null;
+  identifier: string | null;
+  pid: number | null;
+}
+
+/** `GET /api/servers/{id}/logs`. */
+export interface LogList {
+  /** Newest first. */
+  lines: LogLine[];
+  /** More lines matched than the limit. */
+  more: boolean;
+  /** The units of the range, sorted, for the unit filter. */
+  units: string[];
+}
+
+export interface LogQuery {
+  start?: Date;
+  end?: Date;
+  /** "error": errors and worse; otherwise warnings and worse, all that is forwarded. */
+  level?: "error" | "warning";
+  unit?: string;
+  /** Text anywhere in the message, without regard to case. */
+  q?: string;
+  limit?: number;
+}
+
 /** One series: its labels and `[unix seconds, value]` points; null is not a number. */
 export interface MetricSeries {
   labels: Record<string, string>;
@@ -2792,6 +2825,22 @@ export const api = {
     const search = params.toString();
     return request<CommandList>(
       `/api/servers/${encodeURIComponent(serverId)}/commands${search ? `?${search}` : ""}`,
+      { signal },
+    );
+  },
+
+  /** The server's system logs, newest first (ADR-0091). */
+  serverLogs: (serverId: string, query: LogQuery = {}, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (query.start) params.set("start", query.start.toISOString());
+    if (query.end) params.set("end", query.end.toISOString());
+    if (query.level) params.set("level", query.level);
+    if (query.unit) params.set("unit", query.unit);
+    if (query.q) params.set("q", query.q);
+    if (query.limit !== undefined) params.set("limit", String(query.limit));
+    const search = params.toString();
+    return request<LogList>(
+      `/api/servers/${encodeURIComponent(serverId)}/logs${search ? `?${search}` : ""}`,
       { signal },
     );
   },

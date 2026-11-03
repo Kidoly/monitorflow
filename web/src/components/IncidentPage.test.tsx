@@ -80,6 +80,11 @@ describe("IncidentPage", () => {
       "href",
       expect.stringMatching(/^\/servers\/sensor\/?\?id=.*&sensor=disk_used_ratio&instance=%2Fvar$/),
     );
+    // From 15 minutes before it opened to 15 minutes after it resolved.
+    const logs = new URL(screen.getByRole("link", { name: "Logs around this incident" }).getAttribute("href")!, "http://x");
+    expect(logs.searchParams.get("tab")).toBe("logs");
+    expect(logs.searchParams.get("from")).toBe("2026-10-19T10:45:00.000Z");
+    expect(logs.searchParams.get("to")).not.toBeNull();
     expect(screen.getByRole("group", { name: "Summary" })).toHaveTextContent(
       new RegExp(`Last value96\\.2%\\s*Peak97\\.1%\\s*Opened${clock("2026-10-19T11:00:00Z")}\\s*Lasted40 min`),
     );
