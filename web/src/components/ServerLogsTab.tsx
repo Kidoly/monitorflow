@@ -59,23 +59,31 @@ function Logs({ server }: { server: ServerDetail }) {
   const unitOptions = [...new Set([...units, ...(unit ? [unit] : [])])].sort().map((u) => ({ value: u, label: u }));
   const filtered = FILTER_KEYS.some((key) => params.get(key));
 
+  // Two columns, so messages wrap on a phone rather than scroll away.
   const columns: Column<LogLine>[] = [
     {
       key: "time",
       header: "Time",
-      cell: (line) => <time dateTime={line.time}>{formatExact(new Date(line.time))}</time>,
-    },
-    {
-      key: "level",
-      header: "Level",
+      className: styles.logTime,
       cell: (line) => (
-        <Label small tone={priorityTone(line.priority)}>
-          {priorityWord(line.priority)}
-        </Label>
+        <>
+          <time dateTime={line.time}>{formatExact(new Date(line.time))}</time>
+          <Label small tone={priorityTone(line.priority)}>
+            {priorityWord(line.priority)}
+          </Label>
+        </>
       ),
     },
-    { key: "source", header: "Unit", cell: (line) => lineSource(line) || <span className={styles.muted}>none</span> },
-    { key: "message", header: "Message", cell: (line) => <span className={styles.logMessage}>{line.message}</span> },
+    {
+      key: "message",
+      header: "Message",
+      cell: (line) => (
+        <>
+          <span className={styles.logSource}>{lineSource(line) || "no unit"}</span>
+          <span className={styles.logMessage}>{line.message}</span>
+        </>
+      ),
+    },
   ];
 
   return (
