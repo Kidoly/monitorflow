@@ -89,7 +89,8 @@ gRPC over HTTP/2 with mutual TLS on every link: agent ↔ relay, relay ↔ relay
 | --- | --- | --- |
 | CPU | Usage per core, load average (Linux) | Load above N for M minutes |
 | Memory | Used, available, swap (page files on Windows) | Available below a percentage |
-| Disk | Space and inodes per mount, or per fixed drive on Windows; I/O later | Free space below a percentage |
+| Disk | Space and inodes per mount, or per fixed drive on Windows | Free space below a percentage |
+| Disk activity | Reads, writes, bytes, busy share, wait and queue per disk (`diskio`, ADR-0092) | Average wait above 200 ms for 10 minutes |
 | Service | systemd unit state; Windows service state (`windows_service`) | Unit not active |
 | Port | TCP/UDP reachability, local or remote | Closed or timeout |
 | Log | Pattern matches in files under the agent's log directories, on Linux and Windows (journald later); events of allowed Windows Event Log channels (`eventlog`) | Match count above N in a window |

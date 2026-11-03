@@ -20,6 +20,9 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | AI commands | The commands AI remediation sends a server: shell commands on Linux, PowerShell on Windows. On, Off, Not available (an agent too old for them, which updates by itself), or Not known yet while the agent or its relay has not updated | shell commands | `shell`, `commands.shell`, `MF_ALLOW_COMMANDS`, `ai-commands on` |
 | Watches | The disk, port or service a sensor measures | instance | `instance` |
 | Log folders | The folders whose files a server's log checks may read, set by its administrator in `agent.toml`: `/var/log` on Linux by default, none on Windows | log directories, allowlist | `sensors.log_dirs` |
+| Disk busy | Share of the time a disk had work in flight, per disk (`sda`, `vg0-root`, `PhysicalDrive0`) | utilisation, util, I/O % | `diskio_busy_ratio` |
+| Disk wait | Average time a disk took to answer one read or write, waiting in its queue included | latency, await | `diskio_wait_seconds` |
+| Disk activity | The check that reports how busy and how slow each disk is | disk I/O, diskio (on screen) | `diskio` |
 | Recovery margin | How far past the threshold a value must return before the incident resolves; under Details | hysteresis | `hysteresis` |
 | Set by | Where a setting comes from; under Details | origin | `origin` |
 | Update source | Where a Windows server takes its updates from: Microsoft (Windows Update) or a WSUS server, as its policy sets it. "Updates come from WSUS at http://wsus.example:8530" | update server, WU endpoint, upstream | `windows_update_source` |
