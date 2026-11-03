@@ -934,6 +934,14 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let uri = path.replace("{name}", "monitorflow-backup-20261029T030000Z-daily.tar.gz");
             assert_eq!(ctx.status(method, &uri, None).await, StatusCode::FORBIDDEN);
         }
+        // The certificate authority serves every customer: global
+        // administrators only.
+        ("GET", "/api/certificate-authority")
+        | ("POST", "/api/certificate-authority/rotation")
+        | ("POST", "/api/certificate-authority/rotation/next") => {
+            let body = (method == "POST").then(|| json!({}));
+            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+        }
         // Automatic updates are server-wide: global administrators only.
         ("GET", "/api/auto-update")
         | ("GET", "/api/settings/auto-update")

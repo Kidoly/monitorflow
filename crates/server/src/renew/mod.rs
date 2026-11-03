@@ -354,13 +354,16 @@ impl Renewer {
             Some((_, _, _, true, ..)) => return refused("the presented certificate has expired"),
             Some((_, _, _, _, issuer, trusted)) => (issuer, trusted),
         };
-        // Rows from before ADR-0088 get their issuer at start.
-        let issuer = issuer.as_deref().and_then(from_hex).unwrap_or([0; 32]);
+        // Rows from before ADR-0088 get their issuer at start; until then
+        // they come from the first CA, the oldest one still trusted.
+        let trust = self.ca.trust();
+        let oldest = trust.bundle.last().copied().unwrap_or(trust.issuer);
+        let issuer = issuer.as_deref().and_then(from_hex).unwrap_or(oldest);
         let trusted: Vec<_> = match trusted {
             Some(trusted) => trusted.iter().filter_map(|fp| from_hex(fp)).collect(),
             None => vec![issuer],
         };
-        let behind = ask.accepts_ca_bundle && self.ca.trust().is_behind(&issuer, &trusted);
+        let behind = ask.accepts_ca_bundle && trust.is_behind(&issuer, &trusted);
         if ask.rotation_only && !behind {
             return Err(RenewError::NoRotation);
         }

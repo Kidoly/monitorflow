@@ -106,7 +106,12 @@ pub async fn fleet(
         .into_iter()
         .map(
             |(role, peer_id, name, last_seen_at, not_after, issuer, trusted)| {
-                let issuer = issuer.as_deref().and_then(from_hex);
+                // Rows from before ADR-0088 without their issuer yet: the
+                // first CA, the oldest one still trusted.
+                let issuer = issuer
+                    .as_deref()
+                    .and_then(from_hex)
+                    .or(trust.bundle.last().copied());
                 let fingerprints: Vec<Fingerprint> = match &trusted {
                     Some(list) => list.iter().filter_map(|fp| from_hex(fp)).collect(),
                     None => issuer.into_iter().collect(),
