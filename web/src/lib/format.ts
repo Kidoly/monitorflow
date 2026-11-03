@@ -102,8 +102,12 @@ export function formatValue(value: number | null | undefined, unit: Unit): strin
       return formatPercent(value);
     case "bytes":
       return formatBytes(value);
-    case "bytes_per_second":
-      return `${formatBytes(value)}/s`;
+    case "bytes_per_second": {
+      // Short enough for a chart's axis: 954 MiB/s, not 953.7 MiB/s.
+      const exponent = binaryExponent(value);
+      const scaled = value / 1024 ** exponent;
+      return scaled >= 100 ? `${formatNumber(scaled, 0)} ${formatBytes(value).split(" ")[1]}/s` : `${formatBytes(value)}/s`;
+    }
     case "per_second":
       return `${formatNumber(value, value < 10 ? 1 : 0)}/s`;
     case "seconds":

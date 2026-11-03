@@ -72,6 +72,7 @@ describe("format", () => {
     expect(formatSeconds(0.25)).toBe("250 ms");
     expect(formatValue(1234.567, "number")).toBe("1,234.57");
     expect(formatValue(1536, "bytes_per_second")).toBe("1.5 KiB/s");
+    expect(formatValue(5e8, "bytes_per_second")).toBe("477 MiB/s");
     expect(formatValue(1234.5, "per_second")).toBe("1,235/s");
     expect(formatValue(null, "ratio")).toBe("–");
   });

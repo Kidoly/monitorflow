@@ -46,7 +46,7 @@ export const MAX_SERIES = 8;
 
 const W = 1000;
 const H = 260;
-const LEFT = 56;
+const LEFT = 72;
 const RIGHT = 980;
 const TOP = 20;
 const BOTTOM = 200;

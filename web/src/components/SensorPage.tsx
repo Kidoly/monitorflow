@@ -290,13 +290,9 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
           }
         />
       )}
-      {data.companions.length > 0 && (
-        <div className={styles.pair}>
-          {data.companions.map((c) => (
-            <CompanionChart key={c.title} companion={c} />
-          ))}
-        </div>
-      )}
+      {data.companions.map((c) => (
+        <CompanionChart key={c.title} companion={c} />
+      ))}
       <div className={styles.pair}>
         <FactsBox
           title="Configuration"
