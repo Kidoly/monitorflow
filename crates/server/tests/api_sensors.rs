@@ -171,7 +171,7 @@ db_tests! {
             .iter()
             .map(|s| (s["name"].as_str().unwrap(), s["origin"].as_str().unwrap()))
             .collect();
-        assert_eq!(sensors, [("cpu", "default"), ("disk", "default"), ("memory", "default")]);
+        assert_eq!(sensors, [("cpu", "default"), ("disk", "default"), ("diskio", "default"), ("memory", "default")]);
 
         // Lyon's resources do not exist for a Paris viewer.
         for uri in [
@@ -259,6 +259,7 @@ db_tests! {
                 ("cpu", "site", site_row["id"].clone()),
                 ("disk", "default", Value::Null),
                 ("disk_data", "server", server_row["id"].clone()),
+                ("diskio", "default", Value::Null),
                 ("memory", "default", Value::Null),
             ]
         );
@@ -397,7 +398,7 @@ db_tests! {
             .iter()
             .map(|s| (s["name"].as_str().unwrap(), s["origin"].as_str().unwrap()))
             .collect();
-        assert_eq!(sensors, [("cpu", "default"), ("memory", "default"), ("port_443", "site")]);
+        assert_eq!(sensors, [("cpu", "default"), ("diskio", "default"), ("memory", "default"), ("port_443", "site")]);
         assert_eq!(body["sensors"][2]["params"], json!({ "port": "443" }));
 
         for uri in [

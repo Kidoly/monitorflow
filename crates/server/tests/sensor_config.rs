@@ -128,7 +128,10 @@ db_tests! {
 
         // Nothing configured: the built-in defaults.
         let defaults = store.load("web-01").await.unwrap().unwrap();
-        assert_eq!(keys(&defaults.sensors), [("cpu", "", 60_000), ("disk", "", 60_000), ("memory", "", 60_000)]);
+        assert_eq!(
+            keys(&defaults.sensors),
+            [("cpu", "", 60_000), ("disk", "", 60_000), ("diskio", "", 60_000), ("memory", "", 60_000)]
+        );
         assert!(store.load("nobody").await.unwrap().is_none());
 
         let (at_paris, at_web) = ((Some(paris), None), (None, Some(web)));
@@ -144,7 +147,13 @@ db_tests! {
         let web = store.load("web-01").await.unwrap().unwrap();
         assert_eq!(
             keys(&web.sensors),
-            [("cpu", "", 5_000), ("memory", "", 60_000), ("port", "22", 10_000), ("service", "nginx", 15_000)]
+            [
+                ("cpu", "", 5_000),
+                ("diskio", "", 60_000),
+                ("memory", "", 60_000),
+                ("port", "22", 10_000),
+                ("service", "nginx", 15_000)
+            ]
         );
         let port = &web.sensors[2];
         assert_eq!((port.params["port"].as_str(), port.params["host"].as_str()), ("22", "localhost"));
@@ -154,11 +163,17 @@ db_tests! {
         let db = store.load("db-01").await.unwrap().unwrap();
         assert_eq!(
             keys(&db.sensors),
-            [("cpu", "", 30_000), ("memory", "", 60_000), ("port", "22", 10_000), ("port", "443", 10_000)]
+            [
+                ("cpu", "", 30_000),
+                ("diskio", "", 60_000),
+                ("memory", "", 60_000),
+                ("port", "22", 10_000),
+                ("port", "443", 10_000)
+            ]
         );
         // Another site's rows stay there.
         let app = store.load("app-01").await.unwrap().unwrap();
-        assert_eq!(keys(&app.sensors), [("cpu", "", 60_000), ("disk", "", 60_000)]);
+        assert_eq!(keys(&app.sensors), [("cpu", "", 60_000), ("disk", "", 60_000), ("diskio", "", 60_000)]);
     }
 
     #[sqlx::test]

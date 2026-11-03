@@ -1013,7 +1013,7 @@ db_tests! {
         let mut peer = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
         let first = config(peer.next().await.unwrap());
         let kinds: Vec<_> = first.sensors.iter().map(|s| s.kind.as_str()).collect();
-        assert_eq!(kinds, ["cpu", "disk", "memory"]);
+        assert_eq!(kinds, ["cpu", "disk", "diskio", "memory"]);
         assert_eq!(first.revision, 0);
         assert_eq!(h.registry.get("agent-1").unwrap().sensor_revision_sent, Some(0));
 

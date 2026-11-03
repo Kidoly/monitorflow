@@ -61,9 +61,9 @@ impl Spec {
 }
 
 /// What every server runs unless its site or itself overrides it: cpu,
-/// memory and disk every minute.
+/// memory, disk and diskio every minute.
 pub fn builtin_defaults() -> Vec<Spec> {
-    ["cpu", "memory", "disk"]
+    ["cpu", "memory", "disk", "diskio"]
         .into_iter()
         .map(|kind| Spec::new(kind, DEFAULT_INTERVAL_MS))
         .collect()
@@ -163,6 +163,7 @@ mod tests {
             [
                 ("cpu", "", 60_000),
                 ("disk", "", 60_000),
+                ("diskio", "", 60_000),
                 ("memory", "", 60_000)
             ]
         );
@@ -180,6 +181,7 @@ mod tests {
             row(Layer::Site, "memory", "", 60_000, false),
             row(Layer::Server, "memory", "", 20_000, true),
             row(Layer::Site, "disk", "", 60_000, false),
+            row(Layer::Site, "diskio", "", 60_000, false),
             row(Layer::Server, "service", "nginx", 15_000, true),
         ]);
         assert_eq!(
