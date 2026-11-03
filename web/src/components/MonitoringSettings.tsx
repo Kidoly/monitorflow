@@ -259,7 +259,7 @@ function ThresholdEditor({
   }
 
   const set = (key: keyof ThresholdForm) => (value: string) => setForm((f) => ({ ...f, [key]: value }));
-  const unit = shape.type === "percent" ? "%" : undefined;
+  const unit = shape.type === "percent" ? "%" : shape.type === "number" ? shape.unit : undefined;
   return (
     <form className={styles.editor} onSubmit={submit} noValidate aria-label="Edit alert">
       <div className={styles.fields}>

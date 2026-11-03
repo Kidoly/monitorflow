@@ -55,6 +55,9 @@ describe("thresholds in plain words", () => {
       "Warn when CPU usage is over 90% for 10 min.",
     );
     expect(say(rule({ enabled: false }))).toBe("No alert on a disk.");
+    const wait = rule({ metric: "monitorflow_diskio_wait_seconds", warning: 0.2, critical: null, duration_s: 600 });
+    expect(say(wait)).toBe("Warn when the average wait of a disk is over 0.2 s for 10 min.");
+    expect(say({ ...wait, instance: "sda" })).toBe("Warn when the average wait of disk sda is over 0.2 s for 10 min.");
     expect(say(rule({ metric: "monitorflow_cpu_load5", warning: 4, critical: null, duration_s: 0 }))).toBe(
       "Warn when Load average, 5 min is over 4.",
     );

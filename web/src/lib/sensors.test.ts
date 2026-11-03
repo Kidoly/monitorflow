@@ -43,6 +43,7 @@ describe("sensor metrics", () => {
       instance: "W32Time",
     });
     expect(primaryMetric(sensor("eventlog", "app_errors"))).toEqual({ metric: "monitorflow_app_errors_matches" });
+    expect(primaryMetric(sensor("diskio", "diskio"))).toEqual({ metric: "monitorflow_diskio_busy_ratio" });
   });
 
   it("finds the sensor of a metric by its longest prefix", () => {
@@ -66,6 +67,11 @@ describe("sensor metrics", () => {
     expect(formatSensorValue("monitorflow_port_up", 0)).toBe("closed");
     expect(formatSensorValue("monitorflow_disk_used_ratio", 0.942)).toBe("94.2%");
     expect(formatSensorValue("monitorflow_disk_used_ratio", null)).toBe("–");
+    const diskio = sensor("diskio", "diskio");
+    expect(seriesTitle(diskio, "monitorflow_diskio_busy_ratio", "nvme0n1")).toBe("Disk busy nvme0n1");
+    expect(seriesTitle(diskio, "monitorflow_diskio_wait_seconds", "sda")).toBe("Disk wait sda");
+    expect(formatSensorValue("monitorflow_diskio_read_bytes_per_second", 3 * 1024 ** 2)).toBe("3 MiB/s");
+    expect(formatSensorValue("monitorflow_diskio_reads_per_second", 2.25)).toBe("2.3/s");
     expect(sensorFacts(disk, "/var")).toBe("disk · /var · every 30 s · timeout 10 s");
     expect(sensorFacts(cpu, "total")).toBe("cpu · every 15 s");
   });

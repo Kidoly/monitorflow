@@ -17,6 +17,7 @@ import {
   isAbortError,
 } from "@/lib/api";
 import { RANGES, type Range, chartWindow, metricsError, seriesCsv } from "@/lib/charts";
+import { diskIoCharts } from "@/lib/diskio";
 import { formatSeconds, unitOf } from "@/lib/format";
 import { DEFAULT_INTERVAL_S, METRIC_PREFIX } from "@/lib/metrics";
 import { incidentHref, serverHref } from "@/lib/routes";
@@ -60,8 +61,19 @@ interface SensorData {
   thresholds: EffectiveThreshold[] | null;
   /** Every incident of this metric and instance, newest first; null when they could not be read. */
   incidents: Incident[] | null;
-  chart: { start: number; end: number; step: number } & ({ series: MetricSeries[] } | { error: string });
+  chart: Chart<MetricSeries>;
+  /** More charts of the same instance: a disk's activity (ADR-0092). */
+  companions: Companion[];
   range: Range;
+}
+
+type Chart<S> = { start: number; end: number; step: number } & ({ series: S[] } | { error: string });
+
+interface Companion {
+  title: string;
+  /** The metric of the first series, which gives the unit. */
+  metric: string;
+  chart: Chart<{ label: string; points: MetricSeries["points"] }>;
 }
 
 const orNull = <T,>(promise: Promise<T>) =>
@@ -77,9 +89,34 @@ async function loadSensor(id: string, metric: string, instance: string, range: R
     orNull(api.serverThresholds(id, signal).then((t) => t.thresholds)),
     orNull(api.incidents({ server_id: id, limit: 500 }, signal).then((p) => p.incidents)),
   ]);
-  const interval = (config && sensorOf(config.sensors, metric)?.interval_ms) ?? DEFAULT_INTERVAL_S * 1000;
-  const window = chartWindow(range, metric, interval / 1000, Date.now() / 1000);
-  let chart: SensorData["chart"];
+  const effective = config ? sensorOf(config.sensors, metric) : undefined;
+  const intervalS = (effective?.interval_ms ?? DEFAULT_INTERVAL_S * 1000) / 1000;
+  const others = effective?.kind === "diskio" ? diskIoCharts(effective.name, metric) : [];
+  const [chart, companions] = await Promise.all([
+    rangeChart(id, metric, instance, range, intervalS, signal),
+    Promise.all(others.map((c) => companion(id, instance, range, intervalS, c, signal))),
+  ]);
+  return {
+    server,
+    config,
+    thresholds,
+    incidents: incidents?.filter((i) => i.metric === metric && i.instance === instance) ?? null,
+    chart,
+    companions,
+    range,
+  };
+}
+
+/** `metric` of `instance` (every instance when empty) over `range`, or why it could not be read. */
+async function rangeChart(
+  id: string,
+  metric: string,
+  instance: string,
+  range: Range,
+  intervalS: number,
+  signal: AbortSignal,
+): Promise<Chart<MetricSeries>> {
+  const window = chartWindow(range, metric, intervalS, Date.now() / 1000);
   try {
     const { series } = await api.queryRange(
       {
@@ -93,18 +130,37 @@ async function loadSensor(id: string, metric: string, instance: string, range: R
       },
       signal,
     );
-    chart = { ...window, series };
+    return { ...window, series };
   } catch (e) {
     if (isAbortError(e)) throw e;
-    chart = { ...window, error: metricsError(e) };
+    return { ...window, error: metricsError(e) };
   }
+}
+
+/** One more chart: its metrics side by side, labelled. */
+async function companion(
+  id: string,
+  instance: string,
+  range: Range,
+  intervalS: number,
+  chart: ReturnType<typeof diskIoCharts>[number],
+  signal: AbortSignal,
+): Promise<Companion> {
+  const parts = await Promise.all(chart.series.map((s) => rangeChart(id, s.metric, instance, range, intervalS, signal)));
+  const { start, end, step } = parts[0]!;
+  const failed = parts.find((p) => "error" in p);
+  const series = parts.flatMap((part, i) =>
+    "series" in part
+      ? part.series.map((s) => ({
+          label: instance ? chart.series[i]!.label : `${chart.series[i]!.label} ${s.labels.instance ?? ""}`.trim(),
+          points: s.points,
+        }))
+      : [],
+  );
   return {
-    server,
-    config,
-    thresholds,
-    incidents: incidents?.filter((i) => i.metric === metric && i.instance === instance) ?? null,
-    chart,
-    range,
+    title: chart.title,
+    metric: chart.series[0]!.metric,
+    chart: failed && "error" in failed ? { start, end, step, error: failed.error } : { start, end, step, series },
   };
 }
 
@@ -234,6 +290,13 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
           }
         />
       )}
+      {data.companions.length > 0 && (
+        <div className={styles.pair}>
+          {data.companions.map((c) => (
+            <CompanionChart key={c.title} companion={c} />
+          ))}
+        </div>
+      )}
       <div className={styles.pair}>
         <FactsBox
           title="Configuration"
@@ -277,6 +340,30 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
         </TableBox>
       </div>
     </Page>
+  );
+}
+
+function CompanionChart({ companion }: { companion: Companion }) {
+  const { title, metric, chart } = companion;
+  if ("error" in chart) {
+    return (
+      <Banner tone="bad">
+        {title}: {chart.error}
+      </Banner>
+    );
+  }
+  return (
+    <TimeChart
+      title={title}
+      series={chart.series}
+      start={chart.start}
+      end={chart.end}
+      step={chart.step}
+      format={(v) => formatSensorValue(metric, v)}
+      min={0}
+      max={unitOf(metric) === "ratio" ? 1 : undefined}
+      emptyText="No data in this range yet."
+    />
   );
 }
 
