@@ -1,7 +1,7 @@
 # ADR-0064: AI setup in the interface
 
 Date: 2026-10-31
-Status: accepted; whether a server accepts commands added by ADR-0076
+Status: accepted; whether a server accepts commands added by ADR-0076; the choice of provider added by ADR-0096
 
 ## Context
 

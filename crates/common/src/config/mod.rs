@@ -1256,19 +1256,24 @@ impl MirrorConfig {
 /// Model the Claude adapter uses unless configured otherwise.
 pub const DEFAULT_AI_MODEL: &str = "claude-opus-5-5";
 
-/// External AI API used to diagnose incidents and propose commands
-/// (ADR-0039). Its answers are untrusted text whatever the provider.
+/// AI API used to diagnose incidents and propose commands (ADR-0039,
+/// ADR-0096). Its answers are untrusted text whatever the provider.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AiConfig {
     pub enabled: bool,
     pub provider: AiProviderKind,
     /// File holding the API key, read at start. The key itself never goes
-    /// in this file, the environment or logs.
+    /// in this file, the environment or logs. Optional for an
+    /// OpenAI-compatible server that needs none.
     pub api_key_file: Option<PathBuf>,
+    /// Where an OpenAI-compatible API lives, like
+    /// `http://ollama.lan:11434/v1`. Required for that provider only.
+    pub base_url: Option<String>,
     pub model: String,
-    /// Most tokens one answer may use, thinking included.
-    pub max_tokens: u32,
+    /// Most tokens one answer may use, thinking included. Unset, each
+    /// provider has its own default.
+    pub max_tokens: Option<u32>,
     /// Seconds one HTTP request may take, connection included.
     pub request_timeout: u64,
 }
@@ -1277,11 +1282,13 @@ impl Default for AiConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            provider: AiProviderKind::Claude,
+            provider: AiProviderKind::Anthropic,
             api_key_file: None,
+            base_url: None,
             model: DEFAULT_AI_MODEL.into(),
-            max_tokens: 16_000,
-            // Answers with thinking may take minutes.
+            max_tokens: None,
+            // Answers with thinking, or from a model on a CPU, may take
+            // minutes.
             request_timeout: 300,
         }
     }
@@ -1292,8 +1299,9 @@ impl AiConfig {
         env.set("ai.enabled", &mut self.enabled)?;
         env.set("ai.provider", &mut self.provider)?;
         env.set_opt("ai.api_key_file", &mut self.api_key_file)?;
+        env.set_opt("ai.base_url", &mut self.base_url)?;
         env.set("ai.model", &mut self.model)?;
-        env.set("ai.max_tokens", &mut self.max_tokens)?;
+        env.set_opt("ai.max_tokens", &mut self.max_tokens)?;
         env.set("ai.request_timeout", &mut self.request_timeout)
     }
 
@@ -1301,10 +1309,16 @@ impl AiConfig {
         if !self.enabled {
             return Ok(());
         }
-        let key_file = self.api_key_file.as_deref().unwrap_or(Path::new(""));
-        check.required("ai.api_key_file", &key_file.to_string_lossy())?;
+        if self.provider == AiProviderKind::OpenAiCompatible {
+            check.required("ai.base_url", self.base_url.as_deref().unwrap_or(""))?;
+        } else {
+            let key_file = self.api_key_file.as_deref().unwrap_or(Path::new(""));
+            check.required("ai.api_key_file", &key_file.to_string_lossy())?;
+        }
         check.required("ai.model", &self.model)?;
-        check.positive("ai.max_tokens", self.max_tokens.into())?;
+        if let Some(max_tokens) = self.max_tokens {
+            check.positive("ai.max_tokens", max_tokens.into())?;
+        }
         check.positive("ai.request_timeout", self.request_timeout)
     }
 }
@@ -1396,20 +1410,43 @@ impl FromStr for AgentInstallSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// Who answers: Anthropic, OpenAI, or any server speaking OpenAI's Chat
+/// Completions API, local models included (ADR-0096).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, serde::Serialize)]
 pub enum AiProviderKind {
     #[default]
-    Claude,
+    #[serde(rename = "anthropic", alias = "claude")]
+    Anthropic,
+    #[serde(rename = "openai")]
+    OpenAi,
+    #[serde(rename = "openai_compatible", alias = "openai-compatible")]
+    OpenAiCompatible,
+}
+
+impl AiProviderKind {
+    pub const ALL: [Self; 3] = [Self::Anthropic, Self::OpenAi, Self::OpenAiCompatible];
+
+    /// The name in the API and the database.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::OpenAi => "openai",
+            Self::OpenAiCompatible => "openai_compatible",
+        }
+    }
 }
 
 impl FromStr for AiProviderKind {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "claude" => Ok(Self::Claude),
-            _ => Err(format!("unknown AI provider `{s}`, expected claude")),
+        match s.to_ascii_lowercase().replace('-', "_").as_str() {
+            "anthropic" | "claude" => Ok(Self::Anthropic),
+            "openai" => Ok(Self::OpenAi),
+            "openai_compatible" => Ok(Self::OpenAiCompatible),
+            _ => Err(format!(
+                "unknown AI provider `{s}`, expected anthropic, openai or openai_compatible"
+            )),
         }
     }
 }

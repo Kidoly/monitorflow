@@ -1,5 +1,6 @@
 use super::*;
-use crate::{CommandOutcome, DataBlock, Exchange};
+use crate::answer::MAX_COMMAND_LEN;
+use crate::{CommandOutcome, DataBlock, Exchange, ProposedCommand, StopOutcome};
 
 fn request() -> StepRequest {
     StepRequest {
@@ -241,39 +242,6 @@ fn refusal_and_truncation_are_typed() {
         parse_response(&answer(json!([]), "max_tokens")),
         Err(AiError::Truncated)
     ));
-}
-
-#[test]
-fn api_errors_and_retry_delays() {
-    let body = br#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
-    let error = api_error(529, body, Some("req_1"));
-    assert!(error.is_transient());
-    assert_eq!(
-        error.to_string(),
-        "AI API answered HTTP 529 (overloaded_error): Overloaded"
-    );
-    let error = api_error(400, &[b'x'; 2000], None);
-    assert!(!error.is_transient());
-    match error {
-        AiError::Api {
-            error_type,
-            message,
-            ..
-        } => {
-            assert_eq!(error_type, None);
-            assert_eq!(message.len(), MAX_ERROR_MESSAGE);
-        }
-        other => panic!("{other:?}"),
-    }
-
-    assert_eq!(parse_retry_after("2"), Some(Duration::from_secs(2)));
-    assert_eq!(parse_retry_after(" 0.5 "), Some(Duration::from_millis(500)));
-    assert_eq!(parse_retry_after("Wed, 21 Oct 2026 07:28:00 GMT"), None);
-    assert_eq!(parse_retry_after("-1"), None);
-    let base = Duration::from_secs(1);
-    assert_eq!(backoff(base, 0), base);
-    assert_eq!(backoff(base, 3), Duration::from_secs(8));
-    assert!(backoff(base, 40) >= MAX_RETRY_DELAY);
 }
 
 #[test]
