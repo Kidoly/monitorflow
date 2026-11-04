@@ -117,6 +117,12 @@
 //! | DELETE | `/api/dashboards/{id}` | edit it | 204; audited |
 //! | POST | `/api/dashboard-data` | any role | body [`dashboard_data::DataRequest`]; [`dashboard_data::DataResponse`]: every panel at once, for the servers the user reads within `within`; a failed panel has an `error` sentence |
 //! | GET | `/api/dashboard-metrics` | any role | optional `site_id`, `customer_id`, `metric`; [`dashboard_data::Catalog`]: metrics reported in the last day, and the instances of `metric` |
+//! | GET | `/api/dashboards/{id}/display-links` | link it | [`display::LinkList`]: the display links showing it, without secrets (ADR-0099) |
+//! | POST | `/api/display-links` | link every dashboard named | body [`display::CreateRequest`]; 201 [`display::Created`] with the `url`, the only time its secret is shown; audited |
+//! | DELETE | `/api/display-links/{id}` | its maker, or link one of its dashboards | 204, its screens stop at their next request; audited |
+//! | POST | `/api/display/start` | display link | body `{"token"}`; [`display::ScreenView`] and a one-hour screen session cookie; 410 for a link turned off, expired or whose maker is disabled, 403 when its maker may show none of its dashboards, 429 over the limits |
+//! | GET | `/api/display` | screen session | [`display::ScreenView`]; 401 once the session or link ends |
+//! | POST | `/api/display/data` | screen session | body `{"dashboard_id"}`; [`dashboard_data::DataResponse`] of one of the link's dashboards, read as its maker with their roles of now |
 //! | GET | `/api/servers/{id}/logs` | read | [`logs::LogList`]: the server's system logs, newest first, see below |
 //! | GET | `/api/servers/{id}/packages` | read | [`packages::PackageList`], see below |
 //! | GET | `/api/servers/{id}/commands` | read | [`commands::CommandList`], newest first, paginated |
@@ -576,6 +582,7 @@ pub mod commands;
 pub mod customers;
 pub mod dashboard_data;
 pub mod dashboards;
+pub mod display;
 mod error;
 pub mod follow_up;
 mod health;
@@ -759,6 +766,8 @@ pub struct ApiState {
     pub ca_rotation: Option<crate::ca_rotation::Rotator>,
     /// Recent dashboard query answers (ADR-0095).
     pub dashboard_cache: Arc<dashboard_data::Cache>,
+    /// Rate limits of screens showing display links (ADR-0099).
+    pub display_limits: Arc<display::Limits>,
 }
 
 impl ApiState {
@@ -778,6 +787,7 @@ impl ApiState {
             release_import: release_import::ImportLock::default(),
             ca_rotation: None,
             dashboard_cache: Arc::default(),
+            display_limits: Arc::default(),
         }
     }
 
@@ -995,6 +1005,12 @@ pub fn router(state: ApiState) -> Router {
                 .delete(dashboards::delete),
         )
         .route("/api/dashboard-data", post(dashboard_data::data))
+        .route("/api/dashboards/{id}/display-links", get(display::list))
+        .route("/api/display-links", post(display::create))
+        .route("/api/display-links/{id}", delete(display::revoke))
+        .route("/api/display", get(display::view))
+        .route("/api/display/start", post(display::start))
+        .route("/api/display/data", post(display::data))
         .route("/api/dashboard-metrics", get(dashboard_data::catalog))
         .route(
             "/api/servers/{id}/sensor_configs",

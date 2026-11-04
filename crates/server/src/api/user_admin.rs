@@ -651,6 +651,6 @@ pub async fn use_link(
     tracing::info!(user = %id, "password set from a link");
 
     let cookie = session::set_cookie(&state.settings, &session);
-    let user = auth::load_user(&state.pool, id, session).await?;
+    let user = auth::load_user(&state.pool, id, Some(session)).await?;
     Ok(([(SET_COOKIE, cookie)], Json(Me::from(&user))).into_response())
 }

@@ -190,6 +190,9 @@ pub struct DataResponse {
     pub step: i64,
     /// When figures and top lists were read.
     pub at: i64,
+    /// The server's clock when it answered, so a screen with a wrong
+    /// clock still shows the right time (ADR-0099).
+    pub now: i64,
     pub panels: Vec<PanelData>,
 }
 
@@ -536,6 +539,16 @@ pub async fn data(
     request: Result<Json<DataRequest>, JsonRejection>,
 ) -> Result<Json<DataResponse>, ApiError> {
     let request = body(request)?;
+    Ok(Json(compute(&state, &user, &request).await?))
+}
+
+/// What `request`'s panels show to `user`. Also what a display link shows,
+/// as the person who made it (ADR-0099).
+pub(super) async fn compute(
+    state: &ApiState,
+    user: &CurrentUser,
+    request: &DataRequest,
+) -> Result<DataResponse, ApiError> {
     if !user.can_read() {
         return Err(ApiError::Forbidden);
     }
@@ -546,7 +559,7 @@ pub async fn data(
     let start = end - range.seconds();
     let at = now / NOW_STEP * NOW_STEP;
 
-    let visible = visible_servers(&state, &user, request.within).await?;
+    let visible = visible_servers(state, user, request.within).await?;
     let resolved: Vec<(Vec<&Visible>, usize)> = request
         .panels
         .iter()
@@ -691,13 +704,14 @@ pub async fn data(
             }
         })
         .collect();
-    Ok(Json(DataResponse {
+    Ok(DataResponse {
         start,
         end,
         step,
         at,
+        now,
         panels,
-    }))
+    })
 }
 
 /// Query string of `GET /api/dashboard-metrics`.
