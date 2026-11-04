@@ -26,7 +26,7 @@ use crate::commands::acceptance;
 use crate::remediation::approval::{self, check_command, check_reason, DecideError, Verdict};
 use crate::remediation::audit::AuditError;
 use crate::remediation::risk::{self, Shell, Tier};
-use crate::remediation::snapshot::{GuestKind, Mapped, VmRef};
+use crate::remediation::snapshot::{local, GuestKind, Mapped, VmRef};
 
 /// Most items of one listing. Every awaiting incident has at most one.
 pub const MAX_ITEMS: i64 = 500;
@@ -80,6 +80,7 @@ struct Row {
     left_out: Option<String>,
     shell_acceptance: Option<String>,
     os_family: String,
+    storage: Option<sqlx::types::Json<local::Storage>>,
 }
 
 /// One command waiting for approval. Field names and types are part of
@@ -124,8 +125,8 @@ pub struct PendingView {
     /// `accepted`, `off`, `unsupported`, or `null` when unknown (ADR-0076).
     /// Approving is 409 once it refuses them.
     pub shell_acceptance: Option<String>,
-    /// Whether a change on this server is snapshotted first (ADR-0044);
-    /// when not, rollback is limited.
+    /// Whether a change on this server is snapshotted first, on Proxmox
+    /// (ADR-0044) or locally (ADR-0094); when not, rollback is limited.
     pub snapshots: SnapshotSupport,
     /// What runs the command: `posix` (`/bin/sh`) or `powershell`
     /// (Windows PowerShell), from the server's system (ADR-0084).
@@ -189,13 +190,14 @@ pub async fn list(
                 i.opened_at + make_interval(secs => i.max_duration_s) AS deadline,
                 v.cluster, v.node, v.vmid, v.kind, v.cannot_snapshot, v.left_out,
                 s.command_kinds->>'shell' AS shell_acceptance,
-                s.os_family
+                s.os_family, st.report AS storage
          FROM remediation_pending_commands p
          JOIN remediation_incidents i ON i.id = p.incident_id
          JOIN servers s ON s.id = i.server_id
          JOIN sites si ON si.id = s.site_id
          JOIN customers c ON c.id = i.customer_id
          LEFT JOIN server_proxmox_vms v ON v.server_id = i.server_id
+         LEFT JOIN server_storage st ON st.server_id = i.server_id
          WHERE p.state = 'pending' AND i.state = 'awaiting_approval'
            AND ($1 OR s.site_id = ANY($2))
            AND ($3::uuid IS NULL OR i.customer_id = $3)
@@ -259,7 +261,7 @@ pub async fn list(
                 can_reject: rejecters.contains(row.site_id),
                 shell_acceptance: row.shell_acceptance,
                 shell: Shell::of(&row.os_family),
-                snapshots,
+                snapshots: snapshots.with_local(&row.os_family, row.storage.as_ref().map(|s| &s.0)),
             })
         })
         .collect::<Result<_, ApiError>>()?;

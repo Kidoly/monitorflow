@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/ui/PageState";
 import { Page } from "@/components/ui/Page";
 
 import { PackageSources } from "./PackageSources";
+import { ServerRollback } from "./ServerRollback";
 
 /**
  * The Updates tab. The server page had no updates section before the
@@ -27,6 +28,7 @@ export function ServerUpdatesTab({ server }: { server: ServerDetail }) {
   return (
     <Page>
       <PackageSources server={server} />
+      <ServerRollback server={server} />
       <EmptyState
         actions={
           readsCustomers(me) ? <ButtonLink href={scopedHref(CAMPAIGNS_PATH, scope)}>Open campaigns</ButtonLink> : sensors

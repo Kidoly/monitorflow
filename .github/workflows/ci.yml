@@ -38,6 +38,16 @@ jobs:
       - run: cargo test --workspace
         env:
           DATABASE_URL: postgres://monitorflow:monitorflow@localhost:5432/monitorflow
+      # The snapshots helper on real LVM and ZFS over loop devices, as
+      # root on this throwaway runner (ADR-0094).
+      - name: Snapshots on loop devices
+        run: |
+          sudo apt-get install -y lvm2 thin-provisioning-tools zfsutils-linux
+          bin=$(cargo test -p monitorflow-agent --test snapshots_loop --no-run --message-format=json \
+            | jq -r 'select(.profile.test == true and .target.name == "snapshots_loop") | .executable')
+          sudo "$bin" --ignored --test-threads=1 --nocapture
+        env:
+          DATABASE_URL: postgres://monitorflow:monitorflow@localhost:5432/monitorflow
   # A small load test (ADR-0090, docs/load-test.md): 100 simulated agents,
   # a command to each and a server restart, against the debug server and
   # relay. It fails when an agent does not connect or come back, or a

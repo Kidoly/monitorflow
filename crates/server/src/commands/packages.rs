@@ -2,12 +2,14 @@
 //! `server_packages`, with `servers.reboot_required` and
 //! `servers.packages_reported_at`. Windows agents report their updates
 //! with a title, classification, severity and size (ADR-0049), and where
-//! they come from in `servers.windows_update_source` (ADR-0086).
+//! they come from in `servers.windows_update_source` (ADR-0086). Linux
+//! agents report their system volumes too, in `server_storage` (ADR-0094).
 
 use monitorflow_common::proto::v1::{Package, PackageReport};
 use sqlx::PgPool;
 
 use super::update_source::UpdateSource;
+use crate::remediation::snapshot::local;
 
 /// Packages kept from one report; a Debian or RHEL host has a few
 /// thousand.
@@ -119,6 +121,7 @@ impl PackageStore {
         )
         .execute(&mut *tx)
         .await?;
+        local::store(&mut *tx, server, report.storage.as_deref()).await?;
         tx.commit().await?;
         Ok(true)
     }

@@ -35,6 +35,7 @@ use crate::commands::sources::{self, os_family, ArchiveKey, Selected};
 use crate::commands::{CommandStore, NewCommand, State};
 use crate::live_settings::Live;
 use crate::mirror::{relays, store, Family, Layout, Mirrors};
+use crate::remediation::snapshot::local;
 
 /// Time to live of a restore: the longest a command may have, as putting
 /// a server back is never wrong, even late.
@@ -70,12 +71,20 @@ pub(super) struct Pending {
     pub configure_error: Option<String>,
     pub restore_command_id: Option<Uuid>,
     pub restore_state: Option<State>,
+    /// The local snapshot before the update (ADR-0094).
+    pub snapshot_command_id: Option<Uuid>,
+    pub snapshot_state: Option<State>,
+    pub snapshot_error: Option<String>,
+    pub proxmox_mapped: bool,
+    pub storage: Option<sqlx::types::Json<local::Storage>>,
 }
 
 /// What a [`Pending`] server of a pinned campaign needs next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Next {
     Configure,
+    /// A local snapshot first (ADR-0094).
+    Snapshot,
     Update,
     Wait,
     /// Restored before its update: configure again.
@@ -110,6 +119,33 @@ impl Pending {
             None => Next::Configure,
             Some(State::Succeeded) => Next::Update,
             Some(_) => Next::Wait,
+        }
+    }
+}
+
+impl Pending {
+    /// What a server ready for its update of a package campaign needs
+    /// first: a local snapshot when it has no Proxmox VM and its system
+    /// volumes allow one, as the remediation hook decides (ADR-0094). A
+    /// failed snapshot fails the server without updating it.
+    pub(super) fn before_update(&self) -> Next {
+        match (self.snapshot_command_id, self.snapshot_state) {
+            (Some(_), Some(State::Succeeded)) => Next::Update,
+            (Some(_), Some(state)) if state.is_final() => Next::Fail(match &self.snapshot_error {
+                Some(error) => {
+                    format!("the snapshot before the update {}: {error}", state.as_str())
+                }
+                None => format!("the snapshot before the update {}", state.as_str()),
+            }),
+            (Some(_), _) => Next::Wait,
+            (None, _) if self.proxmox_mapped => Next::Update,
+            (None, _) => {
+                let storage = self.storage.as_ref().map(|s| &s.0);
+                match local::plan_of(&self.os_family, storage) {
+                    Ok(_) => Next::Snapshot,
+                    Err(_) => Next::Update,
+                }
+            }
         }
     }
 }
@@ -310,7 +346,60 @@ mod tests {
             configure_error: Some("apt-get update failed".into()),
             restore_command_id: restore.map(|_| Uuid::nil()),
             restore_state: restore,
+            snapshot_command_id: None,
+            snapshot_state: None,
+            snapshot_error: None,
+            proxmox_mapped: false,
+            storage: None,
         }
+    }
+
+    #[test]
+    fn a_local_snapshot_comes_first_where_possible() {
+        use monitorflow_common::proto::v1::{StorageReport, Volume, VolumeKind};
+
+        let report = |kind: VolumeKind| StorageReport {
+            volumes: vec![Volume {
+                mount_point: "/".into(),
+                fs_type: "ext4".into(),
+                kind: kind.into(),
+                source: "vg0/root".into(),
+                size_bytes: 1 << 34,
+                free_bytes: 1 << 35,
+                pool_bytes: 1 << 36,
+                metadata_percent: 1.0,
+            }],
+            ..StorageReport::default()
+        };
+        let mut thin = pending(None, None);
+        thin.storage = Some(sqlx::types::Json(local::Storage::from_report(&report(
+            VolumeKind::LvmThin,
+        ))));
+        assert_eq!(thin.before_update(), Next::Snapshot);
+        // A Proxmox VM, Windows, a plain root or no report: straight on.
+        let mut mapped = thin.clone();
+        mapped.proxmox_mapped = true;
+        assert_eq!(mapped.before_update(), Next::Update);
+        let mut windows = thin.clone();
+        windows.os_family = "windows".into();
+        assert_eq!(windows.before_update(), Next::Update);
+        let mut plain = thin.clone();
+        plain.storage = Some(sqlx::types::Json(local::Storage::from_report(&report(
+            VolumeKind::Plain,
+        ))));
+        assert_eq!(plain.before_update(), Next::Update);
+        assert_eq!(pending(None, None).before_update(), Next::Update);
+
+        thin.snapshot_command_id = Some(Uuid::nil());
+        thin.snapshot_state = Some(State::Running);
+        assert_eq!(thin.before_update(), Next::Wait);
+        thin.snapshot_state = Some(State::Succeeded);
+        assert_eq!(thin.before_update(), Next::Update);
+        thin.snapshot_state = Some(State::Expired);
+        assert_eq!(
+            thin.before_update(),
+            Next::Fail("the snapshot before the update expired".into())
+        );
     }
 
     #[test]

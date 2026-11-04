@@ -9,6 +9,7 @@ import {
   chainSummary,
   eventSummary,
   riskWord,
+  rollbackText,
   snapshotReason,
   timeLeft,
 } from "./remediation";
@@ -69,6 +70,28 @@ describe("approval helpers", () => {
     expect(snapshotReason("not_mapped")).toBe("the server is not mapped to a Proxmox VM.");
     expect(snapshotReason("cannot_snapshot", "lxc")).toBe("the container's storage cannot take snapshots.");
     expect(snapshotReason("cannot_snapshot", "qemu")).toBe("the VM's storage cannot take snapshots.");
+    expect(rollbackText({ available: true, reason: null, method: "proxmox", kind: "lxc", left_out: "/shared" })).toEqual({
+      text: "A Proxmox snapshot of the container is taken before the command runs.",
+      note: "It leaves out /shared: a rollback does not restore it.",
+    });
+    expect(
+      rollbackText({
+        available: true,
+        reason: "not_mapped",
+        method: "lvm",
+        detail: "LVM snapshot of / (the thin pool has 40.0 GiB free)",
+      }).text,
+    ).toBe("A local snapshot is taken before the command runs: LVM snapshot of / (the thin pool has 40.0 GiB free).");
+    expect(rollbackText({ available: false, reason: "disabled", detail: "/ is on plain ext4" })).toEqual({
+      text: "No snapshot before this change: / is on plain ext4.",
+      note: null,
+    });
+    expect(
+      rollbackText({ available: false, reason: "cannot_snapshot", kind: "lxc", detail: "rootfs is on storage local (dir)" }),
+    ).toEqual({
+      text: "No snapshot before this change: the container's storage cannot take snapshots.",
+      note: "(rootfs is on storage local (dir).)",
+    });
     expect(chainSummary({ valid: true, events: 3, broken_at: null, reason: null, head_hash: "abcdef0123456789" })).toBe(
       "Hash chain verified: 3 events, head abcdef012345.",
     );

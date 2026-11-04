@@ -6,6 +6,8 @@ syntax = "proto3";
 
 package monitorflow.v1;
 
+import "monitorflow/v1/snapshots.proto";
+
 // Payload of a Command of kind "apply_updates".
 message ApplyUpdates {
   // Packages to upgrade, by name; empty upgrades every package.
@@ -26,6 +28,9 @@ message PackageReport {
   // policy sets it. Absent on Linux, from agents before ADR-0086, and when
   // the agent could not read the policy.
   WindowsUpdateSource windows_update_source = 4;
+  // Linux only (ADR-0094): the system volumes and MonitorFlow's snapshots
+  // of them. Absent from agents before ADR-0094.
+  StorageReport storage = 5;
 }
 
 // The update source of a Windows host, read from the Windows Update

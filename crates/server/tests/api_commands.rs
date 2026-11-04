@@ -246,6 +246,7 @@ db_tests! {
             reboot_required: false,
             collected_at_unix_ms: 1_800_000_000_000,
             windows_update_source: None,
+            storage: None,
         };
         assert!(store.replace("agent-1", &first).await.unwrap());
         let report = PackageReport {
@@ -259,6 +260,7 @@ db_tests! {
             reboot_required: true,
             collected_at_unix_ms: 1_800_000_060_000,
             windows_update_source: None,
+            storage: None,
         };
         assert!(store.replace("agent-1", &report).await.unwrap());
         // Older or unknown: ignored.
@@ -461,6 +463,7 @@ db_tests! {
             reboot_required: false,
             collected_at_unix_ms: 1_800_000_000_000,
             windows_update_source: None,
+            storage: None,
         };
         // Agents before ADR-0086 say nothing of the update source.
         assert!(PackageStore::new(pool.clone()).replace("agent-2", &report).await.unwrap());

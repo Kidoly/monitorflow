@@ -133,8 +133,19 @@ What the rules allow:
 | `shutdown -r +1` | `apply_updates` with `allow_reboot` |
 | `monitorflow-agent sources apply`, `… sources revert` | `configure_sources`, `revert_sources` |
 | `monitorflow-agent self-update` | `self_update`: installs a signed agent release (below) |
+| `monitorflow-agent snapshots inspect`, `… snapshots take`, `… snapshots delete` | The storage part of each package report, `take_snapshot` and `delete_snapshot`: local snapshots before a change (below) |
 
 There are no wildcards. The agent never runs `apt-get` or `dnf` through sudo: the `packages update` helper reads the kind of update and the package names on stdin, refuses names that are not package names (options, paths, shell characters), and runs `apt-get update` and the upgrade, or `dnf upgrade`, itself[^0036]. Security-only updates use `dnf upgrade --security` on dnf, and on apt the packages whose candidate comes from a `-security` suite.
+
+## Snapshots before a change
+
+When `/` is on LVM (thin or classic) or ZFS, MonitorFlow snapshots the system volumes (`/`, `/usr`, `/var`, `/opt` and `/boot`, whichever are on LVM or ZFS) before an update campaign updates it and before an AI remediation change, on a server that is not a Proxmox VM or container MonitorFlow knows of[^0094]; those get a Proxmox snapshot instead. Nothing needs setting up. The Rollback line of the server page says in advance what a change would get, like "Snapshot first: LVM snapshot of / and /var (the thin pool has 40.0 GiB free)", or why rollback is limited, like "/ is on plain ext4".
+
+The `snapshots` helper reads only a snapshot name on stdin and decides the rest itself: which volumes, the size of a classic LVM snapshot (20 % of the volume, at least 1 GiB), and whether there is room. It refuses when a volume group lacks that space, or when a thin pool or ZFS dataset has less than 10 % free. Its snapshots carry the LVM tag `monitorflow` or the ZFS property `monitorflow:managed=yes`, and it never deletes a snapshot without them. `sudo monitorflow-agent snapshots inspect` prints what it sees.
+
+Snapshots are deleted automatically: classic LVM snapshots after a day, as they slow every write and become invalid once full, the others after 7 days, and only the newest 3 are kept. Rolling back is manual, as it needs a reboot: the server's Updates tab lists the snapshots with the commands for each.
+
+Hosts installed before snapshots have sudo rules without the `snapshots` lines, and self-update does not change them: run the install command again to get them. The Rollback line says so.
 
 ## Self-update
 
@@ -322,3 +333,4 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0084]: [ADR-0084: AI remediation on Windows](adr/0084-windows-remediation.md)
 [^0086]: [ADR-0086: Where Windows servers take their updates from](adr/0086-windows-update-source.md)
 [^0091]: [ADR-0091: System logs](adr/0091-system-logs.md)
+[^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)

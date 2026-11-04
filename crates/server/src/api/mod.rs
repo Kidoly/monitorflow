@@ -151,6 +151,7 @@
 //! | PUT | `/api/servers/{id}/proxmox` | customer administrator | body [`proxmox::MappingRequest`]; 200 [`proxmox::ProxmoxView`] |
 //! | DELETE | `/api/servers/{id}/proxmox` | customer administrator | 204; 404 without a mapping |
 //! | GET | `/api/servers/{id}/proxmox/guests` | customer administrator | [`proxmox::GuestList`], see below |
+//! | GET | `/api/servers/{id}/rollback` | read | [`rollback::RollbackView`]: what a change gets first, a Proxmox, LVM or ZFS snapshot or why none, and the local snapshots with when they are deleted (ADR-0094) |
 //! | GET | `/api/notifications/channels` | any administrator | [`notifications::ChannelList`]: the channels of what the user administers, without secrets, with `has_secret` and the last error (ADR-0060, ADR-0078) |
 //! | POST | `/api/notifications/channels` | administrator of what it covers | body [`notifications::ChannelRequest`]; 201 [`notifications::ChannelView`]; 403 for anything else; audited |
 //! | PUT | `/api/notifications/channels/{id}` | administrator of what it covers | body [`notifications::ChannelRequest`], an empty secret keeps the stored one unless the destination changes; 200 [`notifications::ChannelView`]; 404 for a channel the user does not manage, 403 for a coverage they do not; audited |
@@ -599,6 +600,7 @@ pub mod remediation_events;
 pub mod remediation_incidents;
 pub mod revoke;
 pub mod roles;
+pub mod rollback;
 pub mod sensors;
 pub mod server_settings;
 pub mod server_update;
@@ -1027,6 +1029,7 @@ pub fn router(state: ApiState) -> Router {
             put(thresholds::update).delete(thresholds::delete),
         )
         .route("/api/servers/{id}/packages", get(packages::list))
+        .route("/api/servers/{id}/rollback", get(rollback::get))
         .route(
             "/api/servers/{id}/commands",
             get(commands::list).post(commands::create),

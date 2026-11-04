@@ -133,6 +133,8 @@ pub struct TargetView {
     /// update and the command restoring the sources after it.
     pub sources_command_id: Option<Uuid>,
     pub restore_command_id: Option<Uuid>,
+    /// The local snapshot taken before the update, if any (ADR-0094).
+    pub snapshot_command_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
@@ -282,6 +284,7 @@ async fn detail_of(state: &ApiState, id: Uuid) -> Result<CampaignDetail, ApiErro
                 finished_at: t.finished_at,
                 sources_command_id: t.sources_command_id,
                 restore_command_id: t.restore_command_id,
+                snapshot_command_id: t.snapshot_command_id,
             });
         }
         let state = match (wave.started_at, wave.finished_at) {

@@ -29,6 +29,8 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Update source | Where a Windows server takes its updates from: Microsoft (Windows Update) or a WSUS server, as its policy sets it. "Updates come from WSUS at http://wsus.example:8530" | update server, WU endpoint, upstream | `windows_update_source` |
 | Monthly updates | Windows quality updates: the security and fix updates Microsoft releases each month | quality updates, cumulative updates (on screen) | `quality_from_microsoft`, `quality_deferral_days` |
 | Batch | Part of the servers of a campaign, updated together | wave | `waves` |
+| Rollback | What a change gets before it runs: a snapshot to go back to. "Rollback: LVM snapshot of / and /var"; without one, "Rollback limited" and why, like "/ is on plain ext4" | restore point, backup | `snapshots`, `/rollback` |
+| Snapshot | A copy of a server's system volumes (or its Proxmox VM) taken before a change, deleted after a day (classic LVM) or a week | checkpoint, LV, dataset (on screen) | `take_snapshot`, `server_storage` |
 | Channel | Where notifications go: an email address, a webhook, or a Slack, Teams or Discord channel | destination, target, integration | `notification_channels` |
 | Webhook URL | The address a chat service gives for posting to one of its channels. It works as a password, so it is never shown again | token, connector | `secret` |
 | Workflow | What Teams calls the automation that gives such a URL, from the "Send webhook alerts to a channel" template | connector, except to name the retired ones | |

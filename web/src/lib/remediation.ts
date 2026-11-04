@@ -2,6 +2,7 @@ import type {
   ActorKind,
   ChainReport,
   GuestKind,
+  SnapshotSupport,
   RemediationEvent,
   RemediationEventKind,
   RemediationEventQuery,
@@ -145,6 +146,33 @@ export function snapshotReason(reason: SnapshotUnsupported | null, kind?: GuestK
     default:
       return "no snapshot support on this server.";
   }
+}
+
+/**
+ * The rollback line of the approval detail: which snapshot is taken before
+ * the command, or why none is, then a quieter note (ADR-0044, ADR-0093,
+ * ADR-0094).
+ */
+export function rollbackText(snapshots: SnapshotSupport): { text: string; note: string | null } {
+  const { reason, detail, kind } = snapshots;
+  if (!snapshots.available) {
+    // A Proxmox guest: Proxmox's reason, then its cause.
+    if (reason === "cannot_snapshot" || reason === "unknown_cluster" || !detail) {
+      return {
+        text: `No snapshot before this change: ${snapshotReason(reason, kind)}`,
+        note: detail && reason === "cannot_snapshot" ? `(${detail}.)` : null,
+      };
+    }
+    // Not a Proxmox guest: why there is no local snapshot.
+    return { text: `No snapshot before this change: ${detail}.`, note: null };
+  }
+  if ((snapshots.method === "lvm" || snapshots.method === "zfs") && detail) {
+    return { text: `A local snapshot is taken before the command runs: ${detail}.`, note: null };
+  }
+  return {
+    text: `A Proxmox snapshot of the ${kind === "lxc" ? "container" : "VM"} is taken before the command runs.`,
+    note: snapshots.left_out ? `It leaves out ${snapshots.left_out}: a rollback does not restore it.` : null,
+  };
 }
 
 /** "12 min 30 s left", or null once `deadline` passed. */

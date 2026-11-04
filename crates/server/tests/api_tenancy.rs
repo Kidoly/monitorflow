@@ -668,7 +668,9 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 "{body}"
             );
         }
-        ("GET", "/api/servers/{id}/packages") | ("GET", "/api/servers/{id}/commands") => {
+        ("GET", "/api/servers/{id}/packages")
+        | ("GET", "/api/servers/{id}/commands")
+        | ("GET", "/api/servers/{id}/rollback") => {
             let uri = path.replace("{id}", &b.server.to_string());
             assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
             let uri = path.replace("{id}", &a.server.to_string());

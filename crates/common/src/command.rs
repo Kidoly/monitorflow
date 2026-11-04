@@ -16,6 +16,10 @@ pub const REVERT_SOURCES: &str = "revert_sources";
 pub const SHELL: &str = "shell";
 /// Kind of [`crate::proto::v1::SelfUpdate`] commands (ADR-0053).
 pub const SELF_UPDATE: &str = "self_update";
+/// Kind of [`crate::proto::v1::TakeSnapshot`] commands (ADR-0094).
+pub const TAKE_SNAPSHOT: &str = "take_snapshot";
+/// Kind of [`crate::proto::v1::DeleteSnapshot`] commands (ADR-0094).
+pub const DELETE_SNAPSHOT: &str = "delete_snapshot";
 
 /// Package names in an `ApplyUpdates` reach a command line on the agent:
 /// letters, digits and `.+_:-`, at most 128 bytes, not starting with `-` so

@@ -10,7 +10,9 @@
 //!
 //! In a campaign pinned to snapshots, each server's sources are pointed
 //! at them before its update and restored after it ([`super::pin`],
-//! ADR-0038); restores are queued for campaigns in any state.
+//! ADR-0038); restores are queued for campaigns in any state. A package
+//! update is preceded by a local snapshot of the server where one is
+//! possible and it has no Proxmox VM (ADR-0094).
 //!
 //! A step only reads `commands` and the campaign's tables, so running it
 //! twice, or again after a restart, queues nothing twice.
@@ -20,9 +22,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use monitorflow_common::command::{APPLY_UPDATES, CONFIGURE_SOURCES, SELF_UPDATE};
+use monitorflow_common::command::{APPLY_UPDATES, CONFIGURE_SOURCES, SELF_UPDATE, TAKE_SNAPSHOT};
 use monitorflow_common::config::ServerConfig;
+use monitorflow_common::proto::v1::TakeSnapshot;
 use monitorflow_common::release::Version;
+use prost::Message;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use tokio::sync::Notify;
@@ -36,6 +40,7 @@ use crate::api::audit::{self, Event};
 use crate::commands::{CommandStore, Commands, NewCommand};
 use crate::live_settings::Live;
 use crate::mirror::{relays, Mirrors};
+use crate::remediation::snapshot::local;
 
 /// How often active campaigns are looked at.
 pub const POLL: Duration = Duration::from_secs(10);
@@ -63,6 +68,9 @@ pub struct Runner {
     commands: Option<Commands>,
     sources: Option<PinSources>,
     agents: agent_releases::Sources,
+    /// `[proxmox]` is on: a server mapped to a guest is Proxmox's to
+    /// snapshot, so it gets no local snapshot (ADR-0094).
+    proxmox: bool,
     wake: Arc<Notify>,
 }
 
@@ -73,6 +81,7 @@ impl Runner {
             commands: None,
             sources: None,
             agents: agent_releases::Sources::from_config(&ServerConfig::default()),
+            proxmox: false,
             wake: Arc::new(Notify::new()),
         }
     }
@@ -80,6 +89,13 @@ impl Runner {
     /// Where agent update campaigns tell agents to download (ADR-0053).
     pub fn with_agent_releases(mut self, agents: agent_releases::Sources) -> Self {
         self.agents = agents;
+        self
+    }
+
+    /// Whether `[proxmox]` is on, which leaves its mapped guests without a
+    /// local snapshot (ADR-0094).
+    pub fn with_proxmox(mut self, enabled: bool) -> Self {
+        self.proxmox = enabled;
         self
     }
 
@@ -157,7 +173,15 @@ impl Runner {
             restored = pin::restore(&mut tx, &row, open).await?;
         }
         let step = if row.state.is_active() {
-            step(&mut tx, &row, now, self.sources.as_ref(), &self.agents).await?
+            step(
+                &mut tx,
+                &row,
+                now,
+                self.sources.as_ref(),
+                &self.agents,
+                self.proxmox,
+            )
+            .await?
         } else {
             Step::Idle
         };
@@ -213,6 +237,7 @@ async fn step(
     now: DateTime<Utc>,
     sources: Option<&PinSources>,
     agents: &agent_releases::Sources,
+    proxmox: bool,
 ) -> Result<Step, sqlx::Error> {
     let next = match row.current_wave {
         None => 0,
@@ -248,7 +273,7 @@ async fn step(
                 return Ok(Step::Failed);
             }
             if tally.done < tally.size {
-                return queue(conn, row, wave, now, sources, agents).await;
+                return queue(conn, row, wave, now, sources, agents, proxmox).await;
             }
             finish_wave(conn, row.id, wave, &tally).await?;
             wave + 1
@@ -263,7 +288,7 @@ async fn step(
         complete(conn, row.id).await?;
         return Ok(Step::Completed);
     }
-    let step = queue(conn, row, next, now, sources, agents).await?;
+    let step = queue(conn, row, next, now, sources, agents, proxmox).await?;
     if matches!(step, Step::Queued(_)) {
         sqlx::query("UPDATE campaigns SET state = 'running', current_wave = $2 WHERE id = $1")
             .bind(row.id)
@@ -311,19 +336,27 @@ async fn queue(
     now: DateTime<Utc>,
     sources: Option<&PinSources>,
     agents: &agent_releases::Sources,
+    proxmox: bool,
 ) -> Result<Step, sqlx::Error> {
     let missing: Vec<Pending> = sqlx::query_as(
         "SELECT t.server_id, s.peer_id, s.revoked_at IS NOT NULL AS revoked,
              s.os_family, s.package_updates, cfg.state AS configure_state, cfg.error AS configure_error,
-             t.restore_command_id, r.state AS restore_state
+             t.restore_command_id, r.state AS restore_state,
+             t.snapshot_command_id, sn.state AS snapshot_state, sn.error AS snapshot_error,
+             $3 AND EXISTS (SELECT 1 FROM server_proxmox_vms v WHERE v.server_id = t.server_id)
+                 AS proxmox_mapped,
+             st.report AS storage
          FROM campaign_targets t JOIN servers s ON s.id = t.server_id
          LEFT JOIN commands cfg ON cfg.id = t.sources_command_id
          LEFT JOIN commands r ON r.id = t.restore_command_id
+         LEFT JOIN commands sn ON sn.id = t.snapshot_command_id
+         LEFT JOIN server_storage st ON st.server_id = t.server_id
          WHERE t.campaign_id = $1 AND t.wave = $2 AND t.command_id IS NULL AND t.error IS NULL
          ORDER BY s.hostname, s.peer_id",
     )
     .bind(row.id)
     .bind(wave)
+    .bind(proxmox)
     .fetch_all(&mut *conn)
     .await?;
     if missing.is_empty() {
@@ -337,7 +370,7 @@ async fn queue(
     let packages = row.spec().payload();
     let mut configurer = None;
     let mut peers = Vec::new();
-    let (mut skipped, mut configured) = (0, 0);
+    let (mut skipped, mut configured, mut snapshots) = (0, 0, 0);
     for target in missing {
         let next = match row.sources_mode {
             _ if target.revoked => Next::Fail("server revoked".into()),
@@ -352,6 +385,11 @@ async fn queue(
             Some(_) if target.os_family == "windows" => Next::Update,
             Some(_) => target.next(),
         };
+        // A package update may take a local snapshot first (ADR-0094).
+        let next = match next {
+            Next::Update if agent_version.is_none() => target.before_update(),
+            next => next,
+        };
         let built = match next {
             Next::Wait => continue,
             Next::Fail(error) => Err(error),
@@ -365,6 +403,10 @@ async fn queue(
                 .await?;
                 skipped += 1;
                 continue;
+            }
+            Next::Snapshot => {
+                let name = local::campaign_name(row.id);
+                Ok((TAKE_SNAPSHOT, TakeSnapshot { name }.encode_to_vec()))
             }
             Next::Update => match &agent_version {
                 None => Ok((APPLY_UPDATES, packages.clone())),
@@ -412,15 +454,24 @@ async fn queue(
             server_id: target.server_id,
             kind: kind.into(),
             payload,
-            ttl,
+            ttl: if kind == TAKE_SNAPSHOT {
+                ttl.min(local::TAKE_TTL)
+            } else {
+                ttl
+            },
             requested_by: None,
             campaign_id: Some(row.id),
         };
         let command = CommandStore::enqueue_in(&mut *conn, &new).await?;
         let update = if kind == CONFIGURE_SOURCES {
             configured += 1;
+            // Configured again after a restore: a new snapshot too.
             "UPDATE campaign_targets
-             SET sources_command_id = $3, restore_command_id = NULL
+             SET sources_command_id = $3, restore_command_id = NULL, snapshot_command_id = NULL
+             WHERE campaign_id = $1 AND server_id = $2"
+        } else if kind == TAKE_SNAPSHOT {
+            snapshots += 1;
+            "UPDATE campaign_targets SET snapshot_command_id = $3
              WHERE campaign_id = $1 AND server_id = $2"
         } else {
             "UPDATE campaign_targets SET command_id = $3
@@ -453,6 +504,7 @@ async fn queue(
             "wave": wave,
             "commands": peers.len(),
             "configure_sources": configured,
+            "take_snapshot": snapshots,
             "skipped": skipped,
             "ttl_s": ttl.as_secs(),
         }),

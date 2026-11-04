@@ -1,5 +1,5 @@
 # MonitorFlow agent: the privileged commands it runs through `sudo -n`
-# (ADR-0031, ADR-0032, ADR-0035, ADR-0036, ADR-0053). Install as
+# (ADR-0031, ADR-0032, ADR-0035, ADR-0036, ADR-0053, ADR-0094). Install as
 # /etc/sudoers.d/monitorflow-agent, owner root, mode 0440, and check with
 # `visudo -cf`. See docs/deploy-agent.md.
 #
@@ -16,5 +16,11 @@ Cmnd_Alias MONITORFLOW_SOURCES = \
 # Self-update: the helper reads a signed release on stdin and installs it
 # only if the release key built into it verifies it (ADR-0053).
 Cmnd_Alias MONITORFLOW_SELF_UPDATE = /usr/bin/monitorflow-agent self-update
+# Local snapshots of the system volumes on LVM or ZFS: the helper reads
+# only a snapshot name on stdin and picks the volumes itself (ADR-0094).
+Cmnd_Alias MONITORFLOW_SNAPSHOTS = \
+    /usr/bin/monitorflow-agent snapshots inspect, \
+    /usr/bin/monitorflow-agent snapshots take, \
+    /usr/bin/monitorflow-agent snapshots delete
 
-monitorflow ALL=(root) NOPASSWD: MONITORFLOW_PACKAGES, MONITORFLOW_REBOOT, MONITORFLOW_SOURCES, MONITORFLOW_SELF_UPDATE
+monitorflow ALL=(root) NOPASSWD: MONITORFLOW_PACKAGES, MONITORFLOW_REBOOT, MONITORFLOW_SOURCES, MONITORFLOW_SELF_UPDATE, MONITORFLOW_SNAPSHOTS

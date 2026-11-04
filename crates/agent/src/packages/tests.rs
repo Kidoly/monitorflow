@@ -71,11 +71,13 @@ impl Fakes {
         );
         fake("shutdown", "exit 0".into());
         // The packages helper: saves its stdin, exits with `helper-exit`.
+        // The storage inspection of each report finds plain volumes.
         let helper_exit = dir.path().join("helper-exit");
         fake(
             "monitorflow-agent",
             format!(
-                "cat > '{}'
+                "[ \"$1 $2\" = 'snapshots inspect' ] && {{ echo '{{\"volumes\":[],\"snapshots\":[]}}'; exit 0; }}
+cat > '{}'
 code=$(cat '{}' 2>/dev/null || echo 0)
 echo '$ /usr/bin/apt-get -q update'
                  [ \"$code\" = 0 ] || {{ echo 'E: broken' >&2; echo 'Error: `apt-get upgrade` exited with '\"$code\"': E: broken' >&2; }}
@@ -104,9 +106,12 @@ exit \"$code\"",
         }
     }
 
-    /// The lines `sudo` was called with, the fake directory shown as `@`.
+    /// The lines `sudo` was called with, the fake directory shown as `@`,
+    /// without the storage inspection every report makes (ADR-0094).
     fn sudo_calls(&self) -> Vec<String> {
-        self.calls_of("sudo")
+        let mut calls = self.calls_of("sudo");
+        calls.retain(|c| !c.ends_with("monitorflow-agent snapshots inspect"));
+        calls
     }
 
     /// The arguments `name` was called with, the fake directory shown as `@`.

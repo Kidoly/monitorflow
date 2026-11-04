@@ -427,8 +427,11 @@ pub(super) async fn cancel_queued(
             "UPDATE campaign_targets SET
                  command_id = CASE WHEN command_id = ANY($1) THEN NULL ELSE command_id END,
                  sources_command_id = CASE WHEN sources_command_id = ANY($1) THEN NULL
-                                           ELSE sources_command_id END
-             WHERE command_id = ANY($1) OR sources_command_id = ANY($1)",
+                                           ELSE sources_command_id END,
+                 snapshot_command_id = CASE WHEN snapshot_command_id = ANY($1) THEN NULL
+                                            ELSE snapshot_command_id END
+             WHERE command_id = ANY($1) OR sources_command_id = ANY($1)
+                OR snapshot_command_id = ANY($1)",
         )
         .bind(&ids)
         .execute(&mut *conn)

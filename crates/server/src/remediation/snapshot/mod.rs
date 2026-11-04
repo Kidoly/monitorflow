@@ -3,8 +3,9 @@
 //! An arbitrary shell command cannot be undone reliably, so before the
 //! remediation loop runs a low- or high-impact command it asks a
 //! [`Snapshotter`] for a snapshot of the server. Proxmox VE snapshots of
-//! VMs and containers come first ([`ProxmoxSnapshotter`], ADR-0093); LVM,
-//! Btrfs and ZFS may follow behind the same trait. A server without snapshot support gets
+//! VMs and containers come first ([`ProxmoxSnapshotter`], ADR-0093);
+//! servers that are not Proxmox guests get local LVM or ZFS snapshots
+//! taken by their agent ([`local`], ADR-0094). A server without snapshot support gets
 //! [`Support::Unavailable`], and the interface shows that rollback is
 //! limited.
 //!
@@ -15,8 +16,10 @@
 //! (ADR-0046).
 
 pub mod check;
+pub mod choice;
 pub mod discovery;
 pub mod hook;
+pub mod local;
 pub mod proxmox;
 pub mod store;
 #[cfg(test)]
@@ -30,6 +33,7 @@ use serde::{Serialize, Serializer};
 use uuid::Uuid;
 
 pub use hook::SnapshotHook;
+pub use local::LocalSnapshots;
 pub use proxmox::{ProxmoxClient, ProxmoxOptions, ProxmoxSnapshotter};
 pub use store::{GuestKind, Mapped, VmRef};
 
