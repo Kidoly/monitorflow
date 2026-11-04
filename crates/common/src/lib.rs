@@ -7,6 +7,7 @@ pub mod config;
 pub mod grpc_url;
 pub mod logging;
 pub mod mirror;
+pub mod rate;
 pub mod redact;
 pub mod release;
 #[cfg(all(unix, feature = "server-update"))]

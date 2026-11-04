@@ -1,6 +1,7 @@
 //! One task per agent owns everything the relay sends upstream for it
 //! (ADR-0027): live envelopes while its upstream stream works, its
-//! `SampleBatch` envelopes to the buffer while it does not, and the
+//! `SampleBatch` and `LogBatch` envelopes to the buffer while it does
+//! not (ADR-0091 for the second), and the
 //! buffered ones first, oldest first, whenever a new stream opens.
 //!
 //! A session runs for a connected agent, or without one to replay the
@@ -241,7 +242,7 @@ impl Session {
                     }
                     side.last_sequence = envelope.sequence;
                     let batch = match &envelope.payload {
-                        Some(Payload::Samples(_)) => true,
+                        Some(Payload::Samples(_) | Payload::Logs(_)) => true,
                         Some(Payload::Hello(_)) => continue,
                         _ => false,
                     };

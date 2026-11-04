@@ -14,6 +14,8 @@ pub mod eventlog;
 pub mod hardware;
 pub mod identity;
 pub mod init_config;
+#[cfg(unix)]
+pub mod journald;
 pub mod os;
 pub mod packages;
 pub mod renew;

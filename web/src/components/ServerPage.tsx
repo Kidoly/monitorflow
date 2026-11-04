@@ -46,6 +46,7 @@ import { OfflineAlerts } from "./OfflineAlerts";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
 import { ServerCommandsTab } from "./ServerCommandsTab";
 import { RollbackFact } from "./ServerRollback";
+import { ServerLogsTab } from "./ServerLogsTab";
 import { ServerSensorsTab } from "./ServerSensorsTab";
 import { ServerUpdatesTab } from "./ServerUpdatesTab";
 import { SilenceBar } from "./Silences";
@@ -55,7 +56,7 @@ export const COMMANDS_PAGE = 50;
 /** The API's largest page, which caps what a refresh reloads. */
 const MAX_LIMIT = 500;
 
-const TABS = ["sensors", "alerts", "updates", "commands"] as const;
+const TABS = ["sensors", "alerts", "logs", "updates", "commands"] as const;
 export type ServerTab = (typeof TABS)[number];
 
 /** The server page for the `id` query parameter. */
@@ -191,10 +192,14 @@ export function ServerPage({ id }: { id: string | null }) {
         label="Server sections"
         idBase="server"
         selected={tab}
-        onSelect={(next) => setParams({ tab: next === "sensors" ? null : next })}
+        // The logs' filters and time belong to that tab.
+        onSelect={(next) =>
+          setParams({ tab: next === "sensors" ? null : next, level: null, unit: null, q: null, from: null, to: null })
+        }
         tabs={[
           { id: "sensors", label: "Sensors", extra: "sensors" in sensors ? `· ${rows.length}` : undefined },
           { id: "alerts", label: "Alerts and checks" },
+          { id: "logs", label: "Logs" },
           { id: "updates", label: "Updates" },
           { id: "commands", label: "Commands", extra: active > 0 ? `· ${active} running` : undefined },
         ]}
@@ -204,6 +209,7 @@ export function ServerPage({ id }: { id: string | null }) {
           <ServerSensorsTab server={server} sensors={sensors} rows={rows} incidentsFailed={incidents === null} now={updatedAt} />
         )}
         {tab === "alerts" && <ServerAlertsTab server={server} />}
+        {tab === "logs" && <ServerLogsTab server={server} />}
         {tab === "updates" && <ServerUpdatesTab server={server} />}
         {tab === "commands" && !server.revoked_at && aiCommands(server) === "off" && <AllowOnThisServer server={server} />}
         {tab === "commands" && (

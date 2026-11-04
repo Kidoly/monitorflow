@@ -30,6 +30,8 @@ message Envelope {
     // Relay to server, on the relay's own stream: the mirrors it serves to
     // its agents (ADR-0037).
     RelayMirrors relay_mirrors = 16;
+    // Agent to server: system log lines (ADR-0091).
+    LogBatch logs = 17;
     Command command = 20;
     CommandResult command_result = 21;
   }
@@ -80,6 +82,30 @@ message Sample {
 
 message SampleBatch {
   repeated Sample samples = 1;
+}
+
+// System log lines an agent forwards (ADR-0091), oldest first.
+message LogBatch {
+  repeated LogEntry entries = 1;
+  // Lines the agent dropped since its previous batch because they came
+  // faster than its rate limit allows.
+  uint64 rate_limited = 2;
+}
+
+message LogEntry {
+  int64 timestamp_unix_ms = 1;
+  string message = 2;
+  // syslog priority: 0 emergency to 7 debug.
+  uint32 priority = 3;
+  // The systemd unit, like "nginx.service"; empty when there is none.
+  string unit = 4;
+  // The syslog identifier, like "sshd" or "kernel".
+  string identifier = 5;
+  // The journal's boot ID, 32 hex digits.
+  string boot_id = 6;
+  uint32 pid = 7;
+  // Where the line comes from: "journal".
+  string source = 8;
 }
 
 // Sensors an agent must run, sent by the server after a valid Hello and

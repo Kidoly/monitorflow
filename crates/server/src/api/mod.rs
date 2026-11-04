@@ -117,6 +117,7 @@
 //! | DELETE | `/api/dashboards/{id}` | edit it | 204; audited |
 //! | POST | `/api/dashboard-data` | any role | body [`dashboard_data::DataRequest`]; [`dashboard_data::DataResponse`]: every panel at once, for the servers the user reads within `within`; a failed panel has an `error` sentence |
 //! | GET | `/api/dashboard-metrics` | any role | optional `site_id`, `customer_id`, `metric`; [`dashboard_data::Catalog`]: metrics reported in the last day, and the instances of `metric` |
+//! | GET | `/api/servers/{id}/logs` | read | [`logs::LogList`]: the server's system logs, newest first, see below |
 //! | GET | `/api/servers/{id}/packages` | read | [`packages::PackageList`], see below |
 //! | GET | `/api/servers/{id}/commands` | read | [`commands::CommandList`], newest first, paginated |
 //! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
@@ -494,6 +495,26 @@
 //!              "points": [[1760000000, 0.25]]}]}
 //! ```
 //!
+//! # `GET /api/servers/{id}/logs`
+//!
+//! The journal lines the server's agent forwarded (ADR-0091). Optional
+//! `start` and `end` (RFC 3339, default the last hour, at most 31 days),
+//! `level` (`warning`, the default and all that is forwarded, or `error`),
+//! `unit` (exact), `q` (text anywhere in the message, without regard to
+//! case; both at most 256 bytes) and `limit` (1 to 1000, default 200). The
+//! API builds the LogsQL itself on the server's `{peer,site}` stream and
+//! passes the same stream as `extra_stream_filters`; arbitrary LogsQL is
+//! not accepted. `units` lists the range's units whatever the filters. A
+//! server outside the user's sites is 404. Backend failures are 502 `logs
+//! backend unavailable`, timeouts 504.
+//!
+//! ```json
+//! {"lines": [{"time": "2026-10-22T13:59:00.500Z", "message": "disk full",
+//!             "priority": 3, "unit": "nginx.service", "identifier": "nginx",
+//!             "pid": 42}],
+//!  "more": false, "units": ["nginx.service"]}
+//! ```
+//!
 //! # `GET /api/servers`
 //!
 //! ```json
@@ -560,6 +581,7 @@ pub mod follow_up;
 mod health;
 pub mod incidents;
 pub mod install_keys;
+pub mod logs;
 pub mod metrics;
 pub mod mirrors;
 pub mod notifications;
@@ -713,6 +735,8 @@ pub struct ApiState {
     pub settings: Arc<ApiSettings>,
     /// Read client for the metric query proxy; `None` answers 502.
     pub metrics: Option<VmQuery>,
+    /// Read client for VictoriaLogs (ADR-0091); `None` answers 502.
+    pub logs: Option<VmQuery>,
     /// CA pin and URLs for enrollment tokens; `None` refuses to create them.
     pub enrollment: Option<Arc<EnrollmentSettings>>,
     /// Revokes certificates and republishes the CRL; `None` refuses
@@ -744,6 +768,7 @@ impl ApiState {
             registry,
             settings: Arc::new(settings),
             metrics: None,
+            logs: None,
             enrollment: None,
             crl: None,
             commands: None,
@@ -808,6 +833,12 @@ impl ApiState {
     /// Serves metric queries from `metrics`.
     pub fn with_metrics(mut self, metrics: VmQuery) -> Self {
         self.metrics = Some(metrics);
+        self
+    }
+
+    /// Serves log queries from `logs`, a client of VictoriaLogs.
+    pub fn with_logs(mut self, logs: VmQuery) -> Self {
+        self.logs = Some(logs);
         self
     }
 }
@@ -950,6 +981,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/servers/{id}/sensors", get(sensors::effective))
         .route("/api/sites/{id}/sensors", get(sensors::effective_site))
         .route("/api/servers/{id}/metrics", get(metrics::discover))
+        .route("/api/servers/{id}/logs", get(logs::list))
         .route("/api/metrics/query", get(metrics::query))
         .route("/api/metrics/query_range", get(metrics::query_range))
         .route(

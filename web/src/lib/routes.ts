@@ -2,8 +2,22 @@ import { type IncidentFilters, NO_FILTERS, filtersToQuery } from "./incidents";
 import { shortMetric } from "./metrics";
 
 /** Link to the page of the server `id` (a query parameter, ADR-0020), on `tab` when given. */
-export function serverHref(id: string, tab?: "sensors" | "alerts" | "updates" | "commands"): string {
+export function serverHref(id: string, tab?: "sensors" | "alerts" | "updates" | "commands" | "logs"): string {
   return `/servers/view/?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ""}`;
+}
+
+/** Margin around an incident in its logs link: 15 minutes. */
+const LOG_MARGIN_MS = 15 * 60 * 1000;
+
+/**
+ * Link to the logs of the server `id` around an incident: from 15 minutes
+ * before it opened to 15 minutes after it resolved, or to now while open.
+ */
+export function incidentLogsHref(id: string, openedAt: string, resolvedAt: string | null): string {
+  const params = new URLSearchParams({ id, tab: "logs" });
+  params.set("from", new Date(Date.parse(openedAt) - LOG_MARGIN_MS).toISOString());
+  if (resolvedAt) params.set("to", new Date(Date.parse(resolvedAt) + LOG_MARGIN_MS).toISOString());
+  return `/servers/view/?${params}`;
 }
 
 /** Link to the page of the site `id`: its alerts and checks. */

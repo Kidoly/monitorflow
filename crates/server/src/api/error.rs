@@ -46,6 +46,12 @@ pub enum ApiError {
     MetricsUnavailable(String),
     #[error("metrics backend timed out")]
     MetricsTimeout,
+    /// VictoriaLogs is unreachable, failing or not configured; the message
+    /// is logged, not returned.
+    #[error("logs backend unavailable")]
+    LogsUnavailable(String),
+    #[error("logs backend timed out")]
+    LogsTimeout,
     #[error("internal error")]
     Database(#[from] sqlx::Error),
     /// Any other server-side failure; the message is logged, not returned.
@@ -63,7 +69,8 @@ impl ApiError {
             Self::Unauthorized | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::Forbidden | Self::CrossSite => StatusCode::FORBIDDEN,
             Self::MetricsUnavailable(_) => StatusCode::BAD_GATEWAY,
-            Self::MetricsTimeout => StatusCode::GATEWAY_TIMEOUT,
+            Self::MetricsTimeout | Self::LogsTimeout => StatusCode::GATEWAY_TIMEOUT,
+            Self::LogsUnavailable(_) => StatusCode::BAD_GATEWAY,
             Self::Database(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -76,6 +83,8 @@ impl IntoResponse for ApiError {
             Self::Internal(error) => tracing::error!(%error, "API request failed"),
             Self::MetricsUnavailable(error) => tracing::warn!(%error, "metric query failed"),
             Self::MetricsTimeout => tracing::warn!("metric query timed out"),
+            Self::LogsUnavailable(error) => tracing::warn!(%error, "log query failed"),
+            Self::LogsTimeout => tracing::warn!("log query timed out"),
             _ => {}
         }
         (self.status(), Json(json!({ "error": self.to_string() }))).into_response()

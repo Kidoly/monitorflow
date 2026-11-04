@@ -37,3 +37,39 @@
   overflow: auto;
   max-height: 480px;
 }
+
+/* The Logs tab: time over level, then unit over the message. */
+.logTime {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.logTime time,
+.logSource {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.logSource {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* A journal message: kept as written, wrapped. */
+.logMessage {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* "Show the last hour" inside a sentence. */
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

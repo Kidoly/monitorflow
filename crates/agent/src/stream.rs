@@ -18,6 +18,8 @@
 //! acknowledgements go up on the current stream (ADR-0016). Samples go up
 //! in `SampleBatch` envelopes taken from the [`Uplink`] when a batch is
 //! full or at each flush interval; while disconnected they stay there.
+//! Journal lines go the same way in `LogBatch` envelopes, with the count
+//! of lines the forwarder dropped (ADR-0091).
 //!
 //! Package reports go up when published, or on the next connection
 //! (ADR-0031). Commands go to the command dispatcher, which checks and runs them, and
@@ -35,8 +37,8 @@ use monitorflow_common::config::AgentConfig;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
-    CommandKindState, CommandResult, Envelope, Heartbeat, Hello, PackageReport, SampleBatch,
-    SensorConfigAck,
+    CommandKindState, CommandResult, Envelope, Heartbeat, Hello, LogBatch, LogEntry, PackageReport,
+    SampleBatch, SensorConfigAck,
 };
 use monitorflow_common::tls::{self, error_chain, TlsError};
 use monitorflow_common::PROTOCOL_VERSION;
@@ -101,6 +103,7 @@ pub struct Agent {
     host: HostInfo,
     sensors: Option<StreamEnd>,
     uplink: Option<Uplink>,
+    logs: Option<Uplink<LogEntry>>,
     commands: Option<commands::StreamEnd>,
     command_kinds: Vec<CommandKindState>,
     reports: Option<watch::Receiver<Option<PackageReport>>>,
@@ -119,6 +122,7 @@ impl Agent {
             host,
             sensors: None,
             uplink: None,
+            logs: None,
             commands: None,
             command_kinds: Vec::new(),
             reports: None,
@@ -130,6 +134,12 @@ impl Agent {
     /// Sends the samples queued in `uplink` upstream.
     pub fn with_upload(mut self, uplink: Uplink) -> Self {
         self.uplink = Some(uplink);
+        self
+    }
+
+    /// Sends the log lines queued in `logs` upstream (ADR-0091).
+    pub fn with_logs(mut self, logs: Uplink<LogEntry>) -> Self {
+        self.logs = Some(logs);
         self
     }
 
@@ -263,19 +273,26 @@ impl Agent {
         let every = self.settings.heartbeat_interval;
         let mut heartbeat = interval_at(Instant::now() + every, every);
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let flush_every = self
-            .uplink
-            .as_ref()
-            .map_or(every, |u| u.settings().flush_interval);
+        let flush_every = match (&self.uplink, &self.logs) {
+            (Some(u), _) => u.settings().flush_interval,
+            (None, Some(l)) => l.settings().flush_interval,
+            (None, None) => every,
+        };
         let mut flush = interval_at(Instant::now() + flush_every, flush_every);
         flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
         // Set by a flush tick while samples wait; cleared once all went.
         let mut flush_due = false;
+        // The same for log lines and drop counts.
+        let mut logs_due = false;
         loop {
             let ready = self
                 .uplink
                 .as_ref()
                 .is_some_and(|u| u.is_full_batch() || (flush_due && !u.is_empty()));
+            let logs_ready = self
+                .logs
+                .as_ref()
+                .is_some_and(|l| l.is_full_batch() || (logs_due && l.has_pending()));
             // Set when this connection must close.
             let close = tokio::select! {
                 () = shutdown.wait() => Some(Ok(())),
@@ -289,17 +306,29 @@ impl Agent {
                     }
                     None
                 }
-                _ = flush.tick(), if self.uplink.is_some() => {
+                _ = flush.tick(), if self.uplink.is_some() || self.logs.is_some() => {
                     flush_due = self.uplink.as_ref().is_some_and(|u| !u.is_empty());
+                    logs_due = self.logs.as_ref().is_some_and(Uplink::has_pending);
                     None
                 }
                 () = filled(&self.uplink), if !ready => None,
+                () = filled(&self.logs), if !logs_ready => None,
                 permit = tx.reserve(), if ready => {
                     if let (Ok(permit), Some(uplink)) = (permit, &self.uplink) {
                         let samples = uplink.take();
                         flush_due &= !uplink.is_empty();
                         tracing::trace!(samples = samples.len(), "sample batch");
                         permit.send(self.envelope(Payload::Samples(SampleBatch { samples })));
+                    }
+                    None
+                }
+                permit = tx.reserve(), if logs_ready && !ready => {
+                    if let (Ok(permit), Some(logs)) = (permit, &self.logs) {
+                        let entries = logs.take();
+                        let rate_limited = logs.take_skipped();
+                        logs_due &= logs.has_pending();
+                        tracing::trace!(lines = entries.len(), rate_limited, "log batch");
+                        permit.send(self.envelope(Payload::Logs(LogBatch { entries, rate_limited })));
                     }
                     None
                 }
@@ -432,11 +461,12 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::CommandResult(_) => "command_result",
         Payload::PackageReport(_) => "package_report",
         Payload::RelayMirrors(_) => "relay_mirrors",
+        Payload::Logs(_) => "logs",
     }
 }
 
 /// Resolves once a full batch waits; never without an uplink.
-async fn filled(uplink: &Option<Uplink>) {
+async fn filled<T>(uplink: &Option<Uplink<T>>) {
     match uplink {
         Some(uplink) => uplink.filled().await,
         None => std::future::pending().await,

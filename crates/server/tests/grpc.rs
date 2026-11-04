@@ -12,8 +12,8 @@ use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
-    Command, CommandAcceptance, CommandKindState, Envelope, Heartbeat, Hello, RelayMirrors, Sample,
-    SampleBatch, SensorConfigAck, ServedMirror,
+    Command, CommandAcceptance, CommandKindState, Envelope, Heartbeat, Hello, LogBatch, LogEntry,
+    RelayMirrors, Sample, SampleBatch, SensorConfigAck, ServedMirror,
 };
 use monitorflow_common::tls::{self, Identity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
@@ -634,6 +634,71 @@ async fn samples_are_written_with_the_identity_of_the_stream() {
 
     let stats = storage.metrics.shutdown(TIMEOUT).await;
     assert_eq!((stats.written, stats.rejected), (2, 3));
+}
+
+#[tokio::test]
+async fn log_lines_are_written_with_the_identity_of_the_stream() {
+    let storage = Storage::start().await;
+    let h = Harness::start_with_ingest(
+        settings(),
+        Arc::new(AllowAllRelayedAgents),
+        Arc::new(OneSite("paris")),
+        storage.ingest(),
+    )
+    .await;
+    let agent = h
+        .open(&h.ca.client("agent-1", 10), hello("agent-1"))
+        .await
+        .unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    let line = |message: &str, source: &str| LogEntry {
+        timestamp_unix_ms: now,
+        message: message.into(),
+        priority: 3,
+        unit: "nginx.service".into(),
+        source: source.into(),
+        ..LogEntry::default()
+    };
+    agent
+        .send(
+            2,
+            Payload::Logs(LogBatch {
+                entries: vec![
+                    line("token=abcdefabcdefabcdef1234 refused", "journal"),
+                    // Not a source the server knows: dropped.
+                    line("x", "other"),
+                ],
+                rate_limited: 3,
+            }),
+        )
+        .await;
+    // The connect event, the agent's drop notice, then its line.
+    let events = storage.wait_for_events(3).await;
+    assert_eq!(events[0]["event"], "peer.connect");
+    assert_eq!(
+        events[1]["_msg"],
+        "The agent dropped 3 log lines: they came faster than 10 a second."
+    );
+    let line = &events[2];
+    assert_eq!(
+        (line["peer"].as_str(), line["site"].as_str()),
+        (Some("agent-1"), Some("paris"))
+    );
+    assert_eq!(
+        (line["source"].as_str(), line["priority"].as_str()),
+        (Some("journal"), Some("3"))
+    );
+    assert_eq!(line["unit"], "nginx.service");
+    let message = line["_msg"].as_str().unwrap();
+    assert!(
+        message.starts_with("token=[REDACTED") && !message.contains("abcdef"),
+        "{message}"
+    );
+    h.wait_until("log lines counted", |r| {
+        let counters = r.get("agent-1").unwrap().counters;
+        (counters.log_lines, counters.dropped_log_lines) == (2, 1)
+    })
+    .await;
 }
 
 /// Marks every test in the block as ignored when `DATABASE_URL` is unset.
