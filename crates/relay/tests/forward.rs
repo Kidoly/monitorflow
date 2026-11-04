@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
-    Command, CommandAcceptance, CommandKindState, Envelope, Heartbeat, Hello,
+    Command, CommandAcceptance, CommandKindState, Envelope, Heartbeat, Hello, LogBatch, LogEntry,
 };
 use monitorflow_common::tls::{PeerIdentity, PeerRole};
 use monitorflow_server::ca::RevocationReason;
@@ -248,6 +248,29 @@ async fn batches_wait_on_disk_while_the_upstream_is_down() {
         relay.buffer.stats().await.unwrap().bytes == 0
     })
     .await;
+}
+
+#[tokio::test]
+async fn log_lines_are_buffered_like_samples() {
+    let pki = Pki::new();
+    let captured = Captured::default();
+    let mut upstream = pki.serve(capturing(&captured)).await;
+    let relay = Relay::start(pki.relay("paris-1"), &upstream.url).await;
+    stop(&mut upstream, &relay).await;
+    let agent = open(&relay.url, &pki.agent("web-01"), hello("web-01"))
+        .await
+        .unwrap();
+    let logs = Payload::Logs(LogBatch {
+        entries: vec![LogEntry {
+            message: "disk full".into(),
+            source: "journal".into(),
+            ..LogEntry::default()
+        }],
+        rate_limited: 0,
+    });
+    agent.send(2, logs).await;
+    agent.send(3, samples(1.0)).await;
+    appended(&relay, 2).await;
 }
 
 #[tokio::test]

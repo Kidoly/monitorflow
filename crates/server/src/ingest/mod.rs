@@ -3,6 +3,7 @@
 //! queues so storage never slows the gRPC streams down.
 
 mod http;
+pub mod journal;
 pub mod logs;
 pub mod metrics;
 pub mod validate;
@@ -35,6 +36,19 @@ impl Ingest {
             .series
             .into_iter()
             .map(|series| queue.push(series))
+            .filter(|&queued| !queued)
+            .count() as u64
+    }
+
+    /// Queues agent log lines; returns how many were dropped because the
+    /// queue was full.
+    pub fn logs(&self, records: Vec<LogRecord>) -> u64 {
+        let Some(queue) = &self.events else {
+            return 0;
+        };
+        records
+            .into_iter()
+            .map(|record| queue.push(record))
             .filter(|&queued| !queued)
             .count() as u64
     }

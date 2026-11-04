@@ -1,13 +1,14 @@
-//! Samples waiting to go upstream in `SampleBatch` envelopes.
+//! Samples and log lines waiting to go upstream, in `SampleBatch` and
+//! `LogBatch` envelopes.
 //!
-//! The sensors task pushes every sample into one bounded [`Uplink`]; the
-//! stream takes a batch when [`UploadSettings::batch_size`] samples are
-//! waiting, or every [`UploadSettings::flush_interval`] whatever is there.
-//! While the stream is down samples accumulate; once
-//! [`UploadSettings::capacity`] is reached the oldest are dropped and
-//! counted, so a long outage keeps the latest data. A batch the stream
-//! took is lost if the connection breaks before it was written: the server
-//! does not acknowledge batches.
+//! The sensors task pushes every sample into one bounded [`Uplink`], and
+//! the journal forwarder its lines into another (ADR-0091); the stream
+//! takes a batch when [`UploadSettings::batch_size`] items are waiting, or
+//! every [`UploadSettings::flush_interval`] whatever is there. While the
+//! stream is down items accumulate; once [`UploadSettings::capacity`] is
+//! reached the oldest are dropped and counted, so a long outage keeps the
+//! latest data. A batch the stream took is lost if the connection breaks
+//! before it was written: the server does not acknowledge batches.
 //!
 //! TODO(phase2-buffer): spill to a disk buffer in `data_dir` before
 //! dropping, with the stream sequence persisted next to it.
@@ -58,22 +59,46 @@ pub struct UploadStats {
     pub dropped: u64,
 }
 
-#[derive(Debug, Default)]
-struct State {
-    samples: VecDeque<proto::Sample>,
+#[derive(Debug)]
+struct State<T> {
+    samples: VecDeque<T>,
     stats: UploadStats,
+    /// Items the producer dropped since [`Uplink::take_skipped`].
+    skipped: u64,
     warned: Option<Instant>,
 }
 
-/// Shared buffer between the sensors task and the stream.
-#[derive(Debug, Clone)]
-pub struct Uplink {
-    state: Arc<Mutex<State>>,
+impl<T> Default for State<T> {
+    fn default() -> Self {
+        Self {
+            samples: VecDeque::new(),
+            stats: UploadStats::default(),
+            skipped: 0,
+            warned: None,
+        }
+    }
+}
+
+/// Shared buffer between a producer (the sensors task, the journal
+/// forwarder) and the stream.
+#[derive(Debug)]
+pub struct Uplink<T = proto::Sample> {
+    state: Arc<Mutex<State<T>>>,
     filled: Arc<Notify>,
     settings: UploadSettings,
 }
 
-impl Uplink {
+impl<T> Clone for Uplink<T> {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            filled: self.filled.clone(),
+            settings: self.settings.clone(),
+        }
+    }
+}
+
+impl<T> Uplink<T> {
     /// `batch_size` is capped to [`MAX_BATCH`] and `capacity` raised to at
     /// least one batch.
     pub fn new(mut settings: UploadSettings) -> Self {
@@ -90,13 +115,13 @@ impl Uplink {
         &self.settings
     }
 
-    fn lock(&self) -> MutexGuard<'_, State> {
+    fn lock(&self) -> MutexGuard<'_, State<T>> {
         // Every critical section leaves the state consistent.
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Queues a sample, dropping the oldest one when full.
-    pub fn push(&self, sample: proto::Sample) {
+    /// Queues an item, dropping the oldest one when full.
+    pub fn push(&self, sample: T) {
         let mut state = self.lock();
         if state.samples.len() >= self.settings.capacity {
             state.samples.pop_front();
@@ -134,8 +159,32 @@ impl Uplink {
         self.len() >= self.settings.batch_size
     }
 
-    /// The oldest samples, at most one batch.
-    pub fn take(&self) -> Vec<proto::Sample> {
+    /// Counts `n` items the producer dropped instead of queuing them.
+    pub fn skip(&self, n: u64) {
+        self.lock().skipped += n;
+    }
+
+    /// Items the producer dropped since the previous call, which resets
+    /// the count.
+    pub fn take_skipped(&self) -> u64 {
+        std::mem::take(&mut self.lock().skipped)
+    }
+
+    /// Whether items or skipped counts wait to be reported. Only for
+    /// producers that call [`Self::skip`]: [`Self::take_skipped`] resets
+    /// the count.
+    pub fn has_pending(&self) -> bool {
+        let state = self.lock();
+        !state.samples.is_empty() || state.skipped > 0
+    }
+
+    /// Whether a push would keep every queued item.
+    pub fn has_room(&self) -> bool {
+        self.len() < self.settings.capacity
+    }
+
+    /// The oldest items, at most one batch.
+    pub fn take(&self) -> Vec<T> {
         let mut state = self.lock();
         let n = state.samples.len().min(self.settings.batch_size);
         state.stats.sent += n as u64;
@@ -246,6 +295,22 @@ mod tests {
             .collect();
         assert_eq!(kept, [6.0, 7.0, 8.0, 9.0]);
         assert_eq!(u.stats().dropped, 6);
+    }
+
+    #[test]
+    fn skipped_items_are_reported_once() {
+        let u = uplink(2, 2);
+        assert!(!u.has_pending());
+        u.skip(3);
+        u.skip(2);
+        assert!(u.has_pending());
+        assert_eq!(u.take_skipped(), 5);
+        assert_eq!(u.take_skipped(), 0);
+        assert!(!u.has_pending());
+        u.push(sample(1.0));
+        assert!(u.has_pending() && u.has_room());
+        u.push(sample(2.0));
+        assert!(!u.has_room());
     }
 
     #[tokio::test(start_paused = true)]

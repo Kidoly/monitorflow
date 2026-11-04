@@ -23,6 +23,7 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Disk busy | Share of the time a disk had work in flight, per disk (`sda`, `vg0-root`, `PhysicalDrive0`) | utilisation, util, I/O % | `diskio_busy_ratio` |
 | Disk wait | Average time a disk took to answer one read or write, waiting in its queue included | latency, await | `diskio_wait_seconds` |
 | Disk activity | The check that reports how busy and how slow each disk is | disk I/O, diskio (on screen) | `diskio` |
+| System logs | The warnings and errors of a server's journal, which its agent forwards; the Logs tab of the server's page | journald, journal entries, log forwarding, syslog | `LogBatch`, `source=journal`, `/api/servers/{id}/logs` |
 | Recovery margin | How far past the threshold a value must return before the incident resolves; under Details | hysteresis | `hysteresis` |
 | Set by | Where a setting comes from; under Details | origin | `origin` |
 | Update source | Where a Windows server takes its updates from: Microsoft (Windows Update) or a WSUS server, as its policy sets it. "Updates come from WSUS at http://wsus.example:8530" | update server, WU endpoint, upstream | `windows_update_source` |

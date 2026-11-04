@@ -293,6 +293,14 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         uplink.clone(),
     );
     let sensors = tokio::spawn(sensors.run(sensors_end, stop.clone()));
+    // System logs (ADR-0091); the Windows Event Log is a follow-up.
+    #[cfg(unix)]
+    let logs = {
+        use monitorflow_agent::journald;
+        let logs = Uplink::new(journald::upload_settings());
+        journald::start(&config.data_dir, logs.clone(), stop.clone());
+        logs
+    };
     let mut handlers = Handlers::default();
     let latest_report = platform_handlers(&config, &host, &mut handlers, &stop);
     let command_kinds = handlers.report();
@@ -331,6 +339,10 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         .with_command_kinds(command_kinds);
     if let Some(reports) = latest_report {
         agent = agent.with_reports(reports);
+    }
+    #[cfg(unix)]
+    {
+        agent = agent.with_logs(logs);
     }
     let result = agent.run(stop).await.context("cannot connect upstream");
     if result.is_ok() {
