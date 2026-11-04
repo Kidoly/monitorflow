@@ -159,3 +159,4 @@ Let each install pick what suits it instead of a fixed choice.
 
 - [ ] Any AI for remediation: Anthropic, OpenAI or any OpenAI-compatible API, and local models (Ollama, llama.cpp, vLLM) so nothing leaves the network. The safety rules stay on the server whatever the model.
 - [ ] Choose how often each check runs, from seconds to hours, per check and as a default per site. Agents already accept any interval up to 24 hours; the web interface only shows it.
+- [ ] Show dashboards on a wall screen or TV: full screen without menus, large text, refreshing by itself, cycling through several dashboards, and a display link that needs no sign-in, read-only, tied to one dashboard and revocable. Say plainly on screen when the data is stale.
