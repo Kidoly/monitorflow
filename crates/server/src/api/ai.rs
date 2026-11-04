@@ -1,16 +1,17 @@
-//! AI setup in the web interface (ADR-0064): API key, model, test and
-//! enable, without a file or a restart. The key is written, never read
-//! back: views say `has_key`. `[ai] enabled = true` in the configuration
-//! wins and locks all of it.
+//! AI setup in the web interface (ADR-0064, ADR-0096): which AI, its key,
+//! address and model, test and enable, without a file or a restart. The
+//! key is written, never read back: views say `has_key`. `[ai] enabled =
+//! true` in the configuration wins and locks all of it.
+
+use std::time::Duration;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::State;
 use axum::Json;
-use monitorflow_ai::claude::{
-    self, ClaudeOptions, ClaudeProvider, Model, DEFAULT_BASE_URL, MODELS,
-};
-use monitorflow_ai::AiError;
-use monitorflow_common::config::{AiConfig, ServerConfig};
+use monitorflow_ai::claude::{Model, DEFAULT_BASE_URL, MODELS};
+use monitorflow_ai::openai::{self, DEFAULT_OPENAI_MODEL, OPENAI_BASE_URL};
+use monitorflow_ai::Connection;
+use monitorflow_common::config::{AiConfig, AiProviderKind, ServerConfig};
 use monitorflow_common::redact::Secret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -25,15 +26,19 @@ use super::{ApiError, ApiState};
 
 /// Longest accepted API key.
 const MAX_KEY: usize = 1024;
+/// Longest accepted model name or address.
+const MAX_TEXT: usize = 512;
 
 const LOCKED: &str = "AI is set by the server's configuration ([ai] in server.toml)";
 
-/// The configuration, and where the API is.
+/// The configuration, and where the APIs are.
 #[derive(Debug, Clone)]
 pub struct AiSettings {
     pub config: AiConfig,
-    /// Tests point this at a local server.
+    /// Anthropic's API; tests point this at a local server.
     pub base_url: String,
+    /// OpenAI's API; tests point this at a local server.
+    pub openai_base_url: String,
 }
 
 impl AiSettings {
@@ -41,21 +46,33 @@ impl AiSettings {
         Self {
             config: config.ai.clone(),
             base_url: DEFAULT_BASE_URL.into(),
+            openai_base_url: OPENAI_BASE_URL.into(),
         }
     }
 
-    fn provider(&self, api_key: Secret, model: &str) -> Result<ClaudeProvider, AiError> {
-        let mut options = ClaudeOptions::from_config(api_key, &self.config);
-        options.model = model.to_owned();
-        options.base_url.clone_from(&self.base_url);
-        ClaudeProvider::new(options)
-    }
-
-    async fn check(&self, api_key: Secret, model: &str) -> Result<(), String> {
-        let provider = self
-            .provider(api_key, model)
-            .map_err(|e| claude::explain(&e))?;
-        provider.check().await.map_err(|e| claude::explain(&e))
+    /// What reaches `kind` with this key, address and model, under the
+    /// configuration's limits. Anthropic and OpenAI have their own
+    /// address.
+    fn connection(
+        &self,
+        kind: AiProviderKind,
+        api_key: Option<Secret>,
+        base_url: Option<String>,
+        model: String,
+    ) -> Connection {
+        let base_url = match kind {
+            AiProviderKind::Anthropic => Some(self.base_url.clone()),
+            AiProviderKind::OpenAi => Some(self.openai_base_url.clone()),
+            AiProviderKind::OpenAiCompatible => base_url,
+        };
+        Connection {
+            kind,
+            api_key,
+            base_url,
+            model,
+            max_tokens: self.config.max_tokens,
+            request_timeout: Duration::from_secs(self.config.request_timeout),
+        }
     }
 }
 
@@ -63,21 +80,40 @@ impl AiSettings {
 #[derive(Default, sqlx::FromRow)]
 struct Stored {
     ai_enabled: bool,
+    ai_provider: String,
     ai_api_key: Option<String>,
+    ai_base_url: Option<String>,
     ai_model: Option<String>,
 }
 
 impl Stored {
+    fn kind(&self) -> AiProviderKind {
+        self.ai_provider.parse().unwrap_or_default()
+    }
+
     fn key(&self) -> Option<Secret> {
         self.ai_api_key.clone().map(Secret::new)
     }
 
-    /// The stored model while it is still offered.
-    fn model(&self) -> &str {
-        self.ai_model
-            .as_deref()
-            .filter(|m| offered(m))
-            .unwrap_or(MODELS[0].id)
+    /// The stored model, while Anthropic still offers it.
+    fn model(&self) -> String {
+        let stored = self.ai_model.as_deref().filter(|m| !m.is_empty());
+        match self.kind() {
+            AiProviderKind::Anthropic => stored.filter(|m| offered(m)).unwrap_or(MODELS[0].id),
+            AiProviderKind::OpenAi => stored.unwrap_or(DEFAULT_OPENAI_MODEL),
+            AiProviderKind::OpenAiCompatible => stored.unwrap_or_default(),
+        }
+        .to_owned()
+    }
+
+    fn audit(&self) -> serde_json::Value {
+        json!({
+            "enabled": self.ai_enabled,
+            "provider": self.kind(),
+            "model": self.ai_model,
+            "base_url": self.ai_base_url,
+            "has_key": self.ai_api_key.is_some(),
+        })
     }
 }
 
@@ -93,10 +129,13 @@ pub struct AiView {
     /// `[ai] enabled = true` in the configuration, which takes precedence
     /// and locks this page.
     pub from_config: bool,
+    pub provider: AiProviderKind,
     /// Whether an API key is stored, or configured.
     pub has_key: bool,
+    /// The address of an OpenAI-compatible server.
+    pub base_url: Option<String>,
     pub model: String,
-    /// What the web interface offers, the default first.
+    /// Anthropic's short list, the default first.
     pub models: &'static [Model],
 }
 
@@ -105,7 +144,9 @@ fn view(config: &AiConfig, stored: &Stored) -> AiView {
         return AiView {
             enabled: true,
             from_config: true,
-            has_key: true,
+            provider: config.provider,
+            has_key: config.api_key_file.is_some(),
+            base_url: config.base_url.clone(),
             model: config.model.clone(),
             models: MODELS,
         };
@@ -113,17 +154,20 @@ fn view(config: &AiConfig, stored: &Stored) -> AiView {
     AiView {
         enabled: stored.ai_enabled,
         from_config: false,
+        provider: stored.kind(),
         has_key: stored.ai_api_key.is_some(),
-        model: stored.model().to_owned(),
+        base_url: stored.ai_base_url.clone(),
+        model: stored.model(),
         models: MODELS,
     }
 }
 
 async fn stored(db: impl PgExecutor<'_>, lock: bool) -> Result<Stored, ApiError> {
     let query = if lock {
-        "SELECT ai_enabled, ai_api_key, ai_model FROM server_settings FOR UPDATE"
+        "SELECT ai_enabled, ai_provider, ai_api_key, ai_base_url, ai_model
+         FROM server_settings FOR UPDATE"
     } else {
-        "SELECT ai_enabled, ai_api_key, ai_model FROM server_settings"
+        "SELECT ai_enabled, ai_provider, ai_api_key, ai_base_url, ai_model FROM server_settings"
     };
     Ok(sqlx::query_as(query)
         .fetch_optional(db)
@@ -156,12 +200,41 @@ fn pasted(key: Option<Secret>) -> Result<Option<Secret>, ApiError> {
     Ok((!key.is_empty()).then(|| Secret::new(key)))
 }
 
-fn known_model(model: &str) -> Result<(), ApiError> {
-    if offered(model) {
-        Ok(())
-    } else {
-        Err(ApiError::Invalid(format!("unknown model `{model}`")))
+/// A typed model name or address: trimmed, `None` when empty.
+fn typed(text: Option<String>, what: &str) -> Result<Option<String>, ApiError> {
+    let Some(text) = text else { return Ok(None) };
+    let text = text.trim();
+    if text.len() > MAX_TEXT || text.chars().any(char::is_control) {
+        return Err(ApiError::Invalid(format!("the {what} is not valid")));
     }
+    Ok((!text.is_empty()).then(|| text.to_owned()))
+}
+
+fn known_model(kind: AiProviderKind, model: &str) -> Result<(), ApiError> {
+    match kind {
+        AiProviderKind::Anthropic if !offered(model) => {
+            Err(ApiError::Invalid(format!("unknown model `{model}`")))
+        }
+        _ if model.is_empty() => Err(ApiError::Invalid("enter a model".into())),
+        _ => Ok(()),
+    }
+}
+
+/// The address an OpenAI-compatible server needs, checked as a URL; the
+/// others have none.
+fn address(kind: AiProviderKind, base_url: Option<String>) -> Result<Option<String>, ApiError> {
+    if kind != AiProviderKind::OpenAiCompatible {
+        return Ok(None);
+    }
+    let base_url = typed(base_url, "address")?
+        .ok_or_else(|| ApiError::Invalid("enter the address of the model server".into()))?;
+    openai::parse_base_url(&base_url).map_err(|e| ApiError::Invalid(plain(&e.to_string())))?;
+    Ok(Some(base_url.trim_end_matches('/').to_owned()))
+}
+
+/// `AI address: reason` as the reason alone.
+fn plain(error: &str) -> String {
+    error.trim_start_matches("AI address: ").to_owned()
 }
 
 /// `GET /api/settings/ai`: every user.
@@ -170,20 +243,27 @@ pub async fn get(State(state): State<ApiState>, _: CurrentUser) -> Result<Json<A
 }
 
 /// Body of `PUT /api/settings/ai`: replaces everything but the key, which
-/// is absent, `null` or empty to keep the stored one.
+/// is absent, `null` or empty to keep the stored one. The stored key
+/// belongs to the stored provider: another provider forgets it.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SetRequest {
+    /// Absent keeps the stored provider.
+    #[serde(default)]
+    pub provider: Option<AiProviderKind>,
     #[serde(default)]
     pub api_key: Option<Secret>,
+    /// Required for `openai_compatible`, ignored otherwise.
+    #[serde(default)]
+    pub base_url: Option<String>,
     pub model: String,
     pub enabled: bool,
 }
 
 /// `PUT /api/settings/ai`: global administrators; audited as `settings.ai`,
 /// without the key. 409 while the configuration sets AI. Turning AI on, or
-/// changing the key or model while on, tests them first and answers 400
-/// in plain words when they do not work.
+/// changing what it uses while on, tests it first and answers 400 in plain
+/// words when it does not work.
 pub async fn set(
     State(state): State<ApiState>,
     user: CurrentUser,
@@ -195,17 +275,29 @@ pub async fn set(
         return Err(ApiError::Conflict(LOCKED.into()));
     }
     let request = body(request)?;
-    known_model(&request.model)?;
-    let key = pasted(request.api_key)?;
     let before = stored(&state.pool, false).await?;
+    let kind = request.provider.unwrap_or_else(|| before.kind());
+    let model = typed(Some(request.model), "model name")?.unwrap_or_default();
+    known_model(kind, &model)?;
+    let base_url = address(kind, request.base_url)?;
+    let key = pasted(request.api_key)?;
+    let same_provider = kind == before.kind();
     if request.enabled {
-        let Some(usable) = key.clone().or_else(|| before.key()) else {
+        let usable = key
+            .clone()
+            .or_else(|| before.key().filter(|_| same_provider));
+        if usable.is_none() && kind != AiProviderKind::OpenAiCompatible {
             return Err(ApiError::Invalid("enter an API key first".into()));
-        };
-        let same = before.ai_enabled && key.is_none() && before.model() == request.model;
+        }
+        let same = before.ai_enabled
+            && same_provider
+            && key.is_none()
+            && before.model() == model
+            && before.ai_base_url == base_url;
         if !same {
             settings
-                .check(usable, &request.model)
+                .connection(kind, usable, base_url.clone(), model.clone())
+                .check()
                 .await
                 .map_err(ApiError::Invalid)?;
         }
@@ -218,28 +310,36 @@ pub async fn set(
         .await?;
     // Locks the row, so concurrent changes audit the right old values.
     let old = stored(&mut *tx, true).await?;
+    // The old key stays only with the provider it was entered for.
     sqlx::query(
         "UPDATE server_settings
-         SET ai_enabled = $1, ai_api_key = COALESCE($2, ai_api_key), ai_model = $3",
+         SET ai_enabled = $1,
+             ai_api_key = COALESCE($2, CASE WHEN ai_provider = $4 THEN ai_api_key END),
+             ai_model = $3, ai_provider = $4, ai_base_url = $5",
     )
     .bind(request.enabled)
     .bind(key.as_ref().map(Secret::expose))
-    .bind(&request.model)
+    .bind(&model)
+    .bind(kind.as_str())
+    .bind(&base_url)
     .execute(&mut *tx)
     .await
-    .map_err(no_key_left)?;
+    .map_err(not_enough_left)?;
     let details = json!({
-        "old": { "enabled": old.ai_enabled, "model": old.ai_model, "has_key": old.ai_api_key.is_some() },
-        "new": { "enabled": request.enabled, "model": request.model, "key_changed": key.is_some() },
+        "old": old.audit(),
+        "new": {
+            "enabled": request.enabled, "provider": kind, "model": model,
+            "base_url": base_url, "key_changed": key.is_some(),
+        },
     });
     record(&mut *tx, &user, details).await?;
     tx.commit().await?;
-    tracing::info!(user = %user.id, enabled = request.enabled, model = %request.model, "changed the AI settings");
+    tracing::info!(user = %user.id, enabled = request.enabled, provider = kind.as_str(), %model, "changed the AI settings");
     Ok(Json(current(&state).await?))
 }
 
-/// A concurrent `DELETE` took the key between the check and the write.
-fn no_key_left(error: sqlx::Error) -> ApiError {
+/// A concurrent change took the key between the check and the write.
+fn not_enough_left(error: sqlx::Error) -> ApiError {
     match &error {
         sqlx::Error::Database(e) if e.constraint() == Some("server_settings_ai_needs_a_key") => {
             ApiError::Invalid("enter an API key first".into())
@@ -264,7 +364,7 @@ pub async fn remove_key(
         .execute(&mut *tx)
         .await?;
     let details = json!({
-        "old": { "enabled": old.ai_enabled, "model": old.ai_model, "has_key": old.ai_api_key.is_some() },
+        "old": old.audit(),
         "new": { "enabled": false, "has_key": false },
     });
     record(&mut *tx, &user, details).await?;
@@ -293,44 +393,104 @@ async fn record(
     Ok(())
 }
 
-/// Body of `POST /api/settings/ai/test`, what the form holds.
+/// Body of `POST /api/settings/ai/test` and `/models`, what the form
+/// holds. What it leaves out is taken from the stored settings, the key
+/// and address only for the same provider.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TestRequest {
-    /// Absent or empty tests the stored key.
+    pub provider: Option<AiProviderKind>,
+    /// Absent or empty uses the stored key.
     pub api_key: Option<Secret>,
+    pub base_url: Option<String>,
     /// Absent tests the stored model.
     pub model: Option<String>,
 }
 
+/// What a test or a model list works on: the configuration's settings
+/// while it sets AI, else the form's over the stored ones.
+async fn resolve(state: &ApiState, request: TestRequest) -> Result<Connection, String> {
+    let settings = &state.settings.ai;
+    let config = &settings.config;
+    if config.enabled {
+        let key = monitorflow_ai::read_config_key(config)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut connection = settings.connection(
+            config.provider,
+            key,
+            config.base_url.clone(),
+            config.model.clone(),
+        );
+        if config.provider != AiProviderKind::OpenAiCompatible {
+            // An address in the configuration replaces the provider's own.
+            connection.base_url = config.base_url.clone().or(connection.base_url);
+        }
+        return Ok(connection);
+    }
+    let invalid = |e: ApiError| match e {
+        ApiError::Invalid(reason) => capitalized(&reason),
+        other => other.to_string(),
+    };
+    let before = stored(&state.pool, false)
+        .await
+        .map_err(|e| e.to_string())?;
+    let kind = request.provider.unwrap_or_else(|| before.kind());
+    let same_provider = kind == before.kind();
+    let model = match typed(request.model, "model name").map_err(invalid)? {
+        Some(model) => model,
+        None if same_provider => before.model(),
+        None => String::new(),
+    };
+    if kind == AiProviderKind::Anthropic {
+        known_model(kind, &model).map_err(invalid)?;
+    }
+    let base_url = typed(request.base_url, "address")
+        .map_err(invalid)?
+        .or_else(|| before.ai_base_url.clone().filter(|_| same_provider));
+    let base_url = address(kind, base_url).map_err(invalid)?;
+    let key = pasted(request.api_key)
+        .map_err(invalid)?
+        .or_else(|| before.key().filter(|_| same_provider));
+    if key.is_none() && kind != AiProviderKind::OpenAiCompatible {
+        return Err("Enter an API key first.".into());
+    }
+    Ok(settings.connection(kind, key, base_url, model))
+}
+
+fn capitalized(reason: &str) -> String {
+    let mut chars = reason.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
+        None => String::new(),
+    }
+}
+
 /// `POST /api/settings/ai/test`: global administrators; saves nothing.
-/// Tests the form's key and model, or under the configuration what it
-/// sets, and answers in plain words.
+/// Tests the form's settings, or under the configuration what it sets,
+/// and answers in plain words.
 pub async fn test(
     State(state): State<ApiState>,
     user: CurrentUser,
     request: Result<Json<TestRequest>, JsonRejection>,
 ) -> Result<Json<TestResult>, ApiError> {
     require_global_admin(&user)?;
-    let settings = &state.settings.ai;
     let request = body(request)?;
-    let (key, model) = if settings.config.enabled {
-        let key = claude::read_config_key(&settings.config)
-            .await
-            .map_err(|e| e.to_string());
-        (key.map(Some), settings.config.model.clone())
-    } else {
-        let before = stored(&state.pool, false).await?;
-        let model = request.model.unwrap_or_else(|| before.model().to_owned());
-        known_model(&model)?;
-        (Ok(pasted(request.api_key)?.or_else(|| before.key())), model)
+    let connection = resolve(&state, request).await;
+    let result = match &connection {
+        Ok(connection) if connection.model.is_empty() => Err("Enter a model first.".to_owned()),
+        Ok(connection) => connection.check().await,
+        Err(error) => Err(error.clone()),
     };
-    let result = match key {
-        Ok(Some(key)) => settings.check(key, &model).await,
-        Ok(None) => Err("Enter an API key first.".to_owned()),
-        Err(error) => Err(error),
-    };
-    tracing::info!(user = %user.id, %model, ok = result.is_ok(), "tested the AI settings");
+    let provider = connection
+        .as_ref()
+        .map(|c| c.kind.as_str())
+        .unwrap_or_default();
+    let model = connection
+        .as_ref()
+        .map(|c| c.model.as_str())
+        .unwrap_or_default();
+    tracing::info!(user = %user.id, provider, model, ok = result.is_ok(), "tested the AI settings");
     Ok(Json(match result {
         Ok(()) => TestResult {
             ok: true,
@@ -338,6 +498,42 @@ pub async fn test(
         },
         Err(error) => TestResult {
             ok: false,
+            error: Some(error),
+        },
+    }))
+}
+
+/// Body of `POST /api/settings/ai/models`.
+#[derive(Debug, Serialize)]
+pub struct ModelList {
+    /// Sorted; empty when the server could not say.
+    pub models: Vec<String>,
+    /// Why there is no list, in plain words.
+    pub error: Option<String>,
+}
+
+/// `POST /api/settings/ai/models`: global administrators; the models the
+/// form's provider offers, read from its server.
+pub async fn models(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    request: Result<Json<TestRequest>, JsonRejection>,
+) -> Result<Json<ModelList>, ApiError> {
+    require_global_admin(&user)?;
+    let mut request = body(request)?;
+    // Listing needs no model; Anthropic's default keeps the checks quiet.
+    request.model = Some(MODELS[0].id.into());
+    let result = match resolve(&state, request).await {
+        Ok(connection) => connection.models().await,
+        Err(error) => Err(error),
+    };
+    Ok(Json(match result {
+        Ok(models) => ModelList {
+            models,
+            error: None,
+        },
+        Err(error) => ModelList {
+            models: Vec::new(),
             error: Some(error),
         },
     }))
@@ -351,17 +547,23 @@ mod tests {
     fn the_configuration_takes_precedence_over_stored_settings() {
         let config = AiConfig {
             enabled: true,
-            model: "claude-custom".into(),
+            provider: AiProviderKind::OpenAiCompatible,
+            base_url: Some("http://ollama.lan:11434/v1".into()),
+            model: "qwen3:8b".into(),
             ..AiConfig::default()
         };
         let stored = Stored {
-            ai_enabled: false,
-            ai_api_key: None,
             ai_model: Some("claude-sonnet-5-5".into()),
+            ..Stored::default()
         };
         let shown = view(&config, &stored);
-        assert!(shown.enabled && shown.from_config && shown.has_key);
-        assert_eq!(shown.model, "claude-custom");
+        assert!(shown.enabled && shown.from_config && !shown.has_key);
+        assert_eq!(shown.provider, AiProviderKind::OpenAiCompatible);
+        assert_eq!(shown.model, "qwen3:8b");
+        assert_eq!(
+            shown.base_url.as_deref(),
+            Some("http://ollama.lan:11434/v1")
+        );
     }
 
     #[test]
@@ -371,8 +573,22 @@ mod tests {
             ..Stored::default()
         };
         let shown = view(&AiConfig::default(), &stored);
+        assert_eq!(shown.provider, AiProviderKind::Anthropic);
         assert_eq!(shown.model, MODELS[0].id);
         assert!(!shown.enabled && !shown.from_config && !shown.has_key);
+
+        // Other providers keep any model; OpenAI starts at its default.
+        let openai = Stored {
+            ai_provider: "openai".into(),
+            ..Stored::default()
+        };
+        assert_eq!(openai.model(), DEFAULT_OPENAI_MODEL);
+        let local = Stored {
+            ai_provider: "openai_compatible".into(),
+            ai_model: Some("llama3.1:8b".into()),
+            ..Stored::default()
+        };
+        assert_eq!(local.model(), "llama3.1:8b");
     }
 
     #[test]
@@ -382,5 +598,32 @@ mod tests {
         assert!(pasted(Some(Secret::new("  "))).unwrap().is_none());
         assert!(pasted(None).unwrap().is_none());
         assert!(pasted(Some(Secret::new("k".repeat(MAX_KEY + 1)))).is_err());
+    }
+
+    #[test]
+    fn models_and_addresses_are_checked_per_provider() {
+        assert!(known_model(AiProviderKind::Anthropic, "gpt-5.1").is_err());
+        assert!(known_model(AiProviderKind::OpenAi, "gpt-5.1").is_ok());
+        assert!(known_model(AiProviderKind::OpenAiCompatible, "").is_err());
+        assert!(typed(Some("qwen3\n".into()), "model name").unwrap() == Some("qwen3".into()));
+        assert!(typed(Some("a\u{0}b".into()), "model name").is_err());
+
+        let compatible = AiProviderKind::OpenAiCompatible;
+        assert_eq!(
+            address(compatible, Some(" http://ollama.lan:11434/v1/ ".into())).unwrap(),
+            Some("http://ollama.lan:11434/v1".into())
+        );
+        assert!(address(compatible, None).is_err());
+        match address(compatible, Some("ollama.lan:11434".into())) {
+            Err(ApiError::Invalid(reason)) => {
+                assert!(reason.starts_with("the address must"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            address(AiProviderKind::OpenAi, Some("http://x".into())).unwrap(),
+            None
+        );
+        assert_eq!(capitalized("enter a model"), "Enter a model.");
     }
 }

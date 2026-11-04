@@ -8,7 +8,9 @@
 use std::future::Future;
 use std::time::Duration;
 
-use monitorflow_common::config::DEFAULT_AI_MODEL;
+use monitorflow_ai::openai::DEFAULT_OPENAI_MODEL;
+use monitorflow_ai::Connection;
+use monitorflow_common::config::{AiConfig, AiProviderKind, DEFAULT_AI_MODEL};
 use monitorflow_common::redact::Secret;
 use sqlx::PgPool;
 use tokio::sync::oneshot;
@@ -20,21 +22,47 @@ use super::runner::Remediation;
 /// What the stored settings ask the loop to run with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wanted {
-    pub api_key: Secret,
+    pub provider: AiProviderKind,
+    /// `None` only for an OpenAI-compatible server that needs none.
+    pub api_key: Option<Secret>,
+    pub base_url: Option<String>,
     pub model: String,
+}
+
+impl Wanted {
+    /// What reaches the provider, under the configuration's limits.
+    pub fn connection(&self, config: &AiConfig) -> Connection {
+        Connection {
+            kind: self.provider,
+            api_key: self.api_key.clone(),
+            base_url: self.base_url.clone(),
+            model: self.model.clone(),
+            ..Connection::from_config(config)
+        }
+    }
 }
 
 /// The loop to run, or `None` while AI is off.
 pub async fn wanted(pool: &PgPool) -> Result<Option<Wanted>, sqlx::Error> {
-    let row: Option<(Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT ai_api_key, ai_model FROM server_settings WHERE ai_enabled")
-            .fetch_optional(pool)
-            .await?;
-    Ok(row.and_then(|(key, model)| {
-        Some(Wanted {
-            api_key: Secret::new(key?),
-            model: model.unwrap_or_else(|| DEFAULT_AI_MODEL.to_owned()),
-        })
+    type Row = (String, Option<String>, Option<String>, Option<String>);
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT ai_provider, ai_api_key, ai_base_url, ai_model
+         FROM server_settings WHERE ai_enabled",
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(provider, key, base_url, model)| {
+        let provider: AiProviderKind = provider.parse().unwrap_or_default();
+        let model = model.unwrap_or_else(|| match provider {
+            AiProviderKind::OpenAi => DEFAULT_OPENAI_MODEL.to_owned(),
+            _ => DEFAULT_AI_MODEL.to_owned(),
+        });
+        Wanted {
+            provider,
+            api_key: key.map(Secret::new),
+            base_url,
+            model,
+        }
     }))
 }
 
@@ -89,7 +117,7 @@ pub async fn supervise<S, F, E>(
         let Some(want) = want else { continue };
         match start(want.clone()).await {
             Ok(remediation) => {
-                tracing::info!(model = %want.model, "AI remediation started from the web interface settings");
+                tracing::info!(provider = want.provider.as_str(), model = %want.model, "AI remediation started from the web interface settings");
                 let (stop, stopped) = oneshot::channel::<()>();
                 let task = tokio::spawn(remediation.run(async move {
                     let _ = stopped.await;

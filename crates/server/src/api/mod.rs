@@ -66,10 +66,11 @@
 //! | GET | `/api/auto-update` | global administrator | [`auto_update::StatusView`]: settings and rollout progress (ADR-0055) |
 //! | GET | `/api/settings/auto-update` | global administrator | [`policy::Settings`](crate::auto_update::policy::Settings) as they apply (ADR-0055) |
 //! | PUT | `/api/settings/auto-update` | global administrator | body [`auto_update::SettingsRequest`]; the settings; 409 against the configuration; audited |
-//! | GET | `/api/settings/ai` | any session | [`ai::AiView`]: whether AI is on, whether a key is stored, the model and the models offered; never the key |
+//! | GET | `/api/settings/ai` | any session | [`ai::AiView`]: whether AI is on, its provider, whether a key is stored, the address, the model and Anthropic's models; never the key |
 //! | PUT | `/api/settings/ai` | global administrator | body [`ai::SetRequest`]; 200 [`ai::AiView`]; 400 with the reason in plain words when the key or model fails its test; 409 while `[ai] enabled = true` in the configuration; audited, without the key |
 //! | DELETE | `/api/settings/ai` | global administrator | forgets the key and turns AI off; 200 [`ai::AiView`]; 409 as above; audited |
 //! | POST | `/api/settings/ai/test` | global administrator | body [`ai::TestRequest`]; 200 [`notifications::TestResult`]; saves nothing |
+//! | POST | `/api/settings/ai/models` | global administrator | body [`ai::TestRequest`] without `model`; 200 [`ai::ModelList`], the models the provider's server offers, or why it could not say |
 //! | GET | `/api/settings/public-address` | customer administrator | [`public_address::PublicAddress`]: the address in install commands, the default, the certificate's names and whether it covers the address |
 //! | PUT | `/api/settings/public-address` | global administrator | body [`public_address::SetRequest`]; 200 [`public_address::PublicAddress`]; audited |
 //! | POST | `/api/auto-update/rollouts/{kind}/{version}/resume` | global administrator | resumes a halted rollout; audited |
@@ -1112,6 +1113,7 @@ pub fn router(state: ApiState) -> Router {
             get(ai::get).put(ai::set).delete(ai::remove_key),
         )
         .route("/api/settings/ai/test", post(ai::test))
+        .route("/api/settings/ai/models", post(ai::models))
         .route(
             "/api/settings/server",
             get(server_settings::get).put(server_settings::set),
