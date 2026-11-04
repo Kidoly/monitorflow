@@ -47,6 +47,8 @@ struct Setup {
     _ca_dir: TempDir,
     ca: CertificateAuthority,
     echo: Arc<Echo>,
+    /// AI commands: on in `agent.toml`, not to be turned on by the server.
+    switch: Arc<ai_switch::AiSwitch>,
     stream: StreamEnd,
     trigger: Trigger,
     task: JoinHandle<()>,
@@ -72,6 +74,11 @@ impl Setup {
         let echo = Arc::new(Echo::default());
         let mut handlers = Handlers::default();
         handlers.register("echo", echo.clone());
+        let switch = Arc::new(ai_switch::AiSwitch::load(true, false, data.path()));
+        handlers.register(
+            command::AI_COMMANDS,
+            Arc::new(ai_switch::AiSwitchHandler::new(switch.clone())),
+        );
         let mut dispatcher = Dispatcher::new(
             "web-01",
             vec![CertificateDer::from(ca_der)],
@@ -90,6 +97,7 @@ impl Setup {
             _ca_dir: ca_dir,
             ca,
             echo,
+            switch,
             stream,
             trigger,
             task,
@@ -373,4 +381,32 @@ fn output_status_and_truncation() {
     long.push(b'z');
     let cut = tail(long);
     assert_eq!((cut.len(), cut.last()), (MAX_OUTPUT, Some(&b'z')));
+}
+
+/// Through the same checks as every command (ADR-0098): signed, then the
+/// handler, which refuses "on" without consent and obeys "off".
+#[tokio::test]
+async fn ai_commands_are_turned_off_by_a_signed_command_only() {
+    use monitorflow_common::proto::v1::AiCommandsSwitch;
+    use prost::Message;
+
+    let mut s = Setup::new();
+    let off = AiCommandsSwitch { on: false }.encode_to_vec();
+    let mut forged = s.command("forged", command::AI_COMMANDS, &off);
+    forged.payload = AiCommandsSwitch { on: true }.encode_to_vec();
+    s.send(forged).await;
+    assert_eq!(s.result().await.status(), CommandStatus::Rejected);
+    assert!(s.switch.is_on());
+
+    let on = AiCommandsSwitch { on: true }.encode_to_vec();
+    s.send(s.command("on", command::AI_COMMANDS, &on)).await;
+    let refused = s.ran("on").await;
+    assert_eq!(refused.status(), CommandStatus::Rejected);
+    assert!(refused.error.contains("from_web"), "{}", refused.error);
+
+    s.send(s.command("off", command::AI_COMMANDS, &off)).await;
+    assert_eq!(s.ran("off").await.status(), CommandStatus::Succeeded);
+    assert!(!s.switch.is_on());
+    let data = s.stop().await;
+    assert!(!ai_switch::AiSwitch::load(true, false, data.path()).is_on());
 }

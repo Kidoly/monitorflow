@@ -106,6 +106,11 @@ pub struct Agent {
     logs: Option<Uplink<LogEntry>>,
     commands: Option<commands::StreamEnd>,
     command_kinds: Vec<CommandKindState>,
+    /// When set, `Hello` reports from these handlers, and the stream
+    /// reconnects to report again whenever the receiver fires.
+    reporting: Option<(commands::Handlers, watch::Receiver<()>)>,
+    /// Set when the connection closed to report again.
+    reporting_again: bool,
     reports: Option<watch::Receiver<Option<PackageReport>>>,
     on_open: Option<Arc<dyn Fn() + Send + Sync>>,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
@@ -125,6 +130,8 @@ impl Agent {
             logs: None,
             commands: None,
             command_kinds: Vec::new(),
+            reporting: None,
+            reporting_again: false,
             reports: None,
             on_open: None,
             sequence: 0,
@@ -165,6 +172,19 @@ impl Agent {
         self
     }
 
+    /// Says in every `Hello` what `handlers` do with each kind of command,
+    /// and reconnects at once to say it again each time `changes` fires:
+    /// AI commands turned on or off by the server (ADR-0098). Relays and
+    /// the server learn it from the new `Hello`, as from a restart.
+    pub fn with_command_handlers(
+        mut self,
+        handlers: commands::Handlers,
+        changes: watch::Receiver<()>,
+    ) -> Self {
+        self.reporting = Some((handlers, changes));
+        self
+    }
+
     /// Sends each package report published on `reports` (ADR-0031): at
     /// once when connected, else on the next connection.
     pub fn with_reports(mut self, reports: watch::Receiver<Option<PackageReport>>) -> Self {
@@ -200,6 +220,10 @@ impl Agent {
                 backoff.reset();
             }
             let delay = match &failure {
+                Failure::Renewed if std::mem::take(&mut self.reporting_again) => {
+                    tracing::info!("reconnecting to report the commands this agent accepts now");
+                    continue;
+                }
                 Failure::Renewed => {
                     tracing::info!("reconnecting with the renewed certificate");
                     continue;
@@ -245,6 +269,9 @@ impl Agent {
     ) -> Result<(), Failure> {
         if let Some(updates) = &mut self.updates {
             self.identity = updates.borrow_and_update().clone();
+        }
+        if let Some((_, changes)) = &mut self.reporting {
+            changes.mark_unchanged();
         }
         let channel = tokio::select! {
             channel = self.connect() => channel?,
@@ -297,6 +324,10 @@ impl Agent {
             let close = tokio::select! {
                 () = shutdown.wait() => Some(Ok(())),
                 () = changed(&mut self.updates) => Some(Err(Failure::Renewed)),
+                () = report_changed(&mut self.reporting) => {
+                    self.reporting_again = true;
+                    Some(Err(Failure::Renewed))
+                }
                 _ = heartbeat.tick() => {
                     let envelope = self.envelope(Payload::Heartbeat(Heartbeat {
                         sent_at_unix_ms: unix_ms(),
@@ -403,7 +434,10 @@ impl Agent {
             os_family: self.host.os_family.as_str().into(),
             os_version: self.host.os_version.clone(),
             no_package_manager: !self.host.package_manager,
-            command_kinds: self.command_kinds.clone(),
+            command_kinds: match &self.reporting {
+                Some((handlers, _)) => handlers.report(),
+                None => self.command_kinds.clone(),
+            },
             system_uuid: self.host.hardware.system_uuid.clone().unwrap_or_default(),
             mac_addresses: self.host.hardware.mac_addresses.clone(),
         }
@@ -512,6 +546,16 @@ async fn changed(updates: &mut Option<watch::Receiver<AgentIdentity>>) {
         return std::future::pending().await;
     };
     if updates.changed().await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
+/// Resolves when what the handlers report changes; never without them.
+async fn report_changed(reporting: &mut Option<(commands::Handlers, watch::Receiver<()>)>) {
+    let Some((_, changes)) = reporting else {
+        return std::future::pending().await;
+    };
+    if changes.changed().await.is_err() {
         std::future::pending::<()>().await;
     }
 }

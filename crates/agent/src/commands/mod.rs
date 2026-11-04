@@ -30,6 +30,7 @@
 //! such an entry when the command arrives again: its future then runs in
 //! place of a handler, reported `RUNNING`, and its output is the result.
 
+pub mod ai_switch;
 pub mod journal;
 pub mod shell;
 pub mod unsupported;

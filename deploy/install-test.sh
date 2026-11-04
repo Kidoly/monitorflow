@@ -244,6 +244,14 @@ installer MF_DOWNLOAD_URL="$base"
 check "a later run keeps the opt-in" test "$(shell_env)" = MONITORFLOW_COMMANDS_SHELL=true
 installer MF_DOWNLOAD_URL="$base" MF_ALLOW_COMMANDS=0
 check "MF_ALLOW_COMMANDS=0 takes it back" test -z "$(shell_env)"
+installer MF_DOWNLOAD_URL="$base" MF_AI_COMMANDS_FROM_WEB=1
+check "MF_AI_COMMANDS_FROM_WEB=1 lets the web interface turn them on" test "$(shell_env)" = MONITORFLOW_COMMANDS_FROM_WEB=true
+echo on | sudo tee /var/lib/monitorflow/agent/ai-commands >/dev/null
+installer MF_DOWNLOAD_URL="$base" MF_ALLOW_COMMANDS=0
+check "a choice on the host forgets the web interface's" absent /var/lib/monitorflow/agent/ai-commands
+check "and keeps the consent" test "$(shell_env)" = MONITORFLOW_COMMANDS_FROM_WEB=true
+installer MF_DOWNLOAD_URL="$base" MF_AI_COMMANDS_FROM_WEB=0
+check "MF_AI_COMMANDS_FROM_WEB=0 takes it back" test -z "$(shell_env)"
 check "agent online after the opt-in" online "$PEER"
 # These runs came quickly: systemd allows 5 starts in 10 seconds.
 sudo systemctl reset-failed monitorflow-agent

@@ -72,6 +72,11 @@ upstream_url = "https://relay.example.com:7443"
 # Run the `shell` commands of the AI remediation loop (ADR-0043): single
 # command lines the server's risk rules classified as read-only, or that an
 # approver accepted, run with /bin/sh -c as the agent's user, environment
-# reset to PATH and LC_ALL=C. Off unless enabled here; the server cannot
-# change it.
+# reset to PATH and LC_ALL=C. Off unless enabled here or, with
+# `from_web`, from the web interface. The installer's MF_ALLOW_COMMANDS
+# sets it.
 # shell = false
+# Let administrators turn `shell` on and off from the server's page in
+# the web interface (ADR-0098). Without it the web interface can only turn
+# it off. The installer's MF_AI_COMMANDS_FROM_WEB sets it.
+# from_web = false

@@ -63,6 +63,11 @@ script_dir = 'C:\ProgramData\MonitorFlow\scripts.d'
 # log_dirs = ['D:\Logs\MyApp']
 
 [commands]
-# Ignored on Windows: `shell` commands are refused, because the server's
-# risk rules assume /bin/sh (ADR-0047).
+# Run the commands of AI remediation in Windows PowerShell 5.1 as the
+# agent's account (ADR-0084). `monitorflow-agent.exe ai-commands on|off`
+# sets it.
 # shell = false
+# Let administrators turn `shell` on and off from the server's page in
+# the web interface (ADR-0098). Without it the web interface can only turn
+# it off. `monitorflow-agent.exe ai-commands from-web on|off` sets it.
+# from_web = false

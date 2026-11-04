@@ -12,6 +12,9 @@
                       starts the service
     ENROLL_URL        optional, enroll_url of agent.toml
     ENROLLMENT_TOKEN  optional, one-time token; hidden from the MSI log
+    AI_COMMANDS_FROM_WEB=1  let the web interface turn AI commands on and
+                      off (commands.from_web in agent.toml, ADR-0098), on a
+                      new install or an upgrade
     REMOVE_DATA=1     on uninstall, also delete %ProgramData%\MonitorFlow
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
@@ -38,6 +41,7 @@
     <Property Id="ENROLL_URL" Secure="yes" />
     <Property Id="ENROLLMENT_TOKEN" Secure="yes" Hidden="yes" />
     <Property Id="REMOVE_DATA" Secure="yes" />
+    <Property Id="AI_COMMANDS_FROM_WEB" Secure="yes" />
 
     <Feature Id="Agent" Title="MonitorFlow agent">
       <ComponentGroupRef Id="AgentProgram" />
@@ -151,8 +155,17 @@
     <CustomAction Id="WriteAgentConfig" FileRef="AgentExe" Execute="deferred" Impersonate="no"
                   Return="check" HideTarget="yes"
                   ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; init-config --upstream-url &quot;[UPSTREAM_URL]&quot; --enroll-url &quot;[ENROLL_URL]&quot; --enrollment-token &quot;[ENROLLMENT_TOKEN]&quot;" />
+    <!-- AI_COMMANDS_FROM_WEB=1: the agent edits agent.toml itself, as
+         `ai-commands from-web on` does, before the service starts. Only
+         with an agent.toml: one written just now, or the one an upgrade
+         keeps. -->
+    <CustomAction Id="AllowAiCommandsFromWeb" FileRef="AgentExe" Execute="deferred" Impersonate="no"
+                  Return="check"
+                  ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; ai-commands from-web on" />
     <InstallExecuteSequence>
       <Custom Action="WriteAgentConfig" After="InstallFiles" Condition="UPSTREAM_URL AND NOT REMOVE" />
+      <Custom Action="AllowAiCommandsFromWeb" After="WriteAgentConfig"
+              Condition="AI_COMMANDS_FROM_WEB = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
     </InstallExecuteSequence>
   </Package>
 </Wix>

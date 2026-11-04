@@ -1,7 +1,7 @@
 # ADR-0076: Each server says whether it accepts commands
 
 Date: 2026-11-01
-Status: accepted; Windows agents accept `shell` since ADR-0084
+Status: accepted; Windows agents accept `shell` since ADR-0084; the report is sent again when the web interface turns AI commands on or off (ADR-0098)
 
 ## Context
 

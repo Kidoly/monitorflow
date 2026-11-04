@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use monitorflow_agent::backoff::Backoff;
+use monitorflow_agent::commands::ai_switch::AiSwitch;
 use monitorflow_agent::commands::shell::ShellHandler;
 use monitorflow_agent::commands::unsupported::Unsupported;
 use monitorflow_agent::commands::Handlers;
@@ -178,6 +179,45 @@ async fn hello_says_what_each_handler_does() {
         agent.hello().command_kinds[1],
         state("shell", CommandAcceptance::Accepted)
     );
+}
+
+/// AI commands turned on or off by the server reach it in a new `Hello`
+/// at once, not at the next restart (ADR-0098).
+#[tokio::test]
+async fn reports_again_when_ai_commands_change() {
+    let s = setup(server_settings()).await;
+    let (identity, _) = s.pki.agent_identity(&s.config, "web-01");
+    let state = TempDir::new().unwrap();
+    let switch = Arc::new(AiSwitch::load(false, true, state.path()));
+    let mut handlers = Handlers::default();
+    handlers.register(
+        command::SHELL,
+        Arc::new(ShellHandler::switched(switch.clone())),
+    );
+    let agent = Agent::new(settings(&s.config), identity, host())
+        .with_command_handlers(handlers.clone(), switch.subscribe());
+    let shell = |agent: &Agent| agent.hello().command_kinds[0].acceptance();
+    assert_eq!(shell(&agent), CommandAcceptance::Disabled);
+    let (trigger, stop) = shutdown::channel();
+    let task = tokio::spawn(async move { agent.run(stop).await.unwrap() });
+    let registry = &s.upstream.registry;
+    eventually("registration", || registry.get("web-01").is_some()).await;
+    let first = connection(registry, "web-01");
+
+    assert!(switch.set(true).await.unwrap());
+    eventually("a new Hello", || connection(registry, "web-01") > first).await;
+    assert_eq!(
+        handlers.report()[0].acceptance(),
+        CommandAcceptance::Accepted
+    );
+    let second = connection(registry, "web-01");
+    // Setting what is already set says nothing new.
+    switch.set(true).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(connection(registry, "web-01"), second);
+
+    trigger.fire();
+    tokio::time::timeout(TIMEOUT, task).await.unwrap().unwrap();
 }
 
 #[tokio::test]
