@@ -392,6 +392,19 @@ mod tests {
     }
 
     #[test]
+    fn hourly_checks_do_not_make_a_server_offline() {
+        // Offline is the stream and its heartbeats every 30 s, not samples
+        // (ADR-0097): a server whose checks run hourly sends its last
+        // sample at minute 0 and stays connected.
+        let a = Peer::Server(Uuid::from_u128(1));
+        let up = online(&[(PeerRole::Agent, "a")]);
+        for minute in [5, 59, 61, 120] {
+            let heartbeat = peer(a, "a", minute - 1);
+            assert!(decide(&[heartbeat], &up, at(minute), at(-60), AFTER).is_empty());
+        }
+    }
+
+    #[test]
     fn resolves_on_reconnect_mute_or_revocation() {
         let a = Peer::Relay(Uuid::from_u128(1));
         let id = Uuid::from_u128(9);

@@ -273,7 +273,7 @@ db_tests! {
         // Same name and instance twice for one owner.
         let (status, body) = call(
             &pool, &operator, "POST", &format!("/api/sites/{}/sensor_configs", f.paris),
-            Some(json!({ "kind": "cpu", "interval_ms": 1_000 })),
+            Some(json!({ "kind": "cpu", "interval_ms": 10_000 })),
         )
         .await;
         assert_eq!(status, StatusCode::CONFLICT);
@@ -339,7 +339,7 @@ db_tests! {
         // A global administrator may.
         let admin = session(&pool, "admin", Role::Administrator, None).await;
         let (status, _) =
-            call(&pool, &admin, "PUT", &uri, Some(json!({ "kind": "cpu", "interval_ms": 1_000 }))).await;
+            call(&pool, &admin, "PUT", &uri, Some(json!({ "kind": "cpu", "interval_ms": 10_000 }))).await;
         assert_eq!(status, StatusCode::OK);
         assert!(revision(&pool, f.lyon_server).await > rev);
         assert_eq!(revision(&pool, f.paris_server).await, 0);
@@ -353,6 +353,7 @@ db_tests! {
         let cases = [
             (json!({ "kind": "gpu", "interval_ms": 1_000 }), "unknown sensor kind `gpu`"),
             (json!({ "kind": "cpu", "interval_ms": 10 }), "interval"),
+            (json!({ "kind": "cpu", "interval_ms": 5_000 }), "interval must be between 10 s and 24 h"),
             (json!({ "kind": "cpu", "interval_ms": 1_000, "params": { "per_cores": true } }), "unknown parameter `per_cores`"),
             (json!({ "kind": "cpu" }), "missing field `interval_ms`"),
             (json!({ "kind": "cpu", "interval_ms": 1_000, "owner": "x" }), "unknown field `owner`"),
@@ -409,5 +410,92 @@ db_tests! {
             let (status, _) = call(&pool, &operator, "GET", &uri, None).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
         }
+    }
+
+    #[sqlx::test]
+    async fn operators_set_how_often_their_sites_builtin_checks_run(pool: PgPool) {
+        let f = fleet(&pool).await;
+        let operator = session(&pool, "paris-op", Role::Operator, Some(f.paris)).await;
+        let viewer = session(&pool, "paris-viewer", Role::Viewer, Some(f.paris)).await;
+        let uri = format!("/api/sites/{}/check-interval", f.paris);
+        let intervals = |body: &Value| -> Vec<(String, u64)> {
+            body["sensors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| (s["name"].as_str().unwrap().to_owned(), s["interval_ms"].as_u64().unwrap()))
+                .collect()
+        };
+
+        // The built-in interval until the site sets one.
+        let (_, body) = call(&pool, &viewer, "GET", &format!("/api/sites/{}/sensors", f.paris), None).await;
+        assert_eq!((body["check_interval_ms"].clone(), body["check_interval_origin"].clone()), (json!(60_000), json!("default")));
+
+        // A custom check keeps its own interval.
+        let (status, _) = call(
+            &pool, &operator, "POST", &format!("/api/sites/{}/sensor_configs", f.paris),
+            Some(json!({ "kind": "port", "name": "port_443", "interval_ms": 30_000, "params": { "port": 443 } })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let rev = revision(&pool, f.paris_server).await;
+        let (status, body) = call(&pool, &operator, "PUT", &uri, Some(json!({ "interval_ms": 3_600_000 }))).await;
+        assert_eq!((status, body), (StatusCode::OK, json!({ "interval_ms": 3_600_000 })));
+        assert!(revision(&pool, f.paris_server).await > rev);
+        assert_eq!(revision(&pool, f.lyon_server).await, 0);
+
+        let (_, body) = call(&pool, &viewer, "GET", &format!("/api/servers/{}/sensors", f.paris_server), None).await;
+        assert_eq!((body["check_interval_ms"].clone(), body["check_interval_origin"].clone()), (json!(3_600_000), json!("site")));
+        let hourly = |name: &str| (name.to_owned(), 3_600_000);
+        assert_eq!(
+            intervals(&body),
+            [hourly("cpu"), hourly("disk"), hourly("diskio"), hourly("memory"), ("port_443".to_owned(), 30_000)]
+        );
+        let (_, body) = call(&pool, &viewer, "GET", &format!("/api/sites/{}/sensors", f.paris), None).await;
+        assert_eq!(body["check_interval_ms"], 3_600_000);
+        let (_, body) = call(&pool, &viewer, "GET", &format!("/api/servers/{}/sensors", f.lyon_server), None).await;
+        assert_eq!(body, json!({ "error": "not found" }));
+
+        // Out of bounds, unknown fields.
+        for (bad, expected) in [
+            (json!({ "interval_ms": 5_000 }), "interval must be between 10 s and 24 h"),
+            (json!({ "interval_ms": 86_400_001u64 }), "interval must be between 10 s and 24 h"),
+            (json!({ "interval_ms": 60_000, "site_id": "x" }), "unknown field `site_id`"),
+        ] {
+            let (status, body) = call(&pool, &operator, "PUT", &uri, Some(bad.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            assert!(body["error"].as_str().unwrap().contains(expected), "{body}");
+        }
+
+        // Viewers may not; another site's operator does not see it.
+        let (status, _) = call(&pool, &viewer, "PUT", &uri, Some(json!({ "interval_ms": 30_000 }))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let lyon_op = session(&pool, "lyon-op", Role::Operator, Some(f.lyon)).await;
+        for uri in [uri.clone(), format!("/api/sites/{}/check-interval", Uuid::new_v4()), "/api/sites/x/check-interval".into()] {
+            let (status, _) = call(&pool, &lyon_op, "PUT", &uri, Some(json!({ "interval_ms": 30_000 }))).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+        }
+
+        // Back to the built-in interval.
+        let (status, body) = call(&pool, &operator, "PUT", &uri, Some(json!({ "interval_ms": null }))).await;
+        assert_eq!((status, body), (StatusCode::OK, json!({ "interval_ms": null })));
+        let (_, body) = call(&pool, &viewer, "GET", &format!("/api/sites/{}/sensors", f.paris), None).await;
+        assert_eq!(body["check_interval_origin"], "default");
+
+        // Audited with the value before and after.
+        let rows: Vec<(String, Option<String>, Value)> = sqlx::query_as(
+            "SELECT action, target_id, details FROM audit_log WHERE action = 'site.check_interval' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let site = f.paris.to_string();
+        assert_eq!(
+            rows,
+            [
+                ("site.check_interval".to_owned(), Some(site.clone()), json!({ "before": null, "after": 3_600_000 })),
+                ("site.check_interval".to_owned(), Some(site), json!({ "before": 3_600_000, "after": null })),
+            ]
+        );
     }
 }

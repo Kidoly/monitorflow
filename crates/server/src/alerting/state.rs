@@ -224,6 +224,38 @@ mod tests {
     }
 
     #[test]
+    fn hourly_samples_fire_at_the_second_bad_one_with_a_gap_of_two_intervals() {
+        // A check every hour, a threshold "for 5 min" (ADR-0097).
+        let rule = disk(0.0);
+        let hour = 3_600;
+        let hourly = |gap: i64, samples: &[(i64, f64)]| {
+            let mut state = SeriesState::default();
+            samples
+                .iter()
+                .map(|&(t, v)| {
+                    state
+                        .evaluate(&rule, t * S, v, gap)
+                        .and_then(|e| e.transition)
+                })
+                .collect::<Vec<_>>()
+        };
+        let samples = [(0, 0.9), (hour, 0.9), (2 * hour, 0.9)];
+        // The default gap restarts the timer at every sample: never fires.
+        assert_eq!(hourly(GAP, &samples), [None, None, None]);
+        let gap = 2 * hour * S;
+        assert_eq!(
+            hourly(gap, &samples),
+            [None, Some(Transition::Opened(Warning)), None]
+        );
+        // One lost sample is covered, two are not.
+        assert_eq!(
+            hourly(gap, &[(0, 0.9), (2 * hour, 0.9)]),
+            [None, Some(Transition::Opened(Warning))]
+        );
+        assert_eq!(hourly(gap, &[(0, 0.9), (3 * hour, 0.9)]), [None, None]);
+    }
+
+    #[test]
     fn a_break_in_the_condition_restarts_the_timer() {
         let rule = disk(0.0);
         let mut state = SeriesState::default();

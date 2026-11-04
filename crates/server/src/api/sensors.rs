@@ -75,7 +75,8 @@ pub struct ValidEntry {
 
 /// Checks `request` as the agent will: ADR-0012's name, instance,
 /// interval and timeout rules, then the kind and its parameters with
-/// [`registry::build`]. The error is a message for the client.
+/// [`registry::build`], then the API's shortest interval (ADR-0097). The
+/// error is a message for the client.
 pub fn validate_entry(request: EntryRequest) -> Result<ValidEntry, String> {
     let name = request.name.unwrap_or_else(|| request.kind.clone());
     validate::sensor_name(&request.kind).map_err(|e| format!("kind: {e}"))?;
@@ -115,6 +116,7 @@ pub fn validate_entry(request: EntryRequest) -> Result<ValidEntry, String> {
         ));
     }
     registry::build(&request.kind, &config.params).map_err(|e| e.to_string())?;
+    check_interval(request.interval_ms)?;
     // Both fit: validate() bounds the interval to 24 h and the timeout by it.
     let millis = |ms: u64| i64::try_from(ms).unwrap_or(i64::MAX);
     Ok(ValidEntry {
@@ -126,6 +128,17 @@ pub fn validate_entry(request: EntryRequest) -> Result<ValidEntry, String> {
         params,
         enabled: request.enabled,
     })
+}
+
+/// Refuses an interval the API does not offer: 10 s to 24 h (ADR-0097).
+pub fn check_interval(interval_ms: u64) -> Result<(), String> {
+    if (sensor_config::MIN_CHECK_INTERVAL_MS..=sensor_config::MAX_CHECK_INTERVAL_MS)
+        .contains(&interval_ms)
+    {
+        Ok(())
+    } else {
+        Err("interval must be between 10 s and 24 h".into())
+    }
 }
 
 /// One row of `sensor_configs`. Exactly one of `site_id` and `server_id`
@@ -177,11 +190,34 @@ pub struct EffectiveSensor {
     pub params: std::collections::BTreeMap<String, String>,
 }
 
+/// Whether the built-in checks run at the built-in interval or the site's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IntervalOrigin {
+    Default,
+    Site,
+}
+
+/// The interval of a site's built-in checks and where it comes from.
+fn builtin_interval(check_interval_ms: Option<i32>) -> (u64, IntervalOrigin) {
+    let origin = match check_interval_ms {
+        Some(_) => IntervalOrigin::Site,
+        None => IntervalOrigin::Default,
+    };
+    (
+        sensor_config::site_interval(check_interval_ms.map(i64::from)),
+        origin,
+    )
+}
+
 /// Body of `GET /api/servers/{id}/sensors`.
 #[derive(Debug, Serialize)]
 pub struct Effective {
     pub server_id: Uuid,
     pub site_id: Uuid,
+    /// Interval of the built-in checks (ADR-0097).
+    pub check_interval_ms: u64,
+    pub check_interval_origin: IntervalOrigin,
     /// Revision of the current configuration.
     pub revision: i64,
     /// Revision the agent last acknowledged, `null` if it never did.
@@ -197,6 +233,9 @@ pub struct Effective {
 #[derive(Debug, Serialize)]
 pub struct SiteEffective {
     pub site_id: Uuid,
+    /// Interval of the built-in checks (ADR-0097).
+    pub check_interval_ms: u64,
+    pub check_interval_origin: IntervalOrigin,
     pub sensors: Vec<EffectiveSensor>,
 }
 
@@ -521,10 +560,10 @@ pub async fn effective(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    type Revisions = (Uuid, i64, Option<i64>, Option<DateTime<Utc>>);
+    type Revisions = (Uuid, i64, Option<i64>, Option<DateTime<Utc>>, Option<i32>);
     let server: Option<Revisions> = sqlx::query_as(
         "SELECT s.site_id, si.sensor_revision + s.sensor_revision,
-                s.sensor_revision_applied, s.sensor_applied_at
+                s.sensor_revision_applied, s.sensor_applied_at, si.check_interval_ms
          FROM servers s JOIN sites si ON si.id = s.site_id
          WHERE s.id = $1",
     )
@@ -532,7 +571,9 @@ pub async fn effective(
     .fetch_optional(&mut *tx)
     .await?;
     let site_id = authorize(&user, server.map(|s| s.0), false)?;
-    let (_, revision, applied_revision, applied_at) = server.ok_or(ApiError::NotFound)?;
+    let (_, revision, applied_revision, applied_at, site_interval) =
+        server.ok_or(ApiError::NotFound)?;
+    let (check_interval_ms, check_interval_origin) = builtin_interval(site_interval);
     // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
     let entries: Vec<Entry> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ENTRY_COLUMNS} FROM sensor_configs WHERE site_id = $1 OR server_id = $2"
@@ -545,11 +586,13 @@ pub async fn effective(
     Ok(Json(Effective {
         server_id,
         site_id,
+        check_interval_ms,
+        check_interval_origin,
         revision,
         applied_revision,
         applied_at,
         in_sync: applied_revision == Some(revision),
-        sensors: effective_sensors(&entries),
+        sensors: effective_sensors(&entries, check_interval_ms),
     }))
 }
 
@@ -560,8 +603,14 @@ pub async fn effective_site(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<SiteEffective>, ApiError> {
-    let owner = Owner::Site(parse_id(&id)?);
-    let site_id = authorize(&user, owner.site(&state.pool).await?, false)?;
+    let id = parse_id(&id)?;
+    let site: Option<(Uuid, Option<i32>)> =
+        sqlx::query_as("SELECT id, check_interval_ms FROM sites WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.pool)
+            .await?;
+    let site_id = authorize(&user, site.map(|s| s.0), false)?;
+    let (check_interval_ms, check_interval_origin) = builtin_interval(site.and_then(|s| s.1));
     // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
     let entries: Vec<Entry> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ENTRY_COLUMNS} FROM sensor_configs WHERE site_id = $1"
@@ -571,14 +620,17 @@ pub async fn effective_site(
     .await?;
     Ok(Json(SiteEffective {
         site_id,
-        sensors: effective_sensors(&entries),
+        check_interval_ms,
+        check_interval_origin,
+        sensors: effective_sensors(&entries, check_interval_ms),
     }))
 }
 
-/// Resolves `entries` with [`sensor_config::resolve`], the function the
+/// Resolves `entries` over the built-in checks every
+/// `builtin_interval_ms` with [`sensor_config::resolve`], the function the
 /// push uses, then names the row each sensor comes from: the server's
 /// row for its key if any, else the site's, else a built-in default.
-fn effective_sensors(entries: &[Entry]) -> Vec<EffectiveSensor> {
+fn effective_sensors(entries: &[Entry], builtin_interval_ms: u64) -> Vec<EffectiveSensor> {
     let rows = entries
         .iter()
         .map(|e| Row {
@@ -598,7 +650,7 @@ fn effective_sensors(entries: &[Entry]) -> Vec<EffectiveSensor> {
             enabled: e.enabled,
         })
         .collect();
-    sensor_config::resolve(rows)
+    sensor_config::resolve(rows, builtin_interval_ms)
         .into_iter()
         .map(|spec| {
             let of = |server: bool| {
@@ -670,6 +722,10 @@ mod tests {
             ),
             (json!({"kind": "cpu", "interval_ms": 999}), "interval"),
             (
+                json!({"kind": "cpu", "interval_ms": 9_999}),
+                "interval must be between 10 s and 24 h",
+            ),
+            (
                 json!({"kind": "cpu", "interval_ms": 86_400_001u64}),
                 "interval",
             ),
@@ -716,6 +772,25 @@ mod tests {
     }
 
     #[test]
+    fn intervals_from_10_seconds_to_a_day() {
+        for ms in [10_000, 30_000, 60_000, 3_600_000, 86_400_000] {
+            assert!(
+                request(json!({"kind": "cpu", "interval_ms": ms})).is_ok(),
+                "{ms}"
+            );
+            assert!(check_interval(ms).is_ok());
+        }
+        for ms in [0, 1_000, 9_999, 86_400_001] {
+            assert!(check_interval(ms).is_err(), "{ms}");
+        }
+        assert_eq!(builtin_interval(None), (60_000, IntervalOrigin::Default));
+        assert_eq!(
+            builtin_interval(Some(3_600_000)),
+            (3_600_000, IntervalOrigin::Site)
+        );
+    }
+
+    #[test]
     fn requests_refuse_unknown_fields() {
         let parsed = serde_json::from_value::<EntryRequest>(
             json!({"kind": "cpu", "interval_ms": 1_000, "site_id": "x"}),
@@ -751,7 +826,7 @@ mod tests {
             entry(true, "disk", "/data", 60_000, true),
             entry(false, "diskio", "", 60_000, false),
         ];
-        let sensors = effective_sensors(&entries);
+        let sensors = effective_sensors(&entries, sensor_config::DEFAULT_INTERVAL_MS);
         let view: Vec<_> = sensors
             .iter()
             .map(|s| {
@@ -773,10 +848,10 @@ mod tests {
             ]
         );
         assert_eq!(sensors[0].params["per_core"], "false");
-        let defaults = effective_sensors(&[]);
-        assert!(defaults
-            .iter()
-            .all(|s| s.origin == Origin::Default && s.entry_id.is_none()));
+        let defaults = effective_sensors(&[], 300_000);
+        assert!(defaults.iter().all(|s| s.origin == Origin::Default
+            && s.entry_id.is_none()
+            && s.interval_ms == 300_000));
         assert_eq!(defaults.len(), 4);
     }
 }
