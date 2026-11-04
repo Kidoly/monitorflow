@@ -160,3 +160,13 @@ Let each install pick what suits it instead of a fixed choice.
 - [ ] Any AI for remediation: Anthropic, OpenAI or any OpenAI-compatible API, and local models (Ollama, llama.cpp, vLLM) so nothing leaves the network. The safety rules stay on the server whatever the model.
 - [ ] Choose how often each check runs, from seconds to hours, per check and as a default per site. Agents already accept any interval up to 24 hours; the web interface only shows it.
 - [ ] Show dashboards on a wall screen or TV: full screen without menus, large text, refreshing by itself, cycling through several dashboards, and a display link that needs no sign-in, read-only, tied to one dashboard and revocable. Say plainly on screen when the data is stale.
+
+## Phase 16 — Integrations
+
+Fit into the tools people already use, for a single company and for MSPs alike (see "Who it is for" in `docs/product.md`).
+
+- [ ] A clean public API: versioned, documented with OpenAPI, API keys with scopes limited to a customer or a site, pagination and filters, stable errors, idempotent writes and rate limits. Everything the web interface does is possible through it.
+- [ ] Outgoing events for integrations: signed webhooks for incidents, acknowledgements, servers and updates, retried and replayable.
+- [ ] PSA connection, HaloPSA first: a ticket per incident with its status kept in step both ways, customers and sites matched to PSA clients and sites, servers synced as assets.
+- [ ] Plugins: add checks, notification channels and integrations without changing MonitorFlow, signed, isolated from the server's secrets, and installable from the web interface.
+- [ ] MSP features out of sight for a single company: no customer picker or customer wording until a second customer exists.

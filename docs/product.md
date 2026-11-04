@@ -11,11 +11,19 @@ Status: draft, 2026-10-18.
 - Ship a web interface from the first version, with graphs and a live view of the fleet.
 - Notify by email, Slack, Teams, Discord and webhook when incidents open or resolve, approvals wait and updates fail, for everything, one customer or one site (ADR-0060, ADR-0077, ADR-0078), silence notifications for planned work (ADR-0079), and tell whoever is on call in person, in turns with covers for holidays (ADR-0081). When many things break at once, related incidents are sent together, at most once a minute per customer (ADR-0080), to the channels and to the person on call alike. Someone acknowledges an alert to say they are on it; when nobody does, a follow-up tells the next people in steps, the administrators after 15 minutes by default (ADR-0082).
 
+## Who it is for
+
+Two audiences with one product: a company running its own servers, and a managed service provider (MSP) running them for many customers. Neither should feel the product was made for the other.
+
+- A company with one organisation sees no customers, no customer picker and no MSP vocabulary. Customers appear only once a second one exists.
+- An MSP gets customers, sites, relays, per-customer routing and a PSA connection, without making the single-company case heavier.
+- A customer of an MSP who is given access sees their own servers in plain words, never the MSP's other customers or its internal tools.
+
 ## Non-goals for the first version
 
 - Windows agents (planned later).
 - A custom time-series database.
-- A local or self-hosted AI model.
+- A local or self-hosted AI model (planned in Phase 15).
 
 ## Roadmap
 
