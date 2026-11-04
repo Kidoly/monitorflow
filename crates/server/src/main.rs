@@ -515,6 +515,10 @@ async fn main() -> anyhow::Result<()> {
             VmQuery::with_auth(&config.victoriametrics_url, QUERY_TIMEOUT, storage.as_ref())
                 .context("VictoriaMetrics query client")?,
         )
+        .with_logs(
+            VmQuery::with_auth(&config.victorialogs_url, QUERY_TIMEOUT, storage.as_ref())
+                .context("VictoriaLogs query client")?,
+        )
         .with_enrollment(EnrollmentSettings::from_config(
             &config,
             enroll::ca_fingerprint(&ca),
