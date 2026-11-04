@@ -152,3 +152,10 @@ The open questions in `docs/product.md`.
 - [ ] Subscription tiers and licensing.
 - [ ] Billing.
 - [ ] Final product name.
+
+## Phase 15 — Your choice
+
+Let each install pick what suits it instead of a fixed choice.
+
+- [ ] Any AI for remediation: Anthropic, OpenAI or any OpenAI-compatible API, and local models (Ollama, llama.cpp, vLLM) so nothing leaves the network. The safety rules stay on the server whatever the model.
+- [ ] Choose how often each check runs, from seconds to hours, per check and as a default per site. Agents already accept any interval up to 24 hours; the web interface only shows it.
