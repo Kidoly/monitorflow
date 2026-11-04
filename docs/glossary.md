@@ -19,6 +19,7 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Accepts commands | What a server's agent will run if it is asked. Say which commands: "AI commands", "package updates", "agent updates" | capability, opt-in, handler | `command_kinds` |
 | AI commands | The commands AI remediation sends a server: shell commands on Linux, PowerShell on Windows. On, Off, Not available (an agent too old for them, which updates by itself), or Not known yet while the agent or its relay has not updated | shell commands | `shell`, `commands.shell`, `MF_ALLOW_COMMANDS`, `ai-commands on` |
 | Watches | The disk, port or service a sensor measures | instance | `instance` |
+| Every 30 s, every 1 h | How often a check runs: "Checked every 5 min". The built-in checks run at their site's interval | interval, frequency, polling rate, scrape interval (on screen) | `interval_ms`, `check_interval_ms` |
 | Log folders | The folders whose files a server's log checks may read, set by its administrator in `agent.toml`: `/var/log` on Linux by default, none on Windows | log directories, allowlist | `sensors.log_dirs` |
 | Disk busy | Share of the time a disk had work in flight, per disk (`sda`, `vg0-root`, `PhysicalDrive0`) | utilisation, util, I/O % | `diskio_busy_ratio` |
 | Disk wait | Average time a disk took to answer one read or write, waiting in its queue included | latency, await | `diskio_wait_seconds` |
