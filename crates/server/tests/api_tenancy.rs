@@ -1007,7 +1007,8 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         ("PUT", "/api/settings/ai")
         | ("DELETE", "/api/settings/ai")
-        | ("POST", "/api/settings/ai/test") => {
+        | ("POST", "/api/settings/ai/test")
+        | ("POST", "/api/settings/ai/models") => {
             let body = match method {
                 "PUT" => Some(json!({ "model": "claude-opus-5-5", "enabled": false })),
                 "POST" => Some(json!({})),

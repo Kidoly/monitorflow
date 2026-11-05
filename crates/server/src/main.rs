@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
-use monitorflow_ai::claude::{ClaudeOptions, ClaudeProvider};
 use monitorflow_common::config::{self, ServerConfig};
 use monitorflow_common::logging;
 use monitorflow_common::redact::Secret;
@@ -761,9 +760,10 @@ async fn start_from_settings(
     commands: Commands,
     wanted: switch::Wanted,
 ) -> anyhow::Result<Remediation> {
-    let mut options = ClaudeOptions::from_config(wanted.api_key, &config.ai);
-    options.model.clone_from(&wanted.model);
-    let provider = Arc::new(ClaudeProvider::new(options).context("AI provider")?);
+    let provider = wanted
+        .connection(&config.ai)
+        .provider()
+        .context("AI provider")?;
     build_remediation(config, storage, provider, &wanted.model, pool, commands).await
 }
 
