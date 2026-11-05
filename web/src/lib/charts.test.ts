@@ -10,7 +10,7 @@ describe("chartWindow", () => {
   const now = END + 10;
 
   it("keeps short ranges raw and long ones rolled up", () => {
-    expect(chartWindow(hour, "monitorflow_cpu_usage_ratio", 600, now)).toEqual({ start: END - 3600, end: END, step: 30 });
+    expect(chartWindow(hour, "monitorflow_cpu_usage_ratio", 30, now)).toEqual({ start: END - 3600, end: END, step: 30 });
     expect(chartWindow(day, "monitorflow_cpu_usage_ratio", 60, now)).toMatchObject({ step: 300, rollup: "max" });
     expect(chartWindow(week, "monitorflow_port_up", 60, now)).toMatchObject({ step: 1800, rollup: "min" });
     expect(chartWindow(month, "monitorflow_disk_total_bytes", 60, now)).toMatchObject({ step: 7200, rollup: "avg" });
@@ -21,6 +21,12 @@ describe("chartWindow", () => {
     expect(window.step).toBe(600);
     expect(window.end % 600).toBe(0);
     expect(window.end - window.start).toBe(86_400);
+  });
+
+  it("rolls a short range up to the interval of a slower check", () => {
+    expect(chartWindow(hour, "monitorflow_cpu_usage_ratio", 600, now)).toEqual({ start: END - 3600, end: END, step: 600, rollup: "max" });
+    expect(chartWindow(hour, "monitorflow_port_443_up", 3600, now)).toMatchObject({ step: 3600, rollup: "min" });
+    expect(chartWindow(RANGES[1], "monitorflow_cpu_usage_ratio", 300, now)).toMatchObject({ step: 360, rollup: "max" });
   });
 
   it("keeps every range within the proxy's point limit and the API's 31 days", () => {

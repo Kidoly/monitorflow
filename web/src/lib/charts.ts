@@ -28,12 +28,15 @@ export interface ChartWindow {
  * The window of `metric` over `range` at `now` (unix seconds). With a
  * rollup, the step is at least the sensor's interval, rounded up to a
  * multiple of the range's step, so every step holds a sample (ADR-0018).
+ * A short range whose step is shorter than the interval takes a rollup
+ * too, so a check every hour draws a line, not lone points (ADR-0097).
  * The end is aligned to the step, so refreshes return the same timestamps.
  */
 export function chartWindow(range: Range, metric: string, intervalS: number, now: number): ChartWindow {
-  const step = range.rollup ? Math.ceil(Math.max(intervalS, range.step) / range.step) * range.step : range.step;
+  const rollup = range.rollup || intervalS > range.step;
+  const step = rollup ? Math.ceil(Math.max(intervalS, range.step) / range.step) * range.step : range.step;
   const end = Math.floor(now / step) * step;
-  return { start: end - range.seconds, end, step, ...(range.rollup && { rollup: rollupFor(metric) }) };
+  return { start: end - range.seconds, end, step, ...(rollup && { rollup: rollupFor(metric) }) };
 }
 
 /** What to tell the user about a failed metric request. */

@@ -6,19 +6,24 @@ import { useCallback, useEffect } from "react";
 
 import {
   ApiError,
+  type EffectiveSensor,
   type EffectiveSensors,
   type EffectiveThreshold,
   type Incident,
   type MetricSeries,
+  type SensorConfigEntry,
   type ServerDetail,
   api,
   describeError,
   isUnauthorized,
   isAbortError,
 } from "@/lib/api";
+import { saveCheckInterval } from "@/lib/alerts";
 import { RANGES, type Range, chartWindow, metricsError, seriesCsv } from "@/lib/charts";
 import { diskIoCharts } from "@/lib/diskio";
 import { formatSeconds, unitOf } from "@/lib/format";
+import { defaultTimeoutMs, every, slowAlertNote } from "@/lib/intervals";
+import { modifiesSite, useMe } from "@/lib/me";
 import { DEFAULT_INTERVAL_S, METRIC_PREFIX } from "@/lib/metrics";
 import { incidentHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -28,6 +33,7 @@ import { usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
 import { UUID } from "@/lib/uuid";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { cx } from "@/components/ui/cx";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { type Column, DataTable } from "@/components/ui/DataTable";
 import { FactsBox } from "@/components/ui/FactsBox";
@@ -40,6 +46,7 @@ import { TimeChart } from "@/components/ui/TimeChart";
 import { formatClock, formatDay, formatDuration } from "@/components/ui/time";
 import type { Tone } from "@/components/ui/tone";
 
+import { IntervalControl } from "./IntervalSelect";
 import styles from "./DetailPages.module.css";
 
 /** A metric name without the prefix, as in `?sensor=disk_used_ratio`. */
@@ -58,6 +65,9 @@ export function SensorView() {
 interface SensorData {
   server: ServerDetail;
   config: EffectiveSensors | null;
+  /** The server's own sensor rows and what its site runs, to change the interval; null when unreadable. */
+  rows: SensorConfigEntry[] | null;
+  siteSensors: EffectiveSensors["sensors"] | null;
   thresholds: EffectiveThreshold[] | null;
   /** Every incident of this metric and instance, newest first; null when they could not be read. */
   incidents: Incident[] | null;
@@ -83,12 +93,14 @@ const orNull = <T,>(promise: Promise<T>) =>
   });
 
 async function loadSensor(id: string, metric: string, instance: string, range: Range, signal: AbortSignal): Promise<SensorData> {
-  const [server, config, thresholds, incidents] = await Promise.all([
+  const [server, config, rows, thresholds, incidents] = await Promise.all([
     api.server(id, signal),
     orNull(api.serverSensors(id, signal)),
+    orNull(api.sensorRows({ kind: "servers", id }, signal).then((r) => r.entries)),
     orNull(api.serverThresholds(id, signal).then((t) => t.thresholds)),
     orNull(api.incidents({ server_id: id, limit: 500 }, signal).then((p) => p.incidents)),
   ]);
+  const siteSensors = config ? await orNull(api.siteSensors(config.site_id, signal).then((s) => s.sensors)) : null;
   const effective = config ? sensorOf(config.sensors, metric) : undefined;
   const intervalS = (effective?.interval_ms ?? DEFAULT_INTERVAL_S * 1000) / 1000;
   const others = effective?.kind === "diskio" ? diskIoCharts(effective.name, metric) : [];
@@ -99,6 +111,8 @@ async function loadSensor(id: string, metric: string, instance: string, range: R
   return {
     server,
     config,
+    rows,
+    siteSensors,
     thresholds,
     incidents: incidents?.filter((i) => i.metric === metric && i.instance === instance) ?? null,
     chart,
@@ -170,6 +184,7 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
   const valid = id !== null && UUID.test(id) && sensor !== null && SENSOR.test(sensor);
   const metric = `${METRIC_PREFIX}${sensor}`;
   const scope = useScope();
+  const me = useMe();
   const [params, setParams] = useUrlParams();
   const range = RANGES.find((r) => r.label.replace(" ", "") === params.get("range")) ?? RANGES[1];
   const fetcher = useCallback(
@@ -253,7 +268,9 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
       ) : (
         <TimeChart
           title="History"
-          subtitle={`${formatClock(new Date(chart.start * 1000)).slice(0, 5)} → ${formatClock(new Date(chart.end * 1000)).slice(0, 5)} · hover or use ← → for exact values`}
+          subtitle={`${formatClock(new Date(chart.start * 1000)).slice(0, 5)} → ${formatClock(new Date(chart.end * 1000)).slice(0, 5)}${
+            effective && effective.interval_ms > 60_000 ? ` · checked ${every(effective.interval_ms)}` : ""
+          } · hover or use ← → for exact values`}
           actions={
             <div role="group" aria-label="Time range" className={styles.segments}>
               {RANGES.map((r) => (
@@ -299,12 +316,29 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
           facts={[
             { label: "Kind", value: effective?.kind ?? "unknown" },
             { label: "Watches", value: instance || effective?.instance || "—", mono: Boolean(instance || effective?.instance) },
-            { label: "Interval", value: effective ? formatSeconds(effective.interval_ms / 1000) : "—" },
+            {
+              label: "How often",
+              value: effective ? (
+                <IntervalFact
+                  data={data}
+                  sensor={effective}
+                  title={title}
+                  canEdit={!server.revoked_at && modifiesSite(me, server.customer_id, server.site_id)}
+                  onChanged={refresh}
+                />
+              ) : (
+                "—"
+              ),
+            },
             {
               label: "Timeout",
-              value: effective ? (effective.timeout_ms === null ? "agent default" : formatSeconds(effective.timeout_ms / 1000)) : "—",
+              value: effective
+                ? effective.timeout_ms === null
+                  ? `automatic, ${formatSeconds(defaultTimeoutMs(effective.interval_ms) / 1000)}`
+                  : formatSeconds(effective.timeout_ms / 1000)
+                : "—",
             },
-            ...thresholdFacts(rule, format, thresholds === null),
+            ...thresholdFacts(rule, format, thresholds === null, effective?.interval_ms),
             {
               label: "Alerts",
               value: <Link href={scopedHref(serverHref(server.id, "alerts"), scope)}>Change when to alert</Link>,
@@ -363,13 +397,55 @@ function CompanionChart({ companion }: { companion: Companion }) {
   );
 }
 
-function thresholdFacts(rule: EffectiveThreshold | undefined, format: (v: number) => string, failed: boolean) {
+function thresholdFacts(rule: EffectiveThreshold | undefined, format: (v: number) => string, failed: boolean, intervalMs: number | undefined) {
   if (!rule) return [{ label: "Thresholds", value: failed ? "could not be read" : "none: this sensor never opens incidents" }];
+  const slow = intervalMs === undefined ? null : slowAlertNote(rule.duration_s, intervalMs / 1000);
   return [
     { label: "Warning", value: rule.warning === null ? "none" : `${rule.comparison} ${format(rule.warning)}` },
     { label: "Critical", value: rule.critical === null ? "none" : `${rule.comparison} ${format(rule.critical)}` },
-    { label: "Duration", value: <>{formatSeconds(rule.duration_s)} <span className={styles.muted}>past the threshold before opening</span></> },
+    {
+      label: "Duration",
+      value: (
+        <>
+          {formatSeconds(rule.duration_s)} <span className={styles.muted}>past the threshold before opening</span>
+          {slow && <span className={cx(styles.muted, styles.block)}>{slow}</span>}
+        </>
+      ),
+    },
   ];
+}
+
+/**
+ * How often the check runs; operators change it for this server, which
+ * writes the server's own row, and go back to the site's (ADR-0097).
+ */
+function IntervalFact({
+  data,
+  sensor,
+  title,
+  canEdit,
+  onChanged,
+}: {
+  data: SensorData;
+  sensor: EffectiveSensor;
+  title: string;
+  canEdit: boolean;
+  onChanged: () => void;
+}) {
+  if (!canEdit || data.rows === null || data.siteSensors === null) return <>{every(sensor.interval_ms)}</>;
+  const row = data.rows.find((r) => r.enabled && r.name === sensor.name && r.instance === sensor.instance);
+  const inherited = data.siteSensors.find((s) => s.name === sensor.name && s.instance === sensor.instance)?.interval_ms;
+  return (
+    <IntervalControl
+      label={`How often to check ${title}`}
+      value={row || inherited === undefined ? sensor.interval_ms : null}
+      inherit={inherited === undefined ? undefined : { ms: inherited, label: "site default" }}
+      save={async (ms) => {
+        await saveCheckInterval({ kind: "servers", id: data.server.id }, sensor, row, ms);
+        onChanged();
+      }}
+    />
+  );
 }
 
 function marginFact(rule: EffectiveThreshold, format: (v: number) => string) {

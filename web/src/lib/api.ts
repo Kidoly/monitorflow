@@ -302,8 +302,14 @@ export interface EffectiveSensor {
   params: Record<string, string>;
 }
 
+/** How often a site's built-in checks run, and whether the site set it (ADR-0097). */
+export interface CheckIntervalOf {
+  check_interval_ms: number;
+  check_interval_origin: "default" | "site";
+}
+
 /** `GET /api/servers/{id}/sensors`: the effective configuration and its drift. */
-export interface EffectiveSensors {
+export interface EffectiveSensors extends CheckIntervalOf {
   server_id: string;
   site_id: string;
   /** Revision of the current configuration. */
@@ -347,7 +353,7 @@ export interface EffectiveThresholds {
 }
 
 /** `GET /api/sites/{id}/sensors`: the built-in defaults overlaid with the site's rows. */
-export interface SiteSensors {
+export interface SiteSensors extends CheckIntervalOf {
   site_id: string;
   sensors: EffectiveSensor[];
 }
@@ -2728,6 +2734,19 @@ export const api = {
       },
     ),
 
+  updateSensor: (id: string, body: SensorConfigRequest) =>
+    request<SensorConfigEntry>(`/api/sensor_configs/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body,
+    }),
+
+  /** How often the site's built-in checks run; null for the built-in interval (ADR-0097). */
+  setCheckInterval: (siteId: string, interval_ms: number | null) =>
+    request<{ interval_ms: number | null }>(`/api/sites/${encodeURIComponent(siteId)}/check-interval`, {
+      method: "PUT",
+      body: { interval_ms },
+    }),
+
   deleteSensor: (id: string) =>
     request<void>(`/api/sensor_configs/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -3048,7 +3067,7 @@ export const api = {
 
   /** The latest value of each series of `metric`, as of now. */
   queryInstant: (
-    query: { serverId: string; metric: string; instance?: string },
+    query: { serverId: string; metric: string; instance?: string; lookbackS?: number },
     signal?: AbortSignal,
   ) => {
     const params = new URLSearchParams({
@@ -3056,6 +3075,7 @@ export const api = {
       metric: query.metric,
     });
     if (query.instance !== undefined) params.set("instance", query.instance);
+    if (query.lookbackS !== undefined) params.set("lookback", String(query.lookbackS));
     return request<QueryResult>(`/api/metrics/query?${params}`, { signal });
   },
 

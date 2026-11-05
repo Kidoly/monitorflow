@@ -88,6 +88,10 @@ function settle<T, F>(promise: Promise<T>, fallback: (error: unknown) => F): Pro
   });
 }
 
+/** For a check slower than every minute, the last value within two of its intervals (ADR-0097). */
+const lookback = (sensor: EffectiveSensor) =>
+  sensor.interval_ms > 60_000 ? { lookbackS: Math.ceil((2 * sensor.interval_ms) / 1000) } : {};
+
 async function loadServer(id: string, commandLimit: number, signal: AbortSignal): Promise<ServerData> {
   const sensors = settle(api.serverSensors(id, signal), (e) => ({ error: describeError(e) }));
   const values = sensors.then(async (config) => {
@@ -95,7 +99,7 @@ async function loadServer(id: string, commandLimit: number, signal: AbortSignal)
     const results = await Promise.all(
       list.map((sensor) =>
         settle(
-          api.queryInstant({ serverId: id, ...primaryMetric(sensor) }, signal).then(({ series }) => ({ series })),
+          api.queryInstant({ serverId: id, ...primaryMetric(sensor), ...lookback(sensor) }, signal).then(({ series }) => ({ series })),
           (e) => ({ error: metricsError(e) }),
         ),
       ),

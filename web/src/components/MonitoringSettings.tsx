@@ -5,6 +5,7 @@ import { type FormEvent, useCallback, useId, useState } from "react";
 
 import {
   ApiError,
+  type CheckIntervalOf,
   type ConfigOwner,
   type EffectiveSensor,
   type EffectiveThreshold,
@@ -24,12 +25,13 @@ import {
   checkTypesFor,
   describeThreshold,
   formOf,
+  saveCheckInterval,
   saveThreshold,
   shapeFor,
   thresholdRequest,
 } from "@/lib/alerts";
-import { formatSeconds } from "@/lib/format";
-import { METRIC_PREFIX } from "@/lib/metrics";
+import { every, slowAlertNote } from "@/lib/intervals";
+import { METRIC_PREFIX, sensorInterval } from "@/lib/metrics";
 import { siteHref } from "@/lib/routes";
 import { type Severity } from "@/lib/thresholds";
 import { usePolledData } from "@/lib/usePolledData";
@@ -38,6 +40,8 @@ import { cx } from "@/components/ui/cx";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, StaleBanner } from "@/components/ui/PageState";
 import { Label } from "@/components/ui/StatusLabel";
+
+import { type Inherit, IntervalControl, IntervalSelect } from "./IntervalSelect";
 
 import admin from "./AdminPages.module.css";
 import styles from "./MonitoringSettings.module.css";
@@ -52,6 +56,10 @@ interface Data {
   sensors: EffectiveSensor[];
   /** The target's own rows, for the checks it turned off. */
   rows: SensorConfigEntry[];
+  /** How often the site's built-in checks run (ADR-0097). */
+  interval: CheckIntervalOf;
+  /** For a server, what its site runs: the checks it inherits. */
+  siteSensors: EffectiveSensor[] | null;
 }
 
 const ownerOf = (target: Target): ConfigOwner => ({ kind: target.kind === "server" ? "servers" : "sites", id: target.id });
@@ -59,12 +67,20 @@ const siteOwner = (target: Target): ConfigOwner => ({ kind: "sites", id: target.
 
 async function load(target: Target, signal: AbortSignal): Promise<Data> {
   const server = target.kind === "server";
-  const [thresholds, sensors, rows] = await Promise.all([
+  const [thresholds, effective, rows, site] = await Promise.all([
     (server ? api.serverThresholds(target.id, signal) : api.siteThresholds(target.id, signal)).then((t) => t.thresholds),
-    (server ? api.serverSensors(target.id, signal) : api.siteSensors(target.id, signal)).then((s) => s.sensors),
+    server ? api.serverSensors(target.id, signal) : api.siteSensors(target.id, signal),
     api.sensorRows(ownerOf(target), signal).then((r) => r.entries),
+    server ? api.siteSensors(target.siteId, signal).then((s) => s.sensors) : null,
   ]);
-  return { thresholds, sensors, rows };
+  const { check_interval_ms, check_interval_origin } = effective;
+  return {
+    thresholds,
+    sensors: effective.sensors,
+    rows,
+    interval: { check_interval_ms, check_interval_origin },
+    siteSensors: site,
+  };
 }
 
 /**
@@ -126,7 +142,10 @@ function Alerts({ target, data, canEdit, onChanged }: { target: Target; data: Da
             return (
               <li key={key} className={styles.item}>
                 <div className={styles.row}>
-                  <span className={cx(styles.text, !rule.enabled && admin.dim)}>{describeThreshold(shape, rule)}</span>
+                  <span className={cx(styles.text, !rule.enabled && admin.dim)}>
+                    {describeThreshold(shape, rule)}
+                    {rule.enabled && <SlowNote durationS={rule.duration_s} intervalS={sensorInterval(data.sensors, rule.metric)} />}
+                  </span>
                   <Origin target={target} origin={rule.origin} />
                   {canEdit && editing !== key && (
                     <AlertActions
@@ -142,6 +161,7 @@ function Alerts({ target, data, canEdit, onChanged }: { target: Target; data: Da
                     target={target}
                     rule={rule}
                     shape={shape}
+                    intervalS={sensorInterval(data.sensors, rule.metric)}
                     onDone={() => {
                       setEditing(null);
                       onChanged();
@@ -156,6 +176,12 @@ function Alerts({ target, data, canEdit, onChanged }: { target: Target; data: Da
       )}
     </section>
   );
+}
+
+/** When checks are slower than the alert reads: "Checked every 1 h, so…". */
+function SlowNote({ durationS, intervalS }: { durationS: number; intervalS: number | undefined }) {
+  const note = slowAlertNote(durationS, intervalS);
+  return note && <span className={cx(admin.dim, styles.note)}>{note}</span>;
 }
 
 /** Edit, and going back to the inherited value when the target has its own. */
@@ -218,12 +244,15 @@ function ThresholdEditor({
   target,
   rule,
   shape,
+  intervalS,
   onDone,
   onCancel,
 }: {
   target: Target;
   rule: EffectiveThreshold;
   shape: Shape;
+  /** How often the check behind it runs, if known. */
+  intervalS: number | undefined;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -293,6 +322,7 @@ function ThresholdEditor({
           hint="0 alerts on the first bad value."
         />
       </div>
+      <SlowNote durationS={Math.max(0, Number(form.minutes) || 0) * 60} intervalS={intervalS} />
       {target.kind === "server" && (
         <fieldset className={styles.scope}>
           <legend>Apply to</legend>
@@ -414,7 +444,7 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
         <h2 id={titleId} className={admin.sectionTitle}>
           What is checked
         </h2>
-        <span className={admin.dim}>Every check runs each minute unless set otherwise.</span>
+        <BuiltinInterval target={target} interval={data.interval} canEdit={canEdit} onChanged={onChanged} />
         {canEdit && !adding && (
           <Button variant="k" size="small" className={styles.push} onClick={() => setAdding(true)}>
             Add a check
@@ -424,6 +454,7 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
       {adding && (
         <AddCheck
           target={target}
+          intervalMs={data.interval.check_interval_ms}
           onDone={() => {
             setAdding(false);
             onChanged();
@@ -441,7 +472,12 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
             return (
               <li key={`${sensor.name}/${sensor.instance}`} className={cx(styles.item, styles.row)}>
                 <span className={styles.text}>
-                  {title} <span className={admin.dim}>· every {formatSeconds(sensor.interval_ms / 1000)}</span>
+                  {title}{" "}
+                  {canEdit ? (
+                    <CheckInterval target={target} data={data} sensor={sensor} title={title} onChanged={onChanged} />
+                  ) : (
+                    <span className={admin.dim}>· {every(sensor.interval_ms)}</span>
+                  )}
                 </span>
                 <Origin target={target} origin={sensor.origin} />
                 {canEdit && (
@@ -480,6 +516,92 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
   );
 }
 
+/** "Built-in checks run every 1 min on every server of Paris", which operators change for the site. */
+function BuiltinInterval({
+  target,
+  interval,
+  canEdit,
+  onChanged,
+}: {
+  target: Target;
+  interval: CheckIntervalOf;
+  canEdit: boolean;
+  onChanged: () => void;
+}) {
+  const siteId = target.kind === "server" ? target.siteId : target.id;
+  const where = target.kind === "server" ? `on every server of ${target.siteName}` : "on every server of this site";
+  if (!canEdit) {
+    return (
+      <span className={admin.dim}>
+        Built-in checks run {every(interval.check_interval_ms)} {where}.
+      </span>
+    );
+  }
+  return (
+    <span className={cx(admin.dim, styles.builtin)}>
+      Built-in checks run{" "}
+      <IntervalControl
+        label="How often the built-in checks run"
+        value={interval.check_interval_origin === "site" ? interval.check_interval_ms : null}
+        inherit={{ ms: BUILTIN_INTERVAL_MS, label: "built-in" }}
+        save={async (ms) => {
+          await api.setCheckInterval(siteId, ms);
+          onChanged();
+        }}
+      />{" "}
+      {where}.
+    </span>
+  );
+}
+
+/** Interval of the built-in checks before any site sets one (ADR-0016). */
+const BUILTIN_INTERVAL_MS = 60_000;
+
+const BUILTIN_CHECKS = ["cpu", "memory", "disk", "diskio"];
+
+/**
+ * How often one check runs, changed for the target: its own row, or a
+ * copy of the inherited check; going back removes the copy.
+ */
+function CheckInterval({
+  target,
+  data,
+  sensor,
+  title,
+  onChanged,
+}: {
+  target: Target;
+  data: Data;
+  sensor: EffectiveSensor;
+  title: string;
+  onChanged: () => void;
+}) {
+  const row = data.rows.find((r) => r.enabled && r.name === sensor.name && r.instance === sensor.instance);
+  const inherited = inheritedInterval(target, data, sensor);
+  const inherit: Inherit | undefined =
+    inherited === undefined ? undefined : { ms: inherited, label: target.kind === "server" ? "site default" : "default" };
+  return (
+    <IntervalControl
+      label={`How often to check ${title}`}
+      value={row || !inherit ? sensor.interval_ms : null}
+      inherit={inherit}
+      save={async (ms) => {
+        await saveCheckInterval(ownerOf(target), sensor, row, ms);
+        onChanged();
+      }}
+    />
+  );
+}
+
+/** The interval `sensor` gets without the target's own row; undefined when it has none to fall back to. */
+function inheritedInterval(target: Target, data: Data, sensor: EffectiveSensor): number | undefined {
+  if (target.kind === "server") {
+    return data.siteSensors?.find((s) => s.name === sensor.name && s.instance === sensor.instance)?.interval_ms;
+  }
+  const builtin = BUILTIN_CHECKS.includes(sensor.name) && sensor.kind === sensor.name && sensor.instance === "";
+  return builtin ? data.interval.check_interval_ms : undefined;
+}
+
 function TurnBackOn({ id, onChanged }: { id: string; onChanged: () => void }) {
   const [error, setError] = useState<string | null>(null);
   return (
@@ -502,9 +624,21 @@ function TurnBackOn({ id, onChanged }: { id: string; onChanged: () => void }) {
 }
 
 /** The Add a check form: a kind, its few fields prefilled where possible, and where it applies. */
-function AddCheck({ target, onDone, onCancel }: { target: Target; onDone: () => void; onCancel: () => void }) {
+function AddCheck({
+  target,
+  intervalMs: initialInterval,
+  onDone,
+  onCancel,
+}: {
+  target: Target;
+  /** Prefilled: how often the built-in checks run. */
+  intervalMs: number;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
   const types = checkTypesFor(target.kind === "server" ? target.osFamily : null);
   const [type, setType] = useState<CheckType>(types[0]!);
+  const [intervalMs, setIntervalMs] = useState(initialInterval);
   const [values, setValues] = useState<Record<string, string>>(() => initialValues(types[0]!));
   const [scope, setScope] = useState<"own" | "site">("own");
   const [alert, setAlert] = useState(true);
@@ -525,7 +659,7 @@ function AddCheck({ target, onDone, onCancel }: { target: Target; onDone: () => 
     setErrors(found);
     if (Object.keys(found).length > 0) return;
     const owner = scope === "site" ? siteOwner(target) : ownerOf(target);
-    const { sensor, threshold } = checkRequests(type, values);
+    const { sensor, threshold } = checkRequests(type, values, intervalMs);
     setBusy(true);
     setFailure(null);
     try {
@@ -569,9 +703,14 @@ function AddCheck({ target, onDone, onCancel }: { target: Target; onDone: () => 
           />
         ))}
       </div>
+      <div className={admin.field}>
+        <span>How often</span>
+        <IntervalSelect label="How often to check" value={intervalMs} onChange={(ms) => setIntervalMs(ms ?? initialInterval)} />
+      </div>
       <label className={styles.check}>
         <input type="checkbox" checked={alert} onChange={(e) => setAlert(e.target.checked)} /> Raise {severity} when it fails
       </label>
+      {alert && <SlowNote durationS={type.duration_s} intervalS={intervalMs / 1000} />}
       {target.kind === "server" && (
         <fieldset className={styles.scope}>
           <legend>Add to</legend>

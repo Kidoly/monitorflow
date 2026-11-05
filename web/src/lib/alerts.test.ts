@@ -154,8 +154,8 @@ describe("adding a check", () => {
   });
 
   it("builds the sensor row and the alert that comes with it", () => {
-    expect(checkRequests(type("port"), { port: " 443 ", host: "127.0.0.1" })).toEqual({
-      sensor: { kind: "port", name: "port_443", interval_ms: 60_000, params: { port: "443", host: "127.0.0.1" } },
+    expect(checkRequests(type("port"), { port: " 443 ", host: "127.0.0.1" }, 30_000)).toEqual({
+      sensor: { kind: "port", name: "port_443", interval_ms: 30_000, params: { port: "443", host: "127.0.0.1" } },
       threshold: {
         metric: "monitorflow_port_443_up",
         instance: null,
@@ -167,7 +167,7 @@ describe("adding a check", () => {
         enabled: true,
       },
     });
-    const { sensor: row, threshold } = checkRequests(type("eventlog"), { channel: "System" });
+    const { sensor: row, threshold } = checkRequests(type("eventlog"), { channel: "System" }, 60_000);
     expect(row.params).toEqual({ channel: "System", levels: "critical,error" });
     expect(threshold).toMatchObject({ metric: "monitorflow_eventlog_system_matches", comparison: ">", warning: 0, critical: null });
   });

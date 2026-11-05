@@ -52,6 +52,8 @@ function config(overrides: Partial<EffectiveSensors> = {}): EffectiveSensors {
   return {
     server_id: ID,
     site_id: "site-1",
+    check_interval_ms: 60_000,
+    check_interval_origin: "default",
     revision: 7,
     applied_revision: 7,
     applied_at: new Date(NOW.getTime() - 180_000).toISOString(),
@@ -185,6 +187,26 @@ describe("ServerPage", () => {
     render(<ServerPage id={ID} />);
     expect(await screen.findByRole("alert")).toHaveTextContent(/sensor configuration.*could not handle the request/);
     expect(screen.getByRole("heading", { level: 1, name: "web-1" })).toBeInTheDocument();
+  });
+
+  it("reads the latest value of a slow check over two of its intervals", async () => {
+    const hourly = config().sensors.map((s) => (s.kind === "disk" ? { ...s, interval_ms: 3_600_000 } : s));
+    const fetchMock = stubFetch(
+      routes({
+        [`GET /api/servers/${ID}/sensors`]: ok(config({ sensors: hourly })),
+        [`GET /api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio`]: { status: 500, body: { error: "unexpected" } },
+        [`GET /api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio&lookback=7200`]: ok({ query: "", series: [value("/", 0.61)] }),
+      }),
+    );
+    render(<ServerPage id={ID} />);
+    await heading();
+    const rows = within(await screen.findByRole("table", { name: "Sensors" })).getAllByRole("row").slice(1);
+    expect(rows.map((r) => r.textContent)).toContain("CPU usagecpu · every 15 s · timeout 5 sOK38.4%");
+    const instant = fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => url.startsWith("/api/metrics/query?"));
+    expect(instant).toContain(`/api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio&lookback=7200`);
+    expect(instant).not.toContain(`/api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio`);
+    // A check every 15 s keeps VictoriaMetrics' own look-back.
+    expect(instant).toContain(`/api/metrics/query?server_id=${ID}&metric=monitorflow_cpu_usage_ratio&instance=total`);
   });
 
   it("says why a sensor has no value", async () => {
@@ -374,6 +396,7 @@ describe("ServerPage", () => {
       routes({
         [`GET /api/servers/${ID}/thresholds/effective`]: ok({ server_id: ID, site_id: "site-1", revision: 1, thresholds: [] }),
         [`GET /api/servers/${ID}/sensor_configs`]: ok({ entries: [] }),
+        "GET /api/sites/site-1/sensors": ok({ site_id: "site-1", check_interval_ms: 60_000, check_interval_origin: "default", sensors: [] }),
       }),
     );
     render(

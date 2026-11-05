@@ -41,15 +41,18 @@ const sensor = (overrides: Partial<EffectiveSensor>): EffectiveSensor => ({
 
 const port = sensor({ origin: "server", entry_id: "p1", kind: "port", name: "port_443", params: { port: "443", host: "127.0.0.1" } });
 
-/** The GET routes of the server panel. */
-function serverRoutes(thresholds: EffectiveThreshold[], sensors: EffectiveSensor[], rows: unknown[] = []) {
+const INTERVAL = { check_interval_ms: 60_000, check_interval_origin: "default" };
+
+/** The GET routes of the server panel; `site` is what the site runs. */
+function serverRoutes(thresholds: EffectiveThreshold[], sensors: EffectiveSensor[], rows: unknown[] = [], site: EffectiveSensor[] = sensors) {
   return {
     "GET /api/servers/srv-1/thresholds/effective": { status: 200, body: { server_id: "srv-1", site_id: "site-1", revision: 1, thresholds } },
     "GET /api/servers/srv-1/sensors": {
       status: 200,
-      body: { server_id: "srv-1", site_id: "site-1", revision: 1, applied_revision: 1, applied_at: null, in_sync: true, sensors },
+      body: { server_id: "srv-1", site_id: "site-1", ...INTERVAL, revision: 1, applied_revision: 1, applied_at: null, in_sync: true, sensors },
     },
     "GET /api/servers/srv-1/sensor_configs": { status: 200, body: { entries: rows } },
+    "GET /api/sites/site-1/sensors": { status: 200, body: { site_id: "site-1", ...INTERVAL, sensors: site } },
   };
 }
 
@@ -143,7 +146,10 @@ describe("MonitoringSettings", () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({
       "GET /api/sites/site-1/thresholds/effective": { status: 200, body: { site_id: "site-1", thresholds: [disk()] } },
-      "GET /api/sites/site-1/sensors": { status: 200, body: { site_id: "site-1", sensors: [sensor({})] } },
+      "GET /api/sites/site-1/sensors": {
+        status: 200,
+        body: { site_id: "site-1", check_interval_ms: 300_000, check_interval_origin: "site", sensors: [sensor({ interval_ms: 300_000 })] },
+      },
       "GET /api/sites/site-1/sensor_configs": { status: 200, body: { entries: [] } },
       "POST /api/sites/site-1/sensor_configs": [{ status: 409, body: { error: "exists" } }, { status: 201, body: {} }],
       "GET /api/sites/site-1/thresholds": { status: 200, body: { entries: [] } },
@@ -154,7 +160,19 @@ describe("MonitoringSettings", () => {
     await user.click(await screen.findByRole("button", { name: "Add a check" }));
     const form = screen.getByRole("form", { name: "Add a check" });
     // A site can mix systems, so every kind is offered.
-    expect(within(form).getAllByRole("option")).toHaveLength(6);
+    expect(within(within(form).getByLabelText("Check that")).getAllByRole("option")).toHaveLength(6);
+    // It starts at the site's interval; "Other" takes any value.
+    const often = within(form).getByRole("combobox", { name: "How often to check" });
+    expect(often).toHaveDisplayValue("every 5 min");
+    await user.selectOptions(often, "Other…");
+    await user.clear(within(form).getByLabelText("Every"));
+    await user.type(within(form).getByLabelText("Every"), "2");
+    await user.selectOptions(within(form).getByLabelText("Unit"), "seconds");
+    await user.click(within(form).getByRole("button", { name: "Set" }));
+    expect(within(form).getByRole("alert")).toHaveTextContent("Enter a value from 10 seconds to 24 hours.");
+    await user.selectOptions(within(form).getByLabelText("Unit"), "minutes");
+    await user.click(within(form).getByRole("button", { name: "Set" }));
+    expect(often).toHaveDisplayValue("every 2 min");
     expect(within(form).getByLabelText("Address")).toHaveValue("127.0.0.1");
     await user.click(within(form).getByRole("button", { name: "Add check" }));
     expect(within(form).getByRole("alert")).toHaveTextContent("Enter the port.");
@@ -167,7 +185,7 @@ describe("MonitoringSettings", () => {
     expect(bodyOf(fetchMock, "POST /api/sites/site-1/sensor_configs")).toEqual({
       kind: "port",
       name: "port_5432",
-      interval_ms: 60_000,
+      interval_ms: 120_000,
       params: { port: "5432", host: "127.0.0.1" },
     });
     expect(bodyOf(fetchMock, "POST /api/sites/site-1/thresholds")).toMatchObject({ metric: "monitorflow_port_5432_up", critical: 1 });
@@ -197,5 +215,86 @@ describe("MonitoringSettings", () => {
     await user.click(screen.getByRole("button", { name: "Turn off" }));
     await screen.findByRole("button", { name: "Turn off Disk space" });
     expect(bodyOf(fetchMock, "POST /api/servers/srv-1/sensor_configs")).toMatchObject({ kind: "disk", name: "disk", enabled: false });
+  });
+
+  it("sets how often the built-in checks of the site run", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      ...serverRoutes([disk()], [sensor({})]),
+      "PUT /api/sites/site-1/check-interval": [{ status: 200, body: { interval_ms: 3_600_000 } }, { status: 200, body: { interval_ms: null } }],
+    });
+    render(<MonitoringSettings target={SERVER} canEdit />);
+
+    const builtin = await screen.findByRole("combobox", { name: "How often the built-in checks run" });
+    expect(builtin).toHaveDisplayValue("every 1 min (built-in)");
+    expect(screen.getByRole("region", { name: "What is checked" })).toHaveTextContent(/Built-in checks run.*on every server of paris\./);
+    await user.selectOptions(builtin, "every 1 h");
+    await vi.waitFor(() => expect(bodyOf(fetchMock, "PUT /api/sites/site-1/check-interval")).toEqual({ interval_ms: 3_600_000 }));
+  });
+
+  it("changes how often one check runs on this server, and goes back to the site's", async () => {
+    const user = userEvent.setup();
+    const own = { id: "own-disk", site_id: null, server_id: "srv-1", kind: "disk", name: "disk", instance: "", interval_ms: 3_600_000, timeout_ms: null, params: {}, enabled: true };
+    const fetchMock = stubFetch({
+      ...serverRoutes([disk()], [sensor({}), port], [], [sensor({})]),
+      "POST /api/servers/srv-1/sensor_configs": { status: 201, body: {} },
+    });
+    const { unmount } = render(<MonitoringSettings target={SERVER} canEdit />);
+
+    // Inherited: the site's value, which a choice copies to this server.
+    const often = await screen.findByRole("combobox", { name: "How often to check Disk space" });
+    expect(often).toHaveDisplayValue("every 1 min (site default)");
+    await user.selectOptions(often, "every 1 h");
+    await vi.waitFor(() =>
+      expect(bodyOf(fetchMock, "POST /api/servers/srv-1/sensor_configs")).toEqual({
+        kind: "disk",
+        name: "disk",
+        instance: "",
+        interval_ms: 3_600_000,
+        params: {},
+        enabled: true,
+      }),
+    );
+    // A check of this server only has nothing to go back to.
+    const portOften = screen.getByRole("combobox", { name: "How often to check Port 443" });
+    expect(within(portOften).queryByText(/site default/)).not.toBeInTheDocument();
+    unmount();
+
+    // With its own row: the row changes, and going back deletes it.
+    const second = stubFetch({
+      ...serverRoutes([disk()], [sensor({ origin: "server", entry_id: "own-disk", interval_ms: 3_600_000 })], [own], [sensor({})]),
+      "PUT /api/sensor_configs/own-disk": { status: 200, body: {} },
+      "DELETE /api/sensor_configs/own-disk": { status: 204 },
+    });
+    render(<MonitoringSettings target={SERVER} canEdit />);
+    const mine = await screen.findByRole("combobox", { name: "How often to check Disk space" });
+    expect(mine).toHaveDisplayValue("every 1 h");
+    // The built-in disk alert lasts 5 min: say what hourly checks make of it.
+    expect(screen.getByText("Checked every 1 h, so this alert opens up to 2 h after the problem starts.")).toBeInTheDocument();
+    await user.selectOptions(mine, "every 15 min");
+    await vi.waitFor(() =>
+      expect(bodyOf(second, "PUT /api/sensor_configs/own-disk")).toEqual({
+        kind: "disk",
+        name: "disk",
+        instance: "",
+        interval_ms: 900_000,
+        timeout_ms: null,
+        params: {},
+        enabled: true,
+      }),
+    );
+    await user.selectOptions(screen.getByRole("combobox", { name: "How often to check Disk space" }), "every 1 min (site default)");
+    await vi.waitFor(() =>
+      expect(second.mock.calls.some(([input, init]) => init?.method === "DELETE" && String(input) === "/api/sensor_configs/own-disk")).toBe(true),
+    );
+  });
+
+  it("shows intervals as text without a role", async () => {
+    stubFetch(serverRoutes([disk()], [sensor({ interval_ms: 30_000 })]));
+    render(<MonitoringSettings target={SERVER} canEdit={false} />);
+    const checks = await screen.findByRole("region", { name: "What is checked" });
+    expect(within(checks).getByText("Built-in checks run every 1 min on every server of paris.")).toBeInTheDocument();
+    expect(within(checks).getByText("· every 30 s")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 });
