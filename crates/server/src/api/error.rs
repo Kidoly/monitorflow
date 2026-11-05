@@ -27,6 +27,9 @@ pub enum ApiError {
     /// says how to get a new one.
     #[error("{0}")]
     Gone(String),
+    /// Over a rate limit; the message says when to try again.
+    #[error("{0}")]
+    TooManyRequests(String),
     /// No valid session.
     #[error("authentication required")]
     Unauthorized,
@@ -66,6 +69,7 @@ impl ApiError {
             Self::BadRequest | Self::Invalid(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Gone(_) => StatusCode::GONE,
+            Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::Unauthorized | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::Forbidden | Self::CrossSite => StatusCode::FORBIDDEN,
             Self::MetricsUnavailable(_) => StatusCode::BAD_GATEWAY,

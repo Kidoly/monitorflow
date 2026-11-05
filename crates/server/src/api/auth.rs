@@ -34,7 +34,9 @@ pub struct CurrentUser {
     pub roles: Vec<RoleGrant>,
     /// `roles` resolved to sites; see [`super::access`].
     pub(super) access: Access,
-    session: SessionToken,
+    /// `None` when acting for someone without a session: the person who
+    /// made a display link (ADR-0099).
+    session: Option<SessionToken>,
 }
 
 impl CurrentUser {
@@ -45,7 +47,7 @@ impl CurrentUser {
             username: "u".into(),
             roles: Vec::new(),
             access,
-            session: SessionToken::for_tests(),
+            session: Some(SessionToken::for_tests()),
         }
     }
 }
@@ -59,14 +61,14 @@ impl FromRequestParts<ApiState> for CurrentUser {
         let user_id = session::resolve(&state.pool, &token, &state.settings)
             .await?
             .ok_or(ApiError::Unauthorized)?;
-        load_user(&state.pool, user_id, token).await
+        load_user(&state.pool, user_id, Some(token)).await
     }
 }
 
 pub(super) async fn load_user(
     pool: &PgPool,
     id: Uuid,
-    session: SessionToken,
+    session: Option<SessionToken>,
 ) -> Result<CurrentUser, ApiError> {
     let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
         .bind(id)
@@ -225,7 +227,7 @@ pub async fn login(
     tracing::info!(user = %account.id, "login succeeded");
 
     let cookie = session::set_cookie(&state.settings, &token);
-    let user = load_user(&state.pool, account.id, token).await?;
+    let user = load_user(&state.pool, account.id, Some(token)).await?;
     Ok(([(SET_COOKIE, cookie)], Json(Me::from(&user))).into_response())
 }
 
@@ -235,7 +237,9 @@ pub async fn logout(
     user: CurrentUser,
 ) -> Result<Response, ApiError> {
     let mut tx = state.pool.begin().await?;
-    session::revoke(&mut *tx, &user.session).await?;
+    if let Some(token) = &user.session {
+        session::revoke(&mut *tx, token).await?;
+    }
     let actor_id = user.id.to_string();
     audit::record(
         &mut *tx,

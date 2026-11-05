@@ -25,6 +25,7 @@ use uuid::Uuid;
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::metrics::check_metric;
+use super::roles::Role;
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
 
@@ -322,6 +323,8 @@ pub struct DashboardSummary {
     /// `null` once the user is deleted.
     pub updated_by_username: Option<String>,
     pub can_edit: bool,
+    /// Whether the user may make display links for it (ADR-0099).
+    pub can_link: bool,
 }
 
 /// Body of `GET /api/dashboards`, by name.
@@ -353,21 +356,21 @@ pub struct DashboardRequest {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct Row {
-    id: Uuid,
-    name: String,
-    owner_id: Option<Uuid>,
+pub(super) struct Row {
+    pub(super) id: Uuid,
+    pub(super) name: String,
+    pub(super) owner_id: Option<Uuid>,
     site_id: Option<Uuid>,
     customer_id: Option<Uuid>,
     place_name: Option<String>,
-    spec: Value,
+    pub(super) spec: Value,
     revision: i64,
     updated_at: DateTime<Utc>,
     updated_by_username: Option<String>,
 }
 
 impl Row {
-    fn sharing(&self) -> Sharing {
+    pub(super) fn sharing(&self) -> Sharing {
         match (self.site_id, self.customer_id) {
             (Some(id), _) => Sharing::Site { id },
             (None, Some(id)) => Sharing::Customer { id },
@@ -376,7 +379,7 @@ impl Row {
     }
 }
 
-const SELECT: &str = "SELECT d.id, d.name, d.owner_id, d.site_id, d.customer_id,
+pub(super) const SELECT: &str = "SELECT d.id, d.name, d.owner_id, d.site_id, d.customer_id,
         COALESCE(si.name, c.name) AS place_name, d.spec, d.revision, d.updated_at,
         u.username AS updated_by_username
     FROM dashboards d
@@ -390,7 +393,7 @@ const VISIBLE: &str = "(d.owner_id = $1
         OR (d.site_id IS NOT NULL AND ($2 OR d.site_id = ANY($3)))
         OR (d.customer_id IS NOT NULL AND ($4 OR d.customer_id = ANY($5))))";
 
-fn may_see(user: &CurrentUser, owner: Option<Uuid>, sharing: Sharing) -> bool {
+pub(super) fn may_see(user: &CurrentUser, owner: Option<Uuid>, sharing: Sharing) -> bool {
     user.can_read()
         && match sharing {
             Sharing::Personal => owner == Some(user.id),
@@ -409,6 +412,19 @@ fn may_edit(user: &CurrentUser, owner: Option<Uuid>, sharing: Sharing) -> bool {
         }
 }
 
+/// Whether `user` may make display links for a dashboard so shared, and
+/// whether a link made by `user` still shows it (ADR-0099): an
+/// administrator of its site or customer, or of anything for their own
+/// dashboard.
+pub(super) fn may_link(user: &CurrentUser, owner: Option<Uuid>, sharing: Sharing) -> bool {
+    may_see(user, owner, sharing)
+        && match sharing {
+            Sharing::Personal => user.is_administrator(),
+            Sharing::Site { id } => user.sites_with(Role::Administrator).contains(id),
+            Sharing::Customer { id } => user.administered_customers().contains(id),
+        }
+}
+
 fn summary(user: &CurrentUser, row: &Row, panels: usize) -> DashboardSummary {
     let sharing = row.sharing();
     DashboardSummary {
@@ -422,6 +438,7 @@ fn summary(user: &CurrentUser, row: &Row, panels: usize) -> DashboardSummary {
         updated_at: row.updated_at,
         updated_by_username: row.updated_by_username.clone(),
         can_edit: may_edit(user, row.owner_id, sharing),
+        can_link: may_link(user, row.owner_id, sharing),
     }
 }
 

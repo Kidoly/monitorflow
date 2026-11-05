@@ -1714,6 +1714,79 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 "{last}"
             );
         }
+        // Display links (ADR-0099): B's dashboards cannot be linked or
+        // their links listed or turned off, and a link of A's naming B's
+        // dashboard by hand shows nothing.
+        ("GET", "/api/dashboards/{id}/display-links") => {
+            for id in [b.site_dashboard, b.customer_dashboard] {
+                let uri = path.replace("{id}", &id.to_string());
+                assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            }
+        }
+        ("POST", "/api/display-links") => {
+            for ids in [
+                json!([b.customer_dashboard]),
+                json!([a.customer_dashboard, b.site_dashboard]),
+            ] {
+                let body = json!({ "name": "TV", "dashboard_ids": ids,
+                                   "seconds_per_page": 30, "expires": "1y" });
+                assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            }
+        }
+        ("DELETE", "/api/display-links/{id}") => {
+            let link: Uuid = sqlx::query_scalar(
+                "WITH u AS (INSERT INTO users (username) VALUES ('maker-b') RETURNING id),
+                      l AS (INSERT INTO display_links (token_hash, name, created_by, seconds_per_page)
+                            SELECT sha256('b'), 'B', id, 30 FROM u RETURNING id)
+                 INSERT INTO display_link_dashboards (link_id, position, dashboard_id)
+                 SELECT id, 0, $1 FROM l RETURNING link_id",
+            )
+            .bind(b.customer_dashboard)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            let uri = path.replace("{id}", &link.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            sqlx::query("DELETE FROM display_links WHERE id = $1")
+                .bind(link)
+                .execute(&ctx.pool)
+                .await
+                .unwrap();
+        }
+        ("POST", "/api/display/start")
+        | ("GET", "/api/display")
+        | ("POST", "/api/display/data") => {
+            let token = "cd".repeat(32);
+            sqlx::query(
+                "WITH l AS (INSERT INTO display_links (token_hash, name, created_by, seconds_per_page)
+                            SELECT sha256(convert_to($1, 'UTF8')), 'A', id, 30
+                            FROM users WHERE username = 'admin-a'
+                            ON CONFLICT DO NOTHING RETURNING id)
+                 INSERT INTO display_link_dashboards (link_id, position, dashboard_id)
+                 SELECT id, 0, $2 FROM l",
+            )
+            .bind(&token)
+            .bind(b.customer_dashboard)
+            .execute(&ctx.pool)
+            .await
+            .unwrap();
+            let start = json!({ "token": token });
+            let (status, body) = ctx
+                .send("POST", "/api/display/start", None, Some(start))
+                .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+            assert!(!Ctx::mentions(&body, b.customer_dashboard), "{body}");
+            // A user's session is not a screen's.
+            let data = json!({ "dashboard_id": b.customer_dashboard });
+            assert_eq!(
+                ctx.status("POST", "/api/display/data", Some(data)).await,
+                StatusCode::UNAUTHORIZED
+            );
+            assert_eq!(
+                ctx.status("GET", "/api/display", None).await,
+                StatusCode::UNAUTHORIZED
+            );
+        }
         ("GET", "/api/dashboard-metrics") => {
             let uri = format!("{path}?site_id={}", b.site);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
