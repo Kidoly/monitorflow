@@ -112,9 +112,13 @@ export function linuxInstallCommand(
   source: InstallSource,
   origin: string,
   relay = "",
+  aiFromWeb = false,
 ): Command {
-  return installerCommand(target, source, origin, relay, []);
+  return installerCommand(target, source, origin, relay, aiFromWeb ? [FROM_WEB] : []);
 }
+
+/** Lets the web interface turn the agent's AI commands on and off (ADR-0098). */
+const FROM_WEB = "MF_AI_COMMANDS_FROM_WEB=1";
 
 /**
  * The relay's command, as in docs/deploy-relay.md: the same installer with
@@ -156,10 +160,16 @@ function installerCommand(
  * The one line that lets an installed Linux agent run AI commands (ADR-0064),
  * from the default source, whose files `central` serves at the public address.
  */
-export function allowCommandsCommand(install: AgentInstall, address: PublicAddress, origin: string): Command {
+export function allowCommandsCommand(
+  install: AgentInstall,
+  address: PublicAddress,
+  origin: string,
+  fromWeb = false,
+): Command {
   const files = base(install, install.source, publicOrigin(origin, address.address));
   if ("unavailable" in files) return files;
-  return runInstaller(install, install.source, files.url, (download) => [...download, "MF_ALLOW_COMMANDS=1"].join(" "));
+  const variable = fromWeb ? FROM_WEB : "MF_ALLOW_COMMANDS=1";
+  return runInstaller(install, install.source, files.url, (download) => [...download, variable].join(" "));
 }
 
 /**
@@ -169,6 +179,12 @@ export function allowCommandsCommand(install: AgentInstall, address: PublicAddre
  */
 export const WINDOWS_ALLOW_COMMANDS = [
   `& "$env:ProgramFiles\\MonitorFlow\\monitorflow-agent.exe" ai-commands on`,
+  `Restart-Service MonitorFlowAgent`,
+].join("\n");
+
+/** The Windows lines that let the web interface turn AI commands on and off (ADR-0098). */
+export const WINDOWS_ALLOW_FROM_WEB = [
+  `& "$env:ProgramFiles\\MonitorFlow\\monitorflow-agent.exe" ai-commands from-web on`,
   `Restart-Service MonitorFlowAgent`,
 ].join("\n");
 
@@ -247,6 +263,7 @@ export function windowsInstallCommand(
   source: InstallSource,
   origin: string,
   relay = "",
+  aiFromWeb = false,
 ): Command {
   const files = base(target.install, source, origin);
   if ("unavailable" in files) return files;
@@ -255,6 +272,7 @@ export function windowsInstallCommand(
     `UPSTREAM_URL=https://${server}`,
     enroll && `ENROLL_URL=https://${enroll}`,
     `ENROLLMENT_TOKEN=${target.token}`,
+    aiFromWeb && "AI_COMMANDS_FROM_WEB=1",
   ].filter(Boolean);
   const msiexec = `msiexec /i monitorflow-agent.msi /qn /l*v install.log \``;
   const central = target.install.central;

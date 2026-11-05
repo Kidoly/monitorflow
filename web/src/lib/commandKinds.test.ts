@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { acceptance, aiCommands, commandSummary, unsupportedReason } from "./commandKinds";
+import { acceptance, aiCommands, aiSwitch, commandSummary, unsupportedReason } from "./commandKinds";
+
+describe("aiSwitch", () => {
+  it("turns on and off where the host allowed it, only off where not, nothing for an old agent", () => {
+    expect(aiSwitch({ command_kinds: { ai_commands: "accepted" } })).toBe("both");
+    expect(aiSwitch({ command_kinds: { ai_commands: "off" } })).toBe("off");
+    expect(aiSwitch({ command_kinds: { shell: "accepted" } })).toBe("none");
+    expect(aiSwitch({ command_kinds: null })).toBe("none");
+  });
+});
 
 describe("acceptance", () => {
   it("keeps the API's words and calls the rest unknown", () => {

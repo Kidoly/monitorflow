@@ -610,6 +610,7 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
   const sourceName = useId();
   const [source, setSource] = useState<InstallSource>(token.install.source);
   const [relay, setRelay] = useState(initialRelay);
+  const [aiFromWeb, setAiFromWeb] = useState(false);
   const valid = relay.trim() === "" || isServerAddress(relay);
   const through = valid ? relay : "";
   const origin = pageOrigin();
@@ -617,12 +618,12 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
     {
       name: "Linux",
       note: "as root, on any Linux with systemd",
-      command: linuxInstallCommand(token, source, origin, through),
+      command: linuxInstallCommand(token, source, origin, through, aiFromWeb),
     },
     {
       name: "Windows",
       note: "in an elevated PowerShell",
-      command: windowsInstallCommand(token, source, origin, through),
+      command: windowsInstallCommand(token, source, origin, through, aiFromWeb),
     },
   ];
   // One note when both commands are missing for the same reason.
@@ -663,6 +664,14 @@ function InstallCommands({ token, relay: initialRelay = "" }: { token: InstallTa
           Enter a name or IP address, with an optional port; IPv6 addresses in brackets.
         </p>
       )}
+      <label className={styles.check}>
+        <input type="checkbox" checked={aiFromWeb} onChange={(e) => setAiFromWeb(e.target.checked)} /> Allow AI commands
+        to be turned on from the web interface{" "}
+        <span className={styles.fieldNote}>
+          — administrators can then turn AI commands on and off from the server&apos;s page; without it, they can only
+          turn them off
+        </span>
+      </label>
       {shared ? (
         <Banner tone="warn">{shared}</Banner>
       ) : (

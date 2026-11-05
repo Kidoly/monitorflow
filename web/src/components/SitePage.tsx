@@ -15,6 +15,7 @@ import { ErrorState, LoadingBlock, NotFound, PageHeader } from "@/components/ui/
 
 import { MonitoringSettings } from "./MonitoringSettings";
 import { SiteSources } from "./PackageSources";
+import { SiteAiCommands } from "./SiteAiCommands";
 import { SilenceBar } from "./Silences";
 
 /** The site page for the `id` query parameter. */
@@ -67,6 +68,7 @@ export function SitePage({ id }: { id: string | null }) {
       <SilenceBar target={{ scope: "site", id: site.id, name: site.name, customerId: site.customer_id, siteId: site.id }} />
       <MonitoringSettings target={target} canEdit={modifiesSite(me, site.customer_id, site.id)} />
       <SiteSources site={site} />
+      <SiteAiCommands site={site} />
     </Page>
   );
 }
