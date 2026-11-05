@@ -333,4 +333,9 @@ fn errors_are_explained_for_each_flavor() {
     );
     assert!(unreachable.contains("OLLAMA_HOST"), "{unreachable}");
     assert!(explain(Flavor::Compatible, local, &AiError::Malformed("x".into())).contains("/v1"));
+    let public = AiError::InvalidAddress("8.8.8.8 is not on a private network".into());
+    assert_eq!(
+        explain(Flavor::Compatible, local, &public),
+        "8.8.8.8 is not on a private network."
+    );
 }

@@ -435,8 +435,19 @@ fn explain_compatible(base_url: &str, error: &AiError) -> String {
             "{host} answered, but not like an OpenAI-compatible API. Check that the address ends \
              with /v1."
         ),
+        AiError::InvalidAddress(reason) => sentence(reason),
         other => other.to_string(),
     }
+}
+
+/// `reason` as a sentence on its own: capital first, full stop last.
+fn sentence(reason: &str) -> String {
+    let mut chars = reason.chars();
+    let first = chars
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_default();
+    format!("{first}{}.", chars.as_str().trim_end_matches('.'))
 }
 
 /// An `http` or `https` URL without credentials, query or fragment.
