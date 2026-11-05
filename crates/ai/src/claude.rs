@@ -17,9 +17,9 @@ use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::{
-    Action, AiError, AiProvider, ProposedCommand, Step, StepRequest, StopDecision, StopOutcome,
-};
+pub use crate::answer::{PROPOSE_TOOL, STOP_TOOL};
+use crate::http::{self, Retries};
+use crate::{answer, AiError, AiProvider, Step, StepRequest};
 
 #[cfg(test)]
 mod tests;
@@ -36,13 +36,8 @@ const FALLBACK_MODELS: &[&str] = &[
     "claude-opus-5",
     "claude-sonnet-5-5",
 ];
-pub const PROPOSE_TOOL: &str = "propose_command";
-pub const STOP_TOOL: &str = "stop";
-/// Longest wait between attempts, `retry-after` included.
-const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
-const MAX_COMMAND_LEN: usize = 4096;
-/// Characters of an API error message kept in [`AiError::Api`].
-const MAX_ERROR_MESSAGE: usize = 512;
+/// Default of `max_tokens`: room for thinking before the tool call.
+pub const DEFAULT_MAX_TOKENS: u32 = 16_000;
 
 /// Time one [`ClaudeProvider::check`] may take.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
@@ -108,7 +103,7 @@ impl ClaudeOptions {
         Self {
             api_key,
             model: DEFAULT_AI_MODEL.into(),
-            max_tokens: defaults.max_tokens,
+            max_tokens: DEFAULT_MAX_TOKENS,
             request_timeout: Duration::from_secs(defaults.request_timeout),
             max_retries: 3,
             retry_base_delay: Duration::from_secs(1),
@@ -120,7 +115,7 @@ impl ClaudeOptions {
     pub fn from_config(api_key: Secret, config: &AiConfig) -> Self {
         Self {
             model: config.model.clone(),
-            max_tokens: config.max_tokens,
+            max_tokens: config.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             request_timeout: Duration::from_secs(config.request_timeout),
             ..Self::new(api_key)
         }
@@ -140,13 +135,8 @@ impl ClaudeProvider {
         let mut api_key = HeaderValue::from_str(options.api_key.expose())
             .map_err(|_| AiError::InvalidApiKey("not a valid HTTP header value"))?;
         api_key.set_sensitive(true);
-        let client = reqwest::Client::builder()
-            .timeout(options.request_timeout)
-            .connect_timeout(Duration::from_secs(10))
-            .build()
-            .map_err(|e| AiError::Transport(e.without_url().to_string()))?;
         Ok(Self {
-            client,
+            client: http::client(options.request_timeout)?,
             url: format!("{}/v1/messages", options.base_url.trim_end_matches('/')),
             api_key,
             options,
@@ -171,35 +161,10 @@ impl ClaudeProvider {
             "messages": [{"role": "user", "content": "ping"}],
         });
         let request = self.request(body.to_string().into_bytes());
-        match tokio::time::timeout(CHECK_TIMEOUT, self.send(request)).await {
+        match tokio::time::timeout(CHECK_TIMEOUT, http::send(request)).await {
             Ok(result) => result.map(drop).map_err(|(error, _)| error),
             Err(_) => Err(AiError::Transport("no answer within 30 seconds".into())),
         }
-    }
-
-    /// POSTs `body`, retrying transient failures, and returns the body of
-    /// the first successful answer.
-    async fn post(&self, body: Vec<u8>) -> Result<Vec<u8>, AiError> {
-        let mut attempt = 0;
-        loop {
-            let (error, retry_after) = match self.attempt(body.clone()).await {
-                Ok(bytes) => return Ok(bytes),
-                Err(failure) => failure,
-            };
-            if attempt >= self.options.max_retries || !error.is_transient() {
-                return Err(error);
-            }
-            let delay = retry_after
-                .unwrap_or_else(|| backoff(self.options.retry_base_delay, attempt))
-                .min(MAX_RETRY_DELAY);
-            attempt += 1;
-            tracing::warn!(attempt, delay_ms = delay.as_millis() as u64, %error, "retrying AI request");
-            tokio::time::sleep(delay).await;
-        }
-    }
-
-    async fn attempt(&self, body: Vec<u8>) -> Result<Vec<u8>, (AiError, Option<Duration>)> {
-        self.send(self.request(body)).await
     }
 
     fn request(&self, body: Vec<u8>) -> reqwest::RequestBuilder {
@@ -215,23 +180,6 @@ impl ClaudeProvider {
         }
         request
     }
-
-    async fn send(
-        &self,
-        request: reqwest::RequestBuilder,
-    ) -> Result<Vec<u8>, (AiError, Option<Duration>)> {
-        let transport = |e: reqwest::Error| (AiError::Transport(e.without_url().to_string()), None);
-        let response = request.send().await.map_err(transport)?;
-        let status = response.status();
-        let headers = response.headers().clone();
-        let bytes = response.bytes().await.map_err(transport)?;
-        if status.is_success() {
-            return Ok(bytes.to_vec());
-        }
-        let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
-        let error = api_error(status.as_u16(), &bytes, header("request-id"));
-        Err((error, header("retry-after").and_then(parse_retry_after)))
-    }
 }
 
 #[async_trait]
@@ -243,7 +191,11 @@ impl AiProvider for ClaudeProvider {
     async fn next_step(&self, request: &StepRequest) -> Result<Step, AiError> {
         let body = build_request(&self.options.model, self.options.max_tokens, request);
         let body = serde_json::to_vec(&body).expect("a JSON value serializes");
-        let answer = self.post(body).await?;
+        let retries = Retries {
+            max: self.options.max_retries,
+            base_delay: self.options.retry_base_delay,
+        };
+        let answer = http::post(retries, || self.request(body.clone())).await?;
         parse_response(&answer)
     }
 }
@@ -321,39 +273,6 @@ fn uses_fallback(model: &str) -> bool {
     FALLBACK_MODELS.contains(&model)
 }
 
-fn backoff(base: Duration, attempt: u32) -> Duration {
-    base.saturating_mul(1 << attempt.min(16))
-}
-
-/// `retry-after` in seconds; the HTTP-date form is ignored.
-fn parse_retry_after(value: &str) -> Option<Duration> {
-    let seconds: f64 = value.trim().parse().ok()?;
-    (seconds.is_finite() && seconds >= 0.0).then(|| Duration::from_secs_f64(seconds))
-}
-
-fn api_error(status: u16, body: &[u8], request_id: Option<&str>) -> AiError {
-    #[derive(Deserialize)]
-    struct Envelope {
-        error: Detail,
-    }
-    #[derive(Deserialize)]
-    struct Detail {
-        #[serde(rename = "type")]
-        kind: String,
-        message: String,
-    }
-    let (error_type, message) = match serde_json::from_slice::<Envelope>(body) {
-        Ok(Envelope { error }) => (Some(error.kind), error.message),
-        Err(_) => (None, String::from_utf8_lossy(body).into_owned()),
-    };
-    AiError::Api {
-        status,
-        error_type,
-        message: message.chars().take(MAX_ERROR_MESSAGE).collect(),
-        request_id: request_id.map(str::to_owned),
-    }
-}
-
 /// The Messages API request body for one step.
 fn build_request(model: &str, max_tokens: u32, request: &StepRequest) -> Value {
     let mut system = Vec::new();
@@ -429,44 +348,17 @@ fn document(title: &str, data: &str) -> Value {
 }
 
 fn tools() -> Value {
-    let text = |description: &str| json!({"type": "string", "description": description});
-    json!([
-        {
-            "name": PROPOSE_TOOL,
-            "description": "Propose the next shell command to run on the affected server. \
-                One command on one line. The server classifies its risk with its own \
-                rules and may require a human approval before running it; its output \
-                and exit code come back in the next request.",
-            "strict": true,
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "diagnosis": text("Your current understanding of the incident."),
-                    "command": text("The single shell command to run, on one line."),
-                    "reasoning": text("Why this command, and what you expect it to show or fix. Shown to approvers."),
-                },
-                "required": ["diagnosis", "command", "reasoning"],
-                "additionalProperties": false,
-            },
-        },
-        {
-            "name": STOP_TOOL,
-            "description": "Finish the incident: `resolved` when the evidence shows the \
-                problem is fixed, `escalate` when a human must take over, for example \
-                when no safe command can make progress.",
-            "strict": true,
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "diagnosis": text("Your final understanding of the incident."),
-                    "outcome": {"type": "string", "enum": ["resolved", "escalate"]},
-                    "reason": text("Why you stop, for the people reading the incident."),
-                },
-                "required": ["diagnosis", "outcome", "reason"],
-                "additionalProperties": false,
-            },
-        },
-    ])
+    answer::tools()
+        .into_iter()
+        .map(|tool| {
+            json!({
+                "name": tool.name,
+                "description": tool.description,
+                "strict": true,
+                "input_schema": tool.schema,
+            })
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -492,29 +384,6 @@ enum Block {
     },
     #[serde(other)]
     Other,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProposeInput {
-    diagnosis: String,
-    command: String,
-    reasoning: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StopInput {
-    diagnosis: String,
-    outcome: OutcomeInput,
-    reason: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum OutcomeInput {
-    Resolved,
-    Escalate,
 }
 
 /// Parses a Messages API answer into a [`Step`], strictly.
@@ -543,55 +412,5 @@ fn parse_response(body: &[u8]) -> Result<Step, AiError> {
     if calls.next().is_some() {
         return Err(AiError::Malformed("more than one tool call".into()));
     }
-    let invalid = |e: serde_json::Error| AiError::Malformed(format!("`{name}` input: {e}"));
-    match name.as_str() {
-        PROPOSE_TOOL => {
-            let input: ProposeInput = serde_json::from_value(input).map_err(invalid)?;
-            Ok(Step {
-                diagnosis: required("diagnosis", input.diagnosis)?,
-                action: Action::Run(ProposedCommand {
-                    command: command(input.command)?,
-                    reasoning: required("reasoning", input.reasoning)?,
-                }),
-            })
-        }
-        STOP_TOOL => {
-            let input: StopInput = serde_json::from_value(input).map_err(invalid)?;
-            Ok(Step {
-                diagnosis: required("diagnosis", input.diagnosis)?,
-                action: Action::Stop(StopDecision {
-                    outcome: match input.outcome {
-                        OutcomeInput::Resolved => StopOutcome::Resolved,
-                        OutcomeInput::Escalate => StopOutcome::Escalate,
-                    },
-                    reason: required("reason", input.reason)?,
-                }),
-            })
-        }
-        _ => Err(AiError::Malformed(format!("unknown tool `{name}`"))),
-    }
-}
-
-fn required(field: &str, value: String) -> Result<String, AiError> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(AiError::Malformed(format!("`{field}` is empty")));
-    }
-    Ok(value.to_owned())
-}
-
-/// One non-empty line without control characters.
-fn command(value: String) -> Result<String, AiError> {
-    let value = required("command", value)?;
-    if value.len() > MAX_COMMAND_LEN {
-        return Err(AiError::Malformed(format!(
-            "command longer than {MAX_COMMAND_LEN} bytes"
-        )));
-    }
-    if value.chars().any(char::is_control) {
-        return Err(AiError::Malformed(
-            "command holds a line break or control character".into(),
-        ));
-    }
-    Ok(value)
+    answer::step(&name, input)
 }

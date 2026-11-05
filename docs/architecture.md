@@ -202,7 +202,7 @@ Windows servers take part in the same campaigns with Windows Update semantics (A
 
 ## 8. AI-driven remediation
 
-When a threshold is crossed, the central server can ask an external AI API to diagnose and propose shell commands. The AI layer is provider-agnostic: one trait, one adapter per provider. The Claude API is the first adapter.
+When a threshold is crossed, the central server can ask an external AI API to diagnose and propose shell commands. The AI layer is provider-agnostic: one trait, one adapter per provider. Anthropic, OpenAI and any OpenAI-compatible API are supported, local models (Ollama, llama.cpp, vLLM) included, so incident data can stay on the network (ADR-0096).
 
 ### Flow
 
@@ -233,7 +233,7 @@ Classification uses rules first (allow-lists and deny patterns). Unknown command
 ### Threats addressed
 
 - **Prompt injection.** Logs and command outputs may contain text crafted to steer the AI. Context is passed as clearly delimited data, and risk tiers apply whatever the AI says.
-- **Data leaving the network.** Secrets are redacted before sending. In MSP mode one AI configuration serves all customers, and each request carries data from a single customer only.
+- **Data leaving the network.** Secrets are redacted before sending. A local model keeps everything on the network; plain HTTP to it is allowed only to private addresses (ADR-0096). In MSP mode one AI configuration serves all customers, and each request carries data from a single customer only.
 - **Runaway loops.** Each incident has a limit on commands and duration before it escalates to a human.
 
 ## 9. Web interface

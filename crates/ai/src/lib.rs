@@ -6,17 +6,24 @@
 //! The answer is untrusted text: it carries no risk opinion, and the
 //! server classifies every command by its own rules (architecture §8).
 //!
-//! [`claude::ClaudeProvider`] calls the Anthropic Messages API; the
-//! `testing` feature adds a scripted [`testing::MockProvider`].
+//! [`claude::ClaudeProvider`] calls the Anthropic Messages API,
+//! [`openai::OpenAiProvider`] the Chat Completions API of OpenAI or of any
+//! server speaking it, local models included (ADR-0096). The `testing`
+//! feature adds a scripted [`testing::MockProvider`].
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use monitorflow_common::config::{AiConfig, AiProviderKind};
+use monitorflow_common::redact::Secret;
 use serde::Serialize;
 
+mod answer;
 pub mod claude;
+mod http;
+pub mod openai;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
@@ -144,6 +151,9 @@ pub enum AiError {
     ApiKeyFile { path: PathBuf, reason: String },
     #[error("invalid AI API key: {0}")]
     InvalidApiKey(&'static str),
+    /// A base URL that is not one, or plain HTTP to a public address.
+    #[error("AI address: {0}")]
+    InvalidAddress(String),
     #[error("AI request failed: {0}")]
     Transport(String),
     #[error("AI API answered HTTP {status} ({}): {message}", error_type.as_deref().unwrap_or("unknown error"))]
@@ -178,14 +188,140 @@ pub(crate) fn is_retryable_status(status: u16) -> bool {
     matches!(status, 408 | 409 | 429 | 500..=599)
 }
 
-/// Builds the configured provider, or `None` when AI is disabled.
+/// What a provider needs, from the configuration or the web interface.
+/// `Debug` hides the key.
+#[derive(Debug, Clone)]
+pub struct Connection {
+    pub kind: AiProviderKind,
+    /// Required but for [`AiProviderKind::OpenAiCompatible`].
+    pub api_key: Option<Secret>,
+    /// Required for [`AiProviderKind::OpenAiCompatible`]; otherwise
+    /// replaces the provider's own address, which only tests do.
+    pub base_url: Option<String>,
+    pub model: String,
+    /// `None` takes the provider's default.
+    pub max_tokens: Option<u32>,
+    pub request_timeout: Duration,
+}
+
+/// A built provider, kept typed for what only the web interface asks:
+/// tests and model lists.
+enum Built {
+    Claude(claude::ClaudeProvider),
+    OpenAi(openai::OpenAiProvider),
+}
+
+impl Connection {
+    /// The configured key, model and limits, without the key.
+    pub fn from_config(config: &AiConfig) -> Self {
+        Self {
+            kind: config.provider,
+            api_key: None,
+            base_url: config.base_url.clone(),
+            model: config.model.clone(),
+            max_tokens: config.max_tokens,
+            request_timeout: Duration::from_secs(config.request_timeout),
+        }
+    }
+
+    /// The provider these settings describe.
+    pub fn provider(&self) -> Result<Arc<dyn AiProvider>, AiError> {
+        Ok(match self.build()? {
+            Built::Claude(provider) => Arc::new(provider),
+            Built::OpenAi(provider) => Arc::new(provider),
+        })
+    }
+
+    fn build(&self) -> Result<Built, AiError> {
+        let flavor = match self.kind {
+            AiProviderKind::Anthropic => {
+                let key = self
+                    .api_key
+                    .clone()
+                    .ok_or(AiError::InvalidApiKey("Anthropic needs an API key"))?;
+                let mut options = claude::ClaudeOptions::new(key);
+                options.model.clone_from(&self.model);
+                options.max_tokens = self.max_tokens.unwrap_or(claude::DEFAULT_MAX_TOKENS);
+                options.request_timeout = self.request_timeout;
+                if let Some(url) = &self.base_url {
+                    options.base_url.clone_from(url);
+                }
+                return Ok(Built::Claude(claude::ClaudeProvider::new(options)?));
+            }
+            AiProviderKind::OpenAi => openai::Flavor::OpenAi,
+            AiProviderKind::OpenAiCompatible => openai::Flavor::Compatible,
+        };
+        let base_url = match (&self.base_url, flavor) {
+            (Some(url), _) => url.clone(),
+            (None, openai::Flavor::OpenAi) => openai::OPENAI_BASE_URL.to_owned(),
+            (None, openai::Flavor::Compatible) => {
+                return Err(AiError::InvalidAddress(
+                    "enter the address of the model server".into(),
+                ))
+            }
+        };
+        let mut options = openai::OpenAiOptions::new(flavor, base_url, &self.model);
+        options.api_key.clone_from(&self.api_key);
+        if let Some(max_tokens) = self.max_tokens {
+            options.max_tokens = max_tokens;
+        }
+        options.request_timeout = self.request_timeout;
+        Ok(Built::OpenAi(openai::OpenAiProvider::new(options)?))
+    }
+
+    /// Whether these settings work, with the smallest real request, or
+    /// what is wrong in plain words.
+    pub async fn check(&self) -> Result<(), String> {
+        let result = match self.build() {
+            Ok(Built::Claude(provider)) => provider.check().await,
+            Ok(Built::OpenAi(provider)) => provider.check().await,
+            Err(error) => Err(error),
+        };
+        result.map_err(|error| self.explain(&error))
+    }
+
+    /// The models the provider's server offers, or what is wrong in plain
+    /// words. Anthropic's short list lives in [`claude::MODELS`].
+    pub async fn models(&self) -> Result<Vec<String>, String> {
+        let result = match self.build() {
+            Ok(Built::Claude(_)) => Ok(claude::MODELS.iter().map(|m| m.id.to_owned()).collect()),
+            Ok(Built::OpenAi(provider)) => provider.models().await,
+            Err(error) => Err(error),
+        };
+        result.map_err(|error| self.explain(&error))
+    }
+
+    fn explain(&self, error: &AiError) -> String {
+        match self.kind {
+            AiProviderKind::Anthropic => claude::explain(error),
+            AiProviderKind::OpenAi => {
+                openai::explain(openai::Flavor::OpenAi, openai::OPENAI_BASE_URL, error)
+            }
+            AiProviderKind::OpenAiCompatible => openai::explain(
+                openai::Flavor::Compatible,
+                self.base_url.as_deref().unwrap_or_default(),
+                error,
+            ),
+        }
+    }
+}
+
+/// Builds the configured provider, or `None` when AI is disabled. The key
+/// is read from `api_key_file`, which a model server without keys does
+/// not need.
 pub async fn from_config(config: &AiConfig) -> Result<Option<Arc<dyn AiProvider>>, AiError> {
     if !config.enabled {
         return Ok(None);
     }
-    match config.provider {
-        AiProviderKind::Claude => Ok(Some(Arc::new(
-            claude::ClaudeProvider::from_config(config).await?,
-        ))),
+    let mut connection = Connection::from_config(config);
+    connection.api_key = read_config_key(config).await?;
+    connection.provider().map(Some)
+}
+
+/// The key of `config`'s `api_key_file`, if any.
+pub async fn read_config_key(config: &AiConfig) -> Result<Option<Secret>, AiError> {
+    match config.api_key_file {
+        Some(_) => claude::read_config_key(config).await.map(Some),
+        None => Ok(None),
     }
 }

@@ -250,13 +250,13 @@ fn server_ai_defaults_overrides_and_checks() {
     ]);
     let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
     assert!(server.ai.enabled);
-    assert_eq!(server.ai.provider, AiProviderKind::Claude);
+    assert_eq!(server.ai.provider, AiProviderKind::Anthropic);
     assert_eq!(
         server.ai.api_key_file.as_deref(),
         Some(Path::new("/etc/mf/ai.key"))
     );
     assert_eq!(server.ai.model, "claude-sonnet-5-5");
-    assert_eq!(server.ai.max_tokens, 8000);
+    assert_eq!(server.ai.max_tokens, Some(8000));
     assert_eq!(server.ai.request_timeout, 60);
 
     // Settings of a disabled section are not checked.
@@ -272,10 +272,39 @@ fn server_ai_defaults_overrides_and_checks() {
     assert!(msg.contains("ai.max_tokens"), "{msg}");
     let msg = err::<ServerConfig>(&format!("{SERVER_MIN}\n[ai]\nmodel = \"\""), &with_key);
     assert!(msg.contains("ai.model"), "{msg}");
-    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_AI_PROVIDER", "openai")]);
+    let msg = err::<ServerConfig>(SERVER_MIN, &[("MONITORFLOW_AI_PROVIDER", "gemini")]);
     assert!(msg.contains("MONITORFLOW_AI_PROVIDER"), "{msg}");
     let msg = err::<ServerConfig>(&format!("{SERVER_MIN}\n[ai]\napi_key = \"sk\""), &[]);
     assert!(msg.contains("unknown field"), "{msg}");
+}
+
+#[test]
+fn server_ai_local_models_need_an_address_not_a_key() {
+    let local = format!(
+        "{SERVER_MIN}\n[ai]\nenabled = true\nprovider = \"openai_compatible\"\nbase_url = \"http://ollama.lan:11434/v1\"\nmodel = \"qwen3:8b\""
+    );
+    let server = parse::<ServerConfig>(&local).unwrap();
+    assert_eq!(server.ai.provider, AiProviderKind::OpenAiCompatible);
+    assert_eq!(server.ai.api_key_file, None);
+    assert_eq!(server.ai.max_tokens, None, "each provider has its default");
+
+    let msg = err::<ServerConfig>(
+        &format!("{SERVER_MIN}\n[ai]\nenabled = true\nprovider = \"openai-compatible\""),
+        &[],
+    );
+    assert!(msg.contains("ai.base_url"), "{msg}");
+    let vars = env(&[("MONITORFLOW_AI_PROVIDER", "openai")]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert_eq!(server.ai.provider, AiProviderKind::OpenAi);
+    for (text, kind) in [
+        ("claude", AiProviderKind::Anthropic),
+        ("Anthropic", AiProviderKind::Anthropic),
+    ] {
+        assert_eq!(text.parse::<AiProviderKind>().unwrap(), kind);
+    }
+    for kind in AiProviderKind::ALL {
+        assert_eq!(kind.as_str().parse::<AiProviderKind>().unwrap(), kind);
+    }
 }
 
 #[test]

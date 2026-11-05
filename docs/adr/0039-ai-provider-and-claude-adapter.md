@@ -1,7 +1,7 @@
 # ADR-0039: AI provider trait and Claude adapter
 
 Date: 2026-10-23
-Status: accepted
+Status: accepted; OpenAI and OpenAI-compatible adapters added by ADR-0096
 
 ## Context
 
