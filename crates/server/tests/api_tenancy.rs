@@ -1484,6 +1484,11 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let body = Some(json!({ "enabled": true }));
             assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
         }
+        ("PUT", "/api/sites/{id}/check-interval") => {
+            let uri = path.replace("{id}", &b.site.to_string());
+            let body = Some(json!({ "interval_ms": 3_600_000 }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
         ("PUT", "/api/sites/{id}/offline-alerts")
         | ("PUT", "/api/servers/{id}/offline-alerts")
         | ("PUT", "/api/relays/{id}/offline-alerts") => {
