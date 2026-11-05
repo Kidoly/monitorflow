@@ -219,7 +219,7 @@ export function ScreenPanel({
                     <b>{alert.severity === "critical" ? "Critical" : "Warning"}</b> {incidentTitle(alert)}{" "}
                     <span className={styles.muted}>on {alert.hostname}</span>
                   </span>
-                  <span className={styles.muted}>{formatSince(new Date(alert.opened_at), now)}</span>
+                  <span className={styles.muted}>since {formatSince(new Date(alert.opened_at), now)}</span>
                 </li>
               ))}
             </ul>
