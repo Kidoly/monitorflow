@@ -39,6 +39,7 @@ import {
   sharingLabel,
   withinOf,
 } from "@/lib/dashboards";
+import { displayHref } from "@/lib/display";
 import { modifiesCustomer, modifiesSite, useMe } from "@/lib/me";
 import { DASHBOARDS_PATH, dashboardHref, readyMadeHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -439,6 +440,11 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
         actions={
           !draft && (
             <>
+              {panels.length > 0 && (saved || builtIn) && (
+                <ButtonLink href={scopedHref(displayHref(saved ? { id: saved.id } : { ready: builtIn!.id }), scope)}>
+                  Show on a screen
+                </ButtonLink>
+              )}
               {canEdit && <Button onClick={startEditing}>Edit</Button>}
               <Button onClick={() => void copy()} disabled={busy}>
                 Make a copy

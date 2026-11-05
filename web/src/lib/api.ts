@@ -142,6 +142,8 @@ export interface DashboardSummary {
   updated_at: string;
   updated_by_username: string | null;
   can_edit: boolean;
+  /** Whether the user may make display links for it (ADR-0099). */
+  can_link: boolean;
 }
 
 export interface Dashboard extends DashboardSummary {
@@ -196,7 +198,44 @@ export interface DashboardData {
   step: number;
   /** When figures and top lists were read, unix seconds. */
   at: number;
+  /** The server's clock when it answered, unix seconds. */
+  now: number;
   panels: PanelData[];
+}
+
+/** What a screen shows through a display link (ADR-0099). */
+export interface ScreenView {
+  /** Where the screen is: "Reception TV". */
+  name: string;
+  seconds_per_page: number;
+  refresh_seconds: number;
+  expires_at: string | null;
+  dashboards: { id: string; name: string; spec: DashboardSpec }[];
+}
+
+/** A display link, without its secret. */
+export interface DisplayLink {
+  id: string;
+  name: string;
+  /** Those the reader sees, in the order shown. */
+  dashboards: { id: string; name: string }[];
+  /** How many more it shows that the reader does not see. */
+  other_dashboards: number;
+  seconds_per_page: number;
+  created_by_username: string;
+  created_at: string;
+  /** null: never. */
+  expires_at: string | null;
+  last_used_at: string | null;
+}
+
+export type DisplayLinkExpiry = "30d" | "1y" | "never";
+
+export interface DisplayLinkRequest {
+  name: string;
+  dashboard_ids: string[];
+  seconds_per_page: number;
+  expires: DisplayLinkExpiry;
 }
 
 /** `within` of `POST /api/dashboard-data`: the dashboard's sharing, or everything. */
@@ -3036,6 +3075,34 @@ export const api = {
   /** Every panel at once, for the servers the user reads within `within`. */
   dashboardData: (body: { range: TimeRangeLabel; within: Within; panels: Panel[] }, signal?: AbortSignal) =>
     request<DashboardData>("/api/dashboard-data", { method: "POST", body, signal }),
+
+  /** The display links showing the dashboard `id` (ADR-0099). */
+  displayLinks: (id: string, signal?: AbortSignal) =>
+    request<{ links: DisplayLink[] }>(`/api/dashboards/${encodeURIComponent(id)}/display-links`, { signal }),
+
+  /** A new display link; `url` holds its secret, shown only now. */
+  createDisplayLink: (body: DisplayLinkRequest) =>
+    request<DisplayLink & { url: string }>("/api/display-links", { method: "POST", body }),
+
+  /** Turns a display link off; its screens stop at their next request. */
+  revokeDisplayLink: (id: string) =>
+    request<void>(`/api/display-links/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Trades a display link's secret for a screen session cookie. No session needed. */
+  startDisplay: (token: string, signal?: AbortSignal) =>
+    request<ScreenView>("/api/display/start", { method: "POST", body: { token }, signal, redirectOn401: false }),
+
+  /** What the screen shows now, with its screen session. */
+  display: (signal?: AbortSignal) => request<ScreenView>("/api/display", { signal, redirectOn401: false }),
+
+  /** One of the link's dashboards, read as the link's maker. */
+  displayData: (dashboardId: string, signal?: AbortSignal) =>
+    request<DashboardData>("/api/display/data", {
+      method: "POST",
+      body: { dashboard_id: dashboardId },
+      signal,
+      redirectOn401: false,
+    }),
 
   dashboardCatalog: (query: { siteId?: string; customerId?: string; metric?: string }, signal?: AbortSignal) => {
     const params = new URLSearchParams();
