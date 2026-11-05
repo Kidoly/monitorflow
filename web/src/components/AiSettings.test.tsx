@@ -27,7 +27,9 @@ function settings(overrides: Partial<AiSettings> = {}): AiSettings {
   return {
     enabled: false,
     from_config: false,
+    provider: "anthropic",
     has_key: false,
+    base_url: null,
     model: "claude-opus-5-5",
     models: [
       { id: "claude-opus-5-5", name: "Claude Opus 5.5", note: "Recommended: the best diagnoses" },
@@ -82,12 +84,18 @@ describe("AiSettingsPage", () => {
     await user.click(screen.getByRole("button", { name: "Test" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Anthropic refused this API key.");
     await user.click(screen.getByRole("button", { name: "Test" }));
-    expect(await screen.findByText("The key and model answered.")).toBeInTheDocument();
-    expect(sent(fetchMock, "POST")).toEqual({ api_key: "sk-ant-1", model: "claude-sonnet-5-5" });
+    expect(await screen.findByText("The model answered.")).toBeInTheDocument();
+    expect(sent(fetchMock, "POST")).toEqual({ provider: "anthropic", api_key: "sk-ant-1", base_url: null, model: "claude-sonnet-5-5" });
 
     await user.click(screen.getByRole("button", { name: "Enable AI" }));
     expect(await screen.findByText(/with Claude Sonnet 5.5/)).toBeInTheDocument();
-    expect(sent(fetchMock, "PUT")).toEqual({ api_key: "sk-ant-1", model: "claude-sonnet-5-5", enabled: true });
+    expect(sent(fetchMock, "PUT")).toEqual({
+      provider: "anthropic",
+      api_key: "sk-ant-1",
+      base_url: null,
+      model: "claude-sonnet-5-5",
+      enabled: true,
+    });
     expect(screen.getByLabelText(/Anthropic API key/)).toHaveValue("");
     expect(screen.getByLabelText(/Anthropic API key/)).toHaveAttribute("placeholder", "Saved; leave empty to keep it");
     const [linux, windows] = await screen.findAllByLabelText("Command that allows AI commands");
@@ -161,7 +169,13 @@ describe("AiSettingsPage", () => {
     page();
     await user.click(await screen.findByRole("button", { name: "Turn off AI" }));
     expect(await screen.findByText("AI is off.")).toBeInTheDocument();
-    expect(sent(fetchMock, "PUT")).toEqual({ api_key: null, model: "claude-opus-5-5", enabled: false });
+    expect(sent(fetchMock, "PUT")).toEqual({
+      provider: "anthropic",
+      api_key: null,
+      base_url: null,
+      model: "claude-opus-5-5",
+      enabled: false,
+    });
 
     await user.click(screen.getByRole("button", { name: "Remove key" }));
     await user.click(await screen.findByRole("button", { name: "Remove" }));
@@ -182,6 +196,62 @@ describe("AiSettingsPage", () => {
     expect(screen.queryByLabelText(/Anthropic API key/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Turn off AI" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Test" }));
-    expect(await screen.findByText("The key and model answered.")).toBeInTheDocument();
+    expect(await screen.findByText("The model answered.")).toBeInTheDocument();
+  });
+
+  it("sets up a local model with an address, its listed models and no key", async () => {
+    const user = userEvent.setup();
+    const LOCAL = "http://ollama.lan:11434/v1";
+    const fetchMock = stubFetch({
+      [`GET ${AI}`]: ok(settings()),
+      [`POST ${AI}/models`]: { status: 200, body: { models: ["llama3.1:8b", "qwen3:8b"], error: null } },
+      [`POST ${AI}/test`]: { status: 200, body: { ok: true, error: null } },
+      [`PUT ${AI}`]: ok(settings({ enabled: true, provider: "openai_compatible", base_url: LOCAL, model: "llama3.1:8b" })),
+      "GET /api/settings/agent-install": install,
+      "GET /api/settings/public-address": address,
+    });
+    page();
+    await user.click(await screen.findByLabelText("Another or a local model"));
+    expect(screen.getByText(/nothing leaves it/)).toBeInTheDocument();
+    expect(screen.getByText(/Small local models diagnose less well/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Enable AI" })).toBeDisabled();
+
+    await user.type(screen.getByLabelText(/^Address/), LOCAL);
+    expect(screen.getByText(/Sent unencrypted over your network/)).toBeInTheDocument();
+    await user.tab();
+    expect(await screen.findByText("2 models on this server: pick one or type its name.")).toBeInTheDocument();
+    // The first listed model fills an empty field.
+    expect(screen.getByLabelText(/^Model/)).toHaveValue("llama3.1:8b");
+    expect(screen.getByLabelText(/only if the server asks/)).toHaveAttribute("placeholder", "Usually none for a local model");
+
+    await user.click(screen.getByRole("button", { name: "Test" }));
+    expect(await screen.findByText("The model answered.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Enable AI" }));
+    expect(await screen.findByText(/with llama3.1:8b on ollama.lan:11434/)).toBeInTheDocument();
+    expect(sent(fetchMock, "PUT")).toEqual({
+      provider: "openai_compatible",
+      api_key: null,
+      base_url: LOCAL,
+      model: "llama3.1:8b",
+      enabled: true,
+    });
+  });
+
+  it("asks OpenAI for a key, and does not reuse another provider's", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch({
+      [`GET ${AI}`]: ok(settings({ has_key: true })),
+      [`POST ${AI}/models`]: { status: 200, body: { models: [], error: "OpenAI refused this API key." } },
+    });
+    page();
+    await user.click(await screen.findByLabelText("OpenAI"));
+    const key = screen.getByLabelText(/OpenAI API key/);
+    expect(key).toHaveAttribute("placeholder", "sk-…");
+    expect(screen.getByLabelText(/^Model/)).toHaveValue("gpt-5.1");
+    expect(screen.getByRole("button", { name: "Enable AI" })).toBeDisabled();
+    await user.type(key, "sk-bad");
+    await user.tab();
+    expect(await screen.findByText(/Could not list the models, type the name instead: OpenAI refused/)).toBeInTheDocument();
+    expect(sent(fetchMock, "POST")).toEqual({ provider: "openai", api_key: "sk-bad", base_url: null });
   });
 });

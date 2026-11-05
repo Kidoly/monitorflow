@@ -2128,14 +2128,29 @@ export interface AiModel {
   note: string;
 }
 
+/** Who answers (ADR-0096): Anthropic, OpenAI, or any OpenAI-compatible server, local models included. */
+export type AiProvider = "anthropic" | "openai" | "openai_compatible";
+
 /** `GET /api/settings/ai`, readable by every user; the key itself never leaves the server. */
 export interface AiSettings {
   enabled: boolean;
   /** Set by `[ai]` in the server's configuration, which takes precedence and locks the page. */
   from_config: boolean;
+  provider: AiProvider;
   has_key: boolean;
+  /** The address of an OpenAI-compatible server. */
+  base_url: string | null;
   model: string;
+  /** Anthropic's short list. */
   models: AiModel[];
+}
+
+/** What the AI form holds; an empty key or address uses the stored one of the same provider. */
+export interface AiForm {
+  provider?: AiProvider;
+  api_key: string | null;
+  base_url?: string | null;
+  model: string;
 }
 
 async function request<T>(
@@ -2505,22 +2520,23 @@ export const api = {
     request<AiSettings>("/api/settings/ai", { signal }),
 
   /** Saves the AI settings, testing them when they turn AI on; global administrators only, audited. An empty key keeps the stored one. */
-  setAiSettings: (body: {
-    api_key: string | null;
-    model: string;
-    enabled: boolean;
-  }) => request<AiSettings>("/api/settings/ai", { method: "PUT", body }),
+  setAiSettings: (body: AiForm & { enabled: boolean }) =>
+    request<AiSettings>("/api/settings/ai", { method: "PUT", body }),
 
   /** Forgets the API key, which turns AI off; global administrators only, audited. */
   removeAiKey: () =>
     request<AiSettings>("/api/settings/ai", { method: "DELETE" }),
 
   /** Tests a key and model without saving; an empty key tests the stored one. */
-  testAiSettings: (body: { api_key: string | null; model: string }) =>
+  testAiSettings: (body: AiForm) =>
     request<ChannelTestResult>("/api/settings/ai/test", {
       method: "POST",
       body,
     }),
+
+  /** The models the form's provider offers, read from its server; `error` says why there is no list. */
+  aiModels: (body: Omit<AiForm, "model">) =>
+    request<{ models: string[]; error: string | null }>("/api/settings/ai/models", { method: "POST", body }),
 
   /** Schedules the user manages or is on, with who is on call now and next (ADR-0081). */
   onCallSchedules: (signal?: AbortSignal) => request<{ schedules: OnCallSchedule[] }>("/api/on-call/schedules", { signal }),

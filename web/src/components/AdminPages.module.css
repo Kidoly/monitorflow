@@ -172,6 +172,14 @@ tr td.wrap {
   align-items: center;
 }
 
+/* Choices with longer words, on several lines at phone width. */
+.radiosWrap {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 36px;
+  row-gap: 6px;
+}
+
 /* A form or control under a section's note. */
 .sectionBody {
   padding: 0 20px 16px;
