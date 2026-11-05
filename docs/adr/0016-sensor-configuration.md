@@ -1,7 +1,7 @@
 # ADR-0016: Sensor configuration pushed from the server
 
 Date: 2026-10-19
-Status: accepted
+Status: accepted; the built-in checks run at their site's interval since ADR-0097
 
 ## Context
 

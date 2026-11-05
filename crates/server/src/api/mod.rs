@@ -28,6 +28,7 @@
 //! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
 //! | GET | `/api/sites/{id}/sensors` | read | [`sensors::SiteEffective`]: built-in defaults overlaid with the site's rows |
+//! | PUT | `/api/sites/{id}/check-interval` | modify | body and answer [`check_interval::CheckInterval`] `{"interval_ms"}`, 10 s to 24 h or `null` for the built-in one: how often the site's built-in checks run; audited (ADR-0097) |
 //! | GET | `/api/sites/{id}/sensor_configs` | read | [`sensors::EntryList`] of the site's rows |
 //! | POST | `/api/sites/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
 //! | PUT | `/api/sensor_configs/{id}` | modify | body [`sensors::EntryRequest`], replaces the row; 200 [`sensors::Entry`] |
@@ -286,7 +287,9 @@
 //! a second row with the same name and instance for one owner 409. Every
 //! change is audited (`sensor_config.create`, `.update`, `.delete`,
 //! parameter names only) and bumps the revision, so agents get it at the
-//! next poll.
+//! next poll. `interval_ms` is 10 s to 24 h (ADR-0097); the effective
+//! views carry the interval of the built-in checks, `check_interval_ms`,
+//! and whether the site sets it, `check_interval_origin`.
 //!
 //! # Thresholds
 //!
@@ -573,6 +576,7 @@ pub mod auto_update;
 pub mod backups;
 pub mod campaigns;
 pub mod certificate_authority;
+pub mod check_interval;
 pub mod commands;
 pub mod customers;
 pub mod dashboard_data;
@@ -886,6 +890,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/on-call/contact/test", post(on_call::test_contact))
         .route("/api/silences/{id}/end", post(silences::end))
         .route("/api/sites/{id}/offline-alerts", put(offline_alerts::site))
+        .route("/api/sites/{id}/check-interval", put(check_interval::site))
         .route(
             "/api/servers/{id}/offline-alerts",
             put(offline_alerts::server),

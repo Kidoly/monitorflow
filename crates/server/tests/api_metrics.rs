@@ -346,6 +346,15 @@ db_tests! {
         );
         assert_eq!(sent.param("time"), ["1792404000"]);
         assert_eq!(sent.param("extra_label"), ["peer=agent-lyon", "site=o\"lyon"]);
+
+        // A check that runs hourly: the last value within two hours (ADR-0097).
+        vm.success(json!({ "resultType": "vector", "result": [] }));
+        let (status, body) = get(&pool, &vm, &viewer, &format!("{uri}&lookback=7200")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            vm.seen()[1].param("query"),
+            [r#"last_over_time(monitorflow_disk_used_ratio{peer="agent-lyon",site="o\"lyon",instance="/"}[7200s])"#]
+        );
     }
 
     #[sqlx::test]
@@ -361,6 +370,8 @@ db_tests! {
             (format!("{base}&metric=monitorflow_cpu&agg=quantile"), "unknown variant"),
             (format!("{base}&metric=monitorflow_cpu&rollup=sum"), "unknown variant"),
             (format!("/api/metrics/query?server_id={paris_server}&metric=monitorflow_cpu&rollup=max"), "unknown field `rollup`"),
+            (format!("/api/metrics/query?server_id={paris_server}&metric=monitorflow_cpu&lookback=0"), "lookback must be"),
+            (format!("/api/metrics/query?server_id={paris_server}&metric=monitorflow_cpu&lookback=172801"), "lookback must be"),
             (format!("{base}&metric=monitorflow_cpu&instance=a%0Ab"), "instance must be"),
             (format!("{base}&metric=monitorflow_cpu&start=2026-01-01T00:00:00Z&end=2026-03-01T00:00:00Z"), "at most 31 days"),
             (format!("{base}&metric=monitorflow_cpu&start=2026-01-01T00:00:00Z&end=2026-01-02T00:00:00Z&step=1"), "points"),

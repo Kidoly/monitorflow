@@ -8,7 +8,8 @@ use uuid::Uuid;
 use super::rules::{resolve, Row, Rule, Rules};
 use super::state::{SeriesState, Transition};
 use super::Severity;
-use crate::sensor_config::Layer;
+use crate::ingest::validate::METRIC_PREFIX;
+use crate::sensor_config::{Layer, SensorConfigStore, Spec};
 
 /// One series: server row, full metric name, instance (`''` for none).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -18,12 +19,47 @@ pub struct SeriesKey {
     pub instance: String,
 }
 
-/// The effective thresholds of one server.
+/// The effective thresholds of one server, and how often its checks run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerRules {
     pub server_id: Uuid,
+    /// Threshold and sensor revisions together: either moving reloads.
     pub revision: u64,
     pub rules: Rules,
+    pub intervals: CheckIntervals,
+}
+
+/// The collection interval of each check of a server, by sensor name; the
+/// longest of its instances.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CheckIntervals(std::collections::BTreeMap<String, u64>);
+
+impl CheckIntervals {
+    pub fn new(sensors: &[Spec]) -> Self {
+        let mut intervals = std::collections::BTreeMap::new();
+        for spec in sensors {
+            let interval = intervals.entry(spec.name.clone()).or_insert(0);
+            *interval = spec.interval_ms.max(*interval);
+        }
+        Self(intervals)
+    }
+
+    /// The interval of the check that writes `metric`, in milliseconds:
+    /// the sensor with the longest name that prefixes it
+    /// (`monitorflow_disk_data_used_ratio` comes from `disk_data`, not
+    /// `disk`), as the web interface matches them.
+    pub fn of(&self, metric: &str) -> Option<u64> {
+        let short = metric.strip_prefix(METRIC_PREFIX)?;
+        self.0
+            .iter()
+            .filter(|(name, _)| {
+                short
+                    .strip_prefix(name.as_str())
+                    .is_some_and(|rest| rest.starts_with('_'))
+            })
+            .max_by_key(|(name, _)| name.len())
+            .map(|(_, interval)| *interval)
+    }
 }
 
 /// A series that was pending or firing when the engine stopped.
@@ -91,9 +127,11 @@ impl AlertStore {
         Self { pool }
     }
 
-    /// The thresholds of the agent `peer_id`, or `None` without a
-    /// `servers` row or for a removed server (ADR-0062). One statement, so
-    /// the revision matches the rows.
+    /// The thresholds of the agent `peer_id` and the intervals of its
+    /// checks, or `None` without a `servers` row or for a removed server
+    /// (ADR-0062). The thresholds come with the revision in one statement;
+    /// the checks are read after it, so a change in between is newer than
+    /// the revision and only causes one more reload.
     pub async fn load_rules(&self, peer_id: &str) -> Result<Option<ServerRules>, sqlx::Error> {
         type Line = (
             Uuid,
@@ -109,7 +147,8 @@ impl AlertStore {
             Option<bool>,
         );
         let lines: Vec<Line> = sqlx::query_as(
-            "SELECT s.id, si.threshold_revision + s.threshold_revision,
+            "SELECT s.id, si.threshold_revision + s.threshold_revision
+                          + si.sensor_revision + s.sensor_revision,
                     t.server_id IS NOT NULL, t.metric, t.instance, t.comparison,
                     t.warning, t.critical, t.duration_s, t.hysteresis, t.enabled
              FROM servers s
@@ -154,18 +193,25 @@ impl AlertStore {
                 })
             })
             .collect();
+        let sensors = SensorConfigStore::new(self.pool.clone())
+            .load(peer_id)
+            .await?
+            .map(|resolved| resolved.sensors)
+            .unwrap_or_default();
         Ok(Some(ServerRules {
             server_id,
             revision: non_negative(revision),
             rules: resolve(rows),
+            intervals: CheckIntervals::new(&sensors),
         }))
     }
 
-    /// Current threshold revisions of `server_ids`, removed ones left out,
-    /// so the engine forgets them.
+    /// Current threshold and sensor revisions of `server_ids`, removed
+    /// ones left out, so the engine forgets them.
     pub async fn revisions(&self, server_ids: &[Uuid]) -> Result<Vec<(Uuid, u64)>, sqlx::Error> {
         let rows: Vec<(Uuid, i64)> = sqlx::query_as(
             "SELECT s.id, si.threshold_revision + s.threshold_revision
+                          + si.sensor_revision + s.sensor_revision
              FROM servers s JOIN sites si ON si.id = s.site_id
              WHERE s.id = ANY($1) AND s.revoked_at IS NULL",
         )
@@ -409,6 +455,35 @@ async fn save_state(
 
 #[cfg(test)]
 mod tests {
+    use super::{CheckIntervals, Spec};
+
+    #[test]
+    fn intervals_come_from_the_check_with_the_longest_matching_name() {
+        let mut data = Spec::new("disk", 300_000);
+        data.name = "disk_data".into();
+        let mut root = Spec::new("disk", 60_000);
+        root.instance = "/".into();
+        let intervals = CheckIntervals::new(&[
+            Spec::new("cpu", 3_600_000),
+            Spec::new("disk", 10_000),
+            root,
+            data,
+            Spec::new("diskio", 30_000),
+        ]);
+        assert_eq!(intervals.of("monitorflow_cpu_usage_ratio"), Some(3_600_000));
+        // The longest of the instances of one check.
+        assert_eq!(intervals.of("monitorflow_disk_used_ratio"), Some(60_000));
+        assert_eq!(
+            intervals.of("monitorflow_disk_data_used_ratio"),
+            Some(300_000)
+        );
+        assert_eq!(intervals.of("monitorflow_diskio_busy_ratio"), Some(30_000));
+        assert_eq!(intervals.of("monitorflow_memory_available_ratio"), None);
+        assert_eq!(intervals.of("monitorflow_cpu"), None);
+        assert_eq!(intervals.of("cpu_usage_ratio"), None);
+        assert_eq!(intervals.of("offline"), None);
+    }
+
     use super::*;
 
     #[test]

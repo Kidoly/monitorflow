@@ -177,6 +177,46 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_site_interval_applies_to_its_builtin_checks_and_moves_the_revision(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        let lyon = site(&pool, "lyon").await;
+        let web = server(&pool, "web-01", paris).await;
+        server(&pool, "app-01", lyon).await;
+        let store = SensorConfigStore::new(pool.clone());
+        insert(&pool, (Some(paris), None), "port", "22", 30_000, json!({"port": 22}), true).await.unwrap();
+        insert(&pool, (None, Some(web)), "cpu", "", 10_000, json!({}), true).await.unwrap();
+        let before = revision(&store, "web-01").await;
+
+        let set = |ms: Option<i32>| {
+            sqlx::query("UPDATE sites SET check_interval_ms = $2 WHERE id = $1").bind(paris).bind(ms).execute(&pool)
+        };
+        set(Some(3_600_000)).await.unwrap();
+        let after = revision(&store, "web-01").await;
+        assert!(after > before);
+        let web_config = store.load("web-01").await.unwrap().unwrap();
+        assert_eq!(
+            keys(&web_config.sensors),
+            [("cpu", "", 10_000), ("disk", "", 3_600_000), ("diskio", "", 3_600_000), ("memory", "", 3_600_000), ("port", "22", 30_000)]
+        );
+        // The timeout sent to the agent scales with the interval.
+        let proto = web_config.to_proto();
+        assert_eq!((proto.sensors[0].timeout_ms, proto.sensors[1].timeout_ms), (10_000, 60_000));
+        // The same value again does not move it; another site is untouched.
+        set(Some(3_600_000)).await.unwrap();
+        assert_eq!(revision(&store, "web-01").await, after);
+        assert_eq!(revision(&store, "app-01").await, 0);
+        assert_eq!(keys(&store.load("app-01").await.unwrap().unwrap().sensors)[0], ("cpu", "", 60_000));
+        // Back to the built-in interval.
+        set(None).await.unwrap();
+        assert!(revision(&store, "web-01").await > after);
+        assert_eq!(keys(&store.load("web-01").await.unwrap().unwrap().sensors)[1], ("disk", "", 60_000));
+        // The schema keeps the API's bounds.
+        for ms in [9_999, 86_400_001] {
+            assert_eq!(sqlstate(set(Some(ms)).await), CHECK_VIOLATION, "{ms}");
+        }
+    }
+
+    #[sqlx::test]
     async fn every_change_of_either_layer_moves_the_revision(pool: PgPool) {
         let paris = site(&pool, "paris").await;
         let lyon = site(&pool, "lyon").await;

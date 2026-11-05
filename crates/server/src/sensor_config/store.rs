@@ -2,7 +2,7 @@
 
 use sqlx::PgPool;
 
-use super::{params, resolve, Layer, Resolved, Row, Spec};
+use super::{params, resolve, site_interval, Layer, Resolved, Row, Spec};
 
 /// Reads configurations and records what agents applied.
 #[derive(Debug, Clone)]
@@ -26,6 +26,7 @@ impl SensorConfigStore {
     pub async fn load(&self, peer_id: &str) -> Result<Option<Resolved>, sqlx::Error> {
         type Line = (
             i64,
+            Option<i32>,
             Option<bool>,
             Option<String>,
             Option<String>,
@@ -36,7 +37,7 @@ impl SensorConfigStore {
             Option<bool>,
         );
         let lines: Vec<Line> = sqlx::query_as(
-            "SELECT si.sensor_revision + s.sensor_revision,
+            "SELECT si.sensor_revision + s.sensor_revision, si.check_interval_ms,
                     c.server_id IS NOT NULL, c.kind, c.name, c.instance,
                     c.interval_ms, c.timeout_ms, c.params, c.enabled
              FROM servers s
@@ -51,10 +52,12 @@ impl SensorConfigStore {
             return Ok(None);
         };
         let revision = non_negative(first.0);
+        let builtin_interval = site_interval(first.1.map(i64::from));
         let rows = lines
             .into_iter()
             .filter_map(|line| {
-                let (_, server, kind, name, instance, interval, timeout, params_, enabled) = line;
+                let (_, _, server, kind, name, instance, interval, timeout, params_, enabled) =
+                    line;
                 Some(Row {
                     layer: if server? { Layer::Server } else { Layer::Site },
                     spec: Spec {
@@ -71,7 +74,7 @@ impl SensorConfigStore {
             .collect();
         Ok(Some(Resolved {
             revision,
-            sensors: resolve(rows),
+            sensors: resolve(rows, builtin_interval),
         }))
     }
 

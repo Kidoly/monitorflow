@@ -237,6 +237,34 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn hourly_checks_still_open_incidents(pool: PgPool) {
+        // The built-in disk threshold: over 85 % for 5 minutes (ADR-0097).
+        let paris = site(&pool, "paris").await;
+        let lyon = site(&pool, "lyon").await;
+        server(&pool, "web-01", paris).await;
+        server(&pool, "app-01", lyon).await;
+        sqlx::query("UPDATE sites SET check_interval_ms = 3600000 WHERE id = $1").bind(paris).execute(&pool).await.unwrap();
+        let (alerts, recorder) = engine(&pool).await;
+        let hour = 3_600;
+        let t0 = chrono::Utc::now().timestamp_millis() - 5 * hour * S;
+        let hourly = [("/", 0, 0.9), ("/", hour, 0.9)];
+        feed(&alerts, "web-01", t0, &hourly).await;
+        feed(&alerts, "app-01", t0, &hourly).await;
+        // Paris checks hourly: the second bad sample opens it. Lyon checks
+        // every minute, so an hour without samples restarts its timer.
+        let open: Vec<_> = recorder.0.lock().unwrap().clone();
+        assert_eq!(open, [("/".to_string(), Transition::Opened(Severity::Warning))]);
+        assert_eq!(incidents(&pool).await.len(), 1);
+
+        // Lyon moves to hourly checks: the engine reloads on the sensor
+        // revision, not only on the thresholds'.
+        sqlx::query("UPDATE sites SET check_interval_ms = 3600000 WHERE id = $1").bind(lyon).execute(&pool).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        feed(&alerts, "app-01", t0, &[("/", 3 * hour, 0.9), ("/", 4 * hour, 0.9)]).await;
+        assert_eq!(incidents(&pool).await.len(), 2);
+    }
+
+    #[sqlx::test]
     async fn removing_a_threshold_resolves_its_incidents(pool: PgPool) {
         let paris = site(&pool, "paris").await;
         let web = server(&pool, "web-01", paris).await;

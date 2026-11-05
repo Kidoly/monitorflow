@@ -164,9 +164,21 @@ pub trait Sensor: Send + Sync + 'static {
 pub const MIN_INTERVAL: Duration = Duration::from_secs(1);
 /// Longest allowed collection interval.
 pub const MAX_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
-/// Collection timeout when the configuration has none, capped by the
-/// interval.
+/// Shortest collection timeout when the configuration has none, capped
+/// by the interval.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Longest collection timeout when the configuration has none.
+pub const MAX_DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The timeout of a sensor collected every `interval` without one of its
+/// own (ADR-0097): a sixth of the interval, from [`DEFAULT_TIMEOUT`] to
+/// [`MAX_DEFAULT_TIMEOUT`], never longer than the interval. 10 s up to a
+/// 1-minute interval, 50 s at 5 minutes, 60 s from 6 minutes.
+pub fn default_timeout(interval: Duration) -> Duration {
+    (interval / 6)
+        .clamp(DEFAULT_TIMEOUT, MAX_DEFAULT_TIMEOUT)
+        .min(interval)
+}
 
 /// One configured sensor. `(name, instance)` is unique within a scheduler,
 /// so two port checks are `port`/`22` and `port`/`443`.
@@ -194,10 +206,12 @@ impl SensorConfig {
         }
     }
 
-    /// The configured timeout, or [`DEFAULT_TIMEOUT`], never longer than
+    /// The configured timeout, or [`default_timeout`], never longer than
     /// the interval.
     pub fn timeout(&self) -> Duration {
-        self.timeout.unwrap_or(DEFAULT_TIMEOUT).min(self.interval)
+        self.timeout
+            .unwrap_or_else(|| default_timeout(self.interval))
+            .min(self.interval)
     }
 
     pub fn validate(&self) -> Result<(), ValidationError> {
@@ -244,6 +258,29 @@ mod tests {
     }
 
     #[test]
+    fn default_timeouts_scale_with_the_interval() {
+        let secs = Duration::from_secs;
+        for (interval, timeout) in [
+            (1, 1),
+            (5, 5),
+            (10, 10),
+            (30, 10),
+            (60, 10),
+            (120, 20),
+            (300, 50),
+            (900, 60),
+            (3600, 60),
+            (86_400, 60),
+        ] {
+            assert_eq!(
+                default_timeout(secs(interval)),
+                secs(timeout),
+                "{interval} s"
+            );
+        }
+    }
+
+    #[test]
     fn config_timeout_defaults_and_bounds() {
         let mut config = SensorConfig::new("cpu", Duration::from_secs(30));
         assert_eq!(config.timeout(), DEFAULT_TIMEOUT);
@@ -266,6 +303,10 @@ mod tests {
         ));
         config.interval = MAX_INTERVAL + Duration::from_secs(1);
         assert!(config.validate().is_err());
+        config.interval = Duration::from_secs(300);
+        assert_eq!(config.timeout(), Duration::from_secs(50));
+        config.timeout = Some(Duration::from_secs(5));
+        assert_eq!(config.timeout(), Duration::from_secs(5));
         let bad = SensorConfig::new("CPU", Duration::from_secs(5));
         assert!(matches!(
             bad.validate(),

@@ -38,6 +38,9 @@ pub const MIN_STEP: i64 = 1;
 const DEFAULT_POINTS: i64 = 720;
 /// Most series in one answer.
 pub const MAX_SERIES: usize = 500;
+/// Longest `lookback` of an instant query, in seconds: two intervals of
+/// the longest check (ADR-0097).
+pub const MAX_LOOKBACK: i64 = 2 * 86_400;
 /// How far back discovery looks.
 pub const DISCOVERY_WINDOW: Duration = Duration::days(1);
 /// Most series discovery reads for one server.
@@ -100,6 +103,9 @@ pub struct InstantParams {
     /// Defaults to now.
     pub time: Option<DateTime<Utc>>,
     pub agg: Option<Aggregation>,
+    /// Seconds: the last value within this window rather than within
+    /// VictoriaMetrics' default, for checks that run less often (ADR-0097).
+    pub lookback: Option<i64>,
 }
 
 /// Query string of `GET /api/metrics/query_range`.
@@ -258,6 +264,15 @@ pub fn range(params: &RangeParams, now: DateTime<Utc>) -> Result<(i64, i64, i64)
     Ok((start.timestamp(), end.timestamp(), step))
 }
 
+fn check_lookback(lookback: Option<i64>) -> Result<(), ApiError> {
+    match lookback {
+        Some(s) if !(1..=MAX_LOOKBACK).contains(&s) => Err(ApiError::Invalid(format!(
+            "lookback must be 1 to {MAX_LOOKBACK} seconds"
+        ))),
+        _ => Ok(()),
+    }
+}
+
 fn check_instance(instance: Option<&str>) -> Result<(), ApiError> {
     match instance {
         Some(i) => validate::instance(i).map_err(|e| ApiError::Invalid(e.to_string())),
@@ -350,12 +365,13 @@ pub async fn query(
     let params = query_params(params)?;
     check_metric(&params.metric)?;
     check_instance(params.instance.as_deref())?;
+    check_lookback(params.lookback)?;
     let (vm, target) = target(&state, &user, params.server_id).await?;
     let promql = build_query(
         &params.metric,
         &target,
         params.instance.as_deref(),
-        None,
+        params.lookback.map(|window| (Rollup::Last, window)),
         params.agg,
     );
     let time = params.time.unwrap_or_else(Utc::now).timestamp();
@@ -495,6 +511,17 @@ mod tests {
             ),
             r#"max(monitorflow_disk_used_ratio{peer="agent-1",site="o\"brien\\paris",instance="/\"}or{"})"#
         );
+    }
+
+    #[test]
+    fn lookbacks_are_bounded() {
+        assert!(check_lookback(None).is_ok());
+        assert!(check_lookback(Some(1)).is_ok());
+        assert!(check_lookback(Some(7_200)).is_ok());
+        assert!(check_lookback(Some(MAX_LOOKBACK)).is_ok());
+        for bad in [0, -1, MAX_LOOKBACK + 1] {
+            assert!(check_lookback(Some(bad)).is_err(), "{bad}");
+        }
     }
 
     #[test]

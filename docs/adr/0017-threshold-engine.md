@@ -1,7 +1,7 @@
 # ADR-0017: Threshold engine and incidents
 
 Date: 2026-10-19
-Status: accepted
+Status: accepted; `max_gap` follows the check's interval since ADR-0097
 
 ## Context
 

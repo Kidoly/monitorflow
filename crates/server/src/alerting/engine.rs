@@ -30,7 +30,9 @@ use crate::ingest::Series;
 pub struct EngineSettings {
     /// Batches queued towards the engine; more are dropped.
     pub queue_capacity: usize,
-    /// A longer silence between two samples restarts pending timers.
+    /// A longer silence between two samples restarts pending timers; for
+    /// a check whose interval is longer than half of it, two intervals
+    /// (ADR-0097).
     pub max_gap: Duration,
     /// Time between two threshold revision checks.
     pub poll_interval: Duration,
@@ -298,11 +300,12 @@ impl Engine {
         let Some(server) = self.server(peer).await else {
             return;
         };
-        let max_gap = i64::try_from(self.settings.max_gap.as_millis()).unwrap_or(i64::MAX);
+        let max_gap = u64::try_from(self.settings.max_gap.as_millis()).unwrap_or(u64::MAX);
         for point in points {
             let Some(rule) = server.rules.lookup(&point.metric, &point.instance) else {
                 continue;
             };
+            let max_gap = series_max_gap(max_gap, server.intervals.of(&point.metric));
             let key = SeriesKey {
                 server_id: server.server_id,
                 metric: point.metric,
@@ -467,6 +470,17 @@ struct Change<'a> {
 }
 
 /// The engine's writes, apart from its maps so both can be borrowed.
+/// The longest silence between two samples of a series that keeps its
+/// pending timers, in milliseconds: `max_gap`, or two intervals of the
+/// check that writes it when longer, so a check that runs every hour can
+/// still hold a condition for two hours and lose one sample (ADR-0097).
+fn series_max_gap(max_gap_ms: u64, interval_ms: Option<u64>) -> i64 {
+    let gap = interval_ms.map_or(max_gap_ms, |interval| {
+        max_gap_ms.max(interval.saturating_mul(2))
+    });
+    i64::try_from(gap).unwrap_or(i64::MAX)
+}
+
 struct Output {
     store: AlertStore,
     notifier: Arc<dyn Notifier>,
@@ -537,5 +551,24 @@ impl Output {
                 }),
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MINUTE: u64 = 60_000;
+
+    #[test]
+    fn the_gap_follows_long_intervals_only() {
+        let base = 10 * MINUTE;
+        assert_eq!(series_max_gap(base, None), 600_000);
+        for interval in [10_000, MINUTE, 5 * MINUTE] {
+            assert_eq!(series_max_gap(base, Some(interval)), 600_000, "{interval}");
+        }
+        assert_eq!(series_max_gap(base, Some(15 * MINUTE)), 1_800_000);
+        assert_eq!(series_max_gap(base, Some(60 * MINUTE)), 7_200_000);
+        assert_eq!(series_max_gap(u64::MAX, Some(MINUTE)), i64::MAX);
     }
 }
