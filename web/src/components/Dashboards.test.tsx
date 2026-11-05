@@ -250,6 +250,11 @@ describe("Dashboards", () => {
     expect(screen.getByText("Ready-made")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
     expect(bodyOf(fetchMock, "POST /api/dashboard-data")).toMatchObject({ range: "6h", within: { kind: "customer", id: customer } });
+    expect(screen.getByRole("link", { name: "Show on a screen" })).toHaveAttribute(
+      "href",
+      // Next adds the trailing slash in the export, not in tests.
+      expect.stringMatching(new RegExp(`^/display/?\\?ready=overview&customer=${customer}$`)),
+    );
 
     await userEvent.click(screen.getByRole("button", { name: "Make a copy" }));
     const created = bodyOf(fetchMock, "POST /api/dashboards");
