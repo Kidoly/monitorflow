@@ -1,0 +1,261 @@
+/*
+ * Dashboards on a screen (ADR-0099). Sizes follow the screen's smaller
+ * side (vmin), so 1080p and 4K show the same layout. Only what 2019
+ * browsers have: no gap on flex boxes, no clamp(), no aspect-ratio.
+ */
+
+.screen {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 1.6vmin 2vmin;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 2.2vmin;
+  line-height: 1.25;
+  overflow: hidden;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 0.6em;
+}
+
+.heading h1 {
+  display: inline;
+  margin: 0;
+  font-size: 1.5em;
+  font-weight: 600;
+}
+
+.pageOf {
+  margin-left: 0.8em;
+  color: var(--muted);
+}
+
+.clock {
+  text-align: right;
+  color: var(--muted);
+}
+
+.clock b {
+  display: block;
+  font-size: 1.8em;
+  line-height: 1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.stale {
+  margin: 0 0 0.6em;
+  padding: 0.5em 0.8em;
+  border-radius: var(--radius-panel);
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 1.2em;
+  font-weight: 600;
+}
+
+.grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-gap: 1.2vmin;
+}
+
+.grid[data-stale] {
+  opacity: 0.45;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 0.6em 0.8em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.w1 {
+  grid-column: span 1;
+}
+
+.w2 {
+  grid-column: span 2;
+}
+
+.w3 {
+  grid-column: span 3;
+}
+
+.title {
+  margin: 0 0 0.3em;
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.figure {
+  margin: auto 0 0;
+  font-size: 4.2em;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.figure + .muted {
+  margin-bottom: auto;
+}
+
+.muted {
+  margin: 0;
+  color: var(--muted);
+}
+
+.bad {
+  margin: 0;
+  color: var(--bad);
+}
+
+.ok {
+  margin: auto 0;
+  color: var(--ok);
+  font-size: 1.4em;
+  font-weight: 600;
+}
+
+.rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rows li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.15em 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.rows b {
+  margin-left: 0.6em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.critical b {
+  color: var(--bad);
+}
+
+.warning b {
+  color: var(--warn);
+}
+
+.plot {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  font-size: 0.8em;
+}
+
+.plot svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.gridLine {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+
+.axis {
+  fill: var(--muted);
+}
+
+.line {
+  fill: none;
+  stroke-width: 3;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0.3em 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8em;
+}
+
+.legend li {
+  margin-right: 1.2em;
+  white-space: nowrap;
+}
+
+.swatch {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.25em;
+  margin-right: 0.35em;
+  vertical-align: middle;
+}
+
+.message {
+  margin: auto;
+  max-width: 40em;
+  text-align: center;
+}
+
+.message h2 {
+  font-size: 2em;
+  margin: 0 0 0.4em;
+}
+
+.message p {
+  color: var(--muted);
+  font-size: 1.2em;
+}
+
+.controls {
+  position: fixed;
+  right: 2vmin;
+  bottom: 2vmin;
+}
+
+.controls button,
+.controls a {
+  margin-left: 0.6em;
+  padding: 0.4em 0.9em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--hl);
+  color: var(--text);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}

@@ -39,6 +39,7 @@ import {
   sharingLabel,
   withinOf,
 } from "@/lib/dashboards";
+import { displayHref } from "@/lib/display";
 import { modifiesCustomer, modifiesSite, useMe } from "@/lib/me";
 import { DASHBOARDS_PATH, dashboardHref, readyMadeHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -55,6 +56,7 @@ import { formatDay } from "@/components/ui/time";
 
 import admin from "./AdminPages.module.css";
 import { DashboardPanel } from "./DashboardPanel";
+import { DisplayLinks } from "./DisplayLinks";
 import styles from "./Dashboards.module.css";
 import { PanelForm } from "./PanelForm";
 
@@ -439,6 +441,11 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
         actions={
           !draft && (
             <>
+              {panels.length > 0 && (saved || builtIn) && (
+                <ButtonLink href={scopedHref(displayHref(saved ? { id: saved.id } : { ready: builtIn!.id }), scope)}>
+                  Show on a screen
+                </ButtonLink>
+              )}
               {canEdit && <Button onClick={startEditing}>Edit</Button>}
               <Button onClick={() => void copy()} disabled={busy}>
                 Make a copy
@@ -565,6 +572,7 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
         </div>
       )}
       {draft && <p className={admin.footnote}>Drag a panel to move it, or use Earlier and Later. Nothing is kept until you save.</p>}
+      {!draft && saved?.can_link && <DisplayLinks dashboard={saved} />}
     </Page>
   );
 }

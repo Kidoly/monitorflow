@@ -32,7 +32,7 @@ const chart: Panel = {
 const WINDOW = { start: 1_800_000_000, end: 1_800_003_600, step: 30, at: 1_800_003_600 };
 
 function data(panels: PanelData[]): DashboardData {
-  return { ...WINDOW, panels };
+  return { ...WINDOW, now: WINDOW.at, panels };
 }
 
 function dashboard(overrides: Partial<Dashboard> = {}): Dashboard {
@@ -44,6 +44,7 @@ function dashboard(overrides: Partial<Dashboard> = {}): Dashboard {
     updated_at: "2026-11-01T10:00:00Z",
     updated_by_username: "alice",
     can_edit: true,
+    can_link: false,
     spec: { version: 1, range: "6h", panels: [chart] },
     revision: 3,
     ...overrides,
@@ -249,6 +250,11 @@ describe("Dashboards", () => {
     expect(screen.getByText("Ready-made")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
     expect(bodyOf(fetchMock, "POST /api/dashboard-data")).toMatchObject({ range: "6h", within: { kind: "customer", id: customer } });
+    expect(screen.getByRole("link", { name: "Show on a screen" })).toHaveAttribute(
+      "href",
+      // Next adds the trailing slash in the export, not in tests.
+      expect.stringMatching(new RegExp(`^/display/?\\?ready=overview&customer=${customer}$`)),
+    );
 
     await userEvent.click(screen.getByRole("button", { name: "Make a copy" }));
     const created = bodyOf(fetchMock, "POST /api/dashboards");
