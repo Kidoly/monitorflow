@@ -103,3 +103,18 @@
   align-items: center;
   gap: 10px;
 }
+
+/* "Checked every 1 h, so this alert opens up to 2 h after…" under an alert. */
+.note {
+  display: block;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+/* "Built-in checks run [every 1 min] on every server of …" in the section head. */
+.builtin {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}

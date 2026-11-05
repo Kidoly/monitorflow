@@ -1,0 +1,27 @@
+/* How often a check runs (ADR-0097): a list, and a typed value for "Other". */
+
+.picker {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.select {
+  width: auto;
+}
+
+.amount {
+  width: 72px;
+}
+
+.dim {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.error {
+  color: var(--bad);
+  font-weight: 500;
+  font-size: 12px;
+}

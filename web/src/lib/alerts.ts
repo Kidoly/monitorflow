@@ -3,6 +3,7 @@ import {
   type ConfigOwner,
   type EffectiveSensor,
   type EffectiveThreshold,
+  type SensorConfigEntry,
   type SensorConfigRequest,
   type ThresholdRequest,
   api,
@@ -333,20 +334,18 @@ export function checkErrors(type: CheckType, values: Record<string, string>): Re
   return errors;
 }
 
-/** Interval of an added check: the built-in sensors' one. */
-export const CHECK_INTERVAL_MS = 60_000;
-
-/** The sensor row and the threshold that alerts on it. */
+/** The sensor row, run every `intervalMs`, and the threshold that alerts on it. */
 export function checkRequests(
   type: CheckType,
   values: Record<string, string>,
+  intervalMs: number,
 ): { sensor: SensorConfigRequest; threshold: ThresholdRequest } {
   const name = checkName(type, values);
   const params = Object.fromEntries(type.fields.map((f) => [f.key, (values[f.key] ?? "").trim()]));
   const event = EVENTS[type.kind]!;
   const level = (severity: Severity) => (type.severity === severity ? event.value : null);
   return {
-    sensor: { kind: type.kind, name, interval_ms: CHECK_INTERVAL_MS, params: { ...params, ...type.fixed } },
+    sensor: { kind: type.kind, name, interval_ms: intervalMs, params: { ...params, ...type.fixed } },
     threshold: {
       metric: `${METRIC_PREFIX}${name}_${event.suffix}`,
       instance: null,
@@ -358,6 +357,32 @@ export function checkRequests(
       enabled: true,
     },
   };
+}
+
+/**
+ * Runs `sensor` every `ms` for `owner` (ADR-0097): changes `row`, the
+ * owner's own row for it, or adds one that copies the inherited check.
+ * `null` removes `row`, going back to the inherited check.
+ */
+export async function saveCheckInterval(
+  owner: ConfigOwner,
+  sensor: EffectiveSensor,
+  row: SensorConfigEntry | undefined,
+  ms: number | null,
+): Promise<void> {
+  if (ms === null) {
+    if (row) await api.deleteSensor(row.id);
+    return;
+  }
+  if (!row) {
+    const { kind, name, instance, params } = sensor;
+    await api.createSensor(owner, { kind, name, instance, interval_ms: ms, params, enabled: true });
+    return;
+  }
+  // A timeout of its own must stay within the interval.
+  const timeout_ms = row.timeout_ms !== null && row.timeout_ms <= ms ? row.timeout_ms : null;
+  const { kind, name, instance, params, enabled } = row;
+  await api.updateSensor(row.id, { kind, name, instance, interval_ms: ms, timeout_ms, params, enabled });
 }
 
 /** "Port 443", "Service nginx", "Disk space": a check in the list. */
