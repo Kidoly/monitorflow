@@ -279,7 +279,10 @@ async fn the_test_and_the_model_list_need_no_key_on_a_local_server() {
     assert!(error.contains("must start with https://"), "{error}");
     connection.base_url = None;
     let error = connection.check().await.unwrap_err();
-    assert!(error.contains("Enter the address of the model server."), "{error}");
+    assert!(
+        error.contains("Enter the address of the model server."),
+        "{error}"
+    );
 }
 
 #[tokio::test]
