@@ -18,7 +18,8 @@ const UNSUPPORTED: &str = "unsupported";
 
 /// The kinds stored. An agent names only what it runs, but its report
 /// passes through relays, so nothing else reaches the database.
-const KINDS: [&str; 5] = [
+const KINDS: [&str; 6] = [
+    command::AI_COMMANDS,
     command::APPLY_UPDATES,
     command::CONFIGURE_SOURCES,
     command::REVERT_SOURCES,
@@ -128,6 +129,7 @@ mod tests {
                 state("self_update", CommandAcceptance::Unspecified.into()),
                 state("revert_sources", 99),
                 state("reboot", CommandAcceptance::Accepted.into()),
+                state("ai_commands", CommandAcceptance::Disabled.into()),
             ],
             ..Hello::default()
         };
@@ -135,6 +137,7 @@ mod tests {
         assert_eq!(
             stored,
             BTreeMap::from([
+                ("ai_commands", OFF),
                 ("apply_updates", ACCEPTED),
                 ("configure_sources", UNSUPPORTED),
                 ("shell", OFF),

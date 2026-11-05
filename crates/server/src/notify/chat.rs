@@ -353,9 +353,9 @@ impl Card {
             (GROUP, Some("critical")) => Tone::Danger,
             (GROUP, _) => Tone::Warning,
             ("incident.opened" | "incident.escalated", Some("critical")) => Tone::Danger,
-            ("incident.opened" | "incident.escalated", _) | ("approval.waiting", _) => {
-                Tone::Warning
-            }
+            ("incident.opened" | "incident.escalated", _)
+            | ("approval.waiting", _)
+            | ("ai_commands.changed", _) => Tone::Warning,
             ("update.failed" | "backup.failed", _) => Tone::Danger,
             _ => Tone::Neutral,
         };

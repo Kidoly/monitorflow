@@ -129,6 +129,8 @@
 //! | GET | `/api/servers/{id}/packages` | read | [`packages::PackageList`], see below |
 //! | GET | `/api/servers/{id}/commands` | read | [`commands::CommandList`], newest first, paginated |
 //! | POST | `/api/servers/{id}/commands` | customer administrator | body [`commands::CreateRequest`]; 201 [`commands::CommandDetail`] |
+//! | POST | `/api/servers/{id}/ai-commands` | site administrator | body `{"on": bool}`; 201 [`commands::CommandDetail`] of the `ai_commands` command; 409 saying why the agent would refuse; audited and notified (ADR-0098) |
+//! | POST | `/api/sites/{id}/ai-commands` | site administrator | body `{"on": bool}`; [`package_sources::SiteChange`]: the servers switched, those skipped and why (ADR-0098) |
 //! | GET | `/api/commands/{id}` | read | [`commands::CommandDetail`]: the command and its output |
 //! | GET | `/agent/{version}/{file}`, `/agent/latest/{file}` | none | A file of a cached agent release, for installs (ADR-0054); 404 with a plain-text reason |
 //! | GET | `/api/settings/agent-install` | customer administrator | [`settings::AgentInstall`]: default install source, custom URL, what the configuration sets, the release `central` installs (ADR-0054) |
@@ -567,7 +569,10 @@
 //!  "certificate": {"serial": "3f2a…", "not_before": "2026-10-18T12:00:00Z",
 //!                  "not_after": "2027-01-16T12:00:00Z",
 //!                  "issued_at": "2026-10-18T12:00:00Z", "revoked": false,
-//!                  "revoked_at": null, "revocation_reason": null}}
+//!                  "revoked_at": null, "revocation_reason": null},
+//!  "ai_commands_change": {"command_id": "uuid", "on": true, "state": "succeeded",
+//!                         "requested_by": "alice", "issued_at": "…",
+//!                         "finished_at": "…", "error": null}}
 //! ```
 //!
 //! A server outside the user's sites, or an ID that is not a UUID, is 404.
@@ -575,6 +580,7 @@
 pub mod access;
 pub mod agent_files;
 pub mod ai;
+pub mod ai_commands;
 pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
@@ -1056,6 +1062,8 @@ pub fn router(state: ApiState) -> Router {
             "/api/servers/{id}/commands",
             get(commands::list).post(commands::create),
         )
+        .route("/api/servers/{id}/ai-commands", post(ai_commands::server))
+        .route("/api/sites/{id}/ai-commands", post(ai_commands::site))
         .route("/api/commands/{id}", get(commands::detail))
         .route("/api/agent-releases", get(commands::agent_releases))
         .route(
