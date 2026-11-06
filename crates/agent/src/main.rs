@@ -8,6 +8,7 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use monitorflow_agent::backoff::Backoff;
+use monitorflow_agent::commands::ai_switch::AiSwitch;
 use monitorflow_agent::commands::{self, Dispatcher, DispatcherSettings, Handlers, Journal};
 use monitorflow_agent::enroll::{self, EnrollError};
 use monitorflow_agent::init_config;
@@ -75,12 +76,13 @@ enum Command {
     #[cfg(windows)]
     UpdateService,
     /// Let this agent run the commands AI remediation sends, or stop it
-    /// (ADR-0084): sets `commands.shell` in `--config`, keeping the rest
-    /// of the file. Restart the MonitorFlowAgent service afterwards.
+    /// (ADR-0084), or let the web interface turn them on (ADR-0098): sets
+    /// `commands.shell` or `commands.from_web` in `--config`, keeping the
+    /// rest of the file. Restart the MonitorFlowAgent service afterwards.
     #[cfg(windows)]
     AiCommands {
-        #[arg(value_enum)]
-        state: OnOff,
+        #[command(subcommand)]
+        action: AiCommandsAction,
     },
     /// Write the configuration file `--config` with these keys, unless it
     /// already exists; the MSI package runs this (ADR-0050). Empty values
@@ -100,6 +102,21 @@ enum Command {
 enum OnOff {
     On,
     Off,
+}
+
+#[cfg(windows)]
+#[derive(Subcommand, Debug, Clone, Copy)]
+enum AiCommandsAction {
+    /// Run AI commands here, whatever the web interface last said.
+    On,
+    /// Refuse AI commands here, whatever the web interface last said.
+    Off,
+    /// `on` lets the web interface turn AI commands on and off; `off`
+    /// lets it only turn them off.
+    FromWeb {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
 }
 
 #[cfg(unix)]
@@ -216,21 +233,8 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
             unreachable!("started before the runtime")
         }
         #[cfg(windows)]
-        Some(Command::AiCommands { state }) => {
-            use monitorflow_agent::ai_commands::{self, Outcome};
-            let on = state == OnOff::On;
-            let path = cli.config.clone();
-            let outcome =
-                tokio::task::spawn_blocking(move || ai_commands::set(&path, on)).await??;
-            let word = if on { "on" } else { "off" };
-            match outcome {
-                Outcome::Changed => println!(
-                    "AI commands are {word} in {}; restart the agent to apply it: Restart-Service MonitorFlowAgent",
-                    cli.config.display()
-                ),
-                Outcome::Unchanged => println!("AI commands were already {word} in {}", cli.config.display()),
-            }
-            return Ok(());
+        Some(Command::AiCommands { action }) => {
+            return set_ai_commands(&cli.config, action).await;
         }
         Some(Command::InitConfig {
             upstream_url,
@@ -256,6 +260,52 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
     let (trigger, stop) = shutdown::channel();
     shutdown::on_signals(trigger).context("cannot install signal handlers")?;
     run(config, stop).await
+}
+
+/// `ai-commands`: sets the key in the configuration file. `on` and `off`
+/// also forget what the web interface last set, so they win over it.
+#[cfg(windows)]
+async fn set_ai_commands(path: &Path, action: AiCommandsAction) -> anyhow::Result<()> {
+    use monitorflow_agent::ai_commands::{self, Key, Outcome};
+    use monitorflow_agent::commands::ai_switch;
+
+    let (key, on) = match action {
+        AiCommandsAction::On => (Key::Shell, true),
+        AiCommandsAction::Off => (Key::Shell, false),
+        AiCommandsAction::FromWeb { state } => (Key::FromWeb, state == OnOff::On),
+    };
+    let file = path.to_owned();
+    let (outcome, config) =
+        tokio::task::spawn_blocking(move || ai_commands::set(&file, key, on)).await??;
+    let forgot = match key {
+        Key::Shell => {
+            let data_dir = config.data_dir.clone();
+            tokio::task::spawn_blocking(move || ai_switch::forget(&data_dir))
+                .await?
+                .with_context(|| {
+                    format!(
+                        "cannot remove the web interface's choice in {}",
+                        config.data_dir.display()
+                    )
+                })?
+        }
+        Key::FromWeb => false,
+    };
+    let what = match (key, on) {
+        (Key::Shell, true) => "AI commands are on",
+        (Key::Shell, false) => "AI commands are off",
+        (Key::FromWeb, true) => "the web interface may turn AI commands on and off",
+        (Key::FromWeb, false) => "the web interface may only turn AI commands off",
+    };
+    if outcome == Outcome::Unchanged && !forgot {
+        println!("{what} already ({})", path.display());
+    } else {
+        println!(
+            "{what} in {}; restart the agent to apply it: Restart-Service MonitorFlowAgent",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 /// Where the agent's logs go.
@@ -326,7 +376,8 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     };
     let mut handlers = Handlers::default();
     let latest_report = platform_handlers(&config, &host, &mut handlers, &stop);
-    let command_kinds = handlers.report();
+    let ai_switch = ai_handlers(&config, &mut handlers);
+    let reporting = handlers.clone();
     let (commands_stream, commands_end) = commands::link();
     let ca_certs =
         tls::load_certs(&config.tls_paths().ca_cert).context("loading the CA certificate")?;
@@ -359,7 +410,7 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
         .with_sensors(stream_end)
         .with_upload(uplink)
         .with_commands(commands_stream)
-        .with_command_kinds(command_kinds);
+        .with_command_handlers(reporting, ai_switch.subscribe());
     if let Some(reports) = latest_report {
         agent = agent.with_reports(reports);
     }
@@ -374,8 +425,31 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     result
 }
 
+/// `shell` and `ai_commands`, which share whether AI commands are on:
+/// `commands.shell`, or what the server last set (ADR-0098).
+fn ai_handlers(config: &AgentConfig, handlers: &mut Handlers) -> Arc<AiSwitch> {
+    use monitorflow_agent::commands::ai_switch::AiSwitchHandler;
+    use monitorflow_agent::commands::shell::ShellHandler;
+    use monitorflow_common::command;
+
+    let switch = Arc::new(AiSwitch::load(
+        config.commands.shell,
+        config.commands.from_web,
+        &config.data_dir,
+    ));
+    handlers.register(
+        command::SHELL,
+        Arc::new(ShellHandler::switched(switch.clone())),
+    );
+    handlers.register(
+        command::AI_COMMANDS,
+        Arc::new(AiSwitchHandler::new(switch.clone())),
+    );
+    switch
+}
+
 /// Package reports every `packages.report_interval`, and the handlers of
-/// `apply_updates`, the source commands and `shell`; returns the reports
+/// `apply_updates` and the source commands; returns the reports
 /// for the stream. Without a package manager there are no reports, and
 /// the package commands are refused as unsupported (ADR-0063).
 #[cfg(unix)]
@@ -385,7 +459,6 @@ fn platform_handlers(
     handlers: &mut Handlers,
     stop: &Shutdown,
 ) -> Option<tokio::sync::watch::Receiver<Option<monitorflow_common::proto::v1::PackageReport>>> {
-    use monitorflow_agent::commands::shell::ShellHandler;
     use monitorflow_agent::commands::unsupported::Unsupported;
     use monitorflow_agent::packages::{
         self, ApplyUpdatesHandler, Reports, SourcesAction, SourcesHandler, Tools,
@@ -436,10 +509,6 @@ fn platform_handlers(
         }
     }
     handlers.register(
-        command::SHELL,
-        Arc::new(ShellHandler::new(config.commands.shell)),
-    );
-    handlers.register(
         command::SELF_UPDATE,
         Arc::new(self_update::handler::SelfUpdateHandler::new(
             self_update::handler::SudoHelper {
@@ -452,8 +521,8 @@ fn platform_handlers(
 }
 
 /// Windows Update reports and `apply_updates` through the update service
-/// (ADR-0049), `shell` with Windows PowerShell (ADR-0084); the source
-/// commands are refused as unsupported (ADR-0047).
+/// (ADR-0049); the source commands are refused as unsupported (ADR-0047).
+/// `shell` runs with Windows PowerShell (ADR-0084).
 #[cfg(windows)]
 fn platform_handlers(
     config: &AgentConfig,
@@ -461,7 +530,6 @@ fn platform_handlers(
     handlers: &mut Handlers,
     stop: &Shutdown,
 ) -> Option<tokio::sync::watch::Receiver<Option<monitorflow_common::proto::v1::PackageReport>>> {
-    use monitorflow_agent::commands::shell::ShellHandler;
     use monitorflow_agent::commands::unsupported::Unsupported;
     use monitorflow_agent::packages::windows_update::client::{
         WindowsApplyHandler, WindowsUpdates,
@@ -485,10 +553,6 @@ fn platform_handlers(
             service,
             data_dir: config.data_dir.clone(),
         })),
-    );
-    handlers.register(
-        command::SHELL,
-        Arc::new(ShellHandler::new(config.commands.shell)),
     );
     for (kind, what) in [
         (command::CONFIGURE_SOURCES, "package sources"),

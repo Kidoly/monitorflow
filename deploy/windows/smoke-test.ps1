@@ -83,7 +83,7 @@ function Random-Part {
 $token = "mfe1.$(Random-Part).$(Random-Part)"
 
 Write-Host "== install"
-$log = Msiexec "install" @("/i", "`"$Msi`"", "UPSTREAM_URL=https://127.0.0.1:7443", "ENROLLMENT_TOKEN=$token")
+$log = Msiexec "install" @("/i", "`"$Msi`"", "UPSTREAM_URL=https://127.0.0.1:7443", "ENROLLMENT_TOKEN=$token", "AI_COMMANDS_FROM_WEB=1")
 Check (-not (Select-String -Path $log -SimpleMatch $token -Quiet)) "the MSI log does not contain the token"
 Check (Test-Path "$bin\monitorflow-agent.exe") "the binary is in $bin"
 Check (Test-Path "$bin\agent.windows.example.toml") "the example configuration is in $bin"
@@ -115,6 +115,7 @@ $config = Get-Content -Raw "$data\agent.toml"
 Check ($config.Contains('upstream_url = "https://127.0.0.1:7443"')) "agent.toml has the upstream"
 Check ($config.Contains($token)) "agent.toml has the token"
 Check (-not (Dacl "$data\agent.toml").Protected) "agent.toml inherits the ACL of $data"
+Check ($config -match '(?m)^from_web = true') "AI_COMMANDS_FROM_WEB=1 lets the web interface turn AI commands on (ADR-0098)"
 $source = "HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\$service"
 Check (Test-Path $source) "the Event Log source is registered"
 
@@ -133,12 +134,20 @@ Write-Host "== AI commands (ADR-0084)"
 Check ($LASTEXITCODE -eq 0) "ai-commands on succeeds"
 Restart-Service MonitorFlowAgent
 $config = Get-Content -Raw "$data\agent.toml"
-Check ($config -match '(?m)^\[commands\]\r?\nshell = true') "agent.toml allows AI commands"
+Check ($config -match '(?m)^shell = true') "agent.toml allows AI commands"
 Check ($config.Contains($token)) "agent.toml keeps its other keys"
 Check (-not (Dacl "$data\agent.toml").Protected) "agent.toml keeps the ACL of $data"
 Check (Wait-Status "Running") "the service runs with AI commands on"
 $again = & "$env:ProgramFiles\MonitorFlow\monitorflow-agent.exe" ai-commands on
-Check ("$again" -match "already on") "a second run changes nothing (got $again)"
+Check ("$again" -match "already") "a second run changes nothing (got $again)"
+# What the web interface last set is forgotten by a choice made here.
+Set-Content "$data\agent\ai-commands" "off"
+& "$env:ProgramFiles\MonitorFlow\monitorflow-agent.exe" ai-commands on | Out-Null
+Check (-not (Test-Path "$data\agent\ai-commands")) "ai-commands on forgets the web interface's choice"
+& "$env:ProgramFiles\MonitorFlow\monitorflow-agent.exe" ai-commands from-web off | Out-Null
+Check ((Get-Content -Raw "$data\agent.toml") -match '(?m)^from_web = false') "ai-commands from-web off takes the consent back"
+Restart-Service MonitorFlowAgent
+Check (Wait-Status "Running") "the service runs after these changes"
 
 Write-Host "== upgrade"
 $configHash = (Get-FileHash "$data\agent.toml").Hash

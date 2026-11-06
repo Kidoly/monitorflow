@@ -35,7 +35,8 @@ One command serves every server of a site, for 30 days by default[^0073]. Each s
 | `MF_TIMEOUT` | Seconds to wait for the first connection, 120 by default |
 | `MF_REQUIRE_SIGNATURE=1` | Fail instead of warning when OpenSSL 3 is missing and the signature cannot be checked |
 | `MF_ALLOW_UNSIGNED=1` | Install a release without `SHA256SUMS.sig`, like 0.1.0, with its checksums checked only |
-| `MF_ALLOW_COMMANDS=1` | Let this agent run the shell commands of AI remediation (`commands.shell`), through a systemd drop-in. Works on an installed agent too, and is kept by later runs; `MF_ALLOW_COMMANDS=0` takes it back. The web interface shows this line under Administration › AI and on a server's Commands tab, and each server shows whether it accepts AI commands[^0064] |
+| `MF_ALLOW_COMMANDS=1` | Let this agent run the shell commands of AI remediation (`commands.shell`), through a systemd drop-in. Works on an installed agent too, and is kept by later runs; `MF_ALLOW_COMMANDS=0` takes it back. Either value also undoes what the web interface last set. Each server shows whether it accepts AI commands[^0064] |
+| `MF_AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page (`commands.from_web`), through a systemd drop-in. Without it, the web interface can only turn them off. Works on an installed agent too; `MF_AI_COMMANDS_FROM_WEB=0` takes it back. "Allow AI commands to be turned on from the web interface" on the Add servers page adds it to the command[^0098] |
 | `MF_UNINSTALL=1` | Remove the binary, the unit and the sudo rules. `agent.toml` and the identity stay, so a reinstall keeps the server's history. Add `MF_PURGE=1` to remove them and the `monitorflow` user too. "Remove" on the server's page shows the command to use |
 
 An agent behind a relay:
@@ -209,6 +210,7 @@ msiexec /i monitorflow-agent-0.2.0-x64.msi /qn /l*v install.log `
 | `ENROLL_URL` | Optional `enroll_url`, needed behind a relay |
 | `ENROLLMENT_TOKEN` | Optional single-use token. The MSI log shows asterisks in its place. Remove it from `agent.toml` once connected (below) |
 | `REMOVE_DATA=1` | On uninstall, also deletes `%ProgramData%\MonitorFlow`: configuration, identity and logs |
+| `AI_COMMANDS_FROM_WEB=1` | Let administrators turn AI commands on and off from the server's page, on a new install or an upgrade: sets `[commands] from_web = true` in `agent.toml`, as `ai-commands from-web on` does[^0098] |
 
 An invalid URL makes the install fail and roll back; `install.log` has the custom action `WriteAgentConfig` failing. The package is not signed yet, so Windows shows an unknown publisher.
 
@@ -307,7 +309,9 @@ AI remediation sends a Windows server PowerShell commands[^0084]. The agent refu
 Restart-Service MonitorFlowAgent
 ```
 
-The first line sets `[commands] shell = true` in `agent.toml` and leaves the rest of the file as it is; the setting is kept across upgrades. `ai-commands off` takes it back. The server's page shows the change once the agent is back, and gives these lines on its Commands tab and under Administration › AI.
+The first line sets `[commands] shell = true` in `agent.toml` and leaves the rest of the file as it is; the setting is kept across upgrades. `ai-commands off` takes it back. Either one also undoes what the web interface last set. The server's page shows the change once the agent is back, and gives these lines on its Commands tab.
+
+To let administrators turn AI commands on and off from the server's page instead, run `ai-commands from-web on` the same way, then restart the service; `ai-commands from-web off` takes it back. The MSI's `AI_COMMANDS_FROM_WEB=1` does the same at install[^0098].
 
 Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SERVICE\MonitorFlowAgent`, from `C:\`, with the system `PATH`, and is stopped with everything it started at the time limit. That account is not an administrator: it reads services, processes, the System and Application event logs, disks and network state, but cannot restart most services. To let AI restart one service after approval, grant the account that right on that service, for example with `sc.exe sdshow` and `sc.exe sdset`, adding `(A;;RPWPLCRC;;;S-1-5-80-546755567-1596817566-60379001-3258130523-3598288828)` (the service SID of `MonitorFlowAgent`). Without it, the command fails with "access denied" and the incident goes to a person.
 
@@ -334,3 +338,4 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0086]: [ADR-0086: Where Windows servers take their updates from](adr/0086-windows-update-source.md)
 [^0091]: [ADR-0091: System logs](adr/0091-system-logs.md)
 [^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)
+[^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)

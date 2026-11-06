@@ -233,3 +233,11 @@ message ShellCommand {
   // seconds; 0 means the agent's default.
   uint32 timeout_seconds = 2;
 }
+
+// Payload of "ai_commands" commands (ADR-0098): turns the agent's AI
+// commands, the "shell" kind, on or off. Agents always obey "off", and
+// obey "on" only when their administrator allowed it with
+// `commands.from_web`.
+message AiCommandsSwitch {
+  bool on = 1;
+}

@@ -14,12 +14,14 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use monitorflow_common::proto::v1::{CommandAcceptance, ShellCommand};
 use prost::Message;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
+use super::ai_switch::AiSwitch;
 use super::{Handler, Output, MAX_OUTPUT};
 
 /// Timeout when the command does not set one.
@@ -38,20 +40,26 @@ const DISABLED: &str = "shell commands are disabled on this agent (commands.shel
                         and restart the MonitorFlowAgent service to allow them";
 
 pub struct ShellHandler {
-    enabled: bool,
+    switch: Arc<AiSwitch>,
 }
 
 impl ShellHandler {
-    /// `enabled` is the agent's `commands.shell`.
+    /// On or off for good, whatever the server says.
     pub fn new(enabled: bool) -> Self {
-        Self { enabled }
+        Self::switched(Arc::new(AiSwitch::fixed(enabled)))
+    }
+
+    /// On while `switch` is: `commands.shell`, or the server's choice
+    /// (ADR-0098).
+    pub fn switched(switch: Arc<AiSwitch>) -> Self {
+        Self { switch }
     }
 }
 
 #[async_trait::async_trait]
 impl Handler for ShellHandler {
     fn acceptance(&self) -> CommandAcceptance {
-        if self.enabled {
+        if self.switch.is_on() {
             CommandAcceptance::Accepted
         } else {
             CommandAcceptance::Disabled
@@ -59,7 +67,7 @@ impl Handler for ShellHandler {
     }
 
     async fn run(&self, payload: &[u8]) -> Output {
-        if !self.enabled {
+        if !self.switch.is_on() {
             return Output::rejected(DISABLED);
         }
         let Ok(request) = ShellCommand::decode(payload) else {

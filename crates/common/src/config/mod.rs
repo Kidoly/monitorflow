@@ -519,6 +519,9 @@ pub struct AgentCommandsConfig {
     /// Runs `shell` commands of the AI remediation loop (ADR-0043), with
     /// `/bin/sh -c` as the agent's user. Off unless enabled here.
     pub shell: bool,
+    /// Lets the central server turn `shell` on and off (ADR-0098). It
+    /// can always turn it off; without this, never on.
+    pub from_web: bool,
 }
 
 /// Package reports and updates (ADR-0031).
@@ -649,6 +652,7 @@ impl LoadConfig for AgentConfig {
             &mut self.packages.report_interval,
         )?;
         env.set("commands.shell", &mut self.commands.shell)?;
+        env.set("commands.from_web", &mut self.commands.from_web)?;
         if let Some(dirs) = env.list("sensors.log_dirs") {
             self.sensors.log_dirs = dirs.into_iter().map(PathBuf::from).collect();
         }
