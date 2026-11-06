@@ -159,7 +159,7 @@ Let each install pick what suits it instead of a fixed choice.
 
 - [x] Any AI for remediation: Anthropic, OpenAI or any OpenAI-compatible API, and local models (Ollama, llama.cpp, vLLM) so nothing leaves the network. The safety rules stay on the server whatever the model.
 - [x] Choose how often each check runs, from seconds to hours, per check and as a default per site. Agents already accept any interval up to 24 hours; the web interface only shows it.
-- [ ] Turn AI commands on and off from the web interface instead of on each server. Turning off always works. Turning on works only for servers installed with "Allow AI commands to be turned on from the web interface", so a compromised central server cannot give itself a shell on servers that did not agree. Administrators only, audited, and shown plainly on the server's page.
+- [x] Turn AI commands on and off from the web interface instead of on each server. Turning off always works. Turning on works only for servers installed with "Allow AI commands to be turned on from the web interface", so a compromised central server cannot give itself a shell on servers that did not agree. Administrators only, audited, and shown plainly on the server's page.
 - [x] Show dashboards on a wall screen or TV: full screen without menus, large text, refreshing by itself, cycling through several dashboards, and a display link that needs no sign-in, read-only, tied to one dashboard and revocable. Say plainly on screen when the data is stale.
 
 ## Phase 16 — Integrations
