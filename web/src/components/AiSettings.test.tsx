@@ -98,10 +98,9 @@ describe("AiSettingsPage", () => {
     });
     expect(screen.getByLabelText(/Anthropic API key/)).toHaveValue("");
     expect(screen.getByLabelText(/Anthropic API key/)).toHaveAttribute("placeholder", "Saved; leave empty to keep it");
-    const [linux, windows] = await screen.findAllByLabelText("Command that allows AI commands");
-    expect(linux).toHaveTextContent("sudo MF_ALLOW_COMMANDS=1 sh");
-    expect(windows).toHaveTextContent('monitorflow-agent.exe" ai-commands on');
-    expect(windows).toHaveTextContent("Restart-Service MonitorFlowAgent");
+    // AI commands are turned on from each server's page now (ADR-0098).
+    expect(await screen.findByText(/Turn AI commands on or off from each server/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Command that allows AI commands")).not.toBeInTheDocument();
   });
 
   it("shows where each server stands, with a link to act on it", async () => {
@@ -126,14 +125,14 @@ describe("AiSettingsPage", () => {
     });
     page();
     expect(await screen.findByText("1 of 5 servers accept AI commands.")).toBeInTheDocument();
-    expect(screen.getByText(/^Off, run the line below/)).toHaveTextContent(/web-2$/);
+    expect(screen.getByText(/^Off, turn them on from their page/)).toHaveTextContent(/web-2$/);
     expect(screen.getByRole("link", { name: "web-2" })).toHaveAttribute("href", expect.stringContaining("id=2&tab=commands"));
     // Not reporting is its own group, even from an agent that reports other kinds.
     expect(screen.getByText(/^Not known yet/)).toHaveTextContent(/web-3, web-5$/);
     expect(screen.getByText(/^Their agent is too old/)).toHaveTextContent(/web-4$/);
   });
 
-  it("still gives the line when the servers cannot be read", async () => {
+  it("still says where to turn them on when the servers cannot be read", async () => {
     stubFetch({
       [`GET ${AI}`]: ok(settings({ enabled: true, has_key: true })),
       "GET /api/settings/agent-install": install,
@@ -141,8 +140,7 @@ describe("AiSettingsPage", () => {
       "GET /api/servers": { status: 500, body: { error: "database unavailable" } },
     });
     page();
-    expect(await screen.findByText("On Windows servers, in PowerShell as an administrator:")).toBeInTheDocument();
-    expect(await screen.findByText(/sudo MF_ALLOW_COMMANDS=1 sh/)).toBeInTheDocument();
+    expect(await screen.findByText(/Turn AI commands on or off from each server/)).toBeInTheDocument();
     expect(screen.queryByText(/accept AI commands\./)).not.toBeInTheDocument();
   });
 

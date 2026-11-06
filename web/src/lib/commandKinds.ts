@@ -20,6 +20,15 @@ type Reporting = Pick<Server, "command_kinds">;
 /** What the server's agent last said it does with AI commands. */
 export const aiCommands = (server: Reporting): Acceptance => acceptance(server.command_kinds?.shell);
 
+/**
+ * What the web interface may do with the server's AI commands (ADR-0098): turn them on and off
+ * where its host allowed it, only off elsewhere, nothing with an agent too old to know the switch.
+ */
+export function aiSwitch(server: Reporting): "both" | "off" | "none" {
+  const word = server.command_kinds?.ai_commands;
+  return word === "accepted" ? "both" : word === "off" ? "off" : "none";
+}
+
 /** "Accepts agent updates. Refuses AI commands.", or null while the agent has not said. */
 export function commandSummary(server: Reporting): string | null {
   const kinds = server.command_kinds;

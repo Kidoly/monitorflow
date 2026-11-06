@@ -363,6 +363,14 @@ describe("TokensAdmin", () => {
     expect(within(install).getByRole("alert")).toHaveTextContent("Enter a name or IP address");
     expect(linux).toHaveTextContent("MF_SERVER=mf.example:7443 MF_TOKEN");
     expect(linux).not.toHaveTextContent("; id");
+
+    // Off by default; checked, both lines let the web interface turn AI commands on (ADR-0098).
+    const fromWeb = within(install).getByRole("checkbox", { name: /Allow AI commands to be turned on from the web interface/ });
+    expect(fromWeb).not.toBeChecked();
+    expect(linux).not.toHaveTextContent("MF_AI_COMMANDS_FROM_WEB");
+    await user.click(fromWeb);
+    expect(linux).toHaveTextContent("sudo MF_AI_COMMANDS_FROM_WEB=1 MF_SERVER=");
+    expect(within(install).getByLabelText(/^Windows/)).toHaveTextContent("AI_COMMANDS_FROM_WEB=1");
   });
 
   it("lets global administrators change the address of every command in one step", async () => {

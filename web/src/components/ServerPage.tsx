@@ -19,10 +19,10 @@ import {
 import { updateAvailable } from "@/lib/agentVersion";
 import { certificateProblem, certificateState } from "@/lib/certificates";
 import { metricsError } from "@/lib/charts";
-import { aiCommands, commandSummary, unsupportedReason } from "@/lib/commandKinds";
+import { aiCommands, aiSwitch, commandSummary, unsupportedReason } from "@/lib/commandKinds";
 import { isActive } from "@/lib/commands";
 import { formatOs } from "@/lib/format";
-import { administersCustomer, modifiesSite, useMe } from "@/lib/me";
+import { administersCustomer, administersSite, modifiesSite, useMe } from "@/lib/me";
 import { serverHref, siteHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { type SensorValues, primaryMetric, sensorRows } from "@/lib/sensors";
@@ -290,25 +290,39 @@ function UpdateAgent({
 /** How to turn on AI commands on this server, or who can. */
 function AllowOnThisServer({ server }: { server: ServerDetail }) {
   const me = useMe();
+  const where = server.os_family === "windows" ? ", in PowerShell as an administrator" : "";
+  if (aiSwitch(server) === "both") {
+    return (
+      <Banner tone="warn">
+        <strong>AI commands are off on {server.hostname}.</strong> AI&apos;s commands are refused here and its incidents
+        go to a person.{" "}
+        {administersSite(me, server.customer_id, server.site_id)
+          ? "Turn them on from AI commands, above."
+          : "An administrator of its site can turn them on from this page."}
+      </Banner>
+    );
+  }
   return (
     <Banner tone="warn">
       <strong>AI commands are off on {server.hostname}.</strong>{" "}
-      {administersCustomer(me, server.customer_id) ? (
+      {administersSite(me, server.customer_id, server.site_id) ? (
         <>
-          AI&apos;s commands are refused here and its incidents go to a person. To allow them, run this once on the server
-          {server.os_family === "windows" && ", in PowerShell as an administrator"}. This page changes by itself when it is
-          done.
+          AI&apos;s commands are refused here and its incidents go to a person. They can only be turned on on the server.
+          To let administrators turn them on and off from this page, run this once on the server{where}. This page
+          changes by itself when it is done.
+          <AllowCommandsLine osFamily={server.os_family} fromWeb />
+          Or, to turn them on for good from the server itself:
           <AllowCommandsLine osFamily={server.os_family} />
         </>
       ) : (
-        "AI's commands are refused here and its incidents go to a person. An administrator can turn them on from this page."
+        "AI's commands are refused here and its incidents go to a person. An administrator can turn them on on the server."
       )}
     </Banner>
   );
 }
 
 /** Whether the server runs AI's commands, in words, with the way to change it. */
-function AiCommandsFact({ server }: { server: ServerDetail }) {
+function AiCommandsFact({ server, onChanged }: { server: ServerDetail; onChanged: () => void }) {
   const scope = useScope();
   const state = aiCommands(server);
   const lastContact = server.status === "offline" && " As of its last contact.";
@@ -317,13 +331,24 @@ function AiCommandsFact({ server }: { server: ServerDetail }) {
       return (
         <>
           <Label tone="ok">On</Label> Runs the commands AI sends.{lastContact}
+          <AiCommandsChangeLine server={server} />
+          <AiCommandsSwitch server={server} on={false} onChanged={onChanged} />
         </>
       );
     case "off":
       return (
         <>
-          <Label tone="warn">Off</Label> Refuses AI&apos;s commands.{lastContact}{" "}
-          <Link href={scopedHref(serverHref(server.id, "commands"), scope)}>How to turn them on</Link>
+          <Label tone="warn">Off</Label> Refuses AI&apos;s commands.{lastContact}
+          <AiCommandsChangeLine server={server} />
+          {aiSwitch(server) === "both" ? (
+            <AiCommandsSwitch server={server} on onChanged={onChanged} />
+          ) : (
+            <>
+              {" "}
+              Can only be turned on on the server:{" "}
+              <Link href={scopedHref(serverHref(server.id, "commands"), scope)}>how</Link>
+            </>
+          )}
         </>
       );
     case "unsupported":
@@ -340,6 +365,73 @@ function AiCommandsFact({ server }: { server: ServerDetail }) {
         </>
       );
   }
+}
+
+/**
+ * " Turned on by alice at 14:02.", " Turning on… asked by alice at 14:02.", or why the last request
+ * did not apply: who changed AI commands from the web interface last (ADR-0098).
+ */
+function AiCommandsChangeLine({ server }: { server: ServerDetail }) {
+  const change = server.ai_commands_change;
+  if (!change) return null;
+  const word = change.on ? "on" : "off";
+  const who = change.requested_by ?? "a removed user";
+  const asked = `asked by ${who} at ${minutes(change.issued_at)}`;
+  if (isActive(change)) {
+    const later = server.status === "offline" ? " It applies when the server is back." : "";
+    return <> Turning {word}… {asked}.{later}</>;
+  }
+  if (change.state === "succeeded") {
+    // A later change on the server itself makes the request history, not the reason.
+    if (change.on !== (aiCommands(server) === "accepted")) return null;
+    return <> Turned {word} by {who} at {minutes(change.finished_at ?? change.issued_at)}.</>;
+  }
+  if (change.state === "failed") {
+    return <> The request to turn them {word}, {asked}, failed: {change.error ?? "unknown error"}.</>;
+  }
+  if (change.state === "expired") {
+    return <> The request to turn them {word}, {asked}, expired before the server was back.</>;
+  }
+  return null;
+}
+
+/** "Turn on…" or "Turn off…" for administrators of the server's site, unless a request is under way. */
+function AiCommandsSwitch({ server, on, onChanged }: { server: ServerDetail; on: boolean; onChanged: () => void }) {
+  const me = useMe();
+  const change = server.ai_commands_change;
+  if (
+    server.revoked_at ||
+    aiSwitch(server) === "none" ||
+    (change && isActive(change)) ||
+    !administersSite(me, server.customer_id, server.site_id)
+  ) {
+    return null;
+  }
+  const word = on ? "on" : "off";
+  return (
+    <>
+      {" "}
+      <InlineConfirm
+        trigger={`Turn ${word}…`}
+        triggerVariant={on ? "default" : "danger"}
+        layout="row"
+        title={`Turn AI commands ${word} on ${server.hostname}?`}
+        consequence={
+          on
+            ? "AI runs read-only commands here at once, and changes once an approver accepts them. The channels covering this server are told."
+            : "AI's commands are refused here and its incidents go to a person. The channels covering this server are told."
+        }
+        confirmLabel={`Turn ${word}`}
+        confirmVariant={on ? "k" : "danger"}
+        pendingLabel="Sending…"
+        onConfirm={async () => {
+          await api.switchAiCommands(server.id, on);
+          onChanged();
+        }}
+        describeError={(e) => `Nothing changed. ${describeError(e)}`}
+      />
+    </>
+  );
 }
 
 /** "2026-10-19 02:14". */
@@ -400,7 +492,7 @@ function ServerFacts({
         ...(server.revoked_at
           ? []
           : [
-              { label: "AI commands", value: <AiCommandsFact server={server} /> },
+              { label: "AI commands", value: <AiCommandsFact server={server} onChanged={onChanged} /> },
               { label: "Offline alerts", value: <OfflineAlerts kind="servers" target={server} onChanged={onChanged} /> },
               // What a change gets first; the Proxmox mapping for administrators of the customer.
               {

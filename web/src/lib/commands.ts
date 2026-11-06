@@ -45,6 +45,10 @@ export function describeCommand(command: Command): { title: string; sub: string 
         sub: `${p.allow_downgrade === true ? "downgrade allowed · " : ""}rolls back unless it connects within ${timeout} s`,
       };
     }
+    case "ai_commands":
+      return p.on === true
+        ? { title: "Turn AI commands on", sub: "from the web interface" }
+        : { title: "Turn AI commands off", sub: "from the web interface" };
     default:
       return { title: command.kind, sub: "" };
   }

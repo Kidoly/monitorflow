@@ -319,11 +319,13 @@ describe("ServerPage", () => {
       );
       await heading();
       expect(screen.getByText("Off")).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "How to turn them on" })).toHaveAttribute(
-        "href",
-        expect.stringContaining("tab=commands"),
-      );
-      expect(await screen.findByLabelText("Command that allows AI commands")).toHaveTextContent("MF_ALLOW_COMMANDS=1");
+      expect(screen.getByText(/Can only be turned on on the server/)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "how" })).toHaveAttribute("href", expect.stringContaining("tab=commands"));
+      expect(screen.queryByRole("button", { name: "Turn on…" })).not.toBeInTheDocument();
+      // First the line that lets this page turn them on (ADR-0098), then the one that turns them on for good.
+      const [fromWeb, forGood] = await screen.findAllByLabelText("Command that allows AI commands");
+      expect(fromWeb).toHaveTextContent("MF_AI_COMMANDS_FROM_WEB=1");
+      expect(forGood).toHaveTextContent("MF_ALLOW_COMMANDS=1");
       expect(screen.getByText(/AI commands are off on web-1/)).toBeInTheDocument();
     });
 
@@ -353,7 +355,8 @@ describe("ServerPage", () => {
       expect(screen.getByText(/AI commands are off on web-1/).parentElement).toHaveTextContent(
         "run this once on the server, in PowerShell as an administrator.",
       );
-      const line = await screen.findByLabelText("Command that allows AI commands");
+      const [fromWeb, line] = await screen.findAllByLabelText("Command that allows AI commands");
+      expect(fromWeb).toHaveTextContent("ai-commands from-web on");
       expect(line).toHaveTextContent("ai-commands on");
       expect(line).not.toHaveTextContent("MF_ALLOW_COMMANDS");
     });
@@ -368,6 +371,89 @@ describe("ServerPage", () => {
       expect(screen.getByText(/Its agent is too old for AI commands on Windows/)).toBeInTheDocument();
       expect(screen.queryByRole("link", { name: "How to turn them on" })).not.toBeInTheDocument();
       expect(screen.queryByText(/AI commands are off/)).not.toBeInTheDocument();
+    });
+
+    it("lets administrators of the site turn them on where the server allowed it", async () => {
+      const queued = command({ id: "c8", kind: "ai_commands", parameters: { on: true }, state: "queued" });
+      const fetchMock = stubFetch(
+        routes({
+          [`GET /api/servers/${ID}`]: reporting({ ...off, ai_commands: "accepted" }),
+          [`POST /api/servers/${ID}/ai-commands`]: { status: 201, body: { ...queued, stdout: null, stderr: null } },
+        }),
+      );
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(
+        <As user={me({ role: "administrator", customer_id: null, site_id: web1.site_id })}>
+          <ServerPage id={ID} />
+        </As>,
+      );
+      await heading();
+      expect(screen.queryByText(/Can only be turned on on the server/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Turn on…" }));
+      await user.click(screen.getByRole("button", { name: "Turn on" }));
+      await vi.waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith(
+          `/api/servers/${ID}/ai-commands`,
+          expect.objectContaining({ method: "POST", body: JSON.stringify({ on: true }) }),
+        ),
+      );
+    });
+
+    it("offers no switch to operators", async () => {
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting({ ...off, ai_commands: "accepted" }) }));
+      render(
+        <As user={me({ role: "operator", customer_id: null, site_id: null })}>
+          <ServerPage id={ID} />
+        </As>,
+      );
+      await heading();
+      expect(screen.queryByRole("button", { name: "Turn on…" })).not.toBeInTheDocument();
+    });
+
+    it("lets administrators turn them off even where only the server can turn them on", async () => {
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting({ ...off, shell: "accepted", ai_commands: "off" }) }));
+      render(
+        <As user={customerAdmin}>
+          <ServerPage id={ID} />
+        </As>,
+      );
+      await heading();
+      expect(screen.getByRole("button", { name: "Turn off…" })).toBeInTheDocument();
+    });
+
+    it("names who turned them on, and what is under way", async () => {
+      const change = {
+        command_id: "c7",
+        on: true,
+        state: "succeeded",
+        requested_by: "alice",
+        issued_at: "2026-11-16T14:01:00Z",
+        finished_at: "2026-11-16T14:02:00Z",
+        error: null,
+      } as const;
+      const kinds = { ...off, shell: "accepted", ai_commands: "accepted" };
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting(kinds, { ai_commands_change: change }) }));
+      const { unmount } = render(
+        <As user={customerAdmin}>
+          <ServerPage id={ID} />
+        </As>,
+      );
+      await heading();
+      expect(screen.getByText(/Runs the commands AI sends/)).toHaveTextContent(/Turned on by alice at 2026-11-16 \d\d:02\./);
+      unmount();
+
+      const pending = { ...change, on: false, state: "queued", finished_at: null } as const;
+      stubFetch(routes({ [`GET /api/servers/${ID}`]: reporting(kinds, { ai_commands_change: pending, status: "offline" }) }));
+      render(
+        <As user={customerAdmin}>
+          <ServerPage id={ID} />
+        </As>,
+      );
+      await heading();
+      expect(screen.getByText(/Runs the commands AI sends/)).toHaveTextContent(
+        /Turning off… asked by alice at .*\. It applies when the server is back\./,
+      );
+      expect(screen.queryByRole("button", { name: "Turn off…" })).not.toBeInTheDocument();
     });
 
     it("dates what an offline server last said, and lists every kind under Details", async () => {

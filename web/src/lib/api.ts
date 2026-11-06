@@ -87,6 +87,20 @@ export interface Certificate {
 export interface ServerDetail extends Server {
   /** Null when the CA never issued one, like a server row created by hand. */
   certificate: Certificate | null;
+  /** The last time AI commands were turned on or off from the web interface; null if never (ADR-0098). */
+  ai_commands_change?: AiCommandsChange | null;
+}
+
+/** An `ai_commands` command: who asked to turn AI commands on or off, and what came of it (ADR-0098). */
+export interface AiCommandsChange {
+  command_id: string;
+  on: boolean;
+  state: CommandState;
+  /** The username; null when the account is gone. */
+  requested_by: string | null;
+  issued_at: string;
+  finished_at: string | null;
+  error: string | null;
 }
 
 /** One page of `GET /api/servers`, sorted by site name, hostname and peer ID. */
@@ -3021,6 +3035,20 @@ export const api = {
     request<RelayCommand>(`/api/relays/${encodeURIComponent(relayId)}/update`, {
       method: "POST",
       body: { version },
+    }),
+
+  /** Turns AI commands on or off from the web interface; site administrators (ADR-0098). */
+  switchAiCommands: (serverId: string, on: boolean) =>
+    request<CommandDetail>(`/api/servers/${encodeURIComponent(serverId)}/ai-commands`, {
+      method: "POST",
+      body: { on },
+    }),
+
+  /** The same for every server of a site that can take it. */
+  switchSiteAiCommands: (siteId: string, on: boolean) =>
+    request<SiteSourcesChange>(`/api/sites/${encodeURIComponent(siteId)}/ai-commands`, {
+      method: "POST",
+      body: { on },
     }),
 
   updateAgent: (serverId: string, version: string) =>

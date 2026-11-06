@@ -5,6 +5,7 @@ import {
   type Command,
   type InstallTarget,
   WINDOWS_ALLOW_COMMANDS,
+  WINDOWS_ALLOW_FROM_WEB,
   allowCommandsCommand,
   endpoints,
   hostPort,
@@ -139,6 +140,17 @@ describe("install commands", () => {
     );
   });
 
+  it("lets the web interface turn AI commands on when asked (ADR-0098)", () => {
+    expect(text(linuxInstallCommand(target(), "github", ORIGIN, "", true))).toBe(
+      `curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_AI_COMMANDS_FROM_WEB=1 MF_SERVER=mf.example:7443 MF_TOKEN=${SECRET} sh`,
+    );
+    expect(text(windowsInstallCommand(target(), "github", ORIGIN, "", true))).toContain(
+      `ENROLLMENT_TOKEN=${SECRET} AI_COMMANDS_FROM_WEB=1`,
+    );
+    expect(text(linuxInstallCommand(target(), "github", ORIGIN))).not.toContain("FROM_WEB");
+    expect(text(windowsInstallCommand(target(), "github", ORIGIN))).not.toContain("FROM_WEB");
+  });
+
   it("accepts only addresses and URLs that are safe in a shell command", () => {
     for (const ok of ["relay1", "relay1.paris.example:7443", "10.0.0.5", "[2001:db8::5]:7443"]) {
       expect(isServerAddress(ok), ok).toBe(true);
@@ -192,6 +204,9 @@ describe("WINDOWS_ALLOW_COMMANDS", () => {
     expect(WINDOWS_ALLOW_COMMANDS).toBe(
       '& "$env:ProgramFiles\\MonitorFlow\\monitorflow-agent.exe" ai-commands on\nRestart-Service MonitorFlowAgent',
     );
+    expect(WINDOWS_ALLOW_FROM_WEB).toBe(
+      '& "$env:ProgramFiles\\MonitorFlow\\monitorflow-agent.exe" ai-commands from-web on\nRestart-Service MonitorFlowAgent',
+    );
   });
 });
 
@@ -211,6 +226,9 @@ describe("allowCommandsCommand", () => {
     );
     expect(text(allowCommandsCommand(install({ source: "custom" }), address, ORIGIN))).toBe(
       "curl -fsSL https://files.example/mf/0.2.0/install.sh \\\n  | sudo MF_DOWNLOAD_URL=https://files.example/mf/0.2.0 MF_ALLOW_COMMANDS=1 sh",
+    );
+    expect(text(allowCommandsCommand(install(), address, ORIGIN, true))).toBe(
+      `curl -fsSL ${GITHUB}/install.sh \\\n  | sudo MF_AI_COMMANDS_FROM_WEB=1 sh`,
     );
   });
 

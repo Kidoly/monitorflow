@@ -19,7 +19,6 @@ import { serverHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
 import styles from "./AdminPages.module.css";
-import { AllowCommandsLine } from "./AllowCommands";
 import { Button, fieldClass } from "./ui/Button";
 import { cx } from "./ui/cx";
 import { InlineConfirm } from "./ui/InlineConfirm";
@@ -431,7 +430,7 @@ function ModelsLine({ query, listed }: { query: ModelQuery | null; listed: Model
   );
 }
 
-/** The agent-side opt-in, which stays on each server (architecture §8), and where each server stands. */
+/** Where each server stands; AI commands are turned on per server, from its page (ADR-0098). */
 function AllowCommands() {
   const fetcher = useCallback((signal: AbortSignal) => api.servers(signal), []);
   const { data } = usePolledData(fetcher);
@@ -439,14 +438,12 @@ function AllowCommands() {
     <section className={styles.panel} aria-label="Let AI run commands">
       <h2 className={styles.sectionTitle}>Let AI run commands on a server</h2>
       <p className={styles.footnote}>
-        Each server decides for itself. Run this once on every server AI may work on; elsewhere AI&apos;s commands are
-        refused and the incident is handed to a person.
+        Turn AI commands on or off from each server&apos;s page, or for a whole site from the site&apos;s page. Where they
+        are off, AI&apos;s commands are refused and the incident is handed to a person. A server lets them be turned on
+        there only if it was installed with &ldquo;Allow AI commands to be turned on from the web interface&rdquo;; its
+        page gives the line to run on the others.
       </p>
       {data && data.servers.length > 0 && <ServersAccepting servers={data.servers} />}
-      <p className={styles.footnote}>On Linux servers:</p>
-      <AllowCommandsLine />
-      <p className={styles.footnote}>On Windows servers, in PowerShell as an administrator:</p>
-      <AllowCommandsLine osFamily="windows" />
     </section>
   );
 }
@@ -455,7 +452,7 @@ function AllowCommands() {
 function ServersAccepting({ servers }: { servers: Server[] }) {
   const named = (state: Acceptance) => servers.filter((s) => aiCommands(s) === state);
   const groups: [string, Server[]][] = [
-    ["Off, run the line below for their system on them:", named("off")],
+    ["Off, turn them on from their page:", named("off")],
     ["Not known yet, they say once updated, which happens by itself:", named("unknown")],
     ["Their agent is too old for AI commands, it updates by itself:", named("unsupported")],
   ];
