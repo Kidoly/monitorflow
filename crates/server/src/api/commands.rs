@@ -14,7 +14,9 @@ use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
 use monitorflow_common::command::{self, valid_package_name};
-use monitorflow_common::proto::v1::{ApplyUpdates, ConfigureSources, SelfUpdate, ShellCommand};
+use monitorflow_common::proto::v1::{
+    AiCommandsSwitch, ApplyUpdates, ConfigureSources, SelfUpdate, ShellCommand,
+};
 use monitorflow_common::release::Version;
 use prost::Message;
 use serde::{Deserialize, Serialize};
@@ -153,6 +155,11 @@ pub(crate) fn parameters(kind: &str, payload: &[u8]) -> Value {
         // Queued by the remediation loop only (ADR-0043).
         command::SHELL => match ShellCommand::decode(payload) {
             Ok(p) => json!({"command": p.command, "timeout_seconds": p.timeout_seconds}),
+            Err(_) => Value::Null,
+        },
+        // Queued by `POST .../ai-commands` only (ADR-0098).
+        command::AI_COMMANDS => match AiCommandsSwitch::decode(payload) {
+            Ok(p) => json!({"on": p.on}),
             Err(_) => Value::Null,
         },
         _ => Value::Null,

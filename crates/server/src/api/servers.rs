@@ -136,6 +136,9 @@ pub struct ServerDetail {
     /// The certificate issued last to this agent, revoked or not; `null`
     /// when the CA never issued one (a server row created by hand).
     pub certificate: Option<CertificateView>,
+    /// The last time AI commands were turned on or off from the web
+    /// interface, `null` if never (ADR-0098).
+    pub ai_commands_change: Option<super::ai_commands::AiCommandsChange>,
 }
 
 /// A certificate from the `certificates` table.
@@ -293,9 +296,11 @@ pub async fn detail(
     authorize(&user, row.as_ref().map(|r| r.site_id), false)?;
     let row = row.ok_or(ApiError::NotFound)?;
     let certificate = latest_certificate(&state.pool, PeerRole::Agent, &row.peer_id).await?;
+    let ai_commands_change = super::ai_commands::last_change(&state.pool, row.id).await?;
     Ok(Json(ServerDetail {
         server: ServerView::new(&state, row),
         certificate,
+        ai_commands_change,
     }))
 }
 

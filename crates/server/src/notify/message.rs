@@ -22,7 +22,7 @@ pub struct Event {
     pub id: i64,
     /// `incident.opened`, `incident.escalated`, `incident.resolved`,
     /// `approval.waiting`, `update.failed`, `backup.failed`,
-    /// `update.available`, or `test`.
+    /// `update.available`, `ai_commands.changed`, or `test`.
     pub event: String,
     pub customer_id: Option<Uuid>,
     /// The site named in `details`, `None` when it names none.
@@ -220,6 +220,7 @@ fn path(event: &Event) -> String {
             format!("/incidents/view/?id={}", id(&["incident", "id"]))
         }
         "approval.waiting" => "/remediation/approvals/".into(),
+        "ai_commands.changed" => format!("/servers/view/?id={}", id(&["server", "id"])),
         "backup.failed" => "/admin/backups/".into(),
         "update.available" => "/admin/server-update/".into(),
         "update.failed" => match str_at(d, &["update", "kind"]) {
@@ -251,6 +252,15 @@ pub fn event_text(event: &Event) -> String {
             )
         }
         "update.failed" => update_text(d),
+        "ai_commands.changed" => format!(
+            "{} asked to turn AI commands {} on {}",
+            str_at(d, &["ai_commands", "requested_by"]).unwrap_or("Someone"),
+            match d["ai_commands"]["on"].as_bool() {
+                Some(true) => "on",
+                _ => "off",
+            },
+            place(d)
+        ),
         "backup.failed" => match str_at(d, &["backup", "error"]) {
             Some(error) => format!("Backup of the server failed: {error}"),
             None => "Backup of the server failed".to_owned(),
@@ -519,6 +529,28 @@ mod tests {
         );
         assert_eq!(available.url, "https://mf.example/admin/server-update/");
         assert_eq!(available.payload["release"]["version"], "0.3.0");
+    }
+
+    #[test]
+    fn ai_commands_switched_from_the_web_name_who_and_where() {
+        let server = Uuid::new_v4();
+        let on = render(
+            &event(
+                "ai_commands.changed",
+                json!({"server": {"id": server, "name": "web-1"},
+                       "site": {"id": Uuid::nil(), "name": "paris"},
+                       "ai_commands": {"on": true, "requested_by": "alice"}}),
+            ),
+            WEB,
+        );
+        assert_eq!(
+            on.text,
+            "alice asked to turn AI commands on on web-1 (paris)"
+        );
+        assert_eq!(
+            on.url,
+            format!("https://mf.example/servers/view/?id={server}")
+        );
     }
 
     #[test]
