@@ -8,6 +8,8 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Machine | Any computer, when "server" would be unclear | host | |
 | Central server | The machine that runs MonitorFlow itself. Pages of its web interface may say "this server" | server host | `server` |
 | Relay | Carries the servers of a site that cannot reach the central server | peer | `relays` |
+| Customer | An MSP's client, owning sites. Said only to someone who sees two or more; a single company or a customer's own user never reads it (ADR-0104) | tenant, organisation, default | `customers`, `customer_id` |
+| All sites | For a single company: a choice covering its one customer as a whole | All of default | `customer_id` set, `site_id` null |
 | Name | What an agent or relay is called | peer ID | `peer_id` |
 | Addresses | The names or IP addresses agents use to reach a relay | server names, SANs | `server_names`, `--server-name`, `SERVER_NAMES` |
 | Install command | The line to paste on a machine | enrollment token, install key | `install_keys`, `MF_TOKEN` |

@@ -292,6 +292,8 @@ impl Dispatcher {
         if let Err(error) = count_behind_relays(&self.pool, &mut fresh).await {
             tracing::warn!(%error, "could not count the servers behind an offline relay");
         }
+        // A single company never reads "customer" (ADR-0104).
+        let several = crate::api::customers::several(&self.pool).await?;
         // The person on call is whoever it is now, as this pass sends:
         // every event of the pass goes to the same people.
         let now = chrono::Utc::now();
@@ -376,7 +378,7 @@ impl Dispatcher {
                     told.entry(incident).or_default().channels.push(channel.id);
                 }
             }
-            let messages = self.messages(&channel, &events, &mut groups);
+            let messages = self.messages(&channel, &events, several, &mut groups);
             work.push((channel, messages));
         }
         // People on call get what a channel of their schedule's place gets:
@@ -389,7 +391,7 @@ impl Dispatcher {
                     told.entry(incident).or_default().users.push(channel.id);
                 }
             }
-            let mut messages = self.messages(&channel, &events, &mut groups);
+            let mut messages = self.messages(&channel, &events, several, &mut groups);
             if let Some(person) = directory.people.get(&channel.id) {
                 for message in &mut messages {
                     let incidents = acknowledgeable(message, &events, person, &directory);
@@ -424,13 +426,28 @@ impl Dispatcher {
 
     /// What `channel` is sent for `events`, the ones it covers. Webhooks
     /// get one request per event: their receivers may follow each incident
-    /// by its ID (ADR-0080). Email and chat channels get groups.
-    fn messages(&self, channel: &Channel, events: &[&Event], groups: &mut Groups) -> Vec<Message> {
+    /// by its ID (ADR-0080). Email and chat channels get groups, and name
+    /// the customer only when there are `several` (ADR-0104); a webhook's
+    /// payload is the same either way.
+    fn messages(
+        &self,
+        channel: &Channel,
+        events: &[&Event],
+        several: bool,
+        groups: &mut Groups,
+    ) -> Vec<Message> {
         if let Destination::Webhook(_) = channel.destination {
             return events.iter().map(|e| render(e, &self.web_url)).collect();
         }
         let service = channel.destination.chat().map(|(service, _)| service);
-        group::group(events)
+        let unnamed: Vec<Event>;
+        let events: Vec<&Event> = if several {
+            events.to_vec()
+        } else {
+            unnamed = events.iter().map(|e| without_customer(e)).collect();
+            unnamed.iter().collect()
+        };
+        group::group(&events)
             .into_iter()
             .flat_map(|outgoing| match outgoing {
                 Outgoing::One(event) => vec![render(event, &self.web_url)],
@@ -686,6 +703,15 @@ fn acknowledgeable(
     incidents.sort();
     incidents.dedup();
     incidents
+}
+
+/// `event` without its customer's name, for a single company (ADR-0104).
+fn without_customer(event: &Event) -> Event {
+    let mut event = event.clone();
+    if let Some(customer) = event.details["customer"].as_object_mut() {
+        customer.remove("name");
+    }
+    event
 }
 
 /// Adds to each relay's offline incident how many servers are behind it,

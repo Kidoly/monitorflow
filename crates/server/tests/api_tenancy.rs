@@ -590,6 +590,8 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 body["roles"],
                 json!([{ "role": "administrator", "customer_id": a.customer, "site_id": null }])
             );
+            // Another customer's existence shows nowhere (ADR-0104).
+            assert_eq!(body["multi_customer"], false);
         }
         // Global: the agent releases the server holds (ADR-0053).
         ("GET", "/api/agent-releases") => {
