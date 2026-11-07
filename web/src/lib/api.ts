@@ -1059,6 +1059,16 @@ export interface LicenseView {
   problem?: string | null;
   installed_at?: string | null;
   installed_by?: string | null;
+  /** Central servers added under a license, oldest first. */
+  added?: AddedServer[];
+}
+
+/** A central server added with `install-server.sh --join` (ADR-0100). */
+export interface AddedServer {
+  /** The name of its host. */
+  name: string;
+  admitted_at: string;
+  running: boolean;
 }
 
 /** `GET /api/backups`. */
@@ -3149,6 +3159,10 @@ export const api = {
 
   /** Removes the license key; central servers already added keep running. Audited. */
   removeLicense: () => request<void>("/api/license", { method: "DELETE" }),
+
+  /** Frees the place of an added central server; audited. */
+  removeAddedServer: (name: string) =>
+    request<void>(`/api/license/servers/${encodeURIComponent(name)}`, { method: "DELETE" }),
 
   backups: (signal?: AbortSignal) =>
     request<BackupsView>("/api/backups", { signal }),

@@ -115,6 +115,30 @@ describe("LicensePage", () => {
     }
   });
 
+  it("lists the central servers added and frees a place", async () => {
+    const user = userEvent.setup();
+    const added = [
+      { name: "host2", admitted_at: "2026-11-07T10:00:00Z", running: true },
+      { name: "host3", admitted_at: "2026-11-07T11:00:00Z", running: false },
+    ];
+    const fetch = stubFetch({
+      "GET /api/license": [
+        { status: 200, body: { ...valid, added } },
+        { status: 200, body: { ...valid, added: [added[0]] } },
+      ],
+      "DELETE /api/license/servers/host3": { status: 204 },
+    });
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Central servers added" })).toBeInTheDocument();
+    expect(screen.getByText("3 of 3 with the first one")).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(screen.getByText("Not running")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove host3" }));
+    await user.click(screen.getByRole("button", { name: "Remove host3" }));
+    expect(await screen.findByText("2 of 3 with the first one")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith("/api/license/servers/host3", expect.objectContaining({ method: "DELETE" }));
+  });
+
   it("says when the build has no Enterprise edition", async () => {
     stubFetch({ "GET /api/license": { status: 200, body: { available: false } } });
     renderPage();
