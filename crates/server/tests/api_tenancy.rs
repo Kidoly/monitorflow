@@ -1014,9 +1014,13 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         // The license covers the central server itself: global
         // administrators only (ADR-0100).
-        ("GET", "/api/license") | ("PUT", "/api/license") | ("DELETE", "/api/license") => {
+        ("GET", "/api/license")
+        | ("PUT", "/api/license")
+        | ("DELETE", "/api/license")
+        | ("DELETE", "/api/license/servers/{name}") => {
             let body = (method == "PUT").then(|| json!({ "text": "" }));
-            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+            let uri = path.replace("{name}", "host2");
+            assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
         // The certificate authority serves every customer: global
         // administrators only.

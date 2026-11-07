@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::auth::CurrentUser;
 use super::server_update::require_global_admin;
 use super::{ApiError, ApiState};
+use crate::edition::capitalised;
 #[cfg(feature = "enterprise")]
 use crate::edition::{store, Status};
 
@@ -21,6 +22,9 @@ pub struct LicenseView {
     #[cfg(feature = "enterprise")]
     #[serde(flatten)]
     pub status: Status,
+    /// Central servers added under a license, oldest first.
+    #[cfg(feature = "enterprise")]
+    pub added: Vec<crate::edition::Added>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,9 +45,11 @@ pub async fn get(
 #[cfg(feature = "enterprise")]
 async fn view(state: &ApiState) -> Result<LicenseView, ApiError> {
     let installed = store::read(&state.pool).await?;
+    let added = crate::edition::admission::added(&mut *state.pool.acquire().await?).await?;
     Ok(LicenseView {
         available: true,
         status: Status::of(installed, &state.settings.license_keys, store::today()),
+        added,
     })
 }
 
@@ -148,22 +154,43 @@ pub async fn remove(State(_): State<ApiState>, user: CurrentUser) -> Result<Stat
     Err(ApiError::NotFound)
 }
 
-/// "This license…": errors are written lower case to be embedded.
-fn capitalised(message: &str) -> String {
-    let mut chars = message.chars();
-    chars
-        .next()
-        .map(|first| first.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
+/// `DELETE /api/license/servers/{name}`: frees the place of an added
+/// central server; 204, or 404. Audited.
+#[cfg(feature = "enterprise")]
+pub async fn remove_server(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Result<StatusCode, ApiError> {
+    use super::audit::{self, Event};
+
+    require_global_admin(&user)?;
+    let mut tx = state.pool.begin().await?;
+    if !crate::edition::admission::remove(&mut tx, &name).await? {
+        return Err(ApiError::NotFound);
+    }
+    audit::record(
+        &mut *tx,
+        Event {
+            actor_kind: "user",
+            actor_id: &user.id.to_string(),
+            action: "server_instance.remove",
+            target: Some(("server_instance", &name)),
+            details: serde_json::json!({ "name": name }),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    tracing::info!(name, "added central server removed from the license");
+    Ok(StatusCode::NO_CONTENT)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn capitalises() {
-        assert_eq!(capitalised("this license"), "This license");
-        assert_eq!(capitalised(""), "");
-    }
+#[cfg(not(feature = "enterprise"))]
+pub async fn remove_server(
+    State(_): State<ApiState>,
+    user: CurrentUser,
+    axum::extract::Path(_): axum::extract::Path<String>,
+) -> Result<StatusCode, ApiError> {
+    require_global_admin(&user)?;
+    Err(ApiError::NotFound)
 }
