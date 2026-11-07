@@ -13,7 +13,8 @@ import {
   describeError,
   isUnauthorized,
 } from "@/lib/api";
-import { isAdministrator, useMe } from "@/lib/me";
+import { ALL_SITES } from "@/lib/customers";
+import { isAdministrator, multiCustomer, useMe, useMultiCustomer } from "@/lib/me";
 import { channelScopes, scopeValue } from "@/lib/notifications";
 import {
   WEEKDAYS,
@@ -302,9 +303,9 @@ async function loadPlaces(signal: AbortSignal) {
   return { customers, sites };
 }
 
-/** "acme" for "All of acme", "everything" for "Everything": a place in a sentence. */
+/** "acme" for "All of acme", "everything" for "Everything", "all sites" for "All sites": a place in a sentence. */
 function placeOf(label: string): string {
-  return label === "Everything" ? "everything" : label.replace(/^All of /, "");
+  return label === "Everything" || label === ALL_SITES ? label.toLowerCase() : label.replace(/^All of /, "");
 }
 
 /** Creating or editing a schedule: what it covers, who, in which order, and when hand-offs happen. */
@@ -506,7 +507,7 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
   const [covering, setCovering] = useState<OnCallTurn | null | undefined>(undefined);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const place = placeName(schedule, several);
+  const place = placeName(schedule, several, useMultiCustomer());
   const { now, next } = schedule;
   const ahead = gaps(schedule);
   const isNow = (turn: OnCallTurn) => turn.starts_at === now?.starts_at;
@@ -679,7 +680,7 @@ export function OnCallPage() {
       (!scope.customerId || !s.customer_id || s.customer_id === scope.customerId) &&
       (!scope.siteId || !s.site_id || s.site_id === scope.siteId),
   );
-  const several = new Set((data?.schedules ?? []).map((s) => s.customer_id).filter(Boolean)).size > 1;
+  const several = multiCustomer(me) && new Set((data?.schedules ?? []).map((s) => s.customer_id).filter(Boolean)).size > 1;
   const canCreate = isAdministrator(me);
   return (
     <Page>

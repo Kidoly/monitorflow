@@ -13,7 +13,7 @@ import {
   describeError,
 } from "@/lib/api";
 import { covers, minutesText, stepRequest, stepSentence } from "@/lib/followUp";
-import { useMe } from "@/lib/me";
+import { useMe, useMultiCustomer } from "@/lib/me";
 import { channelScopes, scopeValue } from "@/lib/notifications";
 import { move, placeName } from "@/lib/onCall";
 import { usePolledData } from "@/lib/usePolledData";
@@ -217,10 +217,11 @@ function Steps({ policy }: { policy: Pick<FollowUpPolicy, "steps"> }) {
  * administrators. Others get 403 from the API and see nothing.
  */
 export function FollowUpSection({ enabled }: { enabled: boolean }) {
+  const multi = useMultiCustomer();
   const { data, error, refresh } = usePolledData(loadPolicies, { enabled });
   const [editing, setEditing] = useState<FollowUpPolicy | null | undefined>(undefined);
   if (!enabled || (error instanceof ApiError && error.status === 403)) return null;
-  const several = new Set((data?.policies ?? []).map((p) => p.customer_id).filter(Boolean)).size > 1;
+  const several = multi && new Set((data?.policies ?? []).map((p) => p.customer_id).filter(Boolean)).size > 1;
   const wait = data?.default_steps[0]?.after_minutes ?? 15;
   return (
     <section className={admin.section} aria-labelledby="follow-up-title">
@@ -255,8 +256,8 @@ export function FollowUpSection({ enabled }: { enabled: boolean }) {
                   }}
                 />
               ) : (
-                <div key={p.id} aria-label={`Follow-up for ${placeName(p, several)}`} role="group">
-                  <strong>{placeName(p, several)}</strong>
+                <div key={p.id} aria-label={`Follow-up for ${placeName(p, several, multi)}`} role="group">
+                  <strong>{placeName(p, several, multi)}</strong>
                   <Steps policy={p} />
                   <div className={styles.actions}>
                     <Button size="small" onClick={() => setEditing(p)}>
@@ -265,7 +266,7 @@ export function FollowUpSection({ enabled }: { enabled: boolean }) {
                     <InlineConfirm
                       trigger="Back to the default…"
                       triggerVariant="default"
-                      title={`Use the default for ${placeName(p, several)}?`}
+                      title={`Use the default for ${placeName(p, several, multi)}?`}
                       consequence={`Critical alerts nobody acknowledges go to the nearest administrators after ${minutesText(wait)}.`}
                       confirmLabel="Use the default"
                       onConfirm={async () => {

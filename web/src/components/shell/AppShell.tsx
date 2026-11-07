@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { Label } from "@/components/ui/StatusLabel";
 import { type Customer, LOGIN_PATH, type Me, type Site, api, describeError, isAbortError } from "@/lib/api";
-import { administersEverything } from "@/lib/me";
+import { administersEverything, multiCustomer } from "@/lib/me";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -68,12 +68,13 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         setSites(s.sites);
       },
       (e: unknown) => {
-        // Without the lists the switcher offers "All customers" only.
+        // Without the lists the switcher offers "All customers" only, or nothing.
         if (!isAbortError(e)) setCustomers([]);
       },
     );
     return () => controller.abort();
-  }, []);
+    // A second customer reloads `me`, and the lists with it (ADR-0104).
+  }, [me.multi_customer]);
 
   const fetchCount = useCallback(
     (signal: AbortSignal) => openIncidents(scope, sites, signal),
@@ -134,7 +135,9 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
             MF
           </span>
         </Link>
-        <ScopeSwitcher customers={customers} sites={sites} />
+        {(multiCustomer(me) || sites.length > 1) && (
+          <ScopeSwitcher customers={customers} sites={sites} multiCustomer={multiCustomer(me)} />
+        )}
         {visibleNavigation(me).map((section) => (
           <Fragment key={section.heading}>
             <div className={styles.heading}>{section.heading}</div>

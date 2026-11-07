@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatKind, NotificationChannel } from "@/lib/api";
-import { As, customerAdmin, me, siteAdmin, viewer } from "@/test/admin";
+import { As, customerAdmin, me, single, siteAdmin, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 
 import {
@@ -429,7 +429,7 @@ describe("Notify about", () => {
       },
     });
     const user = userEvent.setup();
-    page();
+    page(single(globalAdmin));
     await user.click(
       await screen.findByRole("button", { name: "Add webhook" }),
     );
@@ -452,7 +452,7 @@ describe("Notify about", () => {
       },
     });
     const user = userEvent.setup();
-    page();
+    page(single(globalAdmin));
     await user.click(
       await screen.findByRole("button", { name: "Add webhook" }),
     );

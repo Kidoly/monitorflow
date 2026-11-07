@@ -9,7 +9,7 @@ import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { Label } from "@/components/ui/StatusLabel";
 import { Banner, ErrorState, LoadingBlock, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { ApiError, type Customer, type Me, type Relay, type Server, type Site, api, describeError } from "@/lib/api";
-import { administersCustomer, administersEverything } from "@/lib/me";
+import { administersCustomer, administersEverything, multiCustomer, useRefreshMe } from "@/lib/me";
 import { siteHref } from "@/lib/routes";
 import { scopedHref } from "@/lib/scope";
 import { usePolledData } from "@/lib/usePolledData";
@@ -25,7 +25,9 @@ const MAX_NAME = 64;
 /**
  * `/admin/sites/`: sites grouped by customer, with a create form per
  * administered customer. Administrators of everything also create and
- * rename customers.
+ * rename customers. Without customers to show (ADR-0104) it lists the
+ * sites alone, and adding a first other customer is a quiet section at
+ * the bottom.
  */
 export function SitesAdminPage() {
   return <AdminLayout>{(me) => <SitesAdmin me={me} />}</AdminLayout>;
@@ -58,6 +60,7 @@ async function load(signal: AbortSignal): Promise<Data> {
 
 export function SitesAdmin({ me }: { me: Me }) {
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(load);
+  const multi = multiCustomer(me);
 
   return (
     <div className={styles.page}>
@@ -66,15 +69,16 @@ export function SitesAdmin({ me }: { me: Me }) {
         meta={
           data || error ? (
             <>
-              {data && `${plural(data.customers.length, "customer")}, ${plural(data.sites.length, "site")} · `}
+              {data && multi && `${plural(data.customers.length, "customer")}, `}
+              {data && `${plural(data.sites.length, "site")} · `}
               <RefreshLine updatedAt={updatedAt} stale={stale} />
             </>
           ) : undefined
         }
       />
       <Banner tone="info">
-        Sites cannot be renamed or moved to another customer, because the site name labels every stored metric.
-        Choose names that will still make sense in two years.
+        {multi ? "Sites cannot be renamed or moved to another customer" : "Sites cannot be renamed"}, because the site name labels
+        every stored metric. Choose names that will still make sense in two years.
       </Banner>
       <Banner tone="info">
         Agents and relays update themselves to each new release, a canary per site first. A site whose
@@ -98,12 +102,15 @@ export function SitesAdmin({ me }: { me: Me }) {
               relayNames: data.relays.filter((r) => r.site_id === site.id && !r.revoked_at).map((r) => r.peer_id),
             }))}
           canCreate={administersCustomer(me, customer.id)}
-          canRename={administersEverything(me)}
+          canRename={multi && administersEverything(me)}
+          multiCustomer={multi}
           onCreated={refresh}
           onChanged={refresh}
         />
       ))}
-      {data && administersEverything(me) && <CreateCustomer onCreated={refresh} />}
+      {data &&
+        administersEverything(me) &&
+        (multi ? <CreateCustomer onCreated={refresh} /> : <SeveralCustomers own={data.customers[0]} onCreated={refresh} />)}
     </div>
   );
 }
@@ -113,6 +120,7 @@ function CustomerSites({
   rows,
   canCreate,
   canRename,
+  multiCustomer,
   onCreated,
   onChanged,
 }: {
@@ -120,6 +128,7 @@ function CustomerSites({
   rows: Row[];
   canCreate: boolean;
   canRename: boolean;
+  multiCustomer: boolean;
   onCreated: () => void;
   onChanged: () => void;
 }) {
@@ -172,7 +181,7 @@ function CustomerSites({
     <section className={styles.section} aria-labelledby={titleId}>
       <div className={styles.sectionHead}>
         <h2 id={titleId} className={styles.sectionTitle}>
-          {customer.name}
+          {multiCustomer ? customer.name : "Your sites"}
         </h2>
         <span className={styles.dim}>
           {plural(rows.length, "site")} · {plural(servers, "server")} · {plural(relays, "relay")}
@@ -182,9 +191,15 @@ function CustomerSites({
       {rows.length === 0 ? (
         <p className={styles.sectionNote}>No sites yet.</p>
       ) : (
-        <DataTable bare label={`Sites of ${customer.name}`} columns={columns} rows={rows} rowKey={(site) => site.id} />
+        <DataTable
+          bare
+          label={multiCustomer ? `Sites of ${customer.name}` : "Sites"}
+          columns={columns}
+          rows={rows}
+          rowKey={(site) => site.id}
+        />
       )}
-      {canCreate && <CreateSite customer={customer} onCreated={onCreated} />}
+      {canCreate && <CreateSite customer={customer} multiCustomer={multiCustomer} onCreated={onCreated} />}
     </section>
   );
 }
@@ -246,7 +261,15 @@ function AutoUpdate({ site, canChange, onChanged }: { site: Row; canChange: bool
   );
 }
 
-function CreateSite({ customer, onCreated }: { customer: Customer; onCreated: () => void }) {
+function CreateSite({
+  customer,
+  multiCustomer,
+  onCreated,
+}: {
+  customer: Customer;
+  multiCustomer: boolean;
+  onCreated: () => void;
+}) {
   const hintId = useId();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -281,7 +304,12 @@ function CreateSite({ customer, onCreated }: { customer: Customer; onCreated: ()
 
   const invalid = message?.error ?? false;
   return (
-    <form className={styles.newSite} onSubmit={submit} aria-label={`New site for ${customer.name}`} noValidate>
+    <form
+      className={styles.newSite}
+      onSubmit={submit}
+      aria-label={multiCustomer ? `New site for ${customer.name}` : "New site"}
+      noValidate
+    >
       <label className={styles.field}>
         New site name
         <input
@@ -376,9 +404,36 @@ function RenameCustomer({ customer, onRenamed }: { customer: Customer; onRenamed
   );
 }
 
-/** Customers group sites for MSPs: each one's users can be limited to it. */
-function CreateCustomer({ onCreated }: { onCreated: () => void }) {
+/**
+ * For a single company: where an MSP finds customers, folded away. The
+ * first other customer shows customers everywhere (ADR-0104).
+ */
+function SeveralCustomers({ own, onCreated }: { own: Customer | undefined; onCreated: () => void }) {
   const titleId = useId();
+  const [open, setOpen] = useState(false);
+  return (
+    <section className={styles.section} aria-labelledby={titleId}>
+      <div className={styles.sectionHead}>
+        <h2 id={titleId} className={styles.sectionTitle}>
+          Several customers
+        </h2>
+        <Button size="small" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? "Hide" : "Add a customer"}
+        </Button>
+      </div>
+      <p className={styles.sectionNote}>
+        For a service provider running servers for other organisations: each customer has its own sites, and its users see only
+        its servers.
+      </p>
+      {open && <CreateCustomer own={own} onCreated={onCreated} />}
+    </section>
+  );
+}
+
+/** Customers group sites for MSPs: each one's users can be limited to it. */
+function CreateCustomer({ own, onCreated }: { own?: Customer; onCreated: () => void }) {
+  const titleId = useId();
+  const refreshMe = useRefreshMe();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null);
@@ -391,8 +446,15 @@ function CreateCustomer({ onCreated }: { onCreated: () => void }) {
     try {
       const customer = await api.createCustomer(wanted);
       setName("");
-      setMessage({ error: false, text: `Created ${customer.name}. Add its first site above.` });
+      setMessage({
+        error: false,
+        text: own
+          ? `Created ${customer.name}. Your sites so far are under ${own.name}, which you can rename above.`
+          : `Created ${customer.name}. Add its first site above.`,
+      });
       onCreated();
+      // A second customer shows customers everywhere.
+      refreshMe();
     } catch (e) {
       setMessage({
         error: true,
@@ -406,6 +468,30 @@ function CreateCustomer({ onCreated }: { onCreated: () => void }) {
     }
   }
 
+  const form = (
+    <form className={styles.newSite} onSubmit={submit} aria-label="New customer" noValidate>
+      <label className={styles.field}>
+        Customer name
+        <input
+          className={cx(fieldClass, styles.siteName)}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Acme Hosting"
+          maxLength={MAX_NAME}
+          required
+        />
+      </label>
+      {message && (
+        <span className={message.error ? styles.hintError : styles.hint} role={message.error ? "alert" : "status"}>
+          {message.text}
+        </span>
+      )}
+      <Button variant="k" type="submit" disabled={busy || name.trim() === ""}>
+        Create customer
+      </Button>
+    </form>
+  );
+  if (own) return form;
   return (
     <section className={styles.section} aria-labelledby={titleId}>
       <div className={styles.sectionHead}>
@@ -414,27 +500,7 @@ function CreateCustomer({ onCreated }: { onCreated: () => void }) {
         </h2>
         <span className={styles.dim}>For an MSP: a customer has its own sites, and users can be limited to it.</span>
       </div>
-      <form className={styles.newSite} onSubmit={submit} aria-label="New customer" noValidate>
-        <label className={styles.field}>
-          Customer name
-          <input
-            className={cx(fieldClass, styles.siteName)}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Acme Hosting"
-            maxLength={MAX_NAME}
-            required
-          />
-        </label>
-        {message && (
-          <span className={message.error ? styles.hintError : styles.hint} role={message.error ? "alert" : "status"}>
-            {message.text}
-          </span>
-        )}
-        <Button variant="k" type="submit" disabled={busy || name.trim() === ""}>
-          Create customer
-        </Button>
-      </form>
+      {form}
     </section>
   );
 }

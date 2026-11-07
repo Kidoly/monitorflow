@@ -27,6 +27,8 @@ export interface Me {
   id: string;
   username: string;
   roles: RoleGrant[];
+  /** Whether the user sees more than one customer (ADR-0104); read it with `useMultiCustomer`. */
+  multi_customer?: boolean;
 }
 
 export type ServerStatus = "online" | "offline";

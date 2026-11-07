@@ -17,6 +17,9 @@ describe("onCall", () => {
     expect(placeName({ customer_name: "acme", site_name: "paris" }, false)).toBe("paris");
     expect(placeName({ customer_name: "acme", site_name: null }, false)).toBe("All of acme");
     expect(placeName({ customer_name: null, site_name: null }, false)).toBe("Everything");
+    // Without customers (ADR-0104).
+    expect(placeName({ customer_name: "acme", site_name: null }, false, false)).toBe("All sites");
+    expect(problemText("no_access", "bob", "All sites")).toBe("bob can no longer see all sites");
   });
 
   it("explains every gap in plain words", () => {

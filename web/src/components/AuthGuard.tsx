@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type ReactNode, Suspense, useEffect, useState } from "react";
+import { type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
 
 import { AppShell } from "@/components/shell/AppShell";
 import { Banner, LoadingBlock } from "@/components/ui/PageState";
@@ -14,7 +14,7 @@ import {
   isAbortError,
   setUnauthorizedHandler,
 } from "@/lib/api";
-import { MeContext } from "@/lib/me";
+import { MeContext, RefreshMeContext } from "@/lib/me";
 
 import styles from "./AuthGuard.module.css";
 
@@ -27,6 +27,10 @@ export function AuthGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [user, setUser] = useState<Me | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Keeps the page on a failed reload: the user is still signed in.
+  const refresh = useCallback(() => {
+    api.me().then(setUser, () => {});
+  }, []);
 
   useEffect(() => {
     const restore = setUnauthorizedHandler(() => router.replace(LOGIN_PATH));
@@ -58,9 +62,11 @@ export function AuthGuard({ children }: { children: ReactNode }) {
   if (!user) return loading;
   return (
     <MeContext.Provider value={user}>
-      <Suspense fallback={loading}>
-        <AppShell me={user}>{children}</AppShell>
-      </Suspense>
+      <RefreshMeContext.Provider value={refresh}>
+        <Suspense fallback={loading}>
+          <AppShell me={user}>{children}</AppShell>
+        </Suspense>
+      </RefreshMeContext.Provider>
     </MeContext.Provider>
   );
 }

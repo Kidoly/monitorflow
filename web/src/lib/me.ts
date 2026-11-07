@@ -9,6 +9,27 @@ export function useMe(): Me | null {
   return useContext(MeContext);
 }
 
+/** Reloads the signed-in user, after a change that alters `Me`; provided by `AuthGuard`. */
+export const RefreshMeContext = createContext<() => void>(() => {});
+
+export function useRefreshMe(): () => void {
+  return useContext(RefreshMeContext);
+}
+
+/**
+ * Whether `me` sees more than one customer, which alone shows customers on
+ * screen: the picker, customer names and "customer" wording (ADR-0104).
+ * Without it the one customer is implicit and its sites are worded plainly.
+ * An older server, without the field, shows them as before.
+ */
+export function multiCustomer(me: Me | null): boolean {
+  return me?.multi_customer ?? true;
+}
+
+export function useMultiCustomer(): boolean {
+  return multiCustomer(useMe());
+}
+
 /**
  * Whether `me` has an administrator grant of any kind, which shows the
  * Administration section. UX only: the API decides (ADR-0029).
