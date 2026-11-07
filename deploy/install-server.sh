@@ -640,7 +640,9 @@ join_server() {
     else
         mkdir "$tmp/join"
         tar -xf "$join_file" -C "$tmp/join" || die "$join_file is not a file written by --add-server"
-        [ -f "$tmp/join/env" ] && [ -f "$tmp/join/server.tar" ] || die "$join_file is not a file written by --add-server"
+        if [ ! -f "$tmp/join/env" ] || [ ! -f "$tmp/join/server.tar" ]; then
+            die "$join_file is not a file written by --add-server"
+        fi
         say "adding this machine as a central server of $(sed -n 's/^DOMAIN=//p' "$tmp/join/env")"
         install_bundle
         write_joined_env
@@ -760,7 +762,9 @@ download_release
 ensure_docker
 
 if [ "$mode" = join ] || joined; then
-    [ "$mode" != restore ] && [ "$mode" != add ] || die "this is an added central server: run that on the first one"
+    case $mode in
+        restore | add) die "this is an added central server: run that on the first one" ;;
+    esac
     join_file=${join_file:-}
     join_server
     settle_certificate
