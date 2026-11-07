@@ -42,16 +42,15 @@ The owner's rules apply: as simple as possible to set up and use, in plain words
 
 **OpenAPI.** The document is generated from the code with `utoipa`: the request and response types derive their schemas, and each documented route is described next to the router in `api/openapi.rs`. The server serves it, without a session, at `/api/v1/openapi.json`; the web interface shows it as a page, "API documentation", linked from Admin › API keys. `docs/api/openapi.json` is the generated document committed, and a test fails when it differs from what the code generates (`UPDATE_OPENAPI=1 cargo test -p monitorflow-server openapi` rewrites it), so CI catches a change to the contract that nobody looked at. Another test fails when a documented route does not exist, and when a v1 route is neither documented nor listed as "not yet documented", so a new route is a decision.
 
-**Coverage of v1.** Everything the web interface does is reachable. Documented in the first OpenAPI document, which is the part an MSP or a single company automates first:
+**Coverage of v1.** Everything the web interface does is reachable, with the same rules, apart from the routes left out above. The first OpenAPI document describes the part an MSP's PSA or a company's scripts use first:
 
-- Servers, relays, sites and customers: list, detail, create customers and sites, packages.
-- Incidents: list with filters, detail, acknowledge. Silences: list, create, end.
-- Checks and alerts: thresholds and sensor settings of a site and a server, create, change, delete.
-- Updates: commands of a server (list, create, detail), campaigns (list, create, detail, start, pause, resume, stop).
+- Servers, sites and customers: list servers (paged) and read one, list sites and customers, create a customer and a site under it.
+- Incidents: list with filters (paged), read one with its timeline, acknowledge. Silences: list, create, end.
+- Commands of a server: list (paged), queue (package updates), read one with its output.
 - Approvals: pending commands, approve, reject.
-- Dashboards: list, detail, create, change, delete. Metric queries.
+- Metric queries, instant and over a range.
 
-Reachable and documented later, in this order: notification channels and routing, on-call and follow-up, enrollment tokens and install keys, sources and mirrors, remediation rules and incidents, settings, users, backups, the certificate authority.
+Reachable now and described next, in this order: thresholds and check settings, campaigns, dashboards, relays and enrollment (tokens, install keys, pending hosts), notification channels and routing, on-call and follow-up, sources and mirrors, remediation rules, incidents and events, settings, users, backups, the certificate authority. The list lives in `api/openapi.rs` as `NOT_YET_DOCUMENTED`; describing a route takes it out.
 
 **Not done:**
 

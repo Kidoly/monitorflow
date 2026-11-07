@@ -19,7 +19,7 @@ use super::{ApiError, ApiState};
 use crate::auto_update::store;
 
 /// One site.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct SiteView {
     pub id: Uuid,
     pub name: String,
@@ -80,7 +80,7 @@ pub(super) async fn fetch(state: &ApiState, id: Uuid) -> Result<Option<SiteView>
 }
 
 /// Body of `GET /api/sites`, sorted by name.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SiteList {
     pub sites: Vec<SiteView>,
 }
