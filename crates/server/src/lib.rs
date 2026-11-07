@@ -19,6 +19,7 @@ pub mod integrations;
 pub mod live_settings;
 pub mod mirror;
 pub mod notify;
+pub mod plugins;
 pub mod relay_commands;
 pub mod release_check;
 pub mod remediation;

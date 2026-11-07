@@ -1701,6 +1701,7 @@ dependencies = [
  "lettre",
  "monitorflow-ai",
  "monitorflow-common",
+ "monitorflow-plugin",
  "monitorflow-sensors",
  "pem",
  "prost",
