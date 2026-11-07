@@ -1,0 +1,24 @@
+# Example plugins (ADR-0103, docs/plugins.md), built for
+# wasm32-unknown-unknown, apart from the main workspace:
+#
+#   cargo build --release --target wasm32-unknown-unknown
+#
+# The modules are in target/wasm32-unknown-unknown/release/*.wasm.
+[workspace]
+resolver = "2"
+members = ["examples/http-json", "examples/ntfy"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[workspace.dependencies]
+monitorflow-plugin-sdk = { path = "../crates/plugin-sdk" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
