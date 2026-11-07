@@ -82,6 +82,8 @@ export const SETTINGS_PATH = "/admin/settings/";
 
 /** Email, chat and webhook notifications (ADR-0060, ADR-0077). */
 export const NOTIFICATIONS_PATH = "/admin/notifications/";
+/** Signed events for other tools, like a PSA (ADR-0102). */
+export const INTEGRATIONS_PATH = "/admin/integrations/";
 /** AI setup, global administrators only (ADR-0064). */
 export const AI_SETTINGS_PATH = "/admin/ai/";
 

@@ -51,7 +51,7 @@ export function scopeValue(channel: Covered): string {
 }
 
 /** What a channel is about, for the list; the customer only among several. */
-export function scopeName(channel: NotificationChannel, severalCustomers: boolean): string {
+export function scopeName(channel: Covered, severalCustomers: boolean): string {
   if (channel.site_id) {
     const site = channel.site_name ?? "";
     return severalCustomers ? `${channel.customer_name} / ${site}` : site;

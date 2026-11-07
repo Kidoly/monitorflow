@@ -2086,6 +2086,87 @@ export type NotificationChannelRequest = (
   follow_up_only?: boolean;
 };
 
+/** One integration of `GET /api/integrations`: where signed events go (ADR-0102). Never its secret. */
+export interface IntegrationEndpoint {
+  id: string;
+  name: string;
+  url: string;
+  /** The events it wants, among `IntegrationList.events`. */
+  events: string[];
+  /** The customer it covers, or the site's; null with `site_id` too: everything. */
+  customer_id: string | null;
+  customer_name: string | null;
+  site_id: string | null;
+  site_name: string | null;
+  /** Delivers to private addresses; set by a global administrator. */
+  allow_private: boolean;
+  /** `disabled`: turned off after a day without a success. */
+  state: "on" | "paused" | "disabled";
+  created_at: string;
+  /** The first failure since the last success; null while it works. */
+  failing_since: string | null;
+  last_success_at: string | null;
+  /** Deliveries waiting to be sent or tried again. */
+  pending: number;
+  last_error: string | null;
+}
+
+export interface IntegrationList {
+  endpoints: IntegrationEndpoint[];
+  /** Every event an integration can ask for, in order. */
+  events: string[];
+}
+
+export interface IntegrationRequest {
+  name: string;
+  url: string;
+  /** Empty: every event. */
+  events: string[];
+  customer_id: string | null;
+  site_id: string | null;
+  allow_private: boolean;
+}
+
+/** An integration with its signing secret: only when created or given a new secret. */
+export interface IntegrationWithSecret {
+  endpoint: IntegrationEndpoint;
+  secret: string;
+}
+
+export interface IntegrationTestResult {
+  ok: boolean;
+  /** The receiver's HTTP status, when it answered. */
+  status: number | null;
+  error: string | null;
+}
+
+/** One delivery of an integration's log, newest first. */
+export interface IntegrationDelivery {
+  id: number;
+  event_id: string;
+  event: string;
+  occurred_at: string;
+  state: "pending" | "delivered" | "failed";
+  /** Sent again by an administrator. */
+  replay: boolean;
+  attempts: number;
+  last_status: number | null;
+  last_error: string | null;
+  last_attempt_at: string | null;
+  /** When the next try is due, while pending. */
+  next_at: string | null;
+  finished_at: string | null;
+}
+
+export interface IntegrationDeliveryList {
+  deliveries: IntegrationDelivery[];
+  /** Pass as `before` for older ones; null at the end. */
+  next_before: number | null;
+}
+
+/** One event by its ID, or every event from `from` to `to` (now when absent). */
+export type IntegrationReplay = { event_id: string } | { from: string; to?: string };
+
 /** Why the person on call cannot be told: that period is a gap (ADR-0081). */
 export type OnCallProblem = "nobody" | "removed" | "disabled" | "no_access" | "no_contact" | "no_mail_server";
 
@@ -2661,6 +2742,42 @@ export const api = {
       `/api/notifications/channels/${encodeURIComponent(id)}/test`,
       { method: "POST" },
     ),
+  /** Integrations of what the user administers, without secrets (ADR-0102). */
+  integrations: (signal?: AbortSignal) => request<IntegrationList>("/api/integrations", { signal }),
+
+  /** The answer carries the signing secret, the only time it is shown. */
+  createIntegration: (body: IntegrationRequest) =>
+    request<IntegrationWithSecret>("/api/integrations", { method: "POST", body }),
+
+  updateIntegration: (id: string, body: IntegrationRequest) =>
+    request<IntegrationEndpoint>(`/api/integrations/${encodeURIComponent(id)}`, { method: "PUT", body }),
+
+  deleteIntegration: (id: string) =>
+    request<void>(`/api/integrations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** `on` also turns back on one turned off after failing. */
+  setIntegrationState: (id: string, state: "on" | "paused") =>
+    request<IntegrationEndpoint>(`/api/integrations/${encodeURIComponent(id)}/state`, {
+      method: "POST",
+      body: { state },
+    }),
+
+  /** Replaces the signing secret at once; the answer carries the new one. */
+  newIntegrationSecret: (id: string) =>
+    request<IntegrationWithSecret>(`/api/integrations/${encodeURIComponent(id)}/secret`, { method: "POST" }),
+
+  testIntegration: (id: string) =>
+    request<IntegrationTestResult>(`/api/integrations/${encodeURIComponent(id)}/test`, { method: "POST" }),
+
+  integrationDeliveries: (id: string, before?: number, signal?: AbortSignal) =>
+    request<IntegrationDeliveryList>(
+      `/api/integrations/${encodeURIComponent(id)}/deliveries${before === undefined ? "" : `?before=${before}`}`,
+      { signal },
+    ),
+
+  replayIntegration: (id: string, body: IntegrationReplay) =>
+    request<{ queued: number }>(`/api/integrations/${encodeURIComponent(id)}/replay`, { method: "POST", body }),
+
   /** Install keys and hosts waiting for approval, of the customers the user administers (ADR-0073). */
   installKeys: (signal?: AbortSignal) =>
     request<InstallKeyList>("/api/install-keys", { signal }),
