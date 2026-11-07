@@ -2087,7 +2087,7 @@ async fn keeps_customers_apart(pool: PgPool, with_key: bool) {
         let body =
             json!({ "name": "All of A", "customer_id": a.customer, "role": "administrator" });
         let (status, created) = ctx.call("POST", "/api/api-keys", Some(body)).await;
-        assert_eq!(status, StatusCode::CREATED, "{created}");
+        assert_eq!(status, StatusCode::CREATED, "{}", created["error"]);
         ctx.key = Some(created["secret"].as_str().unwrap().to_owned());
     }
 

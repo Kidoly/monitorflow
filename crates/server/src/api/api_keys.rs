@@ -602,7 +602,6 @@ async fn record(
             target: Some(("api_key", &target_id)),
             details: json!({
                 "name": key.name,
-                "prefix": key.prefix,
                 "role": key.role,
                 "customer_id": key.customer_id,
                 "site_id": key.site_id,
@@ -644,20 +643,28 @@ mod tests {
     #[test]
     fn secrets_are_random_and_parse_strictly() {
         let secret = KeySecret::generate();
-        assert!(
-            secret.0.starts_with("mfk_") && secret.0.len() == 4 + 43,
-            "{}",
-            secret.0
-        );
-        assert_ne!(secret, KeySecret::generate());
-        assert_eq!(KeySecret::parse(&secret.0), Some(secret.clone()));
+        assert!(secret.0.starts_with("mfk_") && secret.0.len() == 4 + 43);
+        // Plain booleans: a failure prints nothing about the secrets.
+        assert!(secret != KeySecret::generate());
+        assert!(KeySecret::parse(&secret.0) == Some(secret.clone()));
         let short = &secret.0[..secret.0.len() - 1];
-        for bad in ["", "mfk_", short, &secret.0[4..], &format!("{}=", secret.0)] {
-            assert_eq!(KeySecret::parse(bad), None, "{bad}");
+        let padded = format!("{}=", secret.0);
+        // Each case named by a fixed label, so a failure prints no part of
+        // the secret.
+        for (what, bad) in [
+            ("empty", ""),
+            ("prefix only", "mfk_"),
+            ("one character short", short),
+            ("without the prefix", &secret.0[4..]),
+            ("padded", &padded),
+        ] {
+            assert!(KeySecret::parse(bad).is_none(), "{what} was accepted");
         }
         assert_eq!(secret.hash().len(), 32);
         assert_eq!(secret.shown().len(), SHOWN);
-        assert!(!format!("{secret:?}").contains(&secret.0));
+        // `Debug` never shows a secret; checked on a fixed, made-up one.
+        let made_up = KeySecret(format!("{PREFIX}{}", "A".repeat(43)));
+        assert_eq!(format!("{made_up:?}"), format!("KeySecret({REDACTED})"));
     }
 
     #[test]

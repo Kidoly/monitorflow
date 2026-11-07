@@ -187,7 +187,8 @@ impl World {
         let (status, created) = self
             .session("POST", "/api/api-keys", cookie, Some(body))
             .await;
-        assert_eq!(status, StatusCode::CREATED, "{created}");
+        // The answer holds the secret: say only why it failed.
+        assert_eq!(status, StatusCode::CREATED, "{}", created["error"]);
         let id = created["key"]["id"].as_str().unwrap().parse().unwrap();
         (id, created["secret"].as_str().unwrap().to_owned())
     }
@@ -219,7 +220,7 @@ db_tests! {
         // never of another one.
         let (a_key, secret) = w.make(&w.admin_a, json!({ "name": "Ansible", "customer_id": w.customer_a,
             "role": "operator", "areas": ["alerts", "servers", "alerts"], "expires": "30d" })).await;
-        assert!(secret.starts_with("mfk_") && secret.len() == 47, "{secret}");
+        assert!(secret.starts_with("mfk_") && secret.len() == 47);
         w.make(&w.admin_a, json!({ "name": "Site", "site_id": w.site_a })).await;
         let (status, _) = w.session("POST", "/api/api-keys", &w.admin_a,
             Some(json!({ "name": "B", "customer_id": w.customer_b }))).await;
@@ -249,7 +250,8 @@ db_tests! {
         let ansible = &list["keys"][1];
         assert_eq!(ansible["areas"], json!(["servers", "alerts"]));
         assert_eq!((ansible["role"].as_str(), ansible["customer_name"].as_str()), (Some("operator"), Some("a")));
-        assert_eq!(ansible["prefix"].as_str(), Some(&secret[4..12]));
+        // Compared without printing the secret on failure.
+        assert!(ansible["prefix"].as_str() == Some(&secret[4..12]));
         assert!(!list.to_string().contains(&secret));
         let (_, list) = w.session("GET", "/api/api-keys", &w.root, None).await;
         assert_eq!(list["keys"].as_array().unwrap().len(), 3);
@@ -272,7 +274,9 @@ db_tests! {
         let actions: Vec<&str> = audit.iter().map(|(a, _)| a.as_str()).collect();
         assert_eq!(actions, ["api_key.create", "api_key.create", "api_key.create", "api_key.revoke"]);
         assert_eq!(audit[1].1["areas"], json!(["servers", "alerts"]));
-        assert!(!format!("{audit:?}").contains(&secret[4..]));
+        // No part of the secret, not even the prefix shown in the list.
+        let audit = format!("{audit:?}");
+        assert!(!audit.contains(&secret[4..12]) && !audit.contains("prefix"));
     }
 
     #[sqlx::test]
@@ -292,11 +296,14 @@ db_tests! {
 
         // Not on the web interface's paths, and not with a bad header.
         assert_eq!(w.key("GET", "/api/servers", &everything, None).await.0, StatusCode::UNAUTHORIZED);
-        for header in ["Bearer nope", "Basic abc", &format!("Token {everything}")] {
+        // Each case named by a fixed label: a failure never prints the key.
+        let other_scheme = format!("Token {everything}");
+        for (what, header) in [("unknown key", "Bearer nope"), ("basic", "Basic abc"),
+                               ("other scheme", other_scheme.as_str())] {
             let request = Request::get("/api/v1/servers").header("authorization", header)
                 .header("cookie", &w.root).body(Body::empty()).unwrap();
             let response = w.app.clone().oneshot(request).await.unwrap();
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{header}");
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{what}");
         }
         // Routes for people in a browser are not in v1.
         for (method, uri) in [("GET", "/api/v1/auth/me"), ("POST", "/api/v1/auth/logout"),
