@@ -89,10 +89,11 @@ The CA change keeps refusing to start while several central servers run (ADR-008
 
 `install-server.sh` gains two options, both Enterprise code paths that check the license first:
 
-- On the first server, `--add-server` checks that the license has room, publishes PostgreSQL, VictoriaMetrics and VictoriaLogs on this host's address, each with TLS and a password as today (ADR-0051, ADR-0087), and writes a join file: the certificate authority, the database's CA and password, the stores' password, the public name and the images of this release. The file holds the CA key, so it is written for root only, and the installer says so.
-- On the new machine, `--join FILE` installs the server and web services only, pointing at the first host's stores under their usual names, so their certificates verify as they are, and starts with `MONITORFLOW_ADDITIONAL_INSTANCE`.
+- On the first server, `--add-server` checks that the license has room, publishes PostgreSQL, VictoriaMetrics and VictoriaLogs on this host's address, each with TLS and a password as today (ADR-0051, ADR-0087), and writes a join file: the certificate authority, the database's CA and password, the stores' password and the public name. The file holds the CA key, so it is written for root only, and the installer says so.
+  Publishing the stores is the one exception to ADR-0051's stores without a published port, and only on a first server that ran `--add-server`; the guide asks for a firewall rule that lets only the added servers reach them.
+- On the new machine, `--join FILE` installs the server and web services only (`deploy/docker-compose.joined.yml`), pointing at the first host's stores under their usual names, so their certificates verify as they are, and starts with `MONITORFLOW_ADDITIONAL_INSTANCE`. Backups, updates from the web interface and package mirrors stay on the first host; running the installer again on an added server brings it to the release it is given.
 
-Without a valid license both refuse before changing anything: "Adding a central server needs a MonitorFlow Enterprise subscription. Install its license key under Administration › License; to get one, see https://github.com/Kidoly/monitorflow#licence." The details belong to the increment that adds them.
+Without a valid license both refuse before sharing or installing anything: "Adding a central server needs a MonitorFlow Enterprise subscription. Install its license key under Administration › License; to get one, see https://github.com/Kidoly/monitorflow#licence." The details belong to the increment that adds them.
 
 ### Not DRM
 

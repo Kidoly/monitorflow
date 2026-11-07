@@ -15,6 +15,12 @@
 #   --restore FILE   install if needed, then restore a backup (ADR-0058).
 #   --uninstall      remove the containers and keep the data, or ask.
 #   --purge          with --uninstall: delete the data without asking.
+#   --add-server     on the first central server: let other central servers
+#                    join it, and write the file they join with (ADR-0100,
+#                    Enterprise edition).
+#   --join FILE      on a new machine: run another central server on the
+#                    database of the first, from the file --add-server wrote
+#                    there (Enterprise edition).
 #
 # Settings, from the environment:
 #   MF_PUBLIC_NAME   the name or IP address browsers and agents reach this
@@ -24,6 +30,8 @@
 #   MF_DOWNLOAD_URL  https URL of a directory holding the release files, for
 #                    sites that serve them themselves; updates come from
 #                    there too.
+#   MF_SHARE_ADDRESS with --add-server: the address of this machine the
+#                    added central servers reach; its main one by default.
 set -eu
 
 RELEASES=https://github.com/Kidoly/monitorflow/releases
@@ -31,12 +39,16 @@ ROOT=/opt/monitorflow
 DEPLOY=$ROOT/deploy
 ENV_FILE=$DEPLOY/.env
 BUNDLE=monitorflow-server-compose.tar.gz
+# What --add-server writes, for --join.
+JOIN_FILE=/root/monitorflow-join.tar
+LICENSE_HELP="Install its license key under Administration > License on the first central server. To get one, see https://github.com/Kidoly/monitorflow#licence"
 # The compose project's fixed name, in docker-compose.yml.
 PROJECT=monitorflow
 
 MF_PUBLIC_NAME=${MF_PUBLIC_NAME:-}
 MF_VERSION=${MF_VERSION:-}
 MF_DOWNLOAD_URL=${MF_DOWNLOAD_URL:-}
+MF_SHARE_ADDRESS=${MF_SHARE_ADDRESS:-}
 
 # Public keys that sign releases (ADR-0053), filled in from
 # deploy/release-keys.pem by deploy/release-files.sh.
@@ -51,11 +63,23 @@ die() {
 }
 
 usage() {
-    printf 'usage: install-server.sh [--restore FILE | --uninstall [--purge]]\n' >&2
+    printf 'usage: install-server.sh [--restore FILE | --add-server | --join FILE | --uninstall [--purge]]\n' >&2
     exit 2
 }
 
-compose() { docker compose --project-directory "$DEPLOY" -f "$DEPLOY/docker-compose.yml" "$@"; }
+# The compose files of this machine: an added central server has its own;
+# the first one shares its stores once --add-server ran (ADR-0100).
+compose() {
+    if [ -f "$ENV_FILE" ] && grep -q '^JOINED=1$' "$ENV_FILE"; then
+        docker compose --project-directory "$DEPLOY" -f "$DEPLOY/docker-compose.joined.yml" "$@"
+    elif [ -f "$ENV_FILE" ] && grep -q '^SHARE_ADDRESS=.' "$ENV_FILE"; then
+        docker compose --project-directory "$DEPLOY" -f "$DEPLOY/docker-compose.yml" \
+            -f "$DEPLOY/docker-compose.shared.yml" "$@"
+    else
+        docker compose --project-directory "$DEPLOY" -f "$DEPLOY/docker-compose.yml" "$@"
+    fi
+}
+joined() { [ -f "$ENV_FILE" ] && grep -q '^JOINED=1$' "$ENV_FILE"; }
 
 # Whether a terminal can answer, which `curl | sh` does not give on stdin.
 has_tty() { (exec </dev/tty) 2>/dev/null; }
@@ -366,6 +390,9 @@ start() {
         tail -n 20 "$tmp/up.log" >&2
         compose ps -a >&2 || true
         compose logs --tail 20 server >&2 || true
+        if joined && compose logs server 2>/dev/null | grep -q 'additional central server does not start'; then
+            die "this central server was not added: the lines above say why. $LICENSE_HELP"
+        fi
         die "MonitorFlow did not start; the lines above say why. Fix it, then run this again: settings and data are kept"
     fi
 }
@@ -523,6 +550,116 @@ report() {
     say "settings are in $ENV_FILE; run this installer again after a change, or to upgrade"
 }
 
+# Asks the running server whether the license has room for one more
+# central server; says why not and stops, before anything changes.
+check_license() {
+    if ! answer=$("$@" 2>&1); then
+        printf '%s\n' "$answer" | tail -n 3 >&2
+        die "no central server was added. $LICENSE_HELP"
+    fi
+    say "$(printf '%s\n' "$answer" | tail -n 1)"
+}
+
+# On the first central server: publishes its stores on its address, and
+# writes what another central server needs to join it. The file holds the
+# certificate authority's key.
+add_server() {
+    joined && die "this is an added central server: run --add-server on the first one"
+    check_license compose exec -T server monitorflow-server license check-add
+    share=${MF_SHARE_ADDRESS:-$(env_get SHARE_ADDRESS "$(primary_ip)")}
+    [ -n "$share" ] || die "cannot tell this machine's address: set MF_SHARE_ADDRESS"
+    [ "$(env_get SHARE_ADDRESS '')" = "$share" ] || env_set SHARE_ADDRESS "$share"
+    say "sharing the database and the metric and log stores on $share, ports 5432, 8428 and 9428, with TLS and a password; allow only the added central servers to reach them"
+    start
+    mkdir "$tmp/join"
+    compose exec -T server tar -C /var/lib/monitorflow -cf - server/ca storage-tls >"$tmp/join/server.tar" \
+        || die "cannot read the certificate authority from the server"
+    compose exec -T server cat /certs/ca.pem >"$tmp/join/db-ca.pem" || die "cannot read the database's CA"
+    if [ "$(env_get WEB_CERTIFICATE '')" = internal ]; then
+        compose exec -T web tar -C /data/caddy/pki/authorities -cf - local >"$tmp/join/caddy.tar" \
+            || die "cannot read the browser certificate authority"
+    fi
+    {
+        printf 'FIRST_ADDRESS=%s\n' "$share"
+        for key in DOMAIN POSTGRES_PASSWORD WEB_CERTIFICATE RELEASE_URL AGENT_DOWNLOAD_URL HTTPS_PORT HTTP_PORT \
+            GRPC_PORT ENROLL_PORT MIRROR_PORT; do
+            value=$(env_get "$key" '')
+            [ -z "$value" ] || printf '%s=%s\n' "$key" "$value"
+        done
+    } >"$tmp/join/env"
+    (umask 077 && tar -cf "$JOIN_FILE.new" -C "$tmp/join" .)
+    mv -f "$JOIN_FILE.new" "$JOIN_FILE"
+}
+
+join_instructions() {
+    say "wrote $JOIN_FILE. It holds the keys of this server's certificate authority: copy it to the new machine, then run there:"
+    printf '\n    curl -fsSL %s/install-server.sh | sudo sh -s -- --join %s\n\n' "$base" "$(basename "$JOIN_FILE")"
+    say "then delete both copies of the file"
+}
+
+# The settings of the join file in $tmp/join, with this machine's own.
+write_joined_env() {
+    ip=$(primary_ip)
+    domain=$(sed -n 's/^DOMAIN=//p' "$tmp/join/env")
+    names=$domain
+    [ -z "$ip" ] || [ "$ip" = "$domain" ] || names=$domain,$ip
+    (
+        umask 077
+        {
+            printf '# Written by install-server.sh --join: an added central server (ADR-0100).\n'
+            printf 'JOINED=1\nINSTANCE_NAME=%s\nSERVER_NAMES=%s\n' "$(hostname)" "$names"
+            grep -E '^[A-Z_]+=' "$tmp/join/env"
+            image_lines | while read -r image reference; do
+                printf '%s=%s\n' "$(image_key "$image")" "$reference"
+            done
+        } >"$ENV_FILE.new"
+    )
+    mv -f "$ENV_FILE.new" "$ENV_FILE"
+}
+
+# Fills the volumes of an added central server from the join file.
+copy_join_data() {
+    compose run --rm --no-deps -T --user 0 --entrypoint tar server -C /var/lib/monitorflow -xf - \
+        <"$tmp/join/server.tar" >/dev/null || die "cannot copy the certificate authority"
+    compose run --rm --no-deps -T --user 0 -v "${PROJECT}_dbcerts:/dbcerts" --entrypoint sh server \
+        -c 'cat >/dbcerts/ca.pem' <"$tmp/join/db-ca.pem" >/dev/null || die "cannot copy the database's CA"
+    if [ -f "$tmp/join/caddy.tar" ]; then
+        compose run --rm --no-deps -T --user 0 --entrypoint sh web \
+            -c 'mkdir -p /data/caddy/pki/authorities && tar -C /data/caddy/pki/authorities -xf -' \
+            <"$tmp/join/caddy.tar" >/dev/null || die "cannot copy the browser certificate authority"
+    fi
+}
+
+# On a new machine: another central server on the first one's database.
+join_server() {
+    [ ! -f "$ENV_FILE" ] || joined || die "this machine already runs a central server of its own"
+    if joined; then
+        say "already added: updating this central server to $version"
+        rewrite_image_pins
+        pull_images
+    else
+        mkdir "$tmp/join"
+        tar -xf "$join_file" -C "$tmp/join" || die "$join_file is not a file written by --add-server"
+        [ -f "$tmp/join/env" ] && [ -f "$tmp/join/server.tar" ] || die "$join_file is not a file written by --add-server"
+        say "adding this machine as a central server of $(sed -n 's/^DOMAIN=//p' "$tmp/join/env")"
+        install_bundle
+        write_joined_env
+        pull_images
+        copy_join_data
+        check_license compose run --rm --no-deps -T server license check-add
+    fi
+    start
+}
+
+# An added central server follows the release it is given: the images of
+# this one, pulled, then started.
+rewrite_image_pins() {
+    install_bundle
+    image_lines | while read -r image reference; do
+        env_set "$(image_key "$image")" "$reference"
+    done
+}
+
 uninstall() {
     [ -d "$ROOT" ] || { command -v docker >/dev/null 2>&1 && data_exists; } \
         || die "MonitorFlow is not installed on this machine"
@@ -536,6 +673,9 @@ uninstall() {
             docker compose -p "$PROJECT" down --remove-orphans
         fi
     fi
+    if joined; then
+        say "this was an added central server: free its place under Administration > License"
+    fi
     if [ "$purge" = 1 ]; then
         rm -rf "$ROOT"
         say "MonitorFlow and its data are removed; Docker and the downloaded images stay"
@@ -548,6 +688,7 @@ uninstall() {
 mode=install
 purge=
 backup=
+join_file=
 while [ "$#" -gt 0 ]; do
     case $1 in
         --uninstall) mode=uninstall ;;
@@ -556,6 +697,13 @@ while [ "$#" -gt 0 ]; do
             [ "$#" -ge 2 ] || usage
             mode=restore
             backup=$2
+            shift
+            ;;
+        --add-server) mode=add ;;
+        --join)
+            [ "$#" -ge 2 ] || usage
+            mode='join'
+            join_file=$2
             shift
             ;;
         *) usage ;;
@@ -583,6 +731,13 @@ done
 if [ "$mode" = restore ]; then
     [ -f "$backup" ] || die "$backup: no such file"
 fi
+if [ "$mode" = join ]; then
+    [ -f "$join_file" ] || die "$join_file: no such file. On the first central server, run this installer with --add-server; it writes the file to copy here"
+    join_file=$(cd "$(dirname "$join_file")" && pwd)/$(basename "$join_file")
+fi
+if [ "$mode" = add ] && [ ! -f "$ENV_FILE" ]; then
+    die "MonitorFlow is not installed on this machine: install it first, then run --add-server here"
+fi
 
 if [ -n "$MF_DOWNLOAD_URL" ]; then
     [ -z "$MF_VERSION" ] || die "MF_VERSION selects a GitHub release; with MF_DOWNLOAD_URL, point it at the files of that version instead"
@@ -603,6 +758,16 @@ trap 'exit 1' INT TERM
 
 download_release
 ensure_docker
+
+if [ "$mode" = join ] || joined; then
+    [ "$mode" != restore ] && [ "$mode" != add ] || die "this is an added central server: run that on the first one"
+    join_file=${join_file:-}
+    join_server
+    settle_certificate
+    report
+    say "this machine is a central server of $(env_get DOMAIN ''): add its address $(primary_ip) to that name in your DNS, so agents and browsers reach either. Back up and update the first central server; then run this installer again here"
+    exit 0
+fi
 
 installed=0
 if [ -f "$ENV_FILE" ]; then
@@ -626,6 +791,7 @@ if [ "$mode" = restore ]; then
     restore_backup
 elif [ "$installed" = 1 ]; then
     repair_or_upgrade
+    [ "$mode" != add ] || add_server
 else
     check_ports
     pull_images
@@ -633,3 +799,4 @@ else
 fi
 settle_certificate
 report
+[ "$mode" != add ] || join_instructions
