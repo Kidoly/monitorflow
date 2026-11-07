@@ -10,7 +10,7 @@
 #
 # Each host reaches a local registry and a local HTTPS directory of release
 # files as localhost, in its own network namespace; both hosts' registries
-# share one storage directory. The images must trust MF_TEST_SIGNING_KEY,
+# share one storage volume. The images must trust MF_TEST_SIGNING_KEY,
 # as for deploy/update-test.sh, and MF_TEST_LICENSE_KEY, a throwaway
 # license signing key whose public key was in ee/license-keys.pem when
 # monitorflow-{server,web,updater,mirror}:e2e-base were built. Needs docker,
@@ -32,6 +32,7 @@ cleanup() {
         docker rm -f "$h-registry" "$h-files" >/dev/null 2>&1 || true
         docker rm -fv "$h" >/dev/null 2>&1 || true
     done
+    docker volume rm "$host-registry" >/dev/null 2>&1 || true
     rm -rf "$work"
 }
 trap cleanup EXIT
@@ -52,7 +53,7 @@ CMD ["/sbin/init"]
 EOF
 
 # HTTPS for localhost with a CA of its own, which both hosts trust.
-mkdir -p "$work/tls" "$work/registry" "$work/serve"
+mkdir -p "$work/tls" "$work/serve"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=localhost \
     -addext subjectAltName=DNS:localhost -keyout "$work/tls/key.pem" -out "$work/tls/cert.pem" 2>/dev/null
 cat >"$work/tls/serve.py" <<'EOF'
@@ -79,7 +80,7 @@ start_host() {
     # The public name reaches each host's own web interface from inside it.
     docker exec "$h" sh -c 'echo "127.0.0.1 monitor.internal" >>/etc/hosts'
     docker run -d --name "$h-registry" --network "container:$h" -e "REGISTRY_HTTP_ADDR=:$PORT" \
-        -v "$work/registry:/var/lib/registry" registry:2.8.3 >/dev/null
+        -v "$host-registry:/var/lib/registry" registry:2.8.3 >/dev/null
     docker run -d --name "$h-files" --network "container:$h" -v "$work/serve:/srv:ro" -v "$work/tls:/tls:ro" \
         python:3.13-alpine python3 /tls/serve.py >/dev/null
 }
@@ -105,7 +106,7 @@ jq -n --arg v "$BASE" --arg s "$(push monitorflow-server:e2e-base monitorflow-se
     --arg m "$(push monitorflow-mirror:e2e-base monitorflow-mirror "$BASE")" \
     '{version: $v, images: {server: $s, web: $w, updater: $u, mirror: $m}}' >"$dir/images.json"
 MF_SIGNING_KEY=$key MF_RELEASE_KEYS=$keys MF_RELEASE_VERSION=$BASE "$repo/deploy/release-files.sh" "$dir" >/dev/null
-chmod -R a+rX "$work"
+chmod -R a+rX "$work/serve" "$work/tls"
 for n in 1 2; do
     for _ in $(seq 30); do on "$n" curl -fs -o /dev/null "$files/base/VERSION" && break; sleep 1; done
 done
