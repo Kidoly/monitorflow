@@ -70,6 +70,8 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Ready-made | A dashboard MonitorFlow comes with, for every server you see. Make a copy to change it | built-in, template, default | |
 | Show on a screen | A dashboard full screen, without menus, for a TV or a projector | kiosk mode, TV mode, presentation mode | `/display/` |
 | Display link | A link that shows dashboards on a screen without signing in, made by an administrator, turned off from the dashboard's page. "Reception TV" is its name | share link, public link, token, playlist | `display_links` |
+| API key | What a script or another tool (HaloPSA, Ansible) uses to work with MonitorFlow, made by an administrator under Admin › API keys and shown once. It does what its maker may, within what it reaches and its access: "Read only", "Read and change", "Approve commands", "Administer" | token, API token, secret, service account | `api_keys`, `mfk_` |
+| Public API | The documented API under `/api/v1` for scripts and integrations; its page is "API documentation" | REST API, v1 (on screen) | `/api/v1` |
 | Turn off | Stop watching: no more alerts of a threshold, or offline incidents of a machine, until turned back on | mute | `offline_alerts`, `muted`, `enabled` |
 | Rollback | Going back to the snapshot taken before an AI change. "Snapshot first" when MonitorFlow takes one, "Rollback limited" when it cannot, with the reason: "the container's storage cannot take snapshots" | revert, restore point | `snapshots.available`, `reason` |
 | VM, container | The Proxmox guest a server runs in: a virtual machine, or an LXC container. "VM 101 on pve1", "container 104 on pve2". The ID is Proxmox's | guest, CT, qemu, lxc (on screen) | `server_proxmox_vms`, `kind`, `vmid` |

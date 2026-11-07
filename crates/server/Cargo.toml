@@ -35,6 +35,8 @@ toml.workspace = true
 axum = { workspace = true, features = ["multipart"] }
 # Agent release files behind the web interface (ADR-0054).
 tower-http.workspace = true
+# Hands `/api/v1` requests to the router (ADR-0101).
+tower.workspace = true
 argon2.workspace = true
 rpassword.workspace = true
 sqlx.workspace = true
