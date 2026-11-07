@@ -167,6 +167,7 @@ db_tests! {
                 "integration_deliveries",
                 "integration_endpoints",
                 "integration_events",
+                "license",
                 "mirror_runs",
                 "mirror_snapshots",
                 "mirrors",

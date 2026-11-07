@@ -1012,6 +1012,12 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let uri = path.replace("{name}", "monitorflow-backup-20261029T030000Z-daily.tar.gz");
             assert_eq!(ctx.status(method, &uri, None).await, StatusCode::FORBIDDEN);
         }
+        // The license covers the central server itself: global
+        // administrators only (ADR-0100).
+        ("GET", "/api/license") | ("PUT", "/api/license") | ("DELETE", "/api/license") => {
+            let body = (method == "PUT").then(|| json!({ "text": "" }));
+            assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
+        }
         // The certificate authority serves every customer: global
         // administrators only.
         ("GET", "/api/certificate-authority")

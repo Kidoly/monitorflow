@@ -34,6 +34,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The server from AGPL code only, without the Enterprise edition (ADR-0100).
+      - run: cargo clippy -p monitorflow-server --no-default-features --all-targets -- -D warnings
       # DATABASE_URL enables the PostgreSQL tests (crates/server/build.rs).
       - run: cargo test --workspace
         env:
