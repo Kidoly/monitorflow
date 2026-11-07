@@ -41,21 +41,25 @@ Detailed task lists per phase are in [roadmap.md](roadmap.md).
 
 ## Business model
 
-Following the Proxmox model, every feature lives in the AGPL core and nothing is locked behind a paywall. Revenue comes from subscriptions that sell stability and support, plus services around the product.
+Open core, like GitLab CE and EE (ADR-0100). The AGPL core holds every feature a company or an MSP needs to watch, alert on, update and fix its servers, and stays free. A short list of features for large or critical installs forms the **Enterprise edition**, sold by subscription: its code is public in `ee/`, under a source-available license that needs a subscription in production. High availability of the central server, running more than one, is the first and today only one. Everything published before stays AGPL.
+
+Revenue comes from the Enterprise edition, from subscriptions that sell stability and support, and from services around the product.
 
 ### Subscription tiers (proposal)
 
-| Tier | Update channel | Support | Target |
-| --- | --- | --- | --- |
-| Community | No-subscription channel | Community forum | Homelabs, evaluation, small teams |
-| Basic | Enterprise channel | Business-hours tickets, limited per year | Small companies |
-| Standard | Enterprise channel | Business-hours tickets, unlimited, faster response | Production fleets |
-| Premium | Enterprise channel | Priority response, remote assistance | Critical environments, large MSPs |
+| Tier | Update channel | Support | Enterprise edition | Target |
+| --- | --- | --- | --- | --- |
+| Community | No-subscription channel | Community forum | No | Homelabs, evaluation, small teams |
+| Basic | Enterprise channel | Business-hours tickets, limited per year | No | Small companies |
+| Standard | Enterprise channel | Business-hours tickets, unlimited, faster response | No | Production fleets |
+| Premium | Enterprise channel | Priority response, remote assistance | Option | Critical environments, large MSPs |
+| Enterprise | Enterprise channel | As Premium | Yes: a license key for a number of central servers and a period | High availability, large MSPs |
 
-Subscriptions are counted per managed server (or per relay site for MSPs). Servers without a subscription show a notice in the interface but keep every feature.
+Support subscriptions are counted per managed server (or per relay site for MSPs). The Enterprise edition is counted per central server. Without a subscription nothing nags: a single central server never needs a license key, and only Administration › License mentions one. A license that expires stops adding central servers, never monitoring, alerts or the central servers already running.
 
 ### What the subscription sells
 
+- **Enterprise edition** (Enterprise tier): more than one central server on one database, added with one command, so the platform survives the loss of a host (ADR-0089, ADR-0100).
 - **Enterprise update channel** for the platform itself: builds tested longer than the no-subscription channel.
 - **Validated distribution snapshots:** apt and dnf snapshots tested on reference servers before campaigns use them.
 - **Support with response times**, by tier.
@@ -70,5 +74,6 @@ Subscriptions are counted per managed server (or per relay site for MSPs). Serve
 
 ## Open questions
 
-- [ ] Prices and support response times for each tier.
+- [ ] Prices and support response times for each tier, and the price of the Enterprise edition per central server.
+- [ ] Which features join the Enterprise edition after high availability. Each needs an ADR; a feature already in the core stays there.
 - [ ] Final product name (MonitorFlow is the working name).
