@@ -271,4 +271,65 @@ db_tests! {
         // An unknown agent is not an error.
         store.record_applied("nobody", 1).await.unwrap();
     }
+
+    #[sqlx::test]
+    async fn agents_get_the_check_plugins_of_their_site_granted_to_them(pool: PgPool) {
+        use monitorflow_common::plugin_grant;
+        use monitorflow_server::ca::{CaOptions, CertificateAuthority};
+
+        let paris = site(&pool, "paris").await;
+        let lyon = site(&pool, "lyon").await;
+        server(&pool, "web-01", paris).await;
+        server(&pool, "app-01", lyon).await;
+        let dir = tempfile::TempDir::new().unwrap();
+        let ca = std::sync::Arc::new(
+            CertificateAuthority::open_or_create(&dir.path().join("ca"), CaOptions::default()).unwrap(),
+        );
+        let store = SensorConfigStore::new(pool.clone()).with_plugin_grants(ca.clone());
+        // A stand-in package: the agent checks it, not the store.
+        let plugin: Uuid = sqlx::query_scalar(
+            "INSERT INTO plugins (name, kind, version, title, manifest, package, sha256, public_key, official)
+             VALUES ('web', 'check', '1.0.0', 'Web', '{}', 'package bytes', $1, $1, false) RETURNING id",
+        )
+        .bind(vec![0u8; 32])
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        for at in [paris, lyon] {
+            sqlx::query(
+                "INSERT INTO sensor_configs (site_id, kind, name, interval_ms, params)
+                 VALUES ($1, 'plugin', 'shop', 60000, '{\"plugin\": \"web\", \"url\": \"https://shop.example\"}')",
+            )
+            .bind(at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // Used nowhere yet: no grant, and the check shows as refused.
+        let config = store.load("web-01").await.unwrap().unwrap();
+        assert!(config.sensors.iter().any(|s| s.kind == "plugin"));
+        assert!(config.plugins.is_empty());
+
+        let before = config.revision;
+        sqlx::query("INSERT INTO plugin_places (plugin_id, site_id) VALUES ($1, $2)")
+            .bind(plugin)
+            .bind(paris)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let config = store.load("web-01").await.unwrap().unwrap();
+        assert!(config.revision > before, "agents hear of it");
+        let grant = &config.to_proto().plugins[0];
+        assert_eq!((grant.name.as_str(), grant.package.as_slice()), ("web", b"package bytes".as_slice()));
+        assert_eq!(plugin_grant::verify(grant, "web-01", &ca.trusted_certs()), Ok(()));
+        assert!(plugin_grant::verify(grant, "app-01", &ca.trusted_certs()).is_err());
+        // Lyon is not a place of the plugin.
+        assert!(store.load("app-01").await.unwrap().unwrap().plugins.is_empty());
+        // Turned off, it is granted nowhere.
+        sqlx::query("UPDATE plugins SET enabled = false").execute(&pool).await.unwrap();
+        assert!(store.load("web-01").await.unwrap().unwrap().plugins.is_empty());
+        // Without a signer, as in tests of other parts, nothing is granted.
+        sqlx::query("UPDATE plugins SET enabled = true").execute(&pool).await.unwrap();
+        assert!(SensorConfigStore::new(pool.clone()).load("web-01").await.unwrap().unwrap().plugins.is_empty());
+    }
 }

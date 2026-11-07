@@ -396,4 +396,54 @@ db_tests! {
             .unwrap();
         assert!(!audit.is_empty() && !audit.iter().any(|d| d.to_string().contains("t-secret-1")));
     }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_check_plugin_is_a_check_where_it_is_turned_on(pool: PgPool) {
+        let root = login(&pool, "root", GrantScope::Global).await;
+        let (acme, acme_site) = customer_with_site(&pool, "acme").await;
+        let (_, other_site) = customer_with_site(&pool, "other").await;
+        let acme_admin = login(&pool, "acme-admin", GrantScope::Customer(acme)).await;
+        let signer = Signer::new();
+        let add = json!({"name": "Acme tools", "public_key": signer.key.to_base64()});
+        json_call(&pool, "POST", "/api/plugins/publishers", &root, Some(add)).await;
+        let file = signer.package("1.0.0", &["{settings.url}"]);
+        let (_, plugin) = file_call(&pool, &format!("/api/plugins?sha256={}", package::hex(&package::sha256(&file))), &root, &file).await;
+        let id = plugin["id"].as_str().unwrap().to_owned();
+        let row = |params: Value| json!({"kind": "plugin", "name": "shop", "interval_ms": 60000, "params": params});
+        let rows = format!("/api/sites/{acme_site}/sensor_configs");
+
+        let good = row(json!({"plugin": "web", "url": "https://shop.example"}));
+        let (status, body) = json_call(&pool, "POST", &rows, &acme_admin, Some(good.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("not a check plugin turned on"), "{body}");
+
+        let places = json!({"places": [{"site_id": acme_site}]});
+        json_call(&pool, "PUT", &format!("/api/plugins/{id}/places"), &root, Some(places)).await;
+        let (status, created) = json_call(&pool, "POST", &rows, &acme_admin, Some(good.clone())).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        for (params, expected) in [
+            (json!({"plugin": "web"}), "Address is required"),
+            (json!({"plugin": "web", "url": "ftp://x"}), "Address"),
+            (json!({"plugin": "web", "url": "https://x.example", "other": 1}), "not a setting"),
+            (json!({"url": "https://x.example"}), "must name a check plugin"),
+        ] {
+            let mut ask = row(params);
+            ask["name"] = json!("shop_two");
+            let (status, body) = json_call(&pool, "POST", &rows, &acme_admin, Some(ask)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{expected}");
+            assert!(body["error"].as_str().unwrap().contains(expected), "{expected}: {body}");
+        }
+        // Another site of another customer is not a place of it.
+        let other = format!("/api/sites/{other_site}/sensor_configs");
+        let (status, _) = json_call(&pool, "POST", &other, &root, Some(good)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        // A disabled row only removes a check, so it needs no plugin.
+        let mut off = row(json!({"plugin": "gone"}));
+        off["enabled"] = json!(false);
+        off["name"] = json!("old");
+        assert_eq!(json_call(&pool, "POST", &rows, &acme_admin, Some(off)).await.0, StatusCode::CREATED);
+        let update = format!("/api/sensor_configs/{}", created["id"].as_str().unwrap());
+        let changed = row(json!({"plugin": "web", "url": "https://other.example"}));
+        assert_eq!(json_call(&pool, "PUT", &update, &acme_admin, Some(changed)).await.0, StatusCode::OK);
+    }
 }

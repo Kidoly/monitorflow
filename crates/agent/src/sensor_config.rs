@@ -15,12 +15,15 @@ use std::time::Duration;
 
 use monitorflow_common::config::AgentSensorsConfig;
 use monitorflow_common::proto::v1::{SensorConfig, SensorConfigAck, SensorSpec, SensorSpecError};
+use monitorflow_plugin::manifest::CHECK_KIND;
 use monitorflow_sensors::registry::Local;
 use monitorflow_sensors::{
     self as sensors, Sample, Scheduler, SchedulerOptions, Sensor, SensorError,
 };
 use prost::Message;
 use tokio::sync::{mpsc, watch};
+
+use crate::plugins::PluginChecks;
 
 /// File in `data_dir` holding the last configuration received.
 pub const FILE_NAME: &str = "sensor-config.pb";
@@ -54,6 +57,10 @@ impl FactoryError {
 /// Builds sensor implementations by kind. The agent uses [`Builtin`];
 /// tests plug in fakes.
 pub trait SensorFactory: Send + Sync + 'static {
+    /// Takes what the whole configuration gives before its specs are
+    /// built: the check plugins granted (ADR-0103).
+    fn prepare(&self, _config: &SensorConfig) {}
+
     fn build(
         &self,
         kind: &str,
@@ -63,14 +70,24 @@ pub trait SensorFactory: Send + Sync + 'static {
 
 /// The built-in sensors of [`sensors::registry`] (ADR-0015), within the
 /// limits of the agent's own configuration (ADR-0024).
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Builtin {
     local: Local,
+    /// Runs sensors of kind `plugin`; without it they are refused.
+    plugins: Option<Arc<PluginChecks>>,
 }
 
 impl Builtin {
     pub fn new(local: Local) -> Self {
-        Self { local }
+        Self {
+            local,
+            plugins: None,
+        }
+    }
+
+    pub fn with_plugins(mut self, plugins: Arc<PluginChecks>) -> Self {
+        self.plugins = Some(plugins);
+        self
     }
 
     /// The limits set by the `[sensors]` section of the agent's config,
@@ -98,11 +115,25 @@ pub fn local(config: &AgentSensorsConfig) -> Local {
 }
 
 impl SensorFactory for Builtin {
+    fn prepare(&self, config: &SensorConfig) {
+        if let Some(plugins) = &self.plugins {
+            plugins.prepare(&config.plugins);
+        }
+    }
+
     fn build(
         &self,
         kind: &str,
         config: &sensors::SensorConfig,
     ) -> Result<Arc<dyn Sensor>, FactoryError> {
+        if kind == CHECK_KIND {
+            return match &self.plugins {
+                Some(plugins) => plugins.build(config),
+                None => Err(FactoryError::Refused(
+                    "this agent runs no plugin checks".into(),
+                )),
+            };
+        }
         sensors::registry::build_local(kind, &config.params, &self.local).map_err(|error| {
             match error {
                 sensors::BuildError::UnknownKind(kind) => FactoryError::UnknownKind(kind),
@@ -244,6 +275,7 @@ pub fn build(
 ) -> (Scheduler, Vec<Down>) {
     let mut scheduler = Scheduler::new(options);
     let mut down = Vec::new();
+    factory.prepare(config);
     for spec in &config.sensors {
         let sensor_config = sensor_config(spec);
         // Validate before the factory sees it; `add` checks duplicates.
@@ -394,6 +426,7 @@ mod tests {
         let mut bad_param = spec("fake", "bad_param", 10_000);
         bad_param.params.insert("fail".into(), "1".into());
         let config = SensorConfig {
+            plugins: Vec::new(),
             revision: 3,
             sensors: vec![
                 spec("fake", "good", 10_000),
@@ -526,6 +559,7 @@ mod tests {
         let file = ConfigFile::in_dir(&dir.path().join("sub"));
         assert_eq!(file.load().await, None);
         let config = SensorConfig {
+            plugins: Vec::new(),
             revision: 9,
             sensors: vec![spec("fake", "good", 10_000)],
         };
