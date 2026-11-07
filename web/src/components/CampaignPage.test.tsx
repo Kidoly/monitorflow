@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { CSRF_HEADER } from "@/lib/api";
-import { customerAdmin, me } from "@/test/admin";
+import { customerAdmin, me, single } from "@/test/admin";
 import { CAMPAIGN_ID, WEB1, detail } from "@/test/campaigns";
 import { requestHeaders, stubFetch } from "@/test/fetch";
 
@@ -30,6 +30,14 @@ describe("CampaignPage", () => {
     expect(within(screen.getByRole("region", { name: "Batch 2" })).getByText("Pending", { selector: "td span" })).toBeInTheDocument();
     expect(within(first).getByRole("progressbar", { name: "Batch 1 progress" })).toHaveAttribute("value", "0");
     expect(screen.getByRole("group", { name: "Servers by status" })).toHaveTextContent("In progress1");
+    expect(screen.getByText("Customer")).toBeInTheDocument();
+  });
+
+  it("names no customer for a single company or a customer's user (ADR-0104)", async () => {
+    stubFetch({ [`GET ${PATH}`]: { status: 200, body: detail() } });
+    render(<CampaignPage id={CAMPAIGN_ID} me={single(customerAdmin)} />);
+    expect(await screen.findByRole("heading", { level: 1, name: "October updates" })).toBeInTheDocument();
+    expect(screen.queryByText("Customer")).not.toBeInTheDocument();
   });
 
   it("offers the actions the state allows and applies their answer", async () => {

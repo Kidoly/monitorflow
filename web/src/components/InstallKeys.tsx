@@ -9,6 +9,8 @@ import { StatusLabel } from "@/components/ui/StatusLabel";
 import { formatAgo } from "@/components/ui/time";
 import { type CreatedInstallKey, type InstallKey, type PendingHost, type Site, api, describeError } from "@/lib/api";
 import { formatWhen } from "@/lib/clock";
+import { placeLabel } from "@/lib/customers";
+import { useMultiCustomer } from "@/lib/me";
 
 import styles from "./AdminPages.module.css";
 
@@ -40,6 +42,7 @@ export function CreateInstallKey({
   onCreated: (key: CreatedInstallKey) => void;
 }) {
   const titleId = useId();
+  const multiCustomer = useMultiCustomer();
   const [siteId, setSiteId] = useState("");
   const [ttl, setTtl] = useState(30 * DAY);
   const [limit, setLimit] = useState("");
@@ -83,7 +86,7 @@ export function CreateInstallKey({
           <select className={fieldClass} value={siteId || sites[0]?.id} onChange={(e) => setSiteId(e.target.value)}>
             {sites.map((site) => (
               <option key={site.id} value={site.id}>
-                {site.customer_name} › {site.name}
+                {placeLabel(site.customer_name, site.name, multiCustomer)}
               </option>
             ))}
           </select>
@@ -223,8 +226,9 @@ export function InstallKeyTable({
   onChange: () => void;
 }) {
   const titleId = useId();
+  const multiCustomer = useMultiCustomer();
   const columns: Column<InstallKey>[] = [
-    { key: "site", header: "Site", cell: (key) => `${key.customer_name} › ${key.site_name}` },
+    { key: "site", header: "Site", cell: (key) => placeLabel(key.customer_name, key.site_name, multiCustomer) },
     {
       key: "hosts",
       header: "Installed on",

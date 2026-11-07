@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type Command, type EffectiveSensors, type ServerDetail, setUnauthorizedHandler } from "@/lib/api";
-import { As, customerAdmin, me } from "@/test/admin";
+import { As, customerAdmin, me, single } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { incident } from "@/test/incidents";
 import { setUrl } from "@/test/navigation";
@@ -133,6 +133,18 @@ describe("ServerPage", () => {
     setUrl(`/servers/view/?id=${ID}`);
   });
   afterEach(() => vi.useRealTimers());
+
+  it("names the site alone for a single company or a customer's user (ADR-0104)", async () => {
+    stubFetch(routes());
+    render(
+      <As user={single(customerAdmin)}>
+        <ServerPage id={ID} />
+      </As>,
+    );
+    await heading();
+    expect(document.querySelector("dl")!).toHaveTextContent(/Site\s*paris\s*Last seen/);
+    expect(document.querySelector("dl")!).not.toHaveTextContent("acme");
+  });
 
   it("shows the facts and the sensors, problems first", async () => {
     stubFetch(routes());

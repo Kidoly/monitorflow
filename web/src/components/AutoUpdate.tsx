@@ -13,7 +13,7 @@ import {
   api,
   describeError,
 } from "@/lib/api";
-import { administersEverything, useMe } from "@/lib/me";
+import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
 import { SITES_PATH } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -262,13 +262,14 @@ function Settings({
 }
 
 function Sites({ sites, label, what }: { sites: AutoUpdateSite[]; label: string; what: string }) {
+  const multiCustomer = useMultiCustomer();
   const columns: Column<AutoUpdateSite>[] = [
     {
       key: "site",
       header: "Site",
       cell: (s) => (
         <>
-          <strong>{s.name}</strong> <span className={styles.dim}>· {s.customer_name}</span>
+          <strong>{s.name}</strong> {multiCustomer && <span className={styles.dim}>· {s.customer_name}</span>}
         </>
       ),
     },

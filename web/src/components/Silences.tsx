@@ -3,7 +3,8 @@
 import { type FormEvent, useCallback, useState } from "react";
 
 import { type Silence, type SilenceRequest, type SilenceScope, api, describeError, isUnauthorized } from "@/lib/api";
-import { administersEverything, modifiesCustomer, modifiesSite, useMe } from "@/lib/me";
+import { customerWide } from "@/lib/customers";
+import { administersEverything, modifiesCustomer, modifiesSite, useMe, useMultiCustomer } from "@/lib/me";
 import { useScope } from "@/lib/scope";
 import { DEFAULT_REASON, MAX_DAYS, fromLocalInput, inOneHour, silenceTitle, tomorrowMorning } from "@/lib/silences";
 import { usePolledData } from "@/lib/usePolledData";
@@ -101,6 +102,7 @@ function SilenceForm({
 
 /** "End now" or, before it starts, "Call off"; the list refreshes after. */
 function EndSilence({ silence, onEnded }: { silence: Silence; onEnded: () => void }) {
+  const multiCustomer = useMultiCustomer();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function end() {
@@ -116,7 +118,7 @@ function EndSilence({ silence, onEnded }: { silence: Silence; onEnded: () => voi
   }
   return (
     <>
-      <Button size="small" disabled={busy} onClick={() => void end()} aria-label={`End the silence of ${silenceTitle(silence)}`}>
+      <Button size="small" disabled={busy} onClick={() => void end()} aria-label={`End the silence of ${silenceTitle(silence, multiCustomer)}`}>
         {silence.active ? "End now" : "Call off"}
       </Button>
       {error && <span role="alert"> {error}</span>}
@@ -134,6 +136,7 @@ function because(silence: Silence): string {
  * operators of its site silence it from here in one click.
  */
 export function SilenceBar({ target }: { target: SilenceTarget }) {
+  const multiCustomer = useMultiCustomer();
   const me = useMe();
   const { scope, id, name } = target;
   const key = scope === "server" ? "server_id" : scope === "relay" ? "relay_id" : "site_id";
@@ -175,7 +178,7 @@ export function SilenceBar({ target }: { target: SilenceTarget }) {
           <ul className={styles.lines}>
             {active.map((s) => (
               <li key={s.id}>
-                {s.scope === scope ? "" : `With ${silenceTitle(s)}: `}
+                {s.scope === scope ? "" : `With ${silenceTitle(s, multiCustomer)}: `}
                 {because(s)}, until {formatDay(new Date(s.ends_at), now)}. {s.can_end && <EndSilence silence={s} onEnded={refresh} />}
               </li>
             ))}
@@ -184,7 +187,7 @@ export function SilenceBar({ target }: { target: SilenceTarget }) {
       )}
       {upcoming.map((s) => (
         <Banner key={s.id} tone="plain">
-          Silence planned{s.scope === scope ? "" : ` with ${silenceTitle(s)}`} from {formatDay(new Date(s.starts_at), now)} to{" "}
+          Silence planned{s.scope === scope ? "" : ` with ${silenceTitle(s, multiCustomer)}`} from {formatDay(new Date(s.starts_at), now)} to{" "}
           {formatDay(new Date(s.ends_at), now)}: {because(s)}. {s.can_end && <EndSilence silence={s} onEnded={refresh} />}
         </Banner>
       ))}
@@ -224,13 +227,21 @@ async function loadChoices(signal: AbortSignal) {
 /** Choosing anything that can be silenced, for what has no page of its own. */
 function NewSilence({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
   const me = useMe();
+  const multiCustomer = useMultiCustomer();
+  const everything = administersEverything(me);
   const { data } = usePolledData(loadChoices);
   const [value, setValue] = useState("");
   const choices: Choice[] = [
-    ...(administersEverything(me) ? [{ value: "all", label: "Everything", scope: "all" as const }] : []),
+    ...(everything ? [{ value: "all", label: "Everything", scope: "all" as const }] : []),
+    // For a single company, Everything says it all; a customer's user gets "All sites" (ADR-0104).
     ...(data?.customers ?? [])
-      .filter((c) => modifiesCustomer(me, c.id))
-      .map((c) => ({ value: `customer/${c.id}`, label: `Customer ${c.name}`, scope: "customer" as const, id: c.id })),
+      .filter((c) => modifiesCustomer(me, c.id) && (multiCustomer || !everything))
+      .map((c) => ({
+        value: `customer/${c.id}`,
+        label: customerWide(`Customer ${c.name}`, multiCustomer),
+        scope: "customer" as const,
+        id: c.id,
+      })),
     ...(data?.sites ?? [])
       .filter((s) => modifiesSite(me, s.customer_id, s.id))
       .map((s) => ({ value: `site/${s.id}`, label: `Site ${s.name}`, scope: "site" as const, id: s.id })),
@@ -272,6 +283,7 @@ const load = (signal: AbortSignal) => api.silences({}, signal);
 /** `/silences/`: what is silenced now and what is planned, for the sites the user sees. */
 export function SilencesPage() {
   const me = useMe();
+  const multiCustomer = useMultiCustomer();
   const scope = useScope();
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(load);
   const [adding, setAdding] = useState(false);
@@ -284,7 +296,7 @@ export function SilencesPage() {
   );
   const canSilence = me?.roles.some((grant) => grant.role !== "viewer") ?? false;
   const columns: Column<Silence>[] = [
-    { key: "what", header: "What", cell: (s) => silenceTitle(s) },
+    { key: "what", header: "What", cell: (s) => silenceTitle(s, multiCustomer) },
     {
       key: "state",
       header: "State",

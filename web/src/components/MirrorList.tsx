@@ -4,7 +4,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 
 import { ApiError, type Mirror, type MirrorRunSummary, api, describeError } from "@/lib/api";
-import { administersEverything, useMe } from "@/lib/me";
+import { administersEverything, multiCustomer, useMe } from "@/lib/me";
 import { describeMirror, intervalText, nextSync, retentionText, shortTime } from "@/lib/mirrors";
 import { mirrorHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
@@ -102,7 +102,7 @@ export function MirrorListPage() {
   if (!administersEverything(me)) {
     return (
       <NoPermission title="Mirrors need a global administrator">
-        Mirrors are shared by every customer. Ask a global administrator for a role.
+        Mirrors are shared by {multiCustomer(me) ? "every customer" : "all sites"}. Ask a global administrator for a role.
       </NoPermission>
     );
   }

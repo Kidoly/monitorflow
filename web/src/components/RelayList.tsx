@@ -10,7 +10,7 @@ import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { type Me, type Relay, api, describeError } from "@/lib/api";
 import { certificateProblem, certificateState } from "@/lib/certificates";
-import { administersCustomer } from "@/lib/me";
+import { administersCustomer, multiCustomer } from "@/lib/me";
 import { relayHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -53,7 +53,7 @@ export function RelayList({ me }: { me: Me }) {
         <PrimaryCell
           title={relay.peer_id}
           href={relayHref(relay.id)}
-          sub={[relay.site_name, relay.customer_name, relay.relay_version && `relay ${relay.relay_version}`]
+          sub={[relay.site_name, multiCustomer(me) && relay.customer_name, relay.relay_version && `relay ${relay.relay_version}`]
             .filter(Boolean)
             .join(" · ")}
         />

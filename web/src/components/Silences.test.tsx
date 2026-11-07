@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Silence } from "@/lib/api";
 import { DEFAULT_REASON, tomorrowMorning } from "@/lib/silences";
-import { As, customerAdmin, me, viewer } from "@/test/admin";
+import { As, customerAdmin, me, single, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 
 import { SilenceBar, SilencesPage, type SilenceTarget } from "./Silences";
@@ -244,5 +244,33 @@ describe("SilencesPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Silence" }));
     const body = bodyOf(fetchMock.mock.calls.find((c) => c[1]?.method === "POST"));
     expect(body).toMatchObject({ scope: "site", target_id: "site-1" });
+  });
+
+  it("names no customer for a single company or a customer's user (ADR-0104)", async () => {
+    const own = {
+      ...choices,
+      "GET /api/customers": { status: 200, body: { customers: [{ id: "c1", name: "acme", site_count: 1 }] } },
+    };
+    for (const [user, expected] of [
+      [single(me({ role: "administrator", customer_id: null, site_id: null })), ["Choose…", "Everything", "Site paris"]],
+      [single(customerAdmin), ["Choose…", "All sites", "Site paris"]],
+    ] as const) {
+      stubFetch({
+        "GET /api/silences": { status: 200, body: { silences: [silence({ scope: "customer", target_id: "c1", target_name: "acme" })] } },
+        ...own,
+      });
+      const { unmount } = render(
+        <As user={user}>
+          <SilencesPage />
+        </As>,
+      );
+      expect(await screen.findByRole("cell", { name: "all sites" })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "New silence" }));
+      const what = await screen.findByRole("combobox", { name: "What" });
+      await within(what).findByRole("option", { name: "Site paris" });
+      expect(within(what).getAllByRole("option").map((o) => o.textContent)).toEqual(expected);
+      expect(document.body).not.toHaveTextContent(/customer|acme/i);
+      unmount();
+    }
   });
 });

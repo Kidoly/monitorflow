@@ -112,6 +112,7 @@ describe("dashboards", () => {
   it("say who they are shared with in words", () => {
     expect(sharingLabel({ kind: "personal" })).toBe("Only me");
     expect(sharingLabel({ kind: "site", id: "1", name: "paris" })).toBe("Site paris");
+    expect(sharingLabel({ kind: "customer", id: "1", name: "acme" }, false)).toBe("All sites");
     expect(sharingLabel({ kind: "customer", id: "1", name: "acme" })).toBe("Customer acme");
     expect(withinOf({ kind: "personal" })).toEqual({ kind: "all" });
     expect(withinOf({ kind: "site", id: "1" })).toEqual({ kind: "site", id: "1" });

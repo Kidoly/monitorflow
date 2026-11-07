@@ -14,7 +14,7 @@ import {
   progressSentence,
   stepExplanation,
 } from "@/lib/certificateAuthority";
-import { administersEverything, useMe } from "@/lib/me";
+import { administersEverything, multiCustomer, useMe } from "@/lib/me";
 import { TOKENS_PATH } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -38,7 +38,8 @@ export function CertificateAuthorityPage() {
   if (!administersEverything(me)) {
     return (
       <NoPermission title={TITLE}>
-        It gives every server and relay of every customer its certificate. Ask a global administrator for a role.
+        It gives every server and relay{multiCustomer(me) && " of every customer"} its certificate. Ask a global administrator for a
+        role.
       </NoPermission>
     );
   }

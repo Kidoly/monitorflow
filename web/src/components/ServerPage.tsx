@@ -22,7 +22,7 @@ import { metricsError } from "@/lib/charts";
 import { aiCommands, aiSwitch, commandSummary, unsupportedReason } from "@/lib/commandKinds";
 import { isActive } from "@/lib/commands";
 import { formatOs } from "@/lib/format";
-import { administersCustomer, administersSite, modifiesSite, useMe } from "@/lib/me";
+import { administersCustomer, administersSite, modifiesSite, multiCustomer, useMe } from "@/lib/me";
 import { serverHref, siteHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { type SensorValues, primaryMetric, sensorRows } from "@/lib/sensors";
@@ -461,7 +461,8 @@ function ServerFacts({
           label: "Site",
           value: (
             <>
-              <Link href={siteHref(server.site_id)}>{server.site_name}</Link> · {server.customer_name}
+              <Link href={siteHref(server.site_id)}>{server.site_name}</Link>
+              {multiCustomer(me) && ` · ${server.customer_name}`}
             </>
           ),
         },

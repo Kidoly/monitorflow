@@ -35,7 +35,8 @@ import {
   relayInstallCommand,
   windowsInstallCommand,
 } from "@/lib/install";
-import { administersCustomer, administersEverything } from "@/lib/me";
+import { placeLabel } from "@/lib/customers";
+import { administersCustomer, administersEverything, multiCustomer } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
 
 import { AdminLayout } from "./AdminLayout";
@@ -79,9 +80,15 @@ export function TokensAdmin({ me }: { me: Me }) {
 
   if (!allowed) {
     return (
-      <NoPermission title="Adding servers needs a customer administrator role.">
-        An administrator role on a whole customer is needed; a site administrator role is not enough.
-      </NoPermission>
+      multiCustomer(me) ? (
+        <NoPermission title="Adding servers needs a customer administrator role.">
+          An administrator role on a whole customer is needed; a site administrator role is not enough.
+        </NoPermission>
+      ) : (
+        <NoPermission title="Adding servers needs an administrator role on all sites.">
+          A site administrator role is not enough.
+        </NoPermission>
+      )
     );
   }
   const administered = data?.sites.filter((site) => administersCustomer(me, site.customer_id)) ?? [];
@@ -251,7 +258,7 @@ function CreateToken({
           <select className={fieldClass} value={siteId || sites[0]?.id} onChange={(e) => setSiteId(e.target.value)}>
             {sites.map((site) => (
               <option key={site.id} value={site.id}>
-                {site.customer_name} › {site.name}
+                {placeLabel(site.customer_name, site.name, multiCustomer(me))}
               </option>
             ))}
           </select>

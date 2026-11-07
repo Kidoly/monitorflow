@@ -15,7 +15,7 @@ import {
   describeError,
 } from "@/lib/api";
 import { CAMPAIGN_STATES, SERVER_STATUSES, campaignSubline, canAct, isFinal, shortWindow } from "@/lib/campaigns";
-import { administersCustomer, readsCustomers, useMe } from "@/lib/me";
+import { administersCustomer, multiCustomer, readsCustomers, useMe } from "@/lib/me";
 import { shortTime } from "@/lib/mirrors";
 import { NEW_CAMPAIGN_PATH, campaignHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -106,9 +106,13 @@ async function fetchListing(signal: AbortSignal): Promise<Listing> {
 export function CampaignListPage() {
   const me = useMe();
   if (!readsCustomers(me)) {
-    return (
+    return multiCustomer(me) ? (
       <NoPermission title="Campaigns need a customer role">
         Campaigns span sites: they need a role on a whole customer. Ask an administrator for one.
+      </NoPermission>
+    ) : (
+      <NoPermission title="Campaigns need a role on all sites">
+        Campaigns span sites: a role on one site is not enough. Ask an administrator for one.
       </NoPermission>
     );
   }
@@ -194,7 +198,7 @@ function CampaignList() {
         <PrimaryCell
           title={c.name}
           href={campaignHref(c.id)}
-          sub={customers.size > 1 ? `${c.customer_name} · ${campaignSubline(c)}` : campaignSubline(c)}
+          sub={multiCustomer(me) && customers.size > 1 ? `${c.customer_name} · ${campaignSubline(c)}` : campaignSubline(c)}
         />
       ),
     },

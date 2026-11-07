@@ -6,7 +6,8 @@ import { type FormEvent, useEffect, useId, useState } from "react";
 import { Button, fieldClass } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { type CreatedInstallKey, type Me, type Relay, type Site, api, describeError } from "@/lib/api";
-import { administersCustomer, administersEverything } from "@/lib/me";
+import { placeLabel } from "@/lib/customers";
+import { administersCustomer, administersEverything, multiCustomer } from "@/lib/me";
 import { SITES_PATH, relayHref } from "@/lib/routes";
 
 import styles from "./AdminPages.module.css";
@@ -68,7 +69,7 @@ export function AddRelay({ me, onDone }: { me: Me; onDone: () => void }) {
             <select className={fieldClass} value={siteId || sites?.[0]?.id} onChange={(e) => setSiteId(e.target.value)}>
               {sites?.map((site) => (
                 <option key={site.id} value={site.id}>
-                  {site.customer_name} › {site.name}
+                  {placeLabel(site.customer_name, site.name, multiCustomer(me))}
                 </option>
               ))}
             </select>

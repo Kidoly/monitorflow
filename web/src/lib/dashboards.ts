@@ -183,15 +183,15 @@ export function withinOf(sharing: Sharing): Within {
   return sharing.kind === "personal" ? { kind: "all" } : { kind: sharing.kind, id: sharing.id };
 }
 
-/** "Only me", "Site paris", "Customer acme". */
-export function sharingLabel(sharing: Sharing & { name?: string }): string {
+/** "Only me", "Site paris", "Customer acme" ("All sites" for a single company, ADR-0104). */
+export function sharingLabel(sharing: Sharing & { name?: string }, multiCustomer = true): string {
   switch (sharing.kind) {
     case "personal":
       return "Only me";
     case "site":
       return `Site ${sharing.name ?? ""}`.trim();
     case "customer":
-      return `Customer ${sharing.name ?? ""}`.trim();
+      return multiCustomer ? `Customer ${sharing.name ?? ""}`.trim() : "All sites";
   }
 }
 

@@ -16,6 +16,7 @@ import {
   suggestedTitle,
   withKind,
 } from "@/lib/dashboards";
+import { useMultiCustomer } from "@/lib/me";
 import { metricTitle, shortMetric } from "@/lib/metrics";
 import { Button, fieldClass } from "@/components/ui/Button";
 
@@ -78,6 +79,7 @@ export function PanelForm({
   onDone: (panel: Panel) => void;
   onCancel: () => void;
 }) {
+  const multiCustomer = useMultiCustomer();
   const id = useId();
   const [draft, setDraft] = useState(initial);
   const [titleTyped, setTitleTyped] = useState(!isNew && initial.title !== suggestedTitle(initial));
@@ -116,7 +118,7 @@ export function PanelForm({
     event.preventDefault();
     if (panel.servers.kind === "list" && panel.servers.ids.length === 0) return setError("Choose at least one server.");
     if (panel.servers.kind === "list" && panel.servers.ids.length > MAX_NAMED_SERVERS) {
-      return setError(`Choose at most ${MAX_NAMED_SERVERS} servers, or a site or customer.`);
+      return setError(`Choose at most ${MAX_NAMED_SERVERS} servers, or ${multiCustomer ? "a site or customer" : "a site"}.`);
     }
     if (!panel.title.trim()) return setError("Give the panel a title.");
     onDone({ ...panel, title: panel.title.trim() });
@@ -129,7 +131,7 @@ export function PanelForm({
   const serverChoices: [ServersChoice, string][] = [
     ["all", within.kind === "all" ? "Every server" : "Every server of this dashboard"],
     ...(within.kind !== "site" && places.sites.length > 1 ? [["site", "One site"] as [ServersChoice, string]] : []),
-    ...(within.kind === "all" && places.customers.length > 1 ? [["customer", "One customer"] as [ServersChoice, string]] : []),
+    ...(multiCustomer && within.kind === "all" && places.customers.length > 1 ? [["customer", "One customer"] as [ServersChoice, string]] : []),
     ["list", "Chosen servers"],
   ];
 

@@ -1,9 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { CSRF_HEADER, type Incident, type RelayDetail, type Server } from "@/lib/api";
-import { As, customerAdmin, relay, siteAdmin } from "@/test/admin";
+import { As, customerAdmin, relay, single, siteAdmin } from "@/test/admin";
 import { requestHeaders, stubFetch } from "@/test/fetch";
 
 import { RelayPage } from "./RelayPage";
@@ -124,6 +124,12 @@ describe("RelayPage", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "relay-1" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Relays/relay-1");
     expect(screen.getByText("Site").nextElementSibling).toHaveTextContent("paris · acme");
+    cleanup();
+
+    // A single company, or a customer's user, reads the site alone (ADR-0104).
+    render(<RelayPage id={ID} me={single(siteAdmin)} />);
+    expect(await screen.findByRole("heading", { level: 1, name: "relay-1" })).toBeInTheDocument();
+    expect(screen.getByText("Site").nextElementSibling).toHaveTextContent(/^paris$/);
     expect(screen.getByText("Certificate serial").nextElementSibling).toHaveTextContent("0a1b2c");
 
     const attached = screen.getByRole("region", { name: "Servers connecting through relay-1" });

@@ -17,7 +17,7 @@ import {
 } from "@/lib/api";
 import { canAct, describeSources, describeThreshold, describeUpdate, describeWindow, isFinal } from "@/lib/campaigns";
 import { formatDateTime } from "@/lib/format";
-import { administersCustomer, readsCustomers, useMe } from "@/lib/me";
+import { administersCustomer, multiCustomer, readsCustomers, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH, serverHref } from "@/lib/routes";
 import { usePolling } from "@/lib/usePolling";
 import { UUID } from "@/lib/uuid";
@@ -39,9 +39,13 @@ export function CampaignView() {
   const id = useSearchParams().get("id");
   const me = useMe();
   if (!me || !readsCustomers(me)) {
-    return (
+    return multiCustomer(me) ? (
       <NoPermission title="Campaigns need a customer role">
         Campaigns need a role on a whole customer. Ask an administrator for one.
+      </NoPermission>
+    ) : (
+      <NoPermission title="Campaigns need a role on all sites">
+        A role on one site is not enough. Ask an administrator for one.
       </NoPermission>
     );
   }
@@ -91,7 +95,7 @@ export function CampaignPage({ id, me }: { id: string | null; me: Me }) {
   }
   const { progress } = campaign;
   const facts = [
-    { label: "Customer", value: campaign.customer_name },
+    ...(multiCustomer(me) ? [{ label: "Customer", value: campaign.customer_name }] : []),
     { label: "Update", value: describeUpdate(campaign.spec, campaign.agent_version) },
     { label: "Stops at", value: describeThreshold(campaign.failure_threshold) },
     {

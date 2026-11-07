@@ -24,8 +24,8 @@ export function fromLocalInput(value: string): Date | null {
   return value && !Number.isNaN(date.getTime()) ? date : null;
 }
 
-/** "web-1", "site paris", "customer acme", "everything". */
-export function silenceTitle(silence: Pick<Silence, "scope" | "target_name">): string {
+/** "web-1", "site paris", "customer acme" ("all sites" for a single company, ADR-0104), "everything". */
+export function silenceTitle(silence: Pick<Silence, "scope" | "target_name">, multiCustomer = true): string {
   const name = silence.target_name ?? "";
   switch (silence.scope) {
     case "server":
@@ -35,7 +35,7 @@ export function silenceTitle(silence: Pick<Silence, "scope" | "target_name">): s
     case "site":
       return `site ${name}`;
     case "customer":
-      return `customer ${name}`;
+      return multiCustomer ? `customer ${name}` : "all sites";
     case "all":
       return "everything";
   }

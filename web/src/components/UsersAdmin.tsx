@@ -22,7 +22,8 @@ import {
   describeError,
   passwordLinkUrl,
 } from "@/lib/api";
-import { administersEverything } from "@/lib/me";
+import { ALL_SITES, placeLabel } from "@/lib/customers";
+import { administersEverything, multiCustomer, useMultiCustomer } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
 
 import { AdminLayout } from "./AdminLayout";
@@ -58,21 +59,33 @@ async function load(signal: AbortSignal): Promise<Data> {
   return { ...names, users };
 }
 
-/** "administrator · everything", "operator · Acme Hosting", "viewer · Acme › lyon-office". */
-export function describeGrant(grant: RoleGrant, names: Names | undefined): string {
-  return `${grant.role} · ${describeScope(grant, names)}`;
+/**
+ * "administrator · everything", "operator · Acme Hosting", "viewer · Acme ›
+ * lyon-office"; without customers (ADR-0104), "operator · all sites" and
+ * "viewer · lyon-office".
+ */
+export function describeGrant(grant: RoleGrant, names: Names | undefined, multiCustomer = true): string {
+  return `${grant.role} · ${describeScope(grant, names, multiCustomer)}`;
 }
 
-function describeScope(grant: { customer_id?: string | null; site_id?: string | null }, names: Names | undefined) {
+function describeScope(
+  grant: { customer_id?: string | null; site_id?: string | null },
+  names: Names | undefined,
+  multiCustomer: boolean,
+) {
   if (grant.site_id) {
     const site = names?.sites.find((s) => s.id === grant.site_id);
-    return site ? `${site.customer_name} › ${site.name}` : "a site";
+    return site ? placeLabel(site.customer_name, site.name, multiCustomer) : "a site";
   }
   if (grant.customer_id) {
+    if (!multiCustomer) return ALL_SITES.toLowerCase();
     return names?.customers.find((c) => c.id === grant.customer_id)?.name ?? "a customer";
   }
   return "everything";
 }
+
+const roleReach = (multiCustomer: boolean) =>
+  multiCustomer ? "A role applies to everything, one customer, or one site" : "A role applies to everything or to one site";
 
 const ROLES: { role: Role; hint: string }[] = [
   { role: "viewer", hint: "Sees servers, metrics and incidents." },
@@ -106,6 +119,12 @@ function GrantFields({
   onRole: (role: Role) => void;
   onScope: (scope: string) => void;
 }) {
+  const multiCustomer = useMultiCustomer();
+  const siteOption = (site: Site) => (
+    <option key={site.id} value={`s:${site.id}`}>
+      Site {site.name}
+    </option>
+  );
   return (
     <>
       <label className={styles.field}>
@@ -122,18 +141,15 @@ function GrantFields({
         On
         <select className={fieldClass} value={scope} onChange={(e) => onScope(e.target.value)}>
           <option value="">Everything</option>
-          {names.customers.map((customer) => (
-            <optgroup key={customer.id} label={customer.name}>
-              <option value={`c:${customer.id}`}>All of {customer.name}</option>
-              {names.sites
-                .filter((site) => site.customer_id === customer.id)
-                .map((site) => (
-                  <option key={site.id} value={`s:${site.id}`}>
-                    Site {site.name}
-                  </option>
-                ))}
-            </optgroup>
-          ))}
+          {/* A single company has everything and its sites (ADR-0104). */}
+          {!multiCustomer && names.sites.map(siteOption)}
+          {multiCustomer &&
+            names.customers.map((customer) => (
+              <optgroup key={customer.id} label={customer.name}>
+                <option value={`c:${customer.id}`}>All of {customer.name}</option>
+                {names.sites.filter((site) => site.customer_id === customer.id).map(siteOption)}
+              </optgroup>
+            ))}
         </select>
       </label>
     </>
@@ -326,7 +342,7 @@ export function UsersAdmin({ me }: { me: Me }) {
           <span className={styles.dim}>No role: sees nothing</span>
         ) : (
           user.roles.map((grant) => {
-            const text = describeGrant(grant, data);
+            const text = describeGrant(grant, data, multiCustomer(me));
             return (
               <span key={text} className={styles.grant}>
                 {text}
@@ -348,7 +364,7 @@ export function UsersAdmin({ me }: { me: Me }) {
   const others = data?.users.filter((user) => user.id !== me.id).length ?? 0;
   return (
     <div className={styles.page}>
-      <PageHeader title="Users and roles" meta="A role applies to everything, one customer, or one site" />
+      <PageHeader title="Users and roles" meta={roleReach(multiCustomer(me))} />
       {stale && updatedAt && (
         <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />
       )}
@@ -456,12 +472,12 @@ function OwnAccount({ me }: { me: Me }) {
       key: "grants",
       header: "Grants",
       className: styles.wrap,
-      cell: (user) => user.roles.map((grant) => describeGrant(grant, data)).join("  ·  ") || "No role",
+      cell: (user) => user.roles.map((grant) => describeGrant(grant, data, multiCustomer(me))).join("  ·  ") || "No role",
     },
   ];
   return (
     <div className={styles.page}>
-      <PageHeader title="Users and roles" meta="A role applies to everything, one customer, or one site" />
+      <PageHeader title="Users and roles" meta={roleReach(multiCustomer(me))} />
       <DataTable dense label="Users" columns={columns} rows={[me]} rowKey={(user) => user.id} />
       <Banner tone="info">Only an administrator of everything invites users and changes roles. Ask one to add a colleague.</Banner>
     </div>
