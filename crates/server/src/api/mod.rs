@@ -167,6 +167,15 @@
 //! | PUT | `/api/notifications/channels/{id}` | administrator of what it covers | body [`notifications::ChannelRequest`], an empty secret keeps the stored one unless the destination changes; 200 [`notifications::ChannelView`]; 404 for a channel the user does not manage, 403 for a coverage they do not; audited |
 //! | DELETE | `/api/notifications/channels/{id}` | administrator of what it covers | 204; 404 for a channel the user does not manage; audited |
 //! | POST | `/api/notifications/channels/{id}/test` | administrator of what it covers | sends a test now; 200 [`notifications::TestResult`] `{"ok", "error"}`; 404 for a channel the user does not manage |
+//! | GET | `/api/integrations` | any administrator | [`integrations::EndpointList`]: the integration endpoints of what the user administers, without secrets, and every event one can ask for (ADR-0102) |
+//! | POST | `/api/integrations` | administrator of what it covers | body [`integrations::EndpointRequest`]; 201 [`integrations::WithSecret`], the only time the secret is returned; `allow_private` needs a global administrator (403); audited |
+//! | PUT | `/api/integrations/{id}` | administrator of what it covers | body [`integrations::EndpointRequest`]; 200 [`integrations::EndpointView`]; 404 for an endpoint the user does not manage, 403 for a coverage they do not; audited |
+//! | DELETE | `/api/integrations/{id}` | administrator of what it covers | 204; audited |
+//! | POST | `/api/integrations/{id}/state` | administrator of what it covers | body [`integrations::StateRequest`] `{"state": "on" or "paused"}`; 200 [`integrations::EndpointView`]; audited |
+//! | POST | `/api/integrations/{id}/secret` | administrator of what it covers | a new secret; 200 [`integrations::WithSecret`]; audited |
+//! | POST | `/api/integrations/{id}/test` | administrator of what it covers | sends a `test` event now; 200 [`integrations::TestResult`] `{"ok", "status", "error"}` |
+//! | GET | `/api/integrations/{id}/deliveries` | administrator of what it covers | `?before=`; [`integrations::DeliveryList`], newest first |
+//! | POST | `/api/integrations/{id}/replay` | administrator of what it covers | body [`integrations::ReplayRequest`], `event_id` or `from` and `to`; 200 [`integrations::ReplayResult`]; 404 for an event it does not want or cover; audited |
 //!
 //! # Authentication
 //!
@@ -599,6 +608,7 @@ pub mod follow_up;
 mod health;
 pub mod incidents;
 pub mod install_keys;
+pub mod integrations;
 pub mod logs;
 pub mod metrics;
 pub mod mirrors;
@@ -1164,6 +1174,28 @@ pub fn router(state: ApiState) -> Router {
             "/api/notifications/channels/{id}/test",
             post(notifications::test),
         )
+        .route(
+            "/api/integrations",
+            get(integrations::list).post(integrations::create),
+        )
+        .route(
+            "/api/integrations/{id}",
+            put(integrations::update).delete(integrations::delete),
+        )
+        .route(
+            "/api/integrations/{id}/state",
+            post(integrations::set_state),
+        )
+        .route(
+            "/api/integrations/{id}/secret",
+            post(integrations::renew_secret),
+        )
+        .route("/api/integrations/{id}/test", post(integrations::test))
+        .route(
+            "/api/integrations/{id}/deliveries",
+            get(integrations::deliveries),
+        )
+        .route("/api/integrations/{id}/replay", post(integrations::replay))
         .route(
             "/api/servers/{id}/proxmox",
             get(proxmox::get).put(proxmox::set).delete(proxmox::clear),

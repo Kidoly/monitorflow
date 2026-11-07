@@ -515,6 +515,21 @@ impl Ctx {
         .unwrap()
     }
 
+    /// An integration endpoint of `customer`, or for everything when
+    /// `null` (ADR-0102).
+    async fn integration(&self, customer: Value) -> Uuid {
+        let customer = customer.as_str().map(|id| id.parse::<Uuid>().unwrap());
+        sqlx::query_scalar(
+            "INSERT INTO integration_endpoints (name, url, secret, events, customer_id)
+             VALUES ('psa', 'https://psa.example/', 'mfwh_x', '{incident.opened}', $1)
+             RETURNING id",
+        )
+        .bind(customer)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap()
+    }
+
     /// The last query string VictoriaMetrics received.
     fn vm_seen_last(&self) -> String {
         self.vm.seen().pop().unwrap_or_default()
@@ -1056,6 +1071,110 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                     ctx.status(method, path, Some(ask)).await,
                     StatusCode::FORBIDDEN
                 );
+            }
+        }
+        // Integration endpoints (ADR-0102): channels' rules, and B's events
+        // cannot be replayed to A's endpoint.
+        ("GET", "/api/integrations") => {
+            let other = ctx.integration(json!(b.customer)).await;
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!Ctx::mentions(&body, other), "{body}");
+        }
+        ("POST", "/api/integrations") => {
+            let ask = json!({ "name": "psa", "url": "https://psa.example/" });
+            for (field, id) in [("customer_id", b.customer), ("site_id", b.site)] {
+                let mut to_b = ask.clone();
+                to_b[field] = json!(id);
+                assert_eq!(
+                    ctx.status(method, path, Some(to_b)).await,
+                    StatusCode::FORBIDDEN
+                );
+            }
+            assert_eq!(
+                ctx.status(method, path, Some(ask.clone())).await,
+                StatusCode::FORBIDDEN
+            );
+            // Only a global administrator allows private addresses.
+            let mut private = ask;
+            private["customer_id"] = json!(a.customer);
+            private["allow_private"] = json!(true);
+            assert_eq!(
+                ctx.status(method, path, Some(private)).await,
+                StatusCode::FORBIDDEN
+            );
+        }
+        ("PUT", "/api/integrations/{id}")
+        | ("DELETE", "/api/integrations/{id}")
+        | ("POST", "/api/integrations/{id}/state")
+        | ("POST", "/api/integrations/{id}/secret")
+        | ("POST", "/api/integrations/{id}/test")
+        | ("GET", "/api/integrations/{id}/deliveries")
+        | ("POST", "/api/integrations/{id}/replay") => {
+            let ask = json!({ "name": "psa", "url": "https://psa.example/" });
+            let body = match path.rsplit('/').next() {
+                Some("{id}") if method == "PUT" => Some(ask.clone()),
+                Some("state") => Some(json!({ "state": "paused" })),
+                Some("replay") => {
+                    Some(json!({ "from": "2026-01-01T00:00:00Z", "to": "2026-01-02T00:00:00Z" }))
+                }
+                _ => None,
+            };
+            for owner in [json!(b.customer), Value::Null] {
+                let id = ctx.integration(owner).await.to_string();
+                let uri = path.replace("{id}", &id);
+                assert_eq!(ctx.status(method, &uri, body.clone()).await, not_found);
+            }
+            let own = ctx.integration(json!(a.customer)).await.to_string();
+            let uri = path.replace("{id}", &own);
+            if method == "PUT" {
+                // Its own endpoint cannot be handed to B or to everything.
+                let mut to_b = ask.clone();
+                to_b["customer_id"] = json!(b.customer);
+                for body in [ask, to_b] {
+                    assert_eq!(
+                        ctx.status(method, &uri, Some(body)).await,
+                        StatusCode::FORBIDDEN
+                    );
+                }
+            }
+            if path.ends_with("/replay") {
+                // An event of B is not A's to replay.
+                sqlx::query("UPDATE integration_endpoints SET events = '{server.added}' WHERE id = $1::uuid")
+                    .bind(&own)
+                    .execute(&ctx.pool)
+                    .await
+                    .unwrap();
+                let event: Uuid = sqlx::query_scalar(
+                    "INSERT INTO integration_events (event, customer_id, subject, details)
+                     VALUES ('server.added', $1, 'server:b', jsonb_build_object('site',
+                             jsonb_build_object('id', $2::uuid, 'name', 'b')))
+                     RETURNING id",
+                )
+                .bind(b.customer)
+                .bind(b.site)
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+                let ask = json!({ "event_id": event });
+                assert_eq!(ctx.status(method, &uri, Some(ask)).await, not_found);
+                let range = json!({ "from": "2020-01-01T00:00:00Z" });
+                let (status, body) = ctx.call(method, &uri, Some(range)).await;
+                assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+                let range = json!({ "from": chrono::Utc::now() - chrono::TimeDelta::hours(1) });
+                let (status, body) = ctx.call(method, &uri, Some(range)).await;
+                assert_eq!(status, StatusCode::OK, "{body}");
+                let leaked: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM integration_deliveries d
+                     JOIN integration_events v ON v.seq = d.event_seq
+                     WHERE d.endpoint_id = $1::uuid AND v.customer_id = $2",
+                )
+                .bind(&own)
+                .bind(b.customer)
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+                assert_eq!(leaked, 0);
             }
         }
         ("PUT", "/api/notifications/channels/{id}")
