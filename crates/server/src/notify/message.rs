@@ -22,7 +22,8 @@ pub struct Event {
     pub id: i64,
     /// `incident.opened`, `incident.escalated`, `incident.resolved`,
     /// `approval.waiting`, `update.failed`, `backup.failed`,
-    /// `update.available`, `ai_commands.changed`, or `test`.
+    /// `update.available`, `ai_commands.changed`, `integration.disabled`
+    /// (ADR-0102), or `test`.
     pub event: String,
     pub customer_id: Option<Uuid>,
     /// The site named in `details`, `None` when it names none.
@@ -223,6 +224,7 @@ fn path(event: &Event) -> String {
         "ai_commands.changed" => format!("/servers/view/?id={}", id(&["server", "id"])),
         "backup.failed" => "/admin/backups/".into(),
         "update.available" => "/admin/server-update/".into(),
+        "integration.disabled" => crate::integrations::PAGE.into(),
         "update.failed" => match str_at(d, &["update", "kind"]) {
             Some("campaign") => format!("/campaigns/view/?id={}", id(&["update", "campaign_id"])),
             Some("automatic_rollout") => "/admin/updates/".into(),
@@ -269,6 +271,12 @@ pub fn event_text(event: &Event) -> String {
             "MonitorFlow {} is available; this server runs {}",
             str_at(d, &["release", "version"]).unwrap_or("a new release"),
             str_at(d, &["release", "running_version"]).unwrap_or("an older one")
+        ),
+        "integration.disabled" => format!(
+            "Integration {} was turned off: nothing reached {} for a day. Last error: {}",
+            str_at(d, &["integration", "name"]).unwrap_or("an integration"),
+            str_at(d, &["integration", "host"]).unwrap_or("its address"),
+            str_at(d, &["integration", "error"]).unwrap_or("none recorded")
         ),
         e => incident_text(e, d),
     }
@@ -529,6 +537,23 @@ mod tests {
         );
         assert_eq!(available.url, "https://mf.example/admin/server-update/");
         assert_eq!(available.payload["release"]["version"], "0.3.0");
+    }
+
+    #[test]
+    fn a_disabled_integration_links_to_the_integrations_page() {
+        let disabled = render(
+            &event(
+                "integration.disabled",
+                json!({"integration": {"name": "HaloPSA", "host": "psa.example",
+                                       "error": "psa.example answered 500 Internal Server Error."}}),
+            ),
+            WEB,
+        );
+        assert_eq!(
+            disabled.text,
+            "Integration HaloPSA was turned off: nothing reached psa.example for a day. Last error: psa.example answered 500 Internal Server Error."
+        );
+        assert_eq!(disabled.url, "https://mf.example/admin/integrations/");
     }
 
     #[test]

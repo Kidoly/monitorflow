@@ -72,7 +72,7 @@ fn chain(error: &dyn StdError) -> String {
 
 /// A request that got no answer, in plain words. The URL is taken out of
 /// the error first: it can hold a token, and the text is shown and logged.
-fn request_error(host: &str, error: reqwest::Error) -> SendError {
+pub(crate) fn request_error(host: &str, error: reqwest::Error) -> SendError {
     let error = error.without_url();
     SendError::new(if error.is_timeout() {
         format!(
@@ -87,7 +87,7 @@ fn request_error(host: &str, error: reqwest::Error) -> SendError {
 }
 
 /// A refusal in plain words, from the first characters of the answer.
-fn response_error(host: &str, status: reqwest::StatusCode, text: &str) -> SendError {
+pub(crate) fn response_error(host: &str, status: reqwest::StatusCode, text: &str) -> SendError {
     let text: String = text.trim().chars().take(200).collect();
     SendError::new(if status.is_redirection() {
         format!("{host} answered {status}, a redirect, which is not followed: enter the final URL.")
@@ -142,7 +142,7 @@ pub fn is_public(ip: IpAddr) -> bool {
 /// The sentence for a destination that is not public.
 fn private_address(host: &str) -> SendError {
     SendError::new(format!(
-        "{host} is a private address. Only a global administrator can set a channel to send there."
+        "{host} is a private address, which only a global administrator can allow."
     ))
 }
 
@@ -222,13 +222,22 @@ pub async fn deliver(
 /// The resolver never sees an address written in a URL, so a channel
 /// limited to public addresses checks it here.
 fn refuse_private_literal(channel: &Channel, url: &str) -> Result<(), SendError> {
+    match channel.public_only {
+        true => refuse_private_address_in(url),
+        false => Ok(()),
+    }
+}
+
+/// Refuses a URL whose host is a private address written out, which
+/// [`public_http_client`]'s resolver never sees.
+pub(crate) fn refuse_private_address_in(url: &str) -> Result<(), SendError> {
     let literal = reqwest::Url::parse(url).ok().and_then(|url| {
         url.host_str()?
             .trim_matches(['[', ']'])
             .parse::<IpAddr>()
             .ok()
     });
-    match literal.filter(|ip| channel.public_only && !is_public(*ip)) {
+    match literal.filter(|ip| !is_public(*ip)) {
         Some(ip) => Err(private_address(&ip.to_string())),
         None => Ok(()),
     }

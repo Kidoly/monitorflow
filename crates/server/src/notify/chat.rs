@@ -356,7 +356,7 @@ impl Card {
             ("incident.opened" | "incident.escalated", _)
             | ("approval.waiting", _)
             | ("ai_commands.changed", _) => Tone::Warning,
-            ("update.failed" | "backup.failed", _) => Tone::Danger,
+            ("update.failed" | "backup.failed" | "integration.disabled", _) => Tone::Danger,
             _ => Tone::Neutral,
         };
         let severity = match event {

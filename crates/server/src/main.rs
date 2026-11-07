@@ -29,6 +29,7 @@ use monitorflow_server::grpc::{
     self, AgentStreamService, CrlService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
 };
 use monitorflow_server::ingest::{Ingest, JsonLines, RemoteWrite, Writer, WriterSettings};
+use monitorflow_server::integrations;
 use monitorflow_server::mirror::{
     self, JobKind, Layout, MirrorSpec, Mirrors, ToolsRunner, Trigger,
 };
@@ -549,6 +550,7 @@ async fn main() -> anyhow::Result<()> {
     };
     // Notifications (ADR-0060): the outbox the database triggers fill.
     let notify_pool = pool.clone();
+    let deliverer = integrations::Deliverer::new(pool.clone(), config.web_base_url());
     // The daily look for a newer release (ADR-0061).
     let check_pool = pool.clone();
     let renewer = Renewer::new(pool.clone(), ca.clone());
@@ -624,6 +626,14 @@ async fn main() -> anyhow::Result<()> {
         },
         async {
             campaigns.clone().run(campaign::POLL, until_stopped()).await;
+            Ok(())
+        },
+        // Every instance sends integration events; claims are leased
+        // (ADR-0102).
+        async {
+            deliverer
+                .run(integrations::deliver::POLL, until_stopped())
+                .await;
             Ok(())
         },
         async {
