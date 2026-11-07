@@ -6,6 +6,8 @@
 *.pem
 # Public release keys only (ADR-0053); never a private key.
 !deploy/release-keys.pem
+# Public license keys only (ADR-0100); never the license signing key.
+!ee/license-keys.pem
 *.key
 /deploy/data
 /deploy/dev-certs

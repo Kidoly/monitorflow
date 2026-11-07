@@ -185,7 +185,8 @@ impl PublicKey {
             .ok_or_else(|| ReleaseError::BadKey("not an Ed25519 public key".into()))
     }
 
-    fn verifies(&self, message: &[u8], signature: &[u8]) -> bool {
+    /// Whether `signature` is this key's Ed25519 signature of `message`.
+    pub fn verifies(&self, message: &[u8], signature: &[u8]) -> bool {
         UnparsedPublicKey::new(&ED25519, self.0)
             .verify(message, signature)
             .is_ok()
