@@ -968,6 +968,11 @@ pub async fn set_contact(
                 "Put the email address in its own field.".into(),
             ))
         }
+        Some("plugin") => {
+            return Err(ApiError::Invalid(
+                "A plugin cannot reach you in person; ask an administrator for a channel.".into(),
+            ))
+        }
         Some(kind) => {
             let settings = request.settings.unwrap_or_else(|| json!({}));
             Some(checked(kind, settings, request.secret, current_chat)?)

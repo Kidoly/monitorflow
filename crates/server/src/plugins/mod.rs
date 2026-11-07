@@ -3,6 +3,8 @@
 //! installs them ([`crate::api::plugins`]); channels and agents' checks
 //! use them where they are enabled.
 
+pub mod channel;
+
 use monitorflow_plugin::keys::PublicKey;
 use monitorflow_plugin::Manifest;
 use serde::{Deserialize, Serialize};
