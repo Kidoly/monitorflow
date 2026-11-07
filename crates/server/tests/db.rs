@@ -141,6 +141,7 @@ db_tests! {
                 "acknowledge_links",
                 "agent_auto_updates",
                 "alert_states",
+                "api_keys",
                 "audit_log",
                 "auto_rollouts",
                 "campaign_snapshots",
