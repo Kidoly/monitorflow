@@ -182,6 +182,17 @@ impl World {
         (response.status(), json_of(response).await)
     }
 
+    /// A write with `key` and `Idempotency-Key: value`.
+    async fn once(&self, uri: &str, key: &str, value: &str, body: Value) -> Response {
+        let request = Request::post(uri)
+            .header("authorization", format!("Bearer {key}"))
+            .header("idempotency-key", value)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        self.app.clone().oneshot(request).await.unwrap()
+    }
+
     /// Makes a key as `cookie`'s user; returns its ID and secret.
     async fn make(&self, cookie: &str, body: Value) -> (Uuid, String) {
         let (status, created) = self
@@ -407,5 +418,66 @@ db_tests! {
         for _ in 0..3 {
             assert_eq!(w.session("GET", "/api/v1/sites", &w.root, None).await.0, StatusCode::OK);
         }
+    }
+
+    #[sqlx::test]
+    async fn writes_with_an_idempotency_key_run_once(pool: PgPool) {
+        let w = world(&pool).await;
+        let (_, key) = w.make(&w.root, json!({ "name": "Deploy", "role": "administrator" })).await;
+        let (_, other) = w.make(&w.root, json!({ "name": "Other", "role": "administrator" })).await;
+        let silence = json!({ "scope": "server", "target_id": w.server_a,
+                              "ends_at": chrono::Utc::now() + chrono::Duration::days(1),
+                              "reason": "deploy" });
+        let replayed = |r: &Response| r.headers().get("idempotent-replayed").is_some();
+
+        let first = w.once("/api/v1/silences", &key, "run-1", silence.clone()).await;
+        assert_eq!(first.status(), StatusCode::CREATED);
+        assert!(!replayed(&first));
+        let first = json_of(first).await;
+        let again = w.once("/api/v1/silences", &key, "run-1", silence.clone()).await;
+        assert_eq!(again.status(), StatusCode::CREATED);
+        assert!(replayed(&again));
+        assert_eq!(again.headers()["content-type"], "application/json");
+        assert_eq!(json_of(again).await, first);
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM silences").fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 1);
+
+        // Another key's value is its own; another request with the value is refused.
+        let theirs = w.once("/api/v1/silences", &other, "run-1", silence.clone()).await;
+        assert!(theirs.status() == StatusCode::CREATED && !replayed(&theirs));
+        let mut changed = silence.clone();
+        changed["reason"] = json!("other");
+        let reused = w.once("/api/v1/silences", &key, "run-1", changed).await;
+        assert_eq!(reused.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(json_of(reused).await["code"], "idempotency_key_reused");
+        let bad = w.once("/api/v1/silences", &key, "has space", silence.clone()).await;
+        assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+
+        // Errors are kept too, except server errors.
+        let invalid = json!({ "scope": "server", "target_id": w.server_a, "reason": "x" });
+        let first = w.once("/api/v1/silences", &key, "bad-1", invalid.clone()).await;
+        assert_eq!(first.status(), StatusCode::BAD_REQUEST);
+        let again = w.once("/api/v1/silences", &key, "bad-1", invalid).await;
+        assert!(again.status() == StatusCode::BAD_REQUEST && replayed(&again));
+
+        // A first request still running.
+        sqlx::query("UPDATE api_idempotency SET status = NULL, body = NULL WHERE value = 'run-1'
+                     AND key_id = (SELECT id FROM api_keys WHERE name = 'Deploy')")
+            .execute(&pool).await.unwrap();
+        let running = w.once("/api/v1/silences", &key, "run-1", silence).await;
+        assert_eq!(running.status(), StatusCode::CONFLICT);
+        assert_eq!(json_of(running).await["code"], "idempotency_in_progress");
+
+        // A secret is never stored: the replay says it was done.
+        let invite = json!({ "username": "newcomer", "role": "viewer" });
+        let first = w.once("/api/v1/users", &key, "invite-1", invite.clone()).await;
+        assert_eq!(first.status(), StatusCode::CREATED);
+        let link = json_of(first).await["link"].to_string();
+        let again = w.once("/api/v1/users", &key, "invite-1", invite).await;
+        assert!(again.status() == StatusCode::CONFLICT && replayed(&again));
+        let stored: Vec<Option<Vec<u8>>> = sqlx::query_scalar("SELECT body FROM api_idempotency WHERE value = 'invite-1'")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(stored, [None]);
+        assert!(!json_of(again).await.to_string().contains(&link));
     }
 }

@@ -16,7 +16,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{MatchedPath, Path, State};
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
-use axum::http::{Method, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -172,8 +172,8 @@ impl KeySecret {
 }
 
 /// The secret of `Authorization: Bearer <secret>`, if well-formed.
-pub fn bearer(parts: &Parts) -> Option<KeySecret> {
-    let value = parts.headers.get(AUTHORIZATION)?.to_str().ok()?;
+pub fn bearer(headers: &HeaderMap) -> Option<KeySecret> {
+    let value = headers.get(AUTHORIZATION)?.to_str().ok()?;
     let (scheme, secret) = value.split_once(' ')?;
     if !scheme.eq_ignore_ascii_case("bearer") {
         return None;
@@ -237,7 +237,7 @@ struct AuthRow {
 /// a missing, unknown or expired key or a disabled maker, 429 over the
 /// key's rate limit, 403 `api_key_scope` outside its areas.
 pub(super) async fn authenticate(parts: &Parts, state: &ApiState) -> Result<CurrentUser, ApiError> {
-    let secret = bearer(parts).ok_or(ApiError::Unauthorized)?;
+    let secret = bearer(&parts.headers).ok_or(ApiError::Unauthorized)?;
     let row: AuthRow = sqlx::query_as(
         "SELECT k.id, k.role, k.customer_id, k.site_id, s.customer_id AS site_customer,
                 k.areas, k.created_by,
