@@ -8,8 +8,9 @@
 //!
 //! - Bodies are JSON objects; field names are `snake_case`.
 //! - Timestamps are RFC 3339 strings in UTC, IDs are UUID strings.
-//! - Errors use the HTTP status and a body `{"error": "<message>"}`. Messages
-//!   are generic and never carry internal details.
+//! - Errors use the HTTP status and a body `{"error": "<message>", "code":
+//!   "<code>"}`. Messages are generic and never carry internal details;
+//!   codes are stable (ADR-0101, [`ERROR_CODES`]).
 //!
 //! # Routes
 //!
@@ -668,7 +669,7 @@ use crate::vm_query::VmQuery;
 
 pub use auth::{CurrentUser, Me};
 use error::is_missing_file;
-pub use error::ApiError;
+pub use error::{ApiError, CODES as ERROR_CODES};
 pub use roles::{Role, RoleGrant};
 pub use servers::{CertificateView, ServerDetail, ServerList, ServerView};
 pub use tokens::EnrollmentSettings;
