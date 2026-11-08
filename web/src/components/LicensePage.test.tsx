@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { LicenseView } from "@/lib/api";
-import { As, customerAdmin, me } from "@/test/admin";
+import { As, customerAdmin, me, single } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { setUrl } from "@/test/navigation";
 
@@ -101,6 +101,18 @@ describe("LicensePage", () => {
     expect(screen.getByText(/Central servers already added keep running and monitoring goes on/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Remove the license key" }));
     expect(await screen.findByText("No license key.")).toBeInTheDocument();
+  });
+
+  it("never says customer, whoever reads it (ADR-0104)", async () => {
+    for (const user of [globalAdmin, single(globalAdmin)]) {
+      stubFetch({ "GET /api/license": { status: 200, body: valid } });
+      const { unmount } = renderPage(user);
+      // The license holder's name is a fact labelled "For", not a customer.
+      expect(await screen.findByText("Example Corp")).toBeInTheDocument();
+      expect(screen.getByText("For")).toBeInTheDocument();
+      expect(document.body.textContent).not.toMatch(/customer/i);
+      unmount();
+    }
   });
 
   it("says when the build has no Enterprise edition", async () => {
