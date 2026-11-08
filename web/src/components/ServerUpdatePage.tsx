@@ -11,7 +11,7 @@ import {
   api,
   describeError,
 } from "@/lib/api";
-import { administersEverything, useMe } from "@/lib/me";
+import { administersEverything, multiCustomer, useMe } from "@/lib/me";
 import { BACKUPS_PATH } from "@/lib/routes";
 import { changeLines, imageText, inProgress, isFinal, restoreCommand, STATE_WORDS } from "@/lib/serverUpdate";
 import { usePolledData } from "@/lib/usePolledData";
@@ -35,7 +35,7 @@ export function ServerUpdatePage() {
   if (!administersEverything(me)) {
     return (
       <NoPermission title="Server updates need a global administrator">
-        The server is shared by every customer. Ask a global administrator for a role.
+        The server is shared by {multiCustomer(me) ? "every customer" : "all sites"}. Ask a global administrator for a role.
       </NoPermission>
     );
   }

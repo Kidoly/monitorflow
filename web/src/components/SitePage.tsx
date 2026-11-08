@@ -4,7 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo } from "react";
 
 import { api, describeError, isUnauthorized } from "@/lib/api";
-import { modifiesSite, useMe } from "@/lib/me";
+import { modifiesSite, multiCustomer, useMe } from "@/lib/me";
 import { scopedHref } from "@/lib/scope";
 import { usePolledData } from "@/lib/usePolledData";
 import { UUID } from "@/lib/uuid";
@@ -62,7 +62,7 @@ export function SitePage({ id }: { id: string | null }) {
       <PageHeader
         detail
         title={site.name}
-        meta={`${site.customer_name} · ${servers}`}
+        meta={multiCustomer(me) ? `${site.customer_name} · ${servers}` : servers}
         actions={<ButtonLink href={fleet}>Show its {servers}</ButtonLink>}
       />
       <SilenceBar target={{ scope: "site", id: site.id, name: site.name, customerId: site.customer_id, siteId: site.id }} />

@@ -14,7 +14,7 @@ import {
 } from "@/lib/api";
 import { acceptance } from "@/lib/commandKinds";
 import { riskWord, rollbackText, timeLeft } from "@/lib/remediation";
-import { administersEverything, useMe } from "@/lib/me";
+import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
 import { AI_SETTINGS_PATH, AUDIT_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { seriesTitle } from "@/lib/sensors";
@@ -45,6 +45,7 @@ const TIERS: RiskTier[] = ["low_impact", "high_impact"];
 
 /** The approval queue (ADR-0045): commands the risk rules parked for a human. */
 export function ApprovalQueue() {
+  const multiCustomer = useMultiCustomer();
   const scope = useScope();
   const [params] = useUrlParams();
   const tier = TIERS.find((t) => t === params.get("tier")) ?? null;
@@ -70,7 +71,7 @@ export function ApprovalQueue() {
         <PrimaryCell
           title={`${seriesTitle(undefined, p.metric, p.instance)} on ${p.hostname}`}
           href={scopedHref(serverHref(p.server_id), scope)}
-          sub={`Step ${p.commands_run + 1} of ${p.max_commands} · ${p.site_name} · ${p.customer_name}`}
+          sub={[`Step ${p.commands_run + 1} of ${p.max_commands}`, p.site_name, multiCustomer && p.customer_name].filter(Boolean).join(" · ")}
         />
       ),
     },

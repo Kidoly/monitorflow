@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { type Incident, type Server, type Site, api, describeError, isUnauthorized } from "@/lib/api";
 import { type IncidentFilters, apiQuery, filtersFromQuery, incidentTitle, isOffline } from "@/lib/incidents";
-import { administersEverything, useMe } from "@/lib/me";
+import { administersEverything, multiCustomer, useMe } from "@/lib/me";
 import { NOTIFICATIONS_PATH, incidentHref, incidentPeerHref, incidentsHref } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue } from "@/lib/sensors";
@@ -174,7 +174,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
         <PrimaryCell
           title={i.hostname}
           href={scopedHref(incidentPeerHref(i), scope)}
-          sub={[i.site_name, customers.get(i.site_id)].filter(Boolean).join(" · ")}
+          sub={[i.site_name, multiCustomer(me) && customers.get(i.site_id)].filter(Boolean).join(" · ")}
         />
       ),
     },

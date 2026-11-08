@@ -17,7 +17,7 @@ import {
   toRequest,
   validateCampaign,
 } from "@/lib/campaigns";
-import { administersCustomer, useMe } from "@/lib/me";
+import { administersCustomer, multiCustomer, useMe } from "@/lib/me";
 import { CAMPAIGNS_PATH, campaignHref } from "@/lib/routes";
 
 import own from "./Campaigns.module.css";
@@ -40,7 +40,9 @@ export function NewCampaignPage() {
   if (!me || !administersCustomer(me)) {
     return (
       <NoPermission title="Creating a campaign needs an administrator">
-        It needs an administrator role on a whole customer. Ask an administrator for one.
+        {multiCustomer(me)
+          ? "It needs an administrator role on a whole customer. Ask an administrator for one."
+          : "It needs an administrator role on all sites. Ask an administrator for one."}
       </NoPermission>
     );
   }
@@ -94,7 +96,7 @@ export function CampaignForm({ me }: { me: Me }) {
   if (inventory.customers.length === 0) {
     return (
       <EmptyState actions={<ButtonLink href={CAMPAIGNS_PATH}>Back to campaigns</ButtonLink>}>
-        You administer no customer to update.
+        {multiCustomer(me) ? "You administer no customer to update." : "You administer no sites to update."}
       </EmptyState>
     );
   }
@@ -135,20 +137,22 @@ export function CampaignForm({ me }: { me: Me }) {
       />
       <form className={own.form} onSubmit={submit} aria-label="New campaign" noValidate>
         <div className={own.grid}>
-          <label className={own.fld}>
-            Customer
-            <select
-              className={fieldClass}
-              value={draft.customerId}
-              onChange={(e) => set({ customerId: e.target.value, siteId: "", serverIds: [], waves: [] })}
-            >
-              {inventory.customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          {multiCustomer(me) && (
+            <label className={own.fld}>
+              Customer
+              <select
+                className={fieldClass}
+                value={draft.customerId}
+                onChange={(e) => set({ customerId: e.target.value, siteId: "", serverIds: [], waves: [] })}
+              >
+                {inventory.customers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className={own.fld}>
             Name
             <input
@@ -184,7 +188,11 @@ export function CampaignForm({ me }: { me: Me }) {
                     disabled={noPackages(s) || s.site_id === draft.siteId}
                     onChange={(e) => set({ serverIds: toggle(draft.serverIds, s.id, e.target.checked) })}
                   />
-                  {s.hostname} <span className={own.dim}>({s.site_name}{noPackages(s) && ", no package updates"})</span>
+                  {s.hostname}{" "}
+                  <span className={own.dim}>
+                    ({s.site_name}
+                    {noPackages(s) && ", no package updates"})
+                  </span>
                 </label>
               </li>
             ))}
@@ -207,9 +215,7 @@ export function CampaignForm({ me }: { me: Me }) {
             />
           ))}
           <div className={own.row}>
-            <Button onClick={() => set({ waves: [...draft.waves, { kind: "size", value: "1", servers: [] }] })}>
-              Add batch
-            </Button>
+            <Button onClick={() => set({ waves: [...draft.waves, { kind: "size", value: "1", servers: [] }] })}>Add batch</Button>
           </div>
           <WavePlan draft={draft} targets={targets} />
         </Fieldset>
@@ -259,11 +265,7 @@ export function CampaignForm({ me }: { me: Me }) {
           <div className={own.row}>
             {draft.update !== "agent" && (
               <label className={own.inline}>
-                <input
-                  type="checkbox"
-                  checked={draft.allowReboot}
-                  onChange={(e) => set({ allowReboot: e.target.checked })}
-                />
+                <input type="checkbox" checked={draft.allowReboot} onChange={(e) => set({ allowReboot: e.target.checked })} />
                 Allow reboot
               </label>
             )}
@@ -362,7 +364,11 @@ function WaveRow({
     <div className={own.row} role="group" aria-label={label}>
       <label className={own.fld}>
         {label}
-        <select className={fieldClass} value={wave.kind} onChange={(e) => onChange({ ...wave, kind: e.target.value as WaveDraft["kind"] })}>
+        <select
+          className={fieldClass}
+          value={wave.kind}
+          onChange={(e) => onChange({ ...wave, kind: e.target.value as WaveDraft["kind"] })}
+        >
           <option value="size">Number of servers</option>
           <option value="percent">Percentage of servers</option>
           <option value="servers">Chosen servers</option>
@@ -413,11 +419,7 @@ function WavePlan({ draft, targets }: { draft: CampaignDraft; targets: Server[] 
   );
   if ("error" in plan) return <p className={own.note}>Waves cannot be planned: {plan.error}.</p>;
   const sizes = plan.waves.map((w, i) => `batch ${i + 1}: ${w.length}`).join(", ");
-  return (
-    <p className={own.note}>
-      Servers per batch: {sizes}. Servers not placed by a batch form the last one.
-    </p>
-  );
+  return <p className={own.note}>Servers per batch: {sizes}. Servers not placed by a batch form the last one.</p>;
 }
 
 function WindowRow({
@@ -464,11 +466,21 @@ function WindowRow({
         <>
           <label className={own.fld}>
             Starts (your local time)
-            <input className={fieldClass} type="datetime-local" value={window.startsAt} onChange={(e) => set({ startsAt: e.target.value })} />
+            <input
+              className={fieldClass}
+              type="datetime-local"
+              value={window.startsAt}
+              onChange={(e) => set({ startsAt: e.target.value })}
+            />
           </label>
           <label className={own.fld}>
             Ends
-            <input className={fieldClass} type="datetime-local" value={window.endsAt} onChange={(e) => set({ endsAt: e.target.value })} />
+            <input
+              className={fieldClass}
+              type="datetime-local"
+              value={window.endsAt}
+              onChange={(e) => set({ endsAt: e.target.value })}
+            />
           </label>
         </>
       )}

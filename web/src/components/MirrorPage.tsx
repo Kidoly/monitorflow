@@ -6,7 +6,7 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { ApiError, type MirrorDetail, type MirrorRun, type MirrorSnapshot, api, describeError } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
-import { administersEverything, useMe } from "@/lib/me";
+import { administersEverything, multiCustomer, useMe } from "@/lib/me";
 import { describeMirror, durationText, intervalText, minuteText, retentionText } from "@/lib/mirrors";
 import { MIRRORS_PATH, campaignHref, serverHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
@@ -53,7 +53,7 @@ export function MirrorView() {
   if (!administersEverything(me)) {
     return (
       <NoPermission title="Mirrors need a global administrator">
-        Mirrors are shared by every customer. Ask a global administrator for a role.
+        Mirrors are shared by {multiCustomer(me) ? "every customer" : "all sites"}. Ask a global administrator for a role.
       </NoPermission>
     );
   }

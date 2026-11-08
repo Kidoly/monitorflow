@@ -20,6 +20,7 @@ describe("silences", () => {
   it("names what is silenced", () => {
     expect(silenceTitle({ scope: "server", target_name: "web-1" })).toBe("web-1");
     expect(silenceTitle({ scope: "relay", target_name: "gw" })).toBe("relay gw");
+    expect(silenceTitle({ scope: "customer", target_name: "acme" }, false)).toBe("all sites");
     expect(silenceTitle({ scope: "site", target_name: "paris" })).toBe("site paris");
     expect(silenceTitle({ scope: "customer", target_name: "acme" })).toBe("customer acme");
     expect(silenceTitle({ scope: "all", target_name: null })).toBe("everything");

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { UserAccount } from "@/lib/api";
-import { As, me, viewer } from "@/test/admin";
+import { As, me, single, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 
 import { UsersAdminPage, describeGrant } from "./UsersAdmin";
@@ -151,8 +151,31 @@ describe("UsersAdminPage", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("offers everything and sites, never customers, to a single company (ADR-0104)", async () => {
+    stubFetch({
+      ...NAMES,
+      "GET /api/users": {
+        status: 200,
+        body: { users: [account({}), account({ id: "u3", username: "carol", roles: [{ role: "operator", customer_id: "c1", site_id: null }] }), bob] },
+      },
+    });
+    render(
+      <As user={single(root)}>
+        <UsersAdminPage />
+      </As>,
+    );
+    expect(await screen.findByText("A role applies to everything or to one site")).toBeInTheDocument();
+    const on = within(screen.getByRole("form", { name: "Invite a user" })).getByLabelText("On");
+    expect(within(on).getAllByRole("option").map((o) => o.textContent)).toEqual(["Everything", "Site lyon-office"]);
+    expect(await screen.findByText(/operator · all sites/)).toBeInTheDocument();
+    expect(screen.getByText(/viewer · lyon-office/)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/customer|Acme/i);
+  });
+
   it("describes grants before the names arrive", () => {
     expect(describeGrant({ role: "viewer", customer_id: null, site_id: null }, undefined)).toBe("viewer · everything");
     expect(describeGrant({ role: "operator", customer_id: "c9", site_id: null }, names)).toBe("operator · a customer");
+    expect(describeGrant({ role: "operator", customer_id: "c9", site_id: null }, names, false)).toBe("operator · all sites");
+    expect(describeGrant({ role: "viewer", customer_id: null, site_id: "s2" }, names, false)).toBe("viewer · lyon-office");
   });
 });

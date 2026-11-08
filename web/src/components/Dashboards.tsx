@@ -40,7 +40,8 @@ import {
   withinOf,
 } from "@/lib/dashboards";
 import { displayHref } from "@/lib/display";
-import { modifiesCustomer, modifiesSite, useMe } from "@/lib/me";
+import { customerWide } from "@/lib/customers";
+import { modifiesCustomer, modifiesSite, multiCustomer, useMe, useMultiCustomer } from "@/lib/me";
 import { DASHBOARDS_PATH, dashboardHref, readyMadeHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { usePolledData } from "@/lib/usePolledData";
@@ -63,6 +64,7 @@ import { PanelForm } from "./PanelForm";
 /** `/dashboards/`: the ready-made dashboards and those the user sees. */
 export function DashboardsPage() {
   const scope = useScope();
+  const multi = useMultiCustomer();
   const fetcher = useCallback((signal: AbortSignal) => api.dashboards(signal), []);
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher, { intervalMs: DASHBOARD_REFRESH_MS });
   const columns: Column<DashboardSummary>[] = [
@@ -78,7 +80,7 @@ export function DashboardsPage() {
       ),
       sortValue: (d) => d.name,
     },
-    { key: "shared", header: "Shared with", cell: (d) => sharingLabel(d.shared_with), sortValue: (d) => sharingLabel(d.shared_with) },
+    { key: "shared", header: "Shared with", cell: (d) => sharingLabel(d.shared_with, multi), sortValue: (d) => sharingLabel(d.shared_with, multi) },
     {
       key: "updated",
       header: "Changed",
@@ -171,13 +173,13 @@ function sharingOptions(me: ReturnType<typeof useMe>, servers: Server[], current
     { value: "personal", label: "Only me", sharing: { kind: "personal" } },
   ];
   for (const c of customers) {
-    if (modifiesCustomer(me, c.id)) options.push({ value: `customer:${c.id}`, label: `Customer ${c.name}`, sharing: { kind: "customer", id: c.id } });
+    if (modifiesCustomer(me, c.id)) options.push({ value: `customer:${c.id}`, label: customerWide(`Customer ${c.name}`, multiCustomer(me)), sharing: { kind: "customer", id: c.id } });
   }
   for (const s of sites) {
     if (modifiesSite(me, s.customerId, s.id)) options.push({ value: `site:${s.id}`, label: `Site ${s.name}`, sharing: { kind: "site", id: s.id } });
   }
   const value = sharingValue(current);
-  if (!options.some((o) => o.value === value)) options.push({ value, label: sharingLabel(current), sharing: current });
+  if (!options.some((o) => o.value === value)) options.push({ value, label: sharingLabel(current, multiCustomer(me)), sharing: current });
   return options;
 }
 
@@ -433,8 +435,8 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
               ? "Ready-made"
               : draft
                 ? (sharingOptions(me, servers ?? [], draft.shared_with).find((o) => o.value === sharingValue(draft.shared_with))?.label ??
-                  sharingLabel(draft.shared_with))
-                : sharingLabel(saved?.shared_with ?? shown.shared_with)}
+                  sharingLabel(draft.shared_with, multiCustomer(me)))
+                : sharingLabel(saved?.shared_with ?? shown.shared_with, multiCustomer(me))}
           </Label>
         }
         meta={panels.length > 0 ? <RefreshLine updatedAt={updatedAt} stale={stale} intervalMs={DASHBOARD_REFRESH_MS} /> : undefined}

@@ -29,7 +29,7 @@ import { certificateState } from "@/lib/certificates";
 import { formatDay, formatMinute, formatWhen } from "@/lib/clock";
 import { formatOs, formatValue, unitOf } from "@/lib/format";
 import { relayAddress } from "@/lib/install";
-import { administersCustomer, administersEverything } from "@/lib/me";
+import { administersCustomer, administersEverything, multiCustomer } from "@/lib/me";
 import { metricTitle } from "@/lib/metrics";
 import { RELAYS_PATH, serverHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
@@ -251,7 +251,7 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
   const now = updatedAt ?? new Date();
   const { certificate } = relay;
   const facts: Fact[] = [
-    { label: "Site", value: `${relay.site_name} · ${relay.customer_name}` },
+    { label: "Site", value: multiCustomer(me) ? `${relay.site_name} · ${relay.customer_name}` : relay.site_name },
     {
       label: "Last seen",
       value: relay.last_heartbeat ? <RelativeTime value={relay.last_heartbeat} now={now} /> : "never",
