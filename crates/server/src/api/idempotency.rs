@@ -29,7 +29,13 @@ fn hands_out_a_secret(path: &str) -> bool {
     let segments: Vec<&str> = path.trim_start_matches("/api/").split('/').collect();
     matches!(
         segments.as_slice(),
-        ["tokens"] | ["install-keys"] | ["display-links"] | ["users"] | ["users", _, "link"]
+        ["tokens"]
+            | ["install-keys"]
+            | ["display-links"]
+            | ["users"]
+            | ["users", _, "link"]
+            | ["integrations"]
+            | ["integrations", _, "secret"]
     )
 }
 
@@ -275,10 +281,17 @@ mod tests {
             "/api/display-links",
             "/api/users",
             "/api/users/x/link",
+            "/api/integrations",
+            "/api/integrations/x/secret",
         ] {
             assert!(hands_out_a_secret(path), "{path}");
         }
-        for path in ["/api/silences", "/api/users/x/roles", "/api/tokens/x"] {
+        for path in [
+            "/api/silences",
+            "/api/users/x/roles",
+            "/api/tokens/x",
+            "/api/integrations/x/test",
+        ] {
             assert!(!hands_out_a_secret(path), "{path}");
         }
     }
