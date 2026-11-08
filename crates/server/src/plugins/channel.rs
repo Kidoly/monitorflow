@@ -25,13 +25,18 @@ type Compiled = Mutex<HashMap<Vec<u8>, Arc<Plugin>>>;
 /// Most modules kept compiled; past it the cache starts over.
 const MAX_COMPILED: usize = 32;
 
-/// HTTP for plugins on the central server: [`public_http_client`], whose
-/// resolver connects to public addresses only, and a check of addresses
-/// written in the URL, which never reach the resolver.
+/// HTTP for plugins on the central server: HTTPS only, since what they
+/// send carries their secret settings across the Internet, and
+/// [`public_http_client`], whose resolver connects to public addresses
+/// only, with a check of addresses written in the URL, which never reach
+/// the resolver.
 struct PublicOnly(ReqwestHttp);
 
 impl Http for PublicOnly {
     fn send(&self, request: Checked, timeout: Duration) -> Result<Response, String> {
+        if request.url.scheme() != "https" {
+            return Err("plugins on the central server connect over HTTPS only".into());
+        }
         let literal = request
             .url
             .host_str()
@@ -150,25 +155,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn literal_private_addresses_are_refused_before_any_connection() {
+    fn plain_http_and_literal_private_addresses_are_refused_before_any_connection() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let http = PublicOnly(ReqwestHttp::new(
             public_http_client(),
             runtime.handle().clone(),
         ));
-        for url in [
-            "http://127.0.0.1/",
-            "http://10.1.2.3:8080/",
-            "http://[::1]/",
-            "http://169.254.169.254/",
-        ] {
+        let send = |url: &str| {
             let request = Checked {
                 method: reqwest::Method::GET,
                 url: reqwest::Url::parse(url).unwrap(),
                 headers: Vec::new(),
                 body: String::new(),
             };
-            let error = http.send(request, Duration::from_secs(1)).unwrap_err();
+            http.send(request, Duration::from_secs(1)).unwrap_err()
+        };
+        assert!(send("http://ntfy.example/").contains("HTTPS only"));
+        for url in [
+            "https://127.0.0.1/",
+            "https://10.1.2.3:8080/",
+            "https://[::1]/",
+            "https://169.254.169.254/",
+        ] {
+            let error = send(url);
             assert!(error.contains("private address"), "{url}: {error}");
         }
     }

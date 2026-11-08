@@ -11,6 +11,8 @@ A plugin runs in a sandbox. It cannot read files, start programs or open connect
 | `check` | each server it is configured for, like a built-in check | its settings and the instance it watches | samples |
 | `channel` | the central server, for each notification | its settings, its secret settings and the notification | nothing, or an error |
 
+A channel's requests go over HTTPS to public addresses only; a check's may reach its server's own network over HTTP or HTTPS.
+
 Integration hooks for outgoing events will be a third kind.
 
 ## Quick start in Rust
