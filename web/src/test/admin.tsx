@@ -8,6 +8,9 @@ export const customerAdmin = me({ role: "administrator", customer_id: "c1", site
 export const siteAdmin = me({ role: "administrator", customer_id: null, site_id: "site-1" });
 export const viewer = me({ role: "viewer", customer_id: null, site_id: null });
 
+/** `user` as the server says it with one customer, or to a user limited to one (ADR-0104). */
+export const single = (user: Me): Me => ({ ...user, multi_customer: false });
+
 /** Renders `children` as signed in as `user`. */
 export function As({ user, children }: { user: Me; children: ReactNode }) {
   return <MeContext.Provider value={user}>{children}</MeContext.Provider>;

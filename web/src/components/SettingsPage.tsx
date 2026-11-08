@@ -5,7 +5,7 @@ import { type FormEvent, type ReactNode, useCallback, useState } from "react";
 
 import { type RetentionSettings, type ServerSettings, api, describeError } from "@/lib/api";
 import { formatDuration } from "@/lib/format";
-import { administersEverything, useMe } from "@/lib/me";
+import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
 import {
   AI_SETTINGS_PATH,
   AUTO_UPDATE_PATH,
@@ -30,7 +30,7 @@ const APPLYING_REFRESH_MS = 3_000;
 
 const OTHER_SETTINGS: { label: string; href: string; note: string }[] = [
   { label: "Users and roles", href: USERS_PATH, note: "Who signs in, and what they can do." },
-  { label: "Sites", href: SITES_PATH, note: "Customers and the sites their servers belong to." },
+  { label: "Sites", href: SITES_PATH, note: "The places your servers are in." },
   { label: "Notifications", href: NOTIFICATIONS_PATH, note: "Email, Slack, Teams, Discord and webhooks for incidents, approvals and failed updates." },
   { label: "AI", href: AI_SETTINGS_PATH, note: "An API key and a model to diagnose incidents and propose fixes." },
   { label: "Automatic updates", href: AUTO_UPDATE_PATH, note: "Keep agents and relays on the newest release." },
@@ -53,6 +53,7 @@ export function SettingsPage() {
 }
 
 function Settings() {
+  const multiCustomer = useMultiCustomer();
   const fetcher = useCallback((signal: AbortSignal) => api.serverSettings(signal), []);
   const [applying, setApplying] = useState(false);
   const { data: settings, error, refresh } = usePolledData(
@@ -87,7 +88,10 @@ function Settings() {
         <ul className={styles.linkList}>
           {OTHER_SETTINGS.map((item) => (
             <li key={item.href}>
-              <Link href={item.href}>{item.label}</Link> <span className={styles.dim}>{item.note}</span>
+              <Link href={item.href}>{item.label}</Link>{" "}
+              <span className={styles.dim}>
+                {item.href === SITES_PATH && multiCustomer ? "Customers and the sites their servers belong to." : item.note}
+              </span>
             </li>
           ))}
         </ul>

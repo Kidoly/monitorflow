@@ -40,3 +40,10 @@ export const SHELL_ROUTES = {
     body: { incidents: [openIncident("i1", PARIS), openIncident("i2", PARIS), openIncident("i3", BERLIN)], next_cursor: null },
   },
 };
+
+/** A single company (ADR-0104): Acme and its two sites. */
+export const COMPANY_ROUTES = {
+  ...SHELL_ROUTES,
+  "GET /api/customers": { status: 200, body: { customers: [customers[0]!] } },
+  "GET /api/sites": { status: 200, body: { sites: sites.slice(0, 2) } },
+};

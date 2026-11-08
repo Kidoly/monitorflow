@@ -22,8 +22,18 @@ interface Option {
  * The customer the pages show, picked from a two-level list (customer, then
  * its sites). The button shows only the customer name; the choice goes into
  * the URL (`?customer=`, and `?site=` for a site), so links keep it.
+ * Without `multiCustomer` it lists sites only, worded plainly, and the
+ * parent shows it only for two sites or more (ADR-0104).
  */
-export function ScopeSwitcher({ customers, sites }: { customers: Customer[]; sites: Site[] }) {
+export function ScopeSwitcher({
+  customers,
+  sites,
+  multiCustomer = true,
+}: {
+  customers: Customer[];
+  sites: Site[];
+  multiCustomer?: boolean;
+}) {
   const scope = useScope();
   const listId = useId();
   const [open, setOpen] = useState(false);
@@ -32,16 +42,28 @@ export function ScopeSwitcher({ customers, sites }: { customers: Customer[]; sit
   const list = useRef<HTMLUListElement>(null);
   const root = useRef<HTMLDivElement>(null);
 
-  const current = customers.find((c) => c.id === scope.customerId);
-  const name = current?.name ?? "All customers";
+  const all = multiCustomer ? "All customers" : "All sites";
+  const current = multiCustomer
+    ? customers.find((c) => c.id === scope.customerId)
+    : sites.find((s) => s.id === scope.siteId);
+  const name = current?.name ?? all;
 
-  const options: Option[] = [{ key: "all", label: "All customers", scope: { customerId: null, siteId: null } }];
-  for (const customer of customers) {
+  const options: Option[] = [{ key: "all", label: all, scope: { customerId: null, siteId: null } }];
+  if (!multiCustomer) {
+    for (const site of sites) {
+      options.push({ key: site.id, label: site.name, scope: { customerId: site.customer_id, siteId: site.id } });
+    }
+  }
+  for (const customer of multiCustomer ? customers : []) {
     options.push({ key: customer.id, label: customer.name, scope: { customerId: customer.id, siteId: null } });
     for (const site of sites.filter((s) => s.customer_id === customer.id)) {
       options.push({ key: site.id, label: site.name, scope: { customerId: customer.id, siteId: site.id }, site: true });
     }
   }
+  // One group per customer, or the sites alone.
+  const groups = multiCustomer
+    ? customers.map((c) => ({ key: c.id, label: c.name, options: options.filter((o) => o.scope.customerId === c.id) }))
+    : [{ key: "sites", label: "Sites", options: options.slice(1) }];
   const selectedIndex = Math.max(
     0,
     options.findIndex((o) => o.scope.customerId === scope.customerId && o.scope.siteId === scope.siteId),
@@ -139,18 +161,13 @@ export function ScopeSwitcher({ customers, sites }: { customers: Customer[]; sit
       {open && (
         <ul ref={list} id={listId} role="listbox" aria-label="Scope" className={styles.popup} onKeyDown={onKeyDown}>
           {renderOption(options[0]!)}
-          {customers.map((customer) => {
-            const own = options.filter((o) => o.scope.customerId === customer.id);
-            const [head, ...siteOptions] = own;
-            return (
-              <li key={customer.id} role="presentation">
-                <ul role="group" aria-label={customer.name}>
-                  {renderOption(head!)}
-                  {siteOptions.map(renderOption)}
-                </ul>
-              </li>
-            );
-          })}
+          {groups.map((group) => (
+            <li key={group.key} role="presentation">
+              <ul role="group" aria-label={group.label}>
+                {group.options.map(renderOption)}
+              </ul>
+            </li>
+          ))}
         </ul>
       )}
     </div>

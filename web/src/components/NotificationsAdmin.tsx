@@ -14,7 +14,7 @@ import {
   api,
   describeError,
 } from "@/lib/api";
-import { administersEverything, isAdministrator, useMe } from "@/lib/me";
+import { administersEverything, isAdministrator, multiCustomer, useMe } from "@/lib/me";
 import { channelScopes, scopeName, scopeValue } from "@/lib/notifications";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -215,11 +215,11 @@ function Notifications() {
             tests={tests}
             showScope={
               !global ||
-              allCustomers.length > 1 ||
+              multiCustomer(me) ||
               allSites.length > 1 ||
               data.channels.some((c) => c.customer_id)
             }
-            severalCustomers={allCustomers.length > 1}
+            severalCustomers={multiCustomer(me)}
             onTest={(id) => void test(id)}
             onEdit={(channel) => setEditing({ kind: channel.kind, channel })}
             onDelete={remove}

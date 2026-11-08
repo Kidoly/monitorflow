@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { Customer, NotificationChannel, Site } from "@/lib/api";
-import { customerAdmin, me, siteAdmin } from "@/test/admin";
+import { customerAdmin, me, single, siteAdmin } from "@/test/admin";
 
 import { channelScopes, scopeName, scopeValue } from "./notifications";
 
 const global = me({ role: "administrator", customer_id: null, site_id: null });
+
 const customer = (id: string, name: string) => ({ id, name, site_count: 1 }) as Customer;
 const site = (id: string, name: string, customer_id: string) => ({ id, name, customer_id }) as Site;
 const acme = customer("c1", "acme");
@@ -19,8 +20,8 @@ const labels = (...args: Parameters<typeof channelScopes>) => channelScopes(...a
 
 describe("channelScopes", () => {
   it("keeps a small install to Everything", () => {
-    expect(labels(global, [acme], [paris])).toEqual(["Everything"]);
-    expect(labels(global, [acme], [paris, lyon])).toEqual(["Everything", "paris", "lyon"]);
+    expect(labels(single(global), [acme], [paris])).toEqual(["Everything"]);
+    expect(labels(single(global), [acme], [paris, lyon])).toEqual(["Everything", "paris", "lyon"]);
   });
 
   it("names customers when there are several", () => {
@@ -39,7 +40,9 @@ describe("channelScopes", () => {
       "acme / paris",
       "acme / lyon",
     ]);
-    expect(labels(siteAdmin, [acme], [paris, lyon])).toEqual(["paris"]);
+    // An MSP's customer reads no customer wording.
+    expect(labels(single(customerAdmin), [acme], [paris, lyon])).toEqual(["All sites", "paris", "lyon"]);
+    expect(labels(single(siteAdmin), [acme], [paris, lyon])).toEqual(["paris"]);
     const viewerOfGlobex = me(
       { role: "administrator", customer_id: "c1", site_id: null },
       { role: "viewer", customer_id: "c2", site_id: null },
@@ -58,9 +61,9 @@ describe("channelScopes", () => {
 
   it("keeps the current scope of an edited channel as a choice", () => {
     const hidden = channel({ customer_id: "c1", customer_name: "default" });
-    expect(labels(global, [acme], [paris], hidden)).toEqual(["Everything", "All of default"]);
+    expect(labels(single(global), [acme], [paris], hidden)).toEqual(["Everything", "All sites"]);
     const gone = channel({ customer_id: "c1", customer_name: "acme", site_id: "site-9", site_name: "old" });
-    expect(labels(global, [acme], [], gone)).toEqual(["Everything", "old"]);
+    expect(labels(single(global), [acme], [], gone)).toEqual(["Everything", "old"]);
   });
 });
 
@@ -73,6 +76,7 @@ describe("a saved channel", () => {
     const onCustomer = channel({ customer_id: "c1", customer_name: "acme" });
     expect(scopeValue(onCustomer)).toBe("customer:c1");
     expect(scopeName(onCustomer, true)).toBe("acme");
+    expect(scopeName(onCustomer, false)).toBe("All sites");
     expect(scopeValue(channel({}))).toBe("everything");
     expect(scopeName(channel({}), true)).toBe("Everything");
   });

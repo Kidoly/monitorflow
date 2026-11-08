@@ -1,5 +1,6 @@
 import type { Customer, Me, NotificationChannel, Site } from "./api";
-import { administersCustomer, administersEverything, administersSite } from "./me";
+import { ALL_SITES } from "./customers";
+import { administersCustomer, administersEverything, administersSite, multiCustomer } from "./me";
 
 /** One choice of "Notify about" in the channel form (ADR-0078). */
 export interface ChannelScope {
@@ -19,11 +20,12 @@ const EVERYTHING: ChannelScope = {
   site_id: null,
 };
 
-function customerScope(id: string, name: string): ChannelScope {
+/** A whole customer; "All sites" for someone who sees one customer (ADR-0104). */
+function customerScope(id: string, name: string, named: boolean): ChannelScope {
   return {
     value: `customer:${id}`,
-    label: `All of ${name}`,
-    note: `Alerts from ${name} and all its sites. Nothing from other customers.`,
+    label: named ? `All of ${name}` : ALL_SITES,
+    note: named ? `Alerts from ${name} and all its sites. Nothing from other customers.` : "Alerts from all your sites.",
     customer_id: id,
     site_id: null,
   };
@@ -54,12 +56,14 @@ export function scopeName(channel: NotificationChannel, severalCustomers: boolea
     const site = channel.site_name ?? "";
     return severalCustomers ? `${channel.customer_name} / ${site}` : site;
   }
+  if (channel.customer_id && !severalCustomers) return ALL_SITES;
   return channel.customer_name ?? EVERYTHING.label;
 }
 
 /**
- * What `me` may point a channel at, widest first. An install with one
- * customer does not hear of customers, nor one with one site of sites.
+ * What `me` may point a channel at, widest first. Someone who sees one
+ * customer does not hear of customers (ADR-0104), nor one with one site of
+ * sites.
  * `current` stays a choice whatever the rules say, so editing never moves
  * a channel by itself. UX only: the API decides.
  */
@@ -70,11 +74,11 @@ export function channelScopes(
   current?: Covered,
 ): ChannelScope[] {
   const global = administersEverything(me);
-  const several = customers.length > 1;
+  const several = multiCustomer(me);
   const scopes = global ? [EVERYTHING] : [];
   for (const customer of customers) {
     if ((several || !global) && administersCustomer(me, customer.id)) {
-      scopes.push(customerScope(customer.id, customer.name));
+      scopes.push(customerScope(customer.id, customer.name, several));
     }
     if (several || sites.length > 1 || !global) {
       for (const site of sites) {
@@ -89,7 +93,7 @@ export function channelScopes(
     if (current.site_id) {
       scopes.push(siteScope(current.site_id, current.site_name ?? "", customer, several));
     } else if (current.customer_id) {
-      scopes.push(customerScope(current.customer_id, customer));
+      scopes.push(customerScope(current.customer_id, customer, several));
     } else {
       scopes.unshift(EVERYTHING);
     }

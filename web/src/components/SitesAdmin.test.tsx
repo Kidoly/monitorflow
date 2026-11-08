@@ -1,9 +1,10 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { CSRF_HEADER } from "@/lib/api";
-import { customerAdmin, me, relay } from "@/test/admin";
+import { RefreshMeContext } from "@/lib/me";
+import { customerAdmin, me, relay, single } from "@/test/admin";
 import { requestHeaders, stubFetch } from "@/test/fetch";
 
 import { SitesAdmin } from "./SitesAdmin";
@@ -64,6 +65,57 @@ describe("SitesAdmin", () => {
     await user.type(field, "Acme Hosting");
     await user.click(within(section).getByRole("button", { name: "Save" }));
     expect(await within(section).findByRole("alert")).toHaveTextContent('A customer named "Acme Hosting" already exists.');
+  });
+
+  describe("for a single company (ADR-0104)", () => {
+    const routes = {
+      "GET /api/customers": { status: 200, body: { customers: [{ id: C1, name: "default", site_count: 2 }] } },
+      "GET /api/sites": {
+        status: 200,
+        body: { sites: [site("s1", "paris", C1, "default"), site("s2", "lyon", C1, "default")] },
+      },
+      "GET /api/servers": servers,
+      "GET /api/relays": relays,
+    };
+
+    it("lists the sites without customers and keeps adding one quiet", async () => {
+      const fetchMock = stubFetch({
+        ...routes,
+        "POST /api/customers": { status: 201, body: { id: "c2", name: "Acme Hosting", site_count: 0 } },
+      });
+      const refreshMe = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <RefreshMeContext.Provider value={refreshMe}>
+          <SitesAdmin me={single(me({ role: "administrator", customer_id: null, site_id: null }))} />
+        </RefreshMeContext.Provider>,
+      );
+      const section = await screen.findByRole("region", { name: "Your sites" });
+      expect(within(section).getByRole("table", { name: "Sites" })).toBeInTheDocument();
+      expect(screen.queryByText(/customers?,/)).not.toBeInTheDocument();
+      expect(screen.queryByText("default")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Rename/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("form", { name: "New customer" })).not.toBeInTheDocument();
+
+      // Folded away at the bottom, then the user is reloaded: customers show everywhere.
+      await user.click(screen.getByRole("button", { name: "Add a customer" }));
+      const form = screen.getByRole("form", { name: "New customer" });
+      await user.type(within(form).getByLabelText("Customer name"), "Acme Hosting");
+      await user.click(within(form).getByRole("button", { name: "Create customer" }));
+      expect(await within(form).findByRole("status")).toHaveTextContent(
+        "Created Acme Hosting. Your sites so far are under default, which you can rename above.",
+      );
+      expect(refreshMe).toHaveBeenCalledOnce();
+      expect(fetchMock).toHaveBeenCalledWith("/api/customers", expect.objectContaining({ method: "POST" }));
+    });
+
+    it("shows a customer's administrator no customer and no way to add one", async () => {
+      stubFetch(routes);
+      render(<SitesAdmin me={single(customerAdmin)} />);
+      await screen.findByRole("region", { name: "Your sites" });
+      expect(document.body).not.toHaveTextContent(/customer/i);
+      expect(screen.queryByRole("button", { name: "Add a customer" })).not.toBeInTheDocument();
+    });
   });
 
   it("hides customer creation from customer administrators", async () => {

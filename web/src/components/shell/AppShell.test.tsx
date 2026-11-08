@@ -7,7 +7,7 @@ import { THEME_KEY, THEME_SCRIPT } from "@/lib/theme";
 import { stubFetch } from "@/test/fetch";
 import { authority, rotation } from "@/test/certificateAuthority";
 import { setUrl } from "@/test/navigation";
-import { ACME, LYON, SHELL_ROUTES } from "@/test/shell";
+import { ACME, COMPANY_ROUTES, LYON, SHELL_ROUTES, sites } from "@/test/shell";
 
 import { AppShell } from "./AppShell";
 
@@ -208,6 +208,45 @@ describe("AppShell", () => {
     expect(new URLSearchParams(window.location.search).get("site")).toBe(LYON);
     // The button names the customer only; the site is a filter.
     expect(screen.getByRole("button", { name: "Scope: Acme Hosting" })).toBeInTheDocument();
+  });
+
+  describe("a single company (ADR-0104)", () => {
+    const company: Me = { ...admin, multi_customer: false };
+    const customerUser: Me = {
+      ...admin,
+      multi_customer: false,
+      roles: [{ role: "viewer", customer_id: ACME, site_id: null }],
+    };
+
+    for (const [who, user] of [
+      ["a single company", company],
+      ["an MSP's customer", customerUser],
+    ] as const) {
+      it(`picks among sites, never customers, for ${who}`, async () => {
+        const u = userEvent.setup();
+        stubFetch(COMPANY_ROUTES);
+        render(<AppShell me={user}>page</AppShell>);
+        await u.click(await screen.findByRole("button", { name: "Scope: All sites" }));
+        const list = screen.getByRole("listbox", { name: "Scope" });
+        expect(within(list).getAllByRole("option").map((o) => o.textContent)).toEqual([
+          "All sites",
+          "paris-dc1",
+          "lyon-office",
+        ]);
+        await u.click(within(list).getByRole("option", { name: "lyon-office" }));
+        expect(new URLSearchParams(window.location.search).get("site")).toBe(LYON);
+        expect(screen.getByRole("button", { name: "Scope: lyon-office" })).toBeInTheDocument();
+        expect(document.body).not.toHaveTextContent(/customer/i);
+      });
+    }
+
+    it("shows no picker for one site", async () => {
+      stubFetch({ ...COMPANY_ROUTES, "GET /api/sites": { status: 200, body: { sites: [sites[0]!] } } });
+      render(<AppShell me={company}>page</AppShell>);
+      // The count comes after the lists, fetched first.
+      await within(nav()).findByLabelText("3 open incidents");
+      expect(screen.queryByRole("button", { name: /^Scope/ })).not.toBeInTheDocument();
+    });
   });
 
   it("cycles the theme, stores it and applies it to <html>", async () => {

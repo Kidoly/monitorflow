@@ -1,4 +1,5 @@
 import type { OnCallProblem, OnCallSchedule, OnCallTurn } from "./api";
+import { ALL_SITES } from "./customers";
 
 /** ISO weekdays, 1 for Monday. */
 export const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -9,10 +10,18 @@ export function handoffRule(schedule: Pick<OnCallSchedule, "rotation" | "handoff
   return `Hands off every ${day} at ${schedule.handoff_time}, ${schedule.time_zone.replaceAll("_", " ")} time`;
 }
 
-/** "acme / paris", "All of acme", "Everything": what a schedule covers. */
-export function placeName(schedule: Pick<OnCallSchedule, "customer_name" | "site_name">, severalCustomers: boolean): string {
+/**
+ * "acme / paris", "All of acme", "Everything": what a schedule covers. With
+ * `multiCustomer` false (ADR-0104), "All sites" for a whole customer.
+ */
+export function placeName(
+  schedule: Pick<OnCallSchedule, "customer_name" | "site_name">,
+  severalCustomers: boolean,
+  multiCustomer = true,
+): string {
   if (schedule.site_name) return severalCustomers ? `${schedule.customer_name} / ${schedule.site_name}` : (schedule.site_name ?? "");
-  return schedule.customer_name ? `All of ${schedule.customer_name}` : "Everything";
+  if (!schedule.customer_name) return "Everything";
+  return multiCustomer ? `All of ${schedule.customer_name}` : ALL_SITES;
 }
 
 /** Why a turn is a gap, in plain words: "bob has not added a way to reach them". */
@@ -26,7 +35,7 @@ export function problemText(problem: OnCallProblem, username: string | null, pla
     case "disabled":
       return `${who}'s account is disabled`;
     case "no_access":
-      return `${who} can no longer see ${place === "Everything" ? "everything" : place}`;
+      return `${who} can no longer see ${place === "Everything" || place === ALL_SITES ? place.toLowerCase() : place}`;
     case "no_contact":
       return `${who} has not added an email address or a chat`;
     case "no_mail_server":
