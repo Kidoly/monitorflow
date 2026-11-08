@@ -182,10 +182,10 @@ check "the addition is audited" test "$(psql "SELECT count(*) FROM audit_log WHE
 check "the same certificate authority" test \
     "$(compose 1 exec -T server sha256sum /var/lib/monitorflow/server/ca/ca-key.pem)" = \
     "$(compose 2 exec -T server sha256sum /var/lib/monitorflow/server/ca/ca-key.pem)"
-on 1 curl -fs -o /tmp/ca.crt "http://monitor.internal/trust/monitorflow-ca.crt"
-docker cp -q "$host-1:/tmp/ca.crt" "$work/browser-ca.crt"
-docker cp -q "$work/browser-ca.crt" "$host-2:/tmp/ca.crt"
-check "its HTTPS verifies against the first's browser CA" on 2 curl -fs --cacert /tmp/ca.crt \
+# Through the runner: systemd mounts a tmpfs on the hosts' /tmp, which
+# docker cp does not see.
+on 1 curl -fs "http://monitor.internal/trust/monitorflow-ca.crt" | on 2 sh -c 'cat >/root/browser-ca.crt'
+check "its HTTPS verifies against the first's browser CA" on 2 curl -fs --cacert /root/browser-ca.crt \
     --connect-to "::127.0.0.1" -o /dev/null "https://$first/api/health/ready"
 on 2 curl -fsSk -c /tmp/cookies -H 'content-type: application/json' -H 'x-monitorflow-csrf: 1' \
     -d "$(jq -n --arg p "$password" '{username: "admin", password: $p}')" https://monitor.internal/api/auth/login >/dev/null
@@ -200,8 +200,9 @@ check "it says the license is full" grep -q 'allows 2 central servers' "$work/fu
 echo "== after expiry"
 license 2 2020-01-31 >"$work/expired.txt"
 expired=$(cat "$work/expired.txt")
-compose 1 exec -T postgres psql -U monitorflow -d monitorflow -q -v "text=$expired" \
-    -c "UPDATE license SET text = :'text'" >/dev/null
+# From stdin: psql does not substitute variables in -c.
+echo "UPDATE license SET text = :'text';" \
+    | compose 1 exec -T postgres psql -U monitorflow -d monitorflow -q -v ON_ERROR_STOP=1 -v "text=$expired" >/dev/null
 compose 2 restart server >/dev/null
 for _ in $(seq 60); do healthy 2 && break; sleep 2; done
 check "the added central server starts again" healthy 2
