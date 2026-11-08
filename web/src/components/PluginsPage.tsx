@@ -12,7 +12,8 @@ import {
   api,
   describeError,
 } from "@/lib/api";
-import { administersEverything, useMe } from "@/lib/me";
+import { customerWide, placeLabel } from "@/lib/customers";
+import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
 
 import styles from "./AdminPages.module.css";
@@ -52,19 +53,18 @@ interface PlaceChoice {
 }
 
 /**
- * Where a plugin may be used, widest first. One customer means no
- * customers on screen, and one site no sites: the choice is then just on
- * or off.
+ * Where a plugin may be used, widest first (ADR-0104): customers only for
+ * someone who sees several (`multiCustomer`), sites once there are
+ * several; with neither the choice is just on or off.
  */
-export function placeChoices(customers: Customer[], sites: Site[]): PlaceChoice[] {
-  const several = customers.length > 1;
-  const choices: PlaceChoice[] = [{ key: "everything", label: several ? "Every customer" : "Every server" }];
-  if (several) {
+export function placeChoices(customers: Customer[], sites: Site[], multiCustomer: boolean): PlaceChoice[] {
+  const choices: PlaceChoice[] = [{ key: "everything", label: multiCustomer ? "Every customer" : "Every server" }];
+  if (multiCustomer) {
     for (const c of customers) choices.push({ key: `customer:${c.id}`, label: `All of ${c.name}` });
   }
-  if (several || sites.length > 1) {
+  if (multiCustomer || sites.length > 1) {
     for (const s of sites) {
-      choices.push({ key: `site:${s.id}`, label: several ? `${s.customer_name} / ${s.name}` : s.name });
+      choices.push({ key: `site:${s.id}`, label: placeLabel(s.customer_name, s.name, multiCustomer, " / ") });
     }
   }
   return choices;
@@ -76,16 +76,14 @@ function placeKey(place: InstalledPlugin["places"][number]): PlaceKey {
 }
 
 /** Where a plugin may be used, in a few words. */
-export function placesSummary(plugin: InstalledPlugin, severalCustomers: boolean): string {
+export function placesSummary(plugin: InstalledPlugin, multiCustomer: boolean): string {
   if (plugin.places.length === 0) return "Nowhere yet";
   if (plugin.places.some((p) => !p.customer_id && !p.site_id)) return "Everywhere";
   return plugin.places
     .map((p) =>
       p.site_id
-        ? severalCustomers
-          ? `${p.customer_name} / ${p.site_name}`
-          : (p.site_name ?? "")
-        : `All of ${p.customer_name}`,
+        ? placeLabel(p.customer_name, p.site_name ?? "", multiCustomer, " / ")
+        : customerWide(`All of ${p.customer_name}`, multiCustomer),
     )
     .join(", ");
 }
@@ -97,6 +95,7 @@ function errorText(e: unknown): string {
 function Plugins() {
   const { data, error, refresh } = usePolledData(api.plugins);
   const customers = usePolledData(api.customers, { intervalMs: 60_000 });
+  const multi = useMultiCustomer();
   const sites = usePolledData(api.sites, { intervalMs: 60_000 });
   const [placing, setPlacing] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -121,7 +120,7 @@ function Plugins() {
 
   const allCustomers = customers.data?.customers ?? [];
   const allSites = sites.data?.sites ?? [];
-  const choices = placeChoices(allCustomers, allSites);
+  const choices = placeChoices(allCustomers, allSites, multi);
   const editing = data.plugins.find((p) => p.id === placing);
 
   async function act(action: () => Promise<unknown>) {
@@ -158,7 +157,7 @@ function Plugins() {
       key: "where",
       header: "Used where",
       className: styles.wrap,
-      cell: (p) => placesSummary(p, allCustomers.length > 1),
+      cell: (p) => placesSummary(p, multi),
     },
     {
       key: "status",

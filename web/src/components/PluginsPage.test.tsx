@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Customer, InstalledPlugin, PluginInspection, Site } from "@/lib/api";
-import { As, customerAdmin, me } from "@/test/admin";
+import { As, customerAdmin, me, single } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { setUrl } from "@/test/navigation";
 
@@ -99,7 +99,7 @@ describe("PluginsPage", () => {
     const user = userEvent.setup();
     const installed = plugin({ id: "p2", name: "http-json", kind: "check", title: "Web address", places: [] });
     stubFetch(routes([], { "POST /api/plugins/inspect": { status: 200, body: inspection() } }));
-    renderPage();
+    renderPage(single(globalAdmin));
     const file = new File(["{}"], "http-json-1.0.0.mfplugin");
     await user.upload(await screen.findByLabelText(/Plugin file/), file);
     const asks = await screen.findByRole("list", { name: "What it asks for" });
@@ -172,14 +172,16 @@ describe("PluginsPage", () => {
 });
 
 describe("placeChoices", () => {
-  it("hides customers and sites until there are several", () => {
-    const one = placeChoices([customer("c1", "acme")], [site("s1", "main", "c1", "acme")]);
+  it("shows customers only to someone who sees several, sites once there are several", () => {
+    const acme = [customer("c1", "acme")];
+    const one = placeChoices(acme, [site("s1", "main", "c1", "acme")], false);
     expect(one.map((c) => c.label)).toEqual(["Every server"]);
-    const sites = placeChoices([customer("c1", "acme")], [site("s1", "paris", "c1", "acme"), site("s2", "lyon", "c1", "acme")]);
+    const sites = placeChoices(acme, [site("s1", "paris", "c1", "acme"), site("s2", "lyon", "c1", "acme")], false);
     expect(sites.map((c) => c.label)).toEqual(["Every server", "paris", "lyon"]);
     const msp = placeChoices(
       [customer("c1", "acme"), customer("c2", "globex")],
       [site("s1", "main", "c1", "acme"), site("s2", "hq", "c2", "globex")],
+      true,
     );
     expect(msp.map((c) => c.label)).toEqual(["Every customer", "All of acme", "All of globex", "acme / main", "globex / hq"]);
   });
@@ -194,5 +196,7 @@ describe("placesSummary", () => {
     ];
     expect(placesSummary(plugin({ places }), true)).toBe("All of acme, globex / hq");
     expect(placesSummary(plugin({ places: places.slice(1) }), false)).toBe("hq");
+    // A customer place said without the customer, for one customer.
+    expect(placesSummary(plugin({ places: places.slice(0, 1) }), false)).toBe("All sites");
   });
 });
