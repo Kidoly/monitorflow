@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kidoly/monitorflow/blob/main/docs/events/v1.schema.json",
+  "title": "MonitorFlow integration event, version 1",
+  "description": "The body of every request MonitorFlow sends to an integration endpoint (ADR-0102). Fields are only ever added: ignore the ones you do not know. De-duplicate on `id`.",
+  "type": "object",
+  "required": ["version", "id", "event", "occurred_at", "url", "customer", "site", "server", "relay"],
+  "properties": {
+    "version": { "const": 1 },
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The event's ID: the same for every endpoint, retry and replay. Also in the X-MonitorFlow-Delivery header."
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "incident.opened", "incident.escalated", "incident.acknowledged", "incident.resolved",
+        "server.added", "server.removed", "server.offline", "server.online",
+        "update.started", "update.succeeded", "update.failed",
+        "campaign.started", "campaign.succeeded", "campaign.failed",
+        "approval.waiting", "approval.decided",
+        "test"
+      ]
+    },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "url": { "type": "string", "format": "uri", "description": "The page of the web interface that shows the event's subject." },
+    "customer": { "$ref": "#/$defs/ref" },
+    "site": { "$ref": "#/$defs/ref" },
+    "server": { "$ref": "#/$defs/ref" },
+    "relay": { "$ref": "#/$defs/ref" },
+    "restored": { "type": "boolean", "description": "server.added only: a removed server came back with its history." },
+    "incident": { "$ref": "#/$defs/incident" },
+    "update": { "$ref": "#/$defs/update" },
+    "campaign": { "$ref": "#/$defs/campaign" },
+    "approval": { "$ref": "#/$defs/approval" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "event": { "pattern": "^incident\\." } } },
+      "then": { "required": ["incident"] }
+    },
+    {
+      "if": { "properties": { "event": { "pattern": "^update\\." } } },
+      "then": { "required": ["update"] }
+    },
+    {
+      "if": { "properties": { "event": { "pattern": "^campaign\\." } } },
+      "then": { "required": ["campaign"] }
+    },
+    {
+      "if": { "properties": { "event": { "pattern": "^approval\\." } } },
+      "then": { "required": ["approval"] }
+    },
+    {
+      "if": { "properties": { "event": { "pattern": "^server\\." } } },
+      "then": { "properties": { "server": { "type": "object" } } }
+    }
+  ],
+  "$defs": {
+    "ref": {
+      "description": "A customer, site, server or relay; null when the event concerns none.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["id", "name"],
+          "properties": {
+            "id": { "type": "string", "format": "uuid" },
+            "name": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "incident": {
+      "type": "object",
+      "required": ["id"],
+      "description": "server.offline and server.online carry only the incident's id.",
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "metric": { "type": "string", "description": "Like monitorflow_cpu_usage_percent, or offline." },
+        "instance": { "type": "string", "description": "Like /var for a disk; empty when the metric has none." },
+        "severity": { "enum": ["warning", "critical"], "description": "The new severity; the last one when resolved." },
+        "value": { "type": ["number", "null"] },
+        "peak_value": { "type": ["number", "null"] },
+        "reason": { "type": ["string", "null"], "description": "Why it changed when the writer says, like back_online, revoked or muted." },
+        "acknowledged_by": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" } } }
+          ]
+        },
+        "opened_at": { "type": "string", "format": "date-time" },
+        "resolved_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "update": {
+      "type": "object",
+      "required": ["kind", "command_id", "state"],
+      "properties": {
+        "kind": { "enum": ["apply_updates", "self_update"] },
+        "command_id": { "type": "string", "format": "uuid" },
+        "version": { "type": ["string", "null"], "description": "A relay's self_update only." },
+        "state": { "enum": ["running", "succeeded", "failed", "expired", "cancelled"] },
+        "error": { "type": ["string", "null"] }
+      }
+    },
+    "campaign": {
+      "type": "object",
+      "required": ["id", "name", "state"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string" },
+        "state": { "enum": ["running", "completed", "failed", "stopped"] },
+        "error": { "type": ["string", "null"] },
+        "started_at": { "type": ["string", "null"], "format": "date-time" },
+        "finished_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "required": ["id", "command", "tier", "state"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "remediation_incident_id": { "type": "string", "format": "uuid" },
+        "incident_id": { "type": ["string", "null"], "format": "uuid" },
+        "metric": { "type": "string" },
+        "command": { "type": "string", "description": "Proposed by the AI: untrusted text. Never run it from a webhook." },
+        "tier": { "enum": ["low_impact", "high_impact"] },
+        "state": { "enum": ["pending", "approved", "rejected", "expired", "cancelled"] },
+        "decided_at": { "type": ["string", "null"], "format": "date-time" },
+        "decided_by": { "$ref": "#/$defs/ref" }
+      }
+    }
+  }
+}

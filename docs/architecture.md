@@ -108,6 +108,10 @@ Runs on the central server, not on the agent, so rules can change without touchi
 
 Database triggers on incident events, approvals and failed updates write an outbox, with failed backups copied from the updater's status; a server task delivers it to the email, webhook, Slack, Teams and Discord channels administrators set up in the web interface, each covering everything, one customer or one site (ADR-0060, ADR-0077, ADR-0078). Whoever is on call for the place, by a schedule of the same coverage, is told in person too, with the same grouped messages, through the email address and chat they set themselves (ADR-0081). When nobody acknowledges a critical incident, the next step of the place's follow-up is told after a wait: the administrators after 15 minutes by default, in person, with a link that acknowledges in one click (ADR-0082).
 
+### Outgoing events for integrations
+
+Machines such as a PSA get their own outbox (ADR-0102): triggers on the same tables write `integration_events` (incidents including acknowledgements, servers added, removed, offline and online, updates, campaigns, approvals), and one delivery per endpoint that wants each event and covers its place. Every instance sends due deliveries, claimed with a 60-second lease, so delivery is at least once without a leader; deliveries about one subject go in order, failures are retried for a day, an endpoint failing for a day is disabled with a notice to administrators, and events are kept 30 days for replays. Requests are signed like notification webhooks.
+
 ## 6. Storage
 
 | Data | Store | Why |
@@ -290,6 +294,7 @@ Recorded in short form here; rationale in `docs/adr/`.
 | AI in MSP mode | One shared configuration; one customer per request; secrets redacted |
 | Snapshots | Proxmox first, else local LVM or ZFS (ADR-0094) |
 | Notifications | Email (SMTP), signed JSON webhooks and Slack, Teams and Discord incoming webhooks set up in the interface with a test button; an outbox filled by triggers on incident events, pending approvals and failed updates, delivered at most once by a polling task to the channels covering the event, per customer or site; secrets never returned (ADR-0060, ADR-0077, ADR-0078) |
+| Integrations | Signed JSON webhooks for machines, at least once, retried for a day, in order per subject, replayable for 30 days; endpoints per customer or site with chosen events, a generated secret shown once, private addresses only when a global administrator allows them (ADR-0102) |
 | Threshold evaluation | Server side |
 | Time series | VictoriaMetrics, not a custom store |
 | Peer identity | Role and ID in a `monitorflow://<role>/<id>` URI SAN; relays speak only for agents of their site |
