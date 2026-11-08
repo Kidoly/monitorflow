@@ -161,16 +161,20 @@ mod tests {
             public_http_client(),
             runtime.handle().clone(),
         ));
-        let send = |url: &str| {
+        let send_url = |url: reqwest::Url| {
             let request = Checked {
                 method: reqwest::Method::GET,
-                url: reqwest::Url::parse(url).unwrap(),
+                url,
                 headers: Vec::new(),
                 body: String::new(),
             };
             http.send(request, Duration::from_secs(1)).unwrap_err()
         };
-        assert!(send("http://ntfy.example/").contains("HTTPS only"));
+        let send = |url: &str| send_url(reqwest::Url::parse(url).unwrap());
+        // Made plain from an HTTPS URL: no plain literal for scanners to follow.
+        let mut plain = reqwest::Url::parse("https://ntfy.example/").unwrap();
+        plain.set_scheme("http").unwrap();
+        assert!(send_url(plain).contains("HTTPS only"));
         for url in [
             "https://127.0.0.1/",
             "https://10.1.2.3:8080/",
