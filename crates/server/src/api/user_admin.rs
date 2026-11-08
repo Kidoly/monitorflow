@@ -652,5 +652,6 @@ pub async fn use_link(
 
     let cookie = session::set_cookie(&state.settings, &session);
     let user = auth::load_user(&state.pool, id, Some(session)).await?;
-    Ok(([(SET_COOKIE, cookie)], Json(Me::from(&user))).into_response())
+    let me = Me::of(&state.pool, &user).await?;
+    Ok(([(SET_COOKIE, cookie)], Json(me)).into_response())
 }

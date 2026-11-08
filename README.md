@@ -110,7 +110,7 @@ curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/instal
 
 ## For MSPs and remote sites
 
-- **Customers** keep their servers, sites and notifications apart, and a user's role can cover everything, one customer or one site.
+- **Customers** keep their servers, sites and notifications apart, and a user's role can cover everything, one customer or one site. A single company never sees them: they appear once you add a second customer under **Administration › Sites**, and a customer's own users see only their servers.
 - **Sites** group the servers of one place. Each site has its own install command.
 - **Relays** serve a site whose servers cannot reach the central server directly. The relay connects out to the central server, the site's servers connect to the relay, and it can keep a local copy of the packages. Add one under **Administration › Relays**. See [Installing a relay](docs/deploy-relay.md).
 

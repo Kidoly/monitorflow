@@ -241,6 +241,8 @@ pub async fn complete(
             customer_id: None,
             site_id: None,
         }],
+        // A global administrator sees every customer (ADR-0104).
+        multi_customer: super::customers::several(&state.pool).await?,
     };
     Ok(([(SET_COOKIE, cookie)], Json(me)).into_response())
 }

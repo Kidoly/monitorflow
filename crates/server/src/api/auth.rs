@@ -134,15 +134,21 @@ pub struct Me {
     pub id: Uuid,
     pub username: String,
     pub roles: Vec<RoleGrant>,
+    /// Whether the user sees more than one customer: what shows the
+    /// customer picker and the customer wording in the web interface
+    /// (ADR-0104). False for a single company and for a user limited to
+    /// one customer.
+    pub multi_customer: bool,
 }
 
-impl From<&CurrentUser> for Me {
-    fn from(user: &CurrentUser) -> Self {
-        Self {
+impl Me {
+    pub(super) async fn of(pool: &PgPool, user: &CurrentUser) -> Result<Self, sqlx::Error> {
+        Ok(Self {
             id: user.id,
             username: user.username.clone(),
             roles: user.roles.clone(),
-        }
+            multi_customer: super::customers::several_visible(pool, user).await?,
+        })
     }
 }
 
@@ -228,7 +234,8 @@ pub async fn login(
 
     let cookie = session::set_cookie(&state.settings, &token);
     let user = load_user(&state.pool, account.id, Some(token)).await?;
-    Ok(([(SET_COOKIE, cookie)], Json(Me::from(&user))).into_response())
+    let me = Me::of(&state.pool, &user).await?;
+    Ok(([(SET_COOKIE, cookie)], Json(me)).into_response())
 }
 
 /// `POST /api/auth/logout`: ends the current session.
@@ -258,6 +265,6 @@ pub async fn logout(
 }
 
 /// `GET /api/auth/me`.
-pub async fn me(user: CurrentUser) -> Json<Me> {
-    Json(Me::from(&user))
+pub async fn me(State(state): State<ApiState>, user: CurrentUser) -> Result<Json<Me>, ApiError> {
+    Ok(Json(Me::of(&state.pool, &user).await?))
 }

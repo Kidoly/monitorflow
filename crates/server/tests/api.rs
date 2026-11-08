@@ -10,7 +10,7 @@ use monitorflow_common::redact::Secret;
 use monitorflow_common::tls::PeerRole;
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::session;
-use monitorflow_server::api::users::{self, CreateUserError};
+use monitorflow_server::api::users::{self, CreateUserError, GrantScope};
 use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::grpc::{Counters, PeerInfo, Registry};
 use monitorflow_server::live_settings::Live;
@@ -129,6 +129,7 @@ db_tests! {
             "id": id,
             "username": "Admin",
             "roles": [{ "role": "administrator", "customer_id": null, "site_id": null }],
+            "multi_customer": false,
         });
         assert_eq!(body, expected);
         let cookie = cookie.unwrap();
@@ -153,6 +154,55 @@ db_tests! {
         let audit = audit_actions(&pool).await;
         assert_eq!(audit.last().unwrap().0, "auth.login");
         assert_eq!(audit.last().unwrap().1, id.to_string());
+    }
+
+    #[sqlx::test]
+    async fn customers_show_once_a_user_sees_a_second_one(pool: PgPool) {
+        let grant = |name: &'static str, scope: GrantScope| {
+            let pool = pool.clone();
+            async move {
+                users::create_user_with(&pool, name, &Secret::new(PASSWORD), Role::Viewer, scope, "test")
+                    .await
+                    .unwrap();
+                login(&pool, name).await
+            }
+        };
+        let multi = |cookie: String| {
+            let pool = pool.clone();
+            async move {
+                let (status, body) = call(app(pool), with_cookie("GET", "/api/auth/me", &cookie)).await;
+                assert_eq!(status, StatusCode::OK);
+                body["multi_customer"].as_bool().unwrap()
+            }
+        };
+        let own: Uuid = sqlx::query_scalar("SELECT id FROM customers").fetch_one(&pool).await.unwrap();
+        let site: Uuid = sqlx::query_scalar("INSERT INTO sites (name, customer_id) VALUES ('paris', $1) RETURNING id")
+            .bind(own)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let admin = grant("admin", GrantScope::Global).await;
+        let customer = grant("customer", GrantScope::Customer(own)).await;
+        assert!(!multi(admin.clone()).await, "a single company");
+
+        let other: Uuid = sqlx::query_scalar("INSERT INTO customers (name) VALUES ('globex') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let (status, cookie, body) = call_with_cookie(app(pool.clone()), login_request("admin", PASSWORD)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(cookie.is_some() && body["multi_customer"] == true, "the login answer says it too");
+        assert!(multi(admin).await, "the second customer shows at once");
+        assert!(!multi(customer).await, "a customer's user sees only theirs");
+        assert!(!multi(grant("local", GrantScope::Site(site)).await).await, "nor does a site's");
+
+        let both = grant("both", GrantScope::Customer(own)).await;
+        sqlx::query("INSERT INTO user_roles (user_id, role, customer_id) SELECT id, 'operator', $1 FROM users WHERE username = 'both'")
+            .bind(other)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(multi(both).await, "a user of two customers sees both");
     }
 
     #[sqlx::test]

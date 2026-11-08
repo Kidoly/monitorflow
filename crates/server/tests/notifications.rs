@@ -536,6 +536,60 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn a_single_company_reads_no_customer_until_a_second_one_exists(pool: PgPool) {
+        // The install's own customer, renamed, is the only one (ADR-0104).
+        let own: Uuid = sqlx::query_scalar("UPDATE customers SET name = 'acme' RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let site: Uuid = sqlx::query_scalar(
+            "INSERT INTO sites (name, customer_id) VALUES ('paris', $1) RETURNING id",
+        )
+        .bind(own)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let server: Uuid = sqlx::query_scalar(
+            "INSERT INTO servers (peer_id, site_id, hostname, os_family)
+             VALUES ('web-1', $1, 'web-1', 'debian') RETURNING id",
+        )
+        .bind(site)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (url, hooks) = receiver(StatusCode::NO_CONTENT).await;
+        let (port, mails) = smtp_server().await;
+        notify::insert(&pool, &Destination::Webhook(Webhook { url }), None, Coverage::Everything, false)
+            .await
+            .unwrap();
+        let email = Destination::Email(Email {
+            host: "127.0.0.1".into(),
+            port,
+            username: String::new(),
+            from: "mf@example.com".into(),
+            to: vec!["ops@example.com".into()],
+        });
+        notify::insert(&pool, &email, None, Coverage::Everything, false).await.unwrap();
+        let dispatcher = fast(&pool);
+
+        incident(&pool, server, &[("opened", Some("critical"))]).await;
+        assert_eq!(dispatcher.pass().await.unwrap(), 1);
+        let mail = mails.lock().unwrap()[0].clone();
+        assert!(mail.contains("Critical: cpu_usage_percent is 91 on web-1 (paris)"), "{mail}");
+        assert!(mail.contains("Site: paris") && !mail.contains("acme"), "{mail}");
+        // A webhook's payload does not change with the number of customers.
+        let payload: Value = serde_json::from_slice(&hooks.lock().unwrap()[0].1).unwrap();
+        assert_eq!(payload["text"], "Critical: cpu_usage_percent is 91 on web-1 (acme / paris)");
+
+        let (_, other, _) = place(&pool, "globex").await;
+        incident(&pool, other, &[("opened", Some("critical"))]).await;
+        assert_eq!(dispatcher.pass().await.unwrap(), 1);
+        let mail = mails.lock().unwrap()[1].clone();
+        assert!(mail.contains("on globex-web (globex / globex-site)"), "{mail}");
+        assert!(mail.contains("Customer: globex"), "{mail}");
+    }
+
+    #[sqlx::test]
     async fn offline_servers_and_relays_notify_with_the_right_ending(pool: PgPool) {
         let (customer, _, relay) = place(&pool, "acme").await;
         for table in ["servers", "relays"] {

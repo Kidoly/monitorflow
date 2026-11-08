@@ -237,6 +237,27 @@ pub async fn list_all(pool: &PgPool) -> Result<Vec<CustomerView>, sqlx::Error> {
     visible(pool, &Scope::All, true, &[], None).await
 }
 
+/// Whether more than one customer exists (ADR-0104).
+pub(crate) async fn several(db: impl PgExecutor<'_>) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT count(*) > 1 FROM customers")
+        .fetch_one(db)
+        .await
+}
+
+/// Whether `user` sees more than one customer, as `GET /api/customers`
+/// lists them: the web interface shows customers only then (ADR-0104).
+pub(super) async fn several_visible(
+    pool: &PgPool,
+    user: &CurrentUser,
+) -> Result<bool, sqlx::Error> {
+    if user.visible_customers() == Scope::All {
+        return several(pool).await;
+    }
+    let (all_sites, sites) = user.readable_sites().bind();
+    let customers = visible(pool, &user.visible_customers(), all_sites, &sites, None).await?;
+    Ok(customers.len() > 1)
+}
+
 /// Customers the user sees: those of a global grant, granted as a whole,
 /// or with a readable site. Only `customer` when set.
 async fn visible(
