@@ -167,7 +167,7 @@ Let each install pick what suits it instead of a fixed choice.
 Fit into the tools people already use, for a single company and for MSPs alike (see "Who it is for" in `docs/product.md`).
 
 - [ ] A clean public API: versioned, documented with OpenAPI, API keys with scopes limited to a customer or a site, pagination and filters, stable errors, idempotent writes and rate limits. Everything the web interface does is possible through it.
-- [ ] Outgoing events for integrations: signed webhooks for incidents, acknowledgements, servers and updates, retried and replayable.
+- [x] Outgoing events for integrations: signed webhooks for incidents, acknowledgements, servers and updates, retried and replayable.
 - [ ] PSA connection, HaloPSA first: a ticket per incident with its status kept in step both ways, customers and sites matched to PSA clients and sites, servers synced as assets.
 - [ ] Plugins: add checks, notification channels and integrations without changing MonitorFlow, signed, isolated from the server's secrets, and installable from the web interface.
 - [x] MSP features out of sight for a single company: no customer picker or customer wording until a second customer exists.
