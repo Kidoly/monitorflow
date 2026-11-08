@@ -13,7 +13,7 @@ import {
   api,
   describeError,
 } from "@/lib/api";
-import { administersCustomer, administersEverything, administersSite, useMe } from "@/lib/me";
+import { administersCustomer, administersEverything, administersSite, useMe, useMultiCustomer } from "@/lib/me";
 import { API_DOCS_PATH } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
@@ -53,9 +53,9 @@ const EXPIRIES: { value: ApiKeyExpiry; label: string }[] = [
   { value: "never", label: "Never" },
 ];
 
-/** Where a key reaches, in plain words; customers only once there are two. */
-export function reachWords(key: ApiKey, manyCustomers: boolean): string {
-  if (key.site_id) return manyCustomers ? `${key.customer_name} › ${key.site_name}` : `${key.site_name}`;
+/** Where a key reaches, in plain words; customers only for `multiCustomer` (ADR-0104). */
+export function reachWords(key: ApiKey, multiCustomer: boolean): string {
+  if (key.site_id) return multiCustomer ? `${key.customer_name} › ${key.site_name}` : `${key.site_name}`;
   if (key.customer_id) return `${key.customer_name}`;
   return "Everything";
 }
@@ -87,7 +87,7 @@ function ApiKeys() {
     secret: string;
   } | null>(null);
   const now = new Date();
-  const manyCustomers = customers.length > 1;
+  const multiCustomer = useMultiCustomer();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -144,7 +144,7 @@ function ApiKeys() {
               <li key={key.id}>
                 <b>{key.name}</b> <span className={admin.mono}>mfk_{key.prefix}…</span>{" "}
                 <span className={admin.dim}>
-                  {accessWords(key)} · {reachWords(key, manyCustomers)}. Made by {key.created_by_username}.{" "}
+                  {accessWords(key)} · {reachWords(key, multiCustomer)}. Made by {key.created_by_username}.{" "}
                   {key.expires_at ? `Expires ${formatDay(new Date(key.expires_at), now)}.` : "Never expires."}{" "}
                   {key.last_used_at ? `Last used ${formatDay(new Date(key.last_used_at), now)}.` : "Not used yet."}
                 </span>{" "}
@@ -190,16 +190,19 @@ function ApiKeys() {
   );
 }
 
-/** Reaches the user may give a key, as `everything`, `c:<id>` or `s:<id>`. */
+/**
+ * Reaches the user may give a key, as `everything`, `c:<id>` or `s:<id>`;
+ * customers only for `multiCustomer` (ADR-0104).
+ */
 export function reachOptions(
   me: Parameters<typeof administersEverything>[0],
+  multiCustomer: boolean,
   customers: Customer[],
   sites: Site[],
 ): { value: string; label: string }[] {
   const options: { value: string; label: string }[] = [];
   if (administersEverything(me)) options.push({ value: "everything", label: "Everything" });
-  const many = customers.length > 1;
-  if (many) {
+  if (multiCustomer) {
     for (const c of customers) {
       if (administersCustomer(me, c.id)) options.push({ value: `c:${c.id}`, label: c.name });
     }
@@ -208,7 +211,7 @@ export function reachOptions(
     if (administersSite(me, s.customer_id, s.id)) {
       options.push({
         value: `s:${s.id}`,
-        label: many ? `${s.customer_name} › ${s.name}` : s.name,
+        label: multiCustomer ? `${s.customer_name} › ${s.name}` : s.name,
       });
     }
   }
@@ -227,7 +230,8 @@ function NewKey({
   onCreated: (key: { name: string; secret: string }) => void;
 }) {
   const me = useMe();
-  const reaches = reachOptions(me, customers, sites);
+  const multiCustomer = useMultiCustomer();
+  const reaches = reachOptions(me, multiCustomer, customers, sites);
   const [name, setName] = useState("");
   const [role, setRole] = useState<Role>("viewer");
   const [reach, setReach] = useState(reaches[0]?.value ?? "everything");
@@ -312,7 +316,11 @@ function NewKey({
               {AREA_WORDS[area]}
             </label>
           ))}
-        <span className={admin.fieldNote}>Any key may list servers, sites and customers within its reach.</span>
+        <span className={admin.fieldNote}>
+          {multiCustomer
+            ? "Any key may list servers, sites and customers within its reach."
+            : "Any key may list servers and sites within its reach."}
+        </span>
       </fieldset>
       <label className={admin.field}>
         The key stops working

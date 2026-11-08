@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ApiKey, Customer, Site } from "@/lib/api";
-import { As, customerAdmin, me } from "@/test/admin";
+import { As, customerAdmin, me, single } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 
 import { ApiKeysPage, accessWords, reachOptions, reachWords } from "./ApiKeys";
@@ -62,9 +62,9 @@ describe("words", () => {
     expect(reachWords(siteKey, true)).toBe("acme › paris");
   });
 
-  it("offers customers only once there are two", () => {
-    expect(reachOptions(root, [ACME], [PARIS]).map((o) => o.label)).toEqual(["Everything", "paris"]);
-    expect(reachOptions(root, [ACME, GLOBEX], [PARIS, BERLIN]).map((o) => o.label)).toEqual([
+  it("offers customers only to someone who sees several", () => {
+    expect(reachOptions(root, false, [ACME], [PARIS]).map((o) => o.label)).toEqual(["Everything", "paris"]);
+    expect(reachOptions(root, true, [ACME, GLOBEX], [PARIS, BERLIN]).map((o) => o.label)).toEqual([
       "Everything",
       "acme",
       "globex",
@@ -72,7 +72,10 @@ describe("words", () => {
       "globex › berlin",
     ]);
     // A customer's administrator: only that customer and its sites.
-    expect(reachOptions(customerAdmin, [ACME, GLOBEX], [PARIS, BERLIN]).map((o) => o.value)).toEqual(["c:c1", "s:s1"]);
+    expect(reachOptions(customerAdmin, true, [ACME, GLOBEX], [PARIS, BERLIN]).map((o) => o.value)).toEqual([
+      "c:c1",
+      "s:s1",
+    ]);
   });
 });
 
@@ -92,7 +95,7 @@ describe("ApiKeysPage", () => {
       },
     });
     render(
-      <As user={root}>
+      <As user={single(root)}>
         <ApiKeysPage />
       </As>,
     );
@@ -101,6 +104,9 @@ describe("ApiKeysPage", () => {
     await userEvent.type(screen.getByLabelText("What is it for?"), "HaloPSA");
     await userEvent.selectOptions(screen.getByLabelText(/^Access/), "operator");
     await userEvent.click(screen.getByLabelText("Only some areas"));
+    // One customer (ADR-0104): no customer in the reaches or the words.
+    expect(screen.getByText("Any key may list servers and sites within its reach.")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "paris" })).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText("Servers"));
     await userEvent.click(screen.getByRole("button", { name: "Make the key" }));
 
@@ -115,8 +121,25 @@ describe("ApiKeysPage", () => {
     });
     expect(await screen.findByText("mfk_abcd1234…")).toBeInTheDocument();
     expect(screen.getByText(/Read and change · Alerts and checks · Everything\. Made by alice\./)).toBeInTheDocument();
-    // One customer: no reach to choose beyond everything and the site, no customer words.
-    expect(screen.queryByText("acme")).not.toBeInTheDocument();
+    expect(screen.queryByText(/acme|customer/)).not.toBeInTheDocument();
+  });
+
+  it("offers customers to someone who sees several", async () => {
+    stubFetch({
+      "GET /api/api-keys": { status: 200, body: { keys: [] } },
+      "GET /api/customers": { status: 200, body: { customers: [ACME, GLOBEX] } },
+      "GET /api/sites": { status: 200, body: { sites: [PARIS, BERLIN] } },
+    });
+    render(
+      <As user={{ ...root, multi_customer: true }}>
+        <ApiKeysPage />
+      </As>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "New API key" }));
+    expect(await screen.findByRole("option", { name: "globex" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "acme › paris" })).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText("Only some areas"));
+    expect(screen.getByText("Any key may list servers, sites and customers within its reach.")).toBeInTheDocument();
   });
 
   it("turns a key off", async () => {
