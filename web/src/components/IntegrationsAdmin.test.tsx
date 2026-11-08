@@ -231,6 +231,50 @@ describe("IntegrationsPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("never speaks of customers to someone who sees one (ADR-0104)", async () => {
+    const single = {
+      ...me({ role: "administrator", customer_id: "c1", site_id: null }),
+      multi_customer: false,
+    };
+    stubFetch({
+      [`GET ${ENDPOINTS}`]: list([
+        endpoint({ customer_id: "c1", customer_name: "acme" }),
+        endpoint({
+          id: "i2",
+          name: "Paris PSA",
+          customer_id: "c1",
+          customer_name: "acme",
+          site_id: "site-1",
+          site_name: "paris",
+        }),
+      ]),
+      "GET /api/customers": {
+        status: 200,
+        body: { customers: [{ id: "c1", name: "acme", site_count: 1 }] },
+      },
+      "GET /api/sites": {
+        status: 200,
+        body: {
+          sites: [
+            { id: "site-1", name: "paris", customer_id: "c1", customer_name: "acme" },
+          ],
+        },
+      },
+    });
+    const user = userEvent.setup();
+    page(single);
+    const table = await screen.findByRole("table", { name: "Integrations" });
+    expect(within(table).getByText("All sites")).toBeInTheDocument();
+    expect(within(table).getByText("paris")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add integration" }));
+    const picker = screen.getByLabelText(/^Send events about/);
+    expect(
+      within(picker).getAllByRole("option").map((o) => o.textContent),
+    ).toEqual(["All sites", "paris"]);
+    expect(screen.getByText("Events of all your sites.")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/customer|acme/i);
+  });
+
   it("offers private addresses to a global administrator", async () => {
     stubFetch({
       [`GET ${ENDPOINTS}`]: list([]),

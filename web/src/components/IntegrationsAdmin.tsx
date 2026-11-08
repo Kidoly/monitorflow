@@ -28,7 +28,12 @@ import {
   localToIso,
   stateLabel,
 } from "@/lib/integrations";
-import { administersEverything, isAdministrator, useMe } from "@/lib/me";
+import {
+  administersEverything,
+  isAdministrator,
+  multiCustomer,
+  useMe,
+} from "@/lib/me";
 import {
   type ChannelScope,
   channelScopes,
@@ -67,9 +72,18 @@ export function IntegrationsPage() {
   return <Integrations />;
 }
 
-/** What an integration's coverage means: the notification notes speak of alerts and the central server. */
-function integrationNote(scope: ChannelScope): string {
+/**
+ * What an integration's coverage means: the notification notes speak of
+ * alerts and the central server. Customers are named only to someone who
+ * sees several (ADR-0104); otherwise the customer as a whole is all sites.
+ */
+function integrationNote(scope: ChannelScope, several: boolean): string {
   if (scope.site_id) return `Events of ${scope.label.split(" / ").pop()} only.`;
+  if (!several) {
+    return scope.customer_id
+      ? "Events of all your sites."
+      : "Events of every site.";
+  }
   if (scope.customer_id)
     return `Events of ${scope.label.replace(/^All of /, "")} and all its sites. Nothing from other customers.`;
   return "Events of every customer and site.";
@@ -214,11 +228,11 @@ function Integrations() {
             tests={tests}
             showScope={
               !global ||
-              allCustomers.length > 1 ||
+              multiCustomer(me) ||
               allSites.length > 1 ||
               data.endpoints.some((e) => e.customer_id)
             }
-            severalCustomers={allCustomers.length > 1}
+            severalCustomers={multiCustomer(me)}
             onTest={(id) => void test(id)}
             onLog={setLog}
             onEdit={(endpoint) => setEditing({ endpoint })}
@@ -453,6 +467,7 @@ function IntegrationForm({
   const [error, setError] = useState<string | null>(null);
   const id = useId();
   const global = administersEverything(me);
+  const several = multiCustomer(me);
   const scopes = channelScopes(me, customers, sites, endpoint);
   const wanted = chosen ?? (endpoint ? scopeValue(endpoint) : scopes[0]?.value);
   const scope = scopes.find((s) => s.value === wanted);
@@ -554,10 +569,14 @@ function IntegrationForm({
                 </option>
               ))}
             </select>,
-            scope && integrationNote(scope),
+            scope && integrationNote(scope, several),
           )
         : scope?.value !== "everything" &&
-          scope && <p className={styles.fieldNote}>{integrationNote(scope)}</p>}
+          scope && (
+            <p className={styles.fieldNote}>
+              {integrationNote(scope, several)}
+            </p>
+          )}
       <fieldset className={styles.fieldset}>
         <legend className={styles.legend}>Events</legend>
         <label>
