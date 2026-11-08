@@ -37,7 +37,7 @@ One `POST` per event, with a JSON body described by [`events/v1.schema.json`](ev
 1. **De-duplicate on `id`.** Delivery is at least once: after a timeout, a restart, or a replay, the same event comes again with the same `id`.
 2. **Answer 2xx within 15 seconds.** Anything else is retried: after 30 seconds, then twice as long each time up to an hour, for 24 hours. Redirects are not followed. Do the work after answering.
 3. **Order:** events about one subject (an incident, a server, an update, a campaign, an approval) arrive in order. Events about different subjects may not; sort on `occurred_at` if you need one order.
-4. An endpoint that has not accepted anything for 24 hours is turned off, and administrators are told. Turn it back on from the page, then use **Replay** for what it missed. Events are kept 30 days.
+4. An integration that has not accepted anything for 24 hours is turned off, and administrators are told. Turn it back on from the page, then use **Send again** in its deliveries for what it missed. Events are kept 30 days.
 
 ## Verifying the signature
 
@@ -48,8 +48,8 @@ Every request carries:
 | `X-MonitorFlow-Event` | the event, or `test` |
 | `X-MonitorFlow-Delivery` | the event's `id` |
 | `X-MonitorFlow-Timestamp` | Unix seconds when this attempt was signed |
-| `X-MonitorFlow-Signature` | `sha256=` and the hex HMAC-SHA256 of `{timestamp}.{raw body}` under the endpoint's secret |
-| `X-MonitorFlow-Replay` | `1` when an administrator replayed the event |
+| `X-MonitorFlow-Signature` | `sha256=` and the hex HMAC-SHA256 of `{timestamp}.{raw body}` under the integration's signing secret |
+| `X-MonitorFlow-Replay` | `1` when an administrator sent the event again |
 
 Compute the HMAC over the raw bytes of the body, before any JSON parsing, compare in constant time, and refuse timestamps more than 5 minutes away from your clock.
 
@@ -86,8 +86,8 @@ function verify(secret, headers, rawBody) {
 }
 ```
 
-The secret is shown once, when the endpoint is created or its secret is renewed. Keep it in your receiver's secret store.
+The signing secret is shown once, when the integration is added or given a **New secret**. Keep it in your receiver's secret store.
 
 ## Addresses
 
-An endpoint must be reachable from the central server. Private and local addresses (like `10.0.0.5`, `192.168.1.10` or `localhost`) are refused unless a global administrator ticks **Allow private addresses** for that endpoint.
+The URL must be reachable from the central server. Private and local addresses (like `10.0.0.5`, `192.168.1.10` or `localhost`) are refused unless a global administrator ticks **Allow private addresses** for that integration.

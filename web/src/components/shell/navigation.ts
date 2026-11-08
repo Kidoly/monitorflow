@@ -9,6 +9,7 @@ import {
   CAMPAIGNS_PATH,
   CERTIFICATE_AUTHORITY_PATH,
   DASHBOARDS_PATH,
+  INTEGRATIONS_PATH,
   MIRRORS_PATH,
   NOTIFICATIONS_PATH,
   ON_CALL_PATH,
@@ -89,6 +90,12 @@ export const NAVIGATION: NavSection[] = [
         label: "Notifications",
         href: NOTIFICATIONS_PATH,
         icon: "bell",
+        iconWhenCollapsed: true,
+      },
+      {
+        label: "Integrations",
+        href: INTEGRATIONS_PATH,
+        icon: "integrations",
         iconWhenCollapsed: true,
       },
       {

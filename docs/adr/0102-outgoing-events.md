@@ -62,6 +62,7 @@ An **endpoint** is a URL, a name, the events it wants, and what it covers: every
 
 - **The signing secret is made by the server**, 32 random bytes shown once when the endpoint is created and when it is rotated, never again. People are bad at choosing secrets and a receiver needs one anyway. Rotating replaces it at once; there is no overlap period, which would be one more thing to explain.
 - **Event types** are chosen per endpoint, all of them by default.
+- **One customer, no customers.** As everywhere (ADR-0104), the page names customers only to someone who sees several: otherwise the choices are Everything, All sites and each site.
 - **Private addresses are refused** unless a global administrator ticks "Allow private addresses" for that endpoint. This is stricter than channels (ADR-0078), which trust a global administrator's choice silently: an integration is often set up from a PSA's documentation by someone copying a URL, and the central server sits next to VictoriaMetrics, which deletes data on a `POST`. A save by anyone else that changes the URL clears the flag. The check uses ADR-0078's resolver, on the addresses actually connected to, and refuses addresses written in the URL.
 - **Pause and resume.** An endpoint is `on`, `paused` by an administrator, or `disabled` after failing (below). Only `on` endpoints get new events.
 

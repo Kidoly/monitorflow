@@ -1,0 +1,23 @@
+/* Event checkboxes, one column per group, tops aligned. */
+.events {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
+  gap: 10px 16px;
+  align-items: start;
+}
+
+.events label {
+  display: block;
+}
+
+/* Send a time range again: the fields and the button on one line when it fits. */
+.range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+}
+
+.range label {
+  flex: 1 1 200px;
+}
