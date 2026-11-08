@@ -193,6 +193,7 @@ fn errors(operation: &mut Operation) {
 // in the order ADR-0101 gives. Moving one into the document is additive.
 pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/notifications/",
+    "/api/integrations",
     "/api/on-call/",
     "/api/follow-up/",
     "/api/tokens",

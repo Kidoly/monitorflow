@@ -50,7 +50,7 @@ The owner's rules apply: as simple as possible to set up and use, in plain words
 - Approvals: pending commands, approve, reject.
 - Metric queries, instant and over a range.
 
-Reachable now and described next, in this order: thresholds and check settings, campaigns, dashboards, relays and enrollment (tokens, install keys, pending hosts), notification channels and routing, on-call and follow-up, sources and mirrors, remediation rules, incidents and events, settings, users, backups, the certificate authority. The list lives in `api/openapi.rs` as `NOT_YET_DOCUMENTED`; describing a route takes it out.
+Reachable now and described next, in this order: thresholds and check settings, campaigns, dashboards, relays and enrollment (tokens, install keys, pending hosts), notification channels and routing, integration endpoints (ADR-0102), on-call and follow-up, sources and mirrors, remediation rules, incidents and events, settings, users, backups, the certificate authority. The list lives in `api/openapi.rs` as `NOT_YET_DOCUMENTED`; describing a route takes it out.
 
 **Not done:**
 
