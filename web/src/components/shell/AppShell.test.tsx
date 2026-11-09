@@ -142,6 +142,7 @@ describe("AppShell", () => {
       "Sites",
       "Add servers",
       "Users and roles",
+      "API keys",
       "Notifications",
       "Integrations",
       "AI",

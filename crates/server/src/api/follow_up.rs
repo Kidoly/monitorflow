@@ -40,7 +40,7 @@ const LINK_GONE: &str =
     "This link no longer works: it expired. Open the alert in MonitorFlow to acknowledge it.";
 
 /// Where an incident is in its follow-up.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct FollowUpView {
     /// `waiting` for the next step at `next_at`, `silenced` until a silence
     /// ends then waiting, or `stopped`.

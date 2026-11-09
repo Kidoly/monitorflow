@@ -11,7 +11,9 @@ use uuid::Uuid;
 pub const VMID_RANGE: std::ops::RangeInclusive<u32> = 100..=999_999_999;
 
 /// What a Proxmox guest is, which picks its API path.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum GuestKind {
     /// A VM: `/nodes/{node}/qemu/{vmid}`.

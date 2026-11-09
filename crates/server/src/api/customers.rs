@@ -22,7 +22,7 @@ use super::{ApiError, ApiState};
 pub const MAX_NAME_LEN: usize = 64;
 
 /// One customer.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct CustomerView {
     pub id: Uuid,
     pub name: String,
@@ -31,13 +31,13 @@ pub struct CustomerView {
 }
 
 /// Body of `GET /api/customers`, sorted by name.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CustomerList {
     pub customers: Vec<CustomerView>,
 }
 
 /// Body of `POST /api/customers` and `POST /api/customers/{id}/sites`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NameRequest {
     pub name: String,

@@ -28,7 +28,8 @@ pub const MAX_OUTPUT: usize = 64 * 1024;
 /// Longest `error` stored, in bytes.
 pub const MAX_ERROR: usize = 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type, utoipa::ToSchema)]
+#[schema(as = CommandState)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum State {

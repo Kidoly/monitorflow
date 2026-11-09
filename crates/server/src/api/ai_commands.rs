@@ -45,7 +45,7 @@ pub struct SwitchRequest {
 }
 
 /// The last `ai_commands` command of a server, in `GET /api/servers/{id}`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct AiCommandsChange {
     pub command_id: Uuid,
     pub on: bool,
