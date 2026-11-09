@@ -194,6 +194,7 @@ db_tests! {
                 "remediation_rules",
                 "seen_releases",
                 "sensor_configs",
+                "server_instance_admissions",
                 "server_instances",
                 "server_packages",
                 "server_proxmox_candidates",

@@ -150,6 +150,7 @@
 //! | GET | `/api/license` | global administrator | [`license::LicenseView`]: the Enterprise license key and where it stands (ADR-0100) |
 //! | PUT | `/api/license` | global administrator | `{"text"}`; installs a license key in place of any other; 400 with the reason when it does not verify or has expired; audited |
 //! | DELETE | `/api/license` | global administrator | removes it; 204, 404 without one; central servers already added keep running; audited |
+//! | DELETE | `/api/license/servers/{name}` | global administrator | frees the place of an added central server; 204, 404; audited |
 //! | GET | `/api/campaigns` | customer role | [`campaigns::CampaignList`], newest first, paginated |
 //! | POST | `/api/campaigns` | customer administrator | body [`campaigns::CreateRequest`]; 201 [`campaigns::CampaignDetail`] |
 //! | GET | `/api/campaigns/{id}` | customer role | [`campaigns::CampaignDetail`]: the campaign, its waves and servers |
@@ -1118,6 +1119,10 @@ pub fn router(state: ApiState) -> Router {
             get(license::get)
                 .put(license::install)
                 .delete(license::remove),
+        )
+        .route(
+            "/api/license/servers/{name}",
+            delete(license::remove_server),
         )
         .route(
             "/api/servers/{id}/sources",
