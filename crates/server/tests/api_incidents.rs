@@ -254,7 +254,7 @@ db_tests! {
         }
         for uri in [format!("/api/incidents/{lyon}"), format!("/api/incidents/{}", Uuid::new_v4()), "/api/incidents/x".into()] {
             let (status, body) = call(&pool, &viewer, "GET", &uri, None).await;
-            assert_eq!((status, body), (StatusCode::NOT_FOUND, json!({ "error": "not found" })), "{uri}");
+            assert_eq!((status, body), (StatusCode::NOT_FOUND, json!({ "error": "not found", "code": "not_found" })), "{uri}");
         }
         let (status, _) = call(&pool, &viewer, "GET", &format!("/api/incidents/{paris}"), None).await;
         assert_eq!(status, StatusCode::OK);

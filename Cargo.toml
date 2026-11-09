@@ -12,7 +12,10 @@ members = [
     "crates/loadtest",
     # Enterprise edition, under ee/LICENSE (ADR-0100).
     "ee/crates/server-ee",
+    "crates/plugin",
+    "crates/plugin-sdk",
 ]
+exclude = ["plugins"]
 
 [workspace.package]
 version = "0.2.0"
@@ -27,6 +30,7 @@ monitorflow-common = { path = "crates/common" }
 monitorflow-sensors = { path = "crates/sensors" }
 monitorflow-ai = { path = "crates/ai" }
 monitorflow-server-ee = { path = "ee/crates/server-ee" }
+monitorflow-plugin = { path = "crates/plugin" }
 
 tokio = { version = "1", features = ["full"] }
 tonic = { version = "0.14", features = ["tls-ring"] }
@@ -56,8 +60,8 @@ rpassword = "7"
 sqlx = { version = "0.9", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "migrate", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
-toml_edit = "0.22"
+toml = "1.2"
+toml_edit = "0.25"
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
@@ -80,7 +84,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 ruzstd = "0.9"
 # xz: lzma-rs and lzma-rust2 are the pure-Rust choices; lzma-rust2 has a
 # streaming `Read` decoder, lzma-rs only decodes into a buffer.
-lzma-rust2 = { version = "0.24", default-features = false, features = ["std", "xz"] }
+lzma-rust2 = { version = "0.25", default-features = false, features = ["std", "xz"] }
 # bzip2 on libbz2-rs-sys, its default pure-Rust port of libbzip2.
 bzip2 = "0.6"
 quick-xml = "0.42"
@@ -96,7 +100,7 @@ rustix = { version = "1", features = ["fs", "time"] }
 # Windows sensors (ADR-0048). The windows-sys version tokio uses.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
 windows-service = "0.8"
-windows-registry = "0.6"
+windows-registry = "0.100"
 # Windows Update Agent COM API (ADR-0049), on the windows-core of
 # windows-registry.
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_UpdateAgent", "Win32_System_Variant", "Win32_System_Ole"] }

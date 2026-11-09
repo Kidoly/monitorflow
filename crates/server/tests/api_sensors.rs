@@ -183,7 +183,7 @@ db_tests! {
         ] {
             let (status, body) = call(&pool, &viewer, "GET", &uri, None).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
-            assert_eq!(body, json!({ "error": "not found" }));
+            assert_eq!(body, json!({ "error": "not found", "code": "not_found" }));
         }
 
         // Reading is allowed, changing is not.
@@ -454,7 +454,7 @@ db_tests! {
         let (_, body) = call(&pool, &viewer, "GET", &format!("/api/sites/{}/sensors", f.paris), None).await;
         assert_eq!(body["check_interval_ms"], 3_600_000);
         let (_, body) = call(&pool, &viewer, "GET", &format!("/api/servers/{}/sensors", f.lyon_server), None).await;
-        assert_eq!(body, json!({ "error": "not found" }));
+        assert_eq!(body, json!({ "error": "not found", "code": "not_found" }));
 
         // Out of bounds, unknown fields.
         for (bad, expected) in [

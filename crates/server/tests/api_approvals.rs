@@ -375,7 +375,7 @@ db_tests! {
         // Second decisions conflict and write nothing.
         let before = kinds(&pool, incident).await;
         let (status, body) = post(&pool, &approver, &approve_uri(pending), json!({})).await;
-        assert_eq!((status, body), (StatusCode::CONFLICT, json!({ "error": "the command is no longer pending" })));
+        assert_eq!((status, body), (StatusCode::CONFLICT, json!({ "error": "the command is no longer pending", "code": "conflict" })));
         let (status, _) = post(&pool, &approver, &reject_uri(pending), json!({ "reason": "late" })).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(kinds(&pool, incident).await, before);
@@ -541,7 +541,7 @@ db_tests! {
         // only through its own grant: here it does not read site 0 at all.
         for cookie in [&elsewhere, &foreign] {
             let (status, body) = post(&pool, cookie, &approve_uri(high), json!({})).await;
-            assert_eq!((status, body), (StatusCode::NOT_FOUND, json!({ "error": "not found" })));
+            assert_eq!((status, body), (StatusCode::NOT_FOUND, json!({ "error": "not found", "code": "not_found" })));
         }
         for uri in [approve_uri(Uuid::new_v4()), "/api/remediation/approvals/x/approve".into()] {
             let (status, _) = post(&pool, &site_admin, &uri, json!({})).await;
@@ -629,7 +629,7 @@ db_tests! {
         let (late_incident, late) = park(&pool, acme.servers[0], LOW, Duration::from_secs(1)).await;
         tokio::time::sleep(Duration::from_millis(1100)).await;
         let (status, body) = post(&pool, &admin, &approve_uri(late), json!({})).await;
-        assert_eq!((status, body), (StatusCode::CONFLICT, json!({ "error": "the incident reached its duration limit" })));
+        assert_eq!((status, body), (StatusCode::CONFLICT, json!({ "error": "the incident reached its duration limit", "code": "conflict" })));
         assert_eq!(states(&pool, late_incident).await, ("awaiting_approval".into(), "pending".into()));
 
         // The incident closed (its alert resolved) before the decision.
