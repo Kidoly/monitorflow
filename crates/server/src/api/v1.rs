@@ -1,6 +1,6 @@
 //! The public API (ADR-0101): `/api/v1/<path>` is `/api/<path>`, served
 //! by the same router and handlers, with API keys accepted, per-key rate
-//! limits and `Idempotency-Key` on writes. Routes for people in a browser
+//! limits and `Idempotency-Key` on writes ([`idempotency`]). Routes for people in a browser
 //! are left out.
 
 use std::collections::HashMap;
@@ -11,12 +11,11 @@ use axum::extract::Request;
 use axum::http::request::Parts;
 use axum::http::{Extensions, HeaderName, HeaderValue};
 use axum::response::{IntoResponse, Response};
-use axum::routing::any;
+use axum::routing::{any, get};
 use axum::Router;
-use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::{router, ApiError, ApiState};
+use super::{idempotency, openapi, router, ApiError, ApiState};
 
 /// Path of the public API.
 pub const PREFIX: &str = "/api/v1";
@@ -61,6 +60,7 @@ pub fn app(state: ApiState) -> Router {
     let inner = router(state.clone());
     let v1 = inner.clone();
     Router::new()
+        .route(&format!("{PREFIX}/openapi.json"), get(openapi::document))
         .route(
             &format!("{PREFIX}/{{*rest}}"),
             any(move |request: Request| handle(state.clone(), v1.clone(), request)),
@@ -99,7 +99,7 @@ fn target(path: &str) -> Option<String> {
     (!left_out(&target)).then_some(target)
 }
 
-async fn handle(_state: ApiState, inner: Router, request: Request) -> Response {
+async fn handle(state: ApiState, inner: Router, request: Request) -> Response {
     let Some(path) = target(request.uri().path()) else {
         return ApiError::NotFound.into_response();
     };
@@ -121,10 +121,9 @@ async fn handle(_state: ApiState, inner: Router, request: Request) -> Response {
     let slot = Slot::default();
     request.extensions_mut().insert(V1);
     request.extensions_mut().insert(slot.clone());
-    let mut response = match SLOT.scope(slot.clone(), inner.oneshot(request)).await {
-        Ok(response) => response,
-        Err(never) => match never {},
-    };
+    let mut response = SLOT
+        .scope(slot.clone(), idempotency::run(state, inner, request))
+        .await;
     if let Some(rate) = slot.lock().rate {
         rate.headers(&mut response);
     }

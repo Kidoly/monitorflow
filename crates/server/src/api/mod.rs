@@ -201,7 +201,9 @@
 //! `Authorization: Bearer mfk_…`: an API key acting as its maker narrowed
 //! to its reach, role and areas, without the CSRF header, limited to 600
 //! requests a minute with `RateLimit-*` headers. `/api/<path>` never takes
-//! keys.
+//! keys. A key's write with `Idempotency-Key` runs once; the same request
+//! again within 24 hours gets the first answer with `Idempotent-Replayed:
+//! true` ([`idempotency`]).
 //!
 //! # Authorization
 //!
@@ -621,6 +623,7 @@ pub mod display;
 mod error;
 pub mod follow_up;
 mod health;
+pub mod idempotency;
 pub mod incidents;
 pub mod install_keys;
 pub mod integrations;
@@ -631,6 +634,7 @@ pub mod notifications;
 pub mod offline_alerts;
 pub mod on_call;
 pub(crate) mod one_time;
+pub mod openapi;
 pub mod package_sources;
 pub mod packages;
 pub mod password;

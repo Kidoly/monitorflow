@@ -37,6 +37,8 @@ axum = { workspace = true, features = ["multipart"] }
 tower-http.workspace = true
 # Hands `/api/v1` requests to the router (ADR-0101).
 tower.workspace = true
+# OpenAPI document of the public API (ADR-0101).
+utoipa.workspace = true
 argon2.workspace = true
 rpassword.workspace = true
 sqlx.workspace = true
