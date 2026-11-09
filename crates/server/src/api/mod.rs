@@ -634,6 +634,7 @@ pub mod notifications;
 pub mod offline_alerts;
 pub mod on_call;
 pub(crate) mod one_time;
+pub mod openapi;
 pub mod package_sources;
 pub mod packages;
 pub mod password;

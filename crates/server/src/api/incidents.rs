@@ -30,14 +30,14 @@ pub const DEFAULT_LIMIT: u32 = 100;
 /// Largest accepted `limit`.
 pub const MAX_LIMIT: u32 = 500;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum StateFilter {
     Open,
     Resolved,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SeverityFilter {
     Warning,
@@ -45,7 +45,8 @@ pub enum SeverityFilter {
 }
 
 /// Query string of `GET /api/incidents`. Every filter is optional.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
     pub state: Option<StateFilter>,
@@ -67,7 +68,7 @@ pub struct ListParams {
 
 /// One incident. Field names and types are part of the API contract: add
 /// fields, never rename or remove them.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct IncidentView {
     pub id: Uuid,
     /// `null` for a relay's offline incident.
@@ -112,7 +113,7 @@ pub struct IncidentView {
 }
 
 /// Body of `GET /api/incidents`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct IncidentList {
     pub incidents: Vec<IncidentView>,
     /// Pass as `cursor` for the next page; `null` on the last one.
@@ -120,7 +121,7 @@ pub struct IncidentList {
 }
 
 /// One change of an incident.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct EventView {
     pub id: i64,
     /// `opened`, `escalated`, `deescalated`, `resolved`, what a silence
@@ -141,7 +142,7 @@ pub struct EventView {
 }
 
 /// A notification that told this incident with others (ADR-0080).
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct GroupView {
     /// `group` of `GET /api/incidents` lists them.
     pub id: Uuid,
@@ -151,7 +152,7 @@ pub struct GroupView {
 }
 
 /// Body of `GET /api/incidents/{id}`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct IncidentDetail {
     #[serde(flatten)]
     pub incident: IncidentView,
@@ -334,7 +335,7 @@ fn acknowledgeable(incident: &IncidentView, modifiable: &Scope) -> bool {
 }
 
 /// Body of `POST /api/incidents/acknowledge`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AcknowledgeRequest {
     /// 1 to [`MAX_LIMIT`] incidents, like a group of a notification.
@@ -343,7 +344,7 @@ pub struct AcknowledgeRequest {
 
 /// Body of the answer: the incidents this request acknowledged. The
 /// others were resolved, or someone acknowledged them first.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct Acknowledged {
     pub acknowledged: Vec<Uuid>,
 }

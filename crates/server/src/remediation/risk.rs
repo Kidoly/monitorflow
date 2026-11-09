@@ -55,7 +55,19 @@ pub use pattern::{Pattern, PatternError, MAX_PATTERN_LEN};
 pub const MAX_COMMAND_LEN: usize = 4096;
 
 /// Risk tiers of architecture §8, from least to most dangerous.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    utoipa::ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
     /// Runs automatically.
@@ -164,7 +176,7 @@ pub struct RuleSet {
 }
 
 /// The shell that runs a server's commands, which decides the rules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Shell {
     /// `/bin/sh -c`, on Linux (ADR-0043).

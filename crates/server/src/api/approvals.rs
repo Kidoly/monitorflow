@@ -40,7 +40,8 @@ pub fn approver_role(tier: Tier) -> Role {
 }
 
 /// Query string of `GET /api/remediation/approvals`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
     pub customer_id: Option<Uuid>,
@@ -85,7 +86,7 @@ struct Row {
 
 /// One command waiting for approval. Field names and types are part of
 /// the API contract: add fields, never rename or remove them.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PendingView {
     /// The pending command; decisions go to `/approvals/{id}/...`.
     pub id: Uuid,
@@ -134,14 +135,14 @@ pub struct PendingView {
 }
 
 /// Body of `GET /api/remediation/approvals`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PendingList {
     /// Nearest deadline first.
     pub approvals: Vec<PendingView>,
 }
 
 /// Body of `POST .../approve`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ApproveRequest {
     /// Runs this instead of the proposal, recorded as an `edit`.
@@ -149,7 +150,7 @@ pub struct ApproveRequest {
 }
 
 /// Body of `POST .../reject`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RejectRequest {
     /// Sent back to the AI with the rejection, and recorded.
@@ -157,7 +158,7 @@ pub struct RejectRequest {
 }
 
 /// Answer of both decision routes.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DecisionView {
     pub id: Uuid,
     pub incident_id: Uuid,

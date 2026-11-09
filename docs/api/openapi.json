@@ -1,0 +1,3633 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "MonitorFlow public API",
+    "description": "Scripts and integrations use `/api/v1` with an API key made under Admin › API keys: `Authorization: Bearer mfk_…`. A key acts as the administrator who made it, within its reach (everything, a customer or a site), its access and its areas. Lists that can grow take `limit` and `cursor` and answer `next_cursor`, null on the last page. Every error has `error`, plain words, and `code`, stable. Writes may carry `Idempotency-Key`; the same request again within 24 hours gets the first answer with `Idempotent-Replayed: true`. A key makes up to 600 requests a minute; answers carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`, and 429 carries `Retry-After`. See ADR-0101.",
+    "license": {
+      "name": "AGPL-3.0-only"
+    },
+    "version": "1"
+  },
+  "paths": {
+    "/api/v1/commands/{id}": {
+      "get": {
+        "tags": [
+          "updates"
+        ],
+        "operationId": "command",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/customers": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "operationId": "list_customers",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "servers"
+        ],
+        "operationId": "create_customer",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/customers/{id}/sites": {
+      "post": {
+        "tags": [
+          "servers"
+        ],
+        "operationId": "create_site",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/incidents": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "operationId": "list_incidents",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/StateFilter"
+            }
+          },
+          {
+            "name": "severity",
+            "in": "query",
+            "description": "The incident's current severity.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SeverityFilter"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Incidents still open at or resolved after this time.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Incidents opened at or before this time.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "description": "The incidents one notification told together (ADR-0080).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to [`MAX_LIMIT`], default [`DEFAULT_LIMIT`].",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/incidents/acknowledge": {
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Says someone is on it, so nobody else is told next. Acknowledging again\nchanges nothing.",
+        "operationId": "acknowledge",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcknowledgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Acknowledged"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/incidents/{id}": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "operationId": "incident",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/metrics/query": {
+      "get": {
+        "tags": [
+          "metrics"
+        ],
+        "operationId": "query",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "description": "Full name, `monitorflow_<sensor metric>`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "instance",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time",
+            "in": "query",
+            "description": "Defaults to now.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "agg",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Aggregation"
+            }
+          },
+          {
+            "name": "lookback",
+            "in": "query",
+            "description": "Seconds: the last value within this window rather than within\nVictoriaMetrics' default, for checks that run less often (ADR-0097).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/metrics/query_range": {
+      "get": {
+        "tags": [
+          "metrics"
+        ],
+        "operationId": "query_range",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "instance",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "description": "Defaults to `end` minus one hour.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "description": "Defaults to now.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "step",
+            "in": "query",
+            "description": "Seconds; defaults to the range over 720, at least one second.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "agg",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Aggregation"
+            }
+          },
+          {
+            "name": "rollup",
+            "in": "query",
+            "description": "Applied per series over a window of one step, before `agg`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Rollup"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/approvals": {
+      "get": {
+        "tags": [
+          "remediation"
+        ],
+        "operationId": "list_approvals",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/approvals/{id}/approve": {
+      "post": {
+        "tags": [
+          "remediation"
+        ],
+        "operationId": "approve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/approvals/{id}/reject": {
+      "post": {
+        "tags": [
+          "remediation"
+        ],
+        "operationId": "reject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "operationId": "list_servers",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to [`MAX_LIMIT`], default [`DEFAULT_LIMIT`].",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "operationId": "server",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/commands": {
+      "get": {
+        "tags": [
+          "updates"
+        ],
+        "operationId": "list_commands",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "updates"
+        ],
+        "summary": "Queues a command for the server's agent. Not safe to repeat: send\n`Idempotency-Key` to retry.",
+        "operationId": "create_command",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/silences": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "operationId": "list_silences",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "relay_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SilenceList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Not safe to repeat: send `Idempotency-Key` to retry.",
+        "operationId": "create_silence",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SilenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SilenceView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/silences/{id}/end": {
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "operationId": "end_silence",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Ended"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sites": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "operationId": "list_sites",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AcknowledgeRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/incidents/acknowledge`.",
+        "required": [
+          "incident_ids"
+        ],
+        "properties": {
+          "incident_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "1 to [`MAX_LIMIT`] incidents, like a group of a notification."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Acknowledged": {
+        "type": "object",
+        "description": "Body of the answer: the incidents this request acknowledged. The\nothers were resolved, or someone acknowledged them first.",
+        "required": [
+          "acknowledged"
+        ],
+        "properties": {
+          "acknowledged": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "Aggregation": {
+        "type": "string",
+        "description": "A simple aggregation across the selected series.",
+        "enum": [
+          "avg",
+          "min",
+          "max",
+          "sum",
+          "count"
+        ]
+      },
+      "AiCommandsChange": {
+        "type": "object",
+        "description": "The last `ai_commands` command of a server, in `GET /api/servers/{id}`.",
+        "required": [
+          "command_id",
+          "on",
+          "state",
+          "issued_at"
+        ],
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "on": {
+            "type": "boolean"
+          },
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The username, `null` when the account is gone."
+          },
+          "state": {
+            "$ref": "#/components/schemas/CommandState"
+          }
+        }
+      },
+      "ApproveRequest": {
+        "type": "object",
+        "description": "Body of `POST .../approve`.",
+        "properties": {
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Runs this instead of the proposal, recorded as an `edit`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CertificateView": {
+        "type": "object",
+        "description": "A certificate from the `certificates` table.",
+        "required": [
+          "serial",
+          "not_before",
+          "not_after",
+          "issued_at",
+          "revoked"
+        ],
+        "properties": {
+          "issued_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "not_after": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Expiry."
+          },
+          "not_before": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revocation_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revoked": {
+            "type": "boolean"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "serial": {
+            "type": "string",
+            "description": "Lowercase hexadecimal without leading zeros."
+          }
+        }
+      },
+      "CommandDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CommandView"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "stderr": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "stdout": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "`GET /api/commands/{id}`: the command and its output, each at most\nthe last 64 KiB."
+      },
+      "CommandList": {
+        "type": "object",
+        "required": [
+          "commands"
+        ],
+        "properties": {
+          "commands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CommandView"
+            },
+            "description": "Newest first."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CommandRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/servers/{id}/commands`.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "allow_downgrade": {
+            "type": "boolean",
+            "description": "`self_update`: install even an older version."
+          },
+          "allow_reboot": {
+            "type": "boolean"
+          },
+          "health_timeout_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`self_update`: seconds the new agent has to connect before the\nold one comes back; 30 to 3600, 300 by default.",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "`apply_updates` or `self_update`."
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Packages to upgrade; empty or absent for all."
+          },
+          "security_only": {
+            "type": "boolean"
+          },
+          "ttl_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Seconds the agent may still start it; [`MIN_TTL_S`] to\n[`MAX_TTL_S`], default [`DEFAULT_TTL_S`].",
+            "minimum": 0
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`self_update`: the agent version to install."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CommandState": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "sent",
+          "running",
+          "succeeded",
+          "failed",
+          "expired",
+          "cancelled"
+        ]
+      },
+      "CommandView": {
+        "type": "object",
+        "description": "One command, without its output.",
+        "required": [
+          "id",
+          "server_id",
+          "kind",
+          "parameters",
+          "state",
+          "issued_at",
+          "expires_at"
+        ],
+        "properties": {
+          "campaign_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "parameters": {
+            "description": "The payload as JSON, for kinds the API knows."
+          },
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "sent_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CommandState"
+          }
+        }
+      },
+      "CustomerList": {
+        "type": "object",
+        "description": "Body of `GET /api/customers`, sorted by name.",
+        "required": [
+          "customers"
+        ],
+        "properties": {
+          "customers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CustomerView"
+            }
+          }
+        }
+      },
+      "CustomerView": {
+        "type": "object",
+        "description": "One customer.",
+        "required": [
+          "id",
+          "name",
+          "site_count"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "site_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sites of the customer the user reads, not all of them."
+          }
+        }
+      },
+      "DecisionView": {
+        "type": "object",
+        "description": "Answer of both decision routes.",
+        "required": [
+          "id",
+          "incident_id",
+          "state",
+          "command",
+          "edited"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "What will run, or what was rejected."
+          },
+          "edited": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "incident_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "description": "`approved` or `rejected`."
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "invalid_request",
+              "invalid",
+              "not_found",
+              "conflict",
+              "gone",
+              "unauthenticated",
+              "invalid_credentials",
+              "forbidden",
+              "api_key_scope",
+              "cross_site",
+              "rate_limited",
+              "idempotency_key_reused",
+              "idempotency_in_progress",
+              "metrics_unavailable",
+              "metrics_timeout",
+              "logs_unavailable",
+              "logs_timeout",
+              "internal"
+            ]
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "EventView": {
+        "type": "object",
+        "description": "One change of an incident.",
+        "required": [
+          "id",
+          "kind",
+          "occurred_at",
+          "recorded_at",
+          "details"
+        ],
+        "properties": {
+          "details": {
+            "description": "For instance `{\"reason\": \"threshold_removed\"}`, `{\"notified\":\ntrue}` when a silence ended, `{\"username\", \"via\"}` when\nacknowledged, or `{\"step\", \"steps\", \"minutes\", \"told\"}` for a\nfollow-up step."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`opened`, `escalated`, `deescalated`, `resolved`, what a silence\ndid: `silenced` and `silence_ended` (ADR-0079), `acknowledged`, and\n`followed_up` when a follow-up step told someone (ADR-0082)."
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Sample time of the change, or the server clock without a sample."
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "severity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Severity after the change; `null` once resolved."
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "FollowUpView": {
+        "type": "object",
+        "description": "Where an incident is in its follow-up.",
+        "required": [
+          "state",
+          "step",
+          "steps",
+          "started_at",
+          "next",
+          "policy"
+        ],
+        "properties": {
+          "next": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Who it would tell then, people first; empty when nobody can be."
+          },
+          "next_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the next step is told if nobody acknowledges."
+          },
+          "policy": {
+            "type": "string",
+            "description": "Whose follow-up applies: `default`, `everything`, `customer` or\n`site`."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the first message went out."
+          },
+          "state": {
+            "type": "string",
+            "description": "`waiting` for the next step at `next_at`, `silenced` until a silence\nends then waiting, or `stopped`."
+          },
+          "step": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Steps told so far, and how many there are now.",
+            "minimum": 0
+          },
+          "steps": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "stop_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When stopped: `acknowledged`, `resolved`, `not_critical`, or\n`finished` once every step was told."
+          }
+        }
+      },
+      "GroupView": {
+        "type": "object",
+        "description": "A notification that told this incident with others (ADR-0080).",
+        "required": [
+          "id",
+          "incidents",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "`group` of `GET /api/incidents` lists them."
+          },
+          "incidents": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many incidents it told, this one included."
+          }
+        }
+      },
+      "GuestKind": {
+        "type": "string",
+        "description": "What a Proxmox guest is, which picks its API path.",
+        "enum": [
+          "qemu",
+          "lxc"
+        ]
+      },
+      "IncidentDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/IncidentView"
+          },
+          {
+            "type": "object",
+            "required": [
+              "events",
+              "notification_groups"
+            ],
+            "properties": {
+              "acknowledged_via": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "`page` or `link`: where it was acknowledged."
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EventView"
+                },
+                "description": "In the order they happened."
+              },
+              "follow_up": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/FollowUpView",
+                    "description": "Who is told next if nobody acknowledges (ADR-0082); `null` when no\nfollow-up started: a warning, or not sent yet."
+                  }
+                ]
+              },
+              "notification_groups": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/GroupView"
+                },
+                "description": "Oldest first."
+              }
+            }
+          }
+        ],
+        "description": "Body of `GET /api/incidents/{id}`."
+      },
+      "IncidentList": {
+        "type": "object",
+        "description": "Body of `GET /api/incidents`.",
+        "required": [
+          "incidents"
+        ],
+        "properties": {
+          "incidents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IncidentView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last one."
+          }
+        }
+      },
+      "IncidentView": {
+        "type": "object",
+        "description": "One incident. Field names and types are part of the API contract: add\nfields, never rename or remove them.",
+        "required": [
+          "id",
+          "hostname",
+          "site_id",
+          "site_name",
+          "customer_id",
+          "metric",
+          "instance",
+          "severity",
+          "state",
+          "opened_at",
+          "last_value",
+          "last_value_at",
+          "peak_value",
+          "threshold",
+          "silenced",
+          "can_acknowledge"
+        ],
+        "properties": {
+          "acknowledged_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "acknowledged_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who said they are on it, and when (ADR-0082); `null` until someone\ndoes. The name stays when the account is removed."
+          },
+          "can_acknowledge": {
+            "type": "boolean",
+            "description": "Whether the reader may acknowledge it: open, not acknowledged, and\nthe reader an operator or above of its site."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "hostname": {
+            "type": "string",
+            "description": "The server's hostname, or the relay's name."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "instance": {
+            "type": "string",
+            "description": "`\"\"` for a series without an instance."
+          },
+          "last_value": {
+            "type": "number",
+            "format": "double"
+          },
+          "last_value_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "metric": {
+            "type": "string",
+            "description": "`offline` when the server or relay stopped reporting (ADR-0072)."
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Sample times, not the server clock."
+          },
+          "peak_value": {
+            "type": "number",
+            "format": "double",
+            "description": "The worst value seen while open."
+          },
+          "relay_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Set for a relay's offline incident only (ADR-0072)."
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` for a relay's offline incident."
+          },
+          "severity": {
+            "type": "string",
+            "description": "`warning` or `critical`; the last one while resolved."
+          },
+          "silenced": {
+            "type": "boolean",
+            "description": "Whether a silence ever held back a notification of it."
+          },
+          "silenced_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "While open and covered by a silence, when the last one ends\n(ADR-0079)."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "`open` or `resolved`."
+          },
+          "threshold": {
+            "description": "The threshold as it was when the incident opened."
+          }
+        }
+      },
+      "NameRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/customers` and `POST /api/customers/{id}/sites`.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PendingList": {
+        "type": "object",
+        "description": "Body of `GET /api/remediation/approvals`.",
+        "required": [
+          "approvals"
+        ],
+        "properties": {
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingView"
+            },
+            "description": "Nearest deadline first."
+          }
+        }
+      },
+      "PendingView": {
+        "type": "object",
+        "description": "One command waiting for approval. Field names and types are part of\nthe API contract: add fields, never rename or remove them.",
+        "required": [
+          "id",
+          "incident_id",
+          "customer_id",
+          "customer_name",
+          "site_id",
+          "site_name",
+          "server_id",
+          "hostname",
+          "metric",
+          "instance",
+          "command",
+          "diagnosis",
+          "reasoning",
+          "tier",
+          "rule",
+          "reason",
+          "commands_run",
+          "max_commands",
+          "opened_at",
+          "proposed_at",
+          "deadline",
+          "can_approve",
+          "can_reject",
+          "snapshots",
+          "shell"
+        ],
+        "properties": {
+          "alert_incident_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "can_approve": {
+            "type": "boolean",
+            "description": "Whether the user may approve this command as proposed, and reject\nit. UX hints: the decision routes check again."
+          },
+          "can_reject": {
+            "type": "boolean"
+          },
+          "command": {
+            "type": "string",
+            "description": "The proposed command, exactly as it would run."
+          },
+          "commands_run": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Commands the incident ran so far, and its limit."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date-time",
+            "description": "`opened_at + max_duration_s`: the incident escalates then, and a\ndecision after it is 409."
+          },
+          "diagnosis": {
+            "type": "string",
+            "description": "The AI's text: untrusted, shown as data."
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The pending command; decisions go to `/approvals/{id}/...`."
+          },
+          "incident_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "instance": {
+            "type": "string"
+          },
+          "max_commands": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "proposed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": "string"
+          },
+          "rule": {
+            "description": "`{\"source\": \"builtin\" | \"configured\", \"id\"}`."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "shell": {
+            "$ref": "#/components/schemas/Shell",
+            "description": "What runs the command: `posix` (`/bin/sh`) or `powershell`\n(Windows PowerShell), from the server's system (ADR-0084)."
+          },
+          "shell_acceptance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the server's agent last said it does with these commands:\n`accepted`, `off`, `unsupported`, or `null` when unknown (ADR-0076).\nApproving is 409 once it refuses them."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "snapshots": {
+            "$ref": "#/components/schemas/SnapshotSupport",
+            "description": "Whether a change on this server is snapshotted first, on Proxmox\n(ADR-0044) or locally (ADR-0094); when not, rollback is limited."
+          },
+          "tier": {
+            "$ref": "#/components/schemas/Tier",
+            "description": "`low_impact` or `high_impact`, from the rules, never from the AI."
+          }
+        }
+      },
+      "QueryResult": {
+        "type": "object",
+        "description": "Body of both query endpoints.",
+        "required": [
+          "query",
+          "series"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The PromQL the API ran, filters included."
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesView"
+            }
+          }
+        }
+      },
+      "RejectRequest": {
+        "type": "object",
+        "description": "Body of `POST .../reject`.",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Sent back to the AI with the rejection, and recorded."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Rollup": {
+        "type": "string",
+        "description": "How each point of a range summarizes the samples since the previous\npoint. Without it, a point is the last sample before it, so a spike\nbetween two points of a long range is not drawn.",
+        "enum": [
+          "avg",
+          "max",
+          "min",
+          "last"
+        ]
+      },
+      "SeriesView": {
+        "type": "object",
+        "description": "One series: its labels and its `[unix seconds, value]` points. A value\nthat is not finite is `null`.",
+        "required": [
+          "labels",
+          "points"
+        ],
+        "properties": {
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": false,
+              "prefixItems": [
+                {
+                  "type": "number",
+                  "format": "double"
+                },
+                {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "format": "double"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "ServerDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ServerView"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ai_commands_change": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AiCommandsChange",
+                    "description": "The last time AI commands were turned on or off from the web\ninterface, `null` if never (ADR-0098)."
+                  }
+                ]
+              },
+              "certificate": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CertificateView",
+                    "description": "The certificate issued last to this agent, revoked or not; `null`\nwhen the CA never issued one (a server row created by hand)."
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Body of `GET /api/servers/{id}`: the listing row plus the agent's\ncurrent certificate."
+      },
+      "ServerList": {
+        "type": "object",
+        "description": "Body of `GET /api/servers`.",
+        "required": [
+          "servers"
+        ],
+        "properties": {
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last one."
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerView"
+            }
+          }
+        }
+      },
+      "ServerStatus": {
+        "type": "string",
+        "enum": [
+          "online",
+          "offline"
+        ]
+      },
+      "ServerView": {
+        "type": "object",
+        "description": "One server. Field names and types are part of the API contract: add\nfields, never rename or remove them.",
+        "required": [
+          "id",
+          "peer_id",
+          "hostname",
+          "site_id",
+          "site_name",
+          "customer_id",
+          "customer_name",
+          "os_family",
+          "package_updates",
+          "created_at",
+          "status",
+          "open_incidents",
+          "offline_alerts",
+          "site_offline_alerts"
+        ],
+        "properties": {
+          "agent_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Version reported by the live stream, else the one last stored."
+          },
+          "cert_not_after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Latest expiry among the agent's unrevoked certificates; `null` when\nit has none. Past dates mean every certificate has expired."
+          },
+          "command_kinds": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "What its agent last said it does with each command kind: `accepted`,\n`off` or `unsupported` (ADR-0076). `null`, or a kind missing here, is\nunknown: its agent or a relay on the way does not report yet.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "connected_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Start of the current stream, when online."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Customer of the site (ADR-0026)."
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_heartbeat": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Last message received: from the live stream when online, else the\nlast time recorded in the database."
+          },
+          "offline_alerts": {
+            "type": "boolean",
+            "description": "Whether it opens an incident when offline (ADR-0072); muted when\nthis or `site_offline_alerts` is `false`."
+          },
+          "open_incidents": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Threshold and offline incidents currently open on this server."
+          },
+          "os_family": {
+            "type": "string",
+            "description": "`debian`, `rhel`, `windows`, or `linux` for any other distribution."
+          },
+          "os_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "package_updates": {
+            "type": "boolean",
+            "description": "Whether the host can take package updates and sources (ADR-0063)."
+          },
+          "peer_id": {
+            "type": "string",
+            "description": "The agent certificate ID."
+          },
+          "relay_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "silenced_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "While a silence covers it, when the last one ends (ADR-0079)."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "site_offline_alerts": {
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ServerStatus"
+          },
+          "via_relay": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Peer ID of the relay carrying the live stream, if any."
+          }
+        }
+      },
+      "SeverityFilter": {
+        "type": "string",
+        "enum": [
+          "warning",
+          "critical"
+        ]
+      },
+      "Shell": {
+        "type": "string",
+        "description": "The shell that runs a server's commands, which decides the rules.",
+        "enum": [
+          "posix",
+          "powershell"
+        ]
+      },
+      "SilenceList": {
+        "type": "object",
+        "description": "Body of `GET /api/silences`.",
+        "required": [
+          "silences"
+        ],
+        "properties": {
+          "silences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SilenceView"
+            }
+          }
+        }
+      },
+      "SilenceRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/silences`.",
+        "required": [
+          "scope",
+          "ends_at",
+          "reason"
+        ],
+        "properties": {
+          "ends_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SilenceScope"
+          },
+          "starts_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Now when absent or past."
+          },
+          "target_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The server, relay, site or customer; absent for `all`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SilenceScope": {
+        "type": "string",
+        "description": "What a silence covers.",
+        "enum": [
+          "server",
+          "relay",
+          "site",
+          "customer",
+          "all"
+        ]
+      },
+      "SilenceView": {
+        "type": "object",
+        "description": "One silence.",
+        "required": [
+          "id",
+          "scope",
+          "starts_at",
+          "ends_at",
+          "active",
+          "reason",
+          "created_at",
+          "can_end"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "Started, as opposed to upcoming."
+          },
+          "can_end": {
+            "type": "boolean",
+            "description": "Whether this user may end it."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by_username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` once the user is deleted."
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The target's customer; `null` for `all`."
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`server`, `relay`, `site`, `customer` or `all`."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The target's site; `null` for `customer` and `all`."
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "target_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` for `all`."
+          },
+          "target_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SiteList": {
+        "type": "object",
+        "description": "Body of `GET /api/sites`, sorted by name.",
+        "required": [
+          "sites"
+        ],
+        "properties": {
+          "sites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SiteView"
+            }
+          }
+        }
+      },
+      "SiteView": {
+        "type": "object",
+        "description": "One site.",
+        "required": [
+          "id",
+          "name",
+          "server_count",
+          "relay_count",
+          "customer_id",
+          "customer_name",
+          "offline_alerts",
+          "agent_auto_update_effective"
+        ],
+        "properties": {
+          "agent_auto_update": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The site's automatic update override: `null` follows the\nserver-wide setting (ADR-0055)."
+          },
+          "agent_auto_update_effective": {
+            "type": "boolean",
+            "description": "Whether automatic updates apply to the site, override or not."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "offline_alerts": {
+            "type": "boolean",
+            "description": "Whether servers and relays of the site open incidents when offline\n(ADR-0072)."
+          },
+          "relay_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Enrolled relays of the site, revoked ones included (ADR-0029)."
+          },
+          "server_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SnapshotSupport": {
+        "type": "object",
+        "description": "Whether the server can be snapshotted; without it the interface shows\nthat rollback is limited.",
+        "required": [
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `cannot_snapshot`: what Proxmox cannot snapshot, like \"rootfs\nis on storage local (dir), which cannot take snapshots\"."
+          },
+          "kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GuestKind",
+                "description": "The mapped guest's kind, so the reason can say VM or container."
+              }
+            ]
+          },
+          "left_out": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What a snapshot does not hold, though Proxmox takes one."
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Which snapshot a change gets when available: `proxmox`, or a local\n`lvm` or `zfs` snapshot (ADR-0094)."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`disabled`, `not_mapped`, `unknown_cluster` or `cannot_snapshot`\nwhen unavailable."
+          }
+        }
+      },
+      "StateFilter": {
+        "type": "string",
+        "enum": [
+          "open",
+          "resolved"
+        ]
+      },
+      "Tier": {
+        "type": "string",
+        "description": "Risk tiers of architecture §8, from least to most dangerous.",
+        "enum": [
+          "read_only",
+          "low_impact",
+          "high_impact",
+          "forbidden"
+        ]
+      }
+    },
+    "securitySchemes": {
+      "api_key": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "api_key": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "servers",
+      "description": "Servers, sites and customers"
+    },
+    {
+      "name": "alerts",
+      "description": "Incidents and silences"
+    },
+    {
+      "name": "updates",
+      "description": "Commands sent to servers"
+    },
+    {
+      "name": "remediation",
+      "description": "Commands the AI proposed, waiting for a person"
+    },
+    {
+      "name": "metrics",
+      "description": "Metric queries built by MonitorFlow, never raw PromQL"
+    }
+  ]
+}

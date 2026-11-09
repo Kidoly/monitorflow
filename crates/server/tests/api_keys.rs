@@ -480,4 +480,15 @@ db_tests! {
         assert_eq!(stored, [None]);
         assert!(!json_of(again).await.to_string().contains(&link));
     }
+
+    #[sqlx::test]
+    async fn the_document_is_served_without_a_key(pool: PgPool) {
+        let w = world(&pool).await;
+        let request = Request::get("/api/v1/openapi.json").body(Body::empty()).unwrap();
+        let response = w.app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let doc = json_of(response).await;
+        assert_eq!(doc["info"]["version"], "1");
+        assert!(doc["paths"]["/api/v1/incidents/acknowledge"]["post"].is_object());
+    }
 }

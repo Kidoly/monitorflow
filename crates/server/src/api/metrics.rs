@@ -47,7 +47,7 @@ pub const DISCOVERY_WINDOW: Duration = Duration::days(1);
 pub const MAX_DISCOVERY_SERIES: usize = 10_000;
 
 /// A simple aggregation across the selected series.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Aggregation {
     Avg,
@@ -72,7 +72,7 @@ impl Aggregation {
 /// How each point of a range summarizes the samples since the previous
 /// point. Without it, a point is the last sample before it, so a spike
 /// between two points of a long range is not drawn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Rollup {
     Avg,
@@ -93,7 +93,8 @@ impl Rollup {
 }
 
 /// Query string of `GET /api/metrics/query`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct InstantParams {
     pub server_id: Uuid,
@@ -109,7 +110,8 @@ pub struct InstantParams {
 }
 
 /// Query string of `GET /api/metrics/query_range`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct RangeParams {
     pub server_id: Uuid,
@@ -128,14 +130,14 @@ pub struct RangeParams {
 
 /// One series: its labels and its `[unix seconds, value]` points. A value
 /// that is not finite is `null`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SeriesView {
     pub labels: BTreeMap<String, String>,
     pub points: Vec<(f64, Option<f64>)>,
 }
 
 /// Body of both query endpoints.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct QueryResult {
     /// The PromQL the API ran, filters included.
     pub query: String,

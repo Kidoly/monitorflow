@@ -11,11 +11,11 @@ use axum::extract::Request;
 use axum::http::request::Parts;
 use axum::http::{Extensions, HeaderName, HeaderValue};
 use axum::response::{IntoResponse, Response};
-use axum::routing::any;
+use axum::routing::{any, get};
 use axum::Router;
 use uuid::Uuid;
 
-use super::{idempotency, router, ApiError, ApiState};
+use super::{idempotency, openapi, router, ApiError, ApiState};
 
 /// Path of the public API.
 pub const PREFIX: &str = "/api/v1";
@@ -60,6 +60,7 @@ pub fn app(state: ApiState) -> Router {
     let inner = router(state.clone());
     let v1 = inner.clone();
     Router::new()
+        .route(&format!("{PREFIX}/openapi.json"), get(openapi::document))
         .route(
             &format!("{PREFIX}/{{*rest}}"),
             any(move |request: Request| handle(state.clone(), v1.clone(), request)),
