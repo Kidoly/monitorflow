@@ -168,6 +168,31 @@ The first build compiles the server and the web interface, which takes several m
 
 The server applies database migrations when it starts. Remove the `*_IMAGE` lines from `deploy/.env` first if an update had pinned published images; going back to a build older than the release you ran is a downgrade, which the database refuses.
 
+## Adding a central server
+
+*Enterprise edition (ADR-0100).* A second central server on the same database keeps MonitorFlow working when one machine stops: agents, relays and browsers reach either under the same name, and alerts, notifications and updates go on from the other (ADR-0089). A single central server needs none of this, and no license key.
+
+1. Install the license key of your Enterprise subscription under Administration › License. It says how many central servers it allows, the first one included.
+2. On the first central server:
+
+   ```sh
+   curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install-server.sh | sudo sh -s -- --add-server
+   ```
+
+   It checks that the license has room, publishes PostgreSQL, VictoriaMetrics and VictoriaLogs on this machine's address (ports 5432, 8428 and 9428, each with TLS and a password; `MF_SHARE_ADDRESS` picks another address), and writes `/root/monitorflow-join.tar`. That file holds the keys of the certificate authority: copy it to the new machine over SSH, and delete both copies once done. Allow only the added central servers to reach those three ports in your firewall.
+3. On the new machine, with the file in the current directory:
+
+   ```sh
+   curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install-server.sh | sudo sh -s -- --join monitorflow-join.tar
+   ```
+
+   It runs the server and the web interface only, on the first machine's database and stores. The server starts only if the license has a place for it; otherwise both commands say why and change nothing.
+4. Add the new machine's address to the public name in your DNS, so the name has one address per central server. Agents and relays try each address; nothing changes on them.
+
+Once added, a central server keeps running and restarting even after the license expires or is removed: expiry only stops adding others, and administrators see a notice. Administration › License lists the central servers added; removing one there frees its place for another.
+
+What stays on the first central server: backups, updates from the web interface, package mirrors and the metric and log stores. After updating it, run the installer again on each added central server, with no option, to bring it to the same release. Changing the certificate authority refuses while several central servers run: stop the added ones, change it, then on each run the installer with `--uninstall --purge`, and `--join` with a new join file.
+
 ## Other settings
 
 Administration › Settings changes these with no file and no restart, each change in the audit log. Each page's default suits most servers.

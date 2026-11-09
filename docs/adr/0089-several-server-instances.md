@@ -1,7 +1,7 @@
 # ADR-0089: Several server instances
 
 Date: 2026-11-03
-Status: accepted
+Status: accepted; increment 1 of "Left for the next increments" is Enterprise code (ADR-0100)
 
 ## Context
 

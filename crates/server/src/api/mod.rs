@@ -147,6 +147,10 @@
 //! | GET | `/api/backups` | global administrator | [`backups::BackupsView`]: last backup, next one and the files kept (ADR-0058) |
 //! | POST | `/api/backups` | global administrator | "Back up now"; 202 `{"id"}`; 409 without a running updater or while one runs; audited |
 //! | GET | `/api/backups/{name}` | global administrator | the backup file as an attachment; audited |
+//! | GET | `/api/license` | global administrator | [`license::LicenseView`]: the Enterprise license key and where it stands (ADR-0100) |
+//! | PUT | `/api/license` | global administrator | `{"text"}`; installs a license key in place of any other; 400 with the reason when it does not verify or has expired; audited |
+//! | DELETE | `/api/license` | global administrator | removes it; 204, 404 without one; central servers already added keep running; audited |
+//! | DELETE | `/api/license/servers/{name}` | global administrator | frees the place of an added central server; 204, 404; audited |
 //! | GET | `/api/campaigns` | customer role | [`campaigns::CampaignList`], newest first, paginated |
 //! | POST | `/api/campaigns` | customer administrator | body [`campaigns::CreateRequest`]; 201 [`campaigns::CampaignDetail`] |
 //! | GET | `/api/campaigns/{id}` | customer role | [`campaigns::CampaignDetail`]: the campaign, its waves and servers |
@@ -609,6 +613,7 @@ mod health;
 pub mod incidents;
 pub mod install_keys;
 pub mod integrations;
+pub mod license;
 pub mod logs;
 pub mod metrics;
 pub mod mirrors;
@@ -702,6 +707,10 @@ pub struct ApiSettings {
     pub web_url: String,
     /// `[ai]`, which wins over the settings of the web interface (ADR-0064).
     pub ai: ai::AiSettings,
+    /// The public keys license keys are checked with (ADR-0100): the
+    /// built-in ones, or a throwaway key in tests.
+    #[cfg(feature = "enterprise")]
+    pub license_keys: crate::edition::Verifier,
 }
 
 impl ApiSettings {
@@ -716,6 +725,8 @@ impl ApiSettings {
             auto_update_enabled: config.auto_update.enabled,
             web_url: config.web_base_url(),
             ai: ai::AiSettings::from_config(config),
+            #[cfg(feature = "enterprise")]
+            license_keys: crate::edition::Verifier::built_in(),
             proxmox_enabled: config.proxmox.enabled,
             proxmox_clusters: config
                 .proxmox
@@ -1103,6 +1114,16 @@ pub fn router(state: ApiState) -> Router {
             post(certificate_authority::next),
         )
         .route("/api/backups/{name}", get(backups::download))
+        .route(
+            "/api/license",
+            get(license::get)
+                .put(license::install)
+                .delete(license::remove),
+        )
+        .route(
+            "/api/license/servers/{name}",
+            delete(license::remove_server),
+        )
         .route(
             "/api/servers/{id}/sources",
             get(package_sources::server)

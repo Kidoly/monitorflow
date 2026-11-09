@@ -14,8 +14,11 @@ use std::path::{Path, PathBuf};
 pub const BUNDLE_DIR: &str = "/usr/share/monitorflow/deploy";
 /// What `deploy/release-files.sh` bundles, relative to the deploy
 /// directory; `deploy/docker/updater.Dockerfile` copies the same.
-pub const FILES: [&str; 4] = [
+pub const FILES: [&str; 6] = [
     "docker-compose.yml",
+    // Several central servers (ADR-0100).
+    "docker-compose.shared.yml",
+    "docker-compose.joined.yml",
     "docker/pg_hba.conf",
     "restore.sh",
     ".env.example",

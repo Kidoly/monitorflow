@@ -34,6 +34,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The server from AGPL code only, without the Enterprise edition (ADR-0100).
+      - run: cargo clippy -p monitorflow-server --no-default-features --all-targets -- -D warnings
       # DATABASE_URL enables the PostgreSQL tests (crates/server/build.rs).
       - run: cargo test --workspace
         env:
@@ -196,7 +198,8 @@ jobs:
   # cannot start rolled back. The images trust a throwaway release key.
   # Then the server installer (ADR-0065) with the same images, as no
   # release has any yet: on a systemd container without Docker, from a
-  # local registry and signed release files.
+  # local registry and signed release files. Then a second central server
+  # added to the first with a throwaway license (ADR-0100).
   server-update:
     runs-on: ubuntu-latest
     steps:
@@ -205,6 +208,12 @@ jobs:
         run: |
           openssl genpkey -algorithm ed25519 -out "$RUNNER_TEMP/e2e-signing.pem"
           openssl pkey -in "$RUNNER_TEMP/e2e-signing.pem" -pubout >>deploy/release-keys.pem
+      # The images also trust a throwaway license key, for the join test
+      # (ADR-0100); never the owner's.
+      - name: Throwaway license key
+        run: |
+          openssl genpkey -algorithm ed25519 -out "$RUNNER_TEMP/e2e-license.pem"
+          openssl pkey -in "$RUNNER_TEMP/e2e-license.pem" -pubout >>ee/license-keys.pem
       - run: deploy/update-test.sh
         env:
           MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
@@ -212,6 +221,12 @@ jobs:
         timeout-minutes: 25
         env:
           MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
+      # Adding a central server with --add-server and --join (ADR-0100).
+      - run: deploy/join-test.sh
+        timeout-minutes: 20
+        env:
+          MF_TEST_SIGNING_KEY: ${{ runner.temp }}/e2e-signing.pem
+          MF_TEST_LICENSE_KEY: ${{ runner.temp }}/e2e-license.pem
   # The installer is piped to sh, so it must stay POSIX (ADR-0052).
   shellcheck:
     runs-on: ubuntu-latest

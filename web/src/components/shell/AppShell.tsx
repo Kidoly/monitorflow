@@ -18,6 +18,7 @@ import styles from "./Shell.module.css";
 import { ScopeSwitcher } from "./ScopeSwitcher";
 import { ThemeToggle } from "./ThemeToggle";
 import { CertificateAuthorityBanner } from "./CertificateAuthorityBanner";
+import { LicenseBanner } from "./LicenseBanner";
 import { UpdateBanner } from "./UpdateBanner";
 
 /** The API caps a page at 500; past that the count reads "500+". */
@@ -180,6 +181,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           <>
             <UpdateBanner />
             <CertificateAuthorityBanner />
+            <LicenseBanner />
           </>
         )}
         {children}

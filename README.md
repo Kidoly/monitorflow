@@ -134,3 +134,5 @@ To report a vulnerability, see `SECURITY.md`. Please do not open a public issue.
 ## Licence
 
 AGPL-3.0-or-later. See `LICENSE`. Contributions require signing the CLA (see `CONTRIBUTING.md`).
+
+Everything is free except the Enterprise edition: running more than one central server for high availability, whose code in `ee/` is public under `ee/LICENSE` and needs a subscription in production (ADR-0100). To get one, open an issue titled "Enterprise subscription".
