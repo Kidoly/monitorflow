@@ -148,6 +148,7 @@ describe("AppShell", () => {
       "Server update",
       "Backups",
       "Certificate authority",
+      "License",
     ]);
     expect(within(nav()).getByText("Remediation")).toBeInTheDocument();
     expect(within(nav()).getByText("Updates")).toBeInTheDocument();
