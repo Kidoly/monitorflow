@@ -1,0 +1,36 @@
+[package]
+name = "monitorflow-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Plugins (ADR-0103): manifests, signed packages and the WebAssembly
+# runtime the agent and the server run them in.
+
+[[bin]]
+name = "monitorflow-plugin"
+path = "src/bin/monitorflow-plugin.rs"
+
+[dependencies]
+# An interpreter: no machine code generated, no executable memory, fuel
+# metering. Without WASI, `wat` and the proposals we do not need. The
+# portable loop dispatch, not tail calls, so the stack a plugin uses does
+# not depend on the optimizer of the build or the target.
+wasmi = { version = "2", default-features = false, features = ["std", "validate", "portable-dispatch"] }
+ring.workspace = true
+base64.workspace = true
+pem.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+wat = "1"
+tempfile.workspace = true
+axum.workspace = true
