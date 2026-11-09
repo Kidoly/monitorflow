@@ -47,7 +47,7 @@ pub struct SendError {
 }
 
 impl SendError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             retry_after: None,
@@ -216,6 +216,9 @@ pub async fn deliver(
             }
             post_chat(http, channel, message).await
         }
+        // They need the plugin from the database: the dispatcher sends
+        // them through `plugins::channel`.
+        Destination::Plugin(_) => Err(SendError::new("a plugin channel is sent by its plugin")),
     }
 }
 

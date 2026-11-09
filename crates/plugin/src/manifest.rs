@@ -20,6 +20,8 @@ pub const MAX_HOSTS: usize = 16;
 pub const MAX_VALUE_LEN: usize = 2048;
 /// The check parameter that names the plugin, so no setting may take it.
 pub const PLUGIN_PARAM: &str = "plugin";
+/// The sensor kind of check plugins in a sensor configuration.
+pub const CHECK_KIND: &str = "plugin";
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]

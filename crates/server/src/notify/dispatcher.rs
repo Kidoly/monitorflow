@@ -539,23 +539,33 @@ impl Dispatcher {
         message: &Message,
         retries: &[Duration],
     ) -> Result<(), SendError> {
-        let http = self.client(channel);
-        let mut result = deliver(channel, message, http).await;
+        let mut result = self.deliver(channel, message).await;
         for wait in retries {
             let asked = match &result {
                 Ok(()) => break,
                 Err(error) => error.retry_after,
             };
             sleep(asked.map_or(*wait, |asked| asked.max(*wait))).await;
-            result = deliver(channel, message, http).await;
+            result = self.deliver(channel, message).await;
         }
         result
+    }
+
+    /// One try: a plugin channel by its plugin (ADR-0103), the others
+    /// with the client for their [`Channel::public_only`].
+    async fn deliver(&self, channel: &Channel, message: &Message) -> Result<(), SendError> {
+        match &channel.destination {
+            Destination::Plugin(_) => {
+                crate::plugins::channel::deliver(&self.pool, channel, message).await
+            }
+            _ => deliver(channel, message, self.client(channel)).await,
+        }
     }
 
     /// Sends a test to `channel` once and records the outcome.
     pub async fn test(&self, channel: &Channel) -> Result<Result<(), SendError>, sqlx::Error> {
         let test = render(&Event::test(), &self.web_url);
-        let result = deliver(channel, &test, self.client(channel)).await;
+        let result = self.deliver(channel, &test).await;
         let error = result.as_ref().err().map(|e| e.message.as_str());
         record_outcome(&self.pool, channel, error).await?;
         Ok(result)

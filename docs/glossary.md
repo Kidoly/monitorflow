@@ -60,6 +60,9 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Signing secret | What an integration's receiver checks each request with. Made by MonitorFlow and shown once; "New secret" replaces it at once | key, token, HMAC (on screen) | `secret`, `X-MonitorFlow-Signature` |
 | Send again | Deliver an event an integration already got, or every event of a time range, with the same IDs | replay, resend, redeliver | `/replay`, `X-MonitorFlow-Replay` |
 | Turned off | An integration nothing reached for a day: it gets no new events until someone turns it on | disabled, suspended | `state = 'disabled'` |
+| Plugin | A check or a notification channel someone else wrote, installed as a signed file under Administration › Plugins. "Asks for" lists what it may reach, like "Connects to api.pushover.net" | extension, add-on, module, wasm (on screen) | `plugins`, `.mfplugin` |
+| Publisher | Who signed a plugin: MonitorFlow, or someone whose key a global administrator trusts | vendor, signer, author | `plugin_publishers`, `public_key` |
+| Used where | Where a plugin may be used: every server (every customer), a customer or a site | scope, enabled for, allow-list | `plugin_places` |
 | Certificate authority | What the central server uses to give every server and relay its certificate and to sign commands. Said in full on screen | CA, PKI, root | `ca`, `ca-cert.pem` |
 | Change the certificate authority | Replace it with a new one while every server and relay keeps working: they learn the new one, move to it, then the old one is retired. An emergency change is for when its key may have leaked | rotate, rotation, roll over, re-key, compromise | `ca_rotation`, `ca.rotation.*` |
 | Moved | A server or relay whose certificate comes from the new certificate authority. "312 of 315 servers and relays moved" | migrated, re-issued | `moved`, `issuer_ca` |

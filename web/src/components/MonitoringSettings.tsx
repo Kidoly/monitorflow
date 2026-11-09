@@ -25,6 +25,7 @@ import {
   checkTypesFor,
   describeThreshold,
   formOf,
+  pluginCheckTypes,
   saveCheckInterval,
   saveThreshold,
   shapeFor,
@@ -636,7 +637,14 @@ function AddCheck({
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const types = checkTypesFor(target.kind === "server" ? target.osFamily : null);
+  const usable = usePolledData(api.usablePlugins, { intervalMs: 300_000 });
+  const sites = usePolledData(api.sites, { intervalMs: 300_000 });
+  const siteId = target.kind === "server" ? target.siteId : target.id;
+  const customerId = sites.data?.sites.find((s) => s.id === siteId)?.customer_id ?? null;
+  const types = [
+    ...checkTypesFor(target.kind === "server" ? target.osFamily : null),
+    ...pluginCheckTypes(usable.data?.plugins ?? [], siteId, customerId),
+  ];
   const [type, setType] = useState<CheckType>(types[0]!);
   const [intervalMs, setIntervalMs] = useState(initialInterval);
   const [values, setValues] = useState<Record<string, string>>(() => initialValues(types[0]!));
@@ -646,8 +654,8 @@ function AddCheck({
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  function choose(kind: string) {
-    const next = types.find((t) => t.kind === kind)!;
+  function choose(label: string) {
+    const next = types.find((t) => t.label === label)!;
     setType(next);
     setValues(initialValues(next));
     setErrors({});
@@ -664,7 +672,7 @@ function AddCheck({
     setFailure(null);
     try {
       await api.createSensor(owner, sensor);
-      if (alert) await saveThreshold(owner, threshold);
+      if (alert && threshold) await saveThreshold(owner, threshold);
       onDone();
     } catch (e) {
       setFailure(
@@ -683,9 +691,9 @@ function AddCheck({
       <div className={styles.fields}>
         <label className={admin.field}>
           Check that
-          <select className={fieldClass} value={type.kind} onChange={(e) => choose(e.target.value)}>
+          <select className={fieldClass} value={type.label} onChange={(e) => choose(e.target.value)}>
             {types.map((t) => (
-              <option key={t.kind} value={t.kind}>
+              <option key={t.label} value={t.label}>
                 {t.label}
               </option>
             ))}
@@ -693,7 +701,7 @@ function AddCheck({
         </label>
         {type.fields.map((field) => (
           <TextField
-            key={`${type.kind}/${field.key}`}
+            key={`${type.label}/${field.key}`}
             label={field.label}
             placeholder={field.placeholder}
             hint={field.hint}
@@ -707,10 +715,19 @@ function AddCheck({
         <span>How often</span>
         <IntervalSelect label="How often to check" value={intervalMs} onChange={(ms) => setIntervalMs(ms ?? initialInterval)} />
       </div>
-      <label className={styles.check}>
-        <input type="checkbox" checked={alert} onChange={(e) => setAlert(e.target.checked)} /> Raise {severity} when it fails
-      </label>
-      {alert && <SlowNote durationS={type.duration_s} intervalS={intervalMs / 1000} />}
+      {type.noAlert ? (
+        <p className={admin.fieldNote}>
+          A plugin&apos;s results show among the server&apos;s metrics; add an alert on one from there.
+        </p>
+      ) : (
+        <>
+          <label className={styles.check}>
+            <input type="checkbox" checked={alert} onChange={(e) => setAlert(e.target.checked)} /> Raise {severity} when it
+            fails
+          </label>
+          {alert && <SlowNote durationS={type.duration_s} intervalS={intervalMs / 1000} />}
+        </>
+      )}
       {target.kind === "server" && (
         <fieldset className={styles.scope}>
           <legend>Add to</legend>

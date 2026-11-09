@@ -13,6 +13,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
+use monitorflow_plugin::manifest::{CHECK_KIND, PLUGIN_PARAM};
 use monitorflow_sensors::{registry, validate, SensorConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -23,6 +24,7 @@ use super::access::authorize;
 use super::audit::{self, Event};
 use super::auth::CurrentUser;
 use super::{ApiError, ApiState};
+use crate::plugins;
 use crate::sensor_config::{self, Layer, Row, Spec};
 
 /// Most parameters on one row.
@@ -115,7 +117,16 @@ pub fn validate_entry(request: EntryRequest) -> Result<ValidEntry, String> {
             "param `{key}` must be at most {MAX_PARAM_VALUE_LEN} bytes"
         ));
     }
-    registry::build(&request.kind, &config.params).map_err(|e| e.to_string())?;
+    if request.kind == CHECK_KIND {
+        // The plugin and its settings are checked against what is
+        // installed by `check_plugin`.
+        let plugin = config.params.get(PLUGIN_PARAM).map(String::as_str);
+        if !plugin.is_some_and(monitorflow_plugin::manifest::valid_name) {
+            return Err(format!("param `{PLUGIN_PARAM}` must name a check plugin"));
+        }
+    } else {
+        registry::build(&request.kind, &config.params).map_err(|e| e.to_string())?;
+    }
     check_interval(request.interval_ms)?;
     // Both fit: validate() bounds the interval to 24 h and the timeout by it.
     let millis = |ms: u64| i64::try_from(ms).unwrap_or(i64::MAX);
@@ -391,14 +402,44 @@ fn write_error(error: sqlx::Error, entry: &ValidEntry) -> ApiError {
     }
 }
 
+/// A check plugin's row: the plugin must be a check turned on for `site`
+/// (ADR-0103), and the other params its settings. Disabled rows only
+/// remove a sensor, so they pass.
+async fn check_plugin(
+    db: impl sqlx::PgExecutor<'_>,
+    valid: &ValidEntry,
+    site: Option<Uuid>,
+) -> Result<(), ApiError> {
+    if valid.kind != CHECK_KIND || !valid.enabled {
+        return Ok(());
+    }
+    let mut values = sensor_config::params(valid.params.clone());
+    let name = values.remove(PLUGIN_PARAM).unwrap_or_default();
+    let installed = plugins::usable(db, &name, None, site)
+        .await?
+        .filter(|p| p.manifest.kind == monitorflow_plugin::Kind::Check)
+        .ok_or_else(|| {
+            ApiError::Invalid(format!(
+                "{name} is not a check plugin turned on for this site"
+            ))
+        })?;
+    installed
+        .manifest
+        .values(&values)
+        .map(drop)
+        .map_err(|e| ApiError::Invalid(e.to_string()))
+}
+
 async fn create(
     state: &ApiState,
     user: &CurrentUser,
     owner: Owner,
     request: Result<Json<EntryRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Entry>), ApiError> {
-    authorize(user, owner.site(&state.pool).await?, true)?;
+    let site = owner.site(&state.pool).await?;
+    authorize(user, site, true)?;
     let valid = validate_entry(body(request)?).map_err(ApiError::Invalid)?;
+    check_plugin(&state.pool, &valid, site).await?;
     let (site_id, server_id) = owner.columns();
     let mut tx = state.pool.begin().await?;
     // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
@@ -453,12 +494,13 @@ pub async fn create_server(
     create(&state, &user, Owner::Server(parse_id(&id)?), request).await
 }
 
-/// Locks the row `id` in `tx` after checking the user may change it.
+/// Locks the row `id` in `tx` after checking the user may change it;
+/// with the site it configures.
 async fn lock_entry(
     tx: &mut PgConnection,
     user: &CurrentUser,
     id: Uuid,
-) -> Result<Entry, ApiError> {
+) -> Result<(Entry, Option<Uuid>), ApiError> {
     // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
     let entry: Option<Entry> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ENTRY_COLUMNS} FROM sensor_configs WHERE id = $1 FOR UPDATE"
@@ -480,7 +522,7 @@ async fn lock_entry(
         None => None,
     };
     authorize(user, site, true)?;
-    entry.ok_or(ApiError::NotFound)
+    Ok((entry.ok_or(ApiError::NotFound)?, site))
 }
 
 /// `PUT /api/sensor_configs/{id}`: replaces the row; 200 with the
@@ -493,8 +535,9 @@ pub async fn update(
 ) -> Result<Json<Entry>, ApiError> {
     let id = parse_id(&id)?;
     let mut tx = state.pool.begin().await?;
-    let before = lock_entry(&mut tx, &user, id).await?;
+    let (before, site) = lock_entry(&mut tx, &user, id).await?;
     let valid = validate_entry(body(request)?).map_err(ApiError::Invalid)?;
+    check_plugin(&mut *tx, &valid, site).await?;
     // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
     let entry: Entry = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE sensor_configs
@@ -529,7 +572,7 @@ pub async fn delete(
 ) -> Result<StatusCode, ApiError> {
     let id = parse_id(&id)?;
     let mut tx = state.pool.begin().await?;
-    let entry = lock_entry(&mut tx, &user, id).await?;
+    let (entry, _) = lock_entry(&mut tx, &user, id).await?;
     sqlx::query("DELETE FROM sensor_configs WHERE id = $1")
         .bind(id)
         .execute(&mut *tx)
