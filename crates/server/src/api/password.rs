@@ -1,6 +1,7 @@
 //! Password hashing with argon2id. Hashing is CPU-bound by design: call
 //! these functions from `spawn_blocking`, never directly on the runtime.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 
 use argon2::password_hash::rand_core::OsRng;
@@ -12,6 +13,16 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 static DUMMY_HASH: LazyLock<String> =
     LazyLock::new(|| hash("dummy password for unknown users").expect("hashing a constant"));
 
+/// Argon2 runs of this process, hashes and verifications alike.
+static RUNS: AtomicU64 = AtomicU64::new(0);
+
+/// How many times this process ran argon2. Each run takes 19 MiB and
+/// tens of milliseconds, so tests use this to show that a refused request
+/// never got that far.
+pub fn runs() -> u64 {
+    RUNS.load(Ordering::Relaxed)
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("password hashing failed")]
 pub struct HashError(argon2::password_hash::Error);
@@ -19,6 +30,7 @@ pub struct HashError(argon2::password_hash::Error);
 /// Hashes `password` into a PHC string with argon2id and the crate's default
 /// parameters (m=19 MiB, t=2, p=1, the OWASP baseline) and a random salt.
 pub fn hash(password: &str) -> Result<String, HashError> {
+    RUNS.fetch_add(1, Ordering::Relaxed);
     let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
@@ -29,6 +41,7 @@ pub fn hash(password: &str) -> Result<String, HashError> {
 /// Whether `password` matches the PHC string `stored`. A malformed hash
 /// never matches.
 pub fn verify(stored: &str, password: &str) -> bool {
+    RUNS.fetch_add(1, Ordering::Relaxed);
     PasswordHash::new(stored).is_ok_and(|parsed| {
         Argon2::default()
             .verify_password(password.as_bytes(), &parsed)

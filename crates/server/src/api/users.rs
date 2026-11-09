@@ -144,11 +144,19 @@ pub(super) async fn hash_new_password(
     hash_password(password).await
 }
 
-/// Checks the length of a new password, then hashes it off the runtime.
-pub(super) async fn hash_password(password: &Secret) -> Result<String, CreateUserError> {
+/// Checks the length of a new password: cheap, unlike hashing it.
+pub(super) fn validate_password(password: &Secret) -> Result<(), CreateUserError> {
     if password.expose().chars().count() < MIN_PASSWORD_LEN {
         return Err(CreateUserError::PasswordTooShort);
     }
+    Ok(())
+}
+
+/// Checks the length of a new password, then hashes it off the runtime
+/// (argon2id, 19 MiB). Without authentication, call it only for a request
+/// that showed a live link.
+pub(super) async fn hash_password(password: &Secret) -> Result<String, CreateUserError> {
+    validate_password(password)?;
     let password = password.clone();
     Ok(tokio::task::spawn_blocking(move || password::hash(password.expose())).await??)
 }

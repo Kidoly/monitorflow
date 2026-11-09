@@ -18,7 +18,7 @@
 //! | --- | --- | --- | --- |
 //! | GET | `/api/health` | none | `{"status": "ok"}`: the process is up |
 //! | GET | `/api/health/ready` | none | `{"status": "ready"}`, or 503 `{"status": "unavailable"}` when PostgreSQL is unreachable |
-//! | POST | `/api/auth/login` | none | body `{"username", "password"}`; 200 [`Me`] and the session cookie, or 401 |
+//! | POST | `/api/auth/login` | none | body `{"username", "password"}`; 200 [`Me`] and the session cookie, or 401; 429 `rate_limited` after 10 wrong attempts from one address or 20 on one account in 10 minutes, whether or not the account exists (ADR-0106) |
 //! | POST | `/api/auth/logout` | session | 204, clears the cookie |
 //! | GET | `/api/setup` | none | [`setup::Status`]: `{"pending"}`, true while no user exists (ADR-0071) |
 //! | POST | `/api/setup` | setup link | body `{"token", "username", "password"}`; 200 [`Me`] and the session cookie; 400 for a bad username or password, 410 for a used, replaced or expired link, 409 once a user exists |
@@ -642,6 +642,7 @@ pub mod incidents;
 pub mod install_keys;
 pub mod integrations;
 pub mod license;
+pub mod login_limit;
 pub mod logs;
 pub mod metrics;
 pub mod mirrors;
@@ -833,6 +834,10 @@ pub struct ApiState {
     pub display_limits: Arc<display::Limits>,
     /// Rate limits of API keys (ADR-0101).
     pub api_key_limits: Arc<v1::Limits>,
+    /// Limits of sign-in attempts (ADR-0106).
+    pub login_limits: Arc<login_limit::LoginLimits>,
+    /// Tests of a personal contact, per user.
+    pub contact_tests: Arc<on_call::TestLimit>,
 }
 
 impl ApiState {
@@ -854,6 +859,8 @@ impl ApiState {
             dashboard_cache: Arc::default(),
             display_limits: Arc::default(),
             api_key_limits: Arc::default(),
+            login_limits: Arc::default(),
+            contact_tests: Arc::new(on_call::test_limit()),
         }
     }
 

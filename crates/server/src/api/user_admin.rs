@@ -570,6 +570,21 @@ pub struct UseLinkRequest {
     pub password: Secret,
 }
 
+/// The user a live link belongs to, and whether it never had a password.
+async fn link_owner(
+    pool: &sqlx::PgPool,
+    token: &OneTimeToken,
+) -> Result<Option<(String, bool)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT u.username, u.password_hash IS NULL
+         FROM password_links l JOIN users u ON u.id = l.user_id
+         WHERE l.token_hash = $1 AND l.expires_at > now() AND u.disabled_at IS NULL",
+    )
+    .bind(token.hash())
+    .fetch_optional(pool)
+    .await
+}
+
 /// `POST /api/password-link`, without authentication: the user a live link
 /// belongs to, so the page can greet them. 410 for any other token.
 pub async fn inspect_link(
@@ -578,14 +593,7 @@ pub async fn inspect_link(
 ) -> Result<Json<LinkOwner>, ApiError> {
     let Json(request) = request.map_err(|_| ApiError::BadRequest)?;
     let token = OneTimeToken::parse(&request.token).ok_or(ApiError::Gone(LINK_GONE.into()))?;
-    let owner: Option<(String, bool)> = sqlx::query_as(
-        "SELECT u.username, u.password_hash IS NULL
-         FROM password_links l JOIN users u ON u.id = l.user_id
-         WHERE l.token_hash = $1 AND l.expires_at > now() AND u.disabled_at IS NULL",
-    )
-    .bind(token.hash())
-    .fetch_optional(&state.pool)
-    .await?;
+    let owner = link_owner(&state.pool, &token).await?;
     let (username, invited) = owner.ok_or(ApiError::Gone(LINK_GONE.into()))?;
     Ok(Json(LinkOwner { username, invited }))
 }
@@ -597,14 +605,30 @@ pub async fn use_link(
     request: Result<Json<UseLinkRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Json(request) = request.map_err(|_| ApiError::BadRequest)?;
+    let invalid = |e: CreateUserError| match e {
+        CreateUserError::PasswordTooShort => ApiError::Invalid(e.to_string()),
+        other => ApiError::Internal(other.to_string()),
+    };
     // Checked before the link is consumed, so a short password keeps it.
+    users::validate_password(&request.password).map_err(invalid)?;
+    let token = OneTimeToken::parse(&request.token).ok_or(ApiError::Gone(LINK_GONE.into()))?;
+    // Hashing costs 19 MiB and the route has no authentication: only a
+    // request that shows a live link gets that far. The DELETE below still
+    // decides who uses it.
+    if link_owner(&state.pool, &token).await?.is_none() {
+        // An expired link is deleted all the same.
+        let expired =
+            sqlx::query("DELETE FROM password_links WHERE token_hash = $1 AND expires_at <= now()")
+                .bind(token.hash())
+                .execute(&state.pool)
+                .await?
+                .rows_affected();
+        tracing::info!(expired = expired > 0, "password link refused");
+        return Err(ApiError::Gone(LINK_GONE.into()));
+    }
     let hash = users::hash_password(&request.password)
         .await
-        .map_err(|e| match e {
-            CreateUserError::PasswordTooShort => ApiError::Invalid(e.to_string()),
-            other => ApiError::Internal(other.to_string()),
-        })?;
-    let token = OneTimeToken::parse(&request.token).ok_or(ApiError::Gone(LINK_GONE.into()))?;
+        .map_err(invalid)?;
 
     let mut tx = state.pool.begin().await?;
     // The DELETE takes the row: of two requests with the same link, the

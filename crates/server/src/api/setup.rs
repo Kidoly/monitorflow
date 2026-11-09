@@ -147,6 +147,29 @@ pub async fn status(State(state): State<ApiState>) -> Result<Json<Status>, ApiEr
     }))
 }
 
+/// The answer to a link that is not live: 409 once a user exists, else
+/// 410. An expired link is deleted on the way.
+async fn refused(pool: &PgPool, token: Option<&SetupToken>) -> Result<ApiError, ApiError> {
+    let expired = match token {
+        Some(token) => {
+            sqlx::query("DELETE FROM setup_tokens WHERE token_hash = $1 AND expires_at <= now()")
+                .bind(token.hash())
+                .execute(pool)
+                .await?
+                .rows_affected()
+        }
+        None => 0,
+    };
+    if !pending(&mut *pool.acquire().await?).await? {
+        return Ok(ApiError::Conflict("setup is already done; sign in".into()));
+    }
+    tracing::info!(expired = expired > 0, "setup link refused");
+    Ok(ApiError::Gone(
+        "this setup link is no longer valid; print a new one with `monitorflow-server setup-link`"
+            .into(),
+    ))
+}
+
 #[derive(Deserialize)]
 pub struct SetupRequest {
     pub token: String,
@@ -161,42 +184,50 @@ pub async fn complete(
     request: Result<Json<SetupRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Json(request) = request.map_err(|_| ApiError::BadRequest)?;
-    // Checked before hashing, so a bad form keeps the link alive.
+    let invalid = |e: CreateUserError| match e {
+        CreateUserError::InvalidUsername | CreateUserError::PasswordTooShort => {
+            ApiError::Invalid(e.to_string())
+        }
+        other => ApiError::Internal(other.to_string()),
+    };
+    // Checked before the link is consumed, so a bad form keeps it alive.
+    users::validate_username(&request.username).map_err(invalid)?;
+    users::validate_password(&request.password).map_err(invalid)?;
+    // Hashing costs 19 MiB and the route has no authentication: only a
+    // request that shows the live link gets that far.
+    let token = SetupToken::parse(&request.token);
+    let live: bool = match &token {
+        Some(token) => {
+            sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM setup_tokens
+                                WHERE token_hash = $1 AND expires_at > now())",
+            )
+            .bind(token.hash())
+            .fetch_one(&state.pool)
+            .await?
+        }
+        None => false,
+    };
+    let Some(token) = token.as_ref().filter(|_| live) else {
+        return Err(refused(&state.pool, token.as_ref()).await?);
+    };
     let hash = users::hash_new_password(&request.username, &request.password)
         .await
-        .map_err(|e| match e {
-            CreateUserError::InvalidUsername | CreateUserError::PasswordTooShort => {
-                ApiError::Invalid(e.to_string())
-            }
-            other => ApiError::Internal(other.to_string()),
-        })?;
-    let token = SetupToken::parse(&request.token);
+        .map_err(invalid)?;
 
     let mut tx = state.pool.begin().await?;
     // The DELETE takes the row: of two requests with the same link, the
-    // second finds nothing once the first commits.
-    let live: Option<bool> = match &token {
-        Some(token) => {
-            sqlx::query_scalar(
-                "DELETE FROM setup_tokens WHERE token_hash = $1 RETURNING expires_at > now()",
-            )
-            .bind(token.hash())
-            .fetch_optional(&mut *tx)
-            .await?
-        }
-        None => None,
-    };
-    if live != Some(true) {
-        // An expired link is deleted all the same.
+    // second finds nothing once the first commits. The look above decided
+    // nothing but whether to hash.
+    let taken: Option<bool> = sqlx::query_scalar(
+        "DELETE FROM setup_tokens WHERE token_hash = $1 RETURNING expires_at > now()",
+    )
+    .bind(token.hash())
+    .fetch_optional(&mut *tx)
+    .await?;
+    if taken != Some(true) {
         tx.commit().await?;
-        if !pending(&mut *state.pool.acquire().await?).await? {
-            return Err(ApiError::Conflict("setup is already done; sign in".into()));
-        }
-        tracing::info!(expired = live.is_some(), "setup link refused");
-        return Err(ApiError::Gone(
-            "this setup link is no longer valid; print a new one with `monitorflow-server setup-link`"
-                .into(),
-        ));
+        return Err(refused(&state.pool, Some(token)).await?);
     }
     if !pending(&mut tx).await? {
         tx.commit().await?;
