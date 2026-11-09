@@ -21,6 +21,7 @@ use monitorflow_agent::shutdown::{self, Trigger};
 use monitorflow_agent::stream::{Agent, StreamSettings};
 use monitorflow_agent::upload::{Uplink, UploadSettings};
 use monitorflow_common::proto::v1::{SensorConfig, SensorSpec};
+use monitorflow_common::tls::PeerRole;
 use monitorflow_sensors::testing::FakeSensor;
 use monitorflow_sensors::{SchedulerOptions, Sensor, SensorConfig as Config};
 use monitorflow_server::grpc::{
@@ -143,7 +144,7 @@ async fn eventually<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
 /// `(sample_batches, samples)` received from `id`.
 fn received(registry: &Registry, id: &str) -> (u64, u64) {
     registry
-        .get(id)
+        .get(PeerRole::Agent, id)
         .map_or((0, 0), |p| (p.counters.sample_batches, p.counters.samples))
 }
 

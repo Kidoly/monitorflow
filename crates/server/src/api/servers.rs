@@ -331,10 +331,7 @@ impl ServerView {
     /// `row` with the live status of its agent, if connected.
     fn new(state: &ApiState, row: Row) -> Self {
         // On any server instance (ADR-0089).
-        let live = state
-            .registry
-            .live(&row.peer_id)
-            .filter(|peer| peer.role == PeerRole::Agent);
+        let live = state.registry.live(PeerRole::Agent, &row.peer_id);
         match live {
             Some(peer) => Self {
                 status: Status::Online,

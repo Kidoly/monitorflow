@@ -108,7 +108,7 @@ db_tests! {
         // b fetches its CRL from a, then opens its own stream through a.
         let a = Relay::start(a_id, &upstream.url).await;
         let b = Relay::start(b_id.clone(), &a.url).await;
-        let own = upstream.registry.get("b").unwrap();
+        let own = upstream.registry.get(PeerRole::Relay, "b").unwrap();
         assert_eq!((own.role, own.via_relay.as_deref()), (PeerRole::Relay, Some("a")));
         let seen: Option<bool> = sqlx::query_scalar("SELECT last_seen_at IS NOT NULL FROM relays WHERE peer_id = 'b'")
             .fetch_optional(&pool).await.unwrap();
@@ -126,7 +126,7 @@ db_tests! {
         let mut stream = open(&b.url, &web01, hello("web-01")).await.unwrap();
         let first = stream.next().await.unwrap().unwrap();
         assert!(matches!(first.payload, Some(Payload::SensorConfig(_))), "{first:?}");
-        let info = upstream.registry.get("web-01").unwrap();
+        let info = upstream.registry.get(PeerRole::Agent, "web-01").unwrap();
         assert_eq!((info.role, info.via_relay.as_deref()), (PeerRole::Agent, Some("b")));
         let via: Option<String> = sqlx::query_scalar(
             "SELECT r.peer_id FROM servers s JOIN relays r ON r.id = s.relay_id WHERE s.peer_id = 'web-01'",
@@ -160,11 +160,11 @@ db_tests! {
         // A dmz agent may use a, not b.
         denied(open(&b.url, &web03, hello("web-03")).await, "web-03 through b");
         let _web03 = open(&a.url, &web03, hello("web-03")).await.unwrap();
-        assert_eq!(upstream.registry.get("web-03").unwrap().via_relay.as_deref(), Some("a"));
+        assert_eq!(upstream.registry.get(PeerRole::Agent, "web-03").unwrap().via_relay.as_deref(), Some("a"));
 
         // A relay that is not a's child cannot use a, for itself or others.
         denied(open(&a.url, &c_id, hello("c")).await, "c through a");
-        assert!(upstream.registry.get("c").is_none());
+        assert!(upstream.registry.get(PeerRole::Relay, "c").is_none());
 
         // A compromised b can claim anything below it, but the server only
         // accepts agents of its own site, through relays that are its
@@ -175,6 +175,6 @@ db_tests! {
         denied(open_via(&a.url, &b_id, hello("web-02"), Some(through_c)).await, "forged child relay");
         let as_a = Via::origin(relay("a"));
         denied(open_via(&a.url, &b_id, hello("a"), Some(as_a)).await, "b posing as its parent");
-        assert!(upstream.registry.get("web-02").is_none());
+        assert!(upstream.registry.get(PeerRole::Agent, "web-02").is_none());
     }
 }

@@ -1,8 +1,11 @@
-//! Live registry of connected agents and relays, keyed by peer ID.
+//! Live registry of connected agents and relays, keyed by role and peer ID:
+//! an ID is unique among agents and among relays, not across both, so an
+//! agent and a relay of the same name are two peers that never replace,
+//! receive for or close each other (ADR-0105).
 //!
 //! Each stream registers once its `Hello` is accepted and gets a connection
 //! number. Every later update or removal names that number, so a stream that
-//! was replaced by a newer connection with the same ID can never touch or
+//! was replaced by a newer connection of the same peer can never touch or
 //! remove its successor's entry.
 
 use std::collections::HashMap;
@@ -29,7 +32,7 @@ pub enum RegistryError {
 /// Why the registry asks a stream to close.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseReason {
-    /// A newer connection registered the same ID.
+    /// A newer connection registered the same role and ID.
     Replaced,
     /// The server is shutting down.
     Shutdown,
@@ -59,11 +62,15 @@ pub struct Counters {
 /// A snapshot of one registered peer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeerInfo {
-    /// The agent or relay ID, the registry key.
+    /// The agent or relay ID: the registry key together with `role`.
     pub id: String,
     pub role: PeerRole,
     /// Set when a relay speaks for this agent.
     pub via_relay: Option<String>,
+    /// Every relay the stream passes through, the connecting one first and
+    /// `via_relay` last (ADR-0028). Empty for a peer's own connection, and
+    /// for streams other instances hold.
+    pub relay_path: Vec<String>,
     /// Assigned by [`Registry::register`]; unique for the process lifetime.
     pub connection: u64,
     /// Serial of the connection's client certificate: the relay's when
@@ -97,13 +104,25 @@ impl Entry {
 
 #[derive(Default)]
 struct Inner {
-    peers: HashMap<String, Entry>,
+    peers: HashMap<Key, Entry>,
     next_connection: u64,
     /// Sequence of the last envelope the server sent.
     last_sequence: u64,
     shutting_down: bool,
     /// Streams other server instances hold (ADR-0089), as last read.
-    remote: HashMap<String, PeerInfo>,
+    remote: HashMap<Key, PeerInfo>,
+}
+
+/// A peer: its role and its ID.
+type Key = (PeerRole, String);
+
+fn key(role: PeerRole, id: &str) -> Key {
+    (role, id.to_owned())
+}
+
+/// Order of the listings: by ID, agents before relays of the same ID.
+fn by_id(a: &PeerInfo, b: &PeerInfo) -> std::cmp::Ordering {
+    (&a.id, a.role.as_str()).cmp(&(&b.id, b.role.as_str()))
 }
 
 /// Shared handle to the registry; clones are cheap and see the same peers.
@@ -128,7 +147,8 @@ impl Registry {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Adds a peer, replacing and closing any connection with the same ID.
+    /// Adds a peer, replacing and closing any connection with the same
+    /// role and ID.
     /// `info.connection` is ignored and assigned here.
     pub fn register(
         &self,
@@ -143,14 +163,15 @@ impl Registry {
         inner.next_connection += 1;
         info.connection = inner.next_connection;
         let connection = info.connection;
-        let id = info.id.clone();
+        let (role, id) = (info.role, info.id.clone());
         let entry = Entry {
             info,
             outbound,
             close,
         };
-        if let Some(old) = inner.peers.insert(id.clone(), entry) {
+        if let Some(old) = inner.peers.insert((role, id.clone()), entry) {
             tracing::info!(
+                %role,
                 peer = %id,
                 old_connection = old.info.connection,
                 new_connection = connection,
@@ -164,10 +185,16 @@ impl Registry {
         })
     }
 
-    /// Applies `update` to the entry of `id` if `connection` still owns it.
-    /// Returns false when the connection was replaced or removed.
-    pub fn update(&self, id: &str, connection: u64, update: impl FnOnce(&mut PeerInfo)) -> bool {
-        match self.lock().peers.get_mut(id) {
+    /// Applies `update` to the entry of the peer if `connection` still owns
+    /// it. Returns false when the connection was replaced or removed.
+    pub fn update(
+        &self,
+        role: PeerRole,
+        id: &str,
+        connection: u64,
+        update: impl FnOnce(&mut PeerInfo),
+    ) -> bool {
+        match self.lock().peers.get_mut(&key(role, id)) {
             Some(entry) if entry.info.connection == connection => {
                 update(&mut entry.info);
                 true
@@ -176,12 +203,13 @@ impl Registry {
         }
     }
 
-    /// Removes the entry of `id` if `connection` still owns it.
-    pub fn remove(&self, id: &str, connection: u64) -> bool {
+    /// Removes the entry of the peer if `connection` still owns it.
+    pub fn remove(&self, role: PeerRole, id: &str, connection: u64) -> bool {
         let mut inner = self.lock();
-        match inner.peers.get(id) {
+        let key = key(role, id);
+        match inner.peers.get(&key) {
             Some(entry) if entry.info.connection == connection => {
-                inner.peers.remove(id);
+                inner.peers.remove(&key);
                 true
             }
             _ => false,
@@ -191,12 +219,15 @@ impl Registry {
     /// All connected peers, sorted by ID.
     pub fn connected(&self) -> Vec<PeerInfo> {
         let mut peers: Vec<_> = self.lock().peers.values().map(|e| e.info.clone()).collect();
-        peers.sort_by(|a, b| a.id.cmp(&b.id));
+        peers.sort_by(by_id);
         peers
     }
 
-    pub fn get(&self, id: &str) -> Option<PeerInfo> {
-        self.lock().peers.get(id).map(|e| e.info.clone())
+    pub fn get(&self, role: PeerRole, id: &str) -> Option<PeerInfo> {
+        self.lock()
+            .peers
+            .get(&key(role, id))
+            .map(|e| e.info.clone())
     }
 
     /// Replaces the streams other server instances hold (ADR-0089). Their
@@ -204,17 +235,21 @@ impl Registry {
     /// them from here.
     pub fn set_remote(&self, peers: Vec<PeerInfo>) {
         // A later entry, connected later, wins.
-        self.lock().remote = peers.into_iter().map(|p| (p.id.clone(), p)).collect();
+        self.lock().remote = peers
+            .into_iter()
+            .map(|p| ((p.role, p.id.clone()), p))
+            .collect();
     }
 
-    /// `id`'s stream on this instance, or else on another one.
-    pub fn live(&self, id: &str) -> Option<PeerInfo> {
+    /// The peer's stream on this instance, or else on another one.
+    pub fn live(&self, role: PeerRole, id: &str) -> Option<PeerInfo> {
         let inner = self.lock();
+        let key = key(role, id);
         inner
             .peers
-            .get(id)
+            .get(&key)
             .map(|e| e.info.clone())
-            .or_else(|| inner.remote.get(id).cloned())
+            .or_else(|| inner.remote.get(&key).cloned())
     }
 
     /// Every stream of every instance, this one's first, sorted by ID.
@@ -224,11 +259,11 @@ impl Registry {
         peers.extend(
             inner
                 .remote
-                .values()
-                .filter(|p| !inner.peers.contains_key(&p.id))
-                .cloned(),
+                .iter()
+                .filter(|(key, _)| !inner.peers.contains_key(*key))
+                .map(|(_, p)| p.clone()),
         );
-        peers.sort_by(|a, b| a.id.cmp(&b.id));
+        peers.sort_by(by_id);
         peers
     }
 
@@ -243,13 +278,18 @@ impl Registry {
         }
     }
 
-    /// Queues `envelope` on the stream of `id`. Waits while that stream's
-    /// outbound queue is full.
-    pub async fn send(&self, id: &str, envelope: Envelope) -> Result<(), RegistryError> {
+    /// Queues `envelope` on the stream of the peer. Waits while that
+    /// stream's outbound queue is full.
+    pub async fn send(
+        &self,
+        role: PeerRole,
+        id: &str,
+        envelope: Envelope,
+    ) -> Result<(), RegistryError> {
         let outbound = self
             .lock()
             .peers
-            .get(id)
+            .get(&key(role, id))
             .map(|e| e.outbound.clone())
             .ok_or_else(|| RegistryError::NotConnected(id.to_owned()))?;
         outbound
@@ -258,18 +298,24 @@ impl Registry {
             .map_err(|_| RegistryError::Disconnected(id.to_owned()))
     }
 
-    /// Closes the stream of `id` and every stream relayed by `id` with
-    /// `reason`, and removes them at once. Returns how many were closed.
-    pub fn close(&self, id: &str, reason: CloseReason) -> usize {
+    /// Closes the stream of the peer with `reason` and, for a relay, every
+    /// stream that passes through it, however many relays further down
+    /// (ADR-0029), and removes them at once. Returns how many were closed.
+    pub fn close(&self, role: PeerRole, id: &str, reason: CloseReason) -> usize {
         let closed: Vec<Entry> = {
             let mut inner = self.lock();
-            let ids: Vec<String> = inner
+            let carried = |info: &PeerInfo| {
+                role == PeerRole::Relay
+                    && (info.via_relay.as_deref() == Some(id)
+                        || info.relay_path.iter().any(|relay| relay == id))
+            };
+            let keys: Vec<Key> = inner
                 .peers
-                .values()
-                .filter(|e| e.info.id == id || e.info.via_relay.as_deref() == Some(id))
-                .map(|e| e.info.id.clone())
+                .iter()
+                .filter(|(key, e)| (key.0 == role && key.1 == id) || carried(&e.info))
+                .map(|(key, _)| key.clone())
                 .collect();
-            ids.iter().filter_map(|i| inner.peers.remove(i)).collect()
+            keys.iter().filter_map(|k| inner.peers.remove(k)).collect()
         };
         let count = closed.len();
         for entry in closed {
@@ -301,6 +347,7 @@ mod tests {
             id: id.into(),
             role: PeerRole::Agent,
             via_relay: None,
+            relay_path: Vec::new(),
             connection: 0,
             cert_serial: None,
             agent_version: "0.1.0".into(),
@@ -322,13 +369,20 @@ mod tests {
         let mut elsewhere = info("here");
         elsewhere.hostname = "other".into();
         registry.set_remote(vec![elsewhere, info("there")]);
-        assert_eq!(registry.get("there"), None, "nothing to send on");
-        assert_eq!(registry.live("there").unwrap().id, "there");
-        assert_eq!(registry.live("here").unwrap().hostname, "host");
+        assert_eq!(
+            registry.get(PeerRole::Agent, "there"),
+            None,
+            "nothing to send on"
+        );
+        assert_eq!(registry.live(PeerRole::Agent, "there").unwrap().id, "there");
+        assert_eq!(
+            registry.live(PeerRole::Agent, "here").unwrap().hostname,
+            "host"
+        );
         let ids: Vec<_> = registry.live_all().into_iter().map(|p| p.id).collect();
         assert_eq!(ids, ["here", "there"]);
         registry.set_remote(Vec::new());
-        assert_eq!(registry.live("there"), None);
+        assert_eq!(registry.live(PeerRole::Agent, "there"), None);
     }
 
     #[test]
@@ -355,13 +409,16 @@ mod tests {
         assert_eq!(old.close.await, Ok(CloseReason::Replaced));
 
         // The old stream's teardown must not touch its successor.
-        assert!(!registry.update("a", old.connection, |i| i.last_sequence = 99));
-        assert!(!registry.remove("a", old.connection));
-        let entry = registry.get("a").unwrap();
+        assert!(
+            !registry.update(PeerRole::Agent, "a", old.connection, |i| i.last_sequence =
+                99)
+        );
+        assert!(!registry.remove(PeerRole::Agent, "a", old.connection));
+        let entry = registry.get(PeerRole::Agent, "a").unwrap();
         assert_eq!(entry.connection, new.connection);
         assert_eq!(entry.last_sequence, 1);
 
-        assert!(registry.remove("a", new.connection));
+        assert!(registry.remove(PeerRole::Agent, "a", new.connection));
         assert!(registry.connected().is_empty());
     }
 
@@ -373,15 +430,18 @@ mod tests {
             sequence: 7,
             payload: None,
         };
-        registry.send("a", envelope.clone()).await.unwrap();
+        registry
+            .send(PeerRole::Agent, "a", envelope.clone())
+            .await
+            .unwrap();
         assert_eq!(rx.recv().await, Some(envelope.clone()));
         assert_eq!(
-            registry.send("b", envelope.clone()).await,
+            registry.send(PeerRole::Agent, "b", envelope.clone()).await,
             Err(RegistryError::NotConnected("b".into()))
         );
         drop(rx);
         assert_eq!(
-            registry.send("a", envelope).await,
+            registry.send(PeerRole::Agent, "a", envelope).await,
             Err(RegistryError::Disconnected("a".into()))
         );
     }
@@ -412,14 +472,121 @@ mod tests {
             via_relay: Some("r1".into()),
             ..info(id)
         };
-        let relay = registry.register(info("r1"), tx.clone()).unwrap();
+        let relay = registry.register(relay_info("r1"), tx.clone()).unwrap();
         let behind = registry.register(relayed("a1"), tx.clone()).unwrap();
         let (_other, _) = register(&registry, "a2");
-        assert_eq!(registry.close("r1", CloseReason::Revoked), 2);
+        // An agent of the relay's name is another peer: nothing closes.
+        assert_eq!(
+            registry.close(PeerRole::Agent, "r1", CloseReason::Revoked),
+            0
+        );
+        assert_eq!(
+            registry.close(PeerRole::Relay, "r1", CloseReason::Revoked),
+            2
+        );
         assert_eq!(relay.close.await, Ok(CloseReason::Revoked));
         assert_eq!(behind.close.await, Ok(CloseReason::Revoked));
         let ids: Vec<_> = registry.connected().into_iter().map(|p| p.id).collect();
         assert_eq!(ids, ["a2"]);
-        assert_eq!(registry.close("nobody", CloseReason::Revoked), 0);
+        assert_eq!(
+            registry.close(PeerRole::Relay, "nobody", CloseReason::Revoked),
+            0
+        );
+    }
+
+    fn relay_info(id: &str) -> PeerInfo {
+        PeerInfo {
+            role: PeerRole::Relay,
+            ..info(id)
+        }
+    }
+
+    #[tokio::test]
+    async fn an_agent_and_a_relay_of_one_id_are_two_peers() {
+        let registry = Registry::default();
+        let (agent_tx, mut agent_rx) = mpsc::channel(1);
+        let (relay_tx, mut relay_rx) = mpsc::channel(1);
+        let mut agent = registry.register(info("web-01"), agent_tx).unwrap();
+        let relay = registry.register(relay_info("web-01"), relay_tx).unwrap();
+        // Neither replaced the other.
+        assert!(agent.close.try_recv().is_err());
+        assert_eq!(registry.connected().len(), 2);
+        assert_eq!(
+            registry.get(PeerRole::Agent, "web-01").unwrap().connection,
+            agent.connection
+        );
+        assert_eq!(
+            registry.get(PeerRole::Relay, "web-01").unwrap().connection,
+            relay.connection
+        );
+        // A connection number of one role owns nothing of the other.
+        assert!(!registry.update(PeerRole::Agent, "web-01", relay.connection, |_| {}));
+        assert!(!registry.remove(PeerRole::Agent, "web-01", relay.connection));
+
+        let envelope = registry.envelope(Payload::Heartbeat(Default::default()));
+        registry
+            .send(PeerRole::Relay, "web-01", envelope.clone())
+            .await
+            .unwrap();
+        assert_eq!(relay_rx.recv().await, Some(envelope));
+        assert!(agent_rx.try_recv().is_err(), "the agent got nothing");
+
+        // Streams other instances hold are kept apart the same way.
+        registry.set_remote(vec![relay_info("db-01")]);
+        assert_eq!(registry.live(PeerRole::Agent, "db-01"), None);
+        assert!(registry.live(PeerRole::Relay, "db-01").is_some());
+        let listed: Vec<_> = registry
+            .live_all()
+            .into_iter()
+            .map(|p| (p.id, p.role))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("db-01".to_owned(), PeerRole::Relay),
+                ("web-01".to_owned(), PeerRole::Agent),
+                ("web-01".to_owned(), PeerRole::Relay),
+            ]
+        );
+
+        // Revoking the relay leaves the agent of the same name connected.
+        assert_eq!(
+            registry.close(PeerRole::Relay, "web-01", CloseReason::Revoked),
+            1
+        );
+        assert_eq!(relay.close.await, Ok(CloseReason::Revoked));
+        assert!(agent.close.try_recv().is_err());
+        assert!(registry.get(PeerRole::Agent, "web-01").is_some());
+    }
+
+    #[tokio::test]
+    async fn closing_a_relay_reaches_every_stream_passing_through_it() {
+        let registry = Registry::default();
+        let (tx, _rx) = mpsc::channel(1);
+        // r0 -> r1 -> x: x is attached to r1, on r0's connection.
+        let chained = |id: &str, role| PeerInfo {
+            role,
+            via_relay: Some("r1".into()),
+            relay_path: vec!["r0".into(), "r1".into()],
+            ..info(id)
+        };
+        let _r0 = registry.register(relay_info("r0"), tx.clone()).unwrap();
+        let r1 = PeerInfo {
+            via_relay: Some("r0".into()),
+            relay_path: vec!["r0".into()],
+            ..relay_info("r1")
+        };
+        let r1 = registry.register(r1, tx.clone()).unwrap();
+        let x = registry
+            .register(chained("x", PeerRole::Agent), tx.clone())
+            .unwrap();
+        let (mut direct, _) = register(&registry, "y");
+        assert_eq!(
+            registry.close(PeerRole::Relay, "r0", CloseReason::Revoked),
+            3
+        );
+        assert_eq!(r1.close.await, Ok(CloseReason::Revoked));
+        assert_eq!(x.close.await, Ok(CloseReason::Revoked));
+        assert!(direct.close.try_recv().is_err());
     }
 }

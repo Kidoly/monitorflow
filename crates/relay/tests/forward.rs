@@ -71,13 +71,13 @@ async fn envelopes_go_both_ways_unchanged() {
     let pki = Pki::new();
     let upstream = pki.serve(allow_all).await;
     let relay = Relay::start(pki.relay("paris-1"), &upstream.url).await;
-    let own = upstream.registry.get("paris-1").unwrap();
+    let own = upstream.registry.get(PeerRole::Relay, "paris-1").unwrap();
     assert_eq!((own.role, own.via_relay), (PeerRole::Relay, None));
 
     let mut agent = open(&relay.url, &pki.agent("web-01"), hello("web-01"))
         .await
         .unwrap();
-    let info = upstream.registry.get("web-01").unwrap();
+    let info = upstream.registry.get(PeerRole::Agent, "web-01").unwrap();
     assert_eq!(info.role, PeerRole::Agent);
     assert_eq!(info.via_relay.as_deref(), Some("paris-1"));
     assert_eq!(info.hostname, "web-01.example");
@@ -95,7 +95,7 @@ async fn envelopes_go_both_ways_unchanged() {
         .await;
     upstream
         .wait_until("heartbeats forwarded", |r| {
-            r.get("web-01").unwrap().last_sequence == 3
+            r.get(PeerRole::Agent, "web-01").unwrap().last_sequence == 3
         })
         .await;
 
@@ -109,7 +109,7 @@ async fn envelopes_go_both_ways_unchanged() {
     }));
     upstream
         .registry
-        .send("web-01", command.clone())
+        .send(PeerRole::Agent, "web-01", command.clone())
         .await
         .unwrap();
     assert_eq!(agent.next().await.unwrap(), Some(command));
@@ -117,9 +117,11 @@ async fn envelopes_go_both_ways_unchanged() {
     // The agent leaves: the server sees it offline, the relay stays.
     drop(agent);
     upstream
-        .wait_until("agent removed", |r| r.get("web-01").is_none())
+        .wait_until("agent removed", |r| {
+            r.get(PeerRole::Agent, "web-01").is_none()
+        })
         .await;
-    assert!(upstream.registry.get("paris-1").is_some());
+    assert!(upstream.registry.get(PeerRole::Relay, "paris-1").is_some());
 }
 
 #[tokio::test]
@@ -140,7 +142,7 @@ async fn upstream_refusals_reach_the_agent_unchanged() {
         status.message().contains("may not speak for agent web-01"),
         "{status}"
     );
-    assert!(upstream.registry.get("web-01").is_none());
+    assert!(upstream.registry.get(PeerRole::Agent, "web-01").is_none());
 }
 
 #[tokio::test]
@@ -172,8 +174,8 @@ async fn the_relay_checks_roles_and_the_hello() {
     .err()
     .expect("the first envelope must be Hello");
     assert_eq!(status.code(), Code::InvalidArgument, "{status}");
-    assert!(upstream.registry.get("web-01").is_none());
-    assert!(upstream.registry.get("web-02").is_none());
+    assert!(upstream.registry.get(PeerRole::Agent, "web-01").is_none());
+    assert!(upstream.registry.get(PeerRole::Agent, "web-02").is_none());
 }
 
 #[tokio::test]
@@ -189,7 +191,7 @@ async fn revoked_agents_are_refused_with_the_upstream_crl() {
     // The relay fetches the CRL at start.
     let relay = Relay::start(pki.relay("paris-1"), &upstream.url).await;
     assert!(open(&relay.url, &revoked, hello("web-09")).await.is_err());
-    assert!(upstream.registry.get("web-09").is_none());
+    assert!(upstream.registry.get(PeerRole::Agent, "web-09").is_none());
     open(&relay.url, &pki.agent("web-01"), hello("web-01"))
         .await
         .unwrap();
@@ -243,7 +245,7 @@ async fn batches_wait_on_disk_while_the_upstream_is_down() {
         captured.values("web-02") == [12.0, 13.0, 14.0, 15.0]
     })
     .await;
-    assert!(upstream.registry.get("web-02").is_some());
+    assert!(upstream.registry.get(PeerRole::Agent, "web-02").is_some());
     support::wait_for("buffer emptied", || async {
         relay.buffer.stats().await.unwrap().bytes == 0
     })
@@ -312,7 +314,9 @@ async fn the_buffer_survives_a_relay_restart() {
     })
     .await;
     upstream
-        .wait_until("replay stream closed", |r| r.get("web-01").is_none())
+        .wait_until("replay stream closed", |r| {
+            r.get(PeerRole::Agent, "web-01").is_none()
+        })
         .await;
     assert!(!relay.buffer.has_pending("web-01").await.unwrap());
 }
@@ -429,7 +433,7 @@ async fn batches_from_behind_a_downstream_relay_replay_with_their_path() {
         .unwrap();
     upstream
         .wait_until("web-01 behind b", |r| {
-            r.get("web-01")
+            r.get(PeerRole::Agent, "web-01")
                 .is_some_and(|info| info.via_relay.as_deref() == Some("b"))
         })
         .await;
@@ -544,7 +548,7 @@ async fn the_command_report_passes_through_relays_and_their_buffer() {
         .unwrap();
     upstream
         .wait_until("both agents up", |r| {
-            r.get("web-01").is_some() && r.get("web-02").is_some()
+            r.get(PeerRole::Agent, "web-01").is_some() && r.get(PeerRole::Agent, "web-02").is_some()
         })
         .await;
     assert_eq!(hellos.of("web-02"), Some(report()));

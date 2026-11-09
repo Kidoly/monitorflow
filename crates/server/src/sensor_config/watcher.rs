@@ -163,16 +163,18 @@ impl Watcher {
         let envelope = self
             .registry
             .envelope(Payload::SensorConfig(config.to_proto()));
-        match timeout(self.settings.send_timeout, self.registry.send(id, envelope)).await {
+        let sending = self.registry.send(PeerRole::Agent, id, envelope);
+        match timeout(self.settings.send_timeout, sending).await {
             Ok(Ok(())) => {
                 tracing::info!(
                     agent_id = id,
                     revision = config.revision,
                     "sent a new sensor configuration"
                 );
-                self.registry.update(id, connection, |info| {
-                    info.sensor_revision_sent = Some(config.revision);
-                });
+                self.registry
+                    .update(PeerRole::Agent, id, connection, |info| {
+                        info.sensor_revision_sent = Some(config.revision);
+                    });
             }
             Ok(Err(error)) => {
                 tracing::debug!(agent_id = id, %error, "sensor configuration not sent")

@@ -206,12 +206,9 @@ impl Dispatcher {
     }
 
     async fn dispatch(&mut self, peer_id: &str) {
-        let Some(peer) = self.registry.get(peer_id) else {
+        let Some(peer) = self.registry.get(PeerRole::Agent, peer_id) else {
             return;
         };
-        if peer.role != PeerRole::Agent {
-            return;
-        }
         let row = match self.store.next(peer_id).await {
             Ok(Some(row)) => row,
             Ok(None) => return,
@@ -266,7 +263,7 @@ impl Dispatcher {
         let envelope = self.registry.envelope(Payload::Command(command));
         match timeout(
             self.settings.send_timeout,
-            self.registry.send(peer_id, envelope),
+            self.registry.send(PeerRole::Agent, peer_id, envelope),
         )
         .await
         {

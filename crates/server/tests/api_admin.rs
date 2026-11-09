@@ -142,6 +142,7 @@ fn live(id: &str, role: PeerRole, via_relay: Option<&str>) -> PeerInfo {
         id: id.into(),
         role,
         via_relay: via_relay.map(Into::into),
+        relay_path: Vec::new(),
         connection: 0,
         cert_serial: None,
         agent_version: String::new(),

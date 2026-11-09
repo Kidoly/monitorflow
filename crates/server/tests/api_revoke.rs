@@ -231,6 +231,7 @@ fn live(id: &str, role: PeerRole, via_relay: Option<&str>) -> PeerInfo {
         id: id.into(),
         role,
         via_relay: via_relay.map(Into::into),
+        relay_path: Vec::new(),
         connection: 0,
         cert_serial: None,
         agent_version: String::new(),
@@ -294,7 +295,7 @@ db_tests! {
         assert_eq!(body["reason"], "key_compromise");
         assert_eq!(body["closed_streams"], 1);
         assert_eq!(stream.close.await, Ok(CloseReason::Revoked));
-        assert!(h.registry.get("agent-1").is_none());
+        assert!(h.registry.get(PeerRole::Agent, "agent-1").is_none());
 
         assert!(h.revoked_rows("servers").await);
         assert!(!h.revoked_rows("relays").await);
@@ -427,7 +428,7 @@ db_tests! {
         assert_eq!(body["closed_streams"], 2);
         assert_eq!(relay.close.await, Ok(CloseReason::Revoked));
         assert_eq!(agent.close.await, Ok(CloseReason::Revoked));
-        assert!(h.registry.get("agent-2").is_some());
+        assert!(h.registry.get(PeerRole::Agent, "agent-2").is_some());
         assert!(h.revoked_rows("relays").await);
         assert!(!h.revoked_rows("servers").await);
         assert_eq!(h.revoked_in_crl(), [vec![0x20]]);

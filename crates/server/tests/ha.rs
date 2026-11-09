@@ -437,7 +437,7 @@ db_tests! {
         let (identity, _) = a.agent(&pool, "web-01").await;
         let mut agent = b.open(&identity, "web-01").await.unwrap();
         eventually("a sees the stream b holds", || async {
-            a.registry.live("web-01").is_some_and(|p| p.connection == 0)
+            a.registry.live(PeerRole::Agent, "web-01").is_some_and(|p| p.connection == 0)
         })
         .await;
 
@@ -551,7 +551,7 @@ db_tests! {
         enrolled(&pool, "web-01").await;
         let (identity, _) = a.agent(&pool, "web-01").await;
         let agent = b.open(&identity, "web-01").await.unwrap();
-        eventually("a sees the stream b holds", || async { a.registry.live("web-01").is_some() }).await;
+        eventually("a sees the stream b holds", || async { a.registry.live(PeerRole::Agent, "web-01").is_some() }).await;
         // Seen long ago as far as the database knows: only the stream on b
         // keeps it online for a.
         sqlx::query("UPDATE servers SET last_seen_at = now() - interval '1 day'")
@@ -572,7 +572,7 @@ db_tests! {
         b.crash();
         drop(agent);
         eventually("a forgets the streams of the dead instance", || async {
-            a.registry.live("web-01").is_none()
+            a.registry.live(PeerRole::Agent, "web-01").is_none()
         })
         .await;
         // Two leaders for a moment write one incident.

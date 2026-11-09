@@ -433,6 +433,7 @@ db_tests! {
                     id: "web-01".into(),
                     role: PeerRole::Agent,
                     via_relay: None,
+                    relay_path: Vec::new(),
                     connection: 0,
                     cert_serial: None,
                     agent_version: "0.1.0".into(),
@@ -516,7 +517,7 @@ db_tests! {
         let third = store.enqueue(&new(web1, b"third")).await.unwrap();
         h.commands.dispatch("web-01");
         assert_eq!(peer.command().await.command_id, third.id.to_string());
-        assert_eq!(h.registry.get("web-01").unwrap().counters.command_results, 2);
+        assert_eq!(h.registry.get(PeerRole::Agent, "web-01").unwrap().counters.command_results, 2);
     }
 
     #[sqlx::test]

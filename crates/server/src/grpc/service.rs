@@ -283,7 +283,7 @@ impl AgentStreamService {
             peer: peer.clone(),
             agent_id: hello.agent_id.clone(),
         };
-        let (role, via_relay) = match (peer.role(), via) {
+        let (role, relay_path) = match (peer.role(), via) {
             // Forwarded by relays: the server checks the whole path.
             (PeerRole::Relay, Some(via)) => {
                 let origin = via.origin_peer();
@@ -296,21 +296,22 @@ impl AgentStreamService {
                 if !self.policy.may_route(&relays, origin).await {
                     return Err(not_allowed());
                 }
-                let attached = relays.last().map(|id| (*id).to_owned());
-                (origin.role(), attached)
+                let path: Vec<String> = relays.iter().map(|id| (*id).to_owned()).collect();
+                (origin.role(), path)
             }
             (PeerRole::Agent, _) if hello.agent_id != peer.id() => return Err(not_allowed()),
             // A relay's own Hello, or an agent's own direct connection.
-            (role, _) if hello.agent_id == peer.id() => (role, None),
+            (role, _) if hello.agent_id == peer.id() => (role, Vec::new()),
             // A relay that sends no path speaks for an agent attached to it.
             (PeerRole::Relay, None) => {
                 if !self.policy.may_speak_for(peer.id(), &hello.agent_id).await {
                     return Err(not_allowed());
                 }
-                (PeerRole::Agent, Some(peer.id().to_owned()))
+                (PeerRole::Agent, vec![peer.id().to_owned()])
             }
             (PeerRole::Agent | PeerRole::Server, _) => unreachable!("handled above"),
         };
+        let via_relay = relay_path.last().cloned();
         let accepted = AcceptedHello {
             peer,
             hello: &hello,
@@ -333,6 +334,7 @@ impl AgentStreamService {
             hello,
             role,
             via_relay,
+            relay_path,
             site,
             sensor_config,
         })
@@ -347,6 +349,8 @@ struct Accepted {
     role: PeerRole,
     /// The relay the peer is attached to, if any.
     via_relay: Option<String>,
+    /// The relays the stream passes through, the connecting one first.
+    relay_path: Vec<String>,
     /// The peer's site, from the inventory.
     site: String,
     /// What to send right after registration.
@@ -398,6 +402,7 @@ impl AgentService for AgentStreamService {
             hello,
             role,
             via_relay,
+            relay_path,
             site,
             sensor_config,
         } = accepted;
@@ -406,6 +411,7 @@ impl AgentService for AgentStreamService {
             id: hello.agent_id,
             role,
             via_relay: via_relay.clone(),
+            relay_path,
             connection: 0,
             cert_serial,
             agent_version: hello.agent_version,
@@ -623,7 +629,7 @@ impl Connection {
             }
         };
         // Remove first, so a peer that sees the stream end is already gone.
-        if self.registry.remove(&self.id, self.number) && self.role == PeerRole::Agent {
+        if self.registry.remove(self.role, &self.id, self.number) && self.role == PeerRole::Agent {
             if let Some(alerts) = &self.alerts {
                 alerts.forget(&self.id);
             }
@@ -652,11 +658,12 @@ impl Connection {
             self.record_seen();
         }
         let (sequence, counters) = (self.last_sequence, self.counters);
-        self.registry.update(&self.id, self.number, |info| {
-            info.last_seen = now;
-            info.last_sequence = sequence;
-            info.counters = counters;
-        });
+        self.registry
+            .update(self.role, &self.id, self.number, |info| {
+                info.last_seen = now;
+                info.last_sequence = sequence;
+                info.counters = counters;
+            });
     }
 
     /// Writes `last_seen_at` at most once per `last_seen_interval`. Any
@@ -681,7 +688,9 @@ impl Connection {
         let (invalid, first_error) = (checked.invalid, checked.first_error);
         self.counters.invalid_samples += invalid;
         // Never waits: a full engine queue drops the batch and counts it.
-        if let Some(alerts) = &self.alerts {
+        // Agents only: thresholds are loaded by server ID, and a relay may
+        // have the ID of an agent, of another customer's even (ADR-0105).
+        if let (Some(alerts), PeerRole::Agent) = (&self.alerts, self.role) {
             alerts.submit(&checked.series);
         }
         self.counters.dropped_samples += self.ingest.samples(checked);
@@ -766,7 +775,7 @@ impl Connection {
             tracing::debug!(agent_id = %id, revision = ack.revision, "sensor configuration applied");
         }
         let revision = ack.revision;
-        self.registry.update(id, self.number, |info| {
+        self.registry.update(self.role, id, self.number, |info| {
             info.sensor_revision_applied = Some(revision);
         });
         if let Some(configs) = &self.sensor_configs {

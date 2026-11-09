@@ -21,7 +21,7 @@ use monitorflow_agent::stream::{Agent, StreamSettings};
 use monitorflow_common::command::{CONFIGURE_SOURCES, REVERT_SOURCES};
 use monitorflow_common::proto::v1::configure_sources::{Mode, SigningKey};
 use monitorflow_common::proto::v1::{ConfigureSources, Package, PackageReport, RevertSources};
-use monitorflow_common::tls;
+use monitorflow_common::tls::{self, PeerRole};
 use monitorflow_server::commands::{
     CommandStore, Commands, DispatcherSettings as ServerDispatch, NewCommand, State,
 };
@@ -243,10 +243,10 @@ db_tests! {
         .execute(&pool)
         .await
         .unwrap();
-        let before = s.registry.get("web-01").unwrap().connection;
-        s.registry.close("web-01", CloseReason::Replaced);
+        let before = s.registry.get(PeerRole::Agent, "web-01").unwrap().connection;
+        s.registry.close(PeerRole::Agent, "web-01", CloseReason::Replaced);
         s.wait_for(first, State::Succeeded).await;
-        assert!(s.registry.get("web-01").unwrap().connection > before);
+        assert!(s.registry.get(PeerRole::Agent, "web-01").unwrap().connection > before);
         let row = s.store.get(first).await.unwrap().unwrap();
         assert_eq!(row.stdout.as_deref(), Some("hello"));
         assert_eq!(s.runs(), 1, "answered from the journal, not run again");
@@ -290,12 +290,12 @@ db_tests! {
     async fn a_command_queued_for_a_disconnected_agent_expires_unrun(pool: PgPool) {
         let s = Setup::start(&pool).await;
         let deadline = tokio::time::Instant::now() + TIMEOUT;
-        while s.registry.get("web-01").is_none() {
+        while s.registry.get(PeerRole::Agent, "web-01").is_none() {
             assert!(tokio::time::Instant::now() < deadline, "agent never connected");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         s.trigger.fire();
-        while s.registry.get("web-01").is_some() {
+        while s.registry.get(PeerRole::Agent, "web-01").is_some() {
             assert!(tokio::time::Instant::now() < deadline, "agent never left");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
