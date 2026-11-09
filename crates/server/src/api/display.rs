@@ -150,7 +150,7 @@ impl Default for Limits {
 /// The client's address as the reverse proxy in front of the API saw it:
 /// the last `X-Forwarded-For` entry, which the proxy appends. Without one,
 /// every client shares one bucket.
-fn source(headers: &HeaderMap) -> IpAddr {
+pub(super) fn source(headers: &HeaderMap) -> IpAddr {
     headers
         .get_all("x-forwarded-for")
         .iter()

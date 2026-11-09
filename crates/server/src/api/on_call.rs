@@ -9,6 +9,7 @@
 //! contact, nobody else's.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
@@ -27,6 +28,7 @@ use super::auth::CurrentUser;
 use super::notifications::{checked, is_global_admin, manages, require_administrator};
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
+use crate::enroll::limiter::{Attempts, MAX_SOURCES};
 use crate::notify::on_call::{
     self, mail_channel, Directory, Problem, Rota, Rotation, Schedule, Source,
 };
@@ -1055,14 +1057,36 @@ pub async fn set_contact(
     Ok(Json(view))
 }
 
+/// Tests of a personal contact one user may ask for per minute: each
+/// makes the server call an address the user chose.
+pub const TESTS_PER_MINUTE: u32 = 6;
+
+/// Counts [`test_contact`] calls per user.
+pub type TestLimit = Attempts<Uuid>;
+
+pub fn test_limit() -> TestLimit {
+    Attempts::new(
+        TESTS_PER_MINUTE,
+        Duration::from_secs(60),
+        MAX_SOURCES,
+        Uuid::nil(),
+    )
+}
+
 /// `POST /api/on-call/contact/test`: sends a test to each of the signed-in
 /// user's destinations, email through the mail server their alerts would
-/// use, and answers each outcome in plain words.
+/// use, and answers each outcome in plain words. 429 over
+/// [`TESTS_PER_MINUTE`].
 pub async fn test_contact(
     State(state): State<ApiState>,
     user: CurrentUser,
 ) -> Result<Json<ContactTests>, ApiError> {
     user.in_person()?;
+    if !state.contact_tests.attempt(&user.id) {
+        return Err(ApiError::TooManyRequests(
+            "Too many tests. Wait a minute and try again.".into(),
+        ));
+    }
     let mut conn = state.pool.acquire().await?;
     let directory = Directory::load(&mut conn).await?;
     let person = directory
@@ -1113,6 +1137,17 @@ mod tests {
 
     fn utc(text: &str) -> DateTime<Utc> {
         text.parse().unwrap()
+    }
+
+    #[test]
+    fn contact_tests_are_limited_per_user() {
+        let limit = test_limit();
+        let (alice, bob) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        for _ in 0..TESTS_PER_MINUTE {
+            assert!(limit.attempt(&alice));
+        }
+        assert!(!limit.attempt(&alice));
+        assert!(limit.attempt(&bob));
     }
 
     #[test]

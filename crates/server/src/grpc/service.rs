@@ -481,6 +481,7 @@ impl AgentService for AgentStreamService {
             invalid_logged: None,
             log_limit: ingest::journal::LogLimit::default(),
             invalid_logs_logged: None,
+            pending_logs: ingest::journal::Pending::default(),
         };
         tokio::spawn(connection.run(
             inbound,
@@ -543,6 +544,8 @@ struct Connection {
     log_limit: ingest::journal::LogLimit,
     /// When invalid log lines were last logged.
     invalid_logs_logged: Option<Instant>,
+    /// This stream's batches of log lines being redacted.
+    pending_logs: ingest::journal::Pending,
 }
 
 /// Fields of the stream events recorded in VictoriaLogs. Identifiers only.
@@ -733,9 +736,24 @@ impl Connection {
         if records.is_empty() {
             return;
         }
+        // Redaction is the costly part and nothing awaits it: a stream
+        // holds a bounded number of batches there, and loses the rest.
+        let now_ms = Utc::now().timestamp_millis();
+        let permit = match self
+            .pending_logs
+            .admit(&self.identity, &mut records, now_ms)
+        {
+            Ok(permit) => permit,
+            Err(dropped) => {
+                self.counters.dropped_log_lines += dropped;
+                tracing::debug!(agent_id = %self.id, dropped, "dropped log lines: redaction is behind");
+                return;
+            }
+        };
         tokio::task::spawn_blocking(move || {
             ingest::journal::redact(&mut records);
             ingest.logs(records);
+            drop(permit);
         });
     }
 

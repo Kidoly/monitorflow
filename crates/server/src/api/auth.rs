@@ -4,6 +4,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequestParts, Request, State};
 use axum::http::header::{AUTHORIZATION, SET_COOKIE};
 use axum::http::request::Parts;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -18,7 +19,7 @@ use super::access::Access;
 use super::audit::{self, Event};
 use super::roles::RoleGrant;
 use super::session::{self, SessionToken};
-use super::{api_keys, password, v1, ApiError, ApiState};
+use super::{api_keys, display, password, v1, ApiError, ApiState};
 
 /// Header the web interface sends on every state-changing request. A
 /// cross-origin page cannot set it without a CORS preflight, which the API
@@ -196,11 +197,24 @@ struct Account {
 }
 
 /// `POST /api/auth/login`.
+///
+/// Attempts are limited per source address and per account before
+/// anything is looked up or verified (ADR-0106). A refused attempt costs
+/// no argon2 run and writes no audit row: the wrong attempt that used a
+/// limit up says so in its own row.
 pub async fn login(
     State(state): State<ApiState>,
+    headers: HeaderMap,
     request: Result<Json<LoginRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Json(request) = request.map_err(|_| ApiError::BadRequest)?;
+    let source = display::source(&headers);
+    let Some(attempt) = state.login_limits.begin(source, &request.username) else {
+        tracing::debug!(%source, "login refused: too many attempts");
+        return Err(ApiError::TooManyRequests(
+            "Too many sign-in attempts. Wait a few minutes and try again.".into(),
+        ));
+    };
     let account = sqlx::query_as::<_, (Uuid, Option<String>, bool)>(
         "SELECT id, password_hash, disabled_at IS NOT NULL
          FROM users WHERE lower(username) = lower($1)",
@@ -232,6 +246,14 @@ pub async fn login(
                 Some(a) if a.password_hash.is_none() => (a.id.to_string(), "no_password"),
                 Some(a) => (a.id.to_string(), "bad_password"),
             };
+            let mut details = json!({ "reason": reason });
+            if let Some(limit) = state.login_limits.failed(&attempt) {
+                // The last row of this source or account until the window
+                // ends: what follows is refused unrecorded.
+                details["limit_reached"] = json!(limit.as_str());
+                details["source"] = json!(source.to_string());
+                tracing::warn!(%source, limit = limit.as_str(), "too many failed logins");
+            }
             // The submitted username is not recorded: users sometimes type
             // their password into that field.
             audit::record(
@@ -241,7 +263,7 @@ pub async fn login(
                     actor_id: &actor_id,
                     action: "auth.login_failed",
                     target: None,
-                    details: json!({ "reason": reason }),
+                    details,
                 },
             )
             .await?;
@@ -249,6 +271,8 @@ pub async fn login(
             return Err(ApiError::InvalidCredentials);
         }
     };
+
+    state.login_limits.succeeded(attempt);
 
     let mut tx = state.pool.begin().await?;
     session::prune(&mut *tx, &state.settings).await?;

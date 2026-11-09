@@ -6,9 +6,12 @@
 //! and lines the agent or this server dropped become a line of their own,
 //! so the count shows where the gap is.
 
+use std::sync::Arc;
+
 use chrono::DateTime;
 use monitorflow_common::proto::v1::{LogBatch, LogEntry};
 use monitorflow_common::rate::TokenBucket;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::logs::LogRecord;
 use super::validate::{Identity, MAX_AGE, MAX_FUTURE};
@@ -19,6 +22,14 @@ use crate::remediation::redact::Redactor;
 pub const MAX_ENTRIES_PER_BATCH: usize = 1_000;
 /// Bytes of a message kept, as the agent cuts them.
 pub const MAX_MESSAGE: usize = 4096;
+/// Bytes of a message kept until it is redacted: twice [`MAX_MESSAGE`],
+/// so a line that redaction shortens still fills what is stored, and a
+/// huge one costs the redaction rules no more than that.
+pub const MAX_UNREDACTED_MESSAGE: usize = 2 * MAX_MESSAGE;
+/// Batches of one stream being redacted at once; the next one is dropped
+/// and counted. Redaction keeps up with the rate limit many times over,
+/// so only a stream sending oversized batches gets there.
+pub const MAX_PENDING_BATCHES: usize = 4;
 /// Bytes of a unit or identifier; a longer one is left out.
 pub const MAX_FIELD: usize = 256;
 /// Lines per second one stream may write after [`BURST`], by the clock.
@@ -156,7 +167,11 @@ fn plain(value: String) -> String {
     }
 }
 
-fn record(identity: &Identity, entry: LogEntry) -> LogRecord {
+fn record(identity: &Identity, mut entry: LogEntry) -> LogRecord {
+    // Cut before it is queued; [`redact`] still runs on all that is kept.
+    entry
+        .message
+        .truncate(cut_at(&entry.message, MAX_UNREDACTED_MESSAGE));
     let time = DateTime::from_timestamp_millis(entry.timestamp_unix_ms).unwrap_or_default();
     let boot_id =
         if entry.boot_id.len() == 32 && entry.boot_id.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -198,6 +213,55 @@ fn notice(identity: &Identity, at_ms: i64, msg: String) -> LogRecord {
     .field("identifier", "monitorflow")
 }
 
+/// The batches of one stream being redacted, at most
+/// [`MAX_PENDING_BATCHES`] at once.
+#[derive(Debug)]
+pub struct Pending {
+    permits: Arc<Semaphore>,
+    /// Lines of batches dropped since the last one admitted.
+    shed: u64,
+}
+
+impl Default for Pending {
+    fn default() -> Self {
+        Self {
+            permits: Arc::new(Semaphore::new(MAX_PENDING_BATCHES)),
+            shed: 0,
+        }
+    }
+}
+
+impl Pending {
+    /// Admits a batch for redaction: hold the permit until it is done.
+    /// With too many waiting, the batch is dropped instead and `Err` says
+    /// how many lines; the next batch admitted gets a line saying so.
+    pub fn admit(
+        &mut self,
+        identity: &Identity,
+        records: &mut Vec<LogRecord>,
+        now_ms: i64,
+    ) -> Result<OwnedSemaphorePermit, u64> {
+        let Ok(permit) = self.permits.clone().try_acquire_owned() else {
+            let dropped = records.len() as u64;
+            self.shed += dropped;
+            return Err(dropped);
+        };
+        if self.shed > 0 {
+            let dropped = std::mem::take(&mut self.shed);
+            tracing::warn!(peer = %identity.peer, dropped, "dropped log lines: redaction was behind");
+            records.push(notice(
+                identity,
+                now_ms,
+                format!(
+                    "The server dropped {} of this agent: they came faster than it could redact them.",
+                    lines(dropped)
+                ),
+            ));
+        }
+        Ok(permit)
+    }
+}
+
 /// Redacts secrets in every message, then cuts it to [`MAX_MESSAGE`]
 /// bytes. Runs on the blocking pool: a batch of 500 lines takes a few
 /// milliseconds.
@@ -210,11 +274,16 @@ pub fn redact(records: &mut [LogRecord]) {
 }
 
 fn cut(text: &str, max: usize) -> String {
+    text[..cut_at(text, max)].to_owned()
+}
+
+/// The largest char boundary of `text` within `max` bytes.
+fn cut_at(text: &str, max: usize) -> usize {
     let mut end = text.len().min(max);
     while !text.is_char_boundary(end) {
         end -= 1;
     }
-    text[..end].to_owned()
+    end
 }
 
 #[cfg(test)]
@@ -412,5 +481,67 @@ mod tests {
         assert!(records[0].msg.contains("[REDACTED"), "{}", records[0].msg);
         assert!(records[0].msg.contains("10.0.0.1"));
         assert!(records[1].msg.len() <= MAX_MESSAGE);
+    }
+
+    #[test]
+    fn a_huge_message_is_cut_before_it_is_queued_and_still_redacted() {
+        // A secret early in the line, then megabytes of multi-byte text.
+        let message = format!("password=hunter2hunter2 {}", "é".repeat(1 << 20));
+        let mut checked = check_logs(
+            &identity(),
+            batch(vec![entry(&message), entry("short")]),
+            NOW,
+            &mut LogLimit::default(),
+        );
+        let queued = &checked.records[0].msg;
+        assert!(queued.len() <= MAX_UNREDACTED_MESSAGE, "{}", queued.len());
+        assert!(queued.len() > MAX_UNREDACTED_MESSAGE - 4);
+        assert_eq!(checked.records[1].msg, "short");
+
+        redact(&mut checked.records);
+        let stored = &checked.records[0].msg;
+        assert!(stored.len() <= MAX_MESSAGE);
+        assert!(!stored.contains("hunter2"), "{stored:.60}");
+    }
+
+    #[test]
+    fn a_stream_holds_a_bounded_number_of_batches_in_redaction() {
+        let mut pending = Pending::default();
+        let records = || {
+            check_logs(
+                &identity(),
+                batch(vec![entry("a"), entry("b")]),
+                NOW,
+                &mut LogLimit::default(),
+            )
+            .records
+        };
+        let mut held: Vec<_> = (0..MAX_PENDING_BATCHES)
+            .map(|_| pending.admit(&identity(), &mut records(), NOW).unwrap())
+            .collect();
+        // The next batches are dropped whole and counted.
+        assert_eq!(
+            pending.admit(&identity(), &mut records(), NOW).unwrap_err(),
+            2
+        );
+        assert_eq!(
+            pending.admit(&identity(), &mut records(), NOW).unwrap_err(),
+            2
+        );
+
+        // One finishes: the next is admitted, with a line saying what was lost.
+        held.pop();
+        let mut next = records();
+        let _permit = pending.admit(&identity(), &mut next, NOW).unwrap();
+        assert_eq!(next.len(), 3);
+        assert!(
+            next[2].msg.contains("dropped 4 log lines"),
+            "{}",
+            next[2].msg
+        );
+        held.pop();
+        let mut after = records();
+        let _permit = pending.admit(&identity(), &mut after, NOW).unwrap();
+        assert_eq!(after.len(), 2);
     }
 }

@@ -98,6 +98,26 @@ pub(crate) fn response_error(host: &str, status: reqwest::StatusCode, text: &str
     })
 }
 
+/// Bytes read of an answer that is not a success: enough for the 200
+/// characters shown and for a chat service's `retry_after`.
+pub(crate) const ERROR_BODY_BYTES: usize = 4096;
+
+/// The start of the body of a refusal, at most [`ERROR_BODY_BYTES`]. The
+/// rest is never read: whoever owns the destination chooses its size.
+pub(crate) async fn error_body(mut response: reqwest::Response) -> String {
+    let mut body = Vec::new();
+    while body.len() < ERROR_BODY_BYTES {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                let room = ERROR_BODY_BYTES - body.len();
+                body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+            }
+            Ok(None) | Err(_) => break,
+        }
+    }
+    String::from_utf8_lossy(&body).into_owned()
+}
+
 /// The client for webhooks: no redirects, so a request never lands
 /// somewhere the administrator did not type.
 pub fn http_client() -> reqwest::Client {
@@ -295,7 +315,7 @@ async fn post_webhook(
     if status.is_success() {
         return Ok(());
     }
-    let text = response.text().await.unwrap_or_default();
+    let text = error_body(response).await;
     Err(response_error(&host, status, &text))
 }
 
@@ -346,7 +366,7 @@ async fn post_chat(
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
-    let text = response.text().await.unwrap_or_default();
+    let text = error_body(response).await;
     Err(chat_error(service, &url, status, header.as_deref(), &text))
 }
 
@@ -492,6 +512,39 @@ fn smtp_error(email: &Email, error: &lettre::transport::smtp::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Answers one request with status 500 and `body`, as much of it as
+    /// the client takes.
+    async fn refusing_server(body: Vec<u8>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request).await;
+            let head = format!(
+                "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes()).await;
+            let _ = stream.write_all(&body).await;
+        });
+        format!("http://{address}/")
+    }
+
+    #[tokio::test]
+    async fn only_the_start_of_a_refusal_is_read() {
+        // 64 MiB announced and sent as fast as the client reads.
+        let url = refusing_server(vec![b'x'; 64 << 20]).await;
+        let response = reqwest::get(&url).await.unwrap();
+        let text = error_body(response).await;
+        assert_eq!(text.len(), ERROR_BODY_BYTES);
+
+        let url = refusing_server("disk full: é".into()).await;
+        let response = reqwest::get(&url).await.unwrap();
+        assert_eq!(error_body(response).await, "disk full: é");
+    }
 
     #[test]
     fn signatures_are_hmac_sha256_of_the_timestamp_and_body() {

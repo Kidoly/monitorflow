@@ -5,6 +5,7 @@
 //! and bounded; when full, untracked sources share one bucket.
 
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -21,14 +22,96 @@ pub const UNKNOWN_SOURCE: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 /// Bucket shared by sources that do not fit in the table.
 const OVERFLOW: IpAddr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
 
+/// A fixed-window count per key, in memory and bounded: when the table
+/// is full, untracked keys share the `overflow` bucket.
 #[derive(Debug)]
-pub struct FailureLimiter {
-    max_failures: u32,
+pub struct Attempts<K> {
+    max: u32,
     window: Duration,
-    max_sources: usize,
-    /// Failures and start of the current window, per source.
-    sources: Mutex<HashMap<IpAddr, (u32, Instant)>>,
+    max_keys: usize,
+    overflow: K,
+    /// Count and start of the current window, per key.
+    entries: Mutex<HashMap<K, (u32, Instant)>>,
 }
+
+impl<K: Hash + Eq + Clone> Attempts<K> {
+    pub fn new(max: u32, window: Duration, max_keys: usize, overflow: K) -> Self {
+        Self {
+            max,
+            window,
+            max_keys: max_keys.max(1),
+            overflow,
+            entries: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Whether `key` used up the current window.
+    pub fn is_blocked(&self, key: &K) -> bool {
+        self.is_blocked_at(key, Instant::now())
+    }
+
+    /// Counts one more for `key`, blocked or not.
+    pub fn record(&self, key: &K) {
+        self.count_at(key, Instant::now(), false);
+    }
+
+    /// Counts one more for `key` unless it is blocked, in one step, so
+    /// requests arriving together cannot all pass. False when blocked.
+    pub fn attempt(&self, key: &K) -> bool {
+        self.count_at(key, Instant::now(), true)
+    }
+
+    /// Takes back one count of `key`: an attempt that turned out fine.
+    pub fn forgive(&self, key: &K) {
+        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let key = if entries.contains_key(key) {
+            key
+        } else {
+            &self.overflow
+        };
+        if let Some(entry) = entries.get_mut(key) {
+            entry.0 = entry.0.saturating_sub(1);
+        }
+    }
+
+    pub(crate) fn is_blocked_at(&self, key: &K, now: Instant) -> bool {
+        let entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let key = if entries.contains_key(key) || entries.len() < self.max_keys {
+            key
+        } else {
+            &self.overflow
+        };
+        entries
+            .get(key)
+            .is_some_and(|&(count, start)| count >= self.max && now - start < self.window)
+    }
+
+    /// Counts one more for `key`; with `unless_blocked`, only below the
+    /// limit. Whether it counted.
+    pub(crate) fn count_at(&self, key: &K, now: Instant, unless_blocked: bool) -> bool {
+        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut key = key;
+        if !entries.contains_key(key) && entries.len() >= self.max_keys {
+            entries.retain(|_, &mut (_, start)| now - start < self.window);
+            if entries.len() >= self.max_keys {
+                key = &self.overflow;
+            }
+        }
+        let entry = entries.entry(key.clone()).or_insert((0, now));
+        if now - entry.1 >= self.window {
+            *entry = (0, now);
+        }
+        if unless_blocked && entry.0 >= self.max {
+            return false;
+        }
+        entry.0 = entry.0.saturating_add(1);
+        true
+    }
+}
+
+/// [`Attempts`] per source address.
+#[derive(Debug)]
+pub struct FailureLimiter(Attempts<IpAddr>);
 
 impl Default for FailureLimiter {
     fn default() -> Self {
@@ -38,55 +121,41 @@ impl Default for FailureLimiter {
 
 impl FailureLimiter {
     pub fn new(max_failures: u32, window: Duration, max_sources: usize) -> Self {
-        Self {
-            max_failures,
-            window,
-            max_sources: max_sources.max(1),
-            sources: Mutex::new(HashMap::new()),
-        }
+        Self(Attempts::new(max_failures, window, max_sources, OVERFLOW))
     }
 
     /// Whether `source` used up its failures for the current window.
     pub fn is_blocked(&self, source: IpAddr) -> bool {
-        self.is_blocked_at(source, Instant::now())
+        self.0.is_blocked(&bucket(source))
     }
 
     pub fn record_failure(&self, source: IpAddr) {
-        self.record_failure_at(source, Instant::now());
+        self.0.record(&bucket(source));
     }
 
+    /// See [`Attempts::attempt`].
+    pub fn attempt(&self, source: IpAddr) -> bool {
+        self.0.attempt(&bucket(source))
+    }
+
+    /// See [`Attempts::forgive`].
+    pub fn forgive(&self, source: IpAddr) {
+        self.0.forgive(&bucket(source));
+    }
+
+    #[cfg(test)]
     fn is_blocked_at(&self, source: IpAddr, now: Instant) -> bool {
-        let sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
-        let own = bucket(source);
-        let key = if sources.contains_key(&own) || sources.len() < self.max_sources {
-            own
-        } else {
-            OVERFLOW
-        };
-        sources
-            .get(&key)
-            .is_some_and(|&(count, start)| count >= self.max_failures && now - start < self.window)
+        self.0.is_blocked_at(&bucket(source), now)
     }
 
+    #[cfg(test)]
     fn record_failure_at(&self, source: IpAddr, now: Instant) {
-        let mut sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut key = bucket(source);
-        if !sources.contains_key(&key) && sources.len() >= self.max_sources {
-            sources.retain(|_, &mut (_, start)| now - start < self.window);
-            if sources.len() >= self.max_sources {
-                key = OVERFLOW;
-            }
-        }
-        let entry = sources.entry(key).or_insert((0, now));
-        if now - entry.1 >= self.window {
-            *entry = (0, now);
-        }
-        entry.0 = entry.0.saturating_add(1);
+        self.0.count_at(&bucket(source), now, false);
     }
 }
 
 /// IPv4 addresses count alone; IPv6 by /64, the usual smallest allocation.
-fn bucket(source: IpAddr) -> IpAddr {
+pub(crate) fn bucket(source: IpAddr) -> IpAddr {
     match source {
         IpAddr::V4(v4) => IpAddr::V4(v4),
         IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
@@ -155,5 +224,23 @@ mod tests {
         let later = t0 + WINDOW;
         limiter.record_failure_at(ip("192.0.2.5"), later);
         assert!(!limiter.is_blocked_at(ip("192.0.2.5"), later));
+    }
+
+    #[test]
+    fn attempts_stop_at_the_limit_and_can_be_forgiven() {
+        let attempts = Attempts::new(2, WINDOW, 100, "overflow");
+        let t0 = Instant::now();
+        assert!(attempts.count_at(&"a", t0, true));
+        assert!(attempts.count_at(&"a", t0, true));
+        // Refused attempts do not count further.
+        assert!(!attempts.count_at(&"a", t0, true));
+        assert!(attempts.is_blocked_at(&"a", t0));
+        attempts.forgive(&"a");
+        assert!(!attempts.is_blocked_at(&"a", t0));
+        assert!(attempts.count_at(&"a", t0, true));
+        assert!(attempts.count_at(&"a", t0 + WINDOW, true));
+        // Forgiving a key never seen changes nothing.
+        attempts.forgive(&"b");
+        assert!(!attempts.is_blocked_at(&"b", t0));
     }
 }
