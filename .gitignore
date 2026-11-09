@@ -1,4 +1,5 @@
 /target
+/plugins/target
 /web/node_modules
 /web/.next
 /web/out
@@ -6,6 +7,8 @@
 *.pem
 # Public release keys only (ADR-0053); never a private key.
 !deploy/release-keys.pem
+# Public plugin catalogue keys only (ADR-0103).
+!deploy/plugin-keys.pem
 *.key
 /deploy/data
 /deploy/dev-certs
