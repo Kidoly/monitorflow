@@ -15,7 +15,13 @@ pub struct Event<'a> {
     pub details: Value,
 }
 
-pub async fn record(db: impl PgExecutor<'_>, event: Event<'_>) -> Result<(), sqlx::Error> {
+/// Writes `event`. Within a request made with an API key, `details` gains
+/// `api_key`, the key's ID, so the log tells a person from their script
+/// (ADR-0101).
+pub async fn record(db: impl PgExecutor<'_>, mut event: Event<'_>) -> Result<(), sqlx::Error> {
+    if let (Some(key), Some(details)) = (super::v1::current_key(), event.details.as_object_mut()) {
+        details.insert("api_key".into(), Value::String(key.to_string()));
+    }
     let (target_kind, target_id) = event.target.unzip();
     sqlx::query(
         "INSERT INTO audit_log (actor_kind, actor_id, action, target_kind, target_id, details)

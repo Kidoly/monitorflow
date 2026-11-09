@@ -1,6 +1,7 @@
 import type { Me } from "@/lib/api";
 import { administersEverything, isAdministrator, readsCustomers } from "@/lib/me";
 import {
+  API_KEYS_PATH,
   APPROVALS_PATH,
   AUDIT_PATH,
   AUTO_UPDATE_PATH,
@@ -87,6 +88,7 @@ export const NAVIGATION: NavSection[] = [
       { label: "Sites", href: SITES_PATH, icon: "sites", iconWhenCollapsed: true },
       { label: "Add servers", href: TOKENS_PATH, icon: "tokens", iconWhenCollapsed: true },
       { label: "Users and roles", href: USERS_PATH, icon: "users", iconWhenCollapsed: true },
+      { label: "API keys", href: API_KEYS_PATH, icon: "tokens", iconWhenCollapsed: true },
       {
         label: "Notifications",
         href: NOTIFICATIONS_PATH,

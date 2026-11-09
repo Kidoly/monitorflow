@@ -8,8 +8,9 @@
 //!
 //! - Bodies are JSON objects; field names are `snake_case`.
 //! - Timestamps are RFC 3339 strings in UTC, IDs are UUID strings.
-//! - Errors use the HTTP status and a body `{"error": "<message>"}`. Messages
-//!   are generic and never carry internal details.
+//! - Errors use the HTTP status and a body `{"error": "<message>", "code":
+//!   "<code>"}`. Messages are generic and never carry internal details;
+//!   codes are stable (ADR-0101, [`ERROR_CODES`]).
 //!
 //! # Routes
 //!
@@ -122,6 +123,9 @@
 //! | GET | `/api/dashboards/{id}/display-links` | link it | [`display::LinkList`]: the display links showing it, without secrets (ADR-0099) |
 //! | POST | `/api/display-links` | link every dashboard named | body [`display::CreateRequest`]; 201 [`display::Created`] with the `url`, the only time its secret is shown; audited |
 //! | DELETE | `/api/display-links/{id}` | its maker, or link one of its dashboards | 204, its screens stop at their next request; audited |
+//! | GET | `/api/api-keys` | administrator | [`api_keys::KeyList`]: the keys the user could have made, without secrets (ADR-0101) |
+//! | POST | `/api/api-keys` | administrator of the reach | body [`api_keys::CreateRequest`]; 201 [`api_keys::Created`] with the `secret`, shown this once; audited |
+//! | DELETE | `/api/api-keys/{id}` | administrator of the reach | 204, the key stops at its next request; audited |
 //! | POST | `/api/display/start` | display link | body `{"token"}`; [`display::ScreenView`] and a one-hour screen session cookie; 410 for a link turned off, expired or whose maker is disabled, 403 when its maker may show none of its dashboards, 429 over the limits |
 //! | GET | `/api/display` | screen session | [`display::ScreenView`]; 401 once the session or link ends |
 //! | POST | `/api/display/data` | screen session | body `{"dashboard_id"}`; [`dashboard_data::DataResponse`] of one of the link's dashboards, read as its maker with their roles of now |
@@ -192,6 +196,18 @@
 //! Every request other than GET, HEAD, OPTIONS and TRACE, login included,
 //! must carry the header `X-MonitorFlow-CSRF: 1` and must not be marked
 //! cross-site by `Sec-Fetch-Site`; otherwise 403.
+//!
+//! # Public API
+//!
+//! `/api/v1/<path>` serves `/api/<path>` with the same handlers (see
+//! [`v1`], ADR-0101), except sign-in, setup, password and acknowledge
+//! links, screens and API keys, which are 404 there. It also takes
+//! `Authorization: Bearer mfk_…`: an API key acting as its maker narrowed
+//! to its reach, role and areas, without the CSRF header, limited to 600
+//! requests a minute with `RateLimit-*` headers. `/api/<path>` never takes
+//! keys. A key's write with `Idempotency-Key` runs once; the same request
+//! again within 24 hours gets the first answer with `Idempotent-Replayed:
+//! true` ([`idempotency`]).
 //!
 //! # Authorization
 //!
@@ -594,6 +610,7 @@ pub mod access;
 pub mod agent_files;
 pub mod ai;
 pub mod ai_commands;
+pub mod api_keys;
 pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
@@ -610,6 +627,7 @@ pub mod display;
 mod error;
 pub mod follow_up;
 mod health;
+pub mod idempotency;
 pub mod incidents;
 pub mod install_keys;
 pub mod integrations;
@@ -621,6 +639,7 @@ pub mod notifications;
 pub mod offline_alerts;
 pub mod on_call;
 pub(crate) mod one_time;
+pub mod openapi;
 pub mod package_sources;
 pub mod packages;
 pub mod password;
@@ -648,6 +667,7 @@ pub mod thresholds;
 pub mod tokens;
 pub mod user_admin;
 pub mod users;
+pub mod v1;
 
 use std::future::Future;
 use std::sync::Arc;
@@ -673,7 +693,7 @@ use crate::vm_query::VmQuery;
 
 pub use auth::{CurrentUser, Me};
 use error::is_missing_file;
-pub use error::ApiError;
+pub use error::{ApiError, CODES as ERROR_CODES};
 pub use roles::{Role, RoleGrant};
 pub use servers::{CertificateView, ServerDetail, ServerList, ServerView};
 pub use tokens::EnrollmentSettings;
@@ -800,6 +820,8 @@ pub struct ApiState {
     pub dashboard_cache: Arc<dashboard_data::Cache>,
     /// Rate limits of screens showing display links (ADR-0099).
     pub display_limits: Arc<display::Limits>,
+    /// Rate limits of API keys (ADR-0101).
+    pub api_key_limits: Arc<v1::Limits>,
 }
 
 impl ApiState {
@@ -820,6 +842,7 @@ impl ApiState {
             ca_rotation: None,
             dashboard_cache: Arc::default(),
             display_limits: Arc::default(),
+            api_key_limits: Arc::default(),
         }
     }
 
@@ -1041,6 +1064,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/dashboards/{id}/display-links", get(display::list))
         .route("/api/display-links", post(display::create))
         .route("/api/display-links/{id}", delete(display::revoke))
+        .route("/api/api-keys", get(api_keys::list).post(api_keys::create))
+        .route("/api/api-keys/{id}", delete(api_keys::revoke))
         .route("/api/display", get(display::view))
         .route("/api/display/start", post(display::start))
         .route("/api/display/data", post(display::data))
@@ -1240,7 +1265,7 @@ pub async fn serve(
             tracing::warn!(%addr, "API listens on plain HTTP beyond loopback; keep it behind a TLS reverse proxy (ADR-0006)");
         }
     }
-    axum::serve(listener, router(state))
+    axum::serve(listener, v1::app(state))
         .with_graceful_shutdown(shutdown)
         .await
 }

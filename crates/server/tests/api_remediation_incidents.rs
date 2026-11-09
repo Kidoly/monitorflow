@@ -200,7 +200,7 @@ db_tests! {
             "/api/remediation/incidents/x".into(),
         ] {
             let (status, body) = get(&pool, &site_viewer, &uri).await;
-            assert_eq!((status, body), (StatusCode::NOT_FOUND, json!({ "error": "not found" })), "{uri}");
+            assert_eq!((status, body), (StatusCode::NOT_FOUND, json!({ "error": "not found", "code": "not_found" })), "{uri}");
         }
 
         let admin = session(&pool, "admin", Role::Administrator, None, None).await;

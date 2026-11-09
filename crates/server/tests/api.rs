@@ -220,7 +220,7 @@ db_tests! {
                 call_with_cookie(app(pool.clone()), login_request(username, password)).await;
             assert_eq!(status, StatusCode::UNAUTHORIZED, "{username}");
             assert_eq!(cookie, None);
-            assert_eq!(body, json!({ "error": "invalid credentials" }));
+            assert_eq!(body, json!({ "error": "invalid credentials", "code": "invalid_credentials" }));
         }
 
         let failures: Vec<_> = audit_actions(&pool)
@@ -415,7 +415,7 @@ db_tests! {
         let session = login(&pool, "norole").await;
         let (status, body) = call(app(pool.clone()), with_cookie("GET", "/api/servers", &session)).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
-        assert_eq!(body, json!({ "error": "forbidden" }));
+        assert_eq!(body, json!({ "error": "forbidden", "code": "forbidden" }));
     }
 
     #[sqlx::test]

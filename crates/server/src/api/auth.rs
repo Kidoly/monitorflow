@@ -2,7 +2,7 @@
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequestParts, Request, State};
-use axum::http::header::SET_COOKIE;
+use axum::http::header::{AUTHORIZATION, SET_COOKIE};
 use axum::http::request::Parts;
 use axum::http::StatusCode;
 use axum::middleware::Next;
@@ -18,7 +18,7 @@ use super::access::Access;
 use super::audit::{self, Event};
 use super::roles::RoleGrant;
 use super::session::{self, SessionToken};
-use super::{password, ApiError, ApiState};
+use super::{api_keys, password, v1, ApiError, ApiState};
 
 /// Header the web interface sends on every state-changing request. A
 /// cross-origin page cannot set it without a CORS preflight, which the API
@@ -35,8 +35,10 @@ pub struct CurrentUser {
     /// `roles` resolved to sites; see [`super::access`].
     pub(super) access: Access,
     /// `None` when acting for someone without a session: the person who
-    /// made a display link (ADR-0099).
+    /// made a display link (ADR-0099) or an API key (ADR-0101).
     session: Option<SessionToken>,
+    /// The API key the request came with, if any (ADR-0101).
+    pub api_key: Option<Uuid>,
 }
 
 impl CurrentUser {
@@ -48,6 +50,19 @@ impl CurrentUser {
             roles: Vec::new(),
             access,
             session: Some(SessionToken::for_tests()),
+            api_key: None,
+        }
+    }
+
+    /// The same user acting through `key` with only `roles`, already
+    /// narrowed to the key (ADR-0101).
+    pub(super) fn through_key(self, key: Uuid, roles: Vec<RoleGrant>, access: Access) -> Self {
+        Self {
+            roles,
+            access,
+            session: None,
+            api_key: Some(key),
+            ..self
         }
     }
 }
@@ -56,6 +71,11 @@ impl FromRequestParts<ApiState> for CurrentUser {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &ApiState) -> Result<Self, ApiError> {
+        // Under `/api/v1`, a request with an `Authorization` header is a
+        // key's and never falls back to the cookie (ADR-0101).
+        if v1::is_v1(&parts.extensions) && parts.headers.contains_key(AUTHORIZATION) {
+            return api_keys::authenticate(parts, state).await;
+        }
         let token =
             session::from_headers(&parts.headers, &state.settings).ok_or(ApiError::Unauthorized)?;
         let user_id = session::resolve(&state.pool, &token, &state.settings)
@@ -103,13 +123,17 @@ pub(super) async fn load_user(
         roles,
         access,
         session,
+        api_key: None,
     })
 }
 
 /// Rejects state-changing requests that lack [`CSRF_HEADER`] or that the
-/// browser marks as coming from another site (`Sec-Fetch-Site`).
+/// browser marks as coming from another site (`Sec-Fetch-Site`). A key's
+/// request under `/api/v1` needs neither: it never uses the cookie, and no
+/// browser adds an `Authorization` header by itself (ADR-0101).
 pub async fn csrf_guard(request: Request, next: Next) -> Response {
-    if !request.method().is_safe() {
+    let with_key = v1::is_v1(request.extensions()) && request.headers().contains_key(AUTHORIZATION);
+    if !request.method().is_safe() && !with_key {
         let headers = request.headers();
         let has_header = headers.get(CSRF_HEADER).is_some_and(|v| v == "1");
         let cross_site = headers
