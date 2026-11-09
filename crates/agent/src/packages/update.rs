@@ -133,7 +133,8 @@ pub fn apt_refresh() -> Vec<String> {
     vec!["-q".into(), "update".into()]
 }
 
-/// `apt-get` arguments upgrading everything, or only `packages`.
+/// `apt-get` arguments upgrading everything, or only `packages`, whose
+/// names [`valid_name`] checked: `install` would remove a `name-`.
 pub fn apt_upgrade(packages: &[String]) -> Vec<String> {
     let mut args: Vec<String> = APT_UPGRADE_OPTIONS.iter().map(|a| a.to_string()).collect();
     if packages.is_empty() {
@@ -326,6 +327,9 @@ mod tests {
             "$(id)",
             "",
             "a\n",
+            // apt-get would remove `auditd` (ADR-0036).
+            "auditd-",
+            "auditd-+",
         ] {
             let error = spec(UpdateKind::Named, &["bash", bad])
                 .validate()

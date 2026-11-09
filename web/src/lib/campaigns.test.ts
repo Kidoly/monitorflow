@@ -57,6 +57,9 @@ describe("validateCampaign", () => {
       "The campaign targets no server.",
     ]);
     expect(validateCampaign(valid({ packages: ["openssl", "-rf"] }), ["s1"])).toEqual(['Invalid package name "-rf".']);
+    expect(validateCampaign(valid({ packages: ["auditd-"] }), ["s1"])).toEqual(['Invalid package name "auditd-".']);
+    expect(validateCampaign(valid({ packages: ["auditd-+"] }), ["s1"])).toEqual(['Invalid package name "auditd-+".']);
+    expect(validateCampaign(valid({ packages: ["g++", "libstdc++6:amd64", "a"] }), ["s1"])).toEqual([]);
     expect(validateCampaign(valid({ failure_threshold: { value: 101, unit: "percent" } }), ["s1"])).toHaveLength(1);
     expect(validateCampaign(valid({ failure_threshold: { value: 1.5, unit: "count" } }), ["s1"])).toHaveLength(1);
     expect(validateCampaign(valid({ command_ttl_s: 30 }), ["s1"])).toHaveLength(1);

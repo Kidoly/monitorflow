@@ -5,6 +5,8 @@
 //! Every read-only rule lists the options it accepts; any other option,
 //! such as `journalctl -f` or `tail -f` (never ends) or `dmesg -c`
 //! (clears the buffer), makes the command unknown, hence high impact.
+//! Long options are matched by their whole name: the tools take any
+//! unambiguous prefix (`getopt_long`), which the rules do not guess at.
 
 use super::lexer::Word;
 use super::pattern::glob;
@@ -183,9 +185,14 @@ pub fn command(program: &str, args: &[Word], rules: &RuleSet) -> Verdict {
                     .iter()
                     .all(|a| DATE_FLAGS.contains(&a.text.as_str()) || a.text.starts_with('+'))
         }
-        // These only report: no option of theirs changes anything.
-        "ps" | "netstat" | "lscpu" | "who" | "w" => true,
-        "ss" => args.iter().all(|a| ss_arg(&a.text)),
+        // These only report: no option of theirs changes anything, waits
+        // or names a file to read or write.
+        "ps" | "lscpu" | "w" => true,
+        "netstat" => parse(args, &NETSTAT).is_some_and(|p| p.operands.is_empty()),
+        "who" => parse(args, &WHO).is_some_and(|p| p.operands.is_empty()),
+        // Operands are the words of a socket filter (`state listening`,
+        // `dst 10.0.0.1`), which only selects what is listed.
+        "ss" => parse(args, &SS).is_some(),
         "top" => parse(args, &TOP).is_some_and(|p| {
             p.operands.is_empty()
                 && p.has("-b")
@@ -484,6 +491,90 @@ const ID: Spec = Spec {
     short: "ugGnrz",
     ..EMPTY
 };
+/// No `-K`/`--kill` (closes sockets), `-D`/`--diag` (writes a file),
+/// `-E`/`--events` (never ends), `-F`/`--filter` (reads a file) or
+/// `-N`/`--net` (another namespace). `ss` reads options with
+/// `getopt_long`, which takes any unambiguous prefix of a long option
+/// (`--di=FILE`); [`parse`] takes whole names only.
+const SS: Spec = Spec {
+    short: "nraloempTisbZz460tMSuwxHQOB",
+    short_valued: "fA",
+    long: &[
+        "numeric",
+        "resolve",
+        "all",
+        "listening",
+        "bound-inactive",
+        "options",
+        "extended",
+        "memory",
+        "processes",
+        "threads",
+        "info",
+        "summary",
+        "tos",
+        "cgroup",
+        "ipv4",
+        "ipv6",
+        "packet",
+        "tcp",
+        "mptcp",
+        "sctp",
+        "udp",
+        "raw",
+        "unix",
+        "no-header",
+        "no-queues",
+        "oneline",
+    ],
+    long_valued: &["family", "query", "socket"],
+    numeric: false,
+};
+/// No `-c`/`--continuous`: it never ends.
+const NETSTAT: Spec = Spec {
+    short: "rigsMvWnNeploaFCtuUSwx46",
+    short_valued: "A",
+    long: &[
+        "route",
+        "interfaces",
+        "groups",
+        "statistics",
+        "masquerade",
+        "verbose",
+        "wide",
+        "numeric",
+        "numeric-hosts",
+        "numeric-ports",
+        "numeric-users",
+        "symbolic",
+        "extend",
+        "programs",
+        "timers",
+        "listening",
+        "all",
+        "fib",
+        "cache",
+        "tcp",
+        "udp",
+        "udplite",
+        "sctp",
+        "raw",
+        "unix",
+        "inet",
+        "inet6",
+    ],
+    long_valued: &["protocol"],
+    numeric: false,
+};
+/// No file operand (`who FILE` reads it) and no `--lookup` (DNS queries).
+const WHO: Spec = Spec {
+    short: "abdHlmpqrstTuw",
+    long: &[
+        "all", "boot", "dead", "heading", "login", "process", "count", "runlevel", "short", "time",
+        "mesg", "users", "message", "writable",
+    ],
+    ..EMPTY
+};
 const TOP: Spec = Spec {
     short: "bcHiS",
     short_valued: "no",
@@ -742,18 +833,6 @@ fn counts_ok(parsed: &Parsed<'_>) -> bool {
         }
         _ => true,
     })
-}
-
-/// `ss` reports sockets, except `-K`/`--kill` (closes them), `-D`/`--diag`
-/// (writes a file) and `-E`/`--events` (never ends).
-fn ss_arg(arg: &str) -> bool {
-    if let Some(long) = arg.strip_prefix("--") {
-        !(long == "kill" || long == "events" || long.starts_with("diag"))
-    } else if let Some(short) = arg.strip_prefix('-') {
-        !short.contains(['K', 'D', 'E'])
-    } else {
-        true
-    }
 }
 
 /// `ip [options] <object> [show|list|ls|get ...]` for objects that only
