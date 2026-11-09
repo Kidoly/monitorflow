@@ -417,7 +417,7 @@ mod tests {
         let documented = documented();
         for (method, path) in routes() {
             if !path.starts_with("/api/")
-                || v1::left_out(&path)
+                || v1::left_out(&method, &path)
                 || documented.contains(&(method.clone(), path.clone()))
             {
                 continue;

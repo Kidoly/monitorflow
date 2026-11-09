@@ -14,7 +14,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::api_keys::{bearer, KeySecret};
-use super::{ApiError, ApiState, BODY_LIMIT};
+use super::{v1, ApiError, ApiState, BODY_LIMIT};
 
 pub const HEADER: &str = "idempotency-key";
 /// Set on an answer given again rather than made anew.
@@ -69,7 +69,7 @@ pub(super) async fn run(state: ApiState, inner: Router, request: Request) -> Res
         ))
         .into_response();
     };
-    idempotent(&state.pool, inner, request, secret, value)
+    idempotent(&state, inner, request, secret, value)
         .await
         .unwrap_or_else(IntoResponse::into_response)
 }
@@ -95,17 +95,25 @@ enum Claim {
 }
 
 async fn idempotent(
-    pool: &PgPool,
+    state: &ApiState,
     inner: Router,
     request: Request,
     secret: KeySecret,
     value: String,
 ) -> Result<Response, ApiError> {
-    let key: Option<Uuid> = sqlx::query_scalar("SELECT id FROM api_keys WHERE token_hash = $1")
-        .bind(secret.hash())
-        .fetch_optional(pool)
-        .await?;
-    // An unknown key is refused by the handler, without storing anything.
+    let pool = &state.pool;
+    // Only a key that works now: an answer kept for a key since expired,
+    // or whose maker was disabled, is not given again.
+    let key: Option<Uuid> = sqlx::query_scalar(
+        "SELECT k.id FROM api_keys k JOIN users u ON u.id = k.created_by
+         WHERE k.token_hash = $1 AND u.disabled_at IS NULL
+           AND (k.expires_at IS NULL OR k.expires_at > now())",
+    )
+    .bind(secret.hash())
+    .fetch_optional(pool)
+    .await?;
+    // An unknown or dead key is refused by the handler, without storing
+    // anything.
     let Some(key) = key else {
         return Ok(call(inner, request).await);
     };
@@ -125,7 +133,13 @@ async fn idempotent(
     }
     let fingerprint = hash.finish().as_ref().to_vec();
 
-    match claim(pool, key, &value, &fingerprint).await? {
+    let claim = claim(pool, key, &value, &fingerprint).await?;
+    if !matches!(claim, Claim::Run) {
+        // Answered here, without the handler that counts a request
+        // against the key's rate limit.
+        v1::admit(&parts, state, key)?;
+    }
+    match claim {
         Claim::Run => {}
         Claim::Running => return Err(ApiError::IdempotencyInProgress),
         Claim::Reused => return Err(ApiError::IdempotencyKeyReused),

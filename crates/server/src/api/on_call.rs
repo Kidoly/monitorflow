@@ -370,7 +370,9 @@ async fn views(
         .iter()
         .filter_map(|s| {
             let can_manage = manages(user, s.coverage);
-            let member = s.rota.members.contains(&Some(user.id));
+            // Being on a schedule is the person's; a key sees the
+            // schedules of what it reaches.
+            let member = user.api_key.is_none() && s.rota.members.contains(&Some(user.id));
             let names = names.get(&s.id)?;
             (can_manage || member).then(|| view(s, names, &directory, &channels, now, can_manage))
         })
@@ -932,6 +934,7 @@ pub async fn contact(
     State(state): State<ApiState>,
     user: CurrentUser,
 ) -> Result<Json<ContactView>, ApiError> {
+    user.in_person()?;
     Ok(Json(contact_view(&state.pool, user.id).await?))
 }
 
@@ -939,12 +942,15 @@ pub async fn contact(
 /// chat or webhook follows the channels' rules (ADR-0077, ADR-0078): its
 /// secret is never read back, stays only with its target, and someone
 /// other than a global administrator reaches only public addresses.
-/// Audited as `user.contact_update`.
+/// Audited as `user.contact_update`. Never through an API key: the
+/// contact is where the person's pages go, with links that acknowledge as
+/// them.
 pub async fn set_contact(
     State(state): State<ApiState>,
     user: CurrentUser,
     request: Result<Json<ContactRequest>, JsonRejection>,
 ) -> Result<Json<ContactView>, ApiError> {
+    user.in_person()?;
     let request = body(request)?;
     let email = match request.email.as_deref().map(str::trim) {
         None | Some("") => None,
@@ -1056,6 +1062,7 @@ pub async fn test_contact(
     State(state): State<ApiState>,
     user: CurrentUser,
 ) -> Result<Json<ContactTests>, ApiError> {
+    user.in_person()?;
     let mut conn = state.pool.acquire().await?;
     let directory = Directory::load(&mut conn).await?;
     let person = directory

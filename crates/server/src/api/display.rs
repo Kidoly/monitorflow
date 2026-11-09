@@ -377,6 +377,7 @@ pub async fn list(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<LinkList>, ApiError> {
+    user.in_person()?;
     let id = parse_id(&id)?;
     linkable(&state, &user, id).await?;
     // SQL-safe: interpolates only the constant LINKS.
@@ -423,12 +424,15 @@ async fn record(
 
 /// `POST /api/display-links`: a new link for dashboards the user may
 /// link. Audited as `display_link.create`; the URL with its secret is in
-/// this answer only.
+/// this answer only. Never through an API key: the link reads as its
+/// maker with all their roles, beyond the key's reach, and would outlive
+/// the key.
 pub async fn create(
     State(state): State<ApiState>,
     user: CurrentUser,
     request: Result<Json<CreateRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Created>), ApiError> {
+    user.in_person()?;
     let request = body(request)?;
     let name = request.name.trim();
     if name.is_empty() || name.chars().count() > MAX_NAME {
@@ -504,6 +508,7 @@ pub async fn revoke(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
+    user.in_person()?;
     let id = parse_id(&id)?;
     if !user.can_read() {
         return Err(ApiError::Forbidden);

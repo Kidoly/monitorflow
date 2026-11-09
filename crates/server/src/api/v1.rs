@@ -1,7 +1,8 @@
 //! The public API (ADR-0101): `/api/v1/<path>` is `/api/<path>`, served
 //! by the same router and handlers, with API keys accepted, per-key rate
 //! limits and `Idempotency-Key` on writes ([`idempotency`]). Routes for people in a browser
-//! are left out.
+//! are left out, and those that act as the person rather than within a
+//! key's reach ([`left_out`]).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -26,13 +27,15 @@ const WINDOW: Duration = Duration::from_secs(60);
 const MAX_KEYS: usize = 10_000;
 
 /// First segments after `/api/` that v1 does not serve: they are for
-/// people in a browser, or would let a key make another key.
-const LEFT_OUT: [&str; 6] = [
+/// people in a browser, or would let a key make a credential that
+/// outlives it or acts beyond its reach (another key, a display link).
+const LEFT_OUT: [&str; 7] = [
     "auth",
     "setup",
     "password-link",
     "acknowledge-link",
     "display",
+    "display-links",
     "api-keys",
 ];
 
@@ -83,24 +86,32 @@ impl Slot {
     }
 }
 
-/// Whether v1 leaves out the web interface's route `path` (`/api/…`).
-pub fn left_out(path: &str) -> bool {
-    let first = path
-        .trim_start_matches("/api/")
-        .split('/')
-        .next()
-        .unwrap_or("");
-    LEFT_OUT.contains(&first)
+/// Whether v1 leaves out the web interface's route `method` `path`
+/// (`/api/…`, a request's path or a route's template). Beyond
+/// [`LEFT_OUT`], these act as a person rather than within a key's reach:
+/// the display links of a dashboard, which read as their maker
+/// (ADR-0099); the person's own on-call contact, where their pages go;
+/// and inviting a user or issuing a password link, which hand out a
+/// person's credential that would outlive the key.
+pub fn left_out(method: &str, path: &str) -> bool {
+    let segments: Vec<&str> = path.trim_start_matches("/api/").split('/').collect();
+    let post = method.eq_ignore_ascii_case("POST");
+    match segments.as_slice() {
+        [first, ..] if LEFT_OUT.contains(first) => true,
+        ["dashboards", _, "display-links"] | ["on-call", "contact", ..] => true,
+        ["users"] | ["users", _, "link"] => post,
+        _ => false,
+    }
 }
 
 /// The path `/api/<rest>` for `/api/v1/<rest>`, unless v1 leaves it out.
-fn target(path: &str) -> Option<String> {
+fn target(method: &str, path: &str) -> Option<String> {
     let target = format!("/api{}", path.strip_prefix(PREFIX)?);
-    (!left_out(&target)).then_some(target)
+    (!left_out(method, &target)).then_some(target)
 }
 
 async fn handle(state: ApiState, inner: Router, request: Request) -> Response {
-    let Some(path) = target(request.uri().path()) else {
+    let Some(path) = target(request.method().as_str(), request.uri().path()) else {
         return ApiError::NotFound.into_response();
     };
     let uri = match request.uri().query() {
@@ -225,29 +236,52 @@ mod tests {
 
     #[test]
     fn paths_map_to_the_web_interface_s() {
-        assert_eq!(target("/api/v1/servers").as_deref(), Some("/api/servers"));
         assert_eq!(
-            target("/api/v1/servers/x/commands").as_deref(),
+            target("GET", "/api/v1/servers").as_deref(),
+            Some("/api/servers")
+        );
+        assert_eq!(
+            target("POST", "/api/v1/servers/x/commands").as_deref(),
             Some("/api/servers/x/commands")
         );
-        assert_eq!(
-            target("/api/v1/display-links").as_deref(),
-            Some("/api/display-links")
-        );
-        for left_out in [
-            "/api/v1/auth/login",
-            "/api/v1/auth/me",
-            "/api/v1/setup",
-            "/api/v1/password-link/use",
-            "/api/v1/acknowledge-link",
-            "/api/v1/display",
-            "/api/v1/display/data",
-            "/api/v1/api-keys",
-            "/api/v1/api-keys/x",
+        for (method, left_out) in [
+            ("POST", "/api/v1/auth/login"),
+            ("GET", "/api/v1/auth/me"),
+            ("POST", "/api/v1/setup"),
+            ("POST", "/api/v1/password-link/use"),
+            ("POST", "/api/v1/acknowledge-link"),
+            ("GET", "/api/v1/display"),
+            ("POST", "/api/v1/display/data"),
+            ("GET", "/api/v1/api-keys"),
+            ("DELETE", "/api/v1/api-keys/x"),
+            ("POST", "/api/v1/display-links"),
+            ("DELETE", "/api/v1/display-links/x"),
+            ("GET", "/api/v1/dashboards/x/display-links"),
+            ("GET", "/api/v1/on-call/contact"),
+            ("PUT", "/api/v1/on-call/contact"),
+            ("POST", "/api/v1/on-call/contact/test"),
+            ("POST", "/api/v1/users"),
+            ("POST", "/api/v1/users/x/link"),
         ] {
-            assert_eq!(target(left_out), None, "{left_out}");
+            assert_eq!(target(method, left_out), None, "{method} {left_out}");
         }
-        assert_eq!(target("/api/servers"), None);
+        assert_eq!(target("GET", "/api/servers"), None);
+    }
+
+    #[test]
+    fn what_a_key_may_still_do_next_to_what_is_left_out() {
+        for (method, path) in [
+            ("GET", "/api/v1/users"),
+            ("POST", "/api/v1/users/x/roles"),
+            ("PUT", "/api/v1/users/x/disabled"),
+            ("DELETE", "/api/v1/users/x"),
+            ("GET", "/api/v1/dashboards/x"),
+            ("POST", "/api/v1/dashboards"),
+            ("GET", "/api/v1/on-call/schedules"),
+            ("GET", "/api/v1/on-call/people"),
+        ] {
+            assert!(target(method, path).is_some(), "{method} {path}");
+        }
     }
 
     #[test]
