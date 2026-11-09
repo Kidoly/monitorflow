@@ -41,6 +41,8 @@ pub mod testing;
 pub mod validate;
 #[cfg(windows)]
 mod win;
+#[cfg(windows)]
+pub use win::{check_owner, check_writers};
 pub mod windows_service;
 
 pub use registry::BuildError;

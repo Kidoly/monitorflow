@@ -85,6 +85,11 @@ enum Command {
         #[command(subcommand)]
         action: AiCommandsAction,
     },
+    /// Check that only administrators and the agent's service own the
+    /// folder of `--config` and what it holds, and may write there; the MSI
+    /// package runs this before it writes the configuration (ADR-0050).
+    #[cfg(windows)]
+    CheckDataFolder,
     /// Write the configuration file `--config` with these keys, unless it
     /// already exists; the MSI package runs this (ADR-0050). Empty values
     /// count as unset.
@@ -236,6 +241,23 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
         #[cfg(windows)]
         Some(Command::AiCommands { action }) => {
             return set_ai_commands(&cli.config, action).await;
+        }
+        #[cfg(windows)]
+        Some(Command::CheckDataFolder) => {
+            use monitorflow_agent::packages::windows_update::{service_sid, AGENT_SERVICE};
+
+            let dir = cli.config.parent().unwrap_or(Path::new(".")).to_owned();
+            let agent = service_sid(AGENT_SERVICE);
+            return tokio::task::spawn_blocking(move || {
+                monitorflow_agent::data_folder::check(&dir, &agent)
+            })
+            .await?
+            .map_err(|reason| {
+                anyhow::anyhow!(
+                    "{reason}. Someone other than an administrator made or changed it: check what \
+                     it holds, or remove it, then install again"
+                )
+            });
         }
         Some(Command::InitConfig {
             upstream_url,

@@ -8,6 +8,8 @@
 
 pub mod ai_commands;
 pub mod commands;
+#[cfg(windows)]
+pub mod data_folder;
 pub mod enroll;
 #[cfg(windows)]
 pub mod eventlog;

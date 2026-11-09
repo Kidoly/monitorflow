@@ -214,6 +214,8 @@ msiexec /i monitorflow-agent-0.3.0-x64.msi /qn /l*v install.log `
 
 An invalid URL makes the install fail and roll back; `install.log` has the custom action `WriteAgentConfig` failing. The package is not signed yet, so Windows shows an unknown publisher.
 
+The package refuses to install when someone other than an administrator made `%ProgramData%\MonitorFlow` or put something in it first, as any user of the server can: the install stops and rolls back (msiexec exits with 1603). Look at what the folder holds and who owns it (`Get-ChildItem -Recurse -Force "$env:ProgramData\MonitorFlow" | Get-Acl | Format-Table Path, Owner`), remove it if it is not yours, or after checking it give it to the administrators with `icacls "$env:ProgramData\MonitorFlow" /setowner *S-1-5-32-544 /T`, then install again.
+
 Installing a newer package upgrades in place: the service restarts with the new binary, and `agent.toml` and the identity are kept. `msiexec /x monitorflow-agent-0.3.0-x64.msi /qn` (or Apps and Features) removes the binary and the service and keeps `%ProgramData%\MonitorFlow`, so a reinstall keeps the same identity. When the service stops on an error, the Application event log has the reason, from the source `MonitorFlowAgent`.
 
 The package does not install the Windows Update service yet[^0050]: add it by hand as in [Windows Update service](#windows-update-service).
