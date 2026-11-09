@@ -14,7 +14,14 @@ path = "src/main.rs"
 name = "monitorflow-mirror-tools"
 path = "src/bin/monitorflow-mirror-tools.rs"
 
+[features]
+# The Enterprise edition (ADR-0100), under ee/LICENSE: license keys and
+# additional central servers. Without it the server is AGPL code only.
+default = ["enterprise"]
+enterprise = ["dep:monitorflow-server-ee"]
+
 [dependencies]
+monitorflow-server-ee = { workspace = true, optional = true }
 # server-update: checks and requests of server updates (ADR-0056).
 monitorflow-common = { workspace = true, features = ["mirror", "server-update"] }
 monitorflow-sensors.workspace = true

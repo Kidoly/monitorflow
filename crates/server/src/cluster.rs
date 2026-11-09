@@ -573,7 +573,9 @@ pub async fn lead<F, Fut>(
 }
 
 /// The host name, for operators reading `server_instances`.
-fn hostname() -> String {
+/// The name of this host, which `server_instances` shows and an added
+/// central server is known by (ADR-0100).
+pub fn hostname() -> String {
     std::env::var("HOSTNAME")
         .ok()
         .or_else(|| std::fs::read_to_string("/proc/sys/kernel/hostname").ok())

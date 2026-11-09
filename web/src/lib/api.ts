@@ -1070,6 +1070,43 @@ export interface BackupRun {
   finished_at: string | null;
 }
 
+/** What a license key says (ADR-0100). */
+export interface License {
+  id: string;
+  customer: string;
+  edition: string;
+  /** Central servers allowed on the database, the first one included. */
+  server_instances: number;
+  /** `YYYY-MM-DD`. */
+  issued: string;
+  /** Last valid day, `YYYY-MM-DD` (UTC). */
+  expires: string;
+}
+
+export type LicenseState = "none" | "valid" | "expires_soon" | "expired" | "invalid";
+
+/** `GET /api/license`: the Enterprise license key and where it stands. */
+export interface LicenseView {
+  /** Whether this build includes the Enterprise edition. Without it, nothing else is set. */
+  available: boolean;
+  state?: LicenseState;
+  license?: License | null;
+  /** Why an installed key no longer verifies. */
+  problem?: string | null;
+  installed_at?: string | null;
+  installed_by?: string | null;
+  /** Central servers added under a license, oldest first. */
+  added?: AddedServer[];
+}
+
+/** A central server added with `install-server.sh --join` (ADR-0100). */
+export interface AddedServer {
+  /** The name of its host. */
+  name: string;
+  admitted_at: string;
+  running: boolean;
+}
+
 /** `GET /api/backups`. */
 export interface BackupsView {
   /** The updater service, which takes backups, is set up. */
@@ -3298,6 +3335,19 @@ export const api = {
   /** Server updates; global administrators only (ADR-0056). */
   serverUpdate: (signal?: AbortSignal) =>
     request<ServerUpdateView>("/api/server-update", { signal }),
+
+  license: (signal?: AbortSignal) => request<LicenseView>("/api/license", { signal }),
+
+  /** Installs a license key in place of any other; global administrators only, audited. */
+  installLicense: (text: string) =>
+    request<LicenseView>("/api/license", { method: "PUT", body: { text } }),
+
+  /** Removes the license key; central servers already added keep running. Audited. */
+  removeLicense: () => request<void>("/api/license", { method: "DELETE" }),
+
+  /** Frees the place of an added central server; audited. */
+  removeAddedServer: (name: string) =>
+    request<void>(`/api/license/servers/${encodeURIComponent(name)}`, { method: "DELETE" }),
 
   backups: (signal?: AbortSignal) =>
     request<BackupsView>("/api/backups", { signal }),

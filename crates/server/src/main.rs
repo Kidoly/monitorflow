@@ -24,6 +24,7 @@ use monitorflow_server::cluster::{self, Cluster, Links};
 use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings};
 use monitorflow_server::crl::{self, CrlPublisher};
 use monitorflow_server::db;
+use monitorflow_server::edition::{self, JoinError};
 use monitorflow_server::enroll::{self, server_cert, token, Enroller, FailureLimiter};
 use monitorflow_server::grpc::{
     self, AgentStreamService, CrlService, DbInventory, DbRelayPolicy, Registry, StreamSettings,
@@ -97,6 +98,16 @@ enum Command {
     /// Send a query to VictoriaMetrics and VictoriaLogs as the server does,
     /// and say whether each answered.
     StorageCheck,
+    /// The Enterprise license (ADR-0100).
+    #[command(subcommand)]
+    License(LicenseCommand),
+}
+
+#[derive(Subcommand, Debug)]
+enum LicenseCommand {
+    /// Say whether another central server may be added now, and exit 1
+    /// when not. Changes nothing.
+    CheckAdd,
 }
 
 #[derive(Subcommand, Debug)]
@@ -360,7 +371,11 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::StorageCerts) => return storage_certs_command(&config).await,
         Some(Command::StorageCheck) => return storage_check_command(&config).await,
         Some(
-            Command::User { .. } | Command::Customer(_) | Command::Mirror(_) | Command::SetupLink,
+            Command::User { .. }
+            | Command::Customer(_)
+            | Command::Mirror(_)
+            | Command::SetupLink
+            | Command::License(_),
         ) => {}
         None => {
             logging::init(&config.log);
@@ -378,6 +393,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Customer(command)) => return customer_command(&pool, command).await,
         Some(Command::Mirror(command)) => return mirror_command(&config, pool, command).await,
         Some(Command::SetupLink) => return setup_link_command(&config, &pool).await,
+        Some(Command::License(LicenseCommand::CheckAdd)) => return check_add_command(&pool).await,
         Some(
             Command::Token(_)
             | Command::AgentRelease(_)
@@ -385,6 +401,9 @@ async fn main() -> anyhow::Result<()> {
             | Command::StorageCheck,
         )
         | None => {}
+    }
+    if config.additional_instance {
+        admit_additional(&pool).await?;
     }
     announce_setup(&config, &pool).await?;
 
@@ -871,6 +890,38 @@ async fn announce_setup(config: &ServerConfig, pool: &sqlx::PgPool) -> anyhow::R
         );
     }
     Ok(())
+}
+
+/// An additional central server starts only with a place under the
+/// Enterprise license (ADR-0100); the first one never comes here.
+async fn admit_additional(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+    let name = cluster::hostname();
+    match edition::admit_additional(pool, &name).await {
+        Ok(true) => {
+            tracing::info!(name, "added as an additional central server");
+            Ok(())
+        }
+        Ok(false) => Ok(()),
+        Err(JoinError::Refused(why)) => {
+            tracing::error!(name, "this additional central server does not start: {why}");
+            anyhow::bail!("this additional central server does not start: {why}")
+        }
+        Err(error) => Err(error).context("checking the license"),
+    }
+}
+
+async fn check_add_command(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+    match edition::check_add(pool).await {
+        Ok(said) => {
+            println!("{said}");
+            Ok(())
+        }
+        Err(JoinError::Refused(why)) => {
+            println!("{why}");
+            std::process::exit(1)
+        }
+        Err(error) => Err(error).context("checking the license"),
+    }
 }
 
 async fn setup_link_command(config: &ServerConfig, pool: &sqlx::PgPool) -> anyhow::Result<()> {

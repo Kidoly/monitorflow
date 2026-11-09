@@ -1,0 +1,19 @@
+# Added to docker-compose.yml on the first central server by
+# `install-server.sh --add-server` (ADR-0100): its database and metric and
+# log stores, published on SHARE_ADDRESS for the central servers added to
+# it. Each keeps its TLS and password (ADR-0051, ADR-0087); allow only the
+# added servers to reach these ports in your firewall.
+services:
+  postgres:
+    networks: [storage, shared]
+    ports: ["${SHARE_ADDRESS:?set SHARE_ADDRESS in .env}:5432:5432"]
+  victoriametrics:
+    networks: [storage, shared]
+    ports: ["${SHARE_ADDRESS}:8428:8428"]
+  victorialogs:
+    networks: [storage, shared]
+    ports: ["${SHARE_ADDRESS}:9428:9428"]
+
+networks:
+  # Published ports need a network with a route; the storage network has none.
+  shared:
