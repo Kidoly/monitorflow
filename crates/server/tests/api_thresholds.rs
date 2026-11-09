@@ -220,7 +220,7 @@ db_tests! {
         ] {
             let (status, body) = call(&pool, &viewer, "GET", &uri, None).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
-            assert_eq!(body, json!({ "error": "not found" }));
+            assert_eq!(body, json!({ "error": "not found", "code": "not_found" }));
         }
 
         let (status, body) =

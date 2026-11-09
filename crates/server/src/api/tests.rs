@@ -59,7 +59,10 @@ async fn readiness_reports_unreachable_database() {
 async fn unknown_route_is_json_404() {
     let (status, body) = call(router_without_db(), get("/api/nope")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body, serde_json::json!({ "error": "not found" }));
+    assert_eq!(
+        body,
+        serde_json::json!({ "error": "not found", "code": "not_found" })
+    );
 }
 
 #[test]
@@ -88,7 +91,7 @@ async fn me_without_session_is_unauthorized() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(
         body,
-        serde_json::json!({ "error": "authentication required" })
+        serde_json::json!({ "error": "authentication required", "code": "unauthenticated" })
     );
 
     // A malformed cookie is rejected before any database lookup.
@@ -108,7 +111,7 @@ async fn state_changing_requests_need_the_csrf_header() {
         assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
         assert_eq!(
             body,
-            serde_json::json!({ "error": "cross-site request rejected" })
+            serde_json::json!({ "error": "cross-site request rejected", "code": "cross_site" })
         );
     }
     let request = post("/api/auth/login")
@@ -128,5 +131,8 @@ async fn login_rejects_malformed_bodies() {
         .unwrap();
     let (status, body) = call(router_without_db(), request).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body, serde_json::json!({ "error": "invalid request body" }));
+    assert_eq!(
+        body,
+        serde_json::json!({ "error": "invalid request body", "code": "invalid_request" })
+    );
 }

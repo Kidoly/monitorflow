@@ -396,7 +396,7 @@ db_tests! {
 
         vm.reply(503, json!({ "status": "error", "error": "storage at http://secret@vm down" }));
         let (status, body) = get(&pool, &vm, &viewer, &uri).await;
-        assert_eq!((status, body), (StatusCode::BAD_GATEWAY, json!({ "error": "metrics backend unavailable" })));
+        assert_eq!((status, body), (StatusCode::BAD_GATEWAY, json!({ "error": "metrics backend unavailable", "code": "metrics_unavailable" })));
 
         vm.reply(422, json!({ "status": "error", "error": "cannot select more than 300000 series" }));
         let (status, body) = get(&pool, &vm, &viewer, &uri).await;
@@ -417,7 +417,7 @@ db_tests! {
 
         *vm.inner.delay.lock().unwrap() = Duration::from_secs(2);
         let (status, body) = get(&pool, &vm, &viewer, &uri).await;
-        assert_eq!((status, body), (StatusCode::GATEWAY_TIMEOUT, json!({ "error": "metrics backend timed out" })));
+        assert_eq!((status, body), (StatusCode::GATEWAY_TIMEOUT, json!({ "error": "metrics backend timed out", "code": "metrics_timeout" })));
 
         // No backend configured.
         let router = api::router(ApiState::new(pool.clone(), Registry::default(), ApiSettings::default()));
