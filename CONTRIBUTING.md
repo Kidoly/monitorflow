@@ -6,6 +6,7 @@ Thanks for your interest. Before a first pull request can be merged, contributor
 - One pull request per change, under about 500 lines where possible.
 - Run `scripts/check.sh` before pushing.
 - Architecture changes need an ADR in `docs/adr/`.
+- Code in `ee/` is the Enterprise edition, under `ee/LICENSE` (ADR-0100); the rest is AGPL. The CLA covers both.
 
 ## Building and testing
 
