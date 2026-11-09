@@ -1702,6 +1702,7 @@ dependencies = [
  "monitorflow-ai",
  "monitorflow-common",
  "monitorflow-sensors",
+ "monitorflow-server-ee",
  "pem",
  "prost",
  "rcgen",

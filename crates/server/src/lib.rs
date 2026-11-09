@@ -12,6 +12,7 @@ pub mod cluster;
 pub mod commands;
 pub mod crl;
 pub mod db;
+pub mod edition;
 pub mod enroll;
 pub mod grpc;
 pub mod ingest;

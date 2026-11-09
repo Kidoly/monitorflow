@@ -93,6 +93,8 @@ export const SERVER_UPDATE_PATH = "/admin/server-update/";
 export const BACKUPS_PATH = "/admin/backups/";
 /** Changing the certificate authority of the server (ADR-0088). */
 export const CERTIFICATE_AUTHORITY_PATH = "/admin/certificate-authority/";
+/** The Enterprise license key (ADR-0100). */
+export const LICENSE_PATH = "/admin/license/";
 
 /** Where the browser downloads the backup `name`: a plain GET with the session cookie. */
 export function backupDownloadHref(name: string): string {

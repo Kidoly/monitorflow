@@ -991,6 +991,11 @@ pub struct ServerConfig {
     /// clients trust the built-in CA alone and log in, and both URLs must be
     /// https. Unset, the clients trust public CAs and send no password.
     pub storage_tls_dir: Option<PathBuf>,
+    /// Set by `install-server.sh --join` on a central server added to the
+    /// database of another (ADR-0100): it starts only with a place under
+    /// an Enterprise license. The first central server leaves it off and
+    /// always runs.
+    pub additional_instance: bool,
     pub data_dir: PathBuf,
     /// Seconds without any message after which a peer's stream is closed.
     pub heartbeat_timeout: u64,
@@ -1123,6 +1128,7 @@ impl Default for ServerConfig {
             victoriametrics_url: "http://localhost:8428".into(),
             victorialogs_url: "http://localhost:9428".into(),
             storage_tls_dir: None,
+            additional_instance: false,
             data_dir: "/var/lib/monitorflow/server".into(),
             // Three missed heartbeats at the agent's default interval.
             heartbeat_timeout: 3 * DEFAULT_HEARTBEAT_INTERVAL,
@@ -1616,6 +1622,7 @@ impl LoadConfig for ServerConfig {
         env.set_opt("enroll_public_port", &mut self.enroll_public_port)?;
         env.set("api_listen_addr", &mut self.api_listen_addr)?;
         env.set("api_cookie_secure", &mut self.api_cookie_secure)?;
+        env.set("additional_instance", &mut self.additional_instance)?;
         env.set_opt("api_session_lifetime", &mut self.api_session_lifetime)?;
         env.set_opt(
             "api_session_idle_timeout",
