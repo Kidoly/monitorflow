@@ -254,6 +254,42 @@ export interface DisplayLinkRequest {
   expires: DisplayLinkExpiry;
 }
 
+/** Parts of MonitorFlow an API key may be limited to (ADR-0101). */
+export type ApiKeyArea = "servers" | "alerts" | "updates" | "remediation" | "dashboards" | "administration";
+
+export type ApiKeyExpiry = "30d" | "90d" | "1y" | "never";
+
+/** An API key of the public API, without its secret (ADR-0101). */
+export interface ApiKey {
+  id: string;
+  name: string;
+  /** The first characters after `mfk_`, to tell keys apart. */
+  prefix: string;
+  /** The highest role it acts with. */
+  role: Role;
+  /** Its reach: both null for everything. */
+  customer_id: string | null;
+  customer_name: string | null;
+  site_id: string | null;
+  site_name: string | null;
+  /** Null for every area. */
+  areas: ApiKeyArea[] | null;
+  created_by: string;
+  created_by_username: string;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+}
+
+export interface ApiKeyRequest {
+  name: string;
+  role: Role;
+  customer_id?: string;
+  site_id?: string;
+  areas?: ApiKeyArea[];
+  expires: ApiKeyExpiry;
+}
+
 /** `within` of `POST /api/dashboard-data`: the dashboard's sharing, or everything. */
 export type Within = { kind: "all" } | { kind: "site"; id: string } | { kind: "customer"; id: string };
 
@@ -3270,6 +3306,19 @@ export const api = {
   revokeDisplayLink: (id: string) =>
     request<void>(`/api/display-links/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
+  /** The API keys the user could have made (ADR-0101). */
+  apiKeys: (signal?: AbortSignal) => request<{ keys: ApiKey[] }>("/api/api-keys", { signal }),
+
+  /** A new API key; `secret` is shown only now. */
+  createApiKey: (body: ApiKeyRequest) =>
+    request<{ key: ApiKey; secret: string }>("/api/api-keys", { method: "POST", body }),
+
+  /** Turns an API key off; it stops at its next request. */
+  revokeApiKey: (id: string) => request<void>(`/api/api-keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** The OpenAPI document of the public API; no session needed. */
+  openApi: (signal?: AbortSignal) => request<OpenApiDocument>("/api/v1/openapi.json", { signal }),
+
   /** Trades a display link's secret for a screen session cookie. No session needed. */
   startDisplay: (token: string, signal?: AbortSignal) =>
     request<ScreenView>("/api/display/start", { method: "POST", body: { token }, signal, redirectOn401: false }),
@@ -3325,3 +3374,33 @@ export const api = {
     });
   },
 };
+
+/** The parts of an OpenAPI 3.1 document the documentation page reads (ADR-0101). */
+export interface OpenApiDocument {
+  info: { title: string; version: string; description?: string };
+  paths: Record<string, Partial<Record<"get" | "post" | "put" | "patch" | "delete", OpenApiOperation>>>;
+  components?: { schemas?: Record<string, OpenApiSchema> };
+  tags?: { name: string; description?: string }[];
+}
+
+export interface OpenApiOperation {
+  tags?: string[];
+  summary?: string;
+  description?: string;
+  parameters?: { name: string; in: string; required?: boolean; description?: string; schema?: OpenApiSchema }[];
+  requestBody?: { content?: Record<string, { schema?: OpenApiSchema }> };
+  responses?: Record<string, { description?: string; content?: Record<string, { schema?: OpenApiSchema }> }>;
+}
+
+export interface OpenApiSchema {
+  $ref?: string;
+  type?: string | string[];
+  format?: string;
+  description?: string;
+  enum?: unknown[];
+  items?: OpenApiSchema;
+  properties?: Record<string, OpenApiSchema>;
+  required?: string[];
+  oneOf?: OpenApiSchema[];
+  allOf?: OpenApiSchema[];
+}

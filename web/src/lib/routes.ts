@@ -72,6 +72,9 @@ export const RELAYS_PATH = "/admin/relays/";
 export const SITES_PATH = "/admin/sites/";
 export const TOKENS_PATH = "/admin/tokens/";
 export const USERS_PATH = "/admin/users/";
+/** API keys and the public API's documentation (ADR-0101). */
+export const API_KEYS_PATH = "/admin/api-keys/";
+export const API_DOCS_PATH = "/admin/api-keys/docs/";
 
 export const MIRRORS_PATH = "/admin/mirrors/";
 /** Automatic agent and relay updates (ADR-0055). */
