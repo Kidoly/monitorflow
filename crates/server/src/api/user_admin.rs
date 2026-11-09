@@ -307,12 +307,14 @@ pub async fn list(
 }
 
 /// `POST /api/users`: creates an invited user with one role and returns
-/// its password link.
+/// its password link. Never through an API key (ADR-0101): the link
+/// becomes a person's session, which would outlive the key.
 pub async fn invite(
     State(state): State<ApiState>,
     user: CurrentUser,
     request: Result<Json<InviteRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Invited>), ApiError> {
+    user.in_person()?;
     require_global_admin(&user)?;
     let request = body(request)?;
     let username = request.username.trim();
@@ -343,12 +345,13 @@ pub async fn invite(
 
 /// `POST /api/users/{id}/link`: a new password link for the user,
 /// replacing any previous one. The current password keeps working until
-/// the link is used.
+/// the link is used. Never through an API key, as [`invite`].
 pub async fn link(
     State(state): State<ApiState>,
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<LinkView>), ApiError> {
+    user.in_person()?;
     require_global_admin(&user)?;
     let id = parse_id(&id)?;
     let mut tx = state.pool.begin().await?;

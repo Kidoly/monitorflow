@@ -469,16 +469,137 @@ db_tests! {
         assert_eq!(json_of(running).await["code"], "idempotency_in_progress");
 
         // A secret is never stored: the replay says it was done.
-        let invite = json!({ "username": "newcomer", "role": "viewer" });
-        let first = w.once("/api/v1/users", &key, "invite-1", invite.clone()).await;
+        let endpoint = json!({ "name": "PSA", "url": "https://psa.example.com/hook" });
+        let first = w.once("/api/v1/integrations", &key, "hook-1", endpoint.clone()).await;
         assert_eq!(first.status(), StatusCode::CREATED);
-        let link = json_of(first).await["link"].to_string();
-        let again = w.once("/api/v1/users", &key, "invite-1", invite).await;
+        let secret = json_of(first).await["secret"].as_str().unwrap().to_owned();
+        let again = w.once("/api/v1/integrations", &key, "hook-1", endpoint).await;
         assert!(again.status() == StatusCode::CONFLICT && replayed(&again));
-        let stored: Vec<Option<Vec<u8>>> = sqlx::query_scalar("SELECT body FROM api_idempotency WHERE value = 'invite-1'")
+        let stored: Vec<Option<Vec<u8>>> = sqlx::query_scalar("SELECT body FROM api_idempotency WHERE value = 'hook-1'")
             .fetch_all(&pool).await.unwrap();
         assert_eq!(stored, [None]);
-        assert!(!json_of(again).await.to_string().contains(&link));
+        assert!(!json_of(again).await.to_string().contains(&secret));
+    }
+
+    #[sqlx::test]
+    async fn a_dead_key_gets_no_stored_answer_and_replays_count(pool: PgPool) {
+        let w = world_with(&pool, v1::Limits::new(4)).await;
+        let (id, key) = w.make(&w.admin_a, json!({ "name": "Deploy", "role": "operator", "site_id": w.site_a })).await;
+        let silence = json!({ "scope": "server", "target_id": w.server_a,
+                              "ends_at": chrono::Utc::now() + chrono::Duration::days(1),
+                              "reason": "deploy" });
+        let first = w.once("/api/v1/silences", &key, "run-1", silence.clone()).await;
+        assert_eq!(first.status(), StatusCode::CREATED);
+        let again = w.once("/api/v1/silences", &key, "run-1", silence.clone()).await;
+        assert_eq!(again.status(), StatusCode::CREATED);
+        // The replay counted against the key's limit as the first did.
+        assert_eq!(again.headers()["ratelimit-remaining"], "2");
+
+        // Its maker disabled, then the key expired: 401, not the answer.
+        let disable = |on: bool| sqlx::query("UPDATE users SET disabled_at = CASE WHEN $1 THEN now() END WHERE username = 'admin_a'")
+            .bind(on).execute(&pool);
+        disable(true).await.unwrap();
+        let dead = w.once("/api/v1/silences", &key, "run-1", silence.clone()).await;
+        assert_eq!(dead.status(), StatusCode::UNAUTHORIZED);
+        assert!(dead.headers().get("idempotent-replayed").is_none());
+        disable(false).await.unwrap();
+        sqlx::query("UPDATE api_keys SET expires_at = now() - interval '1 second' WHERE id = $1")
+            .bind(id).execute(&pool).await.unwrap();
+        let dead = w.once("/api/v1/silences", &key, "run-1", silence.clone()).await;
+        assert_eq!(dead.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(json_of(dead).await["code"], "unauthenticated");
+
+        // Alive again, replays stop at the limit like any request.
+        sqlx::query("UPDATE api_keys SET expires_at = NULL WHERE id = $1")
+            .bind(id).execute(&pool).await.unwrap();
+        for expected in [StatusCode::CREATED, StatusCode::CREATED, StatusCode::TOO_MANY_REQUESTS] {
+            let again = w.once("/api/v1/silences", &key, "run-1", silence.clone()).await;
+            assert_eq!(again.status(), expected);
+        }
+    }
+
+    #[sqlx::test]
+    async fn a_key_narrower_than_its_maker_makes_no_display_link(pool: PgPool) {
+        let w = world(&pool).await;
+        // root sees everything; the key administers one site.
+        let (_, key) = w.make(&w.root, json!({ "name": "Site", "role": "administrator", "site_id": w.site_a })).await;
+        let dashboard = json!({
+            "name": "Everything", "shared_with": { "kind": "personal" },
+            "spec": { "version": 1, "range": "6h", "panels": [
+                { "id": "c", "title": "CPU", "kind": "chart", "metric": "monitorflow_cpu_usage_ratio",
+                  "combine": "avg", "servers": { "kind": "all" } }
+            ] }
+        });
+        let (status, made) = w.key("POST", "/api/v1/dashboards", &key, Some(dashboard)).await;
+        assert_eq!(status, StatusCode::CREATED, "{made}");
+        let id = made["id"].as_str().unwrap();
+        let link = json!({ "name": "TV", "dashboard_ids": [id], "seconds_per_page": 30, "expires": "1y" });
+        let (status, body) = w.key("POST", "/api/v1/display-links", &key, Some(link.clone())).await;
+        assert_eq!((status, body["code"].as_str()), (StatusCode::NOT_FOUND, Some("not_found")));
+        let links: i64 = sqlx::query_scalar("SELECT count(*) FROM display_links").fetch_one(&pool).await.unwrap();
+        assert_eq!(links, 0);
+
+        // Its maker's links are neither listed nor turned off with it.
+        let (status, made) = w.session("POST", "/api/display-links", &w.root, Some(link)).await;
+        assert_eq!(status, StatusCode::CREATED, "{}", made["error"]);
+        let list = format!("/api/v1/dashboards/{id}/display-links");
+        assert_eq!(w.key("GET", &list, &key, None).await.0, StatusCode::NOT_FOUND);
+        let one = format!("/api/v1/display-links/{}", made["id"].as_str().unwrap());
+        assert_eq!(w.key("DELETE", &one, &key, None).await.0, StatusCode::NOT_FOUND);
+        // Nor with the session under v1; the web interface's path works.
+        assert_eq!(w.session("GET", &list, &w.root, None).await.0, StatusCode::NOT_FOUND);
+        let (status, body) = w.session("GET", &list.replace("/v1", ""), &w.root, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["links"].as_array().unwrap().len(), 1);
+    }
+
+    #[sqlx::test]
+    async fn a_key_leaves_its_maker_s_contact_alone(pool: PgPool) {
+        let w = world(&pool).await;
+        let contact = json!({ "email": "admin@a.example" });
+        let (status, _) = w.session("PUT", "/api/on-call/contact", &w.admin_a, Some(contact.clone())).await;
+        assert_eq!(status, StatusCode::OK);
+        // A viewer key on one site, alerts included.
+        let (_, key) = w.make(&w.admin_a, json!({ "name": "Read", "site_id": w.site_a })).await;
+        let theirs = json!({ "email": "someone@else.example", "kind": "webhook",
+                             "settings": { "url": "https://else.example/hook" } });
+        for (method, uri, body) in [
+            ("GET", "/api/v1/on-call/contact", None),
+            ("PUT", "/api/v1/on-call/contact", Some(theirs)),
+            ("POST", "/api/v1/on-call/contact/test", None),
+        ] {
+            let (status, body) = w.key(method, uri, &key, body).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}");
+            assert!(!body.to_string().contains("a.example"), "{body}");
+        }
+        let (status, body) = w.session("GET", "/api/on-call/contact", &w.admin_a, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!((&body["email"], &body["kind"]), (&contact["email"], &Value::Null));
+        // The rest of on-call stays reachable.
+        assert_eq!(w.key("GET", "/api/v1/on-call/schedules", &key, None).await.0, StatusCode::OK);
+    }
+
+    #[sqlx::test]
+    async fn a_key_hands_out_no_password_link(pool: PgPool) {
+        let w = world(&pool).await;
+        // The widest key there is: all of a global administrator's reach.
+        let (_, key) = w.make(&w.root, json!({ "name": "Admin", "role": "administrator" })).await;
+        let invite = json!({ "username": "newcomer", "role": "administrator" });
+        let (status, body) = w.key("POST", "/api/v1/users", &key, Some(invite)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        let (status, body) = w.key("GET", "/api/v1/users", &key, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let users = body["users"].as_array().unwrap();
+        assert_eq!(users.len(), 3, "{body}");
+        let admin = users.iter().find(|u| u["username"] == "admin_a").unwrap();
+        let link = format!("/api/v1/users/{}/link", admin["id"].as_str().unwrap());
+        let (status, body) = w.key("POST", &link, &key, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        let links: i64 = sqlx::query_scalar("SELECT count(*) FROM password_links").fetch_one(&pool).await.unwrap();
+        assert_eq!(links, 0);
+        // A person still does both.
+        let (status, _) = w.session("POST", &link.replace("/v1", ""), &w.root, None).await;
+        assert_eq!(status, StatusCode::CREATED);
     }
 
     #[sqlx::test]

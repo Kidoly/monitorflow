@@ -2213,7 +2213,7 @@ async fn keeps_customers_apart(pool: PgPool, with_key: bool) {
 
     for (method, path) in &routes {
         // Routes v1 leaves out answer 404 to a key.
-        if with_key && v1::left_out(path) {
+        if with_key && v1::left_out(method, path) {
             let status = ctx.status(method, &concrete(path), Some(json!({}))).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
             continue;

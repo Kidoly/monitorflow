@@ -68,3 +68,17 @@ Reachable now and described next, in this order: thresholds and check settings, 
 - A leaked key does what its maker could, within its reach, access and areas, until it expires or is turned off, and its use shows in the audit log and the "last used" date.
 - A breaking change to an `/api` route now needs a v1 adapter or a deliberate v2; the OpenAPI test makes that visible in review.
 - Idempotency answers live in PostgreSQL for 24 hours; rate limits reset on restart and are per instance.
+
+## Amendment (2026-11-09): what belongs to the person is left out
+
+A security review found routes where a key acted with its maker's whole identity rather than its narrowed reach. "Handlers see an ordinary user with fewer grants and need no change" holds for what is checked against grants; it does not hold where a handler acts on the person (`user.id`) or hands out a credential of its own. These are now left out of v1 too and answer 404 under `/api/v1`, changing "everything else … is in v1" and the coverage list above:
+
+- **Display links** (`/api/display-links`, `/api/dashboards/{id}/display-links`). A link reads as its maker with all their roles (ADR-0099) and outlives the key: a key for one site could put a personal dashboard of "all servers" on a link and read every site its maker reads, after the key was turned off too. Links are made, listed and turned off by a person in the web interface.
+- **The person's own on-call contact** (`/api/on-call/contact` and its test). It is where their pages go, with links that acknowledge as them; a read-only key could point it at its own webhook. Schedules, overrides and people stay in v1. Through a key, the schedules listed are those of what the key reaches, not also those its maker is on.
+- **Inviting a user and issuing a password link** (`POST /api/users`, `POST /api/users/{id}/link`). The link becomes a person's session, for a new administrator or an existing one, which outlives the key: the reason a key cannot make a key. Listing users, granting and revoking roles, disabling and removing stay in v1 for a key that reaches everything.
+
+The handlers also refuse a request made with a key (403), should one of these routes ever be reached another way. Every route added later that acts on the signed-in person or hands out a credential for people goes on this list (`v1::left_out`).
+
+**Idempotent replays check the key.** A stored answer was given again by the key's hash alone. It is now given only for a key that works: not expired, its maker not disabled; otherwise the request goes on to the usual 401. A replay, and a refusal for a reused or running value, counts against the key's rate limit like any request.
+
+Not changed, and known: a key sees, edits and deletes its maker's "Only me" dashboards, and makes them, whatever its reach; their data is still resolved within the key's reach. A key that reaches everything as administrator can grant roles to existing users, as its maker can.

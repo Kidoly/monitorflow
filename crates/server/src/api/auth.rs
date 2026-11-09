@@ -65,6 +65,18 @@ impl CurrentUser {
             ..self
         }
     }
+
+    /// 403 for a request made with an API key. For what belongs to the
+    /// person rather than to what the key reaches: their own contact, and
+    /// credentials that act as them or outlive the key. v1 leaves these
+    /// routes out already ([`v1::left_out`]); this holds if one is ever
+    /// reached another way.
+    pub(super) fn in_person(&self) -> Result<(), ApiError> {
+        match self.api_key {
+            Some(_) => Err(ApiError::Forbidden),
+            None => Ok(()),
+        }
+    }
 }
 
 impl FromRequestParts<ApiState> for CurrentUser {
