@@ -150,7 +150,7 @@ Mostly follow-ups that the ADRs postponed.
 The open questions in `docs/product.md`.
 
 - [ ] Subscription tiers and licensing.
-- [ ] Enterprise edition: licensed high availability (ADR-0100). The Enterprise directory `ee/` and its license; an offline license key, checked with a key pair of its own, on an Administration › License page; `install-server.sh --join` to add a central server, which starts only with a license that has room. A missing or expired license stops adding central servers, never monitoring or the ones running.
+- [x] Enterprise edition: licensed high availability (ADR-0100). The Enterprise directory `ee/` and its license; an offline license key, checked with a key pair of its own, on an Administration › License page; `install-server.sh --join` to add a central server, which starts only with a license that has room. A missing or expired license stops adding central servers, never monitoring or the ones running.
 - [ ] Billing.
 - [ ] Final product name.
 
@@ -167,8 +167,8 @@ Let each install pick what suits it instead of a fixed choice.
 
 Fit into the tools people already use, for a single company and for MSPs alike (see "Who it is for" in `docs/product.md`).
 
-- [ ] A clean public API: versioned, documented with OpenAPI, API keys with scopes limited to a customer or a site, pagination and filters, stable errors, idempotent writes and rate limits. Everything the web interface does is possible through it.
+- [x] A clean public API: versioned, documented with OpenAPI, API keys with scopes limited to a customer or a site, pagination and filters, stable errors, idempotent writes and rate limits. Everything the web interface does is possible through it.
 - [x] Outgoing events for integrations: signed webhooks for incidents, acknowledgements, servers and updates, retried and replayable.
 - [ ] PSA connection, HaloPSA first: a ticket per incident with its status kept in step both ways, customers and sites matched to PSA clients and sites, servers synced as assets.
-- [ ] Plugins: add checks, notification channels and integrations without changing MonitorFlow, signed, isolated from the server's secrets, and installable from the web interface.
+- [x] Plugins: add checks, notification channels and integrations without changing MonitorFlow, signed, isolated from the server's secrets, and installable from the web interface.
 - [x] MSP features out of sight for a single company: no customer picker or customer wording until a second customer exists.
