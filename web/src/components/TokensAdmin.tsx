@@ -798,65 +798,67 @@ export function DefaultInstallSource({ editable }: { editable: boolean }) {
         Where the install commands of new tokens download the agent or relay from; each command can use another.
         {!editable && " A global administrator changes it."}
       </p>
-      {current && (
-        <>
-          <fieldset className={styles.fieldset} disabled={!editable || current.source_from_config}>
-            <legend className={styles.legend}>
-              Source{" "}
-              {current.source_from_config && (
-                <span className={styles.fieldNote}>— set in the server configuration (agent_install_source)</span>
+      <div className={styles.sectionBody}>
+        {current && (
+          <>
+            <fieldset className={styles.fieldset} disabled={!editable || current.source_from_config}>
+              <legend className={styles.legend}>
+                Source{" "}
+                {current.source_from_config && (
+                  <span className={styles.fieldNote}>— set in the server configuration (agent_install_source)</span>
+                )}
+              </legend>
+              <SourceRadios name={sourceName} value={source} onChange={setSource} />
+            </fieldset>
+            <p className={styles.fieldNote}>
+              {current.central ? (
+                `This server holds release ${current.central.version}.`
+              ) : (
+                <>
+                  This server holds no agent release yet: <Link href={SERVER_UPDATE_PATH}>import one</Link>.
+                </>
               )}
-            </legend>
-            <SourceRadios name={sourceName} value={source} onChange={setSource} />
-          </fieldset>
-          <p className={styles.fieldNote}>
-            {current.central ? (
-              `This server holds release ${current.central.version}.`
-            ) : (
-              <>
-                This server holds no agent release yet: <Link href={SERVER_UPDATE_PATH}>import one</Link>.
-              </>
-            )}
-          </p>
-          <label className={styles.field}>
-            <span>
-              Custom URL{" "}
-              <span className={styles.fieldNote}>
-                {current.custom_url_from_config
-                  ? "— set in the server configuration (agent_download_url)"
-                  : "— https directory holding the release files; agents also update from it"}
+            </p>
+            <label className={styles.field}>
+              <span>
+                Custom URL{" "}
+                <span className={styles.fieldNote}>
+                  {current.custom_url_from_config
+                    ? "— set in the server configuration (agent_download_url)"
+                    : "— https directory holding the release files; agents also update from it"}
+                </span>
               </span>
-            </span>
-            <input
-              className={cx(fieldClass, styles.mono)}
-              value={customUrl}
-              onChange={(e) => setCustomUrl(e.target.value)}
-              placeholder="https://files.example.com/monitorflow/0.3.0"
-              disabled={!editable || current.custom_url_from_config}
-              aria-invalid={!urlValid}
-              spellCheck={false}
-              autoCapitalize="none"
-            />
-          </label>
-          {editable && (
-            <div className={styles.formFoot}>
-              <Button
-                variant="k"
-                type="submit"
-                disabled={busy || !urlValid || (source === "custom" && url === "")}
-              >
-                Save
-              </Button>
-              {saved && <span className={styles.footnote}>Saved.</span>}
-            </div>
-          )}
-        </>
-      )}
-      {error && (
-        <p className={styles.formError} role="alert">
-          {error}
-        </p>
-      )}
+              <input
+                className={cx(fieldClass, styles.mono)}
+                value={customUrl}
+                onChange={(e) => setCustomUrl(e.target.value)}
+                placeholder="https://files.example.com/monitorflow/0.3.0"
+                disabled={!editable || current.custom_url_from_config}
+                aria-invalid={!urlValid}
+                spellCheck={false}
+                autoCapitalize="none"
+              />
+            </label>
+            {editable && (
+              <div className={styles.formFoot}>
+                <Button
+                  variant="k"
+                  type="submit"
+                  disabled={busy || !urlValid || (source === "custom" && url === "")}
+                >
+                  Save
+                </Button>
+                {saved && <span className={styles.footnote}>Saved.</span>}
+              </div>
+            )}
+          </>
+        )}
+        {error && (
+          <p className={styles.formError} role="alert">
+            {error}
+          </p>
+        )}
+      </div>
     </form>
   );
 }
