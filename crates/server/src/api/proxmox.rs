@@ -27,6 +27,11 @@ use crate::remediation::snapshot::{choice, GuestKind, Mapped, Support, Unsupport
 /// Guests listed at most for the picker.
 const MAX_GUESTS: i64 = 2000;
 
+/// To an administrator of one customer who names, on a cluster serving
+/// every customer, a guest that discovery did not match to the server.
+/// The same answer whether the guest exists, is free or is mapped.
+const NOT_MATCHED: &str = "this Proxmox cluster serves several customers: choose one of the     guests matched to this server, or ask a global administrator to map it";
+
 /// Answer of the GET and PUT routes.
 #[derive(Debug, Serialize)]
 pub struct ProxmoxView {
@@ -224,6 +229,8 @@ pub async fn guests(
 }
 
 /// `PUT /api/servers/{id}/proxmox`: sets or replaces the mapping, by hand.
+/// On a cluster that serves every customer, only a global administrator
+/// names any guest; others one of the server's candidates, else 400.
 pub async fn set(
     State(state): State<ApiState>,
     user: CurrentUser,
@@ -245,6 +252,28 @@ pub async fn set(
         return Err(ApiError::Invalid("unknown Proxmox cluster".into()));
     }
     let mut tx = state.pool.begin().await?;
+    // A cluster that serves every customer holds the guests of all of
+    // them, and a mapping is what gets snapshotted before each AI change.
+    // Only a global administrator names a guest there; the others choose
+    // among those discovery matched to the server (ADR-0093). Checked
+    // before the insert, whose conflict would say which IDs are mapped.
+    if by_candidate_only(
+        state.settings.proxmox_owner(&vm.cluster),
+        is_global_admin(&user),
+    ) {
+        let matched: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM server_proxmox_candidates
+                            WHERE server_id = $1 AND cluster = $2 AND vmid = $3)",
+        )
+        .bind(server)
+        .bind(&vm.cluster)
+        .bind(vm.vmid as i32)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !matched {
+            return Err(ApiError::Invalid(NOT_MATCHED.into()));
+        }
+    }
     let previous: Option<(String, String, i32, String, Option<String>)> = sqlx::query_as(
         "SELECT cluster, node, vmid, kind, matched_by FROM server_proxmox_vms
          WHERE server_id = $1 FOR UPDATE",
@@ -347,6 +376,13 @@ pub async fn clear(
     .await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Whether a mapping by hand on a cluster of `owner` is limited to the
+/// guests discovery matched to the server: on a cluster without an owner,
+/// for everyone but global administrators.
+fn by_candidate_only(owner: Owner, global_admin: bool) -> bool {
+    owner == Owner::Everyone && !global_admin
 }
 
 /// A server whose customer the user administers.
@@ -456,4 +492,20 @@ async fn record(
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_global_administrators_name_any_guest_of_a_shared_cluster() {
+        let (customer, site) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        assert!(by_candidate_only(Owner::Everyone, false));
+        assert!(!by_candidate_only(Owner::Everyone, true));
+        // A cluster with an owner serves only that customer or site, whose
+        // administrators map as before.
+        assert!(!by_candidate_only(Owner::Customer(customer), false));
+        assert!(!by_candidate_only(Owner::Site(site), false));
+    }
 }

@@ -1,7 +1,7 @@
 # ADR-0093: Proxmox containers, and finding each server's guest
 
 Date: 2026-11-03
-Status: accepted; amends ADR-0044 and ADR-0046; the discovery amendment below replaces ADR-0044's manual-only mapping
+Status: accepted; amends ADR-0044 and ADR-0046; the discovery amendment below replaces ADR-0044's manual-only mapping; amended 2026-11-09 (mapping by hand on a cluster that serves every customer)
 
 ## Context
 
@@ -68,7 +68,7 @@ A server is mapped at the first signal that matches anything, and only if exactl
 
 **Who corrects.** A mapping by hand (`PUT`) always wins: discovery never changes it, except to follow its guest to another node. Unmapping (`DELETE`, "Not this one" on the page) records a rejection (`server_proxmox_rejections`) and discovery never maps that server to that guest again; mapping the pair by hand lifts it. `matched_by` on the mapping is `uuid`, `mac` or `hostname`, or null for a mapping by hand. The page says "Matched automatically to VM 104 web-1 on pve2 by its hardware ID" (or "by its network card", or "by its name only; check it is the right one"), with Change and Not this one. The form picks from the guests discovery saw, with "Not in the list" for type, node and ID by hand.
 
-**Tenancy.** Clusters stay in `server.toml` (ADR-0064 kept them there). Each `[[proxmox.clusters]]` entry takes an optional `customer` or `site`, an ID as the web interface shows it. A cluster with an owner serves only that customer's or site's servers: by discovery, by hand (a `PUT` naming another customer's cluster is 400 "unknown Proxmox cluster", as for a missing one) and for snapshots (such a mapping reads `unknown_cluster`). A cluster without one is the operator's and serves every customer, as before. The picker lists an operator's cluster to global administrators only, since its guests belong to every customer; others see the candidates their own server matched, and can still map by hand. No setting is needed for a single-customer or single-operator install.
+**Tenancy.** Clusters stay in `server.toml` (ADR-0064 kept them there). Each `[[proxmox.clusters]]` entry takes an optional `customer` or `site`, an ID as the web interface shows it. A cluster with an owner serves only that customer's or site's servers: by discovery, by hand (a `PUT` naming another customer's cluster is 400 "unknown Proxmox cluster", as for a missing one) and for snapshots (such a mapping reads `unknown_cluster`). A cluster without one is the operator's and serves every customer, as before. The picker lists an operator's cluster to global administrators only, since its guests belong to every customer; others see the candidates their own server matched, and map their server only to one of those (amended below; they could first map by hand to any guest). No setting is needed for a single-customer or single-operator install.
 
 **The pass.** The leader runs it at start and every 10 minutes, before the snapshot checks: `GET /cluster/resources?type=vm` per cluster, then each guest's configuration (`smbios1`, `netN`, `hostname`), into `proxmox_guests`. Every mapping whose guest is now on another node moves there (`server.proxmox.move`). Then, only if every cluster could be listed, servers are matched: a cluster that cannot be read must not unmap its servers. New and changed matches are audited as `server.proxmox.discover` (with `matched_by` and the previous mapping), lost ones as `server.proxmox.unmatch` (with the reason), all with actor `system/proxmox-discovery`. The token needs `VM.Audit` on the guests to list them, as ADR-0044 already asks.
 
@@ -88,3 +88,23 @@ Rejected:
 - A clone keeps its original's MAC addresses until someone changes them; both show as candidates until then.
 - Each pass costs one request per cluster and one per guest.
 - A container's agent reports its veth MAC, which Proxmox keeps in the container's configuration: containers match as reliably as VMs.
+
+## Amendment: mapping by hand on a cluster that serves every customer (2026-11-09)
+
+### Context
+
+The picker hid an operator's cluster from administrators of one customer, but `PUT /api/servers/{id}/proxmox` still took any guest ID on it. A customer's administrator could map their server to another customer's VM or container. A mapping is what the remediation hook acts on: before each change-tier AI command of that server it snapshots the mapped guest (`take`), and retention then deletes MonitorFlow's older snapshots of that guest, which are kept per cluster and guest ID, not per server. `rollback` checks the same pair, so it would reach that guest too once something calls it (nothing does yet). The 409 "already mapped to another server" also told which guest IDs are in use.
+
+### Decision
+
+On a cluster without `customer` or `site`, only a global administrator maps a server by hand to any guest. An administrator of a customer or site may `PUT` only a guest that discovery recorded as a candidate for that server (`server_proxmox_candidates`), which is what the "Which one is it?" buttons send. Anything else is 400 with one message, whether the guest exists, is free or is mapped, checked before the insert so that the 409 is never reached. A cluster with an owner is unchanged: its guests are all its customer's or site's, and its administrators map by hand as before.
+
+Rejected:
+
+- **Also allowing a guest the server was once matched to or unmapped from.** After "Not this one", mapping the pair again would need a record of why it was allowed; rejections are also written when a mapping made by hand is removed, so they do not prove a match. A global administrator maps it.
+- **Checking ownership of the guest.** Proxmox does not know MonitorFlow's customers; on a shared cluster only discovery's match ties a guest to a server.
+
+### Consequences
+
+- On a shared cluster, an administrator of one customer who unmapped a match, or whose server discovery cannot match, asks a global administrator to map it. "Not in the list" answers them with that sentence.
+- Mappings made before this change are not re-checked. `server.proxmox.set` in the audit log lists them, with who made each.

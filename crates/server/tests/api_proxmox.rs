@@ -149,6 +149,8 @@ db_tests! {
     #[sqlx::test]
     async fn administrators_map_servers_and_see_snapshot_support(pool: PgPool) {
         let mut h = Harness::new(&pool).await;
+        // The customer's own cluster, where its administrators map by hand.
+        h.settings.proxmox_owners = [("pve".to_owned(), Owner::Customer(h.customer))].into();
         let admin = h.login("boss", Role::Administrator, GrantScope::Customer(h.customer)).await;
         let uri = format!("/api/servers/{}/proxmox", h.servers[0]);
 
@@ -222,7 +224,9 @@ db_tests! {
 
     #[sqlx::test]
     async fn containers_are_mapped_and_say_why_they_cannot_be_snapshotted(pool: PgPool) {
-        let h = Harness::new(&pool).await;
+        let mut h = Harness::new(&pool).await;
+        // The customer's own cluster, where its administrators map by hand.
+        h.settings.proxmox_owners = [("pve".to_owned(), Owner::Customer(h.customer))].into();
         let admin = h.login("boss", Role::Administrator, GrantScope::Customer(h.customer)).await;
         let uri = format!("/api/servers/{}/proxmox", h.servers[0]);
         let ct = json!({ "cluster": "pve", "node": "pve1", "vmid": 104, "kind": "lxc" });
@@ -353,6 +357,50 @@ db_tests! {
         assert!(body["error"].as_str().unwrap().contains("unknown Proxmox cluster"), "{body}");
         let (_, body) = h.call("GET", &format!("/api/servers/{}/proxmox", h.servers[1]), &admin, None).await;
         assert_eq!(body["snapshots"]["reason"], "unknown_cluster");
+    }
+
+    #[sqlx::test]
+    async fn a_shared_cluster_maps_by_hand_for_global_administrators_only(pool: PgPool) {
+        // No owner: the operator's cluster, with guests of every customer.
+        let h = Harness::new(&pool).await;
+        let admin = h.login("boss", Role::Administrator, GrantScope::Customer(h.customer)).await;
+        let global = h.login("root", Role::Administrator, GrantScope::Global).await;
+        let uri = format!("/api/servers/{}/proxmox", h.servers[0]);
+        let other: Uuid = sqlx::query_scalar("SELECT s.id FROM servers s JOIN sites si ON si.id = s.site_id WHERE si.customer_id = $1 LIMIT 1")
+            .bind(h.other_customer).fetch_one(&pool).await.unwrap();
+        // 102 is the other customer's VM, mapped to its server.
+        sqlx::query("INSERT INTO proxmox_guests (cluster, vmid, node, kind, name) VALUES ('pve', 101, 'pve1', 'qemu', 'web-1'), ('pve', 102, 'pve1', 'qemu', 'web-2')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO server_proxmox_vms (server_id, cluster, node, vmid) VALUES ($1, 'pve', 'pve1', 102)")
+            .bind(other).execute(&pool).await.unwrap();
+
+        // A mapped guest, a free one and one that does not exist answer
+        // alike: no 409 to tell which IDs are in use.
+        let mut answers = Vec::new();
+        for vmid in [102, 101, 4242] {
+            let vm = json!({ "cluster": "pve", "node": "pve1", "vmid": vmid });
+            let (status, body) = h.call("PUT", &uri, &admin, Some(vm)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            answers.push(body);
+        }
+        assert!(answers[0]["error"].as_str().unwrap().contains("ask a global administrator"), "{}", answers[0]);
+        assert!(answers.iter().all(|a| a == &answers[0]), "{answers:?}");
+        let mapped: Vec<(Uuid, i32)> = sqlx::query_as("SELECT server_id, vmid FROM server_proxmox_vms")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(mapped, [(other, 102)]);
+
+        // A candidate of another server is not this server's.
+        sqlx::query("INSERT INTO server_proxmox_candidates (server_id, cluster, vmid, matched_by) VALUES ($1, 'pve', 101, 'hostname')")
+            .bind(h.servers[1]).execute(&pool).await.unwrap();
+        let vm = json!({ "cluster": "pve", "node": "pve1", "vmid": 101 });
+        assert_eq!(h.call("PUT", &uri, &admin, Some(vm.clone())).await.0, StatusCode::BAD_REQUEST);
+
+        // A global administrator maps any guest, and is told of a conflict.
+        let taken = json!({ "cluster": "pve", "node": "pve1", "vmid": 102 });
+        assert_eq!(h.call("PUT", &uri, &global, Some(taken)).await.0, StatusCode::CONFLICT);
+        let (status, body) = h.call("PUT", &uri, &global, Some(vm)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["mapping"]["vmid"], 101);
     }
 
     #[sqlx::test]
