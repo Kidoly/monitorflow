@@ -167,3 +167,86 @@ async fn missing_files_directories_and_bad_paths_are_not_found() {
         }
     }
 }
+
+/// The tree is written by tools that parse upstream data, next to keys
+/// the listener's process can read: a link out of a served directory is
+/// not followed, `current` is.
+#[cfg(unix)]
+#[tokio::test]
+async fn links_out_of_the_served_directories_are_not_found() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("mirrors");
+    let served = Served::under(&base);
+    let ca = dir.path().join("ca");
+    write(&ca.join("key.pem"), "secret key");
+    write(&ca.join("monitorflow-archive.asc"), "secret key");
+    let apt = served.root(Family::Apt).join("debian");
+    write(&apt.join("s1/pool/a.deb"), "0123456789");
+    write(&apt.join("s1/repomd.xml"), "<repomd/>");
+    swap_current(&apt, "s1").unwrap();
+    symlink("pool/a.deb", apt.join("s1/alias.deb")).unwrap();
+    symlink("../../../../ca/key.pem", apt.join("s1/relative")).unwrap();
+    symlink(ca.join("key.pem"), apt.join("s1/absolute")).unwrap();
+    symlink(&ca, apt.join("s1/directory")).unwrap();
+    symlink(&ca, apt.join("linked")).unwrap();
+    // Whole served directories replaced by links.
+    symlink(&ca, &served.dnf).unwrap();
+    symlink(&ca, &served.agent).unwrap();
+    symlink(&ca, served.public_key.parent().unwrap()).unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(serve::serve(listener, served, std::future::pending()));
+    let client = reqwest::Client::new();
+
+    for path in [
+        "/apt/debian/s1/pool/a.deb",
+        "/apt/debian/current/pool/a.deb",
+        "/apt/debian/current/alias.deb",
+    ] {
+        let response = client
+            .get(format!("{base_url}{path}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert_eq!(response.text().await.unwrap(), "0123456789", "{path}");
+    }
+    // Content types go by the name asked for, and downloads still resume.
+    let xml = client
+        .get(format!("{base_url}/apt/debian/current/repomd.xml"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(xml.headers()["content-type"], "text/xml");
+    let part = client
+        .get(format!("{base_url}/apt/debian/current/pool/a.deb"))
+        .header("range", "bytes=4-")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(part.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(part.text().await.unwrap(), "456789");
+
+    for path in [
+        "/apt/debian/s1/relative",
+        "/apt/debian/s1/absolute",
+        "/apt/debian/s1/directory/key.pem",
+        "/apt/debian/current/directory/key.pem",
+        "/apt/linked/key.pem",
+        "/dnf/key.pem",
+        "/agent/key.pem",
+        "/keys/monitorflow-archive.asc",
+    ] {
+        for method in [Method::GET, Method::HEAD] {
+            let response = client
+                .request(method.clone(), format!("{base_url}{path}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+            assert_eq!(response.text().await.unwrap(), "", "{method} {path}");
+        }
+    }
+}
