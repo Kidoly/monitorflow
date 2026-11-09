@@ -191,4 +191,16 @@ $app = Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall |
 Msiexec "purge" @("/x", $app.PSChildName, "REMOVE_DATA=1") | Out-Null
 Check ($null -eq (Service-Info)) "the service is removed"
 Check (-not (Test-Path $data)) "$data is removed"
+
+Write-Host "== a data folder someone else made first"
+# Any user may create it before the install and would stay its owner.
+New-Item -ItemType Directory -Force $data | Out-Null
+Set-Content "$data\agent.toml" 'upstream_url = "https://evil.example:7443"'
+icacls "$data\agent.toml" /setowner "*S-1-5-32-545" | Out-Null
+$log = Join-Path $logs "foreign.log"
+$process = Start-Process msiexec.exe -Wait -PassThru `
+    -ArgumentList @("/i", "`"$Msi`"", "UPSTREAM_URL=https://127.0.0.1:7443", "/qn", "/norestart", "/l*v", "`"$log`"")
+Check ($process.ExitCode -eq 1603) "the install fails on a file a user owns in $data (got $($process.ExitCode), see $log)"
+Check ($null -eq (Service-Info)) "and rolls back"
+Remove-Item -Recurse -Force $data
 Write-Host "MSI smoke test passed"

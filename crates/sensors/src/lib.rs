@@ -41,6 +41,10 @@ pub mod testing;
 pub mod validate;
 #[cfg(windows)]
 mod win;
+#[cfg(all(windows, feature = "testing"))]
+pub use win::give_away;
+#[cfg(windows)]
+pub use win::{check_owner, check_writers, process_sid};
 pub mod windows_service;
 
 pub use registry::BuildError;

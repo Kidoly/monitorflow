@@ -261,6 +261,60 @@ pub fn check_writers(path: &Path, agent: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Checks that a trusted account (as for [`check_writers`]) owns `path`:
+/// an owner may always rewrite the access list, whatever it says now.
+pub fn check_owner(path: &Path, agent: &str) -> Result<(), String> {
+    let mut owner: PSID = ptr::null_mut();
+    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    let name = wide(path);
+    // SAFETY: a NUL-terminated name and out pointers; the descriptor is
+    // freed by `Local`, and `owner` points inside it.
+    let error = unsafe {
+        GetNamedSecurityInfoW(
+            name.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    let _descriptor = Local(descriptor);
+    let fail = |e: io::Error| format!("{}: cannot read its owner: {e}", path.display());
+    if error != 0 {
+        return Err(fail(io::Error::from_raw_os_error(error as i32)));
+    }
+    // SAFETY: the API returned a valid owner SID.
+    let owner = unsafe { sid_string(owner) }.map_err(fail)?;
+    if TRUSTED_SIDS.contains(&owner.as_str()) || owner == agent {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} is owned by {owner}, not an administrator or the agent",
+            path.display()
+        ))
+    }
+}
+
+/// Makes `path` belong to an account [`check_owner`] does not trust, as a
+/// file made by another user does. An elevated process owns what it makes
+/// through the Administrators group, which is trusted, so it hands the file
+/// to Everyone; any other process already owns it with its own account.
+#[cfg(any(test, feature = "testing"))]
+pub fn give_away(path: &Path) {
+    if check_owner(path, "S-1-0-0").is_err() {
+        return;
+    }
+    let output = std::process::Command::new("icacls")
+        .arg(path)
+        .args(["/setowner", "*S-1-1-0"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,5 +379,12 @@ mod tests {
         let error = check_writers(dir.path(), &agent).unwrap_err();
         assert!(error.contains("grants write access to S-1-1-0"), "{error}");
         assert!(check_writers(&dir.path().join("missing"), &agent).is_err());
+        // The owner alone: the access list above does not matter.
+        check_owner(dir.path(), &agent).unwrap();
+        check_owner(&system.join("kernel32.dll"), "S-1-0-0").unwrap();
+        give_away(dir.path());
+        let error = check_owner(dir.path(), "S-1-0-0").unwrap_err();
+        assert!(error.contains("is owned by S-1-"), "{error}");
+        assert!(check_owner(&dir.path().join("missing"), &agent).is_err());
     }
 }

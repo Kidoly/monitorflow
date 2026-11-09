@@ -121,22 +121,25 @@
 
     <!-- Same ACLs as docs/deploy-agent.md, protected from inheritance:
          configuration and scripts read by the service, data_dir modified
-         by it. The folders stay on uninstall unless empty. -->
+         by it. The folders stay on uninstall unless empty. Owned by
+         Administrators (O:BA): any user may create a folder in
+         %ProgramData%, and one made before the install would otherwise
+         stay its maker's, who could rewrite this ACL later. -->
     <ComponentGroup Id="AgentData">
       <Component Id="DataFolder" Directory="DATAFOLDER" Guid="3DDCBAD5-230B-4B5F-9B53-296595D9E792">
         <CreateFolder>
-          <PermissionEx Sddl="D:PAI(A;OICI;$(var.Full);;;SY)(A;OICI;$(var.Full);;;BA)(A;OICI;$(var.ReadExecute);;;$(var.ServiceSid))" />
+          <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;$(var.Full);;;SY)(A;OICI;$(var.Full);;;BA)(A;OICI;$(var.ReadExecute);;;$(var.ServiceSid))" />
         </CreateFolder>
       </Component>
       <Component Id="AgentDataFolder" Directory="AGENTDATAFOLDER" Guid="9ABE4B43-2201-442A-820E-1686BE8601E9">
         <CreateFolder>
-          <PermissionEx Sddl="D:PAI(A;OICI;$(var.Full);;;SY)(A;OICI;$(var.Full);;;BA)(A;OICI;$(var.Modify);;;$(var.ServiceSid))" />
+          <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;$(var.Full);;;SY)(A;OICI;$(var.Full);;;BA)(A;OICI;$(var.Modify);;;$(var.ServiceSid))" />
         </CreateFolder>
       </Component>
       <!-- ADR-0048: nobody else may write where scripts run from. -->
       <Component Id="ScriptsFolder" Directory="SCRIPTSFOLDER" Guid="19A88E80-75AB-4D5F-B971-47B511F5E6DA">
         <CreateFolder>
-          <PermissionEx Sddl="D:PAI(A;OICI;$(var.Full);;;SY)(A;OICI;$(var.Full);;;BA)(A;OICI;$(var.ReadExecute);;;$(var.ServiceSid))" />
+          <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;$(var.Full);;;SY)(A;OICI;$(var.Full);;;BA)(A;OICI;$(var.ReadExecute);;;$(var.ServiceSid))" />
         </CreateFolder>
         <!-- REMOVE_DATA=1 on uninstall, not when an upgrade removes the
              old version. The property must be set before CostInitialize,
@@ -148,6 +151,13 @@
     <SetProperty Id="MONITORFLOW_DATA_PATH" Value="[CommonAppDataFolder]MonitorFlow\"
                  After="LaunchConditions" Sequence="execute" />
 
+    <!-- Before anything is written to the data folder or read from it:
+         fails the install when someone other than an administrator or the
+         service owns the folder or anything in it, as after a user made
+         the folder first and left an agent.toml or scripts there. -->
+    <CustomAction Id="CheckDataFolder" FileRef="AgentExe" Execute="deferred" Impersonate="no"
+                  Return="check"
+                  ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; check-data-folder" />
     <!-- agent.toml from the properties, unless it exists. As SYSTEM, after
          the folders have their ACLs, so the file inherits them. The command
          line carries the token: HideTarget keeps it out of the log, and
@@ -163,7 +173,8 @@
                   Return="check"
                   ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; ai-commands from-web on" />
     <InstallExecuteSequence>
-      <Custom Action="WriteAgentConfig" After="InstallFiles" Condition="UPSTREAM_URL AND NOT REMOVE" />
+      <Custom Action="CheckDataFolder" After="InstallFiles" Condition="NOT REMOVE" />
+      <Custom Action="WriteAgentConfig" After="CheckDataFolder" Condition="UPSTREAM_URL AND NOT REMOVE" />
       <Custom Action="AllowAiCommandsFromWeb" After="WriteAgentConfig"
               Condition="AI_COMMANDS_FROM_WEB = &quot;1&quot; AND (UPSTREAM_URL OR WIX_UPGRADE_DETECTED) AND NOT REMOVE" />
     </InstallExecuteSequence>

@@ -50,3 +50,13 @@ Writing the file from the agent rather than a script: a PowerShell custom action
 - `agent.toml` written by the package holds only the keys given; other keys are at their defaults, described in the example next to the binary.
 - Unsigned packages warn when downloaded until the signing step exists.
 - 32-bit and ARM64 Windows are not packaged.
+
+## Amendment: who owns the data folder (2026-11-09)
+
+Any user may create a folder in `%ProgramData%`. One who made `MonitorFlow` there before the install stayed its owner: the package replaced its ACL, and an owner may always write another, then read the enrollment token and the identity key. An `agent.toml` left in the folder was kept, since the package writes it only when missing, so the agent would have served whoever wrote it.
+
+- The three folders' security descriptors now name their owner and group, `O:BAG:SY` before the same ACL: Administrators own them, whoever made them.
+- A deferred custom action as SYSTEM, `monitorflow-agent.exe --config … check-data-folder`, runs after the files are installed and before `agent.toml` is written or read, on installs, upgrades and repairs. It fails the install, which rolls back, unless SYSTEM, Administrators, TrustedInstaller or the service's own account own the folder and everything in it, only they may write to the three folders, and the folder holds no link or junction. The owner is what is checked below the three folders, as the agent's private files grant their owner by design (`winacl`).
+- Rejected: taking ownership of what is found and going on. What a stranger left in the folder stays theirs in content: an `agent.toml` pointing elsewhere, a script. An administrator looks at it or removes the folder, then installs again; the guide says how.
+
+An install of a machine where an administrator's own account, not the Administrators group, owns a file in the folder also stops there, until `icacls "%ProgramData%\MonitorFlow" /setowner *S-1-5-32-544 /T`. The smoke test installs over a folder holding a user's `agent.toml` and expects the failure.
