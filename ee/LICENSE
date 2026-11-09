@@ -1,0 +1,108 @@
+MonitorFlow Enterprise License
+Version 0.1, DRAFT
+
+    DRAFT: to be reviewed by a lawyer before the first Enterprise release.
+    Until then this text states intent and has not been checked for any
+    jurisdiction. Nothing in this directory is released for production use
+    before that review.
+
+Copyright (c) 2026 Alban Mary and the MonitorFlow contributors who assigned
+or licensed their rights under the MonitorFlow Contributor License Agreement.
+
+1. What this license covers
+
+This license applies to the files in the `ee/` directory of the MonitorFlow
+repository and to anything built from them (the "Enterprise Code"). Every
+file outside `ee/` is licensed under the GNU Affero General Public License,
+version 3 or later, and nothing here changes that. Releases of MonitorFlow
+already published, and every version of the repository before the
+Enterprise Code was added, stay under the AGPL as they were published.
+
+"We" and "us" mean the copyright holder named above. "You" means the person
+or organisation using the Enterprise Code. A "Subscription" is a paid
+MonitorFlow Enterprise subscription from us that is current. A "License Key"
+is the signed file we deliver with a Subscription, stating who it is for,
+how many central servers it allows and until when.
+
+2. What you may do without a Subscription
+
+You may, free of charge:
+
+  a. read the Enterprise Code, and copy it;
+  b. change it, build it, and run it, for development, testing,
+     demonstration and evaluation, without a time limit, as long as that
+     use is not production use;
+  c. share copies of the Enterprise Code, changed or not, with others, as
+     long as this license goes with them, unchanged, and every changed file
+     says that you changed it;
+  d. contribute changes back to us, under the MonitorFlow Contributor
+     License Agreement (see CONTRIBUTING.md), on the same terms as
+     contributions to the rest of MonitorFlow.
+
+"Production use" means using the Enterprise Code to watch, manage or update
+machines for any purpose other than development, testing, demonstration or
+evaluation: in short, relying on it.
+
+3. Production use
+
+Production use of the Enterprise Code needs a Subscription and its License
+Key, within the limits the License Key states: the number of central
+servers and the period. When the Subscription ends or the License Key
+expires, you may keep running the central servers you had already added
+under it, as the software itself allows, but you may not add others.
+
+4. What you may not do
+
+You may not:
+
+  a. remove, disable or work around the License Key check in the
+     Enterprise Code, or change the Enterprise Code so that it runs in
+     production beyond what your License Key allows;
+  b. sell, rent or host the Enterprise Code for others as a service, or
+     sell access to features it provides, without a written agreement with
+     us;
+  c. remove or change this license, copyright notices, or the notices of
+     the license on screen.
+
+Building MonitorFlow without the Enterprise Code (the server's Cargo
+feature `enterprise` turned off), and running the AGPL code alone, is
+governed by the AGPL only. This license does not restrict it in any way.
+
+5. Combining with the AGPL code
+
+The Enterprise Code is made to be combined with the AGPL code of MonitorFlow
+into one program. We permit that combination, and its distribution, as
+`ee/README.md` describes. Your rights to the AGPL parts of such a program
+come from the AGPL; your rights to the Enterprise parts come from this
+license.
+
+6. Patents
+
+Each contributor grants you a licence, under any patent claims they can
+license and that the contribution necessarily infringes, to use the
+Enterprise Code as this license allows. That licence ends for you if you
+claim in court that the Enterprise Code infringes a patent.
+
+7. No warranty
+
+The Enterprise Code is provided "as is", without warranty of any kind,
+express or implied, including fitness for a particular purpose. Any
+warranty, support or service level comes only from the terms of a
+Subscription.
+
+8. Limitation of liability
+
+To the extent the law allows, we and the contributors are not liable for
+any damage arising from the Enterprise Code or its use, unless the terms of
+a Subscription say otherwise.
+
+9. Ending
+
+If you break this license, your rights under it end. They come back if you
+stop within 30 days of our notice, the first time it happens. Ending does
+not affect the AGPL code.
+
+10. Changes
+
+We may publish new versions of this license. Code published under one
+version stays available under that version.

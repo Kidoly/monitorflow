@@ -129,7 +129,7 @@ Bring Windows to the level of Linux after Phase 6. The Windows updates list alre
 
 Needed before real customers. Daily backups and restore shipped in Phase 8 (ADR-0058).
 
-- [ ] High availability for the server.
+- [ ] High availability for the server: moved to Phase 14, as the Enterprise edition (ADR-0100). Several instances on one database are done (ADR-0089).
 - [x] CA key rotation.
 - [x] TLS between the server and VictoriaMetrics and VictoriaLogs (ADR-0051).
 - [x] Load test on about 1,000 agents.
@@ -150,6 +150,7 @@ Mostly follow-ups that the ADRs postponed.
 The open questions in `docs/product.md`.
 
 - [ ] Subscription tiers and licensing.
+- [ ] Enterprise edition: licensed high availability (ADR-0100). The Enterprise directory `ee/` and its license; an offline license key, checked with a key pair of its own, on an Administration › License page; `install-server.sh --join` to add a central server, which starts only with a license that has room. A missing or expired license stops adding central servers, never monitoring or the ones running.
 - [ ] Billing.
 - [ ] Final product name.
 

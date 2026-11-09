@@ -48,6 +48,31 @@ jobs:
           sudo "$bin" --ignored --test-threads=1 --nocapture
         env:
           DATABASE_URL: postgres://monitorflow:monitorflow@localhost:5432/monitorflow
+  # The example plugins (ADR-0103), built for WebAssembly in their own
+  # workspace, then signed with a throwaway key and run through the real
+  # runtime by crates/plugin/tests/examples.rs.
+  plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustup target add wasm32-unknown-unknown && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            . -> target
+            plugins -> target
+      - run: cargo fmt --all -- --check
+        working-directory: plugins
+      - run: cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
+        working-directory: plugins
+      - run: cargo test
+        working-directory: plugins
+      - run: cargo build --release --target wasm32-unknown-unknown
+        working-directory: plugins
+      - run: cargo test -p monitorflow-plugin --test examples -- --nocapture
+        env:
+          MONITORFLOW_PLUGIN_EXAMPLES: ${{ github.workspace }}/plugins/target/wasm32-unknown-unknown/release
   # A small load test (ADR-0090, docs/load-test.md): 100 simulated agents,
   # a command to each and a server restart, against the debug server and
   # relay. It fails when an agent does not connect or come back, or a

@@ -12,7 +12,7 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM caddy:2.11.7
+FROM caddy:2.11.8
 COPY deploy/caddy/Caddyfile deploy/caddy/trust.html /etc/caddy/
 COPY --chmod=755 deploy/docker/web-start.sh /usr/local/bin/web-start
 COPY --from=build /web/out /srv/monitorflow/web

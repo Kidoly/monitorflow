@@ -1,0 +1,14 @@
+{
+  "name": "ntfy",
+  "version": "1.0.0",
+  "kind": "channel",
+  "title": "ntfy",
+  "description": "Sends notifications to an ntfy topic, on ntfy.sh or your own ntfy server.",
+  "abi": 1,
+  "capabilities": { "http": ["{settings.server}"] },
+  "settings": [
+    { "key": "server", "label": "Server", "type": "url", "required": true, "default": "https://ntfy.sh" },
+    { "key": "topic", "label": "Topic", "type": "text", "required": true, "help": "Anyone who knows a topic on ntfy.sh can read it: pick a long, unguessable one, or use an access token." },
+    { "key": "token", "label": "Access token", "type": "secret", "help": "Only for topics that need one." }
+  ]
+}
