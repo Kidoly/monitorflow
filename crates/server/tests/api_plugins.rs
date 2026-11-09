@@ -64,6 +64,10 @@ impl Signer {
             "capabilities": {"http": hosts},
             "settings": [{"key": "url", "label": "Address", "type": "url", "required": true}]
         });
+        self.sign(manifest)
+    }
+
+    fn sign(&self, manifest: Value) -> Vec<u8> {
         Package::sign(&manifest.to_string(), NOOP_WASM, &self.pair)
             .unwrap()
             .to_bytes()
@@ -301,5 +305,95 @@ db_tests! {
                 "plugin.places", "plugin.disable", "plugin.remove", "plugin_publisher.remove",
             ]
         );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_channel_plugin_is_a_channel_where_it_is_turned_on(pool: PgPool) {
+        let root = login(&pool, "root", GrantScope::Global).await;
+        let (acme, _) = customer_with_site(&pool, "acme").await;
+        let acme_admin = login(&pool, "acme-admin", GrantScope::Customer(acme)).await;
+        let signer = Signer::new();
+        let add = json!({"name": "Pager Inc", "public_key": signer.key.to_base64()});
+        assert_eq!(json_call(&pool, "POST", "/api/plugins/publishers", &root, Some(add)).await.0, StatusCode::CREATED);
+        let file = signer.sign(json!({
+            "name": "pager", "version": "1.0.0", "kind": "channel", "title": "Pager", "abi": 1,
+            "settings": [
+                {"key": "room", "label": "Room", "type": "text", "required": true},
+                {"key": "token", "label": "Token", "type": "secret", "required": true}
+            ]
+        }));
+        let (status, plugin) = file_call(&pool, &format!("/api/plugins?sha256={}", package::hex(&package::sha256(&file))), &root, &file).await;
+        assert_eq!(status, StatusCode::CREATED, "{plugin}");
+        let id = plugin["id"].as_str().unwrap().to_owned();
+
+        let channel = |values: Value, secret: Option<&str>, customer: Option<Uuid>| {
+            json!({
+                "kind": "plugin",
+                "settings": {"plugin": "pager", "name": "ops", "values": values},
+                "secret": secret,
+                "customer_id": customer,
+            })
+        };
+        let channels = "/api/notifications/channels";
+        // Nowhere yet.
+        let ask = channel(json!({"room": "ops"}), Some(r#"{"token": "t-secret-1"}"#), Some(acme));
+        let (status, body) = json_call(&pool, "POST", channels, &acme_admin, Some(ask.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("not turned on"), "{body}");
+
+        let places = json!({"places": [{"customer_id": acme}]});
+        assert_eq!(json_call(&pool, "PUT", &format!("/api/plugins/{id}/places"), &root, Some(places)).await.0, StatusCode::OK);
+        let (status, created) = json_call(&pool, "POST", channels, &acme_admin, Some(ask)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        assert_eq!(created["kind"], "plugin");
+        assert_eq!(created["has_secret"], true);
+        assert_eq!(created["settings"]["values"], json!({"room": "ops"}));
+        assert!(!created.to_string().contains("t-secret-1"));
+
+        // Settings are checked against the manifest.
+        for (values, secret, expected) in [
+            (json!({"room": "ops"}), None, "Token is required"),
+            (json!({"room": "ops", "token": "x"}), Some(r#"{"token": "x"}"#), "is a secret setting"),
+            (json!({"room": "ops"}), Some(r#"{"room": "x", "token": "y"}"#), "not a secret setting"),
+            (json!({}), Some(r#"{"token": "x"}"#), "Room is required"),
+        ] {
+            let (status, body) = json_call(&pool, "POST", channels, &acme_admin, Some(channel(values, secret, Some(acme)))).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{expected}");
+            assert!(body["error"].as_str().unwrap().contains(expected), "{expected}: {body}");
+        }
+        // Not for everything: it is allowed for acme only.
+        let everywhere = channel(json!({"room": "ops"}), Some(r#"{"token": "t"}"#), None);
+        let (status, _) = json_call(&pool, "POST", channels, &root, Some(everywhere)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // Its test runs the plugin.
+        let channel_id = created["id"].as_str().unwrap();
+        let test = format!("{channels}/{channel_id}/test");
+        let (status, result) = json_call(&pool, "POST", &test, &acme_admin, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(result["ok"], true, "{result}");
+
+        // Another room is another target: the secret is typed again.
+        let moved = channel(json!({"room": "elsewhere"}), None, Some(acme));
+        let (status, body) = json_call(&pool, "PUT", &format!("{channels}/{channel_id}"), &acme_admin, Some(moved)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("again"), "{body}");
+        let renamed = json!({"kind": "plugin", "settings": {"plugin": "pager", "name": "on call", "values": {"room": "ops"}}, "customer_id": acme});
+        assert_eq!(json_call(&pool, "PUT", &format!("{channels}/{channel_id}"), &acme_admin, Some(renamed)).await.0, StatusCode::OK);
+
+        // Turned off, the channel says so.
+        let off = json!({"enabled": false});
+        assert_eq!(json_call(&pool, "PUT", &format!("/api/plugins/{id}/enabled"), &root, Some(off)).await.0, StatusCode::OK);
+        let (_, result) = json_call(&pool, "POST", &test, &acme_admin, None).await;
+        assert_eq!(result["ok"], false);
+        assert!(result["error"].as_str().unwrap().contains("turned off"), "{result}");
+
+        // In use, it stays installed.
+        assert_eq!(json_call(&pool, "DELETE", &format!("/api/plugins/{id}"), &root, None).await.0, StatusCode::CONFLICT);
+        let audit: Vec<Value> = sqlx::query_scalar("SELECT details FROM audit_log WHERE action LIKE 'notification.%'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(!audit.is_empty() && !audit.iter().any(|d| d.to_string().contains("t-secret-1")));
     }
 }
