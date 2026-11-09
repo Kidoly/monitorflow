@@ -132,6 +132,8 @@ pub fn resolve(mut rows: Vec<Row>, builtin_interval_ms: u64) -> Vec<Spec> {
 pub struct Resolved {
     pub revision: u64,
     pub sensors: Vec<Spec>,
+    /// The check plugins its sensors use, granted to it (ADR-0103).
+    pub plugins: Vec<proto::PluginGrant>,
 }
 
 impl Resolved {
@@ -139,6 +141,7 @@ impl Resolved {
         proto::SensorConfig {
             revision: self.revision,
             sensors: self.sensors.iter().map(Spec::to_proto).collect(),
+            plugins: self.plugins.clone(),
         }
     }
 }
@@ -263,6 +266,7 @@ mod tests {
         let mut spec = Spec::new("port", 10_000);
         spec.params.insert("port".into(), "22".into());
         let resolved = Resolved {
+            plugins: Vec::new(),
             revision: 7,
             sensors: vec![
                 spec.clone(),

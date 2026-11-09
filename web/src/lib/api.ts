@@ -2048,6 +2048,8 @@ interface RequestOptions {
   body?: unknown;
   /** Sent as multipart, instead of `body`; the browser sets the content type. */
   form?: FormData;
+  /** Sent as it is, instead of `body`: an uploaded file. */
+  file?: Blob;
   signal?: AbortSignal;
   /** Call the unauthorized handler on 401. Off for login, where 401 means bad credentials. */
   redirectOn401?: boolean;
@@ -2083,6 +2085,7 @@ export type NotificationChannel = (
   | { kind: "email"; settings: EmailSettings }
   | { kind: "webhook"; settings: WebhookSettings }
   | { kind: ChatKind; settings: ChatSettings }
+  | { kind: "plugin"; settings: PluginChannelSettings }
 ) & {
   id: string;
   /** Whether a password, signing secret or chat webhook URL is stored; it never leaves the server. */
@@ -2114,7 +2117,9 @@ export type NotificationChannelRequest = (
     }
   | { kind: "webhook"; settings: WebhookSettings }
   | { kind: ChatKind; settings: Pick<ChatSettings, "name"> }
+  | { kind: "plugin"; settings: PluginChannelSettings }
 ) & {
+  /** For a plugin, its secret settings as a JSON object. */
   secret?: string | null;
   customer_id: string | null;
   site_id: string | null;
@@ -2202,6 +2207,102 @@ export interface IntegrationDeliveryList {
 
 /** One event by its ID, or every event from `from` to `to` (now when absent). */
 export type IntegrationReplay = { event_id: string } | { from: string; to?: string };
+
+/** A channel run by a plugin (ADR-0103); its secret settings never come back. */
+export interface PluginChannelSettings {
+  plugin: string;
+  name: string;
+  values: Record<string, string>;
+}
+
+/** One field of a plugin's settings form. */
+export interface PluginSetting {
+  key: string;
+  label: string;
+  type: "text" | "url" | "number" | "bool" | "secret";
+  required?: boolean;
+  default?: string;
+  help?: string;
+}
+
+export type PluginKind = "check" | "channel";
+
+/** Where a plugin may be used: everything when both IDs are null. */
+export interface PluginPlace {
+  customer_id: string | null;
+  customer_name: string | null;
+  site_id: string | null;
+  site_name: string | null;
+}
+
+/** An installed plugin, for global administrators (ADR-0103). */
+export interface InstalledPlugin {
+  id: string;
+  name: string;
+  kind: PluginKind;
+  version: string;
+  title: string;
+  description: string;
+  official: boolean;
+  /** MonitorFlow, the publisher's name, or null for a key no longer trusted. */
+  publisher: string | null;
+  fingerprint: string;
+  /** What it does and asks for, in words. */
+  capabilities: string[];
+  settings: PluginSetting[];
+  enabled: boolean;
+  places: PluginPlace[];
+  channels: number;
+  checks: number;
+  installed_at: string;
+  updated_at: string;
+}
+
+/** What an uploaded plugin file is, before it is installed. */
+export interface PluginInspection {
+  name: string;
+  kind: PluginKind;
+  version: string;
+  title: string;
+  description: string;
+  official: boolean;
+  publisher: string;
+  fingerprint: string;
+  capabilities: string[];
+  settings: PluginSetting[];
+  sha256: string;
+  update: { from_version: string; adds: string[]; drops: string[] } | null;
+}
+
+/** A plugin turned on where the user can see, for the channel and check forms. */
+export interface UsablePlugin {
+  name: string;
+  kind: PluginKind;
+  version: string;
+  title: string;
+  description: string;
+  capabilities: string[];
+  settings: PluginSetting[];
+  everywhere: boolean;
+  customer_ids: string[];
+  site_ids: string[];
+}
+
+export interface PluginPublisher {
+  id: string;
+  name: string;
+  public_key: string;
+  fingerprint: string;
+  /** Installed plugins it signed. */
+  plugins: string[];
+  created_at: string;
+}
+
+export interface PluginPublisherList {
+  publishers: PluginPublisher[];
+  /** Fingerprints of MonitorFlow's own keys. */
+  official: string[];
+}
 
 /** Why the person on call cannot be told: that period is a gap (ADR-0081). */
 export type OnCallProblem = "nobody" | "removed" | "disabled" | "no_access" | "no_contact" | "no_mail_server";
@@ -2351,6 +2452,7 @@ async function request<T>(
       headers,
       body:
         options.form ??
+        options.file ??
         (options.body === undefined ? undefined : JSON.stringify(options.body)),
       credentials: "same-origin",
       cache: "no-store",
@@ -2754,6 +2856,53 @@ export const api = {
   /** Notification channels of what the user administers, without secrets (ADR-0060, ADR-0078). */
   notificationChannels: (signal?: AbortSignal) =>
     request<NotificationChannelList>("/api/notifications/channels", { signal }),
+
+  /** Installed plugins: global administrators (ADR-0103). */
+  plugins: (signal?: AbortSignal) =>
+    request<{ plugins: InstalledPlugin[] }>("/api/plugins", { signal }),
+
+  /** What a plugin file is and asks for; installs nothing. */
+  inspectPlugin: (file: Blob) =>
+    request<PluginInspection>("/api/plugins/inspect", { method: "POST", file }),
+
+  /** Installs or updates the plugin of `file`, which must be the one inspected. */
+  installPlugin: (file: Blob, sha256: string) =>
+    request<InstalledPlugin>(`/api/plugins?sha256=${encodeURIComponent(sha256)}`, {
+      method: "POST",
+      file,
+    }),
+
+  /** Where it may be used; `{}` is everything, none is nowhere. */
+  setPluginPlaces: (id: string, places: { customer_id?: string; site_id?: string }[]) =>
+    request<InstalledPlugin>(`/api/plugins/${encodeURIComponent(id)}/places`, {
+      method: "PUT",
+      body: { places },
+    }),
+
+  setPluginEnabled: (id: string, enabled: boolean) =>
+    request<InstalledPlugin>(`/api/plugins/${encodeURIComponent(id)}/enabled`, {
+      method: "PUT",
+      body: { enabled },
+    }),
+
+  removePlugin: (id: string) =>
+    request<void>(`/api/plugins/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Plugins turned on at places the user sees. */
+  usablePlugins: (signal?: AbortSignal) =>
+    request<{ plugins: UsablePlugin[] }>("/api/plugins/usable", { signal }),
+
+  pluginPublishers: (signal?: AbortSignal) =>
+    request<PluginPublisherList>("/api/plugins/publishers", { signal }),
+
+  addPluginPublisher: (name: string, publicKey: string) =>
+    request<PluginPublisher>("/api/plugins/publishers", {
+      method: "POST",
+      body: { name, public_key: publicKey },
+    }),
+
+  removePluginPublisher: (id: string) =>
+    request<void>(`/api/plugins/publishers/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   createNotificationChannel: (body: NotificationChannelRequest) =>
     request<NotificationChannel>("/api/notifications/channels", {

@@ -80,3 +80,13 @@ upstream_url = "https://relay.example.com:7443"
 # the web interface (ADR-0098). Without it the web interface can only turn
 # it off. The installer's MF_AI_COMMANDS_FROM_WEB sets it.
 # from_web = false
+
+[plugins]
+# Run the check plugins the central server gives this machine (ADR-0103):
+# WebAssembly modules in a sandbox with no file, program or network
+# access except HTTP to the hosts each plugin lists, run only when the
+# server granted them with its command key. On unless turned off here.
+# checks = true
+# Run only plugins signed with MonitorFlow's own key, not those of
+# publishers your administrators trust.
+# official_only = false

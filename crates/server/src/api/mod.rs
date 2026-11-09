@@ -144,6 +144,16 @@
 //! | PUT | `/api/settings/retention` | global administrator | body [`server_settings::RetentionBody`]; 202 [`server_settings::ServerSettings`], the updater applies it; 409 without a running updater, during a change or against `.env`; audited |
 //! | GET | `/api/agent-releases` | any role | [`commands::AgentReleases`]: cached agent versions and the latest (ADR-0053) |
 //! | POST | `/api/agent-releases/import` | global administrator | multipart release files; 200 [`release_import::ImportResult`]; 400 when they do not verify; 409 during another import; audited (ADR-0061) |
+//! | GET | `/api/plugins` | global administrator | [`plugins::PluginList`]: installed plugins, their signer, capabilities in words, places and uses (ADR-0103) |
+//! | POST | `/api/plugins/inspect` | global administrator | the plugin file as the body; 200 [`plugins::Inspection`], what it is and asks for, stores nothing; 400 saying why it cannot be installed |
+//! | POST | `/api/plugins?sha256=` | global administrator | the same file; 201 (200 for an update) [`plugins::PluginView`]; 400 when it is not the file inspected, is not newer or has another signer; audited (`plugin.install`, `plugin.update`) |
+//! | PUT | `/api/plugins/{id}/places` | global administrator | body `{"places": [{"customer_id"?, "site_id"?}]}`, `{}` for everything; 200 [`plugins::PluginView`]; audited (`plugin.places`) |
+//! | PUT | `/api/plugins/{id}/enabled` | global administrator | body `{"enabled"}`; 200 [`plugins::PluginView`]; audited (`plugin.enable`, `plugin.disable`) |
+//! | DELETE | `/api/plugins/{id}` | global administrator | 204; 409 while a channel or check uses it; audited (`plugin.remove`) |
+//! | GET | `/api/plugins/usable` | any role | [`plugins::UsableList`]: plugins turned on, with the places the user can see |
+//! | GET | `/api/plugins/publishers` | global administrator | [`plugins::PublisherList`] |
+//! | POST | `/api/plugins/publishers` | global administrator | body `{"name", "public_key"}`; 201 [`plugins::PublisherView`]; 409 for a key trusted already; audited (`plugin_publisher.add`) |
+//! | DELETE | `/api/plugins/publishers/{id}` | global administrator | 204; 409 while a plugin it signed is installed; audited (`plugin_publisher.remove`) |
 //! | POST | `/api/agent-releases/import-url` | global administrator | body [`release_import::UrlRequest`]; as above, from a directory of release files |
 //! | GET | `/api/server-update` | global administrator | [`server_update::UpdateView`]: running version, updater, last update and any newer release the daily check saw (ADR-0056, ADR-0061) |
 //! | POST | `/api/server-update/check` | global administrator | [`server_update::CheckResult`]: the latest release, verified, and what it changes |
@@ -638,6 +648,7 @@ pub mod openapi;
 pub mod package_sources;
 pub mod packages;
 pub mod password;
+pub mod plugins;
 pub mod proxmox;
 pub mod public_address;
 pub mod relays;
@@ -1226,6 +1237,32 @@ pub fn router(state: ApiState) -> Router {
             get(proxmox::get).put(proxmox::set).delete(proxmox::clear),
         )
         .route("/api/servers/{id}/proxmox/guests", get(proxmox::guests))
+        .route(
+            "/api/plugins",
+            get(plugins::list)
+                .post(plugins::install)
+                .layer(DefaultBodyLimit::max(
+                    monitorflow_plugin::limits::PACKAGE_BYTES,
+                )),
+        )
+        .route(
+            "/api/plugins/inspect",
+            post(plugins::inspect).layer(DefaultBodyLimit::max(
+                monitorflow_plugin::limits::PACKAGE_BYTES,
+            )),
+        )
+        .route("/api/plugins/usable", get(plugins::usable))
+        .route(
+            "/api/plugins/publishers",
+            get(plugins::publishers).post(plugins::add_publisher),
+        )
+        .route(
+            "/api/plugins/publishers/{id}",
+            delete(plugins::remove_publisher),
+        )
+        .route("/api/plugins/{id}", delete(plugins::remove))
+        .route("/api/plugins/{id}/places", put(plugins::set_places))
+        .route("/api/plugins/{id}/enabled", put(plugins::set_enabled))
         .fallback(not_found)
         .layer(middleware::from_fn(auth::csrf_guard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

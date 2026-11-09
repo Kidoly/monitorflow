@@ -115,6 +115,18 @@ message SensorConfig {
   // Grows with every change of the server's configuration in the database.
   uint64 revision = 1;
   repeated SensorSpec sensors = 2;
+  // The check plugins the sensors of kind "plugin" name (ADR-0103).
+  repeated PluginGrant plugins = 3;
+}
+
+// A check plugin an agent may run (ADR-0103): its package as its publisher
+// signed it, and the server's grant, signed with the command key over the
+// agent's ID, the plugin's name and the package's SHA-256
+// (`common::plugin_grant`), so that a relay cannot add one.
+message PluginGrant {
+  string name = 1;
+  bytes package = 2;
+  bytes signature = 3;
 }
 
 // One configured sensor; (name, instance) is unique within a SensorConfig.

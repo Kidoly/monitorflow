@@ -24,6 +24,7 @@ use super::roles::Role;
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
 use crate::notify::{self, Channel, Coverage, Destination, Dispatcher};
+use crate::plugins;
 
 /// Longest accepted secret.
 const MAX_SECRET: usize = 1024;
@@ -32,10 +33,11 @@ const MAX_SECRET: usize = 1024;
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct ChannelView {
     pub id: Uuid,
-    /// `email`, `webhook`, `slack`, `teams` or `discord`.
+    /// `email`, `webhook`, `slack`, `teams`, `discord` or `plugin`.
     pub kind: String,
     /// email: `{"host", "port", "username", "from", "to"}`; webhook:
-    /// `{"url"}`; chat: `{"name", "host"}`.
+    /// `{"url"}`; chat: `{"name", "host"}`; plugin: `{"plugin", "name",
+    /// "values"}`, its secret settings apart (ADR-0103).
     pub settings: Value,
     /// Whether a password, signing secret or chat webhook URL is stored.
     pub has_secret: bool,
@@ -68,8 +70,9 @@ pub struct ChannelList {
 pub struct ChannelRequest {
     pub kind: String,
     pub settings: Value,
-    /// The SMTP password, webhook signing secret or chat webhook URL. On
-    /// `PUT`, absent, `null` or empty keeps the stored one.
+    /// The SMTP password, webhook signing secret or chat webhook URL, or
+    /// a plugin's secret settings as a JSON object of strings. On `PUT`,
+    /// absent, `null` or empty keeps the stored one.
     #[serde(default)]
     pub secret: Option<String>,
     /// The customer to cover; with `site_id` also `null`, everything.
@@ -230,6 +233,60 @@ pub(super) fn checked(
     Ok((destination, secret))
 }
 
+/// A plugin channel's settings and secret settings checked against the
+/// plugin, which must be turned on for what the channel covers (ADR-0103).
+/// `secret` is the JSON object of secret settings it will keep.
+async fn check_plugin(
+    db: impl PgExecutor<'_>,
+    destination: &Destination,
+    secret: Option<&Secret>,
+    coverage: Coverage,
+) -> Result<(), ApiError> {
+    let Destination::Plugin(plugin) = destination else {
+        return Ok(());
+    };
+    let (customer, site) = coverage.columns();
+    let installed = plugins::usable(db, &plugin.plugin, customer, site)
+        .await?
+        .ok_or_else(|| {
+            ApiError::Invalid(format!(
+                "The {} plugin is not turned on for what this channel covers.",
+                plugin.plugin
+            ))
+        })?;
+    let manifest = &installed.manifest;
+    if manifest.kind != monitorflow_plugin::Kind::Channel {
+        return Err(ApiError::Invalid(format!(
+            "{} is not a channel plugin.",
+            plugin.plugin
+        )));
+    }
+    let secrets =
+        plugins::channel::secrets(secret.map(Secret::expose)).map_err(ApiError::Invalid)?;
+    let is_secret = |key: &String| {
+        manifest
+            .setting(key)
+            .is_some_and(|s| s.kind == monitorflow_plugin::SettingType::Secret)
+    };
+    if let Some(key) = plugin.values.keys().find(|k| is_secret(k)) {
+        return Err(ApiError::Invalid(format!(
+            "{key} is a secret setting: send it as the secret."
+        )));
+    }
+    if let Some(key) = secrets.keys().find(|k| !is_secret(k)) {
+        return Err(ApiError::Invalid(format!(
+            "{key} is not a secret setting of {}.",
+            plugin.plugin
+        )));
+    }
+    let mut values = plugin.values.clone();
+    values.extend(secrets);
+    manifest
+        .values(&values)
+        .map(drop)
+        .map_err(|e| ApiError::Invalid(e.to_string()))
+}
+
 /// What the audit keeps of a channel: no secret, and only the host of a
 /// webhook, whose path often is one.
 fn audited(destination: &Destination, coverage: Coverage) -> Value {
@@ -245,6 +302,10 @@ fn audited(destination: &Destination, coverage: Coverage) -> Value {
         Destination::Slack(chat) | Destination::Teams(chat) | Destination::Discord(chat) => {
             json!({ "host": chat.host, "name": chat.name })
         }
+        // Setting names only: their values may say more than a host.
+        Destination::Plugin(plugin) => json!({
+            "plugin": plugin.plugin, "name": plugin.name, "settings": plugin.values.keys().collect::<Vec<_>>(),
+        }),
     };
     let (customer_id, site_id) = coverage.columns();
     json!({
@@ -312,6 +373,13 @@ pub async fn create(
     let request = body(request)?;
     let follow_up_only = request.follow_up_only;
     let valid = validate(&state.pool, &user, request, None).await?;
+    check_plugin(
+        &state.pool,
+        &valid.destination,
+        valid.secret.as_ref(),
+        valid.coverage,
+    )
+    .await?;
     let mut tx = state.pool.begin().await?;
     let id = notify::insert(
         &mut *tx,
@@ -372,6 +440,8 @@ pub async fn update(
                 .into(),
         ));
     }
+    let kept = valid.secret.as_ref().or(current.secret.as_ref());
+    check_plugin(&mut *tx, &valid.destination, kept, valid.coverage).await?;
     // A global administrator's save vouches for the destination; anyone
     // else's leaves it limited, and limits a new one.
     let public_only = !is_global_admin(&user) && (current.public_only || !same_target);
