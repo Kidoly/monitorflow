@@ -298,6 +298,23 @@ pub fn check_owner(path: &Path, agent: &str) -> Result<(), String> {
     }
 }
 
+/// Makes `path` belong to an account [`check_owner`] does not trust, as a
+/// file made by another user does. An elevated process owns what it makes
+/// through the Administrators group, which is trusted, so it hands the file
+/// to Everyone; any other process already owns it with its own account.
+#[cfg(any(test, feature = "testing"))]
+pub fn give_away(path: &Path) {
+    if check_owner(path, "S-1-0-0").is_err() {
+        return;
+    }
+    let output = std::process::Command::new("icacls")
+        .arg(path)
+        .args(["/setowner", "*S-1-1-0"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,8 +382,9 @@ mod tests {
         // The owner alone: the access list above does not matter.
         check_owner(dir.path(), &agent).unwrap();
         check_owner(&system.join("kernel32.dll"), "S-1-0-0").unwrap();
+        give_away(dir.path());
         let error = check_owner(dir.path(), "S-1-0-0").unwrap_err();
-        assert!(error.contains("is owned by S-1-5-"), "{error}");
+        assert!(error.contains("is owned by S-1-"), "{error}");
         assert!(check_owner(&dir.path().join("missing"), &agent).is_err());
     }
 }

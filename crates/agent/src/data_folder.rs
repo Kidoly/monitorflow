@@ -53,34 +53,31 @@ fn owners(dir: &Path, agent: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// A SID nobody has, so the test's own account is not the agent.
-    const NOBODY: &str = "S-1-0-0";
-
-    fn own_sid(path: &Path) -> String {
-        // "… is owned by S-1-5-…, not an administrator or the agent"
-        let error = check_owner(path, NOBODY).unwrap_err();
-        let sid = error.split("is owned by ").nth(1).unwrap();
-        sid.split(',').next().unwrap().to_owned()
-    }
+    use monitorflow_sensors::{give_away, process_sid};
 
     #[test]
     fn a_folder_someone_else_made_is_refused_with_what_it_holds() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("MonitorFlow");
         std::fs::create_dir_all(data.join("scripts.d")).unwrap();
-        std::fs::write(
-            data.join("agent.toml"),
-            "upstream_url = \"https://evil.example\"",
-        )
-        .unwrap();
-        let me = own_sid(&data);
+        let config = data.join("agent.toml");
+        std::fs::write(&config, "upstream_url = \"https://evil.example\"").unwrap();
+        // The test's own account stands for the agent.
+        let me = process_sid().unwrap();
 
-        // Ours: every entry belongs to the account passed as the agent.
+        // Ours: every entry belongs to the agent or an administrator.
         check(&data, &me).unwrap();
-        // Made by an account that is neither an administrator nor the
-        // agent, as a folder created before the install is.
-        let error = check(&data, NOBODY).unwrap_err();
-        assert!(error.contains("MonitorFlow is owned by"), "{error}");
+        // A file left by an account that is neither, as one created before
+        // the install is.
+        give_away(&config);
+        // Elevated, the file now belongs to Everyone. Otherwise only the
+        // test's account owns it, and it is untrusted once not the agent.
+        let agent = match check_owner(&config, &me) {
+            Ok(()) => "S-1-0-0",
+            Err(_) => me.as_str(),
+        };
+        let error = check(&data, agent).unwrap_err();
+        assert!(error.contains("is owned by"), "{error}");
         assert!(check(&data.join("missing"), &me).is_err());
     }
 
@@ -89,7 +86,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("MonitorFlow");
         std::fs::create_dir(&data).unwrap();
-        let me = own_sid(&data);
+        let me = process_sid().unwrap();
         let target = dir.path().join("elsewhere");
         std::fs::create_dir(&target).unwrap();
         // A junction needs no privilege, unlike a symbolic link.
