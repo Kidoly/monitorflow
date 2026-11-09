@@ -103,14 +103,24 @@ pub fn verify(command: &Command, ca_certs: &[CertificateDer<'_>]) -> Result<(), 
     if command.signature.is_empty() {
         return Err(SignatureError::Missing);
     }
-    let message = signed_bytes(command);
+    verify_signed(&signed_bytes(command), &command.signature, ca_certs)
+}
+
+/// Checks `signature` of `message` against the public key of any of
+/// `ca_certs`, as the command key signs. Certificates that do not parse
+/// are skipped.
+pub fn verify_signed(
+    message: &[u8],
+    signature: &[u8],
+    ca_certs: &[CertificateDer<'_>],
+) -> Result<(), SignatureError> {
     let valid = ca_certs.iter().any(|der| {
         let Ok((_, cert)) = x509_parser::parse_x509_certificate(der) else {
             return false;
         };
         let key = &cert.public_key().subject_public_key.data;
         UnparsedPublicKey::new(&ECDSA_P256_SHA256_ASN1, key)
-            .verify(&message, &command.signature)
+            .verify(message, signature)
             .is_ok()
     });
     if valid {

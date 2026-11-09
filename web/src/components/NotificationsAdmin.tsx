@@ -11,6 +11,7 @@ import {
   type NotificationChannel,
   type NotificationChannelRequest,
   type Site,
+  type UsablePlugin,
   api,
   describeError,
 } from "@/lib/api";
@@ -74,8 +75,30 @@ function isChat(kind: Kind): kind is ChatKind {
   return kind in CHAT;
 }
 
+/**
+ * Whether `plugin` may be used for what `scope` covers (ADR-0103): a
+ * channel for everything needs it everywhere, a customer's needs that
+ * customer, a site's the site or its customer.
+ */
+export function pluginAllows(
+  plugin: UsablePlugin,
+  scope: { customer_id: string | null; site_id: string | null },
+  sites: Site[],
+): boolean {
+  if (plugin.everywhere) return true;
+  if (scope.site_id) {
+    const customer = sites.find((s) => s.id === scope.site_id)?.customer_id;
+    return plugin.site_ids.includes(scope.site_id) || (customer !== undefined && plugin.customer_ids.includes(customer));
+  }
+  return scope.customer_id !== null && plugin.customer_ids.includes(scope.customer_id);
+}
+
 /** What a channel sends to, in a few words. */
 export function destination(channel: NotificationChannel): string {
+  if (channel.kind === "plugin") {
+    const { plugin, name } = channel.settings;
+    return name ? `${plugin}: ${name}` : plugin;
+  }
   if (channel.kind === "email") {
     const { to, host, port } = channel.settings;
     return `Email to ${to.join(", ")} through ${host}:${port}`;
@@ -101,12 +124,15 @@ interface Editing {
   kind: Kind;
   /** The channel being edited, absent for a new one. */
   channel?: NotificationChannel;
+  /** The plugin of a plugin channel. */
+  plugin?: UsablePlugin;
 }
 
 function Notifications() {
   const { data, error, refresh } = usePolledData(api.notificationChannels);
   const customers = usePolledData(api.customers, { intervalMs: 60_000 });
   const sites = usePolledData(api.sites, { intervalMs: 60_000 });
+  const usable = usePolledData(api.usablePlugins, { intervalMs: 60_000 });
   const me = useMe();
   const [editing, setEditing] = useState<Editing | null>(null);
   const [tests, setTests] = useState<
@@ -168,9 +194,15 @@ function Notifications() {
       Add {kindName(kind)}
     </Button>
   );
-  const addButtons = (
-    ["email", "slack", "teams", "discord", "webhook"] as const
-  ).map(add);
+  const channelPlugins = (usable.data?.plugins ?? []).filter((p) => p.kind === "channel");
+  const addButtons = [
+    ...(["email", "slack", "teams", "discord", "webhook"] as const).map(add),
+    ...channelPlugins.map((plugin) => (
+      <Button key={`plugin:${plugin.name}`} onClick={() => setEditing({ kind: "plugin", plugin })}>
+        Add {plugin.title}
+      </Button>
+    )),
+  ];
   const allCustomers = customers.data?.customers ?? [];
   const allSites = sites.data?.sites ?? [];
   const global = administersEverything(me);
@@ -221,7 +253,16 @@ function Notifications() {
             }
             severalCustomers={multiCustomer(me)}
             onTest={(id) => void test(id)}
-            onEdit={(channel) => setEditing({ kind: channel.kind, channel })}
+            onEdit={(channel) =>
+              setEditing({
+                kind: channel.kind,
+                channel,
+                plugin:
+                  channel.kind === "plugin"
+                    ? channelPlugins.find((p) => p.name === channel.settings.plugin)
+                    : undefined,
+              })
+            }
             onDelete={remove}
           />
         </section>
@@ -230,7 +271,8 @@ function Notifications() {
   );
 }
 
-function kindName(kind: Kind): string {
+function kindName(kind: Kind, plugin?: UsablePlugin): string {
+  if (kind === "plugin") return plugin?.title ?? "plugin channel";
   return isChat(kind) ? CHAT[kind].name : kind;
 }
 
@@ -380,7 +422,8 @@ function ChannelForm({
   onCancel: () => void;
   onSaved: (channel: NotificationChannel) => void;
 }) {
-  const { kind, channel } = editing;
+  const { kind, channel, plugin } = editing;
+  const pluginSettings = channel?.kind === "plugin" ? channel.settings : null;
   const email = channel?.kind === "email" ? channel.settings : null;
   const hook = channel?.kind === "webhook" ? channel.settings : null;
   const chat =
@@ -391,7 +434,13 @@ function ChannelForm({
   const [username, setUsername] = useState(email?.username ?? "");
   const [from, setFrom] = useState(email?.from ?? "");
   const [url, setUrl] = useState(hook?.url ?? "");
-  const [name, setName] = useState(chat?.name ?? "");
+  const [name, setName] = useState(chat?.name ?? pluginSettings?.name ?? "");
+  const [values, setValues] = useState<Record<string, string>>(
+    () =>
+      pluginSettings?.values ??
+      Object.fromEntries((plugin?.settings ?? []).filter((s) => s.default).map((s) => [s.key, s.default!])),
+  );
+  const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [secret, setSecret] = useState("");
   const [followUpOnly, setFollowUpOnly] = useState(channel?.follow_up_only ?? false);
   const [chosen, setChosen] = useState<string | null>(null);
@@ -401,7 +450,9 @@ function ChannelForm({
   const kept = channel?.has_secret
     ? "Saved; leave empty to keep it"
     : undefined;
-  const scopes = channelScopes(useMe(), customers, sites, channel);
+  const scopes = channelScopes(useMe(), customers, sites, channel).filter(
+    (s) => !plugin || pluginAllows(plugin, s, sites),
+  );
   const wanted = chosen ?? (channel ? scopeValue(channel) : scopes[0]?.value);
   const scope = scopes.find((s) => s.value === wanted);
   const service = isChat(kind) ? CHAT[kind] : null;
@@ -417,8 +468,20 @@ function ChannelForm({
       site_id: scope.site_id,
       follow_up_only: followUpOnly,
     };
+    const typed = Object.entries(secrets).filter(([, v]) => v !== "");
     const body: NotificationChannelRequest =
-      kind === "email"
+      kind === "plugin"
+        ? {
+            kind,
+            settings: {
+              plugin: plugin?.name ?? pluginSettings?.plugin ?? "",
+              name,
+              values: Object.fromEntries(Object.entries(values).filter(([, v]) => v !== "")),
+            },
+            ...common,
+            secret: typed.length > 0 ? JSON.stringify(Object.fromEntries(typed)) : null,
+          }
+        : kind === "email"
         ? {
             kind,
             settings: {
@@ -432,7 +495,7 @@ function ChannelForm({
           }
         : isChat(kind)
           ? { kind, settings: { name }, ...common }
-          : { kind, settings: { url }, ...common };
+          : { kind: "webhook", settings: { url }, ...common };
     try {
       const saved = channel
         ? await api.updateNotificationChannel(channel.id, body)
@@ -462,9 +525,58 @@ function ChannelForm({
       aria-labelledby={`${id}-title`}
     >
       <h2 id={`${id}-title`} className={styles.sectionTitle}>
-        {channel ? "Edit" : "Add"} {kindName(kind)}
+        {channel ? "Edit" : "Add"} {kindName(kind, plugin)}
       </h2>
-      {kind === "email" ? (
+      {kind === "plugin" ? (
+        plugin ? (
+          <>
+            {plugin.description && <p className={styles.fieldNote}>{plugin.description}</p>}
+            {plugin.settings.map((setting) =>
+              field(
+                setting.label + (setting.required ? "" : " (optional)"),
+                setting.type === "secret" ? (
+                  <input
+                    className={fieldClass}
+                    type="password"
+                    autoComplete="new-password"
+                    required={setting.required && !channel?.has_secret}
+                    value={secrets[setting.key] ?? ""}
+                    onChange={(e) => setSecrets((s) => ({ ...s, [setting.key]: e.target.value }))}
+                    placeholder={kept}
+                  />
+                ) : (
+                  <input
+                    className={fieldClass}
+                    type={setting.type === "url" ? "url" : setting.type === "number" ? "number" : "text"}
+                    required={setting.required}
+                    spellCheck={false}
+                    value={values[setting.key] ?? ""}
+                    onChange={(e) => setValues((v) => ({ ...v, [setting.key]: e.target.value }))}
+                  />
+                ),
+                setting.type === "secret"
+                  ? `${setting.help ? `${setting.help} ` : ""}Stored on the server, never shown again.`
+                  : setting.help,
+              ),
+            )}
+            {field(
+              "Name (optional)",
+              <input
+                className={fieldClass}
+                autoComplete="off"
+                maxLength={80}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />,
+              "Tells this channel from others in the list here.",
+            )}
+          </>
+        ) : (
+          <p className={styles.formError} role="alert">
+            Its plugin is turned off or removed. A global administrator can turn it on under Plugins.
+          </p>
+        )
+      ) : kind === "email" ? (
         <>
           {field(
             "Send to",
