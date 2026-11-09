@@ -288,3 +288,24 @@ fn small_reads_refuse_links_and_large_files() {
     std::os::unix::fs::symlink(dir.path().join("big"), dir.path().join("link")).unwrap();
     assert!(read_small(&dir.path().join("link"), 100).is_err());
 }
+
+/// A FIFO has no writer: an open that waited for one would never return.
+#[test]
+fn small_reads_do_not_wait_on_a_fifo() {
+    use rustix::fs::{mknodat, FileType, Mode, CWD};
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join(REQUEST_FILE);
+    mknodat(CWD, &path, FileType::Fifo, Mode::from_raw_mode(0o600), 0).unwrap();
+    let (done, result) = std::sync::mpsc::channel();
+    let fifo = path.clone();
+    std::thread::spawn(move || done.send(read_small(&fifo, 10).map_err(|e| e.to_string())));
+    let read = result
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the read waits on the FIFO");
+    assert!(read.unwrap_err().contains("is not a file"));
+    // Nor on a directory or a socket of that name.
+    assert!(read_small(dir.path(), 10).is_err());
+    let socket = dir.path().join("socket");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    assert!(read_small(&socket, 10).is_err());
+}

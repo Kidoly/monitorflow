@@ -424,11 +424,15 @@ pub fn write_atomic(dir: &Path, name: &str, bytes: &[u8], mode: u32) -> io::Resu
 }
 
 /// The file at `path`, `None` when missing; never through a link, and
-/// refused past `limit` bytes.
+/// refused past `limit` bytes. Only a regular file is read: opening does
+/// not wait for the writer of a FIFO planted at `path`, which would stop
+/// the caller for good.
 pub fn read_small(path: &Path, limit: usize) -> io::Result<Option<Vec<u8>>> {
+    use rustix::fs::OFlags;
+    let flags = OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::NOCTTY;
     let file = match std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .custom_flags(flags.bits() as i32)
         .open(path)
     {
         Ok(file) => file,
