@@ -435,6 +435,7 @@ mod tests {
 
     fn config(revision: u64, specs: &[(&str, &str)]) -> SensorConfig {
         SensorConfig {
+            plugins: Vec::new(),
             revision,
             sensors: specs
                 .iter()

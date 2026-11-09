@@ -184,6 +184,7 @@ describe("AppShell", () => {
       "AI",
       "Server update",
       "Backups",
+      "Plugins",
       "Certificate authority",
       "License",
     ]);

@@ -78,6 +78,19 @@ pub struct Chat {
     pub host: String,
 }
 
+/// A channel of a plugin (ADR-0103): which one, and its settings. Its
+/// secret settings are in [`Channel::secret`], as a JSON object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginChannel {
+    pub plugin: String,
+    /// Tells channels of one plugin apart; may be empty.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub values: std::collections::BTreeMap<String, String>,
+}
+
 /// The destination of a channel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -87,6 +100,7 @@ pub enum Destination {
     Slack(Chat),
     Teams(Chat),
     Discord(Chat),
+    Plugin(PluginChannel),
 }
 
 impl Destination {
@@ -97,6 +111,7 @@ impl Destination {
             Self::Slack(_) => "slack",
             Self::Teams(_) => "teams",
             Self::Discord(_) => "discord",
+            Self::Plugin(_) => "plugin",
         }
     }
 
@@ -106,7 +121,7 @@ impl Destination {
             Self::Slack(chat) => Some((Service::Slack, chat)),
             Self::Teams(chat) => Some((Service::Teams, chat)),
             Self::Discord(chat) => Some((Service::Discord, chat)),
-            Self::Email(_) | Self::Webhook(_) => None,
+            Self::Email(_) | Self::Webhook(_) | Self::Plugin(_) => None,
         }
     }
 
@@ -124,6 +139,9 @@ impl Destination {
             (Self::Slack(a), Self::Slack(b))
             | (Self::Teams(a), Self::Teams(b))
             | (Self::Discord(a), Self::Discord(b)) => a.host == b.host,
+            // A plugin's settings may name where it sends: any change of
+            // them is another target.
+            (Self::Plugin(a), Self::Plugin(b)) => a.plugin == b.plugin && a.values == b.values,
             _ => false,
         }
     }
@@ -137,6 +155,7 @@ impl Destination {
             Self::Slack(chat) => normalize_chat(chat).map(Self::Slack),
             Self::Teams(chat) => normalize_chat(chat).map(Self::Teams),
             Self::Discord(chat) => normalize_chat(chat).map(Self::Discord),
+            Self::Plugin(plugin) => normalize_plugin(plugin).map(Self::Plugin),
         }
     }
 
@@ -279,6 +298,27 @@ impl Coverage {
             Self::Site(id) => site == Some(id),
         }
     }
+}
+
+fn normalize_plugin(plugin: PluginChannel) -> Result<PluginChannel, String> {
+    if !monitorflow_plugin::manifest::valid_name(&plugin.plugin) {
+        return Err("Choose a plugin.".into());
+    }
+    let name = plugin.name.trim().to_owned();
+    if name.chars().count() > MAX_CHAT_NAME {
+        return Err(format!("Keep the name under {MAX_CHAT_NAME} characters."));
+    }
+    let values = plugin
+        .values
+        .into_iter()
+        .map(|(key, value)| (key, value.trim().to_owned()))
+        .filter(|(_, value)| !value.is_empty())
+        .collect();
+    Ok(PluginChannel {
+        name,
+        values,
+        ..plugin
+    })
 }
 
 fn normalize_chat(chat: Chat) -> Result<Chat, String> {

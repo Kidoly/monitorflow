@@ -13,6 +13,7 @@ use monitorflow_agent::commands::{self, Dispatcher, DispatcherSettings, Handlers
 use monitorflow_agent::enroll::{self, EnrollError};
 use monitorflow_agent::init_config;
 use monitorflow_agent::os::HostInfo;
+use monitorflow_agent::plugins::PluginChecks;
 use monitorflow_agent::renew::{Renewal, RenewalSettings};
 #[cfg(unix)]
 use monitorflow_agent::self_update;
@@ -360,8 +361,16 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     tokio::spawn(renewal.run(stop.clone()));
     let (stream_end, sensors_end) = sensor_config::link();
     let uplink = Uplink::new(UploadSettings::default());
+    let following = updates.clone();
+    let plugin_checks = Arc::new(PluginChecks::new(
+        identity.peer_id(),
+        Arc::new(move || following.borrow().tls.ca_certs().to_vec()),
+        config.plugins.clone(),
+    ));
     let sensors = Sensors::new(
-        Arc::new(Builtin::from_config(&config.sensors, &config.data_dir)),
+        Arc::new(
+            Builtin::from_config(&config.sensors, &config.data_dir).with_plugins(plugin_checks),
+        ),
         ConfigFile::in_dir(&config.data_dir),
         uplink.clone(),
     );

@@ -447,6 +447,10 @@ struct Ctx {
     /// When set, every request with the cookie goes through `/api/v1`
     /// with this key of A's administrator instead (ADR-0101).
     key: Option<String>,
+    /// Check plugins used at B's site, at B and at A's site (ADR-0103),
+    /// made before the rows are compared: plugin changes bump every
+    /// site's revision.
+    plugins: [Uuid; 3],
 }
 
 impl Ctx {
@@ -540,6 +544,35 @@ impl Ctx {
         .fetch_one(&self.pool)
         .await
         .unwrap()
+    }
+
+    /// A check plugin used at `place`, as `{"customer_id"}` or
+    /// `{"site_id"}`, with a stand-in package: nothing runs it here.
+    async fn plugin(&self, place: Value) -> Uuid {
+        let name = format!("p{}", Uuid::new_v4().simple());
+        let manifest =
+            json!({ "name": name, "version": "1.0.0", "kind": "check", "title": "P", "abi": 1 });
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO plugins (name, kind, version, title, manifest, package, sha256, public_key, official)
+             VALUES ($1, 'check', '1.0.0', 'P', $2, '\\x00', $3, $3, false) RETURNING id",
+        )
+        .bind(&name)
+        .bind(manifest)
+        .bind(vec![0u8; 32])
+        .fetch_one(&self.pool)
+        .await
+        .unwrap();
+        let id_of = |key: &str| place[key].as_str().map(|v| v.parse::<Uuid>().unwrap());
+        sqlx::query(
+            "INSERT INTO plugin_places (plugin_id, customer_id, site_id) VALUES ($1, $2, $3)",
+        )
+        .bind(id)
+        .bind(id_of("customer_id"))
+        .bind(id_of("site_id"))
+        .execute(&self.pool)
+        .await
+        .unwrap();
+        id
     }
 
     /// The last query string VictoriaMetrics received.
@@ -1020,6 +1053,41 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
         }
         // Backups hold every customer's data: global administrators only.
+        // Plugins run on the central server or every agent they are given
+        // to: global administrators only (ADR-0103).
+        ("GET", "/api/plugins")
+        | ("POST", "/api/plugins")
+        | ("POST", "/api/plugins/inspect")
+        | ("DELETE", "/api/plugins/{id}")
+        | ("PUT", "/api/plugins/{id}/places")
+        | ("PUT", "/api/plugins/{id}/enabled")
+        | ("GET", "/api/plugins/publishers")
+        | ("POST", "/api/plugins/publishers")
+        | ("DELETE", "/api/plugins/publishers/{id}") => {
+            let id = ctx.plugins[0].to_string();
+            let uri = match (method, path) {
+                ("POST", "/api/plugins") => "/api/plugins?sha256=00".to_owned(),
+                _ => path.replace("{id}", &id),
+            };
+            let body = match path {
+                "/api/plugins/{id}/places" => Some(json!({ "places": [{}] })),
+                "/api/plugins/{id}/enabled" => Some(json!({ "enabled": false })),
+                "/api/plugins/publishers" => Some(json!({ "name": "x", "public_key": "x" })),
+                _ => None,
+            };
+            assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
+        }
+        // Where plugins may be used: only the places A sees.
+        ("GET", "/api/plugins/usable") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["plugins"].as_array().unwrap().len(), 1, "{body}");
+            assert_eq!(body["plugins"][0]["site_ids"], json!([a.site]), "{body}");
+            assert!(
+                !Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site),
+                "{body}"
+            );
+        }
         ("GET", "/api/backups") | ("POST", "/api/backups") | ("GET", "/api/backups/{name}") => {
             let uri = path.replace("{name}", "monitorflow-backup-20261029T030000Z-daily.tar.gz");
             assert_eq!(ctx.status(method, &uri, None).await, StatusCode::FORBIDDEN);
@@ -2090,8 +2158,14 @@ async fn keeps_customers_apart(pool: PgPool, with_key: bool) {
         b,
         mirror,
         key: None,
+        plugins: [Uuid::nil(); 3],
     };
     ctx.cookie = login(&ctx.app(), "admin-a").await.1;
+    ctx.plugins = [
+        ctx.plugin(json!({ "site_id": b.site })).await,
+        ctx.plugin(json!({ "customer_id": b.customer })).await,
+        ctx.plugin(json!({ "site_id": a.site })).await,
+    ];
     let routes = source_routes();
     if with_key {
         let body =

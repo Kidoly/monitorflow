@@ -509,6 +509,28 @@ pub struct AgentConfig {
     pub sensors: AgentSensorsConfig,
     pub packages: AgentPackagesConfig,
     pub commands: AgentCommandsConfig,
+    pub plugins: AgentPluginsConfig,
+}
+
+/// Check plugins on this host (ADR-0103). Only the host's administrator
+/// sets these.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentPluginsConfig {
+    /// Runs the check plugins the server grants, in their sandbox. On
+    /// unless turned off here.
+    pub checks: bool,
+    /// Runs only plugins signed with MonitorFlow's catalogue key.
+    pub official_only: bool,
+}
+
+impl Default for AgentPluginsConfig {
+    fn default() -> Self {
+        Self {
+            checks: true,
+            official_only: false,
+        }
+    }
 }
 
 /// Which optional command kinds the server may send this host. Only the
@@ -610,6 +632,7 @@ impl Default for AgentConfig {
             sensors: AgentSensorsConfig::default(),
             packages: AgentPackagesConfig::default(),
             commands: AgentCommandsConfig::default(),
+            plugins: AgentPluginsConfig::default(),
         }
     }
 }

@@ -94,6 +94,8 @@ export const AI_SETTINGS_PATH = "/admin/ai/";
 export const SERVER_UPDATE_PATH = "/admin/server-update/";
 /** Backups of the server (ADR-0058). */
 export const BACKUPS_PATH = "/admin/backups/";
+/** Plugins: installing them and trusting their publishers (ADR-0103). */
+export const PLUGINS_PATH = "/admin/plugins/";
 /** Changing the certificate authority of the server (ADR-0088). */
 export const CERTIFICATE_AUTHORITY_PATH = "/admin/certificate-authority/";
 /** The Enterprise license key (ADR-0100). */

@@ -10,6 +10,7 @@ import {
   checkTypesFor,
   describeThreshold,
   formOf,
+  pluginCheckTypes,
   shapeFor,
   thresholdRequest,
 } from "./alerts";
@@ -177,5 +178,40 @@ describe("adding a check", () => {
     expect(checkTitle(sensor("port", "port_5432", { port: "5432", host: "db.lan" }))).toBe("Port 5432 on db.lan");
     expect(checkTitle(sensor("systemd", "service_nginx", { units: "nginx" }))).toBe("Service nginx");
     expect(checkTitle(sensor("log", "log_syslog", { path: "/var/log/syslog", pattern: "error" }))).toBe("“error” in /var/log/syslog");
+  });
+});
+
+describe("pluginCheckTypes", () => {
+  const web = {
+    name: "http-json",
+    kind: "check" as const,
+    version: "1.0.0",
+    title: "Web address",
+    description: "",
+    capabilities: [],
+    settings: [
+      { key: "url", label: "Address", type: "url" as const, required: true },
+      { key: "field", label: "JSON field", type: "text" as const },
+    ],
+    everywhere: false,
+    customer_ids: [],
+    site_ids: ["s1"],
+  };
+
+  it("offers check plugins turned on for the site, without an alert", () => {
+    expect(pluginCheckTypes([web], "s2", null)).toEqual([]);
+    expect(pluginCheckTypes([{ ...web, kind: "channel" }], "s1", null)).toEqual([]);
+    const [type] = pluginCheckTypes([web], "s1", null);
+    expect(type!.label).toBe("Web address");
+    expect(checkErrors(type!, { url: "shop.example" })).toEqual({ url: "Enter an address starting with http:// or https://." });
+    expect(checkErrors(type!, { url: "https://shop.example/health" })).toEqual({});
+    const { sensor, threshold } = checkRequests(type!, { url: "https://shop.example/health", field: "" }, 60_000);
+    expect(sensor).toEqual({
+      kind: "plugin",
+      name: "http_json_health",
+      interval_ms: 60_000,
+      params: { url: "https://shop.example/health", plugin: "http-json" },
+    });
+    expect(threshold).toBeNull();
   });
 });

@@ -40,6 +40,7 @@ Shared code:
 | --- | --- |
 | `crates/common` | Generated Protobuf/gRPC code, TLS and certificate helpers, configuration loading, shared types and error types |
 | `crates/sensors` | Sensor trait and implementations. No transport code (gRPC, TLS, HTTP), so it can be reused by a future Windows agent; probes like a TCP connect are allowed (ADR-0021) |
+| `crates/plugin`, `crates/plugin-sdk` | Plugin manifests, signed packages and the WebAssembly runtime; the Rust library plugins are written with (ADR-0103) |
 
 Relays can be chained. Each relay keeps a store-and-forward buffer on disk: if its uplink drops, data is kept and sent once the link returns, in order.
 
@@ -300,6 +301,7 @@ Recorded in short form here; rationale in `docs/adr/`.
 | Peer identity | Role and ID in a `monitorflow://<role>/<id>` URI SAN; relays speak only for agents of their site |
 | Web API transport | Plain HTTP on loopback behind a TLS reverse proxy; server-side sessions (ADR-0006) |
 | Sensor scheduling | One task per sensor, jittered first tick, timeout within the interval, missed ticks skipped, full channel drops new samples (ADR-0012) |
+| Plugins | WebAssembly modules run in wasmi, an interpreter, with no WASI: six `mf` imports, HTTP only to the hosts the manifest lists (public addresses only from the central server), fuel, memory and time limits, a fresh instance per run. Checks run on agents, notification channels on the server; integration hooks later. Signed with Ed25519 by the catalogue key (`deploy/plugin-keys.pem`) or a publisher key a global administrator trusts; installed, enabled per place, updated and removed by global administrators from the web interface after seeing their capabilities in words; audited. Agents also check a grant signed with the command key (ADR-0103) |
 | Windows packaging | WiX v5 MSI: per-machine, service under its virtual account with restart actions, protected ACLs by SID on `%ProgramData%\MonitorFlow`; `agent.toml` written from `UPSTREAM_URL` and a hidden `ENROLLMENT_TOKEN` by `monitorflow-agent init-config` only when absent; data kept on upgrade and uninstall unless `REMOVE_DATA=1`; an Event Log source for the service's fatal error; `AgentHelpers` component group for ADR-0049 (ADR-0050) |
 | Windows sensors | Same kinds where the measure is the same; `windows_service` and `eventlog` as Windows kinds; agents refuse other platforms' kinds (ADR-0048) |
 | System logs | Journal lines of priority warning and above read with `journalctl --output=json --follow`, cursor saved under `data_dir` and resumed within a day; 1,000 lines then 10 a second per agent by the lines' timestamps, reading paused while the queue is full; `LogBatch` envelopes buffered by relays; server limit of 500 a second per stream, ADR-0040 redaction, `peer`/`site` stream fields from the stream's identity; dropped counts written as lines; read through `GET /api/servers/{id}/logs` with the stream filter and `extra_stream_filters`; Windows event logs later (ADR-0091) |
