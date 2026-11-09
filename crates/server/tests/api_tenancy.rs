@@ -459,7 +459,12 @@ impl Ctx {
         let mut state = ApiState::new(
             self.pool.clone(),
             Registry::default(),
-            ApiSettings::default(),
+            // A Proxmox cluster without an owner, serving A and B alike.
+            ApiSettings {
+                proxmox_enabled: true,
+                proxmox_clusters: vec!["pve".into()],
+                ..ApiSettings::default()
+            },
         )
         .with_metrics(vm.clone())
         .with_logs(vm)
@@ -979,10 +984,62 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 .await
                 .unwrap();
             assert_eq!(mapped, 0);
+            // On the cluster both customers' servers run on, A's
+            // administrator cannot map A's server to B's guest, nor learn
+            // from the answer that the guest is mapped (ADR-0093).
+            if method == "PUT" {
+                let uri = path.replace("{id}", &a.server.to_string());
+                sqlx::query(
+                    "INSERT INTO server_proxmox_vms (server_id, cluster, node, vmid)
+                     VALUES ($1, 'pve', 'pve1', 101)",
+                )
+                .bind(b.server)
+                .execute(&ctx.pool)
+                .await
+                .unwrap();
+                let guest = |vmid: u32| json!({ "cluster": "pve", "node": "pve1", "vmid": vmid });
+                let taken = ctx.call(method, &uri, Some(guest(101))).await;
+                let free = ctx.call(method, &uri, Some(guest(102))).await;
+                assert_eq!(taken.0, StatusCode::BAD_REQUEST, "{}", taken.1);
+                assert_eq!(taken, free);
+                let mapped: Vec<Uuid> =
+                    sqlx::query_scalar("DELETE FROM server_proxmox_vms RETURNING server_id")
+                        .fetch_all(&ctx.pool)
+                        .await
+                        .unwrap();
+                assert_eq!(mapped, [b.server]);
+            }
         }
         ("POST", "/api/tokens") => {
             let body = json!({ "role": "agent", "peer_id": "intruder", "site_id": b.site });
             assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            // An ID removed from B's site cannot enroll in A's, and the
+            // refusal does not name B's site (ADR-0062).
+            sqlx::query(
+                "INSERT INTO servers (peer_id, site_id, hostname, os_family, revoked_at)
+                 VALUES ('gone-from-b', $1, 'gone', 'debian', now())",
+            )
+            .bind(b.site)
+            .execute(&ctx.pool)
+            .await
+            .unwrap();
+            let body = json!({ "role": "agent", "peer_id": "gone-from-b", "site_id": a.site });
+            let (status, body) = ctx.call(method, path, Some(body)).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{body}");
+            let b_site: String = sqlx::query_scalar("SELECT name FROM sites WHERE id = $1")
+                .bind(b.site)
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+            let text = body["error"].as_str().unwrap();
+            assert!(
+                text.contains("removed from another site") && !text.contains(&b_site),
+                "{text}"
+            );
+            sqlx::query("DELETE FROM servers WHERE peer_id = 'gone-from-b'")
+                .execute(&ctx.pool)
+                .await
+                .unwrap();
         }
         ("GET", "/api/install-keys") => {
             let (status, body) = ctx.call(method, path, None).await;
@@ -1126,8 +1183,32 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
         }
         // Server-wide, and no customer's data: every user reads whether AI
         // is on, for Approvals; only global administrators change it.
+        // The address of a local model is in the operator's network, for
+        // global administrators only (ADR-0096).
         ("GET", "/api/settings/ai") => {
-            assert_eq!(ctx.status(method, path, None).await, StatusCode::OK);
+            sqlx::query(
+                "INSERT INTO server_settings (singleton, ai_provider, ai_base_url, ai_model)
+                 VALUES (true, 'openai_compatible', 'http://ollama.operator.lan:11434/v1', 'qwen3')
+                 ON CONFLICT (singleton) DO UPDATE
+                 SET ai_provider = excluded.ai_provider, ai_base_url = excluded.ai_base_url,
+                     ai_model = excluded.ai_model",
+            )
+            .execute(&ctx.pool)
+            .await
+            .unwrap();
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["provider"], "openai_compatible");
+            assert_eq!(body["model"], "qwen3");
+            assert_eq!(body["base_url"], Value::Null, "{body}");
+            assert!(!body.to_string().contains("operator.lan"), "{body}");
+            sqlx::query(
+                "UPDATE server_settings
+                 SET ai_provider = 'anthropic', ai_base_url = NULL, ai_model = NULL",
+            )
+            .execute(&ctx.pool)
+            .await
+            .unwrap();
         }
         ("PUT", "/api/settings/ai")
         | ("DELETE", "/api/settings/ai")

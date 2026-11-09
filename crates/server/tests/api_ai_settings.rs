@@ -466,4 +466,55 @@ db_tests! {
         assert_eq!(stored, None);
         assert!(!serde_json::to_string(&audit_details(&pool).await).unwrap().contains(OPENAI_KEY));
     }
+    #[sqlx::test]
+    async fn a_local_models_key_stays_with_its_address(pool: PgPool) {
+        let (mock, settings, local) = mock_apis().await;
+        let cookie = admin(&pool).await;
+        let post = |uri: &'static str, body: Value| {
+            let (pool, cookie, settings) = (pool.clone(), cookie.clone(), settings.clone());
+            async move { call(&pool, settings, "POST", uri, Some(&cookie), Some(body)).await.1 }
+        };
+        let saved = json!({ "provider": "openai_compatible", "base_url": local, "api_key": OPENAI_KEY, "model": "qwen3:8b", "enabled": true });
+        let (status, view, _) = call(&pool, settings.clone(), "PUT", AI, Some(&cookie), Some(saved)).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        let requests = || mock.seen.lock().unwrap().len();
+        let before = requests();
+
+        // The same server under another name: the stored key is not sent
+        // there by Test, the model list or a save, and nothing is asked.
+        let elsewhere = local.replace("127.0.0.1", "localhost");
+        assert_ne!(elsewhere, local);
+        let moved = json!({ "provider": "openai_compatible", "base_url": elsewhere });
+        let answer = post(TEST, moved.clone()).await;
+        assert_eq!(answer["ok"], false);
+        assert!(answer["error"].as_str().unwrap().starts_with("Enter the API key again"), "{answer}");
+        let list = post(MODELS, moved).await;
+        assert!(list["error"].as_str().unwrap().starts_with("Enter the API key again"), "{list}");
+        let body = json!({ "provider": "openai_compatible", "base_url": elsewhere, "model": "qwen3:8b", "enabled": true });
+        let (status, error, _) = call(&pool, settings.clone(), "PUT", AI, Some(&cookie), Some(body.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(error.to_string().contains("enter the API key again"), "{error}");
+        assert_eq!(requests(), before, "nothing was sent to the new address");
+        let stored: (Option<String>, Option<String>) = sqlx::query_as("SELECT ai_api_key, ai_base_url FROM server_settings")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(stored, (Some(OPENAI_KEY.into()), Some(local.clone())));
+
+        // The stored address keeps its key, a trailing slash or not.
+        let answer = post(TEST, json!({ "base_url": format!("{local}/") })).await;
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(mock.seen.lock().unwrap().last().unwrap().0, OPENAI_KEY);
+
+        // A key pasted for the new address goes there, and is audited.
+        let mut pasted = body;
+        pasted["api_key"] = json!("sk-elsewhere");
+        let (status, error, _) = call(&pool, settings.clone(), "PUT", AI, Some(&cookie), Some(pasted.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "the mock refuses this key: {error}");
+        assert_eq!(mock.seen.lock().unwrap().last().unwrap().0, "sk-elsewhere");
+        pasted["enabled"] = json!(false);
+        let (status, view, _) = call(&pool, settings.clone(), "PUT", AI, Some(&cookie), Some(pasted)).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        let last = audit_details(&pool).await.pop().unwrap();
+        assert_eq!(last["new"]["base_url"], json!(elsewhere));
+        assert_eq!(last["new"]["key_changed"], true);
+    }
 }

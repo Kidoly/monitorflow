@@ -55,4 +55,12 @@ describe("seriesCsv", () => {
       'time,/var,"a ""b"", c"\n2026-10-19T12:00:00.000Z,0.5,\n2026-10-19T12:01:00.000Z,,2\n',
     );
   });
+
+  it("keeps a spreadsheet from running a label as a formula", () => {
+    const labels = ['=HYPERLINK("http://evil.example","x")', "+1", "-2+3", "@SUM(A1)", "\tcmd", "\r=1", "eth0", "a=b"];
+    const csv = seriesCsv(labels.map((label) => ({ label, points: [[END, 1]] })));
+    expect(csv.split("\n2026")[0]).toBe(
+      `time,"'=HYPERLINK(""http://evil.example"",""x"")",'+1,'-2+3,'@SUM(A1),'\tcmd,"'\r=1",eth0,a=b`,
+    );
+  });
 });

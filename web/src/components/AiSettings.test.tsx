@@ -235,6 +235,25 @@ describe("AiSettingsPage", () => {
     });
   });
 
+  it("asks for the key again when a local model's address changes", async () => {
+    const user = userEvent.setup();
+    const LOCAL = "http://ollama.lan:11434/v1";
+    stubFetch({
+      [`GET ${AI}`]: ok(settings({ provider: "openai_compatible", has_key: true, base_url: LOCAL, model: "qwen3:8b" })),
+      [`POST ${AI}/models`]: { status: 200, body: { models: ["qwen3:8b"], error: null } },
+    });
+    page();
+    const key = await screen.findByLabelText(/only if the server asks/);
+    expect(key).toHaveAttribute("placeholder", "Saved; leave empty to keep it");
+    const addressField = screen.getByLabelText(/^Address/);
+    // A trailing slash is the same address.
+    await user.type(addressField, "/");
+    expect(key).toHaveAttribute("placeholder", "Saved; leave empty to keep it");
+    await user.clear(addressField);
+    await user.type(addressField, "https://elsewhere.example/v1");
+    expect(key).toHaveAttribute("placeholder", "Enter it again for the new address");
+  });
+
   it("asks OpenAI for a key, and does not reuse another provider's", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch({

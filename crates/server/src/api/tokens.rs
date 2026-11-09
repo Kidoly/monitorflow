@@ -257,7 +257,7 @@ pub async fn create(
         .enrollment
         .as_deref()
         .ok_or_else(|| ApiError::Internal("enrollment is not configured".into()))?;
-    refuse_removed_elsewhere(&state, &request, site_id).await?;
+    refuse_removed_elsewhere(&state, &user, &request, site_id).await?;
     // Before the token exists, so a failure here does not lose one.
     let install = super::settings::agent_install(&state).await?;
     let address = super::public_address::current(&state.pool, settings).await?;
@@ -296,6 +296,7 @@ pub async fn create(
 /// could not bring it back here (ADR-0062), so say it before the install.
 async fn refuse_removed_elsewhere(
     state: &ApiState,
+    user: &CurrentUser,
     request: &CreateRequest,
     site_id: Uuid,
 ) -> Result<(), ApiError> {
@@ -305,8 +306,8 @@ async fn refuse_removed_elsewhere(
         _ => "servers",
     };
     // SQL-safe: `table` is one of two constants, never input.
-    let elsewhere: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT si.name FROM {table} p JOIN sites si ON si.id = p.site_id
+    let elsewhere: Option<(Uuid, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT si.id, si.name FROM {table} p JOIN sites si ON si.id = p.site_id
          WHERE p.peer_id = $1 AND p.revoked_at IS NOT NULL AND p.site_id <> $2"
     )))
     .bind(&request.peer_id)
@@ -314,11 +315,22 @@ async fn refuse_removed_elsewhere(
     .fetch_optional(&state.pool)
     .await?;
     match elsewhere {
-        Some(site) => Err(ApiError::Conflict(format!(
-            "`{}` was removed from the site {site}: enroll it there, or give it another ID",
-            request.peer_id
+        Some((id, name)) => Err(ApiError::Conflict(removed_elsewhere(
+            &request.peer_id,
+            user.readable_sites().contains(id).then_some(name.as_str()),
         ))),
         None => Ok(()),
+    }
+}
+
+/// The site is named only to someone who reads it: it may be another
+/// customer's.
+fn removed_elsewhere(peer_id: &str, site: Option<&str>) -> String {
+    match site {
+        Some(site) => format!(
+            "`{peer_id}` was removed from the site {site}: enroll it there, or give it another ID"
+        ),
+        None => format!("`{peer_id}` was removed from another site: give it another ID"),
     }
 }
 
@@ -411,6 +423,17 @@ pub async fn delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_site_the_user_does_not_read_is_not_named() {
+        let named = removed_elsewhere("web-1", Some("paris"));
+        assert!(named.contains("removed from the site paris"), "{named}");
+        let unnamed = removed_elsewhere("web-1", None);
+        assert_eq!(
+            unnamed,
+            "`web-1` was removed from another site: give it another ID"
+        );
+    }
 
     #[test]
     fn requests_and_states_parse() {

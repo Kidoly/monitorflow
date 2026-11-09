@@ -57,3 +57,8 @@ Test and Enable work as before. The key is stored and never shown again, as befo
 - The private-address check resolves names before each request and reqwest resolves them again; an attacker who controls the DNS of a name the administrator chose could still answer differently in between. HTTPS has no such gap.
 - Switching providers means entering the new provider's key; switching back means entering the old one again.
 - Gemini and others with their own APIs are reached through their OpenAI-compatible endpoints or LiteLLM; a native adapter is one more file when someone needs it.
+
+## Amendment: the address and its key (2026-11-09)
+
+- `GET /api/settings/ai` returns `base_url` to global administrators only, null to everyone else: every user reads whether AI is on, and the address of a local model is often inside the operator's network.
+- The stored key of an `openai_compatible` server belongs to its stored address as well as to its provider. Saving, testing or listing models with another address and no pasted key is refused with "enter the API key again: the stored one was entered for another address". Before, the key followed any address typed in the form, also through Test and the model list, which save and audit nothing. To move to a server without a key, remove the key first. Anthropic and OpenAI have one address each, so nothing changes for them.

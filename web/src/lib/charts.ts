@@ -48,11 +48,19 @@ export function metricsError(error: unknown): string {
   return describeError(error);
 }
 
-/** The points of a chart as CSV, one column per series, for "Download CSV". */
+/**
+ * The points of a chart as CSV, one column per series, for "Download CSV".
+ * Labels come from the monitored machines: one a spreadsheet would run as a
+ * formula (starting with `=`, `+`, `-`, `@`, tab or carriage return) gets a
+ * leading apostrophe, which makes it text.
+ */
 export function seriesCsv(series: { label: string; points: [number, number | null][] }[]): string {
   const times = [...new Set(series.flatMap((s) => s.points.map((p) => p[0])))].sort((a, b) => a - b);
   const byTime = series.map((s) => new Map(s.points));
-  const quote = (text: string) => (/[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text);
+  const quote = (text: string) => {
+    const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+    return /[",\n\r]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
+  };
   const rows = times.map((t) =>
     [new Date(t * 1000).toISOString(), ...byTime.map((m) => String(m.get(t) ?? ""))].join(","),
   );
