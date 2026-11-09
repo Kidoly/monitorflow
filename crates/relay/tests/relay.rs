@@ -66,7 +66,7 @@ db_tests! {
         let Some(Payload::SensorConfig(config)) = first.payload else { panic!("{first:?}") };
         let kinds: Vec<_> = config.sensors.iter().map(|s| s.kind.as_str()).collect();
         assert!(kinds.contains(&"cpu"), "{kinds:?}");
-        let info = upstream.registry.get("web-01").unwrap();
+        let info = upstream.registry.get(PeerRole::Agent, "web-01").unwrap();
         assert_eq!(info.via_relay.as_deref(), Some("paris-1"));
         let via: Option<String> = sqlx::query_scalar(
             "SELECT r.peer_id FROM servers s JOIN relays r ON r.id = s.relay_id WHERE s.peer_id = 'web-01'",
@@ -89,12 +89,12 @@ db_tests! {
         let status = open(&relay.url, &web02, hello("web-02")).await.err().expect("lyon agent");
         assert_eq!(status.code(), Code::PermissionDenied, "{status}");
         assert!(status.message().contains("may not speak for agent web-02"), "{status}");
-        assert!(upstream.registry.get("web-02").is_none());
+        assert!(upstream.registry.get(PeerRole::Agent, "web-02").is_none());
 
         // The agent goes away: the server sees it offline.
         drop(agent);
-        upstream.wait_until("web-01 offline", |r| r.get("web-01").is_none()).await;
-        assert!(upstream.registry.get("paris-1").is_some());
+        upstream.wait_until("web-01 offline", |r| r.get(PeerRole::Agent, "web-01").is_none()).await;
+        assert!(upstream.registry.get(PeerRole::Relay, "paris-1").is_some());
     }
 
     #[sqlx::test(migrations = "../server/migrations")]
@@ -127,7 +127,7 @@ db_tests! {
             captured.values("web-01") == [1.0, 2.0, 3.0, 4.0, 5.0]
         }).await;
         assert!(captured.has(&[("peer", "web-01"), ("site", "paris")]));
-        let info = upstream.registry.get("web-01").unwrap();
+        let info = upstream.registry.get(PeerRole::Agent, "web-01").unwrap();
         assert_eq!(info.via_relay.as_deref(), Some("paris-1"));
         support::wait_for("buffer emptied", || async {
             !relay.buffer.has_pending("web-01").await.unwrap()

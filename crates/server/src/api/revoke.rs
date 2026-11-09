@@ -151,7 +151,7 @@ async fn revoke(
             .map_err(|e| ApiError::Internal(e.to_string()))?;
     }
     tx.commit().await?;
-    let closed_streams = state.registry.close(&peer_id, CloseReason::Revoked);
+    let closed_streams = state.registry.close(role, &peer_id, CloseReason::Revoked);
     tracing::info!(user = %user.id, %kind, %peer_id, ?reason, closed_streams, "revoked a peer");
     Ok(Json(Revoked {
         revoked_at,

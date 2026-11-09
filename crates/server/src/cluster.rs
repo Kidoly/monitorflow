@@ -379,6 +379,7 @@ impl Cluster {
                         id,
                         role: role_of(&role)?,
                         via_relay,
+                        relay_path: Vec::new(),
                         connection: 0,
                         cert_serial: None,
                         agent_version,
@@ -403,13 +404,13 @@ impl Cluster {
         let Some(crl) = &self.inner.links.crl else {
             return Ok(());
         };
-        let rows: Vec<(Vec<u8>, String, Option<String>)> = sqlx::query_as(
-            "SELECT serial, peer_id, revocation_reason FROM certificates
+        let rows: Vec<(Vec<u8>, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT serial, peer_role, peer_id, revocation_reason FROM certificates
              WHERE revoked_at IS NOT NULL AND not_after > now()",
         )
         .fetch_all(&self.inner.pool)
         .await?;
-        for (serial, peer_id, reason) in rows {
+        for (serial, role, peer_id, reason) in rows {
             let serial = Serial::from_bytes(&serial);
             if crl.is_revoked(&serial) {
                 continue;
@@ -419,7 +420,13 @@ impl Cluster {
                 .unwrap_or(RevocationReason::Unspecified);
             match crl.revoke(serial.clone(), reason).await {
                 Ok(()) => {
-                    let closed = self.inner.registry.close(&peer_id, CloseReason::Revoked);
+                    // The streams of that role only: an agent and a relay may
+                    // share an ID (ADR-0105).
+                    let closed = role_of(&role).map_or(0, |role| {
+                        self.inner
+                            .registry
+                            .close(role, &peer_id, CloseReason::Revoked)
+                    });
                     tracing::info!(%serial, %peer_id, closed, "revoked by another instance");
                 }
                 Err(error) => {
@@ -523,13 +530,13 @@ impl Cluster {
     }
 
     fn wake(&self, channel: &str, peer_id: &str) {
-        if self.inner.registry.get(peer_id).is_none() {
-            return;
-        }
+        let here = |role| self.inner.registry.get(role, peer_id).is_some();
         let links = &self.inner.links;
         match channel {
-            COMMANDS_CHANNEL => links.commands.iter().for_each(|c| c.dispatch(peer_id)),
-            RELAY_COMMANDS_CHANNEL => links
+            COMMANDS_CHANNEL if here(PeerRole::Agent) => {
+                links.commands.iter().for_each(|c| c.dispatch(peer_id))
+            }
+            RELAY_COMMANDS_CHANNEL if here(PeerRole::Relay) => links
                 .relay_commands
                 .iter()
                 .for_each(|c| c.dispatch(peer_id)),

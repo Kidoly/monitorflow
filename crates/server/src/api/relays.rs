@@ -249,9 +249,10 @@ pub async fn detail(
     let servers = attached
         .into_iter()
         .map(|(id, peer_id, hostname)| {
-            let live = state.registry.live(&peer_id).is_some_and(|peer| {
-                peer.role == PeerRole::Agent && peer.via_relay.as_deref() == Some(&row.peer_id)
-            });
+            let live = state
+                .registry
+                .live(PeerRole::Agent, &peer_id)
+                .is_some_and(|peer| peer.via_relay.as_deref() == Some(&row.peer_id));
             AttachedServer {
                 id,
                 peer_id,
@@ -292,10 +293,7 @@ impl RelayView {
         row: Row,
         last_update: Option<RelayCommand>,
     ) -> Self {
-        let live = state
-            .registry
-            .live(&row.peer_id)
-            .filter(|peer| peer.role == PeerRole::Relay);
+        let live = state.registry.live(PeerRole::Relay, &row.peer_id);
         Self {
             status: if live.is_some() {
                 Status::Online

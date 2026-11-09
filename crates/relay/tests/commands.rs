@@ -9,6 +9,7 @@ use std::time::Duration;
 use monitorflow_common::command;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{CommandResult, CommandStatus};
+use monitorflow_common::tls::PeerRole;
 use monitorflow_server::commands::{CommandStore, Commands, DispatcherSettings, NewCommand, State};
 use monitorflow_server::grpc::{AgentStreamService, AllowAllRelayedAgents};
 use rustls::pki_types::CertificateDer;
@@ -64,7 +65,7 @@ db_tests! {
         assert_eq!((command.command_id.as_str(), command.agent_id.as_str()), (id.to_string().as_str(), "web-01"));
         let ca = CertificateDer::from(pem::parse(pki.ca.ca_cert_pem()).unwrap().into_contents());
         assert_eq!(command::verify(&command, &[ca]), Ok(()));
-        assert_eq!(upstream.registry.get("web-01").unwrap().via_relay.as_deref(), Some("paris-1"));
+        assert_eq!(upstream.registry.get(PeerRole::Agent, "web-01").unwrap().via_relay.as_deref(), Some("paris-1"));
 
         let result = CommandResult {
             command_id: command.command_id.clone(),

@@ -855,11 +855,11 @@ db_tests! {
             .unwrap()
             .unwrap();
         let deadline = tokio::time::Instant::now() + TIMEOUT;
-        while server.registry.get("web-01").is_none() {
+        while server.registry.get(PeerRole::Agent, "web-01").is_none() {
             assert!(tokio::time::Instant::now() < deadline, "web-01 never registered");
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        assert_eq!(server.registry.get("web-01").unwrap().role, PeerRole::Agent);
+        assert_eq!(server.registry.get(PeerRole::Agent, "web-01").unwrap().role, PeerRole::Agent);
 
         // The Hello created the inventory row: the API lists it, online.
         let servers = list_servers(&pool, server.registry.clone()).await;

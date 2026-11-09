@@ -70,7 +70,9 @@ async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
 }
 
 fn connection(registry: &Registry, id: &str) -> Option<u64> {
-    registry.get(id).map(|peer| peer.connection)
+    registry
+        .get(PeerRole::Agent, id)
+        .map(|peer| peer.connection)
 }
 
 struct Running {
@@ -122,8 +124,11 @@ async fn hello_then_heartbeats_then_clean_shutdown() {
     let agent = Running::start(settings(&s.config), identity);
 
     let registry = &s.upstream.registry;
-    eventually("registration", || registry.get("web-01").is_some()).await;
-    let peer = registry.get("web-01").unwrap();
+    eventually("registration", || {
+        registry.get(PeerRole::Agent, "web-01").is_some()
+    })
+    .await;
+    let peer = registry.get(PeerRole::Agent, "web-01").unwrap();
     assert_eq!(
         (peer.role, peer.hostname.as_str()),
         (PeerRole::Agent, "web-01.example")
@@ -131,14 +136,25 @@ async fn hello_then_heartbeats_then_clean_shutdown() {
     assert_eq!(peer.agent_version, env!("CARGO_PKG_VERSION"));
     let first = peer.last_sequence;
     eventually("heartbeats", || {
-        registry.get("web-01").unwrap().last_sequence >= first + 3
+        registry
+            .get(PeerRole::Agent, "web-01")
+            .unwrap()
+            .last_sequence
+            >= first + 3
     })
     .await;
-    assert_eq!(registry.get("web-01").unwrap().counters.stale_sequences, 0);
+    assert_eq!(
+        registry
+            .get(PeerRole::Agent, "web-01")
+            .unwrap()
+            .counters
+            .stale_sequences,
+        0
+    );
 
     agent.stop().await;
     eventually("removal after shutdown", || {
-        registry.get("web-01").is_none()
+        registry.get(PeerRole::Agent, "web-01").is_none()
     })
     .await;
 }
@@ -201,7 +217,10 @@ async fn reports_again_when_ai_commands_change() {
     let (trigger, stop) = shutdown::channel();
     let task = tokio::spawn(async move { agent.run(stop).await.unwrap() });
     let registry = &s.upstream.registry;
-    eventually("registration", || registry.get("web-01").is_some()).await;
+    eventually("registration", || {
+        registry.get(PeerRole::Agent, "web-01").is_some()
+    })
+    .await;
     let first = connection(registry, "web-01");
 
     assert!(switch.set(true).await.unwrap());
@@ -226,15 +245,18 @@ async fn reconnects_after_being_replaced() {
     let (identity, _) = s.pki.agent_identity(&s.config, "web-01");
     let agent = Running::start(settings(&s.config), identity);
     let registry = &s.upstream.registry;
-    eventually("registration", || registry.get("web-01").is_some()).await;
+    eventually("registration", || {
+        registry.get(PeerRole::Agent, "web-01").is_some()
+    })
+    .await;
 
     // An intruder with the same ID makes the server abort the agent's stream.
-    let mut intruder = registry.get("web-01").unwrap();
+    let mut intruder = registry.get(PeerRole::Agent, "web-01").unwrap();
     intruder.hostname = "intruder".into();
     let (tx, _rx) = mpsc::channel(1);
     let taken = registry.register(intruder, tx).unwrap().connection;
     eventually("reconnect", || connection(registry, "web-01") > Some(taken)).await;
-    let peer = registry.get("web-01").unwrap();
+    let peer = registry.get(PeerRole::Agent, "web-01").unwrap();
     assert_eq!(peer.hostname, "web-01.example");
     // Sequences keep growing across connections.
     assert!(peer.last_sequence > 1, "{peer:?}");
@@ -255,7 +277,10 @@ async fn reconnects_after_a_heartbeat_timeout() {
     };
     let agent = Running::start(slow, identity);
     let registry = &s.upstream.registry;
-    eventually("registration", || registry.get("web-01").is_some()).await;
+    eventually("registration", || {
+        registry.get(PeerRole::Agent, "web-01").is_some()
+    })
+    .await;
     let first = connection(registry, "web-01").unwrap();
     eventually("reconnect", || connection(registry, "web-01") > Some(first)).await;
     agent.stop().await;
@@ -284,7 +309,7 @@ async fn revoked_certificate_is_reported_as_such() {
         .unwrap();
     let mut agent = Agent::new(settings(&s.config), identity, host());
     assert_eq!(session(&mut agent).await, Err(Failure::Revoked));
-    assert!(s.upstream.registry.get("web-01").is_none());
+    assert!(s.upstream.registry.get(PeerRole::Agent, "web-01").is_none());
 }
 
 #[tokio::test]
@@ -332,8 +357,8 @@ db_tests! {
         assert_eq!(identity.peer_id(), "web-01");
         let agent = Running::start(settings(&config), identity);
         let registry = &upstream.registry;
-        eventually("registration", || registry.get("web-01").is_some()).await;
-        assert_eq!(registry.get("web-01").unwrap().role, PeerRole::Agent);
+        eventually("registration", || registry.get(PeerRole::Agent, "web-01").is_some()).await;
+        assert_eq!(registry.get(PeerRole::Agent, "web-01").unwrap().role, PeerRole::Agent);
         agent.stop().await;
     }
 }

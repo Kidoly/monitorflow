@@ -286,12 +286,9 @@ impl Sender {
     }
 
     async fn dispatch(&mut self, peer_id: &str) {
-        let Some(peer) = self.registry.get(peer_id) else {
+        let Some(peer) = self.registry.get(PeerRole::Relay, peer_id) else {
             return;
         };
-        if peer.role != PeerRole::Relay {
-            return;
-        }
         let row: Option<Row> = match sqlx::query_as(
             "SELECT c.id, c.kind, c.payload, c.state, c.issued_at, c.expires_at
              FROM relay_commands c JOIN relays r ON r.id = c.relay_id
@@ -348,7 +345,8 @@ impl Sender {
             }
         };
         let envelope = self.registry.envelope(Payload::Command(command));
-        match timeout(SEND_TIMEOUT, self.registry.send(peer_id, envelope)).await {
+        let sending = self.registry.send(PeerRole::Relay, peer_id, envelope);
+        match timeout(SEND_TIMEOUT, sending).await {
             Ok(Ok(())) => {
                 tracing::info!(relay_id = peer_id, command_id = %row.id, "relay command sent");
                 true

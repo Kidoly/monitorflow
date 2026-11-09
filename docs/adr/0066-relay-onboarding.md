@@ -1,7 +1,7 @@
 # ADR-0066: Relay onboarding without typing
 
 Date: 2026-10-31
-Status: accepted
+Status: accepted; names typed in a token are checked too since ADR-0105
 
 ## Context
 
@@ -58,5 +58,5 @@ Administrators can also be careless, and an administrator of one customer must n
 - This needs a release whose relay sends its host name; an older relay gets the existing `INVALID_ARGUMENT` that says so. Relay self-update does not help a relay that is not installed yet, so Add relay is usable once a release ships this.
 - `mirror.enabled = true` without `public_url` used to leave agents on the server's mirrors; the relay now reports its first name, and agents use it when it holds every snapshot named (ADR-0037).
 - A relay's confirmed names cannot be changed yet: removing and adding it back is the way. The renewal path already follows `confirmed_names`, so an edit is a small later task.
-- Names typed in a token (`POST /api/tokens`, `token create`) are not checked as confirmation is: a customer administrator can still type another site's name there, as since ADR-0025. Applying the same refusals to `POST /api/tokens` is a follow-up, and needs care for setups that run a relay on the server's own host.
+- Names typed in a token (`POST /api/tokens`, `token create`) are not checked as confirmation is: a customer administrator can still type another site's name there, as since ADR-0025. Applying the same refusals to `POST /api/tokens` is a follow-up, and needs care for setups that run a relay on the server's own host. Done in ADR-0105: the API applies them, and `token create` on the server's host stays unchecked for that setup.
 - A waiting relay costs one small call every 10 seconds, and a fresh key per call.

@@ -17,6 +17,7 @@ use monitorflow_agent::renew::{Renewal, RenewalSettings};
 use monitorflow_agent::shutdown::{self, Shutdown, Trigger};
 use monitorflow_agent::stream::{Agent, StreamSettings};
 use monitorflow_common::config::AgentConfig;
+use monitorflow_common::tls::PeerRole;
 use monitorflow_server::ca::{IssuedCert, Serial};
 use monitorflow_server::grpc::{self, Registry};
 use sqlx::PgPool;
@@ -139,11 +140,15 @@ impl Running {
 }
 
 fn serial_on_server(registry: &Registry) -> Option<Serial> {
-    registry.get("web-01").and_then(|peer| peer.cert_serial)
+    registry
+        .get(PeerRole::Agent, "web-01")
+        .and_then(|peer| peer.cert_serial)
 }
 
 fn connection(registry: &Registry) -> Option<u64> {
-    registry.get("web-01").map(|peer| peer.connection)
+    registry
+        .get(PeerRole::Agent, "web-01")
+        .map(|peer| peer.connection)
 }
 
 #[tokio::test]

@@ -350,7 +350,9 @@ pub async fn reject(
             .map_err(|e| ApiError::Internal(e.to_string()))?;
     }
     tx.commit().await?;
-    state.registry.close(&peer_id, CloseReason::Revoked);
+    state
+        .registry
+        .close(PeerRole::Agent, &peer_id, CloseReason::Revoked);
     tracing::info!(user = %user.id, %peer_id, "rejected a new host");
     Ok(StatusCode::NO_CONTENT)
 }

@@ -15,7 +15,8 @@ use monitorflow_common::proto::v1::{
     Command, CommandAcceptance, CommandKindState, Envelope, Heartbeat, Hello, LogBatch, LogEntry,
     RelayMirrors, Sample, SampleBatch, SensorConfigAck, ServedMirror,
 };
-use monitorflow_common::tls::{self, Identity, PeerRole};
+use monitorflow_common::tls::{self, Identity, PeerIdentity, PeerRole};
+use monitorflow_common::via::Via;
 use monitorflow_common::PROTOCOL_VERSION;
 use monitorflow_server::alerting::{AlertStore, Alerts, EngineSettings, LogNotifier};
 use monitorflow_server::grpc::{
@@ -120,6 +121,16 @@ impl Harness {
 
     // `Status` is boxed to keep the `Err` variant small (clippy::result_large_err).
     async fn open(&self, leaf: &Leaf, first: Option<Envelope>) -> Result<Peer, Box<Status>> {
+        self.open_via(leaf, None, first).await
+    }
+
+    /// [`Self::open`] with the path a relay sends for a forwarded stream.
+    async fn open_via(
+        &self,
+        leaf: &Leaf,
+        via: Option<Via>,
+        first: Option<Envelope>,
+    ) -> Result<Peer, Box<Status>> {
         let config = identity(&self.ca, leaf).client_config().unwrap();
         let channel = tls::connect(&self.url, config, TIMEOUT).await.unwrap();
         let (tx, rx) = mpsc::channel(8);
@@ -127,7 +138,11 @@ impl Harness {
             tx.send(first).await.unwrap();
         }
         let mut client = AgentServiceClient::new(channel);
-        let call = client.stream(ReceiverStream::new(rx));
+        let mut request = tonic::Request::new(ReceiverStream::new(rx));
+        if let Some(via) = via {
+            via.insert_into(request.metadata_mut());
+        }
+        let call = client.stream(request);
         let rx = tokio::time::timeout(TIMEOUT, call)
             .await
             .unwrap()
@@ -208,7 +223,7 @@ async fn agent_registers_and_disappears_on_disconnect() {
         .open(&h.ca.client("agent-1", 10), hello("agent-1"))
         .await
         .unwrap();
-    let info = h.registry.get("agent-1").unwrap();
+    let info = h.registry.get(PeerRole::Agent, "agent-1").unwrap();
     assert_eq!(info.role, PeerRole::Agent);
     assert_eq!(info.via_relay, None);
     assert_eq!(info.hostname, "agent-1.example");
@@ -219,7 +234,7 @@ async fn agent_registers_and_disappears_on_disconnect() {
     // Closing our side ends the stream cleanly.
     drop(peer.tx);
     assert_eq!(peer.rx.message().await.unwrap(), None);
-    assert!(h.registry.get("agent-1").is_none());
+    assert!(h.registry.get(PeerRole::Agent, "agent-1").is_none());
 }
 
 #[tokio::test]
@@ -275,17 +290,31 @@ async fn duplicate_connection_replaces_the_old_one() {
         .open(&h.ca.client("agent-1", 10), hello("agent-1"))
         .await
         .unwrap();
-    let first = h.registry.get("agent-1").unwrap().connection;
+    let first = h
+        .registry
+        .get(PeerRole::Agent, "agent-1")
+        .unwrap()
+        .connection;
     let mut new = h
         .open(&h.ca.client("agent-1", 11), hello("agent-1"))
         .await
         .unwrap();
-    let second = h.registry.get("agent-1").unwrap().connection;
+    let second = h
+        .registry
+        .get(PeerRole::Agent, "agent-1")
+        .unwrap()
+        .connection;
     assert_ne!(first, second);
 
     // The old stream is closed, and its teardown left the new entry alone.
     assert_eq!(old.next().await.unwrap_err().code(), Code::Aborted);
-    assert_eq!(h.registry.get("agent-1").unwrap().connection, second);
+    assert_eq!(
+        h.registry
+            .get(PeerRole::Agent, "agent-1")
+            .unwrap()
+            .connection,
+        second
+    );
     assert_eq!(h.registry.connected().len(), 1);
 
     // The new stream is the one that receives.
@@ -293,8 +322,113 @@ async fn duplicate_connection_replaces_the_old_one() {
         sequence: 1,
         payload: Some(Payload::Command(Command::default())),
     };
-    h.registry.send("agent-1", command.clone()).await.unwrap();
+    h.registry
+        .send(PeerRole::Agent, "agent-1", command.clone())
+        .await
+        .unwrap();
     assert_eq!(new.next().await.unwrap(), Some(command));
+}
+
+#[tokio::test]
+async fn a_relay_with_the_id_of_an_agent_does_not_replace_it() {
+    let h = Harness::default().await;
+    let mut agent = h
+        .open(&h.ca.client("web-01", 10), hello("web-01"))
+        .await
+        .unwrap();
+    let before = h.registry.get(PeerRole::Agent, "web-01").unwrap();
+    let mut relay = h
+        .open(&h.ca.relay("web-01", 11), hello("web-01"))
+        .await
+        .unwrap();
+    let own = h.registry.get(PeerRole::Relay, "web-01").unwrap();
+    assert_ne!(own.connection, before.connection);
+    assert_eq!(h.registry.connected().len(), 2);
+
+    // The agent's stream is still its own: it is heard, and what the
+    // server sends to the agent reaches it and not the relay.
+    agent.send(2, heartbeat()).await;
+    h.wait_until("the agent's heartbeat", |r| {
+        r.get(PeerRole::Agent, "web-01")
+            .is_some_and(|p| p.connection == before.connection && p.last_sequence == 2)
+    })
+    .await;
+    let command = h.registry.envelope(Payload::Command(Command {
+        agent_id: "web-01".into(),
+        ..Command::default()
+    }));
+    h.registry
+        .send(PeerRole::Agent, "web-01", command.clone())
+        .await
+        .unwrap();
+    assert_eq!(agent.next().await.unwrap(), Some(command));
+
+    // And the other way: a second connection of the relay replaces the
+    // relay's, never the agent's.
+    let _again = h
+        .open(&h.ca.relay("web-01", 12), hello("web-01"))
+        .await
+        .unwrap();
+    assert_eq!(relay.next().await.unwrap_err().code(), Code::Aborted);
+    agent.send(3, heartbeat()).await;
+    h.wait_until("the agent after the relay reconnected", |r| {
+        r.get(PeerRole::Agent, "web-01")
+            .is_some_and(|p| p.connection == before.connection && p.last_sequence == 3)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn revoking_a_relay_closes_the_streams_of_relays_behind_it() {
+    let h = Harness::start(settings(), Arc::new(AllowAllRelayedAgents)).await;
+    let r0 = h.ca.relay("r0", 10);
+    let _own = h.open(&r0, hello("r0")).await.unwrap();
+    // r0 -> r1 -> x: both streams run on r0's connection.
+    let r1 = PeerIdentity::new(PeerRole::Relay, "r1").unwrap();
+    let mut chained = h
+        .open_via(&r0, Some(Via::origin(r1.clone())), hello("r1"))
+        .await
+        .unwrap();
+    let x = PeerIdentity::new(PeerRole::Agent, "x").unwrap();
+    let via = Via::extend(Some(Via::origin(x)), &r1).unwrap();
+    let mut grandchild = h.open_via(&r0, Some(via), hello("x")).await.unwrap();
+    let mut direct = h.open(&h.ca.client("y", 11), hello("y")).await.unwrap();
+
+    let info = h.registry.get(PeerRole::Agent, "x").unwrap();
+    assert_eq!(info.via_relay.as_deref(), Some("r1"));
+    assert_eq!(info.relay_path, ["r0", "r1"]);
+    assert_eq!(
+        h.registry.get(PeerRole::Relay, "r1").unwrap().relay_path,
+        ["r0"]
+    );
+
+    // An agent named r0 is someone else: nothing of the relay closes.
+    assert_eq!(
+        h.registry
+            .close(PeerRole::Agent, "r0", grpc::CloseReason::Revoked),
+        0
+    );
+    assert_eq!(
+        h.registry
+            .close(PeerRole::Relay, "r0", grpc::CloseReason::Revoked),
+        3
+    );
+    for stream in [&mut chained, &mut grandchild] {
+        let status = stream.next().await.unwrap_err();
+        assert_eq!(status.code(), Code::PermissionDenied, "{status}");
+    }
+    assert!(h.registry.get(PeerRole::Agent, "x").is_none());
+    direct.send(2, heartbeat()).await;
+    h.wait_until("the direct agent stays", |r| {
+        r.get(PeerRole::Agent, "y")
+            .is_some_and(|p| p.last_sequence == 2)
+    })
+    .await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), direct.next())
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -314,7 +448,7 @@ async fn silent_peer_is_removed_after_heartbeat_timeout() {
         peer.send(sequence, heartbeat()).await;
     }
     h.wait_until("last heartbeat", |r| {
-        r.get("agent-1").unwrap().last_sequence == 5
+        r.get(PeerRole::Agent, "agent-1").unwrap().last_sequence == 5
     })
     .await;
     // ...and silence closes it.
@@ -322,7 +456,7 @@ async fn silent_peer_is_removed_after_heartbeat_timeout() {
         peer.next().await.unwrap_err().code(),
         Code::DeadlineExceeded
     );
-    assert!(h.registry.get("agent-1").is_none());
+    assert!(h.registry.get(PeerRole::Agent, "agent-1").is_none());
 }
 
 #[tokio::test]
@@ -342,10 +476,10 @@ async fn stale_sequence_numbers_are_ignored() {
     peer.send(1, heartbeat()).await; // older than the last one
     peer.send(4, heartbeat()).await;
     h.wait_until("sequence 4", |r| {
-        r.get("agent-1").unwrap().last_sequence == 4
+        r.get(PeerRole::Agent, "agent-1").unwrap().last_sequence == 4
     })
     .await;
-    let counters = h.registry.get("agent-1").unwrap().counters;
+    let counters = h.registry.get(PeerRole::Agent, "agent-1").unwrap().counters;
     assert_eq!(counters.stale_sequences, 2);
     assert_eq!(counters.sample_batches, 1);
     assert_eq!(counters.samples, 3);
@@ -365,7 +499,10 @@ async fn registry_send_reaches_the_client() {
             ..Command::default()
         })),
     };
-    h.registry.send("agent-1", command.clone()).await.unwrap();
+    h.registry
+        .send(PeerRole::Agent, "agent-1", command.clone())
+        .await
+        .unwrap();
     assert_eq!(peer.next().await.unwrap(), Some(command));
 }
 
@@ -376,7 +513,10 @@ async fn relay_speaks_for_itself_and_others_only_if_allowed() {
         .open(&h.ca.relay("relay-1", 10), hello("relay-1"))
         .await
         .unwrap();
-    assert_eq!(h.registry.get("relay-1").unwrap().role, PeerRole::Relay);
+    assert_eq!(
+        h.registry.get(PeerRole::Relay, "relay-1").unwrap().role,
+        PeerRole::Relay
+    );
     let status = refused(h.open(&h.ca.relay("relay-1", 11), hello("agent-9")).await);
     assert_eq!(status.code(), Code::PermissionDenied);
 
@@ -385,7 +525,7 @@ async fn relay_speaks_for_itself_and_others_only_if_allowed() {
         .open(&h.ca.relay("relay-1", 10), hello("agent-9"))
         .await
         .unwrap();
-    let info = h.registry.get("agent-9").unwrap();
+    let info = h.registry.get(PeerRole::Agent, "agent-9").unwrap();
     assert_eq!(info.role, PeerRole::Agent);
     assert_eq!(info.via_relay.as_deref(), Some("relay-1"));
 }
@@ -432,7 +572,7 @@ async fn agent_hello_without_a_valid_os_family_is_rejected() {
         hello.os_family.clear();
     }
     h.open(&h.ca.relay("relay-1", 11), Some(own)).await.unwrap();
-    assert!(h.registry.get("agent-1").is_none());
+    assert!(h.registry.get(PeerRole::Agent, "agent-1").is_none());
 }
 
 /// Puts every peer in one site, without a database.
@@ -603,10 +743,14 @@ async fn samples_are_written_with_the_identity_of_the_stream() {
         ])]
     );
     h.wait_until("invalid samples counted", |r| {
-        r.get("agent-1").unwrap().counters.invalid_samples == 3
+        r.get(PeerRole::Agent, "agent-1")
+            .unwrap()
+            .counters
+            .invalid_samples
+            == 3
     })
     .await;
-    let counters = h.registry.get("agent-1").unwrap().counters;
+    let counters = h.registry.get(PeerRole::Agent, "agent-1").unwrap().counters;
     assert_eq!((counters.samples, counters.dropped_samples), (4, 0));
 
     // Behind a relay, the series belong to the agent the relay speaks for.
@@ -695,7 +839,7 @@ async fn log_lines_are_written_with_the_identity_of_the_stream() {
         "{message}"
     );
     h.wait_until("log lines counted", |r| {
-        let counters = r.get("agent-1").unwrap().counters;
+        let counters = r.get(PeerRole::Agent, "agent-1").unwrap().counters;
         (counters.log_lines, counters.dropped_log_lines) == (2, 1)
     })
     .await;
@@ -1026,7 +1170,7 @@ db_tests! {
         for sequence in 2..12 {
             peer.send(sequence, heartbeat()).await;
         }
-        h.wait_until("heartbeats", |r| r.get("agent-1").unwrap().last_sequence == 11).await;
+        h.wait_until("heartbeats", |r| r.get(PeerRole::Agent, "agent-1").unwrap().last_sequence == 11).await;
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert_eq!(server_row(&pool, "agent-1").await.unwrap().last_seen_at, Some(old.into()));
 
@@ -1083,7 +1227,7 @@ db_tests! {
         let _peer = h.open(&h.ca.relay("relay-1", 10), hello("agent-1")).await.unwrap();
         let row = server_row(&pool, "agent-1").await.unwrap();
         assert_eq!((row.site_id, row.relay_id), (paris, Some(relay_id)));
-        assert_eq!(h.registry.get("agent-1").unwrap().via_relay.as_deref(), Some("relay-1"));
+        assert_eq!(h.registry.get(PeerRole::Agent, "agent-1").unwrap().via_relay.as_deref(), Some("relay-1"));
 
         // An agent of another site is refused and gets no row.
         let status = refused(h.open(&h.ca.relay("relay-1", 11), hello("agent-2")).await);
@@ -1118,7 +1262,7 @@ db_tests! {
         let kinds: Vec<_> = first.sensors.iter().map(|s| s.kind.as_str()).collect();
         assert_eq!(kinds, ["cpu", "disk", "diskio", "memory"]);
         assert_eq!(first.revision, 0);
-        assert_eq!(h.registry.get("agent-1").unwrap().sensor_revision_sent, Some(0));
+        assert_eq!(h.registry.get(PeerRole::Agent, "agent-1").unwrap().sensor_revision_sent, Some(0));
 
         // A change in the database reaches the stream without a reconnect.
         sqlx::query(
@@ -1151,7 +1295,7 @@ db_tests! {
             assert!(tokio::time::Instant::now() < deadline, "ack never recorded");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        let info = h.registry.get("agent-1").unwrap();
+        let info = h.registry.get(PeerRole::Agent, "agent-1").unwrap();
         assert_eq!(info.sensor_revision_applied, Some(second.revision));
         assert_eq!(info.sensor_revision_sent, Some(second.revision));
 
@@ -1210,7 +1354,7 @@ db_tests! {
         let agent = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
         agent.send(2, Payload::RelayMirrors(report("http://agent.example", "apt"))).await;
         agent.send(3, heartbeat()).await;
-        h.wait_until("agent heartbeat", |r| r.get("agent-1").is_some_and(|i| i.last_sequence == 3)).await;
+        h.wait_until("agent heartbeat", |r| r.get(PeerRole::Agent, "agent-1").is_some_and(|i| i.last_sequence == 3)).await;
         assert_eq!(url().await, None);
 
         let relay = h.open(&h.ca.relay("relay-1", 10), hello("relay-1")).await.unwrap();
@@ -1238,7 +1382,7 @@ db_tests! {
         .await;
         let mut relay = h.open(&h.ca.relay("relay-1", 10), hello("relay-1")).await.unwrap();
         assert!(tokio::time::timeout(Duration::from_millis(200), relay.rx.message()).await.is_err());
-        assert_eq!(h.registry.get("relay-1").unwrap().sensor_revision_sent, None);
+        assert_eq!(h.registry.get(PeerRole::Relay, "relay-1").unwrap().sensor_revision_sent, None);
     }
 
     #[sqlx::test]
@@ -1300,5 +1444,78 @@ db_tests! {
         agent.send(4, disk(now, 0.5)).await;
         assert_eq!(wait_for("resolved").await, ("resolved".into(), "warning".into(), 0.5));
         assert_eq!(alerts.stats().transitions, 2);
+    }
+
+    #[sqlx::test]
+    async fn a_relay_with_the_id_of_an_agent_cannot_feed_its_thresholds(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        let lyon = site(&pool, "lyon").await;
+        enrolled(&pool, "web-01", paris).await;
+        // Another customer's relay, of the same ID.
+        sqlx::query("INSERT INTO relays (peer_id, site_id, name) VALUES ('web-01', $1, 'web-01')")
+            .bind(lyon)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO thresholds (site_id, metric, instance, comparison, warning, duration_s)
+             VALUES ($1, 'monitorflow_disk_used_ratio', '/', '>', 0.8, 1)",
+        )
+        .bind(paris)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let alerts = Alerts::start(AlertStore::new(pool.clone()), EngineSettings::default(), Arc::new(LogNotifier))
+            .await
+            .unwrap();
+        let engine = alerts.clone();
+        let h = Harness::start_service(|registry| {
+            AgentStreamService::new(registry, Arc::new(DbRelayPolicy::new(pool.clone())), settings())
+                .with_inventory(Arc::new(DbInventory::new(pool.clone())))
+                .with_alerts(engine)
+        })
+        .await;
+        let agent = h.open(&h.ca.client("web-01", 10), hello("web-01")).await.unwrap();
+        let relay = h.open(&h.ca.relay("web-01", 11), hello("web-01")).await.unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        let disk = |ts: i64, value: f64| {
+            Payload::Samples(SampleBatch {
+                samples: vec![Sample {
+                    sensor: "disk_used_ratio".into(),
+                    instance: "/".into(),
+                    timestamp_unix_ms: ts,
+                    value,
+                    labels: Default::default(),
+                }],
+            })
+        };
+        let incidents = || async {
+            sqlx::query_as::<_, (String, f64)>("SELECT state, last_value FROM incidents")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+
+        // A false alarm, then points dated after the agent's to hide a real one.
+        relay.send(2, disk(now - 3_000, 0.99)).await;
+        relay.send(3, disk(now - 1_500, 0.99)).await;
+        relay.send(4, disk(now + 60_000, 0.1)).await;
+        h.wait_until("the relay's batches", |r| {
+            r.get(PeerRole::Relay, "web-01").is_some_and(|p| p.counters.sample_batches == 3)
+        })
+        .await;
+        assert_eq!(alerts.stats().batches, 0, "nothing reached the engine");
+        assert_eq!(incidents().await, []);
+
+        // The agent's own samples still count, and are not out of order.
+        agent.send(2, disk(now - 3_000, 0.9)).await;
+        agent.send(3, disk(now - 1_500, 0.92)).await;
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        while incidents().await != [("open".to_owned(), 0.92)] {
+            assert!(tokio::time::Instant::now() < deadline, "no incident from the agent");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let stats = alerts.stats();
+        assert_eq!((stats.batches, stats.out_of_order), (2, 0));
     }
 }
