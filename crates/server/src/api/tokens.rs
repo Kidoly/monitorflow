@@ -214,6 +214,7 @@ impl From<TokenError> for ApiError {
     fn from(error: TokenError) -> Self {
         match error {
             TokenError::Invalid(message) => Self::Invalid(message),
+            TokenError::Conflict(message) => Self::Conflict(message),
             TokenError::Db(error) => Self::Database(error),
             TokenError::Random => Self::Internal(error.to_string()),
         }
@@ -264,7 +265,10 @@ pub async fn create(
     let ttl = request
         .ttl_s
         .map_or(token::DEFAULT_TTL, Duration::from_secs);
-    let created = token::create(
+    // What agents may know the server by: a relay token cannot name them.
+    let mut central_names = address.names.clone();
+    central_names.push(address.address.clone());
+    let created = token::create_checked(
         &state.pool,
         state.ca_pin(settings),
         &TokenRequest {
@@ -276,6 +280,7 @@ pub async fn create(
             server_names: request.server_names,
             parent_relay: None,
         },
+        &central_names,
     )
     .await?;
     let view = fetch(&state, created.id).await?;

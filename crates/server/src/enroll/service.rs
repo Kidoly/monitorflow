@@ -18,7 +18,7 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use super::limiter::{FailureLimiter, UNKNOWN_SOURCE};
-use super::{install_key, relay_names, server_cert, token};
+use super::{identity, install_key, relay_names, server_cert, token};
 use crate::api::audit::{self, Event};
 use crate::ca::{CertificateAuthority, IssuedCert, Trust};
 use crate::renew;
@@ -198,6 +198,16 @@ impl Enroller {
         };
         let identity =
             PeerIdentity::new(role, &peer_id).map_err(|e| EnrollError::Internal(e.to_string()))?;
+        // An install key chose a free ID under this lock already.
+        if key_id.is_none() {
+            identity::lock(&mut tx).await?;
+        }
+        if let Err(taken) =
+            identity::check(&mut tx, role, &peer_id, site_id, Some(token_id)).await?
+        {
+            tracing::warn!(%role, peer_id, token_site = %site_id, %taken, "enrollment refused");
+            return Err(EnrollError::Refused);
+        }
         let prepared = prepare_inventory(&mut tx, role, &peer_id, site_id, parent).await?;
         if role == PeerRole::Relay {
             // A key's relay always waits. A token names its relay, so one

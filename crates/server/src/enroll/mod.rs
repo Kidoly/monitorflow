@@ -3,6 +3,7 @@
 //! a reusable install key enrolls many agents of a site (ADR-0073), or one
 //! relay, whose names an administrator confirms (ADR-0066).
 
+pub mod identity;
 pub mod install_key;
 pub mod limiter;
 pub mod relay_names;

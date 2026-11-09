@@ -13,6 +13,7 @@ use monitorflow_common::tls::{EnrollmentToken, Fingerprint, PeerRole};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
+use super::identity::{self, Pending};
 use super::token::{self, Creator, TokenError};
 use super::EnrollError;
 
@@ -31,8 +32,6 @@ pub const MAX_PER_MINUTE: i64 = 30;
 const MAX_ID_LEN: usize = 64;
 /// Suffixes tried after the host name itself: `web-01-2` to `web-01-1000`.
 const MAX_SUFFIX: u32 = 1000;
-/// Serialises the choice of new agent IDs between concurrent enrollments.
-const ID_LOCK: i64 = 0x6d66_6964; // "mfid"
 
 /// What a new key allows.
 #[derive(Debug, Clone)]
@@ -192,14 +191,18 @@ pub(super) async fn consume(
         return Err(EnrollError::Busy);
     }
 
-    sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(ID_LOCK)
-        .execute(&mut **tx)
-        .await?;
+    identity::lock(tx).await?;
     let base = peer_id_from_hostname(hostname);
+    let peer_role = match role.as_str() {
+        "relay" => PeerRole::Relay,
+        _ => PeerRole::Agent,
+    };
     let peer_id = match removed_id(tx, &role, site_id, hostname, &base).await? {
-        Some(id) => id,
-        None => new_id(tx, &role, &base).await?,
+        // Not under an ID the other role took meanwhile (ADR-0105).
+        Some(id) if !identity::held_by_other_role(tx, peer_role, &id, Pending::Ignored).await? => {
+            id
+        }
+        _ => new_id(tx, &base).await?,
     };
 
     // A hash of a secret nobody holds: the row exists only as a record.
@@ -282,26 +285,19 @@ async fn removed_id(
 }
 
 /// `base`, or `base` with the first free suffix.
-async fn new_id(
-    tx: &mut Transaction<'_, Postgres>,
-    role: &str,
-    base: &str,
-) -> Result<String, EnrollError> {
-    let table = if role == "relay" { "relays" } else { "servers" };
+async fn new_id(tx: &mut Transaction<'_, Postgres>, base: &str) -> Result<String, EnrollError> {
     for n in 1..=MAX_SUFFIX {
         let candidate = with_suffix(base, n);
-        // Any trace of the ID counts, revoked or pending, in any case:
-        // a key never gives a new host an ID that was ever given out.
-        // SQL-safe: `table` is one of two constants, never input.
-        let taken: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT EXISTS (SELECT 1 FROM {table} WHERE lower(peer_id) = $1)
-                 OR EXISTS (SELECT 1 FROM certificates
-                            WHERE peer_role = $2 AND lower(peer_id) = $1)
-                 OR EXISTS (SELECT 1 FROM enrollment_tokens
-                            WHERE role = $2 AND lower(peer_id) = $1)"
-        )))
+        // Any trace of the ID counts, revoked or pending, in any case and
+        // in either role: a key never gives a new host an ID that was
+        // ever given out, to a server or to a relay (ADR-0105).
+        let taken: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM servers WHERE lower(peer_id) = $1)
+                 OR EXISTS (SELECT 1 FROM relays WHERE lower(peer_id) = $1)
+                 OR EXISTS (SELECT 1 FROM certificates WHERE lower(peer_id) = $1)
+                 OR EXISTS (SELECT 1 FROM enrollment_tokens WHERE lower(peer_id) = $1)",
+        )
         .bind(&candidate)
-        .bind(role)
         .fetch_one(&mut **tx)
         .await?;
         if !taken {
