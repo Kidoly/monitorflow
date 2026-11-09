@@ -8,8 +8,9 @@
 //! Windows PowerShell 5.1, `sc.exe` the service control tool.
 //!
 //! Parameters are matched by their full name or a listed alias only.
-//! PowerShell also accepts any unambiguous prefix, so a prefix the rules
-//! do not list makes the command unknown rather than guessed at.
+//! PowerShell also accepts any unambiguous prefix, of a name or of an
+//! alias, so a prefix the rules do not list makes the command unknown
+//! rather than guessed at. No rule accepts every parameter but some.
 
 use super::lexer::Word;
 use crate::remediation::risk::pattern::glob;
@@ -363,7 +364,7 @@ pub fn command(program: &Program, written: &str, args: &[Word]) -> Verdict {
 /// Whether a rule above knows `name`, for the reason given when its
 /// arguments did not fit.
 fn known(name: &str) -> bool {
-    GENERIC_READ.contains(&name)
+    generic_read(name).is_some()
         || NATIVE_READ.contains(&name)
         || [
             "get-childitem",
@@ -380,101 +381,143 @@ fn known(name: &str) -> bool {
         .contains(&name)
 }
 
-/// Read-only cmdlets whose parameters only select or shape what they
-/// report. Any parameter is accepted but those in [`DENIED_PARAMETERS`].
-const GENERIC_READ: &[&str] = &[
-    "get-service",
-    "get-process",
-    "get-hotfix",
-    "get-computerinfo",
-    "get-date",
-    "get-timezone",
-    "get-culture",
-    "get-volume",
-    "get-disk",
-    "get-physicaldisk",
-    "get-partition",
-    "get-psdrive",
-    "get-storagepool",
-    "get-virtualdisk",
-    "get-netipaddress",
-    "get-netipconfiguration",
-    "get-netadapter",
-    "get-netadapterstatistics",
-    "get-nettcpconnection",
-    "get-netudpendpoint",
-    "get-netroute",
-    "get-netneighbor",
-    "get-netconnectionprofile",
-    "get-netfirewallprofile",
-    "get-netfirewallrule",
-    "get-dnsclient",
-    "get-dnsclientcache",
-    "get-dnsclientserveraddress",
-    "get-smbshare",
-    "get-smbsession",
-    "get-smbconnection",
-    "get-scheduledtask",
-    "get-scheduledtaskinfo",
-    "get-windowsfeature",
-    "get-mpcomputerstatus",
-    "get-mpthreatdetection",
-    "get-iissite",
-    "get-iisapppool",
-    "get-website",
-    "get-webapppoolstate",
-    "get-webbinding",
-    "get-clusternode",
-    "get-clustergroup",
-    "get-clusterresource",
-    "get-localuser",
-    "get-localgroup",
-    "get-localgroupmember",
-    "get-ciminstance",
-    "get-wmiobject",
-    "get-counter",
-    "get-eventlog",
-    "get-winevent",
+/// Read-only cmdlets, each with the parameters it accepts by full name or
+/// alias, in lower case and separated by spaces. They only select or
+/// shape what the cmdlet reports about this computer. Any other parameter
+/// makes the command unknown: those that reach another computer or
+/// account (`-ComputerName` and its aliases, which differ by cmdlet:
+/// `-Cn`, `-ServerName` on `Get-CimInstance`, `-IPAddress` on
+/// `Get-HotFix`; `-CimSession`, `-Credential`, `-PolicyStore`,
+/// `-GPOSession`, `-Cluster`), wait or never end (`-Continuous`,
+/// `-AsJob`), read files (`-Path`, `-FilterXml`, `-Vhd`) or raise
+/// privileges, and every prefix PowerShell would expand to one of them.
+#[rustfmt::skip]
+const GENERIC_READ: &[(&str, &str)] = &[
+    (
+        "get-service",
+        "name servicename displayname include exclude dependentservices ds \
+         requiredservices sdo servicesdependedon",
+    ),
+    ("get-process", "name processname id pid module fileversioninfo fv fvi includeusername"),
+    ("get-hotfix", "id hfid description"),
+    ("get-computerinfo", "property"),
+    ("get-date", "format uformat displayhint date year month day hour minute second"),
+    ("get-timezone", "id name listavailable"),
+    ("get-culture", ""),
+    ("get-volume", "driveletter filesystemlabel friendlyname objectid uniqueid"),
+    ("get-disk", "number friendlyname serialnumber uniqueid"),
+    ("get-physicaldisk", "friendlyname serialnumber uniqueid objectid usage healthstatus canpool"),
+    ("get-partition", "disknumber partitionnumber number driveletter uniqueid"),
+    ("get-psdrive", "name literalname psprovider scope"),
+    ("get-storagepool", "friendlyname uniqueid isprimordial healthstatus"),
+    ("get-virtualdisk", "friendlyname uniqueid healthstatus"),
+    (
+        "get-netipaddress",
+        "ipaddress localaddress interfaceindex ifindex interfacealias ifalias \
+         addressfamily type prefixlength prefixorigin suffixorigin addressstate \
+         includeallcompartments",
+    ),
+    ("get-netipconfiguration", "interfacealias ifalias interfaceindex ifindex detailed all"),
+    (
+        "get-netadapter",
+        "name ifalias interfacealias interfacedescription ifdesc interfaceindex ifindex \
+         includehidden physical",
+    ),
+    (
+        "get-netadapterstatistics",
+        "name ifalias interfacealias interfacedescription ifdesc includehidden",
+    ),
+    (
+        "get-nettcpconnection",
+        "localaddress ipaddress localport remoteaddress remoteport state appliedsetting \
+         owningprocess",
+    ),
+    ("get-netudpendpoint", "localaddress ipaddress localport owningprocess"),
+    (
+        "get-netroute",
+        "destinationprefix interfaceindex ifindex interfacealias ifalias nexthop \
+         addressfamily routemetric protocol state includeallcompartments",
+    ),
+    (
+        "get-netneighbor",
+        "ipaddress interfaceindex ifindex interfacealias ifalias linklayeraddress state \
+         addressfamily includeallcompartments",
+    ),
+    (
+        "get-netconnectionprofile",
+        "name interfacealias interfaceindex networkcategory ipv4connectivity \
+         ipv6connectivity",
+    ),
+    ("get-netfirewallprofile", "name profile all"),
+    (
+        "get-netfirewallrule",
+        "name id displayname displaygroup group description enabled direction action \
+         all status primarystatus policystoresource policystoresourcetype \
+         edgetraversalpolicy owner",
+    ),
+    ("get-dnsclient", "interfaceindex interfacealias connectionspecificsuffix"),
+    ("get-dnsclientcache", "entry name type status section data"),
+    ("get-dnsclientserveraddress", "interfaceindex interfacealias addressfamily"),
+    ("get-smbshare", "name scopename special includehidden"),
+    ("get-smbsession", "sessionid clientcomputername clientusername scopename includehidden"),
+    ("get-smbconnection", "servername username"),
+    ("get-scheduledtask", "taskname taskpath"),
+    ("get-scheduledtaskinfo", "taskname taskpath"),
+    ("get-windowsfeature", "name"),
+    ("get-mpcomputerstatus", ""),
+    ("get-mpthreatdetection", "threatid"),
+    ("get-iissite", "name"),
+    ("get-iisapppool", "name"),
+    ("get-website", "name"),
+    ("get-webapppoolstate", "name"),
+    ("get-webbinding", "name ipaddress port protocol hostheader"),
+    ("get-clusternode", "name"),
+    ("get-clustergroup", "name vmid"),
+    ("get-clusterresource", "name vmid"),
+    ("get-localuser", "name sid"),
+    ("get-localgroup", "name sid"),
+    ("get-localgroupmember", "name sid group member"),
+    (
+        "get-ciminstance",
+        "classname namespace filter query querydialect property selectproperties \
+         keyonly shallow operationtimeoutsec ot",
+    ),
+    (
+        "get-wmiobject",
+        "class classname namespace ns filter query property list recurse amended \
+         directread locale",
+    ),
+    ("get-counter", "counter listset sampleinterval maxsamples"),
+    (
+        "get-eventlog",
+        "logname ln newest after before username instanceid index entrytype et source \
+         abo message msg asbaseobject list asstring",
+    ),
+    (
+        "get-winevent",
+        "logname listlog listprovider providername maxevents filterxpath force oldest",
+    ),
 ];
 
-/// Parameters a generic read-only cmdlet may not take, by full name or
-/// alias: they reach another computer or account, wait or never end, read
-/// arbitrary files, or raise privileges. A parameter that is a prefix of
-/// one of these is refused too, as PowerShell would expand it.
-const DENIED_PARAMETERS: &[&str] = &[
-    "computername",
-    "cn",
-    "cimsession",
-    "session",
-    "credential",
-    "wait",
-    "continuous",
-    "asjob",
-    "throttlelimit",
-    "enableallprivileges",
-    "impersonation",
-    "authentication",
-    "authority",
-    "path",
-    "literalpath",
-    "filepath",
-    "pspath",
-    "lp",
-    "logpath",
-    "outfile",
-    "vhd",
-    "cluster",
-];
+/// Common parameters every generic read-only cmdlet also accepts.
+const COMMON_PARAMETERS: &[&str] = &["erroraction", "ea", "warningaction", "wa", "verbose"];
 
-fn denied_parameter(name: &str) -> bool {
-    DENIED_PARAMETERS.iter().any(|d| d.starts_with(name))
+/// The parameters `name` accepts, when it is a generic read-only cmdlet.
+fn generic_read(name: &str) -> Option<&'static str> {
+    GENERIC_READ
+        .iter()
+        .find(|(cmdlet, _)| *cmdlet == name)
+        .map(|(_, parameters)| *parameters)
 }
 
 /// A cmdlet's verdict, or `None` when no rule decides it.
 fn cmdlet(name: &str, args: &[Word]) -> Option<Verdict> {
-    if GENERIC_READ.contains(&name) {
+    if let Some(accepted) = generic_read(name) {
         let ok = args.iter().all(|a| match a.parameter() {
-            Some((p, _)) => !denied_parameter(&p),
+            Some((p, _)) => {
+                accepted.split(' ').any(|known| known == p)
+                    || COMMON_PARAMETERS.contains(&p.as_str())
+            }
             None => !a.dashed(),
         });
         return ok.then(|| {

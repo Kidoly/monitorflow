@@ -26,11 +26,23 @@ pub const DELETE_SNAPSHOT: &str = "delete_snapshot";
 /// Package names in an `ApplyUpdates` reach a command line on the agent:
 /// letters, digits and `.+_:-`, at most 128 bytes, not starting with `-` so
 /// none reads as an option. The API refuses others, the agent too.
+///
+/// The name must also end with a letter or digit, before any trailing
+/// `+`. `apt-get install` reads `name-` as "remove `name`" and `name+` as
+/// "install `name`" when no package has that very name, so a trailing `-`
+/// would turn an update into a removal, as root. A trailing `+` stays,
+/// for `g++` and `libstdc++`: at worst apt reads it as the name without
+/// it, which `--only-upgrade` only upgrades (ADR-0036).
 pub fn valid_package_name(name: &str) -> bool {
     name.len() <= 128
         && name
             .as_bytes()
             .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && name
+            .trim_end_matches('+')
+            .as_bytes()
+            .last()
             .is_some_and(u8::is_ascii_alphanumeric)
         && name
             .bytes()
@@ -136,6 +148,38 @@ mod tests {
     use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_ASN1_SIGNING};
 
     use super::*;
+
+    #[test]
+    fn package_names_cannot_ask_apt_to_remove() {
+        for good in [
+            "openssl",
+            "g++",
+            "libstdc++",
+            "libstdc++6:amd64",
+            "libsigc++-2.0-0v5",
+            "python3.11",
+            "a",
+        ] {
+            assert!(valid_package_name(good), "{good}");
+        }
+        for bad in [
+            "auditd-",
+            "auditd--",
+            "auditd-+",
+            "auditd+-",
+            "auditd-++",
+            "g++-",
+            "a.",
+            "a:",
+            "a_",
+            "+",
+            "-",
+            "",
+            "-auditd",
+        ] {
+            assert!(!valid_package_name(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn windows_update_names() {

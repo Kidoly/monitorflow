@@ -217,6 +217,49 @@ fn readers_stay_in_their_bounds() {
         ("Get-Service -ComputerName db1", H, "default.unknown"),
         ("Get-Service -Comp db1", H, "default.unknown"),
         ("Get-Service -cn db1", H, "default.unknown"),
+        // Aliases of -ComputerName that differ by cmdlet, and prefixes of
+        // names and aliases, which PowerShell expands.
+        (
+            "Get-CimInstance Win32_Process -ServerName db1",
+            H,
+            "default.unknown",
+        ),
+        (
+            "Get-CimInstance Win32_Process -Serv db1",
+            H,
+            "default.unknown",
+        ),
+        (
+            "Get-CimInstance Win32_Process -Comp:db1",
+            H,
+            "default.unknown",
+        ),
+        ("Get-HotFix -IPAddress 10.0.0.5", H, "default.unknown"),
+        ("Get-HotFix -IPA 10.0.0.5", H, "default.unknown"),
+        ("Get-HotFix -__Server db1", H, "default.unknown"),
+        ("Get-WmiObject Win32_Process -Cn db1", H, "default.unknown"),
+        (
+            "Get-NetIPConfiguration -ComputerName db1",
+            H,
+            "default.unknown",
+        ),
+        ("Get-NetFirewallRule -PolicyStore db1", H, "default.unknown"),
+        ("Get-NetFirewallProfile -GPOSession x", H, "default.unknown"),
+        (
+            "Get-WinEvent -FilterXml '<QueryList/>'",
+            H,
+            "default.unknown",
+        ),
+        ("Get-Service -Nam W3SVC", H, "default.unknown"),
+        ("Get-Service -Frobnicate", H, "default.unknown"),
+        // The same words where they only filter what is reported.
+        ("Get-NetIPAddress -IPAddress 10.0.0.5", R, "readonly.cmdlet"),
+        ("Get-SmbConnection -ServerName fs1", R, "readonly.cmdlet"),
+        (
+            "Get-HotFix -Id KB5034441 -ErrorAction SilentlyContinue",
+            R,
+            "readonly.cmdlet",
+        ),
         (
             "Get-CimInstance Win32_Process -CimSession db1",
             H,

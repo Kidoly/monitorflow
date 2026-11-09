@@ -192,7 +192,8 @@ export function planWaves(targets: string[], specs: WaveSpec[]): { waves: string
   return { waves };
 }
 
-const PACKAGE = /^[A-Za-z0-9][A-Za-z0-9._+:-]*$/;
+// As `valid_package_name` on the server: a trailing `-` would make apt remove the package.
+const PACKAGE = /^[A-Za-z0-9](?:[A-Za-z0-9._+:-]*[A-Za-z0-9])?\+*$/;
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/;
 
 function isCount(n: number, max: number): boolean {
