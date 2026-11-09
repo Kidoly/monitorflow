@@ -3,9 +3,11 @@ import {
   type ConfigOwner,
   type EffectiveSensor,
   type EffectiveThreshold,
+  type PluginSetting,
   type SensorConfigEntry,
   type SensorConfigRequest,
   type ThresholdRequest,
+  type UsablePlugin,
   api,
 } from "./api";
 import { formatNumber, formatSeconds } from "./format";
@@ -193,6 +195,8 @@ export interface CheckField {
   hint?: string;
   /** Why `value` is refused, if it is; the API checks the rest. */
   check?: (value: string) => string | null;
+  /** May be left empty. */
+  optional?: boolean;
 }
 
 /** A kind of check one can add, with the alert that comes with it. */
@@ -208,8 +212,12 @@ export interface CheckType {
   fixed?: Record<string, string>;
   /** The field the check's name is made from. */
   nameFrom: string;
+  /** What the check's name starts with, when not its kind. */
+  prefix?: string;
   severity: Severity;
   duration_s: number;
+  /** No alert comes with it: a plugin's metrics are its own (ADR-0103). */
+  noAlert?: boolean;
 }
 
 const portNumber = (value: string) =>
@@ -313,7 +321,7 @@ const MAX_NAME = 64;
 
 /** "service_nginx": a sensor name for the check, which prefixes its metrics. */
 export function checkName(type: CheckType, values: Record<string, string>): string {
-  const prefix = type.kind === "systemd" || type.kind === "windows_service" ? "service" : type.kind;
+  const prefix = type.prefix ?? (type.kind === "systemd" || type.kind === "windows_service" ? "service" : type.kind);
   const source = (values[type.nameFrom] ?? "").split(/[/\\]/).pop() ?? "";
   const slug = source
     .toLowerCase()
@@ -328,6 +336,7 @@ export function checkErrors(type: CheckType, values: Record<string, string>): Re
   const errors: Record<string, string> = {};
   for (const field of type.fields) {
     const value = (values[field.key] ?? "").trim();
+    if (value === "" && field.optional) continue;
     const error = value === "" ? `Enter the ${field.label.toLowerCase()}.` : (field.check?.(value) ?? null);
     if (error) errors[field.key] = error;
   }
@@ -339,13 +348,17 @@ export function checkRequests(
   type: CheckType,
   values: Record<string, string>,
   intervalMs: number,
-): { sensor: SensorConfigRequest; threshold: ThresholdRequest } {
+): { sensor: SensorConfigRequest; threshold: ThresholdRequest | null } {
   const name = checkName(type, values);
-  const params = Object.fromEntries(type.fields.map((f) => [f.key, (values[f.key] ?? "").trim()]));
-  const event = EVENTS[type.kind]!;
+  const params = Object.fromEntries(
+    type.fields.map((f) => [f.key, (values[f.key] ?? "").trim()]).filter(([, value]) => value !== ""),
+  );
+  const sensor = { kind: type.kind, name, interval_ms: intervalMs, params: { ...params, ...type.fixed } };
+  const event = EVENTS[type.kind];
+  if (!event || type.noAlert) return { sensor, threshold: null };
   const level = (severity: Severity) => (type.severity === severity ? event.value : null);
   return {
-    sensor: { kind: type.kind, name, interval_ms: intervalMs, params: { ...params, ...type.fixed } },
+    sensor,
     threshold: {
       metric: `${METRIC_PREFIX}${name}_${event.suffix}`,
       instance: null,
@@ -357,6 +370,49 @@ export function checkRequests(
       enabled: true,
     },
   };
+}
+
+/** Plain checks of the setting types a plugin's form has. */
+const SETTING_CHECKS: Partial<Record<PluginSetting["type"], (value: string) => string | null>> = {
+  url: (v) => (/^https?:\/\/[^\s/@]+/.test(v) ? null : "Enter an address starting with http:// or https://."),
+  number: (v) => (Number.isFinite(Number(v)) ? null : "Enter a number."),
+  bool: (v) => (v === "true" || v === "false" ? null : "Enter true or false."),
+};
+
+/**
+ * The check plugins turned on for the site `siteId` of `customerId`, as
+ * kinds of check (ADR-0103). Their settings are the fields; the check is
+ * named after the plugin and its first field.
+ */
+export function pluginCheckTypes(plugins: UsablePlugin[], siteId: string, customerId: string | null): CheckType[] {
+  return plugins
+    .filter((p) => p.kind === "check")
+    .filter((p) => p.everywhere || p.site_ids.includes(siteId) || (customerId !== null && p.customer_ids.includes(customerId)))
+    .map((p) => {
+      const fields: CheckField[] = p.settings
+        .filter((s) => s.type !== "secret")
+        .map((s) => ({
+          key: s.key,
+          label: s.label,
+          placeholder: s.default ?? "",
+          initial: s.default,
+          hint: s.help,
+          optional: !s.required,
+          check: SETTING_CHECKS[s.type],
+        }));
+      return {
+        kind: "plugin",
+        label: p.title,
+        os: null,
+        fields,
+        fixed: { plugin: p.name },
+        nameFrom: fields[0]?.key ?? "",
+        prefix: p.name.replace(/-/g, "_"),
+        severity: "warning",
+        duration_s: 0,
+        noAlert: true,
+      };
+    });
 }
 
 /**
