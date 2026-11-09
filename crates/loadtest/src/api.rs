@@ -85,32 +85,6 @@ impl Api {
             .context("site without an ID")
     }
 
-    /// A single-use token, valid a day.
-    pub async fn token(
-        &self,
-        role: &str,
-        peer_id: &str,
-        site_id: &str,
-        server_names: &[&str],
-    ) -> anyhow::Result<String> {
-        let created = self
-            .post(
-                "/api/tokens",
-                &json!({
-                    "role": role,
-                    "peer_id": peer_id,
-                    "site_id": site_id,
-                    "ttl_s": 86_400,
-                    "server_names": server_names,
-                }),
-            )
-            .await?;
-        created["token"]
-            .as_str()
-            .map(str::to_owned)
-            .context("token missing from the response")
-    }
-
     /// Servers the API lists online, following pages like the interface.
     pub async fn servers(&self) -> anyhow::Result<Vec<Value>> {
         let mut servers = Vec::new();
