@@ -58,8 +58,14 @@ pub async fn restore(
         .map_err(|e| format!("database restore failed: {e}"))?;
     if manifest.serverdata {
         say("restoring the server data");
-        let retired = retired_ca::read(serverdata_dir)
-            .map_err(|e| format!("reading the retired certificate authorities: {e}"))?;
+        // The database is restored already: what cannot be read is lost
+        // with a warning, the restore goes on.
+        let retired = retired_ca::read(serverdata_dir).unwrap_or_else(|e| {
+            say(&format!(
+                "warning: cannot read the retired certificate authorities: {e}"
+            ));
+            retired_ca::Retired::default()
+        });
         extract_serverdata(archive, serverdata_dir).await?;
         match retired_ca::put_back(serverdata_dir, &retired) {
             Ok(Some(warning)) => say(&format!("warning: {warning}")),

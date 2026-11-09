@@ -42,7 +42,35 @@ impl From<&Images> for Pins {
     }
 }
 
+/// Whether `pin` reads as an image reference, by tag or by digest, and
+/// as nothing else in `.env`: no space, quote, `$`, `#` or control
+/// character, a line feed above all, which would add a line.
+fn is_reference(pin: &str) -> bool {
+    pin.len() <= 512
+        && pin
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphanumeric())
+        && pin
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-/:@".contains(&b))
+}
+
 impl Pins {
+    /// Refuses a pin that is not an image reference, naming its line.
+    /// Pins come from `.env` and from the updater's record of an update:
+    /// neither may write more than an image's name back.
+    pub fn check(&self) -> Result<(), String> {
+        match self
+            .entries()
+            .into_iter()
+            .find(|(_, pin)| pin.as_deref().is_some_and(|pin| !is_reference(pin)))
+        {
+            Some((key, _)) => Err(format!("{key} is not an image reference")),
+            None => Ok(()),
+        }
+    }
+
     fn entries(&self) -> [(&'static str, &Option<String>); 4] {
         [
             (SERVER, &self.server),
@@ -87,8 +115,11 @@ impl EnvFile {
     }
 
     /// Replaces the pin lines with `pins`, appending the missing ones, and
-    /// keeps the file's mode and owner.
+    /// keeps the file's mode and owner. Refuses pins failing
+    /// [`Pins::check`], whoever hands them over.
     pub fn set_pins(&self, pins: &Pins) -> io::Result<()> {
+        pins.check()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         let text = std::fs::read_to_string(&self.path)?;
         self.write(&with_pins(&text, pins))
     }
@@ -299,6 +330,50 @@ mod tests {
             env.retention().unwrap(),
             (kept("45d", false), kept("1y", true))
         );
+    }
+
+    #[test]
+    fn only_image_references_are_written() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join(".env");
+        let original = "DOMAIN=mf.example\nSERVER_IMAGE=s:1\n";
+        std::fs::write(&path, original).unwrap();
+        let env = EnvFile::new(path.clone());
+        let digest = format!(
+            "ghcr.io/kidoly/monitorflow-server@sha256:{}",
+            "a".repeat(64)
+        );
+        for good in [
+            digest.as_str(),
+            "monitorflow-server:e2e-base",
+            "localhost:5000/x_y.z:1",
+        ] {
+            assert_eq!(pins(Some(good), None, None).check(), Ok(()), "{good}");
+        }
+        for bad in [
+            "",
+            "s:1\nUPDATER_IMAGE=evil",
+            "s:1\rDOCKER_SOCKET=/x",
+            "s:1 # x",
+            "${DOCKER_SOCKET}",
+            "\"s:1\"",
+            "-s:1",
+            "s:1\0",
+            &"a".repeat(513),
+        ] {
+            let forged = Pins {
+                mirror: Some(bad.into()),
+                ..pins(Some("s:2"), None, None)
+            };
+            assert_eq!(
+                forged.check().unwrap_err(),
+                "MIRROR_IMAGE is not an image reference",
+                "{bad:?}"
+            );
+            let error = env.set_pins(&forged).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "{bad:?}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        }
     }
 
     #[test]

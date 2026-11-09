@@ -280,3 +280,47 @@ pub async fn serve(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The server owns the inbox: a FIFO it plants there is refused like
+    /// any bad request, at once, and the loop goes on to the backups.
+    #[test]
+    fn a_fifo_in_the_inbox_does_not_stop_the_loop() {
+        use rustix::fs::{mknodat, FileType, Mode, CWD};
+        let dir = tempfile::TempDir::new().unwrap();
+        let inbox = dir.path().join(INBOX);
+        std::fs::create_dir(&inbox).unwrap();
+        for name in [REQUEST_FILE, BACKUP_REQUEST_FILE, RETENTION_REQUEST_FILE] {
+            mknodat(
+                CWD,
+                inbox.join(name),
+                FileType::Fifo,
+                Mode::from_raw_mode(0o600),
+                0,
+            )
+            .unwrap();
+        }
+        let (done, result) = std::sync::mpsc::channel();
+        let update_dir = dir.path().to_owned();
+        std::thread::spawn(move || {
+            let refused = (
+                take_request(&update_dir).map(|r| r.map(drop)),
+                take_backup_request(&update_dir).map(|r| r.map(drop)),
+                take_retention_request(&update_dir).map(|r| r.map(drop)),
+            );
+            done.send(refused)
+        });
+        let (update, backup, retention) = result
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a read waits on a FIFO");
+        for refused in [update, backup, retention] {
+            assert!(refused.unwrap().unwrap_err().contains("is not a file"));
+        }
+        // Consumed like a request, so the next one is read.
+        assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 0);
+        assert!(take_request(dir.path()).is_none());
+    }
+}
