@@ -11,7 +11,9 @@ members = [
     "crates/e2e",
     "crates/loadtest",
     "crates/plugin",
+    "crates/plugin-sdk",
 ]
+exclude = ["plugins"]
 
 [workspace.package]
 version = "0.2.0"

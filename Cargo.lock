@@ -1628,6 +1628,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "monitorflow-plugin-sdk"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "monitorflow-relay"
 version = "0.2.0"
 dependencies = [

@@ -1,0 +1,13 @@
+[package]
+name = "monitorflow-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# The Rust side of plugins (ADR-0103): built into each plugin's module for
+# wasm32-unknown-unknown, so it stays small and depends on serde alone.
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,13 @@
+{
+  "name": "http-json",
+  "version": "1.0.0",
+  "kind": "check",
+  "title": "Web address",
+  "description": "Fetches a web address and reports whether it answers, its status code, how long it took and, optionally, one number from its JSON.",
+  "abi": 1,
+  "capabilities": { "http": ["{settings.url}"] },
+  "settings": [
+    { "key": "url", "label": "Address", "type": "url", "required": true, "help": "Like https://app.example.com/health" },
+    { "key": "field", "label": "JSON field", "type": "text", "help": "A number in the answer to report, with dots between names: data.queue.length" }
+  ]
+}
