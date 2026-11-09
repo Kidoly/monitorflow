@@ -54,7 +54,7 @@ sqlx = { version = "0.9", features = ["runtime-tokio", "tls-rustls", "postgres",
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.2"
-toml_edit = "0.22"
+toml_edit = "0.25"
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
