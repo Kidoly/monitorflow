@@ -30,7 +30,8 @@ pub const DEFAULT_LIMIT: u32 = 500;
 pub const MAX_LIMIT: u32 = 1000;
 
 /// Query string of `GET /api/servers`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     /// 1 to [`MAX_LIMIT`], default [`DEFAULT_LIMIT`].
     pub limit: Option<u32>,
@@ -39,7 +40,7 @@ pub struct ListParams {
 }
 
 /// Body of `GET /api/servers`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ServerList {
     pub servers: Vec<ServerView>,
     /// Pass as `cursor` for the next page; `null` on the last one.
@@ -71,7 +72,8 @@ pub(super) fn page_limit(limit: Option<u32>, default: u32, max: u32) -> Result<u
     Ok(limit)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = ServerStatus)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
     /// The agent has an open stream to this server, directly or via a relay.
@@ -81,7 +83,7 @@ pub enum Status {
 
 /// One server. Field names and types are part of the API contract: add
 /// fields, never rename or remove them.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ServerView {
     pub id: Uuid,
     /// The agent certificate ID.
@@ -129,7 +131,7 @@ pub struct ServerView {
 
 /// Body of `GET /api/servers/{id}`: the listing row plus the agent's
 /// current certificate.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ServerDetail {
     #[serde(flatten)]
     pub server: ServerView,
@@ -142,7 +144,7 @@ pub struct ServerDetail {
 }
 
 /// A certificate from the `certificates` table.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CertificateView {
     /// Lowercase hexadecimal without leading zeros.
     pub serial: String,

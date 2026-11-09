@@ -31,7 +31,8 @@ pub const MAX_DAYS: i64 = 30;
 pub const MAX_REASON: usize = 200;
 
 /// What a silence covers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = SilenceScope)]
 #[serde(rename_all = "lowercase")]
 pub enum Target {
     Server,
@@ -42,7 +43,8 @@ pub enum Target {
 }
 
 /// Query string of `GET /api/silences`: at most one, for what covers it.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
     pub server_id: Option<Uuid>,
@@ -51,7 +53,8 @@ pub struct ListParams {
 }
 
 /// Body of `POST /api/silences`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = SilenceRequest)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRequest {
     pub scope: Target,
@@ -66,7 +69,7 @@ pub struct CreateRequest {
 }
 
 /// One silence.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct SilenceView {
     pub id: Uuid,
     /// `server`, `relay`, `site`, `customer` or `all`.
@@ -92,7 +95,7 @@ pub struct SilenceView {
 }
 
 /// Body of `GET /api/silences`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SilenceList {
     pub silences: Vec<SilenceView>,
 }

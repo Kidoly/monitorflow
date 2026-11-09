@@ -1,11 +1,13 @@
 import type { Me } from "@/lib/api";
 import { administersEverything, isAdministrator, readsCustomers } from "@/lib/me";
 import {
+  API_KEYS_PATH,
   APPROVALS_PATH,
   AUDIT_PATH,
   AUTO_UPDATE_PATH,
   AI_SETTINGS_PATH,
   BACKUPS_PATH,
+  PLUGINS_PATH,
   CAMPAIGNS_PATH,
   CERTIFICATE_AUTHORITY_PATH,
   DASHBOARDS_PATH,
@@ -87,6 +89,7 @@ export const NAVIGATION: NavSection[] = [
       { label: "Sites", href: SITES_PATH, icon: "sites", iconWhenCollapsed: true },
       { label: "Add servers", href: TOKENS_PATH, icon: "tokens", iconWhenCollapsed: true },
       { label: "Users and roles", href: USERS_PATH, icon: "users", iconWhenCollapsed: true },
+      { label: "API keys", href: API_KEYS_PATH, icon: "tokens", iconWhenCollapsed: true },
       {
         label: "Notifications",
         href: NOTIFICATIONS_PATH,
@@ -117,6 +120,13 @@ export const NAVIGATION: NavSection[] = [
         label: "Backups",
         href: BACKUPS_PATH,
         icon: "backups",
+        iconWhenCollapsed: true,
+        visible: administersEverything,
+      },
+      {
+        label: "Plugins",
+        href: PLUGINS_PATH,
+        icon: "plugin",
         iconWhenCollapsed: true,
         visible: administersEverything,
       },

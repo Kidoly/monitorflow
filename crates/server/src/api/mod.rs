@@ -123,6 +123,9 @@
 //! | GET | `/api/dashboards/{id}/display-links` | link it | [`display::LinkList`]: the display links showing it, without secrets (ADR-0099) |
 //! | POST | `/api/display-links` | link every dashboard named | body [`display::CreateRequest`]; 201 [`display::Created`] with the `url`, the only time its secret is shown; audited |
 //! | DELETE | `/api/display-links/{id}` | its maker, or link one of its dashboards | 204, its screens stop at their next request; audited |
+//! | GET | `/api/api-keys` | administrator | [`api_keys::KeyList`]: the keys the user could have made, without secrets (ADR-0101) |
+//! | POST | `/api/api-keys` | administrator of the reach | body [`api_keys::CreateRequest`]; 201 [`api_keys::Created`] with the `secret`, shown this once; audited |
+//! | DELETE | `/api/api-keys/{id}` | administrator of the reach | 204, the key stops at its next request; audited |
 //! | POST | `/api/display/start` | display link | body `{"token"}`; [`display::ScreenView`] and a one-hour screen session cookie; 410 for a link turned off, expired or whose maker is disabled, 403 when its maker may show none of its dashboards, 429 over the limits |
 //! | GET | `/api/display` | screen session | [`display::ScreenView`]; 401 once the session or link ends |
 //! | POST | `/api/display/data` | screen session | body `{"dashboard_id"}`; [`dashboard_data::DataResponse`] of one of the link's dashboards, read as its maker with their roles of now |
@@ -141,6 +144,16 @@
 //! | PUT | `/api/settings/retention` | global administrator | body [`server_settings::RetentionBody`]; 202 [`server_settings::ServerSettings`], the updater applies it; 409 without a running updater, during a change or against `.env`; audited |
 //! | GET | `/api/agent-releases` | any role | [`commands::AgentReleases`]: cached agent versions and the latest (ADR-0053) |
 //! | POST | `/api/agent-releases/import` | global administrator | multipart release files; 200 [`release_import::ImportResult`]; 400 when they do not verify; 409 during another import; audited (ADR-0061) |
+//! | GET | `/api/plugins` | global administrator | [`plugins::PluginList`]: installed plugins, their signer, capabilities in words, places and uses (ADR-0103) |
+//! | POST | `/api/plugins/inspect` | global administrator | the plugin file as the body; 200 [`plugins::Inspection`], what it is and asks for, stores nothing; 400 saying why it cannot be installed |
+//! | POST | `/api/plugins?sha256=` | global administrator | the same file; 201 (200 for an update) [`plugins::PluginView`]; 400 when it is not the file inspected, is not newer or has another signer; audited (`plugin.install`, `plugin.update`) |
+//! | PUT | `/api/plugins/{id}/places` | global administrator | body `{"places": [{"customer_id"?, "site_id"?}]}`, `{}` for everything; 200 [`plugins::PluginView`]; audited (`plugin.places`) |
+//! | PUT | `/api/plugins/{id}/enabled` | global administrator | body `{"enabled"}`; 200 [`plugins::PluginView`]; audited (`plugin.enable`, `plugin.disable`) |
+//! | DELETE | `/api/plugins/{id}` | global administrator | 204; 409 while a channel or check uses it; audited (`plugin.remove`) |
+//! | GET | `/api/plugins/usable` | any role | [`plugins::UsableList`]: plugins turned on, with the places the user can see |
+//! | GET | `/api/plugins/publishers` | global administrator | [`plugins::PublisherList`] |
+//! | POST | `/api/plugins/publishers` | global administrator | body `{"name", "public_key"}`; 201 [`plugins::PublisherView`]; 409 for a key trusted already; audited (`plugin_publisher.add`) |
+//! | DELETE | `/api/plugins/publishers/{id}` | global administrator | 204; 409 while a plugin it signed is installed; audited (`plugin_publisher.remove`) |
 //! | POST | `/api/agent-releases/import-url` | global administrator | body [`release_import::UrlRequest`]; as above, from a directory of release files |
 //! | GET | `/api/server-update` | global administrator | [`server_update::UpdateView`]: running version, updater, last update and any newer release the daily check saw (ADR-0056, ADR-0061) |
 //! | POST | `/api/server-update/check` | global administrator | [`server_update::CheckResult`]: the latest release, verified, and what it changes |
@@ -193,6 +206,18 @@
 //! Every request other than GET, HEAD, OPTIONS and TRACE, login included,
 //! must carry the header `X-MonitorFlow-CSRF: 1` and must not be marked
 //! cross-site by `Sec-Fetch-Site`; otherwise 403.
+//!
+//! # Public API
+//!
+//! `/api/v1/<path>` serves `/api/<path>` with the same handlers (see
+//! [`v1`], ADR-0101), except sign-in, setup, password and acknowledge
+//! links, screens and API keys, which are 404 there. It also takes
+//! `Authorization: Bearer mfk_…`: an API key acting as its maker narrowed
+//! to its reach, role and areas, without the CSRF header, limited to 600
+//! requests a minute with `RateLimit-*` headers. `/api/<path>` never takes
+//! keys. A key's write with `Idempotency-Key` runs once; the same request
+//! again within 24 hours gets the first answer with `Idempotent-Replayed:
+//! true` ([`idempotency`]).
 //!
 //! # Authorization
 //!
@@ -595,6 +620,7 @@ pub mod access;
 pub mod agent_files;
 pub mod ai;
 pub mod ai_commands;
+pub mod api_keys;
 pub mod approvals;
 pub(crate) mod audit;
 pub mod auth;
@@ -611,6 +637,7 @@ pub mod display;
 mod error;
 pub mod follow_up;
 mod health;
+pub mod idempotency;
 pub mod incidents;
 pub mod install_keys;
 pub mod integrations;
@@ -622,9 +649,11 @@ pub mod notifications;
 pub mod offline_alerts;
 pub mod on_call;
 pub(crate) mod one_time;
+pub mod openapi;
 pub mod package_sources;
 pub mod packages;
 pub mod password;
+pub mod plugins;
 pub mod proxmox;
 pub mod public_address;
 pub mod relays;
@@ -649,6 +678,7 @@ pub mod thresholds;
 pub mod tokens;
 pub mod user_admin;
 pub mod users;
+pub mod v1;
 
 use std::future::Future;
 use std::sync::Arc;
@@ -801,6 +831,8 @@ pub struct ApiState {
     pub dashboard_cache: Arc<dashboard_data::Cache>,
     /// Rate limits of screens showing display links (ADR-0099).
     pub display_limits: Arc<display::Limits>,
+    /// Rate limits of API keys (ADR-0101).
+    pub api_key_limits: Arc<v1::Limits>,
 }
 
 impl ApiState {
@@ -821,6 +853,7 @@ impl ApiState {
             ca_rotation: None,
             dashboard_cache: Arc::default(),
             display_limits: Arc::default(),
+            api_key_limits: Arc::default(),
         }
     }
 
@@ -1042,6 +1075,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/dashboards/{id}/display-links", get(display::list))
         .route("/api/display-links", post(display::create))
         .route("/api/display-links/{id}", delete(display::revoke))
+        .route("/api/api-keys", get(api_keys::list).post(api_keys::create))
+        .route("/api/api-keys/{id}", delete(api_keys::revoke))
         .route("/api/display", get(display::view))
         .route("/api/display/start", post(display::start))
         .route("/api/display/data", post(display::data))
@@ -1223,6 +1258,32 @@ pub fn router(state: ApiState) -> Router {
             get(proxmox::get).put(proxmox::set).delete(proxmox::clear),
         )
         .route("/api/servers/{id}/proxmox/guests", get(proxmox::guests))
+        .route(
+            "/api/plugins",
+            get(plugins::list)
+                .post(plugins::install)
+                .layer(DefaultBodyLimit::max(
+                    monitorflow_plugin::limits::PACKAGE_BYTES,
+                )),
+        )
+        .route(
+            "/api/plugins/inspect",
+            post(plugins::inspect).layer(DefaultBodyLimit::max(
+                monitorflow_plugin::limits::PACKAGE_BYTES,
+            )),
+        )
+        .route("/api/plugins/usable", get(plugins::usable))
+        .route(
+            "/api/plugins/publishers",
+            get(plugins::publishers).post(plugins::add_publisher),
+        )
+        .route(
+            "/api/plugins/publishers/{id}",
+            delete(plugins::remove_publisher),
+        )
+        .route("/api/plugins/{id}", delete(plugins::remove))
+        .route("/api/plugins/{id}/places", put(plugins::set_places))
+        .route("/api/plugins/{id}/enabled", put(plugins::set_enabled))
         .fallback(not_found)
         .layer(middleware::from_fn(auth::csrf_guard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
@@ -1241,7 +1302,7 @@ pub async fn serve(
             tracing::warn!(%addr, "API listens on plain HTTP beyond loopback; keep it behind a TLS reverse proxy (ADR-0006)");
         }
     }
-    axum::serve(listener, router(state))
+    axum::serve(listener, v1::app(state))
         .with_graceful_shutdown(shutdown)
         .await
 }

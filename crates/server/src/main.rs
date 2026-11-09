@@ -472,7 +472,7 @@ async fn main() -> anyhow::Result<()> {
     .context("loading the threshold engine state")?;
     let registry = Registry::default();
     let sensor_configs = SensorConfigs::spawn(
-        SensorConfigStore::new(pool.clone()),
+        SensorConfigStore::new(pool.clone()).with_plugin_grants(ca.clone()),
         registry.clone(),
         WatcherSettings::default(),
     );

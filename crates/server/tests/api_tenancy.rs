@@ -19,7 +19,7 @@ use axum::Router;
 use monitorflow_common::redact::Secret;
 use monitorflow_server::api::auth::CSRF_HEADER;
 use monitorflow_server::api::users::{self, GrantScope};
-use monitorflow_server::api::{self, ApiSettings, ApiState, EnrollmentSettings, Role};
+use monitorflow_server::api::{v1, ApiSettings, ApiState, EnrollmentSettings, Role};
 use monitorflow_server::grpc::Registry;
 use monitorflow_server::vm_query::VmQuery;
 use serde_json::{json, Value};
@@ -444,26 +444,33 @@ struct Ctx {
     b: Tenant,
     /// A global mirror (ADR-0030).
     mirror: Uuid,
+    /// When set, every request with the cookie goes through `/api/v1`
+    /// with this key of A's administrator instead (ADR-0101).
+    key: Option<String>,
+    /// Check plugins used at B's site, at B and at A's site (ADR-0103),
+    /// made before the rows are compared: plugin changes bump every
+    /// site's revision.
+    plugins: [Uuid; 3],
 }
 
 impl Ctx {
     fn app(&self) -> Router {
         let vm = VmQuery::with_timeout(&self.vm_url, Duration::from_millis(500)).unwrap();
-        api::router(
-            ApiState::new(
-                self.pool.clone(),
-                Registry::default(),
-                ApiSettings::default(),
-            )
-            .with_metrics(vm.clone())
-            .with_logs(vm)
-            .with_enrollment(EnrollmentSettings {
-                ca_fingerprint: [7; 32],
-                server_names: vec!["mf.example".into()],
-                grpc_port: 7443,
-                enroll_port: 7445,
-            }),
+        let mut state = ApiState::new(
+            self.pool.clone(),
+            Registry::default(),
+            ApiSettings::default(),
         )
+        .with_metrics(vm.clone())
+        .with_logs(vm)
+        .with_enrollment(EnrollmentSettings {
+            ca_fingerprint: [7; 32],
+            server_names: vec!["mf.example".into()],
+            grpc_port: 7443,
+            enroll_port: 7445,
+        });
+        state.api_key_limits = Arc::new(v1::Limits::new(u32::MAX));
+        v1::app(state)
     }
 
     async fn send(
@@ -475,11 +482,20 @@ impl Ctx {
     ) -> (StatusCode, Value) {
         let mut request = Request::builder()
             .method(method)
-            .uri(uri)
-            .header(CSRF_HEADER, "1")
             .header("content-type", "application/json");
-        if let Some(cookie) = cookie {
-            request = request.header("cookie", cookie);
+        match (&self.key, cookie) {
+            (Some(key), Some(_)) => {
+                let uri = uri.replacen("/api/", "/api/v1/", 1);
+                request = request
+                    .uri(uri)
+                    .header("authorization", format!("Bearer {key}"));
+            }
+            (_, cookie) => {
+                request = request.uri(uri).header(CSRF_HEADER, "1");
+                if let Some(cookie) = cookie {
+                    request = request.header("cookie", cookie);
+                }
+            }
         }
         let request = request
             .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
@@ -528,6 +544,35 @@ impl Ctx {
         .fetch_one(&self.pool)
         .await
         .unwrap()
+    }
+
+    /// A check plugin used at `place`, as `{"customer_id"}` or
+    /// `{"site_id"}`, with a stand-in package: nothing runs it here.
+    async fn plugin(&self, place: Value) -> Uuid {
+        let name = format!("p{}", Uuid::new_v4().simple());
+        let manifest =
+            json!({ "name": name, "version": "1.0.0", "kind": "check", "title": "P", "abi": 1 });
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO plugins (name, kind, version, title, manifest, package, sha256, public_key, official)
+             VALUES ($1, 'check', '1.0.0', 'P', $2, '\\x00', $3, $3, false) RETURNING id",
+        )
+        .bind(&name)
+        .bind(manifest)
+        .bind(vec![0u8; 32])
+        .fetch_one(&self.pool)
+        .await
+        .unwrap();
+        let id_of = |key: &str| place[key].as_str().map(|v| v.parse::<Uuid>().unwrap());
+        sqlx::query(
+            "INSERT INTO plugin_places (plugin_id, customer_id, site_id) VALUES ($1, $2, $3)",
+        )
+        .bind(id)
+        .bind(id_of("customer_id"))
+        .bind(id_of("site_id"))
+        .execute(&self.pool)
+        .await
+        .unwrap();
+        id
     }
 
     /// The last query string VictoriaMetrics received.
@@ -1008,6 +1053,41 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(ctx.status(method, path, body).await, StatusCode::FORBIDDEN);
         }
         // Backups hold every customer's data: global administrators only.
+        // Plugins run on the central server or every agent they are given
+        // to: global administrators only (ADR-0103).
+        ("GET", "/api/plugins")
+        | ("POST", "/api/plugins")
+        | ("POST", "/api/plugins/inspect")
+        | ("DELETE", "/api/plugins/{id}")
+        | ("PUT", "/api/plugins/{id}/places")
+        | ("PUT", "/api/plugins/{id}/enabled")
+        | ("GET", "/api/plugins/publishers")
+        | ("POST", "/api/plugins/publishers")
+        | ("DELETE", "/api/plugins/publishers/{id}") => {
+            let id = ctx.plugins[0].to_string();
+            let uri = match (method, path) {
+                ("POST", "/api/plugins") => "/api/plugins?sha256=00".to_owned(),
+                _ => path.replace("{id}", &id),
+            };
+            let body = match path {
+                "/api/plugins/{id}/places" => Some(json!({ "places": [{}] })),
+                "/api/plugins/{id}/enabled" => Some(json!({ "enabled": false })),
+                "/api/plugins/publishers" => Some(json!({ "name": "x", "public_key": "x" })),
+                _ => None,
+            };
+            assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
+        }
+        // Where plugins may be used: only the places A sees.
+        ("GET", "/api/plugins/usable") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["plugins"].as_array().unwrap().len(), 1, "{body}");
+            assert_eq!(body["plugins"][0]["site_ids"], json!([a.site]), "{body}");
+            assert!(
+                !Ctx::mentions(&body, b.customer) && !Ctx::mentions(&body, b.site),
+                "{body}"
+            );
+        }
         ("GET", "/api/backups") | ("POST", "/api/backups") | ("GET", "/api/backups/{name}") => {
             let uri = path.replace("{name}", "monitorflow-backup-20261029T030000Z-daily.tar.gz");
             assert_eq!(ctx.status(method, &uri, None).await, StatusCode::FORBIDDEN);
@@ -1935,6 +2015,48 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 StatusCode::UNAUTHORIZED
             );
         }
+        // API keys (ADR-0101): B's keys are neither listed nor turned
+        // off, and none is made for B's customer or site.
+        ("GET", "/api/api-keys") | ("DELETE", "/api/api-keys/{id}") => {
+            let key: Uuid = sqlx::query_scalar(
+                "INSERT INTO api_keys (token_hash, prefix, name, role, customer_id, created_by)
+                 SELECT sha256(convert_to($1, 'UTF8')), 'abcdefgh', 'B', 'viewer', $2, id
+                 FROM users WHERE username = 'admin-a' RETURNING id",
+            )
+            .bind(format!("{method}{path}"))
+            .bind(b.customer)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            if method == "GET" {
+                let (status, body) = ctx.call(method, path, None).await;
+                assert_eq!(status, StatusCode::OK);
+                assert!(
+                    !Ctx::mentions(&body, key) && !Ctx::mentions(&body, b.customer),
+                    "{body}"
+                );
+            } else {
+                let uri = path.replace("{id}", &key.to_string());
+                assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            }
+            sqlx::query("DELETE FROM api_keys WHERE id = $1")
+                .bind(key)
+                .execute(&ctx.pool)
+                .await
+                .unwrap();
+        }
+        ("POST", "/api/api-keys") => {
+            for reach in [
+                json!({ "customer_id": b.customer }),
+                json!({ "site_id": b.site }),
+            ] {
+                let mut body = json!({ "name": "K" });
+                body.as_object_mut()
+                    .unwrap()
+                    .extend(reach.as_object().unwrap().clone());
+                assert_eq!(ctx.status(method, path, Some(body)).await, not_found);
+            }
+        }
         ("GET", "/api/dashboard-metrics") => {
             let uri = format!("{path}?site_id={}", b.site);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
@@ -1994,79 +2116,169 @@ fn route_source_parsing_finds_methods() {
 db_tests! {
     #[sqlx::test]
     async fn every_route_keeps_customers_apart(pool: PgPool) {
-        let vm = FakeVm::default();
-        let vm_url = vm.start().await;
-        let a = tenant(&pool, "a").await;
-        let b = tenant(&pool, "b").await;
-        users::create_user_with(&pool, "admin-a", &Secret::new(PASSWORD), Role::Administrator, GrantScope::Customer(a.customer), "test")
-            .await
-            .unwrap();
-        let mirror = sqlx::query_scalar(
+        keeps_customers_apart(pool, false).await;
+    }
+
+    /// The same cases through `/api/v1` with a key that A's administrator
+    /// made for everything they may do (ADR-0101).
+    #[sqlx::test]
+    async fn every_public_route_keeps_customers_apart(pool: PgPool) {
+        keeps_customers_apart(pool, true).await;
+    }
+}
+
+async fn keeps_customers_apart(pool: PgPool, with_key: bool) {
+    let vm = FakeVm::default();
+    let vm_url = vm.start().await;
+    let a = tenant(&pool, "a").await;
+    let b = tenant(&pool, "b").await;
+    users::create_user_with(
+        &pool,
+        "admin-a",
+        &Secret::new(PASSWORD),
+        Role::Administrator,
+        GrantScope::Customer(a.customer),
+        "test",
+    )
+    .await
+    .unwrap();
+    let mirror = sqlx::query_scalar(
             "INSERT INTO mirrors (name, family, upstream_url, distribution, components)
              VALUES ('debian', 'apt', 'https://deb.debian.org/debian', 'bookworm', '{main}') RETURNING id",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        let mut ctx = Ctx { pool: pool.clone(), vm: vm.clone(), vm_url, cookie: String::new(), a, b, mirror };
-        ctx.cookie = login(&ctx.app(), "admin-a").await.1;
+    let mut ctx = Ctx {
+        pool: pool.clone(),
+        vm: vm.clone(),
+        vm_url,
+        cookie: String::new(),
+        a,
+        b,
+        mirror,
+        key: None,
+        plugins: [Uuid::nil(); 3],
+    };
+    ctx.cookie = login(&ctx.app(), "admin-a").await.1;
+    ctx.plugins = [
+        ctx.plugin(json!({ "site_id": b.site })).await,
+        ctx.plugin(json!({ "customer_id": b.customer })).await,
+        ctx.plugin(json!({ "site_id": a.site })).await,
+    ];
+    let routes = source_routes();
+    if with_key {
+        let body =
+            json!({ "name": "All of A", "customer_id": a.customer, "role": "administrator" });
+        let (status, created) = ctx.call("POST", "/api/api-keys", Some(body)).await;
+        assert_eq!(status, StatusCode::CREATED, "{}", created["error"]);
+        ctx.key = Some(created["secret"].as_str().unwrap().to_owned());
+    }
 
-        // The parsed list is the router's: listed methods are routed, the
-        // others on the same paths are 405.
-        let routes = source_routes();
-        let paths: BTreeSet<&String> = routes.iter().map(|(_, p)| p).collect();
-        for path in paths {
-            for method in METHODS.map(str::to_uppercase) {
-                let status = ctx.send(&method, &concrete(path), None, None).await.0;
-                let listed = routes.contains(&(method.clone(), path.clone()));
-                assert_eq!(status == StatusCode::METHOD_NOT_ALLOWED, !listed, "{method} {path}: {status}");
-            }
+    // The parsed list is the router's: listed methods are routed, the
+    // others on the same paths are 405.
+    let paths: BTreeSet<&String> = routes.iter().map(|(_, p)| p).collect();
+    for path in paths {
+        for method in METHODS.map(str::to_uppercase) {
+            let status = ctx.send(&method, &concrete(path), None, None).await.0;
+            let listed = routes.contains(&(method.clone(), path.clone()));
+            assert_eq!(
+                status == StatusCode::METHOD_NOT_ALLOWED,
+                !listed,
+                "{method} {path}: {status}"
+            );
         }
+    }
 
-        let before = |table: &'static str| {
-            let pool = pool.clone();
-            async move {
-                // SQL-safe: `table` is a literal name from this test.
-                sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
-                    "SELECT string_agg(t::text, ',' ORDER BY id) FROM {table} t"
-                )))
-                .fetch_one(&pool)
-                .await
-                .unwrap()
-            }
-        };
-        let rows = (before("sensor_configs").await, before("thresholds").await, before("sites").await, before("enrollment_tokens").await, before("relays").await, before("servers").await);
-
-        for (method, path) in &routes {
-            check(&ctx, method, path).await;
+    let before = |table: &'static str| {
+        let pool = pool.clone();
+        async move {
+            // SQL-safe: `table` is a literal name from this test.
+            sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
+                "SELECT string_agg(t::text, ',' ORDER BY id) FROM {table} t"
+            )))
+            .fetch_one(&pool)
+            .await
+            .unwrap()
         }
+    };
+    let rows = (
+        before("sensor_configs").await,
+        before("thresholds").await,
+        before("sites").await,
+        before("enrollment_tokens").await,
+        before("relays").await,
+        before("servers").await,
+    );
 
-        let untouched: (i64, i64) = sqlx::query_as(
-            "SELECT (SELECT count(*) FROM pending_hosts),
+    for (method, path) in &routes {
+        // Routes v1 leaves out answer 404 to a key.
+        if with_key && v1::left_out(path) {
+            let status = ctx.status(method, &concrete(path), Some(json!({}))).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
+            continue;
+        }
+        check(&ctx, method, path).await;
+    }
+
+    let untouched: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM pending_hosts),
                     (SELECT count(*) FROM install_keys WHERE revoked_at IS NULL)",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(untouched, (2, 2), "an administrator of A decided on B's hosts or keys");
-        let dashboards: String = sqlx::query_scalar(
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        untouched,
+        (2, 2),
+        "an administrator of A decided on B's hosts or keys"
+    );
+    let dashboards: String = sqlx::query_scalar(
             "SELECT string_agg(id::text || name || revision || spec::text, ',' ORDER BY id) FROM dashboards",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        let expected = [a.site_dashboard, a.customer_dashboard, b.site_dashboard, b.customer_dashboard];
-        assert!(expected.iter().all(|id| dashboards.contains(&id.to_string())), "{dashboards}");
-        assert!(dashboards.matches("\"version\"").count() == 4, "a dashboard was added: {dashboards}");
-        let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM mirror_runs").fetch_one(&pool).await.unwrap();
-        assert_eq!(runs, 0, "a customer administrator started a mirror job");
-        // Writes against B changed nothing (A's rows were not touched either).
-        assert_eq!(rows, (before("sensor_configs").await, before("thresholds").await, before("sites").await, before("enrollment_tokens").await, before("relays").await, before("servers").await));
-        // Nothing about B ever reached VictoriaMetrics, while A's queries did.
-        let seen = vm.seen();
-        assert!(!seen.is_empty());
-        for query in seen {
-            assert!(!query.contains("site-b") && !query.contains("agent-b"), "{query}");
-        }
+    let expected = [
+        a.site_dashboard,
+        a.customer_dashboard,
+        b.site_dashboard,
+        b.customer_dashboard,
+    ];
+    assert!(
+        expected
+            .iter()
+            .all(|id| dashboards.contains(&id.to_string())),
+        "{dashboards}"
+    );
+    assert!(
+        dashboards.matches("\"version\"").count() == 4,
+        "a dashboard was added: {dashboards}"
+    );
+    let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM mirror_runs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(runs, 0, "a customer administrator started a mirror job");
+    // Writes against B changed nothing (A's rows were not touched either).
+    assert_eq!(
+        rows,
+        (
+            before("sensor_configs").await,
+            before("thresholds").await,
+            before("sites").await,
+            before("enrollment_tokens").await,
+            before("relays").await,
+            before("servers").await
+        )
+    );
+    // Nothing about B ever reached VictoriaMetrics, while A's queries did.
+    let seen = vm.seen();
+    assert!(!seen.is_empty());
+    for query in seen {
+        assert!(
+            !query.contains("site-b") && !query.contains("agent-b"),
+            "{query}"
+        );
     }
 }

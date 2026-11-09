@@ -40,7 +40,8 @@ pub const DEFAULT_LIMIT: u32 = 100;
 pub const MAX_LIMIT: u32 = 500;
 
 /// Body of `POST /api/servers/{id}/commands`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = CommandRequest)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRequest {
     /// `apply_updates` or `self_update`.
@@ -66,7 +67,7 @@ pub struct CreateRequest {
 }
 
 /// One command, without its output.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CommandView {
     pub id: Uuid,
     pub server_id: Uuid,
@@ -87,7 +88,7 @@ pub struct CommandView {
 
 /// `GET /api/commands/{id}`: the command and its output, each at most
 /// the last 64 KiB.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CommandDetail {
     #[serde(flatten)]
     pub command: CommandView,
@@ -95,14 +96,15 @@ pub struct CommandDetail {
     pub stderr: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CommandList {
     /// Newest first.
     pub commands: Vec<CommandView>,
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
     pub limit: Option<u32>,

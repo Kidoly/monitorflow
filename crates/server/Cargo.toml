@@ -27,6 +27,8 @@ monitorflow-common = { workspace = true, features = ["mirror", "server-update"] 
 monitorflow-sensors.workspace = true
 # AI remediation loop (ADR-0039, ADR-0043).
 monitorflow-ai.workspace = true
+# Plugins: signed packages and their runtime (ADR-0103).
+monitorflow-plugin.workspace = true
 base64.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
@@ -42,6 +44,10 @@ toml.workspace = true
 axum = { workspace = true, features = ["multipart"] }
 # Agent release files behind the web interface (ADR-0054).
 tower-http.workspace = true
+# Hands `/api/v1` requests to the router (ADR-0101).
+tower.workspace = true
+# OpenAPI document of the public API (ADR-0101).
+utoipa.workspace = true
 argon2.workspace = true
 rpassword.workspace = true
 sqlx.workspace = true

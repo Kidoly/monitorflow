@@ -10,6 +10,7 @@ import {
   NotificationsPage,
   destination,
   newSecret,
+  pluginAllows,
 } from "./NotificationsAdmin";
 
 vi.mock("next/navigation", () => import("@/test/navigation"));
@@ -337,6 +338,57 @@ describe("NotificationsPage", () => {
     expect(
       within(screen.getByRole("table")).getByText(/Email to a@example.com/),
     ).toBeInTheDocument();
+  });
+
+  it("adds a channel of a plugin, with its settings and secret settings", async () => {
+    const ntfy = {
+      name: "ntfy",
+      kind: "channel",
+      version: "1.0.0",
+      title: "ntfy",
+      description: "Sends notifications to an ntfy topic.",
+      capabilities: [],
+      settings: [
+        { key: "server", label: "Server", type: "url", required: true, default: "https://ntfy.sh" },
+        { key: "topic", label: "Topic", type: "text", required: true },
+        { key: "token", label: "Access token", type: "secret" },
+      ],
+      everywhere: true,
+      customer_ids: [],
+      site_ids: [],
+    };
+    const saved = {
+      ...hook(),
+      id: "n3",
+      kind: "plugin",
+      settings: { plugin: "ntfy", name: "", values: { server: "https://ntfy.sh", topic: "ops" } },
+    } as NotificationChannel;
+    const fetchMock = stubFetch({
+      [`GET ${CHANNELS}`]: { status: 200, body: { channels: [] } },
+      "GET /api/customers": customers,
+      "GET /api/sites": noSites,
+      "GET /api/plugins/usable": { status: 200, body: { plugins: [ntfy] } },
+      [`POST ${CHANNELS}`]: { status: 201, body: saved },
+      [`POST ${CHANNELS}/n3/test`]: { status: 200, body: { ok: true, error: null } },
+    });
+    const user = userEvent.setup();
+    page();
+    await user.click(await screen.findByRole("button", { name: "Add ntfy" }));
+    expect(screen.getByLabelText("Server")).toHaveValue("https://ntfy.sh");
+    await user.type(screen.getByLabelText("Topic"), "ops");
+    await user.type(screen.getByLabelText(/^Access token/), "tk_1");
+    await user.click(screen.getByRole("button", { name: "Save and send test" }));
+    await waitFor(() =>
+      expect(posted(fetchMock)).toEqual({
+        kind: "plugin",
+        settings: { plugin: "ntfy", name: "", values: { server: "https://ntfy.sh", topic: "ops" } },
+        secret: JSON.stringify({ token: "tk_1" }),
+        customer_id: null,
+        site_id: null,
+        follow_up_only: false,
+      }),
+    );
+    expect(destination(saved)).toBe("ntfy");
   });
 
   it("shows each channel's state and tests it on demand", async () => {
@@ -716,5 +768,34 @@ describe("destination", () => {
       ),
     ).toBe("Slack: hooks.slack.com");
     expect(newSecret()).not.toBe(newSecret());
+  });
+});
+
+describe("pluginAllows", () => {
+  const plugin = (over: object): Parameters<typeof pluginAllows>[0] => ({
+    name: "p",
+    kind: "channel",
+    version: "1.0.0",
+    title: "P",
+    description: "",
+    capabilities: [],
+    settings: [],
+    everywhere: false,
+    customer_ids: [],
+    site_ids: [],
+    ...over,
+  });
+  const sites = [site("site-1", "paris", "c1", "acme")] as Parameters<typeof pluginAllows>[2];
+  const everything = { customer_id: null, site_id: null };
+  const acme = { customer_id: "c1", site_id: null };
+  const paris = { customer_id: null, site_id: "site-1" };
+
+  it("follows the plugin's places", () => {
+    expect(pluginAllows(plugin({ everywhere: true }), everything, sites)).toBe(true);
+    expect(pluginAllows(plugin({ customer_ids: ["c1"] }), everything, sites)).toBe(false);
+    expect(pluginAllows(plugin({ customer_ids: ["c1"] }), acme, sites)).toBe(true);
+    expect(pluginAllows(plugin({ customer_ids: ["c1"] }), paris, sites)).toBe(true);
+    expect(pluginAllows(plugin({ site_ids: ["site-1"] }), acme, sites)).toBe(false);
+    expect(pluginAllows(plugin({ site_ids: ["site-1"] }), paris, sites)).toBe(true);
   });
 });

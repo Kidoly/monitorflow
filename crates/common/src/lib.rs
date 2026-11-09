@@ -7,6 +7,7 @@ pub mod config;
 pub mod grpc_url;
 pub mod logging;
 pub mod mirror;
+pub mod plugin_grant;
 pub mod rate;
 pub mod redact;
 pub mod release;

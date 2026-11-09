@@ -57,6 +57,7 @@ fn server_settings() -> grpc::StreamSettings {
 /// `n` fake sensors collecting every second.
 fn fakes(n: usize) -> SensorConfig {
     SensorConfig {
+        plugins: Vec::new(),
         revision: 1,
         sensors: (0..n)
             .map(|i| SensorSpec {

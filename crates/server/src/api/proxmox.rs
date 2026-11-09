@@ -107,11 +107,12 @@ impl TryFrom<String> for KindColumn {
 
 /// Whether the server can be snapshotted; without it the interface shows
 /// that rollback is limited.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SnapshotSupport {
     pub available: bool,
     /// `disabled`, `not_mapped`, `unknown_cluster` or `cannot_snapshot`
     /// when unavailable.
+    #[schema(value_type = Option<String>)]
     pub reason: Option<Unsupported>,
     /// The mapped guest's kind, so the reason can say VM or container.
     pub kind: Option<GuestKind>,
