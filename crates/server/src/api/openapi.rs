@@ -220,6 +220,8 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/relays",
     "/api/agent-releases",
     "/api/server-update",
+    "/api/license",
+    "/api/plugins",
     "/api/auto-update",
     "/api/health",
     "/api/customers/{id}",
