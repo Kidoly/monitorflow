@@ -175,6 +175,11 @@ function TestLine({ test }: { test: TestState }) {
   );
 }
 
+/** Whether a typed address is the stored one, which the server keeps without a trailing slash. */
+function sameAddress(typed: string, stored: string | null): boolean {
+  return typed.trim().replace(/\/+$/, "") === (stored ?? "");
+}
+
 /** The model the form starts with for `provider`: the stored one when it is that provider's. */
 function startModel(settings: AiSettings, provider: AiProvider): string {
   if (provider === settings.provider) return settings.model;
@@ -206,9 +211,11 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
   );
   const [listed, setListed] = useState<ModelList | null>(null);
   const listId = useId();
-  // The stored key belongs to the stored provider.
-  const hasKey = settings.has_key && provider === settings.provider;
   const local = provider === "openai_compatible";
+  // The stored key belongs to the stored provider and, for a local model,
+  // to the stored address: the server sends it nowhere else.
+  const moved = local && settings.has_key && provider === settings.provider && !sameAddress(baseUrl, settings.base_url);
+  const hasKey = settings.has_key && provider === settings.provider && !moved;
   const canUse = local ? baseUrl.trim() !== "" && model.trim() !== "" : hasKey || key.trim() !== "";
   const note = provider === "anthropic" ? settings.models.find((m) => m.id === model)?.note : undefined;
   const form: AiFormBody = { provider, api_key: key || null, base_url: local ? baseUrl : null, model };
@@ -275,7 +282,9 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
   const keyLabel = local ? "API key, only if the server asks for one" : `${PROVIDERS[provider].name.split(" ")[0]} API key`;
   const keyPlaceholder = hasKey
     ? "Saved; leave empty to keep it"
-    : { anthropic: "sk-ant-…", openai: "sk-…", openai_compatible: "Usually none for a local model" }[provider];
+    : moved
+      ? "Enter it again for the new address"
+      : { anthropic: "sk-ant-…", openai: "sk-…", openai_compatible: "Usually none for a local model" }[provider];
   const keyNote = {
     anthropic: "Create one at console.anthropic.com. Stored on this server, never shown again.",
     openai: "Create one at platform.openai.com. Stored on this server, never shown again.",

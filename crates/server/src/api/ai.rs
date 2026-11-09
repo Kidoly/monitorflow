@@ -29,6 +29,11 @@ const MAX_KEY: usize = 1024;
 /// Longest accepted model name or address.
 const MAX_TEXT: usize = 512;
 
+/// A stored key is not sent to another address than the one it was
+/// entered for.
+const KEY_OF_ANOTHER_ADDRESS: &str =
+    "enter the API key again: the stored one was entered for another address";
+
 const LOCKED: &str = "AI is set by the server's configuration ([ai] in server.toml)";
 
 /// The configuration, and where the APIs are.
@@ -95,6 +100,25 @@ impl Stored {
         self.ai_api_key.clone().map(Secret::new)
     }
 
+    /// The stored key, for whom it was entered: the stored provider and,
+    /// for an OpenAI-compatible server, the stored address. Anywhere else
+    /// it would be sent to an address of the caller's choice.
+    fn key_for(
+        &self,
+        kind: AiProviderKind,
+        base_url: Option<&str>,
+    ) -> Result<Option<Secret>, ApiError> {
+        if kind != self.kind() {
+            return Ok(None);
+        }
+        let moved =
+            kind == AiProviderKind::OpenAiCompatible && self.ai_base_url.as_deref() != base_url;
+        match self.key() {
+            Some(_) if moved => Err(ApiError::Invalid(KEY_OF_ANOTHER_ADDRESS.into())),
+            key => Ok(key),
+        }
+    }
+
     /// The stored model, while Anthropic still offers it.
     fn model(&self) -> String {
         let stored = self.ai_model.as_deref().filter(|m| !m.is_empty());
@@ -122,7 +146,8 @@ fn offered(model: &str) -> bool {
 }
 
 /// Body of `GET`, `PUT` and `DELETE /api/settings/ai`. Readable by every
-/// user, since approvals say when AI is off; holds no key.
+/// user, since approvals say when AI is off; holds no key, and the address
+/// only for global administrators.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AiView {
     pub enabled: bool,
@@ -132,11 +157,20 @@ pub struct AiView {
     pub provider: AiProviderKind,
     /// Whether an API key is stored, or configured.
     pub has_key: bool,
-    /// The address of an OpenAI-compatible server.
+    /// The address of an OpenAI-compatible server, often inside the
+    /// operator's network: null for all but global administrators.
     pub base_url: Option<String>,
     pub model: String,
     /// Anthropic's short list, the default first.
     pub models: &'static [Model],
+}
+
+impl AiView {
+    /// What everyone else reads: whether AI is on, and with which model.
+    fn without_address(mut self) -> Self {
+        self.base_url = None;
+        self
+    }
 }
 
 fn view(config: &AiConfig, stored: &Stored) -> AiView {
@@ -237,14 +271,25 @@ fn plain(error: &str) -> String {
     error.trim_start_matches("AI address: ").to_owned()
 }
 
-/// `GET /api/settings/ai`: every user.
-pub async fn get(State(state): State<ApiState>, _: CurrentUser) -> Result<Json<AiView>, ApiError> {
-    Ok(Json(current(&state).await?))
+/// `GET /api/settings/ai`: every user; the address of the model server
+/// only to global administrators, who set it.
+pub async fn get(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+) -> Result<Json<AiView>, ApiError> {
+    let view = current(&state).await?;
+    Ok(Json(if require_global_admin(&user).is_ok() {
+        view
+    } else {
+        view.without_address()
+    }))
 }
 
 /// Body of `PUT /api/settings/ai`: replaces everything but the key, which
 /// is absent, `null` or empty to keep the stored one. The stored key
-/// belongs to the stored provider: another provider forgets it.
+/// belongs to the stored provider: another provider forgets it. For an
+/// OpenAI-compatible server it also belongs to the stored address: another
+/// address needs the key again, 400 otherwise.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SetRequest {
@@ -282,10 +327,12 @@ pub async fn set(
     let base_url = address(kind, request.base_url)?;
     let key = pasted(request.api_key)?;
     let same_provider = kind == before.kind();
+    // Whether enabled or not: saving another address never keeps the key.
+    let usable = match key.clone() {
+        Some(key) => Some(key),
+        None => before.key_for(kind, base_url.as_deref())?,
+    };
     if request.enabled {
-        let usable = key
-            .clone()
-            .or_else(|| before.key().filter(|_| same_provider));
         if usable.is_none() && kind != AiProviderKind::OpenAiCompatible {
             return Err(ApiError::Invalid("enter an API key first".into()));
         }
@@ -310,11 +357,16 @@ pub async fn set(
         .await?;
     // Locks the row, so concurrent changes audit the right old values.
     let old = stored(&mut *tx, true).await?;
-    // The old key stays only with the provider it was entered for.
+    // The old key stays only with the provider it was entered for, and
+    // for an OpenAI-compatible server with its address, also when a
+    // concurrent change moved either since the check above.
     sqlx::query(
         "UPDATE server_settings
          SET ai_enabled = $1,
-             ai_api_key = COALESCE($2, CASE WHEN ai_provider = $4 THEN ai_api_key END),
+             ai_api_key = COALESCE($2, CASE
+                 WHEN ai_provider = $4
+                      AND ($4 <> 'openai_compatible' OR ai_base_url IS NOT DISTINCT FROM $5)
+                 THEN ai_api_key END),
              ai_model = $3, ai_provider = $4, ai_base_url = $5",
     )
     .bind(request.enabled)
@@ -395,7 +447,8 @@ async fn record(
 
 /// Body of `POST /api/settings/ai/test` and `/models`, what the form
 /// holds. What it leaves out is taken from the stored settings, the key
-/// and address only for the same provider.
+/// and address only for the same provider, and the key of an
+/// OpenAI-compatible server only for the stored address.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TestRequest {
@@ -449,9 +502,10 @@ async fn resolve(state: &ApiState, request: TestRequest) -> Result<Connection, S
         .map_err(invalid)?
         .or_else(|| before.ai_base_url.clone().filter(|_| same_provider));
     let base_url = address(kind, base_url).map_err(invalid)?;
-    let key = pasted(request.api_key)
-        .map_err(invalid)?
-        .or_else(|| before.key().filter(|_| same_provider));
+    let key = match pasted(request.api_key).map_err(invalid)? {
+        Some(key) => Some(key),
+        None => before.key_for(kind, base_url.as_deref()).map_err(invalid)?,
+    };
     if key.is_none() && kind != AiProviderKind::OpenAiCompatible {
         return Err("Enter an API key first.".into());
     }
@@ -589,6 +643,65 @@ mod tests {
             ..Stored::default()
         };
         assert_eq!(local.model(), "llama3.1:8b");
+    }
+
+    #[test]
+    fn the_address_is_shown_to_global_administrators_only() {
+        let stored = Stored {
+            ai_enabled: true,
+            ai_provider: "openai_compatible".into(),
+            ai_base_url: Some("http://ollama.lan:11434/v1".into()),
+            ai_model: Some("qwen3:8b".into()),
+            ..Stored::default()
+        };
+        let full = view(&AiConfig::default(), &stored);
+        assert_eq!(full.base_url.as_deref(), Some("http://ollama.lan:11434/v1"));
+        let shown = full.clone().without_address();
+        assert_eq!(shown.base_url, None);
+        assert!(shown.enabled && shown.model == "qwen3:8b");
+        assert_eq!(shown.provider, AiProviderKind::OpenAiCompatible);
+    }
+
+    #[test]
+    fn the_stored_key_stays_with_its_provider_and_address() {
+        let compatible = AiProviderKind::OpenAiCompatible;
+        let stored = Stored {
+            ai_provider: "openai_compatible".into(),
+            ai_api_key: Some("sk-local".into()),
+            ai_base_url: Some("http://ollama.lan:11434/v1".into()),
+            ..Stored::default()
+        };
+        let key = stored.key_for(compatible, Some("http://ollama.lan:11434/v1"));
+        assert_eq!(key.unwrap().unwrap().expose(), "sk-local");
+        // Another address, or none: the key must be pasted again.
+        for other in [Some("http://evil.example/v1"), None] {
+            match stored.key_for(compatible, other) {
+                Err(ApiError::Invalid(reason)) => assert_eq!(reason, KEY_OF_ANOTHER_ADDRESS),
+                other => panic!("{other:?}"),
+            }
+        }
+        // Another provider forgets it, without an error.
+        assert!(stored
+            .key_for(AiProviderKind::OpenAi, None)
+            .unwrap()
+            .is_none());
+
+        // Without a stored key a new address needs none: local servers
+        // often have no key.
+        let keyless = Stored {
+            ai_api_key: None,
+            ..stored
+        };
+        let key = keyless.key_for(compatible, Some("http://other.lan/v1"));
+        assert!(key.unwrap().is_none());
+
+        // Anthropic and OpenAI have one address each, never the caller's.
+        let anthropic = Stored {
+            ai_api_key: Some("sk-ant-1".into()),
+            ..Stored::default()
+        };
+        let key = anthropic.key_for(AiProviderKind::Anthropic, None);
+        assert_eq!(key.unwrap().unwrap().expose(), "sk-ant-1");
     }
 
     #[test]
