@@ -593,6 +593,70 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn tokens_cannot_take_what_another_customer_has(pool: PgPool) {
+        let h = Harness::new(&pool);
+        let (acme, acme_site) = customer_site(&pool, "acme").await;
+        let (_, globex_site) = customer_site(&pool, "globex").await;
+        // Globex has a relay with a name, a server, and a host waiting
+        // for approval whose certificate is all it has.
+        sqlx::query(
+            "INSERT INTO relays (peer_id, site_id, name, confirmed_names)
+             VALUES ('gw', $1, 'gw', '{relay.globex.example}')",
+        )
+        .bind(globex_site)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO servers (peer_id, site_id, hostname, os_family) VALUES ('web-01', $1, 'web-01', 'debian')")
+            .bind(globex_site)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "WITH enrolled AS (
+                 INSERT INTO enrollment_tokens (token_hash, role, peer_id, site_id, expires_at, used_at, used_by_peer_id)
+                 VALUES (sha256('t'), 'agent', 'db-01', $1, now() + interval '1 hour', now(), 'db-01'))
+             INSERT INTO certificates (serial, peer_role, peer_id, not_before, not_after)
+             VALUES ('\\x01', 'agent', 'db-01', now(), now() + interval '30 days')",
+        )
+        .bind(globex_site)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let cookie = h.user("acme-admin", Role::Administrator, GrantScope::Customer(acme)).await;
+        let token = |role: &str, id: &str, names: &[&str]| {
+            json!({ "role": role, "peer_id": id, "site_id": acme_site, "server_names": names })
+        };
+        for request in [
+            // The ID of the other customer's relay, for a server, and the reverse.
+            token("agent", "gw", &[]),
+            token("relay", "web-01", &[]),
+            // Their host that has no row yet: its first Hello would land here.
+            token("agent", "db-01", &[]),
+            // The name of their relay, and the server's own.
+            token("relay", "relay-9", &["relay.globex.example"]),
+            token("relay", "relay-9", &["mf.example"]),
+        ] {
+            let (status, body, _) = h.call("POST", "/api/tokens", Some(&cookie), Some(request.clone())).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{request}: {body}");
+            let error = body["error"].as_str().unwrap();
+            assert!(!error.contains("site-globex"), "{error}");
+        }
+        let (status, body, _) =
+            h.call("POST", "/api/tokens", Some(&cookie), Some(token("relay", "relay-9", &["localhost"]))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM enrollment_tokens WHERE used_at IS NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stored, 0);
+        let (status, body, _) =
+            h.call("POST", "/api/tokens", Some(&cookie), Some(token("relay", "relay-9", &["relay.acme.example"]))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+
+    #[sqlx::test]
     async fn unused_tokens_can_be_revoked_and_listed_by_state(pool: PgPool) {
         let h = Harness::new(&pool);
         let (_, site) = customer_site(&pool, "acme").await;

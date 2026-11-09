@@ -182,10 +182,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let mut relays = Vec::new();
     for n in 0..cli.relays {
         let id = format!("loadtest-relay-{n}");
-        let site = api
-            .create_site(&customer, &format!("loadtest-site-{n}"))
-            .await?;
-        let token = api.token("relay", &id, &site, &["127.0.0.1"]).await?;
+        let name = format!("loadtest-site-{n}");
+        let site = api.create_site(&customer, &name).await?;
+        let token = server.relay_token(&id, &name).await?;
         relays.push(Relay::start(&relay_bin, &work, &id, &token, &server.ports).await?);
         sites.push(site);
     }

@@ -293,13 +293,67 @@ async fn enroll_as(
         role,
         ..request(site_id, peer_id)
     };
-    let created = token::create(pool, pki.fingerprint(), &request)
-        .await
-        .unwrap();
+    let token = match token::create(pool, pki.fingerprint(), &request).await {
+        Ok(created) => created.token.to_secret_string().expose().to_owned(),
+        // Refused before there is a token: a row or a certificate has the
+        // ID. Enrollment must refuse a token that exists all the same.
+        Err(TokenError::Conflict(_)) => old_token(pki, pool, role, peer_id, site_id).await,
+        Err(error) => panic!("{error}"),
+    };
     let csr = csr(&KeyPair::generate().unwrap(), peer_id, vec![]);
-    pki.enroller(pool)
-        .enroll(created.token.to_secret_string().expose(), &csr, None)
-        .await
+    pki.enroller(pool).enroll(&token, &csr, None).await
+}
+
+/// A token as one created before ADR-0105, or at the same moment as
+/// another: stored without the checks of `token::create`.
+async fn old_token(
+    pki: &Pki,
+    pool: &PgPool,
+    role: PeerRole,
+    peer_id: &str,
+    site_id: Uuid,
+) -> String {
+    let token = token::generate(pki.fingerprint()).unwrap();
+    sqlx::query(
+        "INSERT INTO enrollment_tokens (token_hash, role, peer_id, site_id, expires_at)
+         VALUES ($1, $2, $3, $4, now() + interval '1 hour')",
+    )
+    .bind(token::hash(&token).as_slice())
+    .bind(role.as_str())
+    .bind(peer_id)
+    .bind(site_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    token.to_secret_string().expose().to_owned()
+}
+
+/// What `token::create` answers for `role` and `peer_id` in the site `site`.
+async fn create_token(
+    pool: &PgPool,
+    role: PeerRole,
+    peer_id: &str,
+    site: &str,
+) -> Result<(), TokenError> {
+    let site_id = token::site_id(pool, site, true).await.unwrap().unwrap();
+    let request = TokenRequest {
+        role,
+        ..request(site_id, peer_id)
+    };
+    token::create(pool, CA, &request).await.map(drop)
+}
+
+/// A 409 that names no site: the ID may be another customer's.
+fn taken(result: Result<(), TokenError>) {
+    match result {
+        Err(TokenError::Conflict(message)) => {
+            assert!(
+                !message.contains("paris") && !message.contains("lyon"),
+                "{message}"
+            )
+        }
+        other => panic!("expected a conflict, got {other:?}"),
+    }
 }
 
 /// A new install key of the site `paris`.
@@ -982,6 +1036,170 @@ db_tests! {
             .await
             .unwrap();
         assert_eq!(pending, None);
+    }
+
+    #[sqlx::test]
+    async fn a_new_peer_cannot_take_the_id_of_the_other_role(pool: PgPool) {
+        let pki = Pki::new();
+        let lyon = token::site_id(&pool, "lyon", true).await.unwrap().unwrap();
+        // A relay with a row, and an agent that only has its certificate.
+        enroll_as(&pki, &pool, PeerRole::Relay, "gw", "paris").await.unwrap();
+        enroll_as(&pki, &pool, PeerRole::Agent, "web-01", "paris").await.unwrap();
+        for site in ["paris", "lyon"] {
+            taken(create_token(&pool, PeerRole::Agent, "gw", site).await);
+            taken(create_token(&pool, PeerRole::Relay, "web-01", site).await);
+        }
+        // A token that exists all the same is refused when used, and stays unused.
+        let csr = csr(&KeyPair::generate().unwrap(), "x", vec![]);
+        for (role, id) in [(PeerRole::Agent, "gw"), (PeerRole::Relay, "web-01")] {
+            let token = old_token(&pki, &pool, role, id, lyon).await;
+            refused(pki.enroller(&pool).enroll(&token, &csr, None).await);
+        }
+        assert_eq!(count(&pool, "SELECT count(*) FROM certificates").await, 2);
+        assert_eq!(count(&pool, "SELECT count(*) FROM relays").await, 1);
+        assert_eq!(count(&pool, "SELECT count(*) FROM enrollment_tokens WHERE used_at IS NULL").await, 2);
+
+        // A token waiting for one role holds the ID against the other;
+        // of two made at the same moment, the first to enroll has it.
+        create_token(&pool, PeerRole::Agent, "db-01", "paris").await.unwrap();
+        taken(create_token(&pool, PeerRole::Relay, "db-01", "lyon").await);
+        let racing = old_token(&pki, &pool, PeerRole::Relay, "db-01", lyon).await;
+        pki.enroller(&pool).enroll(&racing, &csr, None).await.unwrap();
+        let waiting = old_token(&pki, &pool, PeerRole::Agent, "db-01", lyon).await;
+        refused(pki.enroller(&pool).enroll(&waiting, &csr, None).await);
+
+        // A key picks the next free ID, whichever role has the first.
+        let key = install_key(&pki, &pool, None, false).await;
+        assert_eq!(enroll_host(&pki, &pool, &key, "GW").await.unwrap(), "gw-2");
+        let key = relay_key(&pki, &pool).await;
+        let relay = pki.enroller(&pool).enroll_host(&key, &csr, "web-01", None).await.unwrap();
+        assert_eq!(relay.identity.uri(), "monitorflow://relay/web-01-2");
+    }
+
+    #[sqlx::test]
+    async fn an_agent_and_a_relay_that_share_an_id_already_keep_enrolling(pool: PgPool) {
+        let pki = Pki::new();
+        let paris = site(&pool).await;
+        // As a fleet from before ADR-0105 has them: a relay's host with an agent.
+        sqlx::query("INSERT INTO relays (peer_id, site_id, name) VALUES ('gw', $1, 'gw')")
+            .bind(paris)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO servers (peer_id, site_id, hostname, os_family) VALUES ('gw', $1, 'gw', 'debian')")
+            .bind(paris)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for role in [PeerRole::Agent, PeerRole::Relay] {
+            create_token(&pool, role, "gw", "paris").await.unwrap();
+            let enrolled = enroll_as(&pki, &pool, role, "gw", "paris").await.unwrap();
+            assert_eq!(enrolled.identity.role(), role);
+        }
+
+        // Removing one of the two ends it: the agent does not come back
+        // under the relay's ID, by a token or by a key.
+        sqlx::query("UPDATE servers SET revoked_at = now()").execute(&pool).await.unwrap();
+        sqlx::query("UPDATE certificates SET revoked_at = now() WHERE peer_role = 'agent'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        taken(create_token(&pool, PeerRole::Agent, "gw", "paris").await);
+        refused(enroll_as(&pki, &pool, PeerRole::Agent, "gw", "paris").await);
+        let key = install_key(&pki, &pool, None, false).await;
+        assert_eq!(enroll_host(&pki, &pool, &key, "gw").await.unwrap(), "gw-2");
+        // The relay is untouched.
+        enroll_as(&pki, &pool, PeerRole::Relay, "gw", "paris").await.unwrap();
+    }
+
+    #[sqlx::test]
+    async fn an_agent_without_a_row_cannot_be_enrolled_into_another_site(pool: PgPool) {
+        let pki = Pki::new();
+        let lyon = token::site_id(&pool, "lyon", true).await.unwrap().unwrap();
+        let csr = csr(&KeyPair::generate().unwrap(), "x", vec![]);
+        // One host waits for approval in paris, another was enrolled a
+        // moment ago: neither has a row yet.
+        let key = install_key(&pki, &pool, None, true).await;
+        assert_eq!(enroll_host(&pki, &pool, &key, "web-01").await.unwrap(), "web-01");
+        enroll_as(&pki, &pool, PeerRole::Agent, "db-01", "paris").await.unwrap();
+        assert_eq!(count(&pool, "SELECT count(*) FROM servers").await, 0);
+
+        for id in ["web-01", "db-01"] {
+            taken(create_token(&pool, PeerRole::Agent, id, "lyon").await);
+            let token = old_token(&pki, &pool, PeerRole::Agent, id, lyon).await;
+            refused(pki.enroller(&pool).enroll(&token, &csr, None).await);
+        }
+        // Their own site may enroll them again.
+        enroll_as(&pki, &pool, PeerRole::Agent, "db-01", "paris").await.unwrap();
+
+        // The first Hello still lands where the host was enrolled.
+        sqlx::query("DELETE FROM pending_hosts").execute(&pool).await.unwrap();
+        for id in ["web-01", "db-01"] {
+            assert_eq!(first_hello(&pool, id).await.unwrap(), "paris");
+        }
+        // And with a row, another site is refused as before.
+        taken(create_token(&pool, PeerRole::Agent, "db-01", "lyon").await);
+
+        // An ID whose certificates no longer work is free again.
+        enroll_as(&pki, &pool, PeerRole::Agent, "old-01", "paris").await.unwrap();
+        sqlx::query("UPDATE certificates SET revoked_at = now() WHERE peer_id = 'old-01'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        enroll_as(&pki, &pool, PeerRole::Agent, "old-01", "lyon").await.unwrap();
+        assert_eq!(first_hello(&pool, "old-01").await.unwrap(), "lyon");
+    }
+
+    #[sqlx::test]
+    async fn relay_token_names_are_checked_for_the_api(pool: PgPool) {
+        let pki = Pki::new();
+        let paris = site(&pool).await;
+        let lyon = token::site_id(&pool, "lyon", true).await.unwrap().unwrap();
+        let central = ["mf.example.com".to_owned(), "*.central.example".to_owned()];
+        let relay = |site_id, id: &str, names: &[&str]| TokenRequest {
+            role: PeerRole::Relay,
+            server_names: names.iter().map(|n| n.to_string()).collect(),
+            ..request(site_id, id)
+        };
+        // A relay of paris has a name and a private address.
+        let first = relay(paris, "relay-1", &["Relay1.Example.", "10.0.0.5"]);
+        let created = token::create_checked(&pool, pki.fingerprint(), &first, &central).await.unwrap();
+        let stored: Vec<String> = sqlx::query_scalar("SELECT server_names FROM enrollment_tokens WHERE id = $1")
+            .bind(created.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stored, ["relay1.example", "10.0.0.5"], "stored as confirmed names are");
+        let csr = csr(&KeyPair::generate().unwrap(), "relay-1", vec![]);
+        pki.enroller(&pool)
+            .enroll(created.token.to_secret_string().expose(), &csr, None)
+            .await
+            .unwrap();
+
+        let checked = |request: TokenRequest| {
+            let (pool, central) = (pool.clone(), central.clone());
+            async move { token::create_checked(&pool, CA, &request, &central).await.map(drop) }
+        };
+        // The server's own names, and another site's relay's.
+        for name in ["mf.example.com", "MF.example.com", "a.central.example", "relay1.example"] {
+            let result = checked(relay(lyon, "relay-2", &[name])).await;
+            assert!(matches!(result, Err(TokenError::Conflict(_))), "{name}: {result:?}");
+        }
+        taken(checked(relay(lyon, "relay-2", &["relay1.example"])).await);
+        // Names no certificate should have.
+        for name in ["localhost", "127.0.0.1", "*.example.com"] {
+            let result = checked(relay(lyon, "relay-2", &[name])).await;
+            assert!(matches!(result, Err(TokenError::Invalid(_))), "{name}: {result:?}");
+        }
+        assert_eq!(count(&pool, "SELECT count(*) FROM enrollment_tokens").await, 1, "nothing stored");
+        // A relay of the same site may share the name; a private address
+        // is another host on each network; no names is the waiting relay.
+        checked(relay(paris, "relay-3", &["relay1.example"])).await.unwrap();
+        checked(relay(lyon, "relay-2", &["10.0.0.5"])).await.unwrap();
+        checked(relay(lyon, "relay-4", &[])).await.unwrap();
+        // On the server's host, `token create` is not checked.
+        let local = relay(lyon, "relay-5", &["mf.example.com", "localhost"]);
+        token::create(&pool, CA, &local).await.unwrap();
     }
 
     #[sqlx::test]

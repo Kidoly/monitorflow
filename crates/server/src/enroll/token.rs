@@ -9,6 +9,9 @@ use ring::rand::{SecureRandom, SystemRandom};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::identity;
+use super::relay_names::{self, NameError};
+
 pub const DEFAULT_TTL: Duration = Duration::from_secs(60 * 60);
 pub const MIN_TTL: Duration = Duration::from_secs(60);
 pub const MAX_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -17,6 +20,9 @@ pub const MAX_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub enum TokenError {
     #[error("{0}")]
     Invalid(String),
+    /// The request is well formed, and something that exists refuses it.
+    #[error("{0}")]
+    Conflict(String),
     #[error("system random generator failed")]
     Random,
     #[error("database query failed: {0}")]
@@ -155,15 +161,70 @@ pub fn parse_ttl(s: &str) -> Result<Duration, String> {
 }
 
 /// Stores a new token for `request`, with an `audit_log` row, in one
-/// transaction.
+/// transaction. Refused for an ID the other role holds, or of an agent of
+/// another site (ADR-0105). A relay's names are stored as given: this is
+/// for `token create`, run on the server's host by whoever holds the CA
+/// key, which is also how a relay on that host gets the server's name.
 pub async fn create(
     pool: &PgPool,
     ca_fingerprint: Fingerprint,
     request: &TokenRequest,
 ) -> Result<CreatedToken, TokenError> {
+    store(pool, ca_fingerprint, request, None).await
+}
+
+/// [`create`] for a request of the API: a relay's names get the refusals
+/// of name confirmation (ADR-0066), so an administrator of one customer
+/// cannot name a relay after the server or after a relay of another site.
+/// `central_names` are those of the server's certificate and its public
+/// address.
+pub async fn create_checked(
+    pool: &PgPool,
+    ca_fingerprint: Fingerprint,
+    request: &TokenRequest,
+    central_names: &[String],
+) -> Result<CreatedToken, TokenError> {
+    store(pool, ca_fingerprint, request, Some(central_names)).await
+}
+
+async fn store(
+    pool: &PgPool,
+    ca_fingerprint: Fingerprint,
+    request: &TokenRequest,
+    central_names: Option<&[String]>,
+) -> Result<CreatedToken, TokenError> {
     request.validate()?;
+    let server_names = match central_names {
+        Some(central) if !request.server_names.is_empty() => {
+            relay_names::check(&request.server_names, central).map_err(name_error)?
+        }
+        _ => request.server_names.clone(),
+    };
     let token = generate(ca_fingerprint)?;
     let mut tx = pool.begin().await?;
+    identity::lock(&mut tx).await?;
+    let checked = identity::check(
+        &mut tx,
+        request.role,
+        &request.peer_id,
+        request.site_id,
+        None,
+    )
+    .await?;
+    if let Err(taken) = checked {
+        tracing::info!(role = %request.role, peer_id = %request.peer_id, %taken, "token refused");
+        // One answer for every case: it must not say which customer's
+        // peer has the ID, or where.
+        return Err(TokenError::Conflict(format!(
+            "the name `{}` is already taken by another server or relay: choose another one",
+            request.peer_id
+        )));
+    }
+    if central_names.is_some() && !server_names.is_empty() {
+        relay_names::check_free(&mut tx, request.site_id, &server_names)
+            .await?
+            .map_err(name_error)?;
+    }
     let parent_relay_id: Option<Uuid> = match &request.parent_relay {
         Some(parent) => Some(
             sqlx::query_scalar("SELECT id FROM relays WHERE peer_id = $1 AND revoked_at IS NULL")
@@ -191,7 +252,7 @@ pub async fn create(
     .bind(request.site_id)
     .bind(request.creator.user_id())
     .bind(request.ttl.as_secs_f64())
-    .bind(&request.server_names)
+    .bind(&server_names)
     .bind(parent_relay_id)
     .fetch_one(&mut *tx)
     .await?;
@@ -200,7 +261,7 @@ pub async fn create(
         "token_id": id,
         "site_id": request.site_id,
         "expires_at": expires_at,
-        "server_names": request.server_names,
+        "server_names": server_names,
         "parent_relay": request.parent_relay,
     });
     sqlx::query(
@@ -221,6 +282,15 @@ pub async fn create(
         token,
         expires_at,
     })
+}
+
+/// A name that cannot be used is the request's fault; one that something
+/// else has is a conflict.
+fn name_error(error: NameError) -> TokenError {
+    match error {
+        NameError::ServerName(_) | NameError::Taken(_) => TokenError::Conflict(error.to_string()),
+        NameError::Unusable(_) | NameError::Count => TokenError::Invalid(error.to_string()),
+    }
 }
 
 /// ID of the site `name`; creates it when missing if `create_missing`.
@@ -357,6 +427,21 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn names_something_else_has_are_conflicts_and_bad_ones_are_invalid() {
+        let conflict = |e| matches!(name_error(e), TokenError::Conflict(_));
+        assert!(conflict(NameError::ServerName("mf.example.com".into())));
+        assert!(conflict(NameError::Taken("relay.example.com".into())));
+        assert!(!conflict(NameError::Unusable("localhost".into())));
+        assert!(!conflict(NameError::Count));
+        // The message of a taken name says nothing of who has it.
+        let message = name_error(NameError::Taken("relay.example.com".into())).to_string();
+        assert_eq!(
+            message,
+            "`relay.example.com` is already the address of a relay of another site"
+        );
     }
 
     #[test]

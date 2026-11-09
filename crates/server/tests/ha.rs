@@ -658,6 +658,23 @@ db_tests! {
         let (identity, serial) = a.agent(&pool, "web-01").await;
         let mut agent = b.open(&identity, "web-01").await.unwrap();
 
+        // A relay of the same ID is revoked on a: another peer (ADR-0105),
+        // so b lists its certificate and leaves the agent connected.
+        let relay = Serial::from_bytes(&[0x42; 8]);
+        sqlx::query(
+            "INSERT INTO certificates (serial, peer_role, peer_id, not_before, not_after,
+                                       revoked_at, revocation_reason)
+             VALUES ($1, 'relay', 'web-01', now() - interval '1 minute', now() + interval '1 day',
+                     now(), 'key_compromise')",
+        )
+        .bind(relay.as_bytes())
+        .execute(&pool)
+        .await
+        .unwrap();
+        eventually("b lists the relay's certificate", || async { b.crl.is_revoked(&relay) }).await;
+        agent.no_command(Duration::from_millis(200)).await;
+        assert!(b.registry.get(PeerRole::Agent, "web-01").is_some());
+
         // What the revoke endpoint does on a.
         sqlx::query(
             "UPDATE certificates SET revoked_at = now(), revocation_reason = 'key_compromise'

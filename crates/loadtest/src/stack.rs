@@ -240,6 +240,29 @@ enabled = false
         }
         Ok(())
     }
+
+    /// `token create` for relay `id` of site `site`, valid a day. Through
+    /// the command line, as the relays listen on `127.0.0.1`, which the API
+    /// refuses as a relay's name (ADR-0105).
+    pub async fn relay_token(&self, id: &str, site: &str) -> anyhow::Result<String> {
+        let output = self
+            .command()
+            .args(["token", "create", "--role", "relay", "--id", id])
+            .args(["--site", site, "--ttl", "1d", "--server-name", "127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("running token create")?;
+        if !output.status.success() {
+            bail!(
+                "token create failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+    }
 }
 
 /// A relay, enrolled with a single-use token.
