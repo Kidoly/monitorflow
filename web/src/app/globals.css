@@ -61,6 +61,30 @@ button {
   cursor: pointer;
 }
 
+/* The browser's file picker, drawn like a Button next to the app's own. */
+input[type="file"] {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+input[type="file"]::file-selector-button {
+  height: var(--control-h);
+  margin-right: 10px;
+  padding: 0 14px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font: inherit;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+}
+
+input[type="file"]:disabled::file-selector-button {
+  cursor: default;
+  opacity: 0.5;
+}
+
 table {
   font-variant-numeric: tabular-nums;
 }

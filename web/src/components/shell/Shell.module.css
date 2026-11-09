@@ -132,6 +132,8 @@
   color: var(--text);
   font-size: 13px;
   text-decoration: underline;
+  white-space: nowrap;
+  flex-shrink: 0;
   position: relative;
 }
 
