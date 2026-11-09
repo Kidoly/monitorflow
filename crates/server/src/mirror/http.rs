@@ -16,6 +16,7 @@ use super::model::Family;
 /// public key.
 pub fn served(layout: &Layout) -> Served {
     Served {
+        base: layout.root().to_owned(),
         apt: layout.served(Family::Apt),
         dnf: layout.served(Family::Dnf),
         public_key: layout.public_key(),

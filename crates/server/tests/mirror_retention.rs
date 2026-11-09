@@ -687,6 +687,7 @@ db_tests! {
         f.snapshots(&mirror, 1..3).await;
         let layout = f.mirrors.layout();
         let served = Served {
+            base: layout.root().to_owned(),
             apt: layout.served(Family::Apt),
             dnf: layout.served(Family::Dnf),
             public_key: layout.public_key(),

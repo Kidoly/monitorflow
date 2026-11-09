@@ -48,6 +48,8 @@ utoipa = { version = "=5.4.0", features = ["uuid", "chrono"] }
 tower = { version = "0.5", features = ["util"] }
 # Static files of the mirror listener.
 tower-http = { version = "0.7", features = ["fs"] }
+# The version tower-http guesses content types with.
+mime_guess = "2"
 percent-encoding = "2"
 x509-parser = "0.18"
 rcgen = "0.14"
