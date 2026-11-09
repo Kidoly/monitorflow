@@ -2,7 +2,7 @@
 
 import { type ChangeEvent, type FormEvent, useCallback, useState } from "react";
 
-import { ApiError, type LicenseView, api, describeError } from "@/lib/api";
+import { type AddedServer, ApiError, type LicenseView, api, describeError } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { centralServers, formatDay, licenseSummary } from "@/lib/license";
 import { administersEverything, useMe } from "@/lib/me";
@@ -51,6 +51,7 @@ function LicenseAdmin() {
     <div className={styles.page}>
       {header}
       <Status view={data} onRemoved={refresh} />
+      {(data.added?.length ?? 0) > 0 && <AddedServers view={data} onRemoved={refresh} />}
       <InstallForm replacing={data.state !== "none"} onInstalled={refresh} />
     </div>
   );
@@ -115,6 +116,49 @@ function Status({ view, onRemoved }: { view: LicenseView; onRemoved: () => void 
         />
       </div>
     </>
+  );
+}
+
+/** The central servers added with `install-server.sh --join`, and freeing a place. */
+function AddedServers({ view, onRemoved }: { view: LicenseView; onRemoved: () => void }) {
+  const added: AddedServer[] = view.added ?? [];
+  const allowed = view.license?.server_instances;
+  return (
+    <section className={styles.section} aria-labelledby="license-added">
+      <div className={styles.sectionHead}>
+        <h2 id="license-added" className={styles.sectionTitle}>
+          Central servers added
+        </h2>
+        <span className={styles.dim}>
+          {added.length + 1}
+          {allowed ? ` of ${allowed}` : ""} with the first one
+        </span>
+      </div>
+      <ul className={own.added}>
+        {added.map((server) => (
+          <li key={server.name} className={own.addedRow}>
+            <strong>{server.name}</strong>
+            <Label tone={server.running ? "ok" : "neutral"} small>
+              {server.running ? "Running" : "Not running"}
+            </Label>
+            <span className={styles.dim}>Added {formatDateTime(server.admitted_at)}</span>
+            <InlineConfirm
+              layout="row"
+              trigger="Remove…"
+              triggerName={`Remove ${server.name}`}
+              title={`Remove ${server.name}?`}
+              consequence="Its place is freed for another central server. If it still runs, it keeps running until it restarts, then needs a place again."
+              confirmLabel={`Remove ${server.name}`}
+              onConfirm={async () => {
+                await api.removeAddedServer(server.name);
+                onRemoved();
+              }}
+              describeError={describeError}
+            />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

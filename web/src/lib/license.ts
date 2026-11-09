@@ -37,3 +37,27 @@ export function licenseSummary(view: LicenseView): [string, Tone] {
       return ["No license key.", "neutral"];
   }
 }
+
+/**
+ * What global administrators are told on every page (ADR-0100): only once
+ * a central server was added, and only when the license stops covering
+ * more. A single central server never sees one.
+ */
+export function licenseNotice(view: LicenseView): string | null {
+  const added = view.added?.length ?? 0;
+  if (!view.available || added === 0) return null;
+  const keep = `${added === 1 ? "The central server" : `The ${added} central servers`} already added keep${added === 1 ? "s" : ""} running`;
+  const expires = view.license ? formatDay(view.license.expires) : null;
+  switch (view.state) {
+    case "expires_soon":
+      return `The Enterprise license expires on ${expires}. ${keep}, but no other can be added after that day.`;
+    case "expired":
+      return `The Enterprise license expired${expires ? ` on ${expires}` : ""}. ${keep}, but no other can be added.`;
+    case "invalid":
+      return `The Enterprise license key no longer verifies. ${keep}, but no other can be added.`;
+    case "none":
+      return `There is no Enterprise license key. ${keep}, but no other can be added.`;
+    default:
+      return null;
+  }
+}

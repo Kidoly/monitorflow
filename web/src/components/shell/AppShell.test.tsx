@@ -100,6 +100,42 @@ describe("AppShell", () => {
     });
   });
 
+  describe("license notice", () => {
+    const view = (state: string, added: string[]) => ({
+      available: true,
+      state,
+      license: {
+        id: "l1",
+        customer: "Example Corp",
+        edition: "enterprise",
+        server_instances: 2,
+        issued: "2026-01-01",
+        expires: "2026-11-30",
+      },
+      added: added.map((name) => ({ name, admitted_at: "2026-11-01T00:00:00Z", running: true })),
+    });
+    const routes = (body: unknown) => ({ ...SHELL_ROUTES, "GET /api/license": { status: 200, body } });
+
+    it("tells global administrators once a central server was added", async () => {
+      stubFetch(routes(view("expired", ["host2"])));
+      render(<AppShell me={admin}>page</AppShell>);
+      expect(
+        await screen.findByText(
+          "The Enterprise license expired on 30 November 2026. The central server already added keeps running, but no other can be added.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "See the license" })).toHaveAttribute("href", expect.stringContaining("/admin/license"));
+    });
+
+    it("says nothing to a single central server", async () => {
+      const fetchMock = stubFetch(routes(view("expired", [])));
+      render(<AppShell me={admin}>page</AppShell>);
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/license", expect.anything()));
+      await screen.findByLabelText("3 open incidents");
+      expect(screen.queryByText(/Enterprise license/)).not.toBeInTheDocument();
+    });
+  });
+
   it("starts with a skip link to the main content", async () => {
     renderShell();
     await userEvent.tab();

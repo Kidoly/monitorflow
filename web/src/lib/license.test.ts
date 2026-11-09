@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { License, LicenseView } from "./api";
-import { centralServers, formatDay, licenseSummary } from "./license";
+import type { AddedServer, License, LicenseView } from "./api";
+import { centralServers, formatDay, licenseNotice, licenseSummary } from "./license";
 
 const license: License = {
   id: "6f1c1d1e-8a43-4c55-9d43-3c2f6c0e9a01",
@@ -42,5 +42,21 @@ describe("license", () => {
       "The license key no longer verifies: the signature does not verify.",
       "bad",
     ]);
+  });
+
+  it("tells administrators only once a central server was added", () => {
+    const added: AddedServer[] = [{ name: "host2", admitted_at: "2026-11-07T10:00:00Z", running: true }];
+    expect(licenseNotice(view("none"))).toBeNull();
+    expect(licenseNotice(view("expired"))).toBeNull();
+    expect(licenseNotice(view("valid", { added }))).toBeNull();
+    expect(licenseNotice(view("expires_soon", { added }))).toBe(
+      "The Enterprise license expires on 30 November 2027. The central server already added keeps running, but no other can be added after that day.",
+    );
+    expect(licenseNotice(view("expired", { added: [...added, { name: "host3", admitted_at: "2026-11-07T11:00:00Z", running: false }] }))).toBe(
+      "The Enterprise license expired on 30 November 2027. The 2 central servers already added keep running, but no other can be added.",
+    );
+    expect(licenseNotice(view("none", { added }))).toBe(
+      "There is no Enterprise license key. The central server already added keeps running, but no other can be added.",
+    );
   });
 });
