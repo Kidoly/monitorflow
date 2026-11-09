@@ -41,6 +41,16 @@ struct Pending {
     phase: Phase,
 }
 
+impl Pending {
+    /// What [`Updater::update`] writes: a version and image references.
+    fn check(&self) -> Result<(), String> {
+        self.to
+            .parse::<Version>()
+            .map_err(|e| format!("version `{}`: {e}", self.to.escape_debug()))?;
+        self.previous.check()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Phase {
@@ -400,6 +410,11 @@ impl Updater<'_> {
             Ok(pins) => pins,
             Err(e) => return self.reporter.finish(UpdateState::Failed, fail(&e)),
         };
+        // A rollback writes them back: refused now rather than then.
+        if let Err(e) = previous.check() {
+            let error = format!("{}: {e}", self.env.path().display());
+            return self.reporter.finish(UpdateState::Failed, Some(error));
+        }
         let mut pending = Pending {
             to: target.to_string(),
             previous,
@@ -562,6 +577,13 @@ impl Updater<'_> {
             self.clear_pending();
             return None;
         };
+        // The record names a directory to remove and the lines to write
+        // in `.env`: one this updater cannot have written is not acted on.
+        if let Err(error) = pending.check() {
+            tracing::error!(%error, "the record of the interrupted update is refused");
+            self.clear_pending();
+            return None;
+        }
         if self.reporter.status.update.is_none() {
             self.reporter.begin(&Request {
                 id: "recovered".into(),

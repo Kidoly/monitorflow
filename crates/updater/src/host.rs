@@ -53,7 +53,8 @@ pub trait Host: Send + Sync {
     /// What `monitorflow-server --version` prints in the server image of
     /// `.env`, whether the server runs or not.
     async fn image_version(&self) -> Result<Version, HostError>;
-    /// Stops `server` and `web`.
+    /// Stops `server`, `web` and the mirror tools, which all write in
+    /// what a restore replaces.
     async fn stop_server(&self) -> Result<(), HostError>;
     /// Starts PostgreSQL if needed, creates the database again and loads
     /// the `pg_dump -Fc` at `dump` into it.
@@ -316,8 +317,14 @@ impl Host for Compose {
     }
 
     async fn stop_server(&self) -> Result<(), HostError> {
+        let services = self.output(true, &["config", "--services"]).await?;
         let mut args = vec!["stop"];
         args.extend(SERVICES);
+        // The mirror tools write in the mirrors volume, which a restore
+        // extracts into as root: nothing may move its directories then.
+        if services.lines().any(|s| s == MIRROR_SERVICE) {
+            args.push(MIRROR_SERVICE);
+        }
         self.output(true, &args).await.map(drop)
     }
 

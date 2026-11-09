@@ -546,6 +546,40 @@ async fn an_update_interrupted_before_confirmation_is_rolled_back_on_restart() {
     assert_eq!(updater.recover().await, None);
 }
 
+/// A record this updater cannot have written, whatever put it in its
+/// volume: nothing of it reaches `.env` or the directories it names.
+#[tokio::test]
+async fn a_forged_record_of_an_update_is_not_acted_on() {
+    let signer = Signer::new();
+    let release = signer.release("0.2.0", None);
+    let volumes = Volumes::new();
+    let host = FakeHost::new(&volumes.env, "0.1.0");
+    let source = dir_source(&release, signer.public());
+    let env = std::fs::read_to_string(&volumes.env).unwrap();
+    let kept = volumes.state.join("kept");
+    std::fs::create_dir(&kept).unwrap();
+    for (to, server) in [
+        ("0.2.0", "old:1\nUPDATER_IMAGE=evil\nDOCKER_SOCKET=/x"),
+        ("0.2.0", "${DOCKER_SOCKET}"),
+        ("../../state/kept", "monitorflow-server:local"),
+    ] {
+        for phase in ["switching", "confirmed"] {
+            let forged = serde_json::json!({
+                "to": to,
+                "previous": {"server": server, "web": null, "updater": null, "mirror": null},
+                "migration_before": 1,
+                "phase": phase,
+            });
+            std::fs::write(volumes.state.join("pending.json"), forged.to_string()).unwrap();
+            let mut updater = volumes.updater(&host, &source);
+            assert_eq!(updater.recover().await, None, "{to} {server:?} {phase}");
+            assert_eq!(std::fs::read_to_string(&volumes.env).unwrap(), env);
+            assert!(!volumes.state.join("pending.json").exists());
+            assert!(kept.is_dir());
+        }
+    }
+}
+
 #[test]
 fn requests_are_consumed_once_and_checked() {
     let volumes = Volumes::new();
