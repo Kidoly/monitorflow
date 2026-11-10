@@ -1,7 +1,7 @@
 # ADR-0088: Changing the certificate authority
 
 Date: 2026-11-03
-Status: accepted; amends ADR-0007 and ADR-0010
+Status: accepted; amends ADR-0007 and ADR-0010; amended by ADR-0107
 
 ## Context
 

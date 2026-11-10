@@ -48,6 +48,8 @@ mirror = ["dep:axum", "dep:tower-http", "dep:percent-encoding", "dep:mime_guess"
 server-update = ["dep:reqwest", "dep:chrono", "dep:rustix", "dep:serde_json"]
 
 [dev-dependencies]
+# The test upstream of `tests/renew_bundle.rs` signs CSRs.
+rcgen = { workspace = true, features = ["x509-parser"] }
 pem.workspace = true
 tempfile.workspace = true
 reqwest.workspace = true

@@ -142,6 +142,9 @@ pub struct Renewed {
     pub cert: IssuedCert,
     /// The CAs to send with it, read when it was issued.
     pub trust: Trust,
+    /// The server's signatures of those CAs for this certificate, which
+    /// let the peer take a new one (ADR-0107).
+    pub ca_bundle_signatures: Vec<Vec<u8>>,
 }
 
 /// What a `Renew` asks for, beyond a CSR.
@@ -391,6 +394,7 @@ impl Renewer {
         }
 
         let (cert, trust) = issue(&self.ca, csr_pem, peer, names).await?;
+        let ca_bundle_signatures = sign_bundle(&self.ca, &cert, &trust)?;
         record_certificate(&mut tx, &cert, peer, &trust, ask.accepts_ca_bundle).await?;
         audit::record(
             &mut *tx,
@@ -416,6 +420,7 @@ impl Renewer {
             identity: peer.clone(),
             cert,
             trust,
+            ca_bundle_signatures,
         })
     }
 }
@@ -453,6 +458,19 @@ pub(crate) async fn issue(
             "the certificate authority changed while issuing".into(),
         )),
     })
+}
+
+/// The signatures that let the peer of `cert` take the CAs of `trust`
+/// (ADR-0107). Two ECDSA signatures at most: not worth a blocking task.
+fn sign_bundle(
+    ca: &CertificateAuthority,
+    cert: &IssuedCert,
+    trust: &Trust,
+) -> Result<Vec<Vec<u8>>, RenewError> {
+    let leaf = monitorflow_common::ca_bundle::leaf_fingerprint(&cert.cert_pem)
+        .ok_or_else(|| RenewError::Internal("the issued certificate does not parse".into()))?;
+    ca.sign_ca_bundle(&leaf, trust)
+        .map_err(|e| RenewError::Internal(e.to_string()))
 }
 
 /// Records `cert` in `certificates`, with its issuer and, for a peer that
@@ -601,6 +619,10 @@ impl Renewer {
             ca_bundle_pem: match ask.accepts_ca_bundle {
                 true => renewed.trust.bundle_pem,
                 false => String::new(),
+            },
+            ca_bundle_signatures: match ask.accepts_ca_bundle {
+                true => renewed.ca_bundle_signatures,
+                false => Vec::new(),
             },
         }))
     }
