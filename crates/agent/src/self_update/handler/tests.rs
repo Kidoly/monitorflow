@@ -9,7 +9,7 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::packages::Tools;
-use crate::self_update::tests::{elf, ReleaseFiles, Signer};
+use crate::self_update::tests::{elf, update_command, ReleaseFiles, Signer};
 
 const ASSET: &str = "monitorflow-agent-linux-x86_64";
 
@@ -86,6 +86,14 @@ fn payload(version: &str, urls: &[String]) -> Vec<u8> {
     .encode_to_vec()
 }
 
+/// The command `c-1` with `payload`, as the dispatcher hands it over.
+fn command(payload: Vec<u8>) -> Command {
+    Command {
+        payload,
+        ..update_command("c-1", "0.3.0", false, 60)
+    }
+}
+
 #[tokio::test]
 async fn takes_the_first_source_with_a_valid_release_and_hands_it_to_the_helper() {
     let signer = Signer::new();
@@ -107,7 +115,8 @@ async fn takes_the_first_source_with_a_valid_release_and_hands_it_to_the_helper(
     let handler = handler(fake_sudo(&dir, "already running 0.3.0", 0), &signer);
     let urls = ["missing", "foreign", "stale", "good"].map(|d| format!("{base}/{d}"));
 
-    let output = handler.run_command("c-1", &payload("0.3.0", &urls)).await;
+    let command = command(payload("0.3.0", &urls));
+    let output = handler.run_command(&command).await;
     assert_eq!(
         (output.exit_code, output.error.as_deref()),
         (0, None),
@@ -126,7 +135,7 @@ async fn takes_the_first_source_with_a_valid_release_and_hands_it_to_the_helper(
     assert_eq!(args.trim(), "-n /usr/bin/monitorflow-agent self-update");
     assert_eq!(
         std::fs::read(dir.path().join("stdin")).unwrap(),
-        good.input("c-1", 60_000)
+        good.input(&command)
     );
 }
 
@@ -146,7 +155,7 @@ async fn fails_when_no_source_is_valid_and_reports_helper_errors() {
     let dir = TempDir::new().unwrap();
 
     let none = handler(fake_sudo(&dir, "", 0), &signer)
-        .run_command("c-1", &payload("0.3.0", &[format!("{base}/truncated")]))
+        .run_command(&command(payload("0.3.0", &[format!("{base}/truncated")])))
         .await;
     assert_eq!(
         none.error.as_deref(),
@@ -155,7 +164,7 @@ async fn fails_when_no_source_is_valid_and_reports_helper_errors() {
     assert!(!dir.path().join("stdin").exists(), "the helper never ran");
 
     let refused = handler(fake_sudo(&dir, "", 3), &signer)
-        .run_command("c-1", &payload("0.3.0", &[format!("{base}/good")]))
+        .run_command(&command(payload("0.3.0", &[format!("{base}/good")])))
         .await;
     assert_eq!(
         (refused.exit_code, refused.error.as_deref()),
@@ -180,10 +189,10 @@ async fn refuses_bad_payloads_without_downloading() {
         ),
         ("garbage", b"\xff\xff".to_vec()),
     ] {
-        let output = handler.run_command("c-1", &payload).await;
+        let output = handler.run_command(&command(payload)).await;
         assert!(output.rejected, "{name}: {output:?}");
     }
-    let same = handler.run_command("c-1", &payload("0.2.0", &url)).await;
+    let same = handler.run_command(&command(payload("0.2.0", &url))).await;
     assert_eq!(same.stdout, b"already running 0.2.0\n");
 }
 

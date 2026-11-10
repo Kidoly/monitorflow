@@ -8,10 +8,11 @@ use super::*;
 
 const NOW: i64 = 1_800_000_000_000;
 
-struct Ca(CertifiedIssuer<'static, KeyPair>);
+/// A certificate authority that signs commands, as the central server's.
+pub(crate) struct Ca(CertifiedIssuer<'static, KeyPair>);
 
 impl Ca {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let mut params = CertificateParams::default();
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         Self(CertifiedIssuer::self_signed(params, KeyPair::generate().unwrap()).unwrap())
@@ -32,7 +33,7 @@ impl Ca {
             .pem()
     }
 
-    fn sign(&self, mut command: Command) -> Command {
+    pub(crate) fn sign(&self, mut command: Command) -> Command {
         let rng = SystemRandom::new();
         let key = EcdsaKeyPair::from_pkcs8(
             &ECDSA_P256_SHA256_ASN1_SIGNING,
@@ -51,9 +52,9 @@ impl Ca {
 
 /// A machine: the service's files, written as its user would, and the
 /// helper's own directory.
-struct Host {
+pub(crate) struct Host {
     dir: TempDir,
-    place: Place,
+    pub(crate) place: Place,
 }
 
 impl Host {
@@ -78,7 +79,7 @@ impl Host {
         Self { dir, place }
     }
 
-    fn pinned(ca: &Ca) -> Self {
+    pub(crate) fn pinned(ca: &Ca) -> Self {
         let host = Self::enrolled(ca);
         fs::write(&host.place.pin_file, format!("{}\n", ca.pin())).unwrap();
         host
@@ -297,6 +298,41 @@ fn a_machine_without_a_pin_adopts_once_and_a_later_pin_replaces_it() {
     assert!(host
         .run(&ca.sign(command("c5")), CONFIGURE_SOURCES)
         .is_err());
+}
+
+#[test]
+fn the_installer_pins_the_ca_of_its_token() {
+    let (ca, old) = (Ca::new(), Ca::new());
+    let token = |ca: &Ca| tls::EnrollmentToken::new([7; 32], tls::fingerprint(ca.0.der()));
+
+    // Connected with `ca`: its token pins it, an older CA's does not.
+    let host = Host::enrolled(&ca);
+    host.run(&ca.sign(command("c1")), CONFIGURE_SOURCES)
+        .unwrap();
+    assert_eq!(host.anchor().origin, Origin::Adopted);
+    assert_eq!(write_pin(&host.place, &token(&old)).unwrap(), Pinned::Stale);
+    assert!(!host.place.pin_file.exists());
+    assert_eq!(
+        write_pin(&host.place, &token(&ca)).unwrap(),
+        Pinned::Written
+    );
+    host.run(&ca.sign(command("c2")), CONFIGURE_SOURCES)
+        .unwrap();
+    assert_eq!(host.anchor().origin, Origin::Pinned);
+
+    // Installed again after its identity was removed: the anchor of the
+    // earlier install goes, and the next one names the new certificate.
+    fs::remove_file(&host.place.cert).unwrap();
+    assert_eq!(
+        write_pin(&host.place, &token(&ca)).unwrap(),
+        Pinned::Written
+    );
+    assert!(!host.place.state_dir.join(ANCHOR_FILE).exists());
+    fs::write(&host.place.cert, ca.issue(PeerRole::Agent, "web-09")).unwrap();
+    let mut renamed = command("c3");
+    renamed.agent_id = "web-09".into();
+    host.run(&ca.sign(renamed), CONFIGURE_SOURCES).unwrap();
+    assert_eq!(host.anchor().peer_id, "web-09");
 }
 
 #[cfg(unix)]

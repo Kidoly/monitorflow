@@ -123,19 +123,19 @@ pub fn health_timeout(seconds: u32) -> Result<Duration, String> {
     }
 }
 
-/// The first line the helper reads on stdin; the binary follows.
+/// The release's small files: one line the helper reads on stdin after
+/// the signed command, before the binary. The command's ID, whether a
+/// downgrade is allowed and the health timeout come from the signed
+/// command, never from here (ADR-0108).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Header {
-    pub command_id: String,
     /// `SHA256SUMS`, as text.
     pub sums: String,
     /// `SHA256SUMS.sig`, base64.
     pub signature: String,
     /// `VERSION`, as text, newline included.
     pub version_file: String,
-    pub allow_downgrade: bool,
-    pub health_timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

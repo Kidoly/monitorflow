@@ -203,6 +203,7 @@ if [ -n "$relay" ]; then
     check "relay data dir monitorflow-relay 0700" mode_is /var/lib/monitorflow/relay "monitorflow-relay:monitorflow-relay 700"
     check "relay.toml root:monitorflow-relay 0640" mode_is /etc/monitorflow/relay.toml "root:monitorflow-relay 640"
     check "relay sudoers root 0440" mode_is /etc/sudoers.d/monitorflow-relay "root:root 440"
+    check "relay CA pin root 0644" mode_is /etc/monitorflow/relay-ca.pin "root:root 644"
     check "relay runs as monitorflow-relay" test "$(systemctl show -p User --value monitorflow-relay)" = monitorflow-relay
     check "relay token file deleted" absent /etc/monitorflow/relay-enroll.env
     check "relay token not in the journal" bash -c "! sudo journalctl -u monitorflow-relay --no-pager | grep -qF -- '$relay_token'"
@@ -222,6 +223,19 @@ check "binary root:root 0755" mode_is /usr/bin/monitorflow-agent "root:root 755"
 check "data dir monitorflow 0700" mode_is /var/lib/monitorflow/agent "monitorflow:monitorflow 700"
 check "agent.toml root:monitorflow 0640" mode_is /etc/monitorflow/agent.toml "root:monitorflow 640"
 check "sudoers root 0440" mode_is /etc/sudoers.d/monitorflow-agent "root:root 440"
+check "CA pin root 0644" mode_is /etc/monitorflow/agent-ca.pin "root:root 644"
+# The service's user asking the root helper itself, with what the helper
+# read before ADR-0108 and no command the server signed: refused, and
+# nothing replaced.
+unsigned_update() {
+    before=$(sha256sum /usr/bin/monitorflow-agent)
+    if printf '{"command_id":"c-1","sums":"","signature":"","version_file":"","allow_downgrade":true,"health_timeout_ms":0}\n' |
+        sudo -u monitorflow sudo -n /usr/bin/monitorflow-agent self-update; then
+        return 1
+    fi
+    [ "$(sha256sum /usr/bin/monitorflow-agent)" = "$before" ]
+}
+check "root helper refuses an unsigned self-update" unsigned_update
 check "service runs as monitorflow" test "$(systemctl show -p User --value monitorflow-agent)" = monitorflow
 check "token file deleted after enrollment" absent /etc/monitorflow/agent-enroll.env
 check "token not in agent.toml" bash -c "! sudo grep -qF -- '$token' /etc/monitorflow/agent.toml"

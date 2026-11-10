@@ -14,7 +14,9 @@ Cmnd_Alias MONITORFLOW_SOURCES = \
     /usr/bin/monitorflow-agent sources apply, \
     /usr/bin/monitorflow-agent sources revert
 # Self-update: the helper reads a signed release on stdin and installs it
-# only if the release key built into it verifies it (ADR-0053).
+# only if the release key built into it verifies it (ADR-0053), and only
+# for a command the central server signed for this server, which it checks
+# against its own copy of the certificate authority (ADR-0108).
 Cmnd_Alias MONITORFLOW_SELF_UPDATE = /usr/bin/monitorflow-agent self-update
 # Local snapshots of the system volumes on LVM or ZFS: the helper reads
 # only a snapshot name on stdin and picks the volumes itself (ADR-0094).

@@ -112,10 +112,11 @@ pub trait Handler: Send + Sync + 'static {
         CommandAcceptance::Accepted
     }
 
-    /// [`Self::run`], for handlers that also need the command's ID.
-    async fn run_command(&self, command_id: &str, payload: &[u8]) -> Output {
-        let _ = command_id;
-        self.run(payload).await
+    /// [`Self::run`], for handlers that need the whole command: its ID,
+    /// or the command as the central server signed it, which the root
+    /// helpers check themselves (ADR-0108).
+    async fn run_command(&self, command: &Command) -> Output {
+        self.run(&command.payload).await
     }
 }
 
@@ -446,7 +447,7 @@ impl Dispatcher {
         let handler = self.handlers.by_kind[&command.kind].clone();
         let run_timeout = self.settings.run_timeout;
         let task = tokio::spawn(async move {
-            let run = handler.run_command(&command.command_id, &command.payload);
+            let run = handler.run_command(&command);
             match tokio::time::timeout(run_timeout, run).await {
                 Ok(output) => output,
                 Err(_) => Output {

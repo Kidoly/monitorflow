@@ -67,6 +67,12 @@ enum Command {
         #[command(subcommand)]
         step: Option<SelfUpdateStep>,
     },
+    /// Records the certificate authority of the install command as the one
+    /// the root helpers trust (ADR-0108). Run as root by the installer,
+    /// with the token in MONITORFLOW_ENROLLMENT_TOKEN.
+    #[cfg(unix)]
+    #[command(hide = true)]
+    PinCa,
     /// Run as the Windows service `MonitorFlowAgent`; only the service
     /// control manager starts the agent this way (ADR-0047).
     #[cfg(windows)]
@@ -228,6 +234,13 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
         #[cfg(unix)]
         Some(Command::Snapshots(command)) => {
             return tokio::task::spawn_blocking(move || snapshots(command)).await?;
+        }
+        #[cfg(unix)]
+        Some(Command::PinCa) => {
+            let config: AgentConfig = config::load(&cli.config)?;
+            let place = monitorflow_agent::helper_trust::Place::agent(&config.tls_paths());
+            let token = config.enrollment_token.as_ref().map(|t| t.expose());
+            return pin_ca(&place, token);
         }
         #[cfg(unix)]
         Some(Command::SelfUpdate { step }) => {
@@ -709,6 +722,27 @@ async fn packages_update() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The installer's `pin-ca`, as root: writes the CA of the token in
+/// MONITORFLOW_ENROLLMENT_TOKEN where the root helpers read it (ADR-0108).
+#[cfg(unix)]
+fn pin_ca(
+    place: &monitorflow_agent::helper_trust::Place,
+    token: Option<&str>,
+) -> anyhow::Result<()> {
+    use monitorflow_agent::helper_trust::{write_pin, Pinned};
+
+    let token = token.context("MONITORFLOW_ENROLLMENT_TOKEN is not set")?;
+    let token = monitorflow_common::tls::EnrollmentToken::parse(token)?;
+    match write_pin(place, &token)? {
+        Pinned::Written => println!("certificate authority recorded for privileged commands"),
+        Pinned::Stale => println!(
+            "this machine is connected with another certificate authority than this install \
+             command's, which is an old one: nothing changed"
+        ),
+    }
+    Ok(())
+}
+
 /// The self-update helper (ADR-0053), as root: installs the release on
 /// stdin, or watches the restart. Reads the configuration for the agent's
 /// data directory, where the new agent proves it connected.
@@ -721,6 +755,7 @@ fn self_update(config: &Path, step: Option<SelfUpdateStep>) -> anyhow::Result<()
     use monitorflow_common::release::{self, Platform, Version};
 
     let config: AgentConfig = config::load(config)?;
+    let trust = monitorflow_agent::helper_trust::Place::agent(&config.tls_paths());
     let paths = Paths::system(config.data_dir);
     match step {
         None => {
@@ -732,6 +767,7 @@ fn self_update(config: &Path, step: Option<SelfUpdateStep>) -> anyhow::Result<()
             match helper::install(
                 &mut stdin,
                 &paths,
+                &trust,
                 keys,
                 &current,
                 platform,

@@ -297,6 +297,45 @@ fn read_pin(path: &Path) -> Result<Option<Fingerprint>, TrustError> {
         .ok_or_else(|| TrustError::Anchor(format!("{} is not a SHA-256", path.display())))
 }
 
+/// What [`write_pin`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pinned {
+    /// The pin is written; the anchor is made from it at the next request.
+    Written,
+    /// The machine is connected with another CA than the token's, so the
+    /// token is an old one: nothing changed.
+    Stale,
+}
+
+/// The installer's step, as root: records the CA of the install command's
+/// token as the one helpers trust. On a machine that is not connected
+/// yet, an anchor left by an earlier install is dropped, as the machine
+/// may come back under another name.
+pub fn write_pin(place: &Place, token: &tls::EnrollmentToken) -> Result<Pinned, TrustError> {
+    let pin = token.ca_fingerprint();
+    let enrolled = read_small(&place.cert)
+        .map_err(io_error(&place.cert))?
+        .is_some();
+    if enrolled {
+        let held = read_small(&place.ca_cert)
+            .map_err(io_error(&place.ca_cert))?
+            .and_then(|bytes| tls::certs_from_pem(&bytes))
+            .unwrap_or_default();
+        if !held.iter().any(|ca| tls::fingerprint(ca) == *pin) {
+            return Ok(Pinned::Stale);
+        }
+    } else {
+        let anchor = place.state_dir.join(ANCHOR_FILE);
+        match fs::remove_file(&anchor) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(io_error(&anchor)(e)),
+            _ => {}
+        }
+    }
+    let line = format!("{}\n", tls::fingerprint_hex(pin));
+    write_synced(&place.pin_file, line.as_bytes()).map_err(io_error(&place.pin_file))?;
+    Ok(Pinned::Written)
+}
+
 /// A SHA-256 in hexadecimal.
 pub fn parse_pin(hex: &str) -> Option<Fingerprint> {
     if hex.len() != 64 || !hex.is_ascii() {
@@ -415,4 +454,4 @@ pub fn authorize(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

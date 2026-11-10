@@ -54,10 +54,13 @@ case $MF_ROLE in
         RUN_USER=monitorflow
         # The previous binary and status of the last self-update (ADR-0053).
         STATE_DIR=/var/lib/monitorflow/self-update
+        # What the root helpers trust, written by them (ADR-0108).
+        HELPER_DIR=/var/lib/monitorflow/helper
         ;;
     relay)
         RUN_USER=monitorflow-relay
         STATE_DIR=/var/lib/monitorflow/relay-self-update
+        HELPER_DIR=/var/lib/monitorflow/relay-helper
         ;;
     *)
         printf 'monitorflow: error: MF_ROLE must be agent or relay\n' >&2
@@ -69,6 +72,8 @@ BIN=/usr/bin/monitorflow-$MF_ROLE
 CONF_DIR=/etc/monitorflow
 CONF=$CONF_DIR/$MF_ROLE.toml
 ENV_FILE=$CONF_DIR/$MF_ROLE-enroll.env
+# The certificate authority of the install command, for the root helpers.
+CA_PIN=$CONF_DIR/$MF_ROLE-ca.pin
 DATA_DIR=/var/lib/monitorflow/$MF_ROLE
 SUDOERS=/etc/sudoers.d/monitorflow-$MF_ROLE
 UNIT=/etc/systemd/system/monitorflow-$MF_ROLE.service
@@ -202,8 +207,8 @@ uninstall() {
         rmdir "$UNIT.d" 2>/dev/null || true
         systemctl daemon-reload
     fi
-    rm -f "$BIN" "$SUDOERS" "$ENV_FILE"
-    rm -rf "$STATE_DIR"
+    rm -f "$BIN" "$SUDOERS" "$ENV_FILE" "$CA_PIN"
+    rm -rf "$STATE_DIR" "$HELPER_DIR"
     if [ "$MF_PURGE" = 1 ]; then
         rm -rf "$CONF" "$DATA_DIR"
         rmdir "$CONF_DIR" /var/lib/monitorflow 2>/dev/null || true
@@ -272,6 +277,19 @@ write_relay_config() {
         fi
     } >"$tmp/relay.toml"
     install -o root -g "$RUN_USER" -m 0640 "$tmp/relay.toml" "$CONF"
+}
+
+# Records the certificate authority of the install command's token for the
+# root helpers, which act only on commands it signed (ADR-0108). They work
+# without it on a machine that was connected before, so a failure warns.
+pin_ca() {
+    [ -n "$MF_TOKEN" ] || return 0
+    if pinned=$(MONITORFLOW_ENROLLMENT_TOKEN=$MF_TOKEN "$BIN" --config "$CONF" pin-ca 2>&1); then
+        chmod 0644 "$CA_PIN" 2>/dev/null || true
+        say "$pinned"
+    else
+        say "warning: cannot record the certificate authority of the install command: $pinned"
+    fi
 }
 
 # Waits for the identity the first start writes. Fails as soon as the service
@@ -450,6 +468,7 @@ elif [ -n "$upstream_url" ]; then
     say "wrote $CONF for $upstream_url"
 fi
 
+pin_ca
 systemctl enable --quiet "$SERVICE"
 if enrolled; then
     systemctl restart "$SERVICE"

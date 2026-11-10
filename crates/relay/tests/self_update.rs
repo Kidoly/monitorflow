@@ -33,7 +33,12 @@ struct NoInstall;
 
 #[async_trait::async_trait]
 impl Installer for NoInstall {
-    async fn install(&self, _header: &Header, _binary: &[u8]) -> Result<Installed, Output> {
+    async fn install(
+        &self,
+        _command: &monitorflow_common::proto::v1::Command,
+        _header: &Header,
+        _binary: &[u8],
+    ) -> Result<Installed, Output> {
         panic!("nothing valid to install")
     }
 
