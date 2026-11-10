@@ -2,12 +2,13 @@
 //! report, and the `take_snapshot` and `delete_snapshot` commands. Both go
 //! through `sudo -n /usr/bin/monitorflow-agent snapshots …` (ADR-0094).
 
-use monitorflow_common::proto::v1::{DeleteSnapshot, StorageReport, TakeSnapshot};
+use monitorflow_common::proto::v1::{Command, DeleteSnapshot, StorageReport, TakeSnapshot};
 use monitorflow_common::snapshot::valid_name;
 use prost::Message;
 
-use super::helper::{Inventory, Request};
+use super::helper::Inventory;
 use crate::commands::{Handler, Output};
+use crate::helper_trust::HelperRequest;
 use crate::packages::{PackageError, Reports, Tools};
 
 /// The host's system volumes and MonitorFlow's snapshots, from the helper.
@@ -71,9 +72,14 @@ impl SnapshotHandler {
             reports,
         }
     }
+}
 
-    fn name(&self, payload: &[u8]) -> Result<String, String> {
-        let name = match self.action {
+impl SnapshotAction {
+    /// The snapshot a payload of this action names: the agent checks it
+    /// before calling the helper, and the helper reads it from the signed
+    /// command, never from its caller (ADR-0108).
+    pub fn name(self, payload: &[u8]) -> Result<String, String> {
+        let name = match self {
             SnapshotAction::Take => TakeSnapshot::decode(payload).map(|t| t.name),
             SnapshotAction::Delete => DeleteSnapshot::decode(payload).map(|d| d.name),
         }
@@ -87,12 +93,15 @@ impl SnapshotHandler {
 
 #[async_trait::async_trait]
 impl Handler for SnapshotHandler {
-    async fn run(&self, payload: &[u8]) -> Output {
-        let name = match self.name(payload) {
-            Ok(name) => name,
-            Err(error) => return Output::rejected(error),
-        };
-        let request = Request { name }.to_json();
+    async fn run(&self, _payload: &[u8]) -> Output {
+        Output::rejected("snapshots need their signed command")
+    }
+
+    async fn run_command(&self, command: &Command) -> Output {
+        if let Err(error) = self.action.name(&command.payload) {
+            return Output::rejected(error);
+        }
+        let request = HelperRequest::of(command).framed();
         let run = self
             .tools
             .privileged_with_input(

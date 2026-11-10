@@ -24,7 +24,7 @@ Each one is classified from `/proc/self/mountinfo`: a ZFS mount names its datase
 - `inspect` takes no input and prints the volumes and MonitorFlow's snapshots as JSON. It runs `lvm lvs` and `lvm vgs` in their JSON report format with byte units, and `zfs list -H -p`, at fixed paths, in the C locale.
 - `take` and `delete` read `{"name": "monitorflow-…"}` on stdin, unknown fields refused, at most 4 KiB. The name is `monitorflow-` then lowercase letters and digits in `-`-separated groups, at most 64 bytes, so it reads neither as an option nor as a path, and fits LVM and ZFS grammars.
 
-The server names the snapshot and nothing else. Which volumes, the snapshot size, the tools and their arguments are decided by the helper from what it inspects itself, so a compromised agent user can make snapshots of the system volumes and delete MonitorFlow's, and nothing more.
+The server names the snapshot and nothing else. Which volumes, the snapshot size, the tools and their arguments are decided by the helper from what it inspects itself, so a compromised agent user can make snapshots of the system volumes and delete MonitorFlow's, and nothing more. Since ADR-0108 it cannot do that either: `take` and `delete` read the signed command on stdin, check it themselves and take the name from it; `inspect` is unchanged.
 
 The same rules decide, in `common::snapshot::plan`, both in the helper before a take and on the server to say in advance what a change gets, so the two never disagree.
 

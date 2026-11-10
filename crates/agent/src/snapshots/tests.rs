@@ -3,7 +3,7 @@ use std::io;
 
 use monitorflow_common::snapshot::Refusal;
 
-use super::helper::{self, HelperError, Kind, Ran, Request, System, Tool};
+use super::helper::{self, HelperError, Kind, Ran, System, Tool};
 use super::parse;
 
 const MOUNTINFO_THIN: &str = include_str!("fixtures/mountinfo-thin.txt");
@@ -393,32 +393,33 @@ fn deletes_only_its_own() {
 
 #[test]
 fn refuses_anything_not_typed() {
+    use monitorflow_common::proto::v1::{DeleteSnapshot, TakeSnapshot};
+    use prost::Message;
+
+    use super::handler::SnapshotAction;
+
+    // The helper takes a name from the signed payload, and nothing else.
+    let take =
+        |name: &str| SnapshotAction::Take.name(&TakeSnapshot { name: name.into() }.encode_to_vec());
     for bad in [
-        &br#"{"name": "monitorflow-x", "volume": "vg0/home"}"#[..],
-        br#"{"name": "vg0/home"}"#,
-        br#"{"name": "monitorflow-x; rm -rf /"}"#,
-        br#"{"name": "monitorflow--force"}"#,
-        br#"{"name": ["monitorflow-x"]}"#,
-        br#"{}"#,
-        b"monitorflow-x",
-        b"",
+        "vg0/home",
+        "monitorflow-x; rm -rf /",
+        "monitorflow--force",
+        "-x",
+        "",
     ] {
-        assert!(
-            Request::parse(bad).is_err(),
-            "{}",
-            String::from_utf8_lossy(bad)
-        );
+        assert!(take(bad).is_err(), "{bad}");
     }
-    let long = format!(
-        r#"{{"name": "monitorflow-x", "pad": "{}"}}"#,
-        "a".repeat(5000)
-    );
-    assert!(Request::parse(long.as_bytes()).is_err());
+    assert!(SnapshotAction::Take.name(b"\xff\xff").is_err());
+    assert_eq!(take("monitorflow-x").unwrap(), "monitorflow-x");
+    let delete = DeleteSnapshot {
+        name: "monitorflow-y".into(),
+    };
     assert_eq!(
-        Request::parse(br#"{"name": "monitorflow-x"}"#)
-            .unwrap()
-            .name,
-        "monitorflow-x"
+        SnapshotAction::Delete
+            .name(&delete.encode_to_vec())
+            .unwrap(),
+        "monitorflow-y"
     );
     // The functions refuse too, whoever calls them.
     let fake = Fake::thin();

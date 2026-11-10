@@ -34,7 +34,7 @@ For apt security, the helper keeps ADR-0031's simulation rather than a security-
 ## Consequences
 
 - `deploy/sudoers/monitorflow-agent` holds three exact lines for the agent (`packages update`, `sources apply|revert`) and `shutdown -r +1`; named and security updates work with it on both families, and no administrator needs a wildcard rule.
-- A compromised agent user can still upgrade any installed package to any version the configured repositories offer, as with the full upgrade it could already run; it cannot pass options, install from a file, remove a package, or install a package that is not installed (`--only-upgrade`, `dnf upgrade`).
+- Since ADR-0108 the helper reads the signed `apply_updates` command on stdin instead of a JSON spec, checks it itself and builds the spec from it, so a compromised agent user can no longer start an update or choose its packages; with ADR-0032's change it cannot choose the repositories either. Before, it could upgrade any installed package to any version the configured repositories offer, which it could also configure. As before, an update cannot pass options, install from a file, remove a package, or install a package that is not installed (`--only-upgrade`, `dnf upgrade`).
 - The helper runs as root with the agent's binary, so `/usr/bin/monitorflow-agent` must stay root-owned and not writable by anyone else (already required by ADR-0032).
 - Killing the agent's `sudo` on a command timeout does not kill the helper or the package manager under it, as before with apt and dnf run directly.
 - Hosts with an older `/etc/sudoers.d/monitorflow-agent` lose updates until the new file is installed: the agent no longer runs `apt-get` or `dnf` through sudo.

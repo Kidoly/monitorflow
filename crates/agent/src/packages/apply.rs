@@ -3,13 +3,14 @@
 
 use std::sync::Arc;
 
-use monitorflow_common::proto::v1::ApplyUpdates;
+use monitorflow_common::proto::v1::{ApplyUpdates, Command};
 use prost::Message;
 
 use super::exec::{Run, Tools};
 use super::update::UpdateSpec;
 use super::{PackageError, PackageManager, Reports};
 use crate::commands::{Handler, Output};
+use crate::helper_trust::HelperRequest;
 
 pub struct ApplyUpdatesHandler {
     manager: Arc<dyn PackageManager>,
@@ -29,16 +30,18 @@ impl ApplyUpdatesHandler {
     }
 
     /// The steps up to the reboot: `sudo -n /usr/bin/monitorflow-agent
-    /// packages update` with `spec` on stdin. The helper prints what it
-    /// ran; when it fails, its last stderr line is the error.
-    async fn apply(&self, spec: &UpdateSpec, output: &mut Output) -> Result<(), PackageError> {
+    /// packages update` with the signed `command` on stdin, which the
+    /// helper checks and builds its spec from (ADR-0108). The helper
+    /// prints what it ran; when it fails, its last stderr line is the
+    /// error.
+    async fn apply(&self, command: &Command, output: &mut Output) -> Result<(), PackageError> {
         let run = self
             .tools
             .privileged_with_input(
                 &[],
                 &self.tools.agent,
                 &["packages", "update"],
-                Some(&spec.to_json()),
+                Some(&HelperRequest::of(command).framed()),
             )
             .await?;
         tracing::info!(exit_code = run.code, "packages helper finished");
@@ -66,8 +69,12 @@ fn append(output: &mut Output, run: Run) {
 
 #[async_trait::async_trait]
 impl Handler for ApplyUpdatesHandler {
-    async fn run(&self, payload: &[u8]) -> Output {
-        let Ok(request) = ApplyUpdates::decode(payload) else {
+    async fn run(&self, _payload: &[u8]) -> Output {
+        Output::rejected("apply_updates needs its signed command")
+    }
+
+    async fn run_command(&self, command: &Command) -> Output {
+        let Ok(request) = ApplyUpdates::decode(command.payload.as_slice()) else {
             return Output::rejected("invalid ApplyUpdates payload");
         };
         let spec = UpdateSpec::from_request(&request);
@@ -75,7 +82,7 @@ impl Handler for ApplyUpdatesHandler {
             return Output::rejected(error.to_string());
         }
         let mut output = Output::default();
-        let result = self.apply(&spec, &mut output).await;
+        let result = self.apply(command, &mut output).await;
         // Whatever happened, the server gets the state of the host.
         self.reports.collect().await;
         if let Err(error) = result {

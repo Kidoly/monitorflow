@@ -1,6 +1,6 @@
 //! The `snapshots` root helper (ADR-0094): `inspect` reads the system
-//! volumes and MonitorFlow's snapshots, `take` and `delete` read a
-//! [`Request`] on stdin. The request only names the snapshot: which
+//! volumes and MonitorFlow's snapshots, `take` and `delete` take the name
+//! of the signed command (ADR-0108). It only names the snapshot: which
 //! volumes it covers, its size and the tools' arguments are decided here,
 //! so sudoers can allow these exact lines and nothing else.
 //!
@@ -19,44 +19,11 @@ use serde::{Deserialize, Serialize};
 
 use super::parse::{self, Lv, ZfsSnapshot, LVS_FIELDS, VGS_FIELDS, ZFS_PROPERTY};
 
-/// Longest request read on stdin.
-pub const MAX_REQUEST_BYTES: usize = 4096;
 /// The LVM tag on MonitorFlow's snapshots.
 pub const LVM_TAG: &str = "monitorflow";
 /// LVM's longest logical volume name.
 const MAX_LV_NAME: usize = 127;
 const MIB: u64 = 1 << 20;
-
-/// What `take` and `delete` read on stdin: `{"name": "monitorflow-…"}`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Request {
-    pub name: String,
-}
-
-impl Request {
-    /// Refuses anything but a JSON object with a valid name.
-    pub fn parse(bytes: &[u8]) -> Result<Self, HelperError> {
-        if bytes.len() > MAX_REQUEST_BYTES {
-            return Err(HelperError::Request(format!(
-                "larger than {MAX_REQUEST_BYTES} bytes"
-            )));
-        }
-        let request: Self =
-            serde_json::from_slice(bytes).map_err(|e| HelperError::Request(e.to_string()))?;
-        if !valid_name(&request.name) {
-            return Err(HelperError::Request(format!(
-                "invalid snapshot name `{}`",
-                request.name
-            )));
-        }
-        Ok(request)
-    }
-
-    pub fn to_json(&self) -> Vec<u8> {
-        serde_json::to_vec(self).unwrap_or_default()
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum HelperError {

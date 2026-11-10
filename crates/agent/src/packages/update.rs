@@ -1,6 +1,7 @@
 //! The `packages update` root helper (ADR-0036): the agent runs `sudo -n
-//! /usr/bin/monitorflow-agent packages update` with an [`UpdateSpec`] as
-//! JSON on stdin, and the helper, as root, checks it and runs apt or dnf
+//! /usr/bin/monitorflow-agent packages update` with the signed
+//! `apply_updates` command on stdin; the helper, as root, checks it
+//! (ADR-0108), builds its [`UpdateSpec`] from it and runs apt or dnf
 //! itself. Sudoers then names one fixed command line, whatever packages
 //! the update names.
 
@@ -49,7 +50,7 @@ impl UpdateKind {
     }
 }
 
-/// What to update, as the helper reads it on stdin:
+/// What to update, built from a signed `ApplyUpdates`. As JSON,
 /// `{"kind": "named", "packages": ["openssl"]}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

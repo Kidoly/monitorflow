@@ -1,6 +1,8 @@
 //! The `packages update` subcommand the agent runs through sudo
-//! (ADR-0036). It runs the host's package manager, so only specs refused
-//! before anything runs are tested here; what it runs is tested in the
+//! (ADR-0036). It runs the host's package manager, so only inputs refused
+//! before anything runs are tested here: the helper acts on a command the
+//! central server signed and on nothing else (ADR-0108). What it checks of
+//! a signed command is tested in `helper_trust`, and what it runs in the
 //! library against fake tools.
 
 // The real server and the Linux helpers only build on Unix (ADR-0047).
@@ -8,6 +10,11 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
+
+use monitorflow_agent::helper_trust::HelperRequest;
+use monitorflow_common::command::APPLY_UPDATES;
+use monitorflow_common::proto::v1::{ApplyUpdates, Command as Signed};
+use prost::Message;
 
 fn update(stdin: &[u8]) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_monitorflow-agent"))
@@ -31,24 +38,32 @@ fn refused(stdin: &[u8], expected: &str) {
 }
 
 #[test]
-fn update_refuses_input_that_is_not_a_spec() {
-    refused(b"\xff\xff", "not an update spec");
+fn update_refuses_the_specs_it_read_before_commands_were_checked() {
+    // What the agent's user could write on stdin before ADR-0108.
+    refused(br#"{"kind":"all"}"#, "invalid input");
     refused(
-        br#"{"kind":"all","args":["-o","APT::x=y"]}"#,
-        "unknown field",
+        br#"{"kind":"named","packages":["bash","-oDpkg::Pre-Invoke::=id"]}"#,
+        "invalid input",
     );
-    refused(&vec![b' '; 70 * 1024], "larger than");
+    refused(b"", "no signed command");
+    refused(b"\xff\xff", "no signed command");
+    refused(&vec![b' '; 70 * 1024], "invalid input");
 }
 
 #[test]
-fn update_refuses_options_and_paths_as_package_names() {
-    refused(
-        br#"{"kind":"named","packages":["bash","-oDpkg::Pre-Invoke::=id"]}"#,
-        "invalid package name",
-    );
-    refused(
-        br#"{"kind":"security","packages":["/tmp/evil.deb"]}"#,
-        "invalid package name",
-    );
-    refused(br#"{"kind":"named","packages":[]}"#, "at least one package");
+fn update_refuses_a_command_nobody_signed() {
+    let payload = ApplyUpdates::default().encode_to_vec();
+    let command = Signed {
+        command_id: "c-1".into(),
+        kind: APPLY_UPDATES.into(),
+        payload,
+        expires_at_unix_ms: i64::MAX,
+        agent_id: "web-01".into(),
+        ..Signed::default()
+    };
+    // Unsigned, and run here without root's trust anchor: refused either
+    // way before the package manager is reached.
+    let output = update(&HelperRequest::of(&command).framed());
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty(), "something ran");
 }

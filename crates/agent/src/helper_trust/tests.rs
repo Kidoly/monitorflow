@@ -95,6 +95,24 @@ impl Host {
     }
 }
 
+/// An unsigned command of `kind` with `payload`, as the dispatcher hands
+/// one to a handler once it has checked it.
+pub(crate) fn unsigned(kind: &str, payload: &[u8]) -> Command {
+    Command {
+        kind: kind.into(),
+        payload: payload.to_vec(),
+        ..command("c-1")
+    }
+}
+
+/// The command a fake helper saved from its stdin, and nothing after it.
+pub(crate) fn sent(stdin: &[u8]) -> Command {
+    let mut input = stdin;
+    let request = HelperRequest::read(&mut input).unwrap();
+    assert!(input.is_empty(), "nothing follows the request");
+    request.command.unwrap()
+}
+
 fn command(id: &str) -> Command {
     Command {
         command_id: id.into(),

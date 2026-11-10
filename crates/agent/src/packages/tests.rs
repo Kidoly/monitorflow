@@ -12,6 +12,8 @@ use tempfile::TempDir;
 use super::update::{self, UpdateKind, UpdateSpec};
 use super::*;
 use crate::commands::{Handler, Output};
+use crate::helper_trust::tests::{sent, unsigned};
+use monitorflow_common::command::APPLY_UPDATES;
 
 const SIMULATION: &str = "\
 Inst libc6 [2.36-9] (2.36-9+deb12u4 Debian-Security:12/stable-security [amd64])
@@ -130,8 +132,9 @@ exit \"$code\"",
         std::fs::write(self.path("helper-exit"), code.to_string()).unwrap();
     }
 
-    fn helper_stdin(&self) -> String {
-        std::fs::read_to_string(self.path("helper-stdin")).unwrap()
+    /// The payload of the signed command the helper was given.
+    fn helper_payload(&self) -> Vec<u8> {
+        sent(&std::fs::read(self.path("helper-stdin")).unwrap()).payload
     }
 }
 
@@ -154,6 +157,11 @@ fn payload(packages: &[&str], security_only: bool, allow_reboot: bool) -> Vec<u8
         allow_reboot,
     }
     .encode_to_vec()
+}
+
+/// Runs `handler` on an `apply_updates` command with `payload`.
+async fn run(handler: &ApplyUpdatesHandler, payload: &[u8]) -> Output {
+    handler.run_command(&unsigned(APPLY_UPDATES, payload)).await
 }
 
 const HELPER: &str = "-n @monitorflow-agent packages update";
@@ -181,10 +189,11 @@ fn package_managers_need_their_tools_on_the_host() {
 async fn updates_go_to_the_helper_then_report() {
     let fakes = Fakes::new(0, 0, 0);
     let (handler, report) = apply_handler(&fakes, OsFamily::Debian);
-    let output = handler.run(&payload(&[], false, false)).await;
+    let output = run(&handler, &payload(&[], false, false)).await;
     assert_eq!((output.exit_code, &output.error), (0, &None), "{output:?}");
     assert_eq!(fakes.sudo_calls(), [HELPER]);
-    assert_eq!(fakes.helper_stdin(), r#"{"kind":"all"}"#);
+    // The helper gets the command itself, not a spec the agent wrote.
+    assert_eq!(fakes.helper_payload(), payload(&[], false, false));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.starts_with("$ sudo -n ") && stdout.contains("$ /usr/bin/apt-get -q update"),
@@ -214,26 +223,21 @@ async fn named_and_security_updates_send_their_spec_and_reboot_when_allowed() {
     let fakes = Fakes::new(0, 0, 0);
     std::fs::write(fakes.path("reboot-required"), "").unwrap();
     let (handler, report) = apply_handler(&fakes, OsFamily::Debian);
-    let output = handler.run(&payload(&["openssl"], true, true)).await;
+    let output = run(&handler, &payload(&["openssl"], true, true)).await;
     assert_eq!(output.error, None);
     assert_eq!(fakes.sudo_calls(), [HELPER, "-n @shutdown -r +1"]);
-    assert_eq!(
-        fakes.helper_stdin(),
-        r#"{"kind":"security","packages":["openssl"]}"#
-    );
+    assert_eq!(fakes.helper_payload(), payload(&["openssl"], true, true));
     assert!(report.borrow().as_ref().unwrap().reboot_required);
 
     let fakes = Fakes::new(0, 0, 0);
     let (handler, _) = apply_handler(&fakes, OsFamily::Rhel);
-    let output = handler
-        .run(&payload(&["openssl", "bash"], false, true))
-        .await;
+    let output = run(&handler, &payload(&["openssl", "bash"], false, true)).await;
     assert_eq!(output.error, None);
     // needs-restarting exits 0: no reboot.
     assert_eq!(fakes.sudo_calls(), [HELPER]);
     assert_eq!(
-        fakes.helper_stdin(),
-        r#"{"kind":"named","packages":["openssl","bash"]}"#
+        fakes.helper_payload(),
+        payload(&["openssl", "bash"], false, true)
     );
 }
 
@@ -242,7 +246,7 @@ async fn a_failed_update_fails_with_the_helpers_error_but_still_reports() {
     let fakes = Fakes::new(0, 0, 0);
     fakes.helper_exits(100);
     let (handler, report) = apply_handler(&fakes, OsFamily::Debian);
-    let output = handler.run(&payload(&["bash"], false, true)).await;
+    let output = run(&handler, &payload(&["bash"], false, true)).await;
     assert_eq!(output.exit_code, 100);
     assert_eq!(
         output.error.as_deref(),
@@ -258,12 +262,12 @@ async fn a_failed_update_fails_with_the_helpers_error_but_still_reports() {
 async fn bad_payloads_are_rejected_before_running_anything() {
     let fakes = Fakes::new(0, 0, 0);
     let (handler, report) = apply_handler(&fakes, OsFamily::Debian);
-    let garbage = handler.run(b"\xff\xff").await;
+    let garbage = run(&handler, b"\xff\xff").await;
     assert!(garbage.rejected);
     for name in ["-o", "a b", "x;reboot", "", "$(id)", "/tmp/x.deb"] {
-        let output: Output = handler.run(&payload(&[name], false, false)).await;
+        let output: Output = run(&handler, &payload(&[name], false, false)).await;
         assert!(output.rejected, "{name}");
-        let output: Output = handler.run(&payload(&[name], true, false)).await;
+        let output: Output = run(&handler, &payload(&[name], true, false)).await;
         assert!(output.rejected, "{name}");
     }
     assert!(fakes.sudo_calls().is_empty());
