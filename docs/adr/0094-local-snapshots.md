@@ -1,7 +1,7 @@
 # ADR-0094: Local LVM and ZFS snapshots before a change
 
 Date: 2026-11-03
-Status: accepted; extends ADR-0044, ADR-0046 and ADR-0093
+Status: accepted; extends ADR-0044, ADR-0046 and ADR-0093; `take` and `delete` need the signed command (ADR-0108)
 
 ## Context
 

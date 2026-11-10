@@ -1,7 +1,7 @@
 # ADR-0032: Package source configuration
 
 Date: 2026-10-19
-Status: accepted
+Status: accepted; the helper no longer trusts the agent user for the spec (ADR-0108)
 
 ## Context
 

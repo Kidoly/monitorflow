@@ -1,7 +1,7 @@
 # ADR-0036: Package update helper
 
 Date: 2026-10-25
-Status: accepted
+Status: accepted; the helper no longer trusts the agent user for the spec (ADR-0108)
 
 ## Context
 

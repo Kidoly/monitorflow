@@ -260,7 +260,7 @@ impl Connected {
 }
 
 /// The file at `path`, `None` when missing; refuses links and large files.
-fn read_small(path: &Path) -> io::Result<Option<Vec<u8>>> {
+pub(crate) fn read_small(path: &Path) -> io::Result<Option<Vec<u8>>> {
     use std::io::Read;
 
     let mut options = std::fs::OpenOptions::new();
