@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use monitorflow_common::ca_bundle;
 use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::certificate_service_client::CertificateServiceClient;
 use monitorflow_common::proto::v1::RenewRequest;
@@ -391,10 +392,19 @@ db_tests! {
         let channel = tls::connect(&url, identity.client_config().unwrap(), TIMEOUT).await.unwrap();
         let mut client = CertificateServiceClient::new(channel);
         let reply = client
-            .renew(RenewRequest { csr_pem: csr(&KeyPair::generate().unwrap(), "web-02", vec![]), names_only: false, ..Default::default() })
+            .renew(RenewRequest { csr_pem: csr(&KeyPair::generate().unwrap(), "web-02", vec![]), accepts_ca_bundle: true, ..Default::default() })
             .await
             .unwrap()
             .into_inner();
+        // The bundle is signed for this certificate by the CA (ADR-0107).
+        let ca_der = CertificateDer::from(pem::parse(&reply.ca_cert_pem).unwrap().into_contents());
+        let leaf = ca_bundle::leaf_fingerprint(&reply.cert_pem).unwrap();
+        let bundle = [tls::fingerprint(&ca_der)];
+        assert_eq!(reply.ca_bundle_pem, pki.ca.ca_cert_pem());
+        assert_eq!(reply.ca_bundle_signatures.len(), 1);
+        ca_bundle::verify(&leaf, &bundle, &reply.ca_bundle_signatures, std::slice::from_ref(&ca_der)).unwrap();
+        let other = ca_bundle::leaf_fingerprint(&agent.cert_pem).unwrap();
+        assert!(ca_bundle::verify(&other, &bundle, &reply.ca_bundle_signatures, &[ca_der]).is_err());
         assert_eq!(reply.peer_uri, "monitorflow://agent/web-01");
         assert_eq!(reply.ca_cert_pem, pki.ca.ca_cert_pem());
         assert!(reply.not_after_unix > 0);

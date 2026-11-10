@@ -157,6 +157,54 @@ fn commands_are_signed_by_the_ca_that_issues() {
 }
 
 #[test]
+fn ca_bundles_are_signed_by_every_trusted_ca() {
+    use monitorflow_common::ca_bundle;
+
+    let dir = TempDir::new().unwrap();
+    let ca = open(&dir.path().join("ca"));
+    let old = der(&ca.ca_cert_pem());
+    let leaf = |cert: &IssuedCert| ca_bundle::leaf_fingerprint(&cert.cert_pem).unwrap();
+    // The signatures of the bundle for `cert`, and whether a peer that
+    // trusts only `trusted` takes them.
+    let signed = |cert: &IssuedCert, trusted: &CertificateDer<'static>| {
+        let trust = ca.trust();
+        let signatures = ca.sign_ca_bundle(&leaf(cert), &trust).unwrap();
+        let trusted = std::slice::from_ref(trusted);
+        let ok = ca_bundle::verify(&leaf(cert), &trust.bundle, &signatures, trusted).is_ok();
+        (signatures.len(), ok)
+    };
+
+    let cert = issue(&ca, "web-01");
+    assert_eq!(signed(&cert, &old), (1, true));
+
+    // Introduced, then switched: a peer that knows either CA alone can
+    // check the bundle, so one that missed the introduction still moves.
+    let before = ca.trust();
+    ca.start_rotation(false).unwrap();
+    let new = der(&ca.status().other.unwrap().cert_pem);
+    assert_eq!(signed(&cert, &old), (2, true));
+    assert_eq!(signed(&cert, &new), (2, true));
+    // The CAs changed since `before` was read: nothing is signed for it.
+    assert!(ca.sign_ca_bundle(&leaf(&cert), &before).is_err());
+    ca.switch().unwrap();
+    let cert = issue(&ca, "web-01");
+    assert_eq!(signed(&cert, &old), (2, true));
+    assert_eq!(signed(&cert, &new), (2, true));
+
+    // The signatures are for one certificate only.
+    let trust = ca.trust();
+    let signatures = ca.sign_ca_bundle(&leaf(&cert), &trust).unwrap();
+    let other = leaf(&issue(&ca, "web-01"));
+    let trusted = [old.clone(), new.clone()];
+    assert!(ca_bundle::verify(&other, &trust.bundle, &signatures, &trusted).is_err());
+
+    // Retired: its key is gone, and so is its signature.
+    ca.retire().unwrap();
+    assert_eq!(signed(&cert, &new), (1, true));
+    assert_eq!(signed(&cert, &old), (1, false));
+}
+
+#[test]
 fn an_emergency_switches_at_once_and_sets_the_distrust_time() {
     let dir = TempDir::new().unwrap();
     let ca = open(&dir.path().join("ca"));
