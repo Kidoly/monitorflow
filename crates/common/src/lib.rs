@@ -1,6 +1,7 @@
 //! Code shared by the agent, relay and server: generated gRPC types,
 //! TLS helpers, configuration loading and common error types.
 
+pub mod ca_bundle;
 pub mod client;
 pub mod command;
 pub mod config;

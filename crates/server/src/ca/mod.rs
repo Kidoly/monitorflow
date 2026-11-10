@@ -397,6 +397,37 @@ impl CertificateAuthority {
             .map_err(|_| CaError::Signing("cannot sign the command".into()))
     }
 
+    /// Signs that the peer holding the certificate of SHA-256 `leaf` must
+    /// trust the CAs of `trust`, once with the key of each of them
+    /// (ADR-0107): a peer that trusts only one of the two verifies it.
+    /// Fails if the CAs changed since `trust` was read.
+    pub fn sign_ca_bundle(
+        &self,
+        leaf: &Fingerprint,
+        trust: &Trust,
+    ) -> Result<Vec<Vec<u8>>, CaError> {
+        let state = self.state();
+        if !state
+            .trusted()
+            .map(|g| &g.fingerprint)
+            .eq(trust.bundle.iter())
+        {
+            return Err(CaError::Signing(
+                "the certificate authority changed while issuing".into(),
+            ));
+        }
+        let message = monitorflow_common::ca_bundle::signed_bytes(leaf, &trust.bundle);
+        state
+            .trusted()
+            .map(|g| {
+                g.command_key
+                    .sign(&SystemRandom::new(), &message)
+                    .map(|signature| signature.as_ref().to_vec())
+                    .map_err(|_| CaError::Signing("cannot sign the CA bundle".into()))
+            })
+            .collect()
+    }
+
     /// The active root certificate, which issues every new certificate.
     /// Peers trust [`Self::trust_bundle_pem`].
     pub fn ca_cert_pem(&self) -> String {
