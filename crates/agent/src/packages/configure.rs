@@ -1,15 +1,17 @@
 //! The `configure_sources` and `revert_sources` commands (ADR-0035): the
-//! signed spec goes to the root helper, `sudo -n /usr/bin/monitorflow-agent
-//! sources apply|revert`, which checks it in full, changes the sources and
-//! reverts on failure (ADR-0032).
+//! signed command goes to the root helper, `sudo -n
+//! /usr/bin/monitorflow-agent sources apply|revert`, which checks its
+//! signature itself (ADR-0108) and the spec in full, changes the sources
+//! and reverts on failure (ADR-0032).
 
 use monitorflow_common::proto::v1::configure_sources::Family;
-use monitorflow_common::proto::v1::{ConfigureSources, RevertSources};
+use monitorflow_common::proto::v1::{Command, ConfigureSources, RevertSources};
 use prost::Message;
 
 use super::exec::{Run, Tools};
 use super::PackageError;
 use crate::commands::{Handler, Output};
+use crate::helper_trust::HelperRequest;
 use crate::os::OsFamily;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,12 +38,11 @@ impl SourcesHandler {
         }
     }
 
-    /// The payload checked as far as the agent can without the helper,
-    /// and what goes to the helper's stdin.
-    fn input<'a>(&self, payload: &'a [u8]) -> Result<Option<&'a [u8]>, String> {
+    /// The payload checked as far as the agent can without the helper.
+    fn check(&self, payload: &[u8]) -> Result<(), String> {
         match self.action {
             SourcesAction::Revert => match RevertSources::decode(payload) {
-                Ok(_) => Ok(None),
+                Ok(_) => Ok(()),
                 Err(_) => Err("invalid RevertSources payload".into()),
             },
             SourcesAction::Apply => {
@@ -61,8 +62,7 @@ impl SourcesHandler {
                         self.family
                     ));
                 }
-                // The signed bytes as received; the helper decodes them again.
-                Ok(Some(payload))
+                Ok(())
             }
         }
     }
@@ -85,18 +85,24 @@ fn output(run: Run) -> Output {
 
 #[async_trait::async_trait]
 impl Handler for SourcesHandler {
-    async fn run(&self, payload: &[u8]) -> Output {
-        let input = match self.input(payload) {
-            Ok(input) => input,
-            Err(error) => return Output::rejected(error),
-        };
+    async fn run(&self, _payload: &[u8]) -> Output {
+        Output::rejected("source configuration needs its signed command")
+    }
+
+    async fn run_command(&self, command: &Command) -> Output {
+        if let Err(error) = self.check(&command.payload) {
+            return Output::rejected(error);
+        }
+        // The command as the server signed it: the helper checks it and
+        // acts on its payload.
+        let input = HelperRequest::of(command).framed();
         let verb = match self.action {
             SourcesAction::Apply => "apply",
             SourcesAction::Revert => "revert",
         };
         let run = self
             .tools
-            .privileged_with_input(&[], &self.tools.agent, &["sources", verb], input)
+            .privileged_with_input(&[], &self.tools.agent, &["sources", verb], Some(&input))
             .await;
         match run {
             Ok(run) => {
@@ -120,8 +126,11 @@ impl Handler for SourcesHandler {
 mod tests {
     use std::path::PathBuf;
 
+    use monitorflow_common::command::{CONFIGURE_SOURCES, REVERT_SOURCES};
     use monitorflow_common::proto::v1::configure_sources::Mode;
     use monitorflow_sensors::testing::write_executable;
+
+    use crate::helper_trust::tests::{sent, unsigned};
     use tempfile::TempDir;
 
     use super::*;
@@ -195,11 +204,13 @@ mod tests {
         let payload = spec(Family::Apt);
         let output = fakes
             .handler(SourcesAction::Apply, OsFamily::Debian)
-            .run(&payload)
+            .run_command(&unsigned(CONFIGURE_SOURCES, &payload))
             .await;
         assert_eq!((output.exit_code, &output.error), (0, &None), "{output:?}");
         assert_eq!(fakes.calls(), ["-n @monitorflow-agent sources apply"]);
-        assert_eq!(std::fs::read(fakes.path("stdin")).unwrap(), payload);
+        // The helper gets the command itself, to check its signature.
+        let command = sent(&std::fs::read(fakes.path("stdin")).unwrap());
+        assert_eq!(command, unsigned(CONFIGURE_SOURCES, &payload));
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(
             stdout.starts_with("$ sudo -n ") && stdout.contains("changed /etc/apt"),
@@ -208,15 +219,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn revert_runs_the_helper_without_input() {
+    async fn revert_sends_its_command_to_the_helper() {
         let fakes = Fakes::new(0);
         let output = fakes
             .handler(SourcesAction::Revert, OsFamily::Rhel)
-            .run(&RevertSources {}.encode_to_vec())
+            .run_command(&unsigned(REVERT_SOURCES, &RevertSources {}.encode_to_vec()))
             .await;
         assert_eq!((output.exit_code, &output.error), (0, &None), "{output:?}");
         assert_eq!(fakes.calls(), ["-n @monitorflow-agent sources revert"]);
-        assert_eq!(std::fs::read(fakes.path("stdin")).unwrap(), b"");
+        let command = sent(&std::fs::read(fakes.path("stdin")).unwrap());
+        assert_eq!(command.kind, REVERT_SOURCES);
     }
 
     #[tokio::test]
@@ -224,7 +236,7 @@ mod tests {
         let fakes = Fakes::new(1);
         let output = fakes
             .handler(SourcesAction::Apply, OsFamily::Rhel)
-            .run(&spec(Family::Dnf))
+            .run_command(&unsigned(CONFIGURE_SOURCES, &spec(Family::Dnf)))
             .await;
         assert_eq!(output.exit_code, 1);
         assert!(!output.rejected);
@@ -248,12 +260,14 @@ mod tests {
             spec(Family::Dnf),
             spec(Family::Unspecified),
         ] {
-            let output = apply.run(&payload).await;
+            let output = apply
+                .run_command(&unsigned(CONFIGURE_SOURCES, &payload))
+                .await;
             assert!(output.rejected, "{output:?}");
         }
         let output = fakes
             .handler(SourcesAction::Revert, OsFamily::Debian)
-            .run(&[0xff])
+            .run_command(&unsigned(REVERT_SOURCES, &[0xff]))
             .await;
         assert!(output.rejected, "{output:?}");
         assert!(fakes.calls().is_empty());
@@ -266,7 +280,7 @@ mod tests {
             ..Tools::default()
         };
         let output = SourcesHandler::new(SourcesAction::Revert, OsFamily::Debian, tools)
-            .run(&[])
+            .run_command(&unsigned(REVERT_SOURCES, &[]))
             .await;
         assert_eq!(output.exit_code, -1);
         assert!(output.error.unwrap().contains("/nonexistent/sudo"));

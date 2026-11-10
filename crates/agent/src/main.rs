@@ -67,6 +67,12 @@ enum Command {
         #[command(subcommand)]
         step: Option<SelfUpdateStep>,
     },
+    /// Records the certificate authority of the install command as the one
+    /// the root helpers trust (ADR-0108). Run as root by the installer,
+    /// with the token in MONITORFLOW_ENROLLMENT_TOKEN.
+    #[cfg(unix)]
+    #[command(hide = true)]
+    PinCa,
     /// Run as the Windows service `MonitorFlowAgent`; only the service
     /// control manager starts the agent this way (ADR-0047).
     #[cfg(windows)]
@@ -221,13 +227,24 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
         }
         #[cfg(unix)]
         Some(Command::Sources(command)) => {
-            return tokio::task::spawn_blocking(move || sources(command)).await?;
+            let path = cli.config.clone();
+            return tokio::task::spawn_blocking(move || sources(&path, command)).await?;
         }
         #[cfg(unix)]
-        Some(Command::Packages(PackagesCommand::Update)) => return packages_update().await,
+        Some(Command::Packages(PackagesCommand::Update)) => {
+            return packages_update(cli.config.clone()).await
+        }
         #[cfg(unix)]
         Some(Command::Snapshots(command)) => {
-            return tokio::task::spawn_blocking(move || snapshots(command)).await?;
+            let path = cli.config.clone();
+            return tokio::task::spawn_blocking(move || snapshots(&path, command)).await?;
+        }
+        #[cfg(unix)]
+        Some(Command::PinCa) => {
+            let config: AgentConfig = config::load(&cli.config)?;
+            let place = monitorflow_agent::helper_trust::Place::agent(&config.tls_paths());
+            let token = config.enrollment_token.as_ref().map(|t| t.expose());
+            return pin_ca(&place, token);
         }
         #[cfg(unix)]
         Some(Command::SelfUpdate { step }) => {
@@ -596,23 +613,44 @@ fn platform_handlers(
     Some(latest_report)
 }
 
+/// What every root helper does first (ADR-0108): reads the command the
+/// central server signed from stdin and checks it against the helper's
+/// own trust anchor, as a command of `kind` for this server, not expired
+/// and not run before. The helper acts on the returned payload only.
+#[cfg(unix)]
+fn signed_command(
+    config: &Path,
+    kind: &str,
+) -> anyhow::Result<monitorflow_common::proto::v1::Command> {
+    use monitorflow_agent::helper_trust::{authorize, HelperRequest, Place};
+
+    let request = HelperRequest::read(&mut std::io::stdin().lock())?;
+    let config: AgentConfig = config::load(config)?;
+    let place = Place::agent(&config.tls_paths());
+    let now = monitorflow_agent::self_update::unix_ms();
+    Ok(authorize(&place, &request, kind, now)?)
+}
+
 /// Prints the changed paths and the backup directory, one per line.
 #[cfg(unix)]
-fn sources(command: SourcesCommand) -> anyhow::Result<()> {
+fn sources(config: &Path, command: SourcesCommand) -> anyhow::Result<()> {
     use monitorflow_agent::packages::sources::{self, SystemCheck};
+    use monitorflow_common::command::{CONFIGURE_SOURCES, REVERT_SOURCES};
     use monitorflow_common::proto::v1::ConfigureSources;
     use prost::Message;
 
     let root = std::path::Path::new("/");
     let outcome = match command {
         SourcesCommand::Apply => {
-            let mut bytes = Vec::new();
-            std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)?;
-            let spec = ConfigureSources::decode(bytes.as_slice())
-                .context("stdin is not a ConfigureSources message")?;
+            let command = signed_command(config, CONFIGURE_SOURCES)?;
+            let spec = ConfigureSources::decode(command.payload.as_slice())
+                .context("the payload is not a ConfigureSources message")?;
             sources::apply(&spec, root, &SystemCheck::default())?
         }
-        SourcesCommand::Revert => sources::revert(root)?,
+        SourcesCommand::Revert => {
+            signed_command(config, REVERT_SOURCES)?;
+            sources::revert(root)?
+        }
     };
     for path in &outcome.changed {
         println!("changed {}", path.display());
@@ -627,10 +665,12 @@ fn sources(command: SourcesCommand) -> anyhow::Result<()> {
 /// the request before anything else, then print each run's command line
 /// and output, and the error last on stderr, like `packages update`.
 #[cfg(unix)]
-fn snapshots(command: SnapshotsCommand) -> anyhow::Result<()> {
-    use std::io::{Read, Write};
+fn snapshots(config: &Path, command: SnapshotsCommand) -> anyhow::Result<()> {
+    use std::io::Write;
 
-    use monitorflow_agent::snapshots::helper::{self, Host, Request, MAX_REQUEST_BYTES};
+    use monitorflow_agent::snapshots::handler::SnapshotAction;
+    use monitorflow_agent::snapshots::helper::{self, Host};
+    use monitorflow_common::command::{DELETE_SNAPSHOT, TAKE_SNAPSHOT};
 
     let host = Host::default();
     let outcome = match command {
@@ -639,17 +679,19 @@ fn snapshots(command: SnapshotsCommand) -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&inventory)?);
             return Ok(());
         }
-        SnapshotsCommand::Take | SnapshotsCommand::Delete => {
-            let mut bytes = Vec::new();
-            std::io::stdin()
-                .take(MAX_REQUEST_BYTES as u64 + 1)
-                .read_to_end(&mut bytes)?;
-            let request = Request::parse(&bytes)?;
-            if matches!(command, SnapshotsCommand::Take) {
-                helper::take(&host, &request.name)
-            } else {
-                helper::delete(&host, &request.name)
-            }
+        SnapshotsCommand::Take => {
+            let command = signed_command(config, TAKE_SNAPSHOT)?;
+            let name = SnapshotAction::Take
+                .name(&command.payload)
+                .map_err(anyhow::Error::msg)?;
+            helper::take(&host, &name)
+        }
+        SnapshotsCommand::Delete => {
+            let command = signed_command(config, DELETE_SNAPSHOT)?;
+            let name = SnapshotAction::Delete
+                .name(&command.payload)
+                .map_err(anyhow::Error::msg)?;
+            helper::delete(&host, &name)
         }
     };
     let (mut stdout, mut stderr) = (std::io::stdout().lock(), std::io::stderr().lock());
@@ -670,23 +712,25 @@ fn snapshots(command: SnapshotsCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Checks the spec before anything else, then prints each run's command
-/// line and output, and the error last on stderr.
+/// Checks the signed command and the spec it gives before anything else,
+/// then prints each run's command line and output, and the error last on
+/// stderr.
 #[cfg(unix)]
-async fn packages_update() -> anyhow::Result<()> {
+async fn packages_update(config: PathBuf) -> anyhow::Result<()> {
     use std::io::Write;
 
     use monitorflow_agent::packages::update::{self, UpdateSpec};
     use monitorflow_agent::packages::Tools;
-    use tokio::io::AsyncReadExt;
+    use monitorflow_common::command::APPLY_UPDATES;
+    use monitorflow_common::proto::v1::ApplyUpdates;
+    use prost::Message;
 
-    let mut bytes = Vec::new();
-    let limit = update::MAX_SPEC_BYTES as u64 + 1;
-    tokio::io::stdin()
-        .take(limit)
-        .read_to_end(&mut bytes)
-        .await?;
-    let spec = UpdateSpec::parse(&bytes)?;
+    let command =
+        tokio::task::spawn_blocking(move || signed_command(&config, APPLY_UPDATES)).await??;
+    let request = ApplyUpdates::decode(command.payload.as_slice())
+        .context("the payload is not an ApplyUpdates message")?;
+    let spec = UpdateSpec::from_request(&request);
+    spec.validate()?;
     let family = os::detect()
         .context("cannot tell the package manager")?
         .os_family;
@@ -709,6 +753,27 @@ async fn packages_update() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The installer's `pin-ca`, as root: writes the CA of the token in
+/// MONITORFLOW_ENROLLMENT_TOKEN where the root helpers read it (ADR-0108).
+#[cfg(unix)]
+fn pin_ca(
+    place: &monitorflow_agent::helper_trust::Place,
+    token: Option<&str>,
+) -> anyhow::Result<()> {
+    use monitorflow_agent::helper_trust::{write_pin, Pinned};
+
+    let token = token.context("MONITORFLOW_ENROLLMENT_TOKEN is not set")?;
+    let token = monitorflow_common::tls::EnrollmentToken::parse(token)?;
+    match write_pin(place, &token)? {
+        Pinned::Written => println!("certificate authority recorded for privileged commands"),
+        Pinned::Stale => println!(
+            "this machine is connected with another certificate authority than this install \
+             command's, which is an old one: nothing changed"
+        ),
+    }
+    Ok(())
+}
+
 /// The self-update helper (ADR-0053), as root: installs the release on
 /// stdin, or watches the restart. Reads the configuration for the agent's
 /// data directory, where the new agent proves it connected.
@@ -721,6 +786,7 @@ fn self_update(config: &Path, step: Option<SelfUpdateStep>) -> anyhow::Result<()
     use monitorflow_common::release::{self, Platform, Version};
 
     let config: AgentConfig = config::load(config)?;
+    let trust = monitorflow_agent::helper_trust::Place::agent(&config.tls_paths());
     let paths = Paths::system(config.data_dir);
     match step {
         None => {
@@ -732,6 +798,7 @@ fn self_update(config: &Path, step: Option<SelfUpdateStep>) -> anyhow::Result<()
             match helper::install(
                 &mut stdin,
                 &paths,
+                &trust,
                 keys,
                 &current,
                 platform,
@@ -951,16 +1018,21 @@ mod service {
 
 /// The update service (ADR-0049): `MonitorFlowUpdate`, as LocalSystem,
 /// serves the agent's Windows Update requests on its pipe until stopped.
-/// It reads no configuration and logs to
+/// It does not believe the agent's account: what changes the host needs
+/// the command the central server signed, which it checks against its own
+/// trust anchor (ADR-0108). It reads `agent.toml`, which that account
+/// cannot write, only for where the agent's certificates are and for the
+/// install command's token, and logs to
 /// `%ProgramData%\MonitorFlow\update\update.log`.
 #[cfg(windows)]
 mod update_service {
     use std::ffi::OsString;
     use std::time::Duration;
 
+    use monitorflow_agent::helper_trust::{pin_once, Place};
     use monitorflow_agent::packages::windows_update::{
-        pipe, pipe_sddl, service_sid, wua, Reply, Request, SelfUpdated, AGENT_SERVICE, PIPE_NAME,
-        SERVICE_NAME,
+        authorized, pipe, pipe_sddl, service_sid, wua, Reply, Request, SelfUpdated, AGENT_SERVICE,
+        PIPE_NAME, SERVICE_NAME,
     };
     use monitorflow_agent::self_update::swap::{self, Scm, Swapped, Watched};
     use monitorflow_common::config::{self, LogConfig};
@@ -1037,6 +1109,19 @@ mod update_service {
         }
     }
 
+    /// The request to run for what the pipe received: reads as they are,
+    /// anything else from the signed command it must carry.
+    fn checked(request: &Request) -> Result<Request, String> {
+        if matches!(request, Request::Scan | Request::Status) {
+            return Ok(request.clone());
+        }
+        let config: monitorflow_common::config::AgentConfig =
+            config::load(&super::default_config()).map_err(|e| e.to_string())?;
+        let place = Place::agent(&config.tls_paths());
+        pin_once(&place, config.enrollment_token.as_ref().map(|t| t.expose()));
+        authorized(request, &place, monitorflow_agent::self_update::unix_ms())
+    }
+
     fn serve() -> anyhow::Result<()> {
         let (handle, stop) = register(SERVICE_NAME)?;
         let ok = ServiceExitCode::Win32(0);
@@ -1054,9 +1139,10 @@ mod update_service {
                         let _ = handle.set_service_status(pending);
                     });
                     let sddl = pipe_sddl(&service_sid(AGENT_SERVICE));
-                    let handle = |request: &Request| match request {
-                        Request::SelfUpdate(request) => self_update(request),
-                        other => wua::handle(other),
+                    let handle = |request: &Request| match checked(request) {
+                        Err(error) => Reply::Error(error),
+                        Ok(Request::SelfUpdate(request)) => self_update(&request),
+                        Ok(other) => wua::handle(&other),
                     };
                     pipe::serve(PIPE_NAME, &sddl, handle, stop).await?;
                     Ok(())

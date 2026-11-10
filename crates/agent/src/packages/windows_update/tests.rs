@@ -46,18 +46,19 @@ fn requests_round_trip_as_json() {
 
 #[test]
 fn self_updates_round_trip_and_are_checked() {
-    let json = r#"{"op":"self_update","command_id":"c-1","data_dir":"C:\\ProgramData\\MonitorFlow\\agent","allow_downgrade":false,"health_timeout_ms":300000}"#;
+    let json = r#"{"op":"self_update","command_id":"c-1","version":"0.3.0","data_dir":"C:\\ProgramData\\MonitorFlow\\agent","allow_downgrade":false,"health_timeout_ms":300000}"#;
     let request: Request = serde_json::from_str(json).unwrap();
     let Request::SelfUpdate(update) = &request else {
         panic!("{request:?}");
     };
     assert_eq!(update.command_id, "c-1");
     assert_eq!(serde_json::to_string(&request).unwrap(), json);
-    let extra = r#"{"op":"self_update","command_id":"c-1","data_dir":"x","allow_downgrade":false,"health_timeout_ms":0,"exe":"x"}"#;
+    let extra = r#"{"op":"self_update","command_id":"c-1","version":"0.3.0","data_dir":"x","allow_downgrade":false,"health_timeout_ms":0,"exe":"x"}"#;
     assert!(serde_json::from_str::<Request>(extra).is_err());
     for (command_id, timeout) in [("../x", 0), ("c-1", 3_600_001)] {
         let bad = Request::SelfUpdate(crate::self_update::swap::Request {
             command_id: command_id.into(),
+            version: "0.3.0".into(),
             data_dir: std::env::temp_dir(),
             allow_downgrade: false,
             health_timeout_ms: timeout,
@@ -308,4 +309,129 @@ fn service_sids_match_windows() {
         pipe_sddl("S-1-5-80-1"),
         "D:P(A;;GA;;;SY)(A;;GRGW;;;S-1-5-80-1)"
     );
+}
+
+/// The service's side of ADR-0108: what its pipe received against its own
+/// trust anchor.
+mod signed {
+    use monitorflow_common::proto::v1::SelfUpdate;
+
+    use super::*;
+    use crate::helper_trust::tests::{unsigned, Ca, Host};
+    use crate::self_update::unix_ms;
+
+    fn apply(packages: &[&str], allow_reboot: bool) -> Vec<u8> {
+        ApplyUpdates {
+            packages: names(packages),
+            security_only: false,
+            allow_reboot,
+        }
+        .encode_to_vec()
+    }
+
+    /// A command valid now, signed by `ca`.
+    fn command(ca: &Ca, id: &str, kind: &str, payload: &[u8]) -> Command {
+        let mut command = unsigned(kind, payload);
+        command.command_id = id.into();
+        command.expires_at_unix_ms = unix_ms() + 60_000;
+        ca.sign(command)
+    }
+
+    #[test]
+    fn reads_pass_and_anything_else_needs_its_signed_command() {
+        let ca = Ca::new();
+        let host = Host::pinned(&ca);
+        let check = |request: &Request| authorized(request, &host.place, unix_ms());
+        assert_eq!(check(&Request::Scan), Ok(Request::Scan));
+        assert_eq!(check(&Request::Status), Ok(Request::Status));
+
+        // What the agent's account could ask before, in its own words.
+        let update = crate::self_update::swap::Request {
+            command_id: "c-1".into(),
+            version: "0.1.0".into(),
+            data_dir: std::env::temp_dir(),
+            allow_downgrade: true,
+            health_timeout_ms: 0,
+        };
+        for bare in [
+            install(Kind::All, &[]),
+            Request::Reboot,
+            Request::SelfUpdate(update),
+        ] {
+            let error = check(&bare).unwrap_err();
+            assert!(error.contains("signed"), "{error}");
+        }
+
+        let unsigned_command = unsigned(APPLY_UPDATES, &apply(&[], true));
+        let forged = Ca::new().sign(unsigned_command.clone());
+        for bad in [unsigned_command, forged] {
+            for step in [Step::Install, Step::Reboot] {
+                assert!(check(&Request::signed(&bad, step, None)).is_err());
+            }
+        }
+        let garbage = Request::Signed {
+            command: "not base64".into(),
+            step: Step::Install,
+            data_dir: None,
+        };
+        assert!(check(&garbage).unwrap_err().contains("does not decode"));
+    }
+
+    #[test]
+    fn an_update_installs_then_restarts_once_each_and_only_when_allowed() {
+        let ca = Ca::new();
+        let host = Host::pinned(&ca);
+        let check = |request: &Request| authorized(request, &host.place, unix_ms());
+
+        let allowed = command(&ca, "c-1", APPLY_UPDATES, &apply(&["KB5034441"], true));
+        let step = |step| Request::signed(&allowed, step, None);
+        assert_eq!(
+            check(&step(Step::Install)),
+            Ok(install(Kind::Named, &["KB5034441"]))
+        );
+        assert_eq!(check(&step(Step::Reboot)), Ok(Request::Reboot));
+        for again in [Step::Install, Step::Reboot] {
+            assert!(check(&step(again)).unwrap_err().contains("already run"));
+        }
+        // An `apply_updates` is no `self_update`.
+        let as_update = Request::signed(&allowed, Step::SelfUpdate, Some(&std::env::temp_dir()));
+        assert!(check(&as_update).unwrap_err().contains("self_update"));
+
+        let quiet = command(&ca, "c-2", APPLY_UPDATES, &apply(&[], false));
+        let reboot = Request::signed(&quiet, Step::Reboot, None);
+        assert!(check(&reboot).unwrap_err().contains("does not allow"));
+        let named = command(&ca, "c-3", APPLY_UPDATES, &apply(&["openssl"], false));
+        let bad_name = Request::signed(&named, Step::Install, None);
+        assert!(check(&bad_name).unwrap_err().contains("not a KB number"));
+    }
+
+    #[test]
+    fn a_self_update_takes_its_version_and_downgrade_from_the_signed_command() {
+        let ca = Ca::new();
+        let host = Host::pinned(&ca);
+        let spec = SelfUpdate {
+            version: "0.1.0".into(),
+            base_urls: Vec::new(),
+            allow_downgrade: true,
+            health_timeout_seconds: 60,
+        };
+        let signed = command(&ca, "c-1", SELF_UPDATE, &spec.encode_to_vec());
+        let data_dir = std::env::temp_dir();
+        let check = |request: &Request| authorized(request, &host.place, unix_ms());
+
+        let missing = Request::signed(&signed, Step::SelfUpdate, None);
+        assert!(check(&missing).is_err());
+        let signed = command(&ca, "c-2", SELF_UPDATE, &spec.encode_to_vec());
+        let request = Request::signed(&signed, Step::SelfUpdate, Some(&data_dir));
+        assert_eq!(
+            check(&request),
+            Ok(Request::SelfUpdate(crate::self_update::swap::Request {
+                command_id: "c-2".into(),
+                version: "0.1.0".into(),
+                data_dir,
+                allow_downgrade: true,
+                health_timeout_ms: 60_000,
+            }))
+        );
+    }
 }

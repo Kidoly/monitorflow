@@ -10,7 +10,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use base64::Engine;
-use monitorflow_common::proto::v1::SelfUpdate;
+use monitorflow_common::proto::v1::{Command, SelfUpdate};
 use monitorflow_common::release::{
     self, check_executable, check_upgrade, Platform, PublicKey, Version, SIGNATURE, SUMS,
     VERSION_FILE,
@@ -50,7 +50,12 @@ pub enum Installed {
 #[async_trait::async_trait]
 pub trait Installer: Send + Sync + 'static {
     /// `Err` is the command's failed output.
-    async fn install(&self, header: &Header, binary: &[u8]) -> Result<Installed, Output>;
+    async fn install(
+        &self,
+        command: &Command,
+        header: &Header,
+        binary: &[u8],
+    ) -> Result<Installed, Output>;
     /// Where to look when the restart never comes.
     fn log_hint(&self) -> &'static str;
 }
@@ -224,11 +229,11 @@ pub const RESTARTING: &str = "restarting into";
 #[async_trait::async_trait]
 impl Handler for SelfUpdateHandler {
     async fn run(&self, _payload: &[u8]) -> Output {
-        Output::rejected("self_update needs its command ID")
+        Output::rejected("self_update needs its signed command")
     }
 
-    async fn run_command(&self, command_id: &str, payload: &[u8]) -> Output {
-        let Ok(spec) = SelfUpdate::decode(payload) else {
+    async fn run_command(&self, command: &Command) -> Output {
+        let Ok(spec) = SelfUpdate::decode(command.payload.as_slice()) else {
             return Output::rejected("the payload is not a SelfUpdate message");
         };
         let checked = Version::from_str(&spec.version)
@@ -279,15 +284,12 @@ impl Handler for SelfUpdateHandler {
             };
         };
         let header = Header {
-            command_id: command_id.to_owned(),
             sums: String::from_utf8_lossy(&files.sums).into_owned(),
             signature: base64::engine::general_purpose::STANDARD.encode(&files.signature),
             version_file: String::from_utf8_lossy(&files.version_file).into_owned(),
-            allow_downgrade: spec.allow_downgrade,
-            health_timeout_ms: health.as_millis() as u64,
         };
         let binary = files.binary;
-        match self.installer.install(&header, &binary).await {
+        match self.installer.install(command, &header, &binary).await {
             Err(output) => Output {
                 stdout: [log.into_bytes(), output.stdout].concat(),
                 ..output
@@ -329,8 +331,13 @@ pub struct UpdateServiceInstaller {
 
 #[async_trait::async_trait]
 impl Installer for UpdateServiceInstaller {
-    async fn install(&self, header: &Header, binary: &[u8]) -> Result<Installed, Output> {
-        use crate::packages::windows_update::{Reply, Request};
+    async fn install(
+        &self,
+        command: &Command,
+        header: &Header,
+        binary: &[u8],
+    ) -> Result<Installed, Output> {
+        use crate::packages::windows_update::{Reply, Request, Step};
         use base64::Engine;
 
         let staged = super::swap::staged_dir(&self.data_dir);
@@ -357,12 +364,8 @@ impl Installer for UpdateServiceInstaller {
                 staged.display()
             ))
         })?;
-        let request = Request::SelfUpdate(super::swap::Request {
-            command_id: header.command_id.clone(),
-            data_dir: self.data_dir.clone(),
-            allow_downgrade: header.allow_downgrade,
-            health_timeout_ms: header.health_timeout_ms,
-        });
+        // The service reads what to install from the signed command.
+        let request = Request::signed(command, Step::SelfUpdate, Some(&self.data_dir));
         match self.service.call(&request).await {
             Ok(Reply::SelfUpdate(done)) if done.restarting => {
                 Ok(Installed::Restarting(done.message + "\n"))
@@ -382,7 +385,8 @@ impl Installer for UpdateServiceInstaller {
 }
 
 /// The root helper, `sudo -n /usr/bin/monitorflow-agent self-update`
-/// (or the relay's), with the header line and the binary on its stdin.
+/// (or the relay's), with the signed command, the header line and the
+/// binary on its stdin.
 #[cfg(unix)]
 pub struct SudoHelper {
     /// `tools.agent` is the binary whose helper runs.
@@ -407,8 +411,14 @@ impl SudoHelper {
 #[cfg(unix)]
 #[async_trait::async_trait]
 impl Installer for SudoHelper {
-    async fn install(&self, header: &Header, binary: &[u8]) -> Result<Installed, Output> {
-        let mut input = serde_json::to_vec(header).expect("a header serializes");
+    async fn install(
+        &self,
+        command: &Command,
+        header: &Header,
+        binary: &[u8],
+    ) -> Result<Installed, Output> {
+        let mut input = crate::helper_trust::HelperRequest::of(command).framed();
+        input.extend(serde_json::to_vec(header).expect("a header serializes"));
         input.push(b'\n');
         input.extend_from_slice(binary);
         let tools = &self.tools;

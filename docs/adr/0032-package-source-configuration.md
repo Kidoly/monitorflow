@@ -1,7 +1,7 @@
 # ADR-0032: Package source configuration
 
 Date: 2026-10-19
-Status: accepted
+Status: accepted; the helper no longer trusts the agent user for the spec (ADR-0108)
 
 ## Context
 
@@ -23,11 +23,11 @@ Architecture §7 has the agent point a server's package manager at its MonitorFl
 monitorflow ALL=(root) NOPASSWD: /usr/bin/monitorflow-agent sources apply, /usr/bin/monitorflow-agent sources revert
 ```
 
-The library API is `apply(spec, root, checker)` and `revert(root)` on a configurable root, which tests set to a temporary directory. The helper trusts the agent user for the spec: command signatures are checked by the agent before it calls the helper (ADR-0031).
+The library API is `apply(spec, root, checker)` and `revert(root)` on a configurable root, which tests set to a temporary directory. The helper trusted the agent user for the spec, as command signatures are checked by the agent before it calls the helper (ADR-0031); since ADR-0108 it reads the signed command on stdin instead of the bare spec, `revert` included, and checks the signature itself.
 
 ## Consequences
 
-- A compromised agent user can point the host at other repositories and keys, but not write any other file as root; it would still need a way to install packages as root.
+- Since ADR-0108 the helper applies only the spec of a `configure_sources` command the central server signed for this server, which it checks itself, so a compromised agent user can no longer point the host at other repositories and keys. Before, it could, and this ADR accepted that because "it would still need a way to install packages as root": `packages update` (ADR-0036) was that way.
 - Package updates of `*-release` packages on dnf hosts write `.rpmnew` files next to the disabled ones instead of re-enabling them.
 - Restoring to the previous MonitorFlow configuration after a failed re-apply is not supported: a failure always goes back to the originals.
 - Hosts whose sources are symbolic links need them replaced by files before MonitorFlow can manage them.

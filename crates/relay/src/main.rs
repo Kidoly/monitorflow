@@ -52,6 +52,11 @@ enum Command {
         #[command(subcommand)]
         step: Option<SelfUpdateStep>,
     },
+    /// Records the certificate authority of the install command as the one
+    /// the root helper trusts (ADR-0108). Run as root by the installer,
+    /// with the token in MONITORFLOW_ENROLLMENT_TOKEN.
+    #[command(hide = true)]
+    PinCa,
 }
 
 #[derive(Subcommand, Debug, Clone, Copy)]
@@ -64,8 +69,15 @@ enum SelfUpdateStep {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    if let Some(Command::SelfUpdate { step }) = cli.command {
-        return self_update(&cli.config, step);
+    match cli.command {
+        Some(Command::SelfUpdate { step }) => return self_update(&cli.config, step),
+        Some(Command::PinCa) => {
+            let config: RelayConfig = config::load(&cli.config)?;
+            let place = monitorflow_agent::helper_trust::Place::relay(&config.tls_paths());
+            let token = config.enrollment_token.as_ref().map(|t| t.expose());
+            return pin_ca(&place, token);
+        }
+        None => {}
     }
     let config: RelayConfig = config::load(&cli.config)?;
     logging::init(&config.log);
@@ -188,6 +200,26 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The installer's `pin-ca`, as root: writes the CA of the token in
+/// MONITORFLOW_ENROLLMENT_TOKEN where the root helpers read it (ADR-0108).
+fn pin_ca(
+    place: &monitorflow_agent::helper_trust::Place,
+    token: Option<&str>,
+) -> anyhow::Result<()> {
+    use monitorflow_agent::helper_trust::{write_pin, Pinned};
+
+    let token = token.context("MONITORFLOW_ENROLLMENT_TOKEN is not set")?;
+    let token = monitorflow_common::tls::EnrollmentToken::parse(token)?;
+    match write_pin(place, &token)? {
+        Pinned::Written => println!("certificate authority recorded for privileged commands"),
+        Pinned::Stale => println!(
+            "this machine is connected with another certificate authority than this install \
+             command's, which is an old one: nothing changed"
+        ),
+    }
+    Ok(())
+}
+
 /// The self-update helper (ADR-0055), as root: installs the release on
 /// stdin, or watches the restart. Reads the configuration for the relay's
 /// data directory, where the new relay proves it connected.
@@ -200,6 +232,7 @@ fn self_update(config: &std::path::Path, step: Option<SelfUpdateStep>) -> anyhow
     use monitorflow_common::release::{self, Platform, Version};
 
     let config: RelayConfig = config::load(config)?;
+    let trust = monitorflow_agent::helper_trust::Place::relay(&config.tls_paths());
     let paths = Paths::of(RELAY, config.data_dir);
     match step {
         None => {
@@ -211,6 +244,7 @@ fn self_update(config: &std::path::Path, step: Option<SelfUpdateStep>) -> anyhow
             match helper::install(
                 &mut stdin,
                 &paths,
+                &trust,
                 keys,
                 &current,
                 platform,

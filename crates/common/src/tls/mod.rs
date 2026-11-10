@@ -7,6 +7,7 @@
 //! tonic, and [`peer_identity`] tells a handler which agent, relay or server
 //! is calling.
 
+mod cert;
 mod peer;
 mod pinned;
 mod token;
@@ -33,6 +34,7 @@ use rustls::{ClientConfig, RootCertStore, ServerConfig};
 
 use crate::config::TlsPaths;
 
+pub use cert::{certs_from_pem, not_before_unix, signed_by};
 pub use peer::{peer_identity, validate_id, PeerIdentity, PeerRole, URI_SCHEME};
 pub use pinned::pinned_client_config;
 pub use token::{

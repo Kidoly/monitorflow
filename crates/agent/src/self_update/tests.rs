@@ -5,6 +5,8 @@ use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use tempfile::TempDir;
 
+use monitorflow_common::proto::v1::Command;
+
 use super::*;
 
 /// A throwaway release signing key.
@@ -50,22 +52,45 @@ pub(crate) struct ReleaseFiles {
 }
 
 impl ReleaseFiles {
-    /// What the agent writes on the helper's stdin.
+    /// What the agent writes on the helper's stdin for `command`.
     #[cfg(unix)]
-    pub(crate) fn input(&self, command_id: &str, health_timeout_ms: u64) -> Vec<u8> {
+    pub(crate) fn input(&self, command: &Command) -> Vec<u8> {
         use base64::Engine;
         let header = Header {
-            command_id: command_id.into(),
             sums: self.sums.clone(),
             signature: base64::engine::general_purpose::STANDARD.encode(&self.signature),
             version_file: self.version_file.clone(),
-            allow_downgrade: false,
-            health_timeout_ms,
         };
-        let mut input = serde_json::to_vec(&header).unwrap();
+        let mut input = crate::helper_trust::HelperRequest::of(command).framed();
+        input.extend(serde_json::to_vec(&header).unwrap());
         input.push(b'\n');
         input.extend_from_slice(&self.binary);
         input
+    }
+}
+
+/// An unsigned `self_update` command for `web-01`, valid for a minute.
+pub(crate) fn update_command(
+    id: &str,
+    version: &str,
+    allow_downgrade: bool,
+    health_timeout_seconds: u32,
+) -> Command {
+    use prost::Message;
+    let spec = monitorflow_common::proto::v1::SelfUpdate {
+        version: version.into(),
+        base_urls: Vec::new(),
+        allow_downgrade,
+        health_timeout_seconds,
+    };
+    Command {
+        command_id: id.into(),
+        kind: monitorflow_common::command::SELF_UPDATE.into(),
+        payload: spec.encode_to_vec(),
+        issued_at_unix_ms: unix_ms(),
+        expires_at_unix_ms: unix_ms() + 60_000,
+        agent_id: "web-01".into(),
+        signature: Vec::new(),
     }
 }
 
@@ -213,14 +238,15 @@ async fn the_windows_installer_stages_the_release_for_the_update_service() {
     let asset = "monitorflow-agent-windows-x86_64.exe";
     let files = signer.release("0.3.0", asset, b"MZ binary");
     let header = Header {
-        command_id: "c-1".into(),
         sums: files.sums.clone(),
         signature: base64::engine::general_purpose::STANDARD.encode(&files.signature),
         version_file: files.version_file.clone(),
-        allow_downgrade: false,
-        health_timeout_ms: 60_000,
     };
-    let installed = installer.install(&header, &files.binary).await.unwrap();
+    let command = update_command("c-1", "0.3.0", false, 60);
+    let installed = installer
+        .install(&command, &header, &files.binary)
+        .await
+        .unwrap();
     assert!(
         matches!(installed, Installed::Restarting(text) if text.contains("restarting into 0.3.0"))
     );
@@ -231,16 +257,14 @@ async fn the_windows_installer_stages_the_release_for_the_update_service() {
         files.signature
     );
     let seen = service.seen.lock().unwrap();
-    let [Request::SelfUpdate(request)] = seen.as_slice() else {
-        panic!("{seen:?}");
-    };
+    // The service gets the command itself, and where the release is.
     assert_eq!(
-        (
-            request.command_id.as_str(),
-            request.health_timeout_ms,
-            request.data_dir.as_path()
-        ),
-        ("c-1", 60_000, data.path())
+        seen.as_slice(),
+        [Request::signed(
+            &command,
+            crate::packages::windows_update::Step::SelfUpdate,
+            Some(data.path())
+        )]
     );
 }
 

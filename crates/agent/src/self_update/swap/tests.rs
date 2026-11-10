@@ -74,6 +74,7 @@ impl Host {
         let files = self.signer.release(version, ASSET, binary);
         let request = Request {
             command_id: "c-1".into(),
+            version: version.into(),
             data_dir: self.data_dir(),
             allow_downgrade: false,
             health_timeout_ms: 200,
@@ -193,6 +194,11 @@ fn refuses_what_does_not_verify_and_changes_nothing() {
         host.install(&same).unwrap(),
         Swapped::Current("0.2.0".parse().unwrap())
     );
+    // The command asks for one version: another signed release is refused.
+    let mut other = host.stage("0.3.0", &pe("0.3.0"));
+    other.version = "0.4.0".into();
+    assert!(matches!(host.install(&other), Err(SwapError::Input(_))));
+    assert_eq!(host.exe(), pe("0.2.0"));
     let mut relative = host.stage("0.3.0", &pe("0.3.0"));
     relative.data_dir = "agent".into();
     assert!(matches!(host.install(&relative), Err(SwapError::Input(_))));

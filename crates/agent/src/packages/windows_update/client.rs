@@ -5,10 +5,10 @@
 
 use std::sync::Arc;
 
-use monitorflow_common::proto::v1::{ApplyUpdates, Package, WindowsUpdateSource};
+use monitorflow_common::proto::v1::{ApplyUpdates, Command, Package, WindowsUpdateSource};
 use prost::Message;
 
-use super::{describe, to_packages, Installed, Reply, Request, Scan, Status};
+use super::{describe, to_packages, Installed, Reply, Request, Scan, Status, Step};
 use crate::commands::{Handler, Output};
 use crate::packages::{PackageError, PackageManager, Reports};
 
@@ -121,8 +121,12 @@ fn line(request: &Request) -> String {
 
 #[async_trait::async_trait]
 impl Handler for WindowsApplyHandler {
-    async fn run(&self, payload: &[u8]) -> Output {
-        let Ok(apply) = ApplyUpdates::decode(payload) else {
+    async fn run(&self, _payload: &[u8]) -> Output {
+        Output::rejected("apply_updates needs its signed command")
+    }
+
+    async fn run_command(&self, command: &Command) -> Output {
+        let Ok(apply) = ApplyUpdates::decode(command.payload.as_slice()) else {
             return Output::rejected("invalid ApplyUpdates payload");
         };
         let request = Request::install(&apply);
@@ -133,7 +137,10 @@ impl Handler for WindowsApplyHandler {
         output
             .stdout
             .extend_from_slice(format!("$ windows update {}\n", line(&request)).as_bytes());
-        let result = self.install(&request).await;
+        // The service checks the signed command and builds the same
+        // request from it (ADR-0108).
+        let signed = Request::signed(command, Step::Install, None);
+        let result = self.install(&signed).await;
         // Whatever happened, the server gets the state of the host.
         self.reports.collect().await;
         let installed = match result {
@@ -158,7 +165,8 @@ impl Handler for WindowsApplyHandler {
             return output;
         }
         if apply.allow_reboot && installed.reboot_required {
-            match self.service.call(&Request::Reboot).await {
+            let reboot = Request::signed(command, Step::Reboot, None);
+            match self.service.call(&reboot).await {
                 Ok(Reply::Rebooting(())) => {
                     output
                         .stdout
@@ -185,7 +193,7 @@ impl Handler for WindowsApplyHandler {
 mod tests {
     use std::sync::Mutex;
 
-    use super::super::{InstallResult, Kind, Outcome, Update};
+    use super::super::{InstallResult, Outcome, Update};
     use super::*;
 
     /// Answers each request kind with a fixed reply and records requests.
@@ -212,9 +220,12 @@ mod tests {
                 Request::Status => Some(Reply::Status(Status {
                     reboot_required: true,
                 })),
-                Request::Install { .. } => self.install.clone(),
-                Request::Reboot => self.reboot.clone(),
-                Request::SelfUpdate(_) => None,
+                Request::Signed { step, .. } => match step {
+                    Step::Install => self.install.clone(),
+                    Step::Reboot => self.reboot.clone(),
+                    Step::SelfUpdate => None,
+                },
+                Request::Install { .. } | Request::Reboot | Request::SelfUpdate(_) => None,
             };
             reply.ok_or_else(|| PackageError::Helper("the update service is not running".into()))
         }
@@ -241,7 +252,13 @@ mod tests {
         let manager = Arc::new(WindowsUpdates::new(fake.clone()));
         let (reports, latest) = Reports::new(manager);
         let handler = WindowsApplyHandler::new(fake.clone(), reports);
-        let output = handler.run(&apply.encode_to_vec()).await;
+        let command = Command {
+            command_id: "c-1".into(),
+            kind: monitorflow_common::command::APPLY_UPDATES.into(),
+            payload: apply.encode_to_vec(),
+            ..Command::default()
+        };
+        let output = handler.run_command(&command).await;
         let reported = latest.borrow().is_some();
         let calls = fake.calls.lock().unwrap().clone();
         (output, calls, reported)
@@ -355,18 +372,26 @@ mod tests {
              KB5034441 succeeded: KB5034441 title\n\
              a restart is required\n"
         );
-        let install = Request::Install {
-            kind: Kind::Security,
-            updates: vec!["KB5034441".into()],
+        // The service gets the command itself, one step at a time.
+        let steps = |calls: &[Request]| -> Vec<Step> {
+            calls
+                .iter()
+                .filter_map(|call| match call {
+                    Request::Signed { step, .. } => Some(*step),
+                    _ => None,
+                })
+                .collect()
         };
-        assert_eq!(calls, [install.clone(), Request::Scan, Request::Status]);
+        assert!(matches!(calls[0], Request::Signed { .. }), "{calls:?}");
+        assert_eq!(calls[1..], [Request::Scan, Request::Status]);
+        assert_eq!(steps(&calls), [Step::Install]);
 
         let (output, calls, _) = run(fake(), apply(true)).await;
         assert_eq!(output.exit_code, 0);
         assert!(String::from_utf8(output.stdout)
             .unwrap()
             .ends_with("restarting in one minute\n"));
-        assert_eq!(calls.last(), Some(&Request::Reboot));
+        assert_eq!(steps(&calls), [Step::Install, Step::Reboot]);
     }
 
     #[tokio::test]
@@ -390,7 +415,13 @@ mod tests {
             Some("1 of 2 updates did not install: KB2 (0x80240022)")
         );
         assert!(reported);
-        assert!(!calls.contains(&Request::Reboot));
+        assert!(!calls.iter().any(|call| matches!(
+            call,
+            Request::Signed {
+                step: Step::Reboot,
+                ..
+            }
+        )));
     }
 
     #[tokio::test]

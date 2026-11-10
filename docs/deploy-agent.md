@@ -118,13 +118,19 @@ install -o root -g root -m 0440 monitorflow-agent-sudoers /etc/sudoers.d/monitor
 visudo -cf /etc/sudoers.d/monitorflow-agent
 ```
 
+Then record the certificate authority of your install command for the root helpers, which act only on commands it signed[^0108]:
+
+```
+MONITORFLOW_ENROLLMENT_TOKEN=mfe1.… monitorflow-agent pin-ca
+```
+
 Start from `deploy/config/agent.example.toml`. The file name in `/etc/sudoers.d` must stay free of dots, or sudo skips it. Do not create `/var/lib/monitorflow/sources-backup/`: the helper does, as root[^0032].
 
 From your init system, run `monitorflow-agent --config /etc/monitorflow/agent.toml` as `monitorflow`, with `MONITORFLOW_ENROLLMENT_TOKEN` in its environment the first time, so the token never stays on disk[^0007]. Everything works but the `systemd` sensor and self-updates, which fail and leave the running version in place: update with a new binary at the same path, then restart it.
 
 ## Sudo rules
 
-Package updates and source configuration need root. The agent runs them with `sudo -n` and fixed command lines, and the rules the installer writes to `/etc/sudoers.d/monitorflow-agent` allow those exact lines and nothing else. Without them, privileged commands fail with sudo's "a password is required", and the command shows as failed.
+Package updates and source configuration need root. The agent runs them with `sudo -n` and fixed command lines, and the rules the installer writes to `/etc/sudoers.d/monitorflow-agent` allow those exact lines and nothing else. The helpers behind them act only on a command the central server signed for this server, which they check themselves, so the agent's user cannot run them for anything else[^0108]. Without them, privileged commands fail with sudo's "a password is required", and the command shows as failed.
 
 What the rules allow:
 
@@ -341,3 +347,4 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0091]: [ADR-0091: System logs](adr/0091-system-logs.md)
 [^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)
 [^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)
+[^0108]: [ADR-0108: Root helpers verify signed commands](adr/0108-root-helpers-verify-signed-commands.md)

@@ -3,9 +3,10 @@
 //! `self-update watch`, run by systemd from the previous binary. The relay
 //! runs the same steps for its own [`Product`] (ADR-0055).
 //!
-//! The helper trusts nothing on its stdin: it verifies the release with
-//! the keys built into itself and refuses older versions unless the header
-//! allows them. The binary is written next to the installed one, synced
+//! The helper trusts nothing on its stdin: it acts only on a `self_update`
+//! command the central server signed for this machine (ADR-0108), verifies
+//! the release with the keys built into itself, and refuses older versions
+//! unless that signed command allows them. The binary is written next to the installed one, synced
 //! and renamed over it, so a crash leaves one or the other, never a part.
 
 use std::fs::{self, File, OpenOptions};
@@ -16,14 +17,18 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
+use monitorflow_common::command::SELF_UPDATE;
+use monitorflow_common::proto::v1::SelfUpdate;
 use monitorflow_common::release::{
     self, check_executable, check_upgrade, Platform, PublicKey, ReleaseError, Version, HEADER_LEN,
 };
+use prost::Message;
 use ring::digest::{Context, SHA256};
 
 use super::{
     unix_ms, Connected, Header, Phase, Product, Status, AGENT, PREVIOUS_FILE, STATUS_FILE,
 };
+use crate::helper_trust::{self, HelperRequest, Place, TrustError};
 
 /// Longest header line.
 pub const MAX_HEADER: usize = 256 * 1024;
@@ -34,6 +39,8 @@ pub const MAX_BINARY: u64 = 512 * 1024 * 1024;
 pub enum HelperError {
     #[error("invalid input: {0}")]
     Input(String),
+    #[error(transparent)]
+    Trust(#[from] TrustError),
     #[error(transparent)]
     Release(#[from] ReleaseError),
     #[error("releases are not built for this platform")]
@@ -146,16 +153,23 @@ pub enum Installed {
     Current(Version),
 }
 
-/// Reads the header line, verifies the release, installs the binary that
-/// follows and starts the watchdog. `current` is this binary's version.
+/// Reads the signed command and checks it against `trust`, then the
+/// header line; verifies the release, installs the binary that follows
+/// and starts the watchdog. `current` is this binary's version.
 pub fn install(
     input: &mut impl BufRead,
     paths: &Paths,
+    trust: &Place,
     keys: &[PublicKey],
     current: &Version,
     platform: Platform,
     services: &dyn Services,
 ) -> Result<Installed, HelperError> {
+    let request = HelperRequest::read(input)?;
+    let command = helper_trust::authorize(trust, &request, SELF_UPDATE, unix_ms())?;
+    let spec = SelfUpdate::decode(command.payload.as_slice())
+        .map_err(|_| HelperError::Input("the payload is not a SelfUpdate message".into()))?;
+    let health = super::health_timeout(spec.health_timeout_seconds).map_err(HelperError::Input)?;
     let header = read_header(input)?;
     let signature = base64::engine::general_purpose::STANDARD
         .decode(header.signature.as_bytes())
@@ -166,15 +180,16 @@ pub fn install(
         header.version_file.as_bytes(),
         keys,
     )?;
-    if !crate::commands::journal::valid_id(&header.command_id) {
-        return Err(HelperError::Input("invalid command ID".into()));
+    // The administrator asked for one version: a caller holding a signed
+    // command for it cannot have another release installed with it.
+    if spec.version.parse::<Version>().ok().as_ref() != Some(&release.version) {
+        return Err(HelperError::Input(format!(
+            "the release is {}, and the command asks for {}",
+            release.version, spec.version
+        )));
     }
-    let health = super::health_timeout(0).expect("default");
-    let health_timeout_ms = match header.health_timeout_ms {
-        0 => health.as_millis() as u64,
-        ms => ms.min(u64::from(super::MAX_HEALTH_TIMEOUT_S) * 1000),
-    };
-    if !check_upgrade(current, &release.version, header.allow_downgrade)? {
+    let health_timeout_ms = health.as_millis() as u64;
+    if !check_upgrade(current, &release.version, spec.allow_downgrade)? {
         return Ok(Installed::Current(current.clone()));
     }
     let asset = paths.product.asset(platform).ok_or(HelperError::Platform)?;
@@ -206,7 +221,7 @@ pub fn install(
     sync_dir(&paths.bin)?;
 
     let mut status = Status {
-        command_id: header.command_id,
+        command_id: command.command_id,
         from: current.to_string(),
         to: release.version.to_string(),
         phase: Phase::Watching,

@@ -275,7 +275,11 @@ db_tests! {
         let row = s.store.get(id).await.unwrap().unwrap();
         let stdout = row.stdout.unwrap();
         assert!(stdout.contains("sources apply") && stdout.contains("changed /etc/apt"), "{stdout}");
-        assert_eq!(std::fs::read(s.fakes.path().join("stdin")).unwrap(), spec);
+        // The helper gets the command as the server signed it (ADR-0108).
+        let stdin = std::fs::read(s.fakes.path().join("stdin")).unwrap();
+        let sent = monitorflow_agent::helper_trust::HelperRequest::read(&mut stdin.as_slice()).unwrap().command.unwrap();
+        assert_eq!((sent.kind.as_str(), &sent.payload, sent.agent_id.as_str()), (CONFIGURE_SOURCES, &spec, "web-01"));
+        assert!(!sent.signature.is_empty());
 
         let id = s.enqueue(REVERT_SOURCES, &RevertSources {}.encode_to_vec(), Duration::from_secs(3600)).await;
         s.wait_for(id, State::Failed).await;
