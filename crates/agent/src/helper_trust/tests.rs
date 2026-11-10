@@ -1,3 +1,4 @@
+use monitorflow_common::ca_bundle::{self, SignedBundle, SignedBundles};
 use monitorflow_common::command::{signed_bytes, CONFIGURE_SOURCES, SELF_UPDATE};
 use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair, SanType};
 use ring::rand::SystemRandom;
@@ -24,7 +25,13 @@ impl Ca {
 
     /// The certificate of `role`/`id`, in PEM.
     fn issue(&self, role: PeerRole, id: &str) -> String {
+        self.issue_on(role, id, 1)
+    }
+
+    /// The same, valid from day `day` of January 2026: a later renewal.
+    fn issue_on(&self, role: PeerRole, id: &str, day: u8) -> String {
         let mut params = CertificateParams::default();
+        params.not_before = rcgen::date_time_ymd(2026, 1, day);
         let uri = PeerIdentity::new(role, id).unwrap().uri();
         params.subject_alt_names = vec![SanType::URI(uri.try_into().unwrap())];
         params
@@ -34,6 +41,11 @@ impl Ca {
     }
 
     pub(crate) fn sign(&self, mut command: Command) -> Command {
+        command.signature = self.sign_bytes(&signed_bytes(&command));
+        command
+    }
+
+    fn sign_bytes(&self, message: &[u8]) -> Vec<u8> {
         let rng = SystemRandom::new();
         let key = EcdsaKeyPair::from_pkcs8(
             &ECDSA_P256_SHA256_ASN1_SIGNING,
@@ -41,12 +53,26 @@ impl Ca {
             &rng,
         )
         .unwrap();
-        command.signature = key
-            .sign(&rng, &signed_bytes(&command))
-            .unwrap()
-            .as_ref()
-            .to_vec();
-        command
+        key.sign(&rng, message).unwrap().as_ref().to_vec()
+    }
+
+    /// What a renewal of `web-01` on `day` brings when the server trusts
+    /// `cas`: its certificate from the first of them, and the bundle
+    /// signed by each of `signers` (ADR-0107).
+    fn renewal(day: u8, cas: &[&Ca], signers: &[&Ca]) -> SignedBundle {
+        Self::renewal_of("web-01", day, cas, signers)
+    }
+
+    fn renewal_of(id: &str, day: u8, cas: &[&Ca], signers: &[&Ca]) -> SignedBundle {
+        let cert_pem = cas[0].issue_on(PeerRole::Agent, id, day);
+        let leaf = ca_bundle::leaf_fingerprint(&cert_pem).unwrap();
+        let fingerprints: Vec<_> = cas.iter().map(|ca| tls::fingerprint(ca.0.der())).collect();
+        let message = ca_bundle::signed_bytes(&leaf, &fingerprints);
+        SignedBundle {
+            cert_pem,
+            ca_bundle_pem: cas.iter().map(|ca| ca.0.pem()).collect(),
+            signatures: signers.iter().map(|ca| ca.sign_bytes(&message)).collect(),
+        }
     }
 }
 
@@ -87,6 +113,18 @@ impl Host {
 
     fn run(&self, command: &Command, kind: &str) -> Result<Command, String> {
         authorize(&self.place, &HelperRequest::of(command), kind, NOW).map_err(|e| e.to_string())
+    }
+
+    /// Writes what the service keeps of its renewals.
+    fn keeps(&self, bundles: &[&SignedBundle]) {
+        let kept = SignedBundles {
+            bundles: bundles.iter().map(|b| (*b).clone()).collect(),
+        };
+        fs::write(
+            ca_bundle::kept_path(&self.place.ca_cert),
+            kept.encode_to_vec(),
+        )
+        .unwrap();
     }
 
     fn anchor(&self) -> Anchor {
@@ -317,6 +355,83 @@ fn a_machine_without_a_pin_adopts_once_and_a_later_pin_replaces_it() {
     assert!(host
         .run(&ca.sign(command("c5")), CONFIGURE_SOURCES)
         .is_err());
+}
+
+#[test]
+fn the_anchor_follows_a_change_of_ca_on_signed_bundles_only() {
+    let (old, new) = (Ca::new(), Ca::new());
+    let host = Host::pinned(&old);
+    let runs = |ca: &Ca, id: &str| host.run(&ca.sign(command(id)), CONFIGURE_SOURCES).is_ok();
+    assert!(runs(&old, "c1") && !runs(&new, "c2"));
+
+    // Introduced: the old CA signs for the new one. Then switched, and
+    // retired: the new CA alone.
+    let introduced = Ca::renewal(2, &[&old, &new], &[&old, &new]);
+    let switched = Ca::renewal(3, &[&new, &old], &[&new, &old]);
+    let retired = Ca::renewal(4, &[&new], &[&new]);
+    host.keeps(&[&introduced]);
+    assert!(runs(&new, "c3") && runs(&old, "c4"));
+    assert_eq!(host.anchor().ca_certs.len(), 2);
+    host.keeps(&[&introduced, &switched, &retired]);
+    assert!(runs(&new, "c5") && !runs(&old, "c6"));
+    assert_eq!(host.anchor().ca_certs.len(), 1);
+
+    // The service's user keeps the earlier bundles and shows them again:
+    // their certificates are older than the last one accepted.
+    host.keeps(&[&introduced]);
+    assert!(!runs(&old, "c7"));
+    host.keeps(&[&switched]);
+    assert!(!runs(&old, "c8") && runs(&new, "c9"));
+}
+
+#[test]
+fn a_machine_that_was_away_follows_the_whole_change_at_once() {
+    let (old, new) = (Ca::new(), Ca::new());
+    let host = Host::pinned(&old);
+    // It never saw the introduction: the switched bundle carries the old
+    // CA's signature too, then the retirement the new one's.
+    let switched = Ca::renewal(3, &[&new, &old], &[&new, &old]);
+    let retired = Ca::renewal(4, &[&new], &[&new]);
+    host.keeps(&[&switched, &retired]);
+    host.run(&new.sign(command("c1")), CONFIGURE_SOURCES)
+        .unwrap();
+    assert!(host
+        .run(&old.sign(command("c2")), CONFIGURE_SOURCES)
+        .is_err());
+}
+
+#[test]
+fn bundles_nobody_trusted_signed_change_nothing() {
+    let (old, new, intruder) = (Ca::new(), Ca::new(), Ca::new());
+    let host = Host::pinned(&old);
+    let refused = |bundle: SignedBundle, id: &str| {
+        host.keeps(&[&bundle]);
+        let command = intruder.sign(command(id));
+        assert!(host.run(&command, CONFIGURE_SOURCES).is_err(), "{id}");
+        assert_eq!(host.anchor().ca_certs.len(), 1, "{id}");
+    };
+    // A CA of the service user's own, signed by itself or by nobody.
+    refused(Ca::renewal(2, &[&old, &intruder], &[&intruder]), "c1");
+    refused(Ca::renewal(2, &[&intruder, &old], &[]), "c2");
+    refused(Ca::renewal(2, &[&intruder], &[&intruder]), "c3");
+    // The server's signature for another bundle, or another certificate.
+    let mut swapped = Ca::renewal(2, &[&old, &new], &[&old]);
+    swapped.ca_bundle_pem = format!("{}{}", old.0.pem(), intruder.0.pem());
+    refused(swapped, "c4");
+    let mut other_cert = Ca::renewal(2, &[&old, &new], &[&old]);
+    other_cert.cert_pem = old.issue_on(PeerRole::Agent, "web-01", 3);
+    refused(other_cert, "c5");
+
+    // A bundle the server signed for another machine does not move this
+    // one's anchor, nor does a file that is not bundles at all.
+    let neighbour = Ca::renewal_of("web-02", 2, &[&old, &new], &[&old]);
+    host.keeps(&[&neighbour]);
+    assert!(host
+        .run(&new.sign(command("c6")), CONFIGURE_SOURCES)
+        .is_err());
+    fs::write(ca_bundle::kept_path(&host.place.ca_cert), b"\xff garbage").unwrap();
+    host.run(&old.sign(command("c7")), CONFIGURE_SOURCES)
+        .unwrap();
 }
 
 #[test]

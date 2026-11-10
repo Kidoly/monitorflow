@@ -46,7 +46,13 @@ On Windows there is no installer step: the MSI already writes the token in `agen
 
 After that the service's files are not read again for trust. A helper asked before the machine ever connected refuses.
 
-A change of CA (ADR-0088) reaches the anchor through the signed bundles of ADR-0107, which the service carries to the helper with each request: a stage of its own, below.
+**A change of CA (ADR-0088)** reaches the service over mTLS, as its user, so the anchor cannot take it from the service's CA bundle. It takes it from proof: since ADR-0107 the central server signs the bundle of every renewal, for the certificate it comes with, with the key of each CA it trusts. The service keeps the last four such bundles, with their certificates and signatures, in `ca-bundles.pb` next to its CA bundle. Before checking a command, the helper reads that file and moves its anchor to each bundle, oldest first, that proves itself:
+
+- signed for its certificate by a CA the anchor holds now, whether the bundle adds a CA or only drops one;
+- its certificate issued by a CA of the bundle to this machine, with the anchor's ID and role;
+- that certificate valid from later than the last one accepted. An earlier bundle is passed over, so the service's user cannot bring a retired CA back by showing it again.
+
+A bundle that fails is passed over without an error: the file is the service user's, and a helper that stopped on it could be stopped by it. A machine away for a whole change needs a new install command anyway (ADR-0088), which writes a new pin.
 
 ### Replays
 
@@ -68,7 +74,8 @@ The agent's journal (ADR-0031) is the service user's and stops nothing here. The
 - A self-update to the first release with this decision is installed by the old helper; from then on every helper call is verified. A signed downgrade to an older release brings the old helpers back, by an administrator's audited choice.
 - On Windows the update service keeps running the previous executable for about a minute after a self-update (ADR-0053); a command in that minute fails and is queued again.
 - A command's signature names an ID and no role (ADR-0105). On a fleet that still has an agent and a relay of one ID from before ADR-0105, one's `self_update` passes the other's helper, which installs that product's own signed release of the version named.
-- An agent newer than its central server follows a change of CA only once the server sends signed bundles (ADR-0107).
+- An agent newer than its central server follows a change of CA only once the server sends signed bundles (ADR-0107); until then its helpers refuse commands signed by a CA they were never shown.
+- The service's user can withhold a bundle, as it can withhold a command: the anchor then stays on the CAs it had, a retired one included, until a later renewal is shown. It gains nothing it did not have unless it also holds that retired CA's key.
 
 ## Stages
 

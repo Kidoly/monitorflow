@@ -63,6 +63,53 @@ pub fn verify(
     }
 }
 
+/// A bundle a renewal brought, with the certificate it came with and the
+/// server's signatures: what the peer keeps for the root helpers, which
+/// have their own copy of the CAs and move it only on such a proof
+/// (ADR-0108). Kept by the service's user, so only ever carried.
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct SignedBundle {
+    #[prost(string, tag = "1")]
+    pub cert_pem: String,
+    #[prost(string, tag = "2")]
+    pub ca_bundle_pem: String,
+    #[prost(bytes = "vec", repeated, tag = "3")]
+    pub signatures: Vec<Vec<u8>>,
+}
+
+/// The last bundles kept, oldest first.
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct SignedBundles {
+    #[prost(message, repeated, tag = "1")]
+    pub bundles: Vec<SignedBundle>,
+}
+
+/// Most bundles kept: a change of CA brings three (introduced, switched,
+/// retired).
+pub const MAX_KEPT: usize = 4;
+
+/// Where the bundles are kept, next to the CA bundle `ca_cert`.
+pub fn kept_path(ca_cert: &std::path::Path) -> std::path::PathBuf {
+    ca_cert.with_file_name("ca-bundles.pb")
+}
+
+impl SignedBundles {
+    /// Adds `bundle`: over the last one when it holds the same CAs, as a
+    /// renewal without a change of CA does, else after it.
+    pub fn keep(&mut self, bundle: SignedBundle) {
+        if self
+            .bundles
+            .last()
+            .is_some_and(|last| last.ca_bundle_pem == bundle.ca_bundle_pem)
+        {
+            self.bundles.pop();
+        }
+        self.bundles.push(bundle);
+        let extra = self.bundles.len().saturating_sub(MAX_KEPT);
+        self.bundles.drain(..extra);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use ring::rand::SystemRandom;
