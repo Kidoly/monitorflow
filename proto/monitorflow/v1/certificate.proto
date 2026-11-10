@@ -64,6 +64,12 @@ message RenewResponse {
   // issuer of `cert_pem` first: two during a change of certificate
   // authority (ADR-0088). Only when the request has `accepts_ca_bundle`.
   string ca_bundle_pem = 5;
+  // The central server's signatures of `ca_bundle_pem` for `cert_pem`, one
+  // per CA of the bundle, each with that CA's key (ADR-0107). A peer takes
+  // a CA it does not trust yet only if one of them verifies against a CA
+  // it already trusts, so a relay, which answers its peers' renewals,
+  // cannot give them one. See `common::ca_bundle` for the signed bytes.
+  repeated bytes ca_bundle_signatures = 6;
 }
 
 // The CA's certificate revocation list, for relays: a relay terminates the
