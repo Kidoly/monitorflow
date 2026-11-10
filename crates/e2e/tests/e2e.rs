@@ -97,6 +97,8 @@ api_listen_addr = "{api}"
 mirror_listen_addr = "{mirrors}"
 api_cookie_secure = false
 database_url = "{db}"
+database_migrate_url = "{owner}"
+database_require_restricted_role = true
 data_dir = "{data}"
 heartbeat_timeout = {HEARTBEAT_TIMEOUT_SECS}
 server_names = ["127.0.0.1"]
@@ -106,7 +108,8 @@ ca_cert = "{data}/tls/ca.pem"
 cert = "{data}/tls/cert.pem"
 key = "{data}/tls/key.pem"
 "#,
-            db = database.url,
+            db = database.runtime_url,
+            owner = database.url,
             data = server_dir.display(),
         ),
     )

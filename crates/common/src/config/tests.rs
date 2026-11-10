@@ -627,6 +627,36 @@ fn database_url_must_be_postgres_without_leaking_it() {
 }
 
 #[test]
+fn database_migrate_url_is_optional_checked_and_redacted() {
+    let server: ServerConfig = parse(SERVER_MIN).unwrap();
+    assert_eq!(server.database_migrate_url, None);
+    assert!(!server.database_require_restricted_role);
+
+    let vars = env(&[
+        (
+            "MONITORFLOW_DATABASE_MIGRATE_URL",
+            "postgres://owner:0wner-pw@db/mf",
+        ),
+        ("MONITORFLOW_DATABASE_REQUIRE_RESTRICTED_ROLE", "true"),
+    ]);
+    let server: ServerConfig = parse_with_env(SERVER_MIN, path(), &vars).unwrap();
+    assert!(server.database_require_restricted_role);
+    let out = format!("{server:?}");
+    assert!(!out.contains("0wner-pw"), "{out}");
+    assert!(out.contains("postgres://owner:[redacted]@db/mf"), "{out}");
+
+    let msg = err::<ServerConfig>(
+        &format!("{SERVER_MIN}\ndatabase_migrate_url = \"mysql://mf:hunter3@db/mf\""),
+        &[],
+    );
+    assert!(
+        msg.contains("key `database_migrate_url`: must start with postgres://"),
+        "{msg}"
+    );
+    assert!(!msg.contains("hunter3"), "{msg}");
+}
+
+#[test]
 fn storage_urls_accept_http_but_not_other_schemes() {
     let text = format!("{SERVER_MIN}\nvictorialogs_url = \"https://logs:9428\"");
     assert!(parse::<ServerConfig>(&text).is_ok());

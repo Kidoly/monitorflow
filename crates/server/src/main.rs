@@ -101,6 +101,10 @@ enum Command {
     /// The Enterprise license (ADR-0100).
     #[command(subcommand)]
     License(LicenseCommand),
+    /// Apply database migrations as the role of `database_migrate_url`,
+    /// give the role of `database_url` its rights, then exit. The compose
+    /// file runs it before the server (ADR-0109).
+    Migrate,
 }
 
 #[derive(Subcommand, Debug)]
@@ -370,6 +374,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::AgentRelease(command)) => return agent_release_command(&config, command),
         Some(Command::StorageCerts) => return storage_certs_command(&config).await,
         Some(Command::StorageCheck) => return storage_check_command(&config).await,
+        Some(Command::Migrate) => return migrate_command(&config).await,
         Some(
             Command::User { .. }
             | Command::Customer(_)
@@ -385,8 +390,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let pool = db::connect(&config.database_url).await?;
-    db::migrate(&pool).await?;
+    let pool = db::open(&config, cli.command.is_none()).await?;
 
     match cli.command {
         Some(Command::User { command }) => return user_command(&pool, command).await,
@@ -398,7 +402,8 @@ async fn main() -> anyhow::Result<()> {
             Command::Token(_)
             | Command::AgentRelease(_)
             | Command::StorageCerts
-            | Command::StorageCheck,
+            | Command::StorageCheck
+            | Command::Migrate,
         )
         | None => {}
     }
@@ -1204,11 +1209,20 @@ async fn open_mirrors(config: &ServerConfig, pool: sqlx::PgPool) -> anyhow::Resu
     Ok(Mirrors::new(pool, runner, layout))
 }
 
+/// `migrate`: the schema of this build and the server's role, as the owner.
+async fn migrate_command(config: &ServerConfig) -> anyhow::Result<()> {
+    let owner = config
+        .database_migrate_url
+        .as_ref()
+        .context("database_migrate_url is not set: it names the role that owns the schema")?;
+    db::migrate_as_owner(owner, &config.database_url).await?;
+    Ok(())
+}
+
 /// `token create`: stdout holds only the token.
 async fn create_token(config: &ServerConfig, args: CreateToken) -> anyhow::Result<()> {
     let ca = open_ca(config).await?;
-    let pool = db::connect(&config.database_url).await?;
-    db::migrate(&pool).await?;
+    let pool = db::open(config, false).await?;
     let site_id = match &args.customer {
         Some(name) => {
             let customer = customer_id(&pool, name).await?;

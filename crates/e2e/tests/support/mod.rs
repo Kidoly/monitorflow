@@ -199,7 +199,11 @@ impl Drop for Process {
 pub struct Database {
     admin_url: String,
     name: String,
+    /// The owner's URL, for migrations (ADR-0109).
     pub url: String,
+    /// The URL of a role of its own for the server to run on, which the
+    /// server creates from `url` when it starts.
+    pub runtime_url: String,
 }
 
 impl Database {
@@ -208,10 +212,12 @@ impl Database {
         let url = with_database(admin_url, &name);
         run_sql(admin_url, &format!("CREATE DATABASE \"{name}\""))
             .unwrap_or_else(|e| panic!("creating database {name}: {e}"));
+        let runtime_url = with_role(&url, &name);
         Self {
             admin_url: admin_url.to_owned(),
             name,
             url,
+            runtime_url,
         }
     }
 }
@@ -221,6 +227,11 @@ impl Drop for Database {
         let sql = format!("DROP DATABASE IF EXISTS \"{}\" WITH (FORCE)", self.name);
         if let Err(e) = run_sql(&self.admin_url, &sql) {
             eprintln!("dropping database {}: {e}", self.name);
+        }
+        // Its rights went with the database.
+        let sql = format!("DROP ROLE IF EXISTS \"{}\"", self.name);
+        if let Err(e) = run_sql(&self.admin_url, &sql) {
+            eprintln!("dropping role {}: {e}", self.name);
         }
     }
 }
@@ -237,6 +248,14 @@ fn run_sql(url: &str, sql: &str) -> Result<(), sqlx::Error> {
         conn.execute(sqlx::AssertSqlSafe(sql)).await?;
         conn.close().await
     })
+}
+
+/// `url` with its role and password replaced by `role` and a password of
+/// its own.
+fn with_role(url: &str, role: &str) -> String {
+    let (scheme, rest) = url.split_once("://").expect("a database URL");
+    let host = rest.split_once('@').map_or(rest, |(_, host)| host);
+    format!("{scheme}://{role}:pw-{role}@{host}")
 }
 
 /// `url` with its database name replaced by `name`, query string kept.
