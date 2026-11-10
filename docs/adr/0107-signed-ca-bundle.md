@@ -45,7 +45,7 @@ Drop the signatures, or the whole answer. Its peers then do not learn a new CA a
 
 Outside a change, every row renews normally. Automatic updates keep server ≥ relay ≥ agent (ADR-0055), so the last two rows need an agent installed by hand in a newer version than what is above it. The order for a real change is therefore: update the server, let relays and then agents follow, then start the change.
 
-The server counts a peer as trusting the new CA from the certificate it issued (ADR-0088), not from what the peer stored, so a peer of the last row is counted as moved although it refused, and is cut off at the switch. A lost answer already had that effect for one peer. Not counting agents newer than their relay is the follow-up below.
+The server counts a peer as trusting the new CA from the certificate it issued (ADR-0088), not from what the peer stored, so a peer of the last row is counted as moved although it refused, and is cut off at the switch. A lost answer already had that effect for one peer. The follow-up below closes both.
 
 ### Emergency change
 
@@ -70,4 +70,4 @@ Whoever holds a CA key that a peer still trusts, and can answer that peer's rene
 
 Not done yet, for later:
 
-- The change of CA waiting for an agent that is newer than the relay it connects through, and saying so on its page.
+- Counting a peer as moved from the certificate it presents at its next hourly question, not from the one the server issued: a peer that refused or lost an answer then keeps the change waiting. Looking at versions alone (an agent newer than its relay) would stop counting too early, as soon as the relay updates and before the agent asks again.

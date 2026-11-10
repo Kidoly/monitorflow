@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
 use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
+use rustls::pki_types::CertificateDer;
 use tokio::sync::watch;
 use tonic::Code;
 
@@ -16,6 +17,8 @@ use super::backoff::{random_u64, Backoff};
 use super::enroll::{self, EnrollError};
 use super::identity::{self, IdentityError, Renewed, StoredIdentity};
 use super::shutdown::Shutdown;
+use crate::ca_bundle;
+use crate::command::SignatureError;
 use crate::config::{AgentConfig, TlsPaths};
 use crate::proto::v1::certificate_service_client::CertificateServiceClient;
 use crate::proto::v1::RenewRequest;
@@ -276,8 +279,15 @@ impl Renewal {
             }
             None
         } else {
-            enroll::check_bundle(&response.ca_bundle_pem, &issuer, &current.ca_fingerprints)
-                .map_err(bad)?;
+            let bundle =
+                enroll::check_bundle(&response.ca_bundle_pem, &issuer, &current.ca_fingerprints)
+                    .map_err(bad)?;
+            check_new_cas(
+                &bundle,
+                &response.cert_pem,
+                &response.ca_bundle_signatures,
+                current.tls.ca_certs(),
+            )?;
             Some(response.ca_bundle_pem)
         };
         enroll::verify_cert(&response.cert_pem, &response.peer_uri, &key, role).map_err(bad)?;
@@ -306,6 +316,36 @@ impl Renewal {
         .map_err(|e| failed(&e))?
         .map_err(RenewError::from)
     }
+}
+
+/// A bundle may hold a CA that is not among `stored`, the CAs of the
+/// current identity, only if the central server signed the bundle for the
+/// certificate `cert_pem` with a stored CA's key (ADR-0107). The upstream
+/// that answers may be a relay: without this it could add a CA of its own
+/// and sign commands with it. A bundle that only keeps, reorders or drops
+/// stored CAs needs no signature: it gives nobody any trust.
+fn check_new_cas(
+    bundle: &[CertificateDer<'static>],
+    cert_pem: &str,
+    signatures: &[Vec<u8>],
+    stored: &[CertificateDer<'static>],
+) -> Result<(), RenewError> {
+    let fingerprints: Vec<_> = bundle.iter().map(tls::fingerprint).collect();
+    let Some(new) = bundle.iter().find(|ca| !stored.contains(ca)) else {
+        return Ok(());
+    };
+    let new = tls::fingerprint_hex(&tls::fingerprint(new));
+    let leaf = ca_bundle::leaf_fingerprint(cert_pem)
+        .ok_or_else(|| RenewError::BadResponse("cert_pem: no certificate".into()))?;
+    ca_bundle::verify(&leaf, &fingerprints, signatures, stored).map_err(|error| {
+        let why = match error {
+            SignatureError::Missing => "without the server's signature; the server, or a relay on the way to it, may be older than this version",
+            SignatureError::Invalid => "with a signature that no certificate authority this peer trusts made",
+        };
+        RenewError::BadResponse(format!(
+            "ca_bundle_pem adds a certificate authority (SHA-256 {new}) {why}"
+        ))
+    })
 }
 
 fn next_check(settings: &RenewalSettings) -> Duration {
@@ -342,6 +382,97 @@ mod tests {
                 "{status:?}"
             );
         }
+    }
+
+    struct Ca {
+        key: KeyPair,
+        der: CertificateDer<'static>,
+    }
+
+    impl Ca {
+        fn new() -> Self {
+            let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+            let cert = rcgen::CertificateParams::default()
+                .self_signed(&key)
+                .unwrap();
+            let der = cert.der().clone();
+            Self { key, der }
+        }
+
+        /// This CA's signature of `bundle` for the certificate `cert_pem`.
+        fn sign(&self, cert_pem: &str, bundle: &[&Ca]) -> Vec<u8> {
+            use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_ASN1_SIGNING};
+            let fingerprints: Vec<_> = bundle.iter().map(|ca| tls::fingerprint(&ca.der)).collect();
+            let leaf = ca_bundle::leaf_fingerprint(cert_pem).unwrap();
+            let rng = ring::rand::SystemRandom::new();
+            let der = self.key.serialize_der();
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &der, &rng)
+                .unwrap()
+                .sign(&rng, &ca_bundle::signed_bytes(&leaf, &fingerprints))
+                .unwrap()
+                .as_ref()
+                .to_vec()
+        }
+    }
+
+    fn leaf_pem() -> String {
+        let key = KeyPair::generate().unwrap();
+        rcgen::CertificateParams::default()
+            .self_signed(&key)
+            .unwrap()
+            .pem()
+    }
+
+    #[test]
+    fn a_new_ca_needs_the_signature_of_a_stored_one() {
+        let (old, new, relay) = (Ca::new(), Ca::new(), Ca::new());
+        let (leaf, other_leaf) = (leaf_pem(), leaf_pem());
+        let ders = |cas: &[&Ca]| cas.iter().map(|ca| ca.der.clone()).collect::<Vec<_>>();
+        let check = |bundle: &[&Ca], signatures: &[Vec<u8>], stored: &[&Ca]| {
+            check_new_cas(&ders(bundle), &leaf, signatures, &ders(stored))
+                .map_err(|e| e.to_string())
+        };
+
+        // Nothing new: the same CAs, in another order, or fewer.
+        assert_eq!(check(&[&old], &[], &[&old]), Ok(()));
+        assert_eq!(check(&[&new, &old], &[], &[&old, &new]), Ok(()));
+        assert_eq!(check(&[&new], &[], &[&new, &old]), Ok(()));
+
+        // Introduced and switched: the old CA signs for the new one. The
+        // server sends the new CA's signature too, which proves nothing
+        // here and does no harm.
+        for bundle in [[&old, &new], [&new, &old]] {
+            let by_old = old.sign(&leaf, &bundle);
+            let by_new = new.sign(&leaf, &bundle);
+            assert_eq!(check(&bundle, &[by_new.clone(), by_old], &[&old]), Ok(()));
+            let unsigned = check(&bundle, &[], &[&old]).unwrap_err();
+            assert!(
+                unsigned.contains("without the server's signature"),
+                "{unsigned}"
+            );
+            let by_itself = check(&bundle, &[by_new], &[&old]).unwrap_err();
+            assert!(
+                by_itself.contains("no certificate authority this peer trusts"),
+                "{by_itself}"
+            );
+        }
+
+        // What a relay can try: its own CA with its own signature, or with
+        // signatures the server made for something else.
+        let evil = [&relay, &old];
+        for signatures in [
+            vec![relay.sign(&leaf, &evil)],
+            vec![old.sign(&leaf, &[&new, &old])],
+            vec![old.sign(&leaf, &[&old])],
+            vec![old.sign(&other_leaf, &evil)],
+            vec![old.sign(&leaf, &[&old, &relay])],
+        ] {
+            assert!(check(&evil, &signatures, &[&old]).is_err());
+        }
+        // A CA dropped and another added at once is still an addition.
+        assert!(check(&[&relay, &new], &[], &[&old, &new]).is_err());
+        let signed = [new.sign(&leaf, &[&relay, &new])];
+        assert_eq!(check(&[&relay, &new], &signed, &[&old, &new]), Ok(()));
     }
 
     #[test]
