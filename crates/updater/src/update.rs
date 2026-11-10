@@ -220,7 +220,13 @@ impl Updater<'_> {
         }
         self.reporter
             .note("installing the compose file of this release; the server restarts");
-        let applied = match compose_file::install(bundle, deploy) {
+        // The compose file of ADR-0109 needs a password for the server's own
+        // role, which no older installation has.
+        let installed = self
+            .env
+            .ensure_secret(env_file::POSTGRES_APP_PASSWORD)
+            .and_then(|_| compose_file::install(bundle, deploy));
+        let applied = match installed {
             Ok(()) => match self.host.apply_compose().await {
                 Ok(()) => self.host.check_stores().await,
                 Err(e) => Err(e),
@@ -431,7 +437,16 @@ impl Updater<'_> {
             return self.reporter.finish(UpdateState::Failed, Some(error));
         }
         self.reporter
-            .step("new images pinned; recreating server and web");
+            .step("new images pinned; migrating the database");
+        if let Err(e) = self.host.migrate().await {
+            return self
+                .rollback(
+                    &pending,
+                    format!("the new version did not migrate the database: {e}"),
+                )
+                .await;
+        }
+        self.reporter.step("recreating server and web");
         if let Err(e) = self.host.recreate().await {
             return self
                 .rollback(&pending, format!("the new version did not start: {e}"))

@@ -15,8 +15,12 @@ use tokio::process::Command;
 
 use crate::project::Project;
 
-/// The PostgreSQL role and database of the compose file (ADR-0051).
+/// The PostgreSQL role and database of the compose file (ADR-0051): the
+/// role that owns the schema, through the container's local socket.
 const DB: &str = "monitorflow";
+/// The one-shot service that migrates the database as that role and gives
+/// the server's own role its rights (ADR-0109).
+pub const MIGRATE_SERVICE: &str = "db-migrate";
 /// Services an update recreates.
 pub const SERVICES: [&str; 2] = ["server", "web"];
 /// Recreated with them when the compose file has it: one from before
@@ -41,6 +45,10 @@ pub trait Host: Send + Sync {
     async fn latest_migration(&self) -> Result<i64, HostError>;
     /// Writes a `pg_dump -Fc` of the database to `dest`.
     async fn dump_database(&self, dest: &Path) -> Result<(), HostError>;
+    /// Runs the database migrations of the server image of `.env` as the
+    /// role that owns the schema, when the compose file has a service for
+    /// it; without one the server migrates when it starts.
+    async fn migrate(&self) -> Result<(), HostError>;
     /// Recreates `server`, `web` and `mirror` with the images of `.env` and waits
     /// until they are healthy.
     async fn recreate(&self) -> Result<(), HostError>;
@@ -200,6 +208,16 @@ impl Host for Compose {
                 .await?;
         }
         Ok(())
+    }
+
+    async fn migrate(&self) -> Result<(), HostError> {
+        let services = self.output(true, &["config", "--services"]).await?;
+        if !services.lines().any(|s| s == MIGRATE_SERVICE) {
+            return Ok(());
+        }
+        self.output(true, &["run", "--rm", "--no-deps", "-T", MIGRATE_SERVICE])
+            .await
+            .map(drop)
     }
 
     async fn latest_migration(&self) -> Result<i64, HostError> {
@@ -364,6 +382,9 @@ impl Host for Compose {
                 "-d",
                 DB,
                 "--no-owner",
+                // Rights name roles, which a dump does not hold: db-migrate
+                // gives them again when everything starts (ADR-0109).
+                "--no-acl",
                 "--exit-on-error",
                 "--single-transaction",
             ],

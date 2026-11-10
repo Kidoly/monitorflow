@@ -18,6 +18,9 @@ pub const MIRROR: &str = "MIRROR_IMAGE";
 /// Set by hand, they win over the web interface's, and lock it.
 pub const METRICS_RETENTION: &str = "METRICS_RETENTION";
 pub const LOGS_RETENTION: &str = "LOGS_RETENTION";
+/// The password of the server's own database role (ADR-0109), which the
+/// compose file needs from the release that introduced it.
+pub const POSTGRES_APP_PASSWORD: &str = "POSTGRES_APP_PASSWORD";
 /// Written by the updater for the web interface.
 pub const UI_METRICS_RETENTION: &str = "UI_METRICS_RETENTION";
 pub const UI_LOGS_RETENTION: &str = "UI_LOGS_RETENTION";
@@ -144,6 +147,17 @@ impl EnvFile {
         ))
     }
 
+    /// Adds `key` with a new random password when it has no value, and says
+    /// whether it did. 24 random bytes in hex: safe in a connection URL.
+    pub fn ensure_secret(&self, key: &str) -> io::Result<bool> {
+        let text = self.text()?;
+        if value(&text, key).is_some() {
+            return Ok(false);
+        }
+        self.write(&with_line(&text, key, &new_secret()?))?;
+        Ok(true)
+    }
+
     /// The whole file, to put back with [`Self::write`].
     pub fn text(&self) -> io::Result<String> {
         std::fs::read_to_string(&self.path)
@@ -166,6 +180,15 @@ impl EnvFile {
             .ok_or_else(|| io::Error::other("invalid .env path"))?;
         Ok((dir, name))
     }
+}
+
+fn new_secret() -> io::Result<String> {
+    use ring::rand::{SecureRandom, SystemRandom};
+    let mut bytes = [0u8; 24];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| io::Error::other("no random numbers"))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// `KEY=value` of a line, `export` and spaces around the key allowed.
@@ -374,6 +397,28 @@ mod tests {
             assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "{bad:?}");
             assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
         }
+    }
+
+    #[test]
+    fn a_secret_is_added_once_and_kept() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join(".env");
+        std::fs::write(&path, "POSTGRES_PASSWORD=s3cret\nPOSTGRES_APP_PASSWORD=\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let env = EnvFile::new(path.clone());
+        assert!(env.ensure_secret(POSTGRES_APP_PASSWORD).unwrap());
+        let text = env.text().unwrap();
+        let secret = value(&text, POSTGRES_APP_PASSWORD).unwrap();
+        assert_eq!(secret.len(), 48);
+        assert!(secret.bytes().all(|b| b.is_ascii_hexdigit()), "{secret}");
+        assert_eq!(text.matches(POSTGRES_APP_PASSWORD).count(), 1, "{text}");
+        assert!(text.starts_with("POSTGRES_PASSWORD=s3cret\n"), "{text}");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        // Set, it stays: the role's password follows this line.
+        assert!(!env.ensure_secret(POSTGRES_APP_PASSWORD).unwrap());
+        assert_eq!(env.text().unwrap(), text);
     }
 
     #[test]
