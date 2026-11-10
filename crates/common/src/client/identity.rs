@@ -207,6 +207,9 @@ pub struct Renewed {
     pub key_pem: Secret,
     pub cert_pem: String,
     pub ca_bundle_pem: Option<String>,
+    /// The server's signatures of that bundle for `cert_pem` (ADR-0107),
+    /// kept for the root helpers (ADR-0108).
+    pub ca_bundle_signatures: Vec<Vec<u8>>,
 }
 
 /// `<path>.next`, where a renewal writes before replacing `path`.
@@ -224,6 +227,9 @@ fn next(path: &Path) -> PathBuf {
 pub fn store_renewed(paths: &TlsPaths, renewed: &Renewed) -> Result<(), IdentityError> {
     if let Some(bundle) = &renewed.ca_bundle_pem {
         write_atomic(&paths.ca_cert, bundle.as_bytes(), PUBLIC_MODE)?;
+        if !renewed.ca_bundle_signatures.is_empty() {
+            keep_bundle(paths, renewed, bundle)?;
+        }
     }
     write_atomic(
         &next(&paths.key),
@@ -232,6 +238,27 @@ pub fn store_renewed(paths: &TlsPaths, renewed: &Renewed) -> Result<(), Identity
     )?;
     write_atomic(&next(&paths.cert), renewed.cert_pem.as_bytes(), PUBLIC_MODE)?;
     commit_renewal(paths)
+}
+
+/// Keeps the signed bundle of `renewed` next to the CA bundle, for the
+/// root helpers to follow a change of CA with (ADR-0108).
+fn keep_bundle(paths: &TlsPaths, renewed: &Renewed, bundle: &str) -> Result<(), IdentityError> {
+    use prost::Message;
+
+    use crate::ca_bundle::{kept_path, SignedBundle, SignedBundles};
+
+    let path = kept_path(&paths.ca_cert);
+    // A file that does not read starts again: it only carries proofs.
+    let mut kept = std::fs::read(&path)
+        .ok()
+        .and_then(|bytes| SignedBundles::decode(bytes.as_slice()).ok())
+        .unwrap_or_default();
+    kept.keep(SignedBundle {
+        cert_pem: renewed.cert_pem.clone(),
+        ca_bundle_pem: bundle.to_owned(),
+        signatures: renewed.ca_bundle_signatures.clone(),
+    });
+    write_atomic(&path, &kept.encode_to_vec(), PUBLIC_MODE)
 }
 
 /// Renames the written files over the live ones, key first. Either may be
@@ -467,6 +494,49 @@ mod tests {
     }
 
     #[test]
+    fn renewals_keep_their_signed_bundles_for_the_root_helpers() {
+        use prost::Message;
+
+        use crate::ca_bundle::{kept_path, SignedBundles, MAX_KEPT};
+
+        let dir = TempDir::new().unwrap();
+        let paths = paths(dir.path());
+        let (enrolled, ca) = enrolled("web-01", PeerRole::Agent);
+        store(&paths, &enrolled).unwrap();
+        let kept = || {
+            let bytes = fs::read(kept_path(&paths.ca_cert)).unwrap();
+            SignedBundles::decode(bytes.as_slice()).unwrap().bundles
+        };
+        let renew = |bundle: &str, signature: u8| {
+            let renewed = Renewed {
+                ca_bundle_pem: Some(bundle.into()),
+                ca_bundle_signatures: vec![vec![signature]],
+                ..renewed_by(&ca, "web-01")
+            };
+            store_renewed(&paths, &renewed).unwrap();
+            renewed.cert_pem
+        };
+        // Without a signature, as from an older server, nothing is kept.
+        store_renewed(&paths, &renewed_by(&ca, "web-01")).unwrap();
+        assert!(!kept_path(&paths.ca_cert).exists());
+
+        // The same CAs again replace the last entry; other CAs follow it.
+        renew("one", 1);
+        let cert = renew("one", 2);
+        assert_eq!(kept().len(), 1);
+        assert_eq!(
+            (kept()[0].cert_pem.clone(), kept()[0].signatures[0][0]),
+            (cert, 2)
+        );
+        for (n, bundle) in ["two", "three", "four", "five"].iter().enumerate() {
+            renew(bundle, n as u8);
+        }
+        let bundles: Vec<String> = kept().into_iter().map(|b| b.ca_bundle_pem).collect();
+        assert_eq!(bundles.len(), MAX_KEPT);
+        assert_eq!(bundles, ["two", "three", "four", "five"]);
+    }
+
+    #[test]
     fn interrupted_renewals_leave_a_matching_pair() {
         let dir = TempDir::new().unwrap();
         let paths = paths(dir.path());
@@ -573,6 +643,7 @@ mod tests {
             key_pem,
             cert_pem,
             ca_bundle_pem: None,
+            ca_bundle_signatures: Vec::new(),
         }
     }
 

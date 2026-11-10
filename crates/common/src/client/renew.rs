@@ -265,6 +265,7 @@ impl Renewal {
         let issuer = enroll::single_ca(&response.ca_cert_pem)
             .map_err(bad)?
             .ok_or_else(|| RenewError::BadResponse("ca_cert_pem is not one certificate".into()))?;
+        let ca_bundle_signatures = response.ca_bundle_signatures.clone();
         let ca_bundle_pem = if response.ca_bundle_pem.is_empty() {
             // A server older than ADR-0088: a CA we already trust, and no
             // change of certificate authority.
@@ -304,6 +305,7 @@ impl Renewal {
             key_pem: Secret::new(key.serialize_pem()),
             cert_pem: response.cert_pem,
             ca_bundle_pem,
+            ca_bundle_signatures,
         };
         let paths = self.paths.clone();
         tokio::task::spawn_blocking(move || {

@@ -10,6 +10,11 @@
 //! pin), or, on a machine installed before pins, from the CAs the service
 //! holds at that moment. A record of the command IDs already used, in the
 //! same directory, stops a command from being run twice.
+//!
+//! When the certificate authority changes (ADR-0088), the anchor follows
+//! on proof only: the bundles the central server signed for this
+//! machine's renewals (ADR-0107), which the service keeps and the helper
+//! reads, each accepted only if a CA the anchor already holds signed it.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
@@ -265,6 +270,56 @@ impl Anchor {
         })
     }
 
+    /// Moves to the CAs of the signed bundles the service kept from its
+    /// renewals, oldest first; true when something changed. The file is
+    /// the service user's, so each bundle must prove itself: signed for
+    /// its certificate by a CA held here (ADR-0107), that certificate
+    /// issued to this machine by a CA of the bundle, and later than the
+    /// last one accepted, so that an old bundle cannot bring a retired CA
+    /// back. Anything else is passed over.
+    fn follow(&mut self, place: &Place) -> bool {
+        use monitorflow_common::ca_bundle::{self, SignedBundles};
+
+        let kept = read_small(&ca_bundle::kept_path(&place.ca_cert))
+            .ok()
+            .flatten()
+            .and_then(|bytes| SignedBundles::decode(bytes.as_slice()).ok())
+            .unwrap_or_default();
+        let engine = base64::engine::general_purpose::STANDARD;
+        let mut changed = false;
+        for bundle in &kept.bundles {
+            let cas = tls::certs_from_pem(bundle.ca_bundle_pem.as_bytes()).unwrap_or_default();
+            let leaf = tls::certs_from_pem(bundle.cert_pem.as_bytes())
+                .unwrap_or_default()
+                .into_iter()
+                .next();
+            let (Some(leaf), 1..=2) = (leaf, cas.len()) else {
+                continue;
+            };
+            let Some(not_before) = tls::not_before_unix(&leaf) else {
+                continue;
+            };
+            let fingerprints: Vec<Fingerprint> = cas.iter().map(tls::fingerprint).collect();
+            let signed = ca_bundle::verify(
+                &tls::fingerprint(&leaf),
+                &fingerprints,
+                &bundle.signatures,
+                &self.certs(),
+            );
+            let ours = PeerIdentity::from_cert(&leaf)
+                .is_ok_and(|id| id.role() == place.role && id.id() == self.peer_id);
+            let issued = cas.iter().any(|ca| tls::signed_by(&leaf, ca));
+            if not_before <= self.cert_not_before || signed.is_err() || !ours || !issued {
+                continue;
+            }
+            let ca_certs: Vec<String> = cas.iter().map(|ca| engine.encode(ca)).collect();
+            changed |= ca_certs != self.ca_certs;
+            self.ca_certs = ca_certs;
+            self.cert_not_before = not_before;
+        }
+        changed
+    }
+
     /// The stored anchor, made first when there is none, and made again
     /// when the installer wrote another pin since.
     fn load(place: &Place) -> Result<Self, TrustError> {
@@ -280,9 +335,18 @@ impl Anchor {
         let pin = read_pin(&place.pin_file)?;
         let pin_hex = pin.as_ref().map(tls::fingerprint_hex);
         match stored {
-            Some(anchor) if pin.is_none() || anchor.pin == pin_hex => Ok(anchor),
+            Some(mut anchor) if pin.is_none() || anchor.pin == pin_hex => {
+                if anchor.follow(place) {
+                    let bytes = serde_json::to_vec_pretty(&anchor).map_err(io::Error::other);
+                    bytes
+                        .and_then(|bytes| write_synced(&path, &bytes))
+                        .map_err(io_error(&path))?;
+                }
+                Ok(anchor)
+            }
             _ => {
-                let anchor = Self::from_service(place, pin)?;
+                let mut anchor = Self::from_service(place, pin)?;
+                anchor.follow(place);
                 if anchor.origin == Origin::Adopted {
                     tracing::warn!(
                         peer_id = %anchor.peer_id,

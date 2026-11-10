@@ -66,6 +66,7 @@ Whoever holds a CA key that a peer still trusts, and can answer that peer's rene
 
 - A compromised relay can no longer sign commands for its subtree by way of a renewal; the "Signed commands" boundary of SECURITY.md holds again.
 - Two more ECDSA signatures per renewal at most.
+- The signatures are also what lets a root helper's own trust anchor follow a change of CA (ADR-0108): the peer keeps the last signed bundles next to its CA bundle (`ca-bundles.pb`), and the helper takes a CA from them only on the signature of one it already holds.
 - A peer behind a relay or a server older than this decision cannot follow a change of CA until they update.
 
 Not done yet, for later:
