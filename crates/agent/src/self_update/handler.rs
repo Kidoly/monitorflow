@@ -337,12 +337,8 @@ impl Installer for UpdateServiceInstaller {
         header: &Header,
         binary: &[u8],
     ) -> Result<Installed, Output> {
-        use crate::packages::windows_update::{Reply, Request};
+        use crate::packages::windows_update::{Reply, Request, Step};
         use base64::Engine;
-
-        let spec = SelfUpdate::decode(command.payload.as_slice())
-            .map_err(|_| failed("the payload is not a SelfUpdate message".into()))?;
-        let health = health_timeout(spec.health_timeout_seconds).map_err(failed)?;
 
         let staged = super::swap::staged_dir(&self.data_dir);
         let signature = base64::engine::general_purpose::STANDARD
@@ -368,12 +364,8 @@ impl Installer for UpdateServiceInstaller {
                 staged.display()
             ))
         })?;
-        let request = Request::SelfUpdate(super::swap::Request {
-            command_id: command.command_id.clone(),
-            data_dir: self.data_dir.clone(),
-            allow_downgrade: spec.allow_downgrade,
-            health_timeout_ms: health.as_millis() as u64,
-        });
+        // The service reads what to install from the signed command.
+        let request = Request::signed(command, Step::SelfUpdate, Some(&self.data_dir));
         match self.service.call(&request).await {
             Ok(Reply::SelfUpdate(done)) if done.restarting => {
                 Ok(Installed::Restarting(done.message + "\n"))

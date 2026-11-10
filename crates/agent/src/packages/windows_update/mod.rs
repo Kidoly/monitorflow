@@ -19,11 +19,15 @@ pub mod source;
 #[cfg(windows)]
 pub mod wua;
 
-use monitorflow_common::command::valid_windows_update_name;
-use monitorflow_common::proto::v1::{ApplyUpdates, Package};
+use base64::Engine;
+use monitorflow_common::command::{valid_windows_update_name, APPLY_UPDATES, SELF_UPDATE};
+use monitorflow_common::proto::v1::{ApplyUpdates, Command, Package, SelfUpdate};
+use prost::Message;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+use crate::helper_trust::{self, HelperRequest, Place};
 
 /// The pipe the update service listens on.
 pub const PIPE_NAME: &str = r"\\.\pipe\MonitorFlowUpdate";
@@ -78,8 +82,33 @@ impl Kind {
     }
 }
 
-/// A request on the pipe: `{"op": "install", "kind": "named", "updates":
-/// ["KB5034441"]}`.
+/// What a signed command asks of the service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Step {
+    /// Install the updates of an `apply_updates`.
+    Install,
+    /// Restart after them, when the command allows it.
+    Reboot,
+    /// Install the staged release of a `self_update`.
+    SelfUpdate,
+}
+
+impl Step {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Install => "install",
+            Self::Reboot => "reboot",
+            Self::SelfUpdate => "self_update",
+        }
+    }
+}
+
+/// A request on the pipe: `{"op": "scan"}`, or `{"op": "signed", "command":
+/// "…", "step": "install"}` for anything that changes the host. The
+/// agent's account writes the pipe and is not believed (ADR-0108): the
+/// service runs `install`, `reboot` and `self_update` only as [`authorized`]
+/// gives them, from a command the central server signed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
@@ -98,6 +127,16 @@ pub enum Request {
     /// Install the agent release staged in the agent's data directory and
     /// restart the agent into it (ADR-0053).
     SelfUpdate(crate::self_update::swap::Request),
+    /// One step of a command the central server signed.
+    Signed {
+        /// The [`HelperRequest`] holding the command, in base64.
+        command: String,
+        step: Step,
+        /// For a self-update: the agent's data directory, where the
+        /// release is staged and the new agent proves it connected.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data_dir: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -115,6 +154,16 @@ pub enum RequestError {
 }
 
 impl Request {
+    /// `step` of `command`, for the service to check and run.
+    pub fn signed(command: &Command, step: Step, data_dir: Option<&std::path::Path>) -> Self {
+        Self::Signed {
+            command: base64::engine::general_purpose::STANDARD
+                .encode(HelperRequest::of(command).encode_to_vec()),
+            step,
+            data_dir: data_dir.map(std::path::Path::to_owned),
+        }
+    }
+
     /// The install an `apply_updates` command asks for; check it with
     /// [`Self::validate`].
     pub fn install(request: &ApplyUpdates) -> Self {
@@ -155,6 +204,65 @@ impl Request {
             None => Ok(()),
         }
     }
+}
+
+/// The service's check of what its pipe received (ADR-0108): `scan` and
+/// `status` change nothing and pass; anything else must be a step of a
+/// command the central server signed for this machine, checked against
+/// the service's own trust anchor at `place`, and each step runs once.
+/// Returns the request to run, built from the signed payload.
+pub fn authorized(request: &Request, place: &Place, now_unix_ms: i64) -> Result<Request, String> {
+    let (command, step, data_dir) = match request {
+        Request::Scan | Request::Status => return Ok(request.clone()),
+        Request::Signed {
+            command,
+            step,
+            data_dir,
+        } => (command, *step, data_dir),
+        Request::Install { .. } | Request::Reboot | Request::SelfUpdate(_) => {
+            return Err("this needs the command the central server signed for it".into())
+        }
+    };
+    let signed = base64::engine::general_purpose::STANDARD
+        .decode(command)
+        .ok()
+        .and_then(|bytes| HelperRequest::decode(bytes.as_slice()).ok())
+        .ok_or("the signed command does not decode")?;
+    let kind = match step {
+        Step::Install | Step::Reboot => APPLY_UPDATES,
+        Step::SelfUpdate => SELF_UPDATE,
+    };
+    let command = helper_trust::authorize_step(place, &signed, kind, step.as_str(), now_unix_ms)
+        .map_err(|e| e.to_string())?;
+    let payload = command.payload.as_slice();
+    let run = match step {
+        Step::Install | Step::Reboot => {
+            let apply =
+                ApplyUpdates::decode(payload).map_err(|_| "invalid ApplyUpdates payload")?;
+            match step {
+                Step::Reboot if !apply.allow_reboot => {
+                    return Err("the command does not allow a restart".into())
+                }
+                Step::Reboot => Request::Reboot,
+                _ => Request::install(&apply),
+            }
+        }
+        Step::SelfUpdate => {
+            let spec = SelfUpdate::decode(payload).map_err(|_| "invalid SelfUpdate payload")?;
+            let health = crate::self_update::health_timeout(spec.health_timeout_seconds)?;
+            Request::SelfUpdate(crate::self_update::swap::Request {
+                command_id: command.command_id,
+                version: spec.version,
+                data_dir: data_dir
+                    .clone()
+                    .ok_or("a self-update needs the data directory")?,
+                allow_downgrade: spec.allow_downgrade,
+                health_timeout_ms: health.as_millis() as u64,
+            })
+        }
+    };
+    run.validate().map_err(|e| e.to_string())?;
+    Ok(run)
 }
 
 /// An update as the service reports it.

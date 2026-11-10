@@ -139,6 +139,21 @@ impl Place {
         )
     }
 
+    /// The agent's on Windows, for the update service: a folder of its own
+    /// under `%ProgramData%\MonitorFlow\update`, which only LocalSystem
+    /// and administrators write.
+    #[cfg(windows)]
+    pub fn agent(tls: &TlsPaths) -> Self {
+        let base = monitorflow_common::config::windows_base_dir();
+        Self {
+            role: PeerRole::Agent,
+            state_dir: base.join("update").join("helper"),
+            pin_file: base.join("ca.pin"),
+            ca_cert: tls.ca_cert.clone(),
+            cert: tls.cert.clone(),
+        }
+    }
+
     pub fn of(role: PeerRole, state_dir: &str, pin_file: &str, tls: &TlsPaths) -> Self {
         Self {
             role,
@@ -336,6 +351,24 @@ pub fn write_pin(place: &Place, token: &tls::EnrollmentToken) -> Result<Pinned, 
     Ok(Pinned::Written)
 }
 
+/// Writes the pin from `token` when there is none yet. The update service
+/// on Windows has no installer step of its own: it reads the token the
+/// MSI wrote, as LocalSystem, in `agent.toml`, which the agent's account
+/// cannot write. A pin already there is never replaced from here, so the
+/// agent's account cannot have the anchor made again by removing its own
+/// certificate.
+pub fn pin_once(place: &Place, token: Option<&str>) {
+    if place.pin_file.exists() {
+        return;
+    }
+    let Some(Ok(token)) = token.map(tls::EnrollmentToken::parse) else {
+        return;
+    };
+    if let Err(error) = write_pin(place, &token) {
+        tracing::warn!(%error, "cannot record the certificate authority of the install command");
+    }
+}
+
 /// A SHA-256 in hexadecimal.
 pub fn parse_pin(hex: &str) -> Option<Fingerprint> {
     if hex.len() != 64 || !hex.is_ascii() {
@@ -373,6 +406,11 @@ fn prepare_dir(dir: &Path) -> Result<(), TrustError> {
             )));
         }
     }
+    // The folder above gives the agent's account read access, which is
+    // inherited; here nothing is: LocalSystem and administrators only.
+    #[cfg(windows)]
+    monitorflow_common::winacl::set_dacl(dir, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+        .map_err(io_error(dir))?;
     Ok(())
 }
 
@@ -394,7 +432,12 @@ fn lock(dir: &Path) -> Result<fs::File, TrustError> {
 
 /// Records `command` as used, refusing one already recorded, and forgets
 /// those that expired: the expiry refuses them from then on.
-fn mark_used(dir: &Path, command: &Command, now_unix_ms: i64) -> Result<(), TrustError> {
+fn mark_used(
+    dir: &Path,
+    command: &Command,
+    step: &str,
+    now_unix_ms: i64,
+) -> Result<(), TrustError> {
     let used = dir.join(USED_DIR);
     prepare_dir(&used)?;
     for entry in fs::read_dir(&used).map_err(io_error(&used))?.flatten() {
@@ -405,7 +448,11 @@ fn mark_used(dir: &Path, command: &Command, now_unix_ms: i64) -> Result<(), Trus
             let _ = fs::remove_file(entry.path());
         }
     }
-    let path = used.join(&command.command_id);
+    // IDs hold no dot (`valid_id`), so a step never reads as another ID.
+    let path = match step {
+        "" => used.join(&command.command_id),
+        step => used.join(format!("{}.{step}", command.command_id)),
+    };
     let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
         Ok(file) => file,
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Err(TrustError::Replayed),
@@ -424,6 +471,18 @@ pub fn authorize(
     place: &Place,
     request: &HelperRequest,
     kind: &str,
+    now_unix_ms: i64,
+) -> Result<Command, TrustError> {
+    authorize_step(place, request, kind, "", now_unix_ms)
+}
+
+/// [`authorize`] for a command done in several privileged steps, each of
+/// which runs once: on Windows an `apply_updates` installs, then restarts.
+pub fn authorize_step(
+    place: &Place,
+    request: &HelperRequest,
+    kind: &str,
+    step: &str,
     now_unix_ms: i64,
 ) -> Result<Command, TrustError> {
     let Some(command) = request.command.clone() else {
@@ -449,7 +508,7 @@ pub fn authorize(
     if now_unix_ms >= command.expires_at_unix_ms {
         return Err(TrustError::Expired);
     }
-    mark_used(&place.state_dir, &command, now_unix_ms)?;
+    mark_used(&place.state_dir, &command, step, now_unix_ms)?;
     Ok(command)
 }
 

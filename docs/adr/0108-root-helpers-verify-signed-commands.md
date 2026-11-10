@@ -20,7 +20,7 @@ The helpers cannot simply check the command's signature with what the agent has:
 
 The service passes a helper the command exactly as the central server signed it, and the helper checks, before anything else: the signature against **its own** copy of the CA, that the command names this machine, its kind against the helper's, its expiry, and that it has not run before. It then acts on the signed payload and on nothing else it was given. The update specification, the snapshot name, the repositories and `allow_downgrade` are no longer the caller's to say.
 
-A request is a 4-byte big-endian length and a protobuf `HelperRequest` holding the `Command`, on stdin, followed by what the helper already read there when the payload does not hold it (the release, for a self-update). `agent::helper_trust::authorize` is the one place that checks it.
+A request is a 4-byte big-endian length and a protobuf `HelperRequest` holding the `Command`, on stdin, followed by what the helper already read there when the payload does not hold it (the release, for a self-update). On the Windows pipe it is `{"op": "signed", "command": …, "step": "install" | "reboot" | "self_update"}` with the same `HelperRequest` in base64; the service refuses `install`, `reboot` and `self_update` asked any other way, and runs each step of a command once. `agent::helper_trust::authorize` is the one place that checks it.
 
 | Helper | Kind of command | Acts on |
 | --- | --- | --- |
@@ -35,11 +35,13 @@ Left as they are, because they change nothing: `snapshots inspect`, and `scan` a
 
 ### The helper's own trust anchor
 
-The helper keeps the CA certificates it trusts and the machine's ID in a directory only its user writes: `/var/lib/monitorflow/helper/` for the agent, `/var/lib/monitorflow/relay-helper/` for the relay, a folder of the update service on Windows. It refuses a directory that belongs to someone else or that others can write, as the self-update helper does for its state.
+The helper keeps the CA certificates it trusts and the machine's ID in a directory only its user writes: `/var/lib/monitorflow/helper/` for the agent, `/var/lib/monitorflow/relay-helper/` for the relay, `%ProgramData%\MonitorFlow\update\helper\` on Windows, with an access list of its own for LocalSystem and administrators only. It refuses a directory that belongs to someone else or that others can write, as the self-update helper does for its state.
 
 The anchor is made once, the first time a helper runs:
 
 - **From the install command.** Every enrollment token carries the SHA-256 of the CA it trusts (ADR-0007). The installer, which runs as root, writes it to `/etc/monitorflow/agent-ca.pin` or `relay-ca.pin` (the hidden `pin-ca` subcommand, whenever it is given a token; a token of another CA than the one a connected machine uses is an old one and changes nothing). The helper then takes, from the service's CA bundle, the CA of that fingerprint and no other, checks that it signed the service's certificate, and keeps the ID and role that certificate names. Whatever else the service's user put in its files is ignored.
+On Windows there is no installer step: the MSI already writes the token in `agent.toml` as LocalSystem, where the agent's account cannot write, and the update service takes the pin from it the first time it needs one, into `%ProgramData%\MonitorFlow\ca.pin`. It never replaces a pin from there.
+
 - **Adopted,** on a machine installed before this decision, which has no pin: the helper trusts the CAs the service holds at that moment, once, and records in the anchor that it was adopted. A machine whose service user is already someone else's at that moment gains nothing; every other one is protected from then on, and none needs a visit. Running the install command again writes a pin, and the anchor is made again from it.
 
 After that the service's files are not read again for trust. A helper asked before the machine ever connected refuses.
@@ -74,4 +76,4 @@ The agent's journal (ADR-0031) is the service user's and stops nothing here. The
 2. The anchor follows a change of CA, from the signed bundles of ADR-0107.
 3. The self-update helper of the agent and the relay, and the installer's pin.
 4. The `sources`, `packages` and `snapshots` helpers.
-5. The Windows update service, and the MSI's pin.
+5. The Windows update service: `signed` requests on its pipe, its anchor and its pin.

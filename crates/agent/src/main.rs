@@ -1018,16 +1018,21 @@ mod service {
 
 /// The update service (ADR-0049): `MonitorFlowUpdate`, as LocalSystem,
 /// serves the agent's Windows Update requests on its pipe until stopped.
-/// It reads no configuration and logs to
+/// It does not believe the agent's account: what changes the host needs
+/// the command the central server signed, which it checks against its own
+/// trust anchor (ADR-0108). It reads `agent.toml`, which that account
+/// cannot write, only for where the agent's certificates are and for the
+/// install command's token, and logs to
 /// `%ProgramData%\MonitorFlow\update\update.log`.
 #[cfg(windows)]
 mod update_service {
     use std::ffi::OsString;
     use std::time::Duration;
 
+    use monitorflow_agent::helper_trust::{pin_once, Place};
     use monitorflow_agent::packages::windows_update::{
-        pipe, pipe_sddl, service_sid, wua, Reply, Request, SelfUpdated, AGENT_SERVICE, PIPE_NAME,
-        SERVICE_NAME,
+        authorized, pipe, pipe_sddl, service_sid, wua, Reply, Request, SelfUpdated, AGENT_SERVICE,
+        PIPE_NAME, SERVICE_NAME,
     };
     use monitorflow_agent::self_update::swap::{self, Scm, Swapped, Watched};
     use monitorflow_common::config::{self, LogConfig};
@@ -1104,6 +1109,19 @@ mod update_service {
         }
     }
 
+    /// The request to run for what the pipe received: reads as they are,
+    /// anything else from the signed command it must carry.
+    fn checked(request: &Request) -> Result<Request, String> {
+        if matches!(request, Request::Scan | Request::Status) {
+            return Ok(request.clone());
+        }
+        let config: monitorflow_common::config::AgentConfig =
+            config::load(&super::default_config()).map_err(|e| e.to_string())?;
+        let place = Place::agent(&config.tls_paths());
+        pin_once(&place, config.enrollment_token.as_ref().map(|t| t.expose()));
+        authorized(request, &place, monitorflow_agent::self_update::unix_ms())
+    }
+
     fn serve() -> anyhow::Result<()> {
         let (handle, stop) = register(SERVICE_NAME)?;
         let ok = ServiceExitCode::Win32(0);
@@ -1121,9 +1139,10 @@ mod update_service {
                         let _ = handle.set_service_status(pending);
                     });
                     let sddl = pipe_sddl(&service_sid(AGENT_SERVICE));
-                    let handle = |request: &Request| match request {
-                        Request::SelfUpdate(request) => self_update(request),
-                        other => wua::handle(other),
+                    let handle = |request: &Request| match checked(request) {
+                        Err(error) => Reply::Error(error),
+                        Ok(Request::SelfUpdate(request)) => self_update(&request),
+                        Ok(other) => wua::handle(&other),
                     };
                     pipe::serve(PIPE_NAME, &sddl, handle, stop).await?;
                     Ok(())

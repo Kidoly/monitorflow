@@ -85,6 +85,7 @@ pub fn handle(request: &Request) -> Reply {
         Request::Reboot => reboot().map(Reply::Rebooting),
         // The service answers it before calling this (ADR-0053).
         Request::SelfUpdate(_) => Err("self-updates are not Windows Update calls".into()),
+        Request::Signed { .. } => Err("the signed command was not checked".into()),
     };
     result.unwrap_or_else(Reply::Error)
 }

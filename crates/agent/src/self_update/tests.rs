@@ -257,16 +257,14 @@ async fn the_windows_installer_stages_the_release_for_the_update_service() {
         files.signature
     );
     let seen = service.seen.lock().unwrap();
-    let [Request::SelfUpdate(request)] = seen.as_slice() else {
-        panic!("{seen:?}");
-    };
+    // The service gets the command itself, and where the release is.
     assert_eq!(
-        (
-            request.command_id.as_str(),
-            request.health_timeout_ms,
-            request.data_dir.as_path()
-        ),
-        ("c-1", 60_000, data.path())
+        seen.as_slice(),
+        [Request::signed(
+            &command,
+            crate::packages::windows_update::Step::SelfUpdate,
+            Some(data.path())
+        )]
     );
 }
 

@@ -53,7 +53,7 @@ impl Ca {
 /// A machine: the service's files, written as its user would, and the
 /// helper's own directory.
 pub(crate) struct Host {
-    dir: TempDir,
+    _dir: TempDir,
     pub(crate) place: Place,
 }
 
@@ -76,7 +76,7 @@ impl Host {
         );
         fs::write(&place.ca_cert, ca.0.pem()).unwrap();
         fs::write(&place.cert, ca.issue(PeerRole::Agent, "web-01")).unwrap();
-        Self { dir, place }
+        Self { _dir: dir, place }
     }
 
     pub(crate) fn pinned(ca: &Ca) -> Self {
@@ -106,6 +106,7 @@ pub(crate) fn unsigned(kind: &str, payload: &[u8]) -> Command {
 }
 
 /// The command a fake helper saved from its stdin, and nothing after it.
+#[cfg(unix)]
 pub(crate) fn sent(stdin: &[u8]) -> Command {
     let mut input = stdin;
     let request = HelperRequest::read(&mut input).unwrap();
@@ -369,7 +370,7 @@ fn a_state_directory_others_can_write_is_refused() {
 
     // A link in its place is not followed either.
     let host = Host::pinned(&ca);
-    let elsewhere = host.dir.path().join("elsewhere");
+    let elsewhere = host.place.state_dir.with_file_name("elsewhere");
     fs::create_dir(&elsewhere).unwrap();
     std::os::unix::fs::symlink(&elsewhere, &host.place.state_dir).unwrap();
     assert!(host

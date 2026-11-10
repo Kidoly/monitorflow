@@ -30,11 +30,15 @@ pub const STAGED_DIR: &str = "staged";
 pub const MAX_BINARY: u64 = 512 * 1024 * 1024;
 const MAX_SMALL: u64 = 64 * 1024;
 
-/// The pipe request's parameters.
+/// What a self-update installs, as the update service read it from the
+/// signed `self_update` command (ADR-0108); only `data_dir` is the
+/// agent's to say.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub command_id: String,
+    /// The version the command asks for: the staged release must be it.
+    pub version: String,
     /// The agent's data directory: the release is staged under it, and the
     /// new agent writes its [`Connected`] file there.
     pub data_dir: PathBuf,
@@ -210,6 +214,12 @@ pub fn install(
     let signature = read_limited(&staged.join(SIGNATURE), MAX_SMALL)?;
     let version_file = read_limited(&staged.join(VERSION_FILE), MAX_SMALL)?;
     let verified = release::verify(&sums, &signature, &version_file, keys)?;
+    if request.version.parse::<Version>().ok().as_ref() != Some(&verified.version) {
+        return Err(SwapError::Input(format!(
+            "the release is {}, and the command asks for {}",
+            verified.version, request.version
+        )));
+    }
     if !check_upgrade(current, &verified.version, request.allow_downgrade)? {
         return Ok(Swapped::Current(current.clone()));
     }
