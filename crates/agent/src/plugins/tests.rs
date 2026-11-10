@@ -68,6 +68,19 @@ impl Server {
         }
     }
 
+    /// The signature of `grants` as the set of `web1` made at
+    /// `issued_at`, valid for a week of the test's clock.
+    fn set(&self, grants: &[PluginGrant], issued_at: i64) -> PluginGrantSet {
+        let expires_at = issued_at + plugin_grant::SET_LIFETIME_MS;
+        let message = plugin_grant::set_signed_bytes("web1", issued_at, expires_at, grants);
+        let signature = self.key.sign(&SystemRandom::new(), &message).unwrap();
+        PluginGrantSet {
+            issued_at_unix_ms: issued_at,
+            expires_at_unix_ms: expires_at,
+            signature: signature.as_ref().to_vec(),
+        }
+    }
+
     fn checks(&self, config: AgentPluginsConfig) -> PluginChecks {
         struct NoHttp;
         impl Http for NoHttp {
@@ -109,7 +122,7 @@ const UP: &str = r#"{"samples": [{"metric": "up", "value": 1}, {"metric": "secon
 async fn a_granted_plugin_runs_as_a_check() {
     let server = Server::new();
     let checks = server.checks(AgentPluginsConfig::default());
-    checks.prepare(&[server.grant("web1", "web", package("web", UP))]);
+    checks.prepare(&[server.grant("web1", "web", package("web", UP))], None);
     let sensor = checks
         .build(&config("web", Some("https://shop.example")))
         .unwrap();
@@ -134,13 +147,16 @@ async fn only_plugins_granted_to_this_agent_run() {
     let checks = server.checks(AgentPluginsConfig::default());
     let url = Some("https://shop.example");
     assert!(refusal(checks.build(&config("web", url))).contains("not granted"));
-    checks.prepare(&[server.grant("web2", "web", package("web", UP))]);
+    checks.prepare(&[server.grant("web2", "web", package("web", UP))], None);
     assert!(refusal(checks.build(&config("web", url))).contains("the server's grant"));
     // A relay's own CA signs nothing the agent trusts.
-    checks.prepare(&[Server::new().grant("web1", "web", package("web", UP))]);
+    checks.prepare(
+        &[Server::new().grant("web1", "web", package("web", UP))],
+        None,
+    );
     assert!(refusal(checks.build(&config("web", url))).contains("the server's grant"));
     // A grant under another name.
-    checks.prepare(&[server.grant("web1", "shop", package("web", UP))]);
+    checks.prepare(&[server.grant("web1", "shop", package("web", UP))], None);
     assert!(refusal(checks.build(&config("shop", url))).contains("not the check plugin"));
 }
 
@@ -151,7 +167,7 @@ async fn the_host_keeps_the_last_word() {
         checks: false,
         official_only: false,
     });
-    off.prepare(&[server.grant("web1", "web", package("web", UP))]);
+    off.prepare(&[server.grant("web1", "web", package("web", UP))], None);
     assert!(
         refusal(off.build(&config("web", Some("https://x.example")))).contains("checks = false")
     );
@@ -159,7 +175,7 @@ async fn the_host_keeps_the_last_word() {
         checks: true,
         official_only: true,
     });
-    official.prepare(&[server.grant("web1", "web", package("web", UP))]);
+    official.prepare(&[server.grant("web1", "web", package("web", UP))], None);
     assert!(
         refusal(official.build(&config("web", Some("https://x.example"))))
             .contains("official_only")
@@ -175,7 +191,7 @@ async fn bad_samples_fail_the_run() {
         r#"{"samples": [{"metric": "up", "value": 1, "labels": {"peer": "x"}}]}"#,
         r#"{"samples": [{"metric": "up", "value": 1, "extra": 1}]}"#,
     ] {
-        checks.prepare(&[server.grant("web1", "web", package("web", result))]);
+        checks.prepare(&[server.grant("web1", "web", package("web", result))], None);
         let sensor = checks
             .build(&config("web", Some("https://x.example")))
             .unwrap();
@@ -185,4 +201,102 @@ async fn bad_samples_fail_the_run() {
             .unwrap_err();
         assert!(!error.is_permanent(), "{result}: {error}");
     }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+#[tokio::test]
+async fn an_older_list_of_plugins_never_comes_back() {
+    let server = Server::new();
+    let checks = server.checks(AgentPluginsConfig::default());
+    let now = now_ms();
+    let v1 = [server.grant("web1", "web", package("web", UP))];
+    let old = server.set(&v1, now - 60_000);
+
+    checks.prepare(&v1, Some(&old));
+    checks.build(&config("web", Some("http://x"))).unwrap();
+    // The same list again, as at every reconnection.
+    checks.prepare(&v1, Some(&old));
+    checks.build(&config("web", Some("http://x"))).unwrap();
+
+    // The administrator turns the plugin off: no plugin, and signed so.
+    checks.prepare(&[], Some(&server.set(&[], now)));
+    let why = refusal(checks.build(&config("web", Some("http://x"))));
+    assert!(why.contains("not granted"), "{why}");
+
+    // A relay sends the old configuration again: refused.
+    checks.prepare(&v1, Some(&old));
+    let why = refusal(checks.build(&config("web", Some("http://x"))));
+    assert!(why.contains("older than"), "{why}");
+    // Or the old grant under the new, empty list, or with none at all.
+    checks.prepare(&v1, Some(&server.set(&[], now)));
+    let why = refusal(checks.build(&config("web", Some("http://x"))));
+    assert!(why.contains("list of plugins"), "{why}");
+    checks.prepare(&v1, None);
+    let why = refusal(checks.build(&config("web", Some("http://x"))));
+    assert!(why.contains("is missing"), "{why}");
+
+    // Turned on again by the server: a newer list.
+    checks.prepare(&v1, Some(&server.set(&v1, now + 1)));
+    checks.build(&config("web", Some("http://x"))).unwrap();
+}
+
+#[tokio::test]
+async fn a_list_of_plugins_is_for_this_agent_and_ends() {
+    let server = Server::new();
+    let checks = server.checks(AgentPluginsConfig::default());
+    let now = now_ms();
+    let grants = [server.grant("web1", "web", package("web", UP))];
+    let why = |set: &PluginGrantSet| {
+        checks.prepare(&grants, Some(set));
+        refusal(checks.build(&config("web", Some("http://x"))))
+    };
+
+    // Signed by someone else, or for other times than it says.
+    let foreign = Server::new().set(&grants, now);
+    assert!(why(&foreign).contains("does not verify"));
+    let mut stretched = server.set(&grants, now);
+    stretched.expires_at_unix_ms += 1;
+    assert!(why(&stretched).contains("does not verify"));
+
+    // Older than a week: a new one comes with the next connection.
+    let expired = server.set(&grants, now - plugin_grant::SET_LIFETIME_MS - 1);
+    assert!(why(&expired).contains("expired"));
+}
+
+#[tokio::test]
+async fn the_newest_list_is_remembered_across_restarts() {
+    let server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("plugin-grants");
+    let now = now_ms();
+    let v1 = [server.grant("web1", "web", package("web", UP))];
+    let old = server.set(&v1, now - 60_000);
+
+    let checks = server
+        .checks(AgentPluginsConfig::default())
+        .with_state(state.clone());
+    checks.prepare(&v1, Some(&old));
+    checks.prepare(&[], Some(&server.set(&[], now)));
+    // Saved off the runtime.
+    for _ in 0..200 {
+        if std::fs::read_to_string(&state).is_ok_and(|t| t == now.to_string()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(std::fs::read_to_string(&state).unwrap(), now.to_string());
+
+    // After a restart the old list is still refused.
+    let restarted = server
+        .checks(AgentPluginsConfig::default())
+        .with_state(state);
+    restarted.prepare(&v1, Some(&old));
+    let why = refusal(restarted.build(&config("web", Some("http://x"))));
+    assert!(why.contains("older than"), "{why}");
 }

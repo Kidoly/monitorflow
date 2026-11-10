@@ -1,7 +1,7 @@
 # ADR-0103: Plugins
 
 Date: 2026-11-07
-Status: accepted; integration hooks wait for outgoing events (ADR-0102)
+Status: accepted; integration hooks wait for outgoing events (ADR-0102); grants are also signed as a dated set since the security audit of 2026-11-09 (see "Checks on agents")
 
 ## Context
 
@@ -96,6 +96,13 @@ Every step is audited (`plugin.install`, `.update`, `.enable`, `.disable`, `.rem
 ### Checks on agents
 
 The server sends an agent the plugins its checks use with its sensor configuration (`SensorConfig.plugins`, additive): each package once per configuration, and a grant signed with the command key (ADR-0031) over the agent's ID, the plugin's name and the package's SHA-256. The agent runs a plugin only when the grant verifies against its certificate authority, so a relay that forwards configurations cannot slip a module in, and the package's own signature verifies with the key it names. `[plugins] checks = false` in `agent.toml` turns plugin checks off on a host, and `official_only = true` keeps only the catalogue's; the agent then refuses the check, which shows as refused like any check it cannot run. A compromised central server can still give agents a plugin with the hosts it chooses; it could already make them connect anywhere with the port check, and the sandbox is the boundary for the rest. A sandbox bug would give the agent's unprivileged user, not root.
+
+**A grant alone never ends** (security audit of 2026-11-09). It names the agent, the plugin and the package, and nothing says when: a relay could keep one and send it again, in a configuration of its own making, after an administrator updated the plugin, turned it off or removed it. The sandbox bounded the harm, but "turning off stops every use at once" did not hold against a relay. Two changes:
+
+- **The grants of a configuration are signed as a set**, with the command key, over the agent's ID, when the set was made, when it ends (a week later) and the name and package SHA-256 of each grant in order (`SensorConfig.plugin_set`, additive; `common::plugin_grant`). A configuration without plugins carries a signed empty set: otherwise nothing signed would say that the last plugin is gone. The agent keeps the time of the newest set it verified, across restarts (`<data_dir>/plugin-grants`), and refuses every plugin of a configuration whose set is older, missing, expired or not the set of its grants. Time rather than the configuration's revision, which a restored backup can lower.
+- **A change of plugins alone reloads the checks.** The agent kept its sensors running when the specs of a new configuration were the same, and updating a plugin, turning it off or taking its place away changes no spec: a running agent went on with the old module until its next restart. It now compares the plugin packages too.
+
+An agent older than sets ignores the field and checks each grant alone, as before; an agent that never received a set accepts a server older than sets the same way, until the first set it sees. A relay can still withhold a newer configuration from an agent, as it can withhold anything (architecture §4); the week bounds what an agent that was never told can be given, and an agent away for longer starts without its plugins until it connects.
 
 ### SDK and examples
 

@@ -59,6 +59,7 @@ fn server_settings() -> grpc::StreamSettings {
 fn fakes(n: usize) -> SensorConfig {
     SensorConfig {
         plugins: Vec::new(),
+        plugin_set: None,
         revision: 1,
         sensors: (0..n)
             .map(|i| SensorSpec {

@@ -117,6 +117,21 @@ message SensorConfig {
   repeated SensorSpec sensors = 2;
   // The check plugins the sensors of kind "plugin" name (ADR-0103).
   repeated PluginGrant plugins = 3;
+  // The server's signature of `plugins` as a whole, with when it was made.
+  // Absent from servers older than it.
+  PluginGrantSet plugin_set = 4;
+}
+
+// Which check plugins an agent may run now (ADR-0103): signed with the
+// command key over the agent's ID, both times, and the name and package
+// SHA-256 of every grant of the configuration, in order
+// (`common::plugin_grant`). An agent runs the plugins of the newest set it
+// has seen and of no older one, so a relay cannot bring back a plugin that
+// was updated, turned off or removed, and an empty set says there is none.
+message PluginGrantSet {
+  int64 issued_at_unix_ms = 1;
+  int64 expires_at_unix_ms = 2;
+  bytes signature = 3;
 }
 
 // A check plugin an agent may run (ADR-0103): its package as its publisher
