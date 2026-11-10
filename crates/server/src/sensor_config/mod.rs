@@ -134,6 +134,9 @@ pub struct Resolved {
     pub sensors: Vec<Spec>,
     /// The check plugins its sensors use, granted to it (ADR-0103).
     pub plugins: Vec<proto::PluginGrant>,
+    /// The signature of `plugins` as a whole, made when this was loaded;
+    /// `None` when the store signs no grants.
+    pub plugin_set: Option<proto::PluginGrantSet>,
 }
 
 impl Resolved {
@@ -142,6 +145,7 @@ impl Resolved {
             revision: self.revision,
             sensors: self.sensors.iter().map(Spec::to_proto).collect(),
             plugins: self.plugins.clone(),
+            plugin_set: self.plugin_set.clone(),
         }
     }
 }
@@ -267,6 +271,7 @@ mod tests {
         spec.params.insert("port".into(), "22".into());
         let resolved = Resolved {
             plugins: Vec::new(),
+            plugin_set: None,
             revision: 7,
             sensors: vec![
                 spec.clone(),

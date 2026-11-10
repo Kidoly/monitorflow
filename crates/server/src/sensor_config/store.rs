@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use monitorflow_common::plugin_grant;
-use monitorflow_common::proto::v1::PluginGrant;
+use monitorflow_common::proto::v1::{PluginGrant, PluginGrantSet};
 use monitorflow_plugin::manifest::{CHECK_KIND, PLUGIN_PARAM};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -47,6 +47,28 @@ impl SensorConfigStore {
     pub fn with_plugin_grants(mut self, ca: Arc<CertificateAuthority>) -> Self {
         self.grants = Some(ca);
         self
+    }
+
+    /// The signature of `grants` as the whole set `peer_id` may run now,
+    /// an empty one included: without it nothing would tell an agent that
+    /// its last plugin was turned off (ADR-0103).
+    fn grant_set(&self, peer_id: &str, grants: &[PluginGrant]) -> Option<PluginGrantSet> {
+        let ca = self.grants.as_ref()?;
+        let issued_at_unix_ms = chrono::Utc::now().timestamp_millis();
+        let expires_at_unix_ms = issued_at_unix_ms + plugin_grant::SET_LIFETIME_MS;
+        let message =
+            plugin_grant::set_signed_bytes(peer_id, issued_at_unix_ms, expires_at_unix_ms, grants);
+        match ca.sign_command(&message) {
+            Ok(signature) => Some(PluginGrantSet {
+                issued_at_unix_ms,
+                expires_at_unix_ms,
+                signature,
+            }),
+            Err(error) => {
+                tracing::warn!(agent_id = peer_id, %error, "cannot sign the plugins of a configuration");
+                None
+            }
+        }
     }
 
     /// Grants to `peer_id` of the check plugins `sensors` name that are
@@ -163,10 +185,12 @@ impl SensorConfigStore {
             .collect();
         let sensors = resolve(rows, builtin_interval);
         let plugins = self.grants(peer_id, site, &sensors).await?;
+        let plugin_set = self.grant_set(peer_id, &plugins);
         Ok(Some(Resolved {
             revision,
             sensors,
             plugins,
+            plugin_set,
         }))
     }
 

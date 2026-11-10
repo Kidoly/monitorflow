@@ -117,7 +117,7 @@ pub fn local(config: &AgentSensorsConfig) -> Local {
 impl SensorFactory for Builtin {
     fn prepare(&self, config: &SensorConfig) {
         if let Some(plugins) = &self.plugins {
-            plugins.prepare(&config.plugins);
+            plugins.prepare(&config.plugins, config.plugin_set.as_ref());
         }
     }
 
@@ -427,6 +427,7 @@ mod tests {
         bad_param.params.insert("fail".into(), "1".into());
         let config = SensorConfig {
             plugins: Vec::new(),
+            plugin_set: None,
             revision: 3,
             sensors: vec![
                 spec("fake", "good", 10_000),
@@ -560,6 +561,7 @@ mod tests {
         assert_eq!(file.load().await, None);
         let config = SensorConfig {
             plugins: Vec::new(),
+            plugin_set: None,
             revision: 9,
             sensors: vec![spec("fake", "good", 10_000)],
         };

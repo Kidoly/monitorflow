@@ -191,11 +191,19 @@ impl Sensors {
     }
 
     /// Builds `config`, then replaces `current` with it and saves it.
+    /// Sensors keep running across a configuration that changes neither
+    /// their specs nor the plugins behind them.
     async fn apply(&self, current: Option<Running>, config: SensorConfig) -> Running {
         let running = match current {
-            Some(mut current) if current.config.sensors == config.sensors => {
+            // The plugins count too: updating one, turning it off or
+            // removing it changes no spec (ADR-0103).
+            Some(mut current)
+                if current.config.sensors == config.sensors
+                    && same_plugins(&current.config, &config) =>
+            {
                 tracing::debug!(revision = config.revision, "sensor configuration unchanged");
-                current.config.revision = config.revision;
+                // Kept whole: its grants are signed again each time.
+                current.config = config;
                 current
             }
             current => {
@@ -351,13 +359,23 @@ async fn next_failure(running: &mut Option<Running>) -> Option<Failure> {
     }
 }
 
+/// Whether `a` and `b` give the same plugin packages under the same names;
+/// their signatures differ each time the server signs them.
+fn same_plugins(a: &SensorConfig, b: &SensorConfig) -> bool {
+    a.plugins.len() == b.plugins.len()
+        && a.plugins
+            .iter()
+            .zip(&b.plugins)
+            .all(|(a, b)| a.name == b.name && a.package == b.package)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
-    use monitorflow_common::proto::v1::SensorSpec;
+    use monitorflow_common::proto::v1::{PluginGrant, SensorSpec};
     use monitorflow_sensors::testing::{FakeSensor, Step};
     use monitorflow_sensors::{SensorConfig as Config, SensorError};
 
@@ -436,6 +454,7 @@ mod tests {
     fn config(revision: u64, specs: &[(&str, &str)]) -> SensorConfig {
         SensorConfig {
             plugins: Vec::new(),
+            plugin_set: None,
             revision,
             sensors: specs
                 .iter()
@@ -509,6 +528,29 @@ mod tests {
         assert_eq!(h.fakes.built.load(Ordering::SeqCst), 1);
         let file = ConfigFile::in_dir(dir.path());
         assert_eq!(file.load().await.unwrap().revision, 2);
+
+        // The same specs with another plugin behind them are rebuilt:
+        // updating a plugin, turning it off or removing it changes no
+        // spec. The same package signed again is not.
+        let grant = |package: &[u8], signature: u8| PluginGrant {
+            name: "web".into(),
+            package: package.to_vec(),
+            signature: vec![signature],
+        };
+        let with = |revision, grants: Vec<PluginGrant>| SensorConfig {
+            plugins: grants,
+            ..config(revision, &[("fake", "one"), ("cpu", "cpu")])
+        };
+        h.push(with(20, vec![grant(b"v1", 1)])).await;
+        assert_eq!(h.fakes.built.load(Ordering::SeqCst), 2);
+        h.push(with(21, vec![grant(b"v1", 2)])).await;
+        assert_eq!(h.fakes.built.load(Ordering::SeqCst), 2);
+        assert_eq!(file.load().await.unwrap().plugins[0].signature, [2]);
+        h.push(with(22, vec![grant(b"v2", 3)])).await;
+        assert_eq!(h.fakes.built.load(Ordering::SeqCst), 3);
+        h.push(with(23, Vec::new())).await;
+        assert_eq!(h.fakes.built.load(Ordering::SeqCst), 4);
+        assert!(file.load().await.unwrap().plugins.is_empty());
 
         // New specs replace the running ones.
         let ack = h.push(config(3, &[("fake", "two")])).await;

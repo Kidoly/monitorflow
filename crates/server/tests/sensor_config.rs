@@ -309,6 +309,9 @@ db_tests! {
         let config = store.load("web-01").await.unwrap().unwrap();
         assert!(config.sensors.iter().any(|s| s.kind == "plugin"));
         assert!(config.plugins.is_empty());
+        // "No plugin" is signed too, so that it cannot be taken away.
+        let none = config.plugin_set.clone().unwrap();
+        assert_eq!(plugin_grant::verify_set(&none, &[], "web-01", &ca.trusted_certs()), Ok(()));
 
         let before = config.revision;
         sqlx::query("INSERT INTO plugin_places (plugin_id, site_id) VALUES ($1, $2)")
@@ -323,6 +326,15 @@ db_tests! {
         assert_eq!((grant.name.as_str(), grant.package.as_slice()), ("web", b"package bytes".as_slice()));
         assert_eq!(plugin_grant::verify(grant, "web-01", &ca.trusted_certs()), Ok(()));
         assert!(plugin_grant::verify(grant, "app-01", &ca.trusted_certs()).is_err());
+        // The grants are signed as a set, for this agent, newer than the
+        // one before and for a week.
+        let proto = config.to_proto();
+        let set = proto.plugin_set.clone().unwrap();
+        assert_eq!(plugin_grant::verify_set(&set, &proto.plugins, "web-01", &ca.trusted_certs()), Ok(()));
+        assert!(plugin_grant::verify_set(&set, &proto.plugins, "app-01", &ca.trusted_certs()).is_err());
+        assert!(plugin_grant::verify_set(&set, &[], "web-01", &ca.trusted_certs()).is_err());
+        assert!(set.issued_at_unix_ms >= none.issued_at_unix_ms);
+        assert_eq!(set.expires_at_unix_ms - set.issued_at_unix_ms, plugin_grant::SET_LIFETIME_MS);
         // Lyon is not a place of the plugin.
         assert!(store.load("app-01").await.unwrap().unwrap().plugins.is_empty());
         // Turned off, it is granted nowhere.
@@ -330,6 +342,7 @@ db_tests! {
         assert!(store.load("web-01").await.unwrap().unwrap().plugins.is_empty());
         // Without a signer, as in tests of other parts, nothing is granted.
         sqlx::query("UPDATE plugins SET enabled = true").execute(&pool).await.unwrap();
-        assert!(SensorConfigStore::new(pool.clone()).load("web-01").await.unwrap().unwrap().plugins.is_empty());
+        let unsigned = SensorConfigStore::new(pool.clone()).load("web-01").await.unwrap().unwrap();
+        assert!(unsigned.plugins.is_empty() && unsigned.plugin_set.is_none());
     }
 }

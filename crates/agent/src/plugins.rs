@@ -1,16 +1,19 @@
 //! Check plugins (ADR-0103): sensors of kind `plugin` run a WebAssembly
 //! module the server granted this agent, in the sandbox of
 //! `monitorflow-plugin`. A plugin runs only when the grant verifies against
-//! the agent's certificate authority and the package against the key it
-//! names, and when `[plugins]` in `agent.toml` allows it.
+//! the agent's certificate authority, the set of grants it came with is
+//! not older than the newest this agent has seen, the package verifies
+//! against the key it names, and `[plugins]` in `agent.toml` allows it.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use monitorflow_common::config::AgentPluginsConfig;
 use monitorflow_common::plugin_grant;
-use monitorflow_common::proto::v1::PluginGrant;
+use monitorflow_common::proto::v1::{PluginGrant, PluginGrantSet};
 use monitorflow_plugin::http::ReqwestHttp;
 use monitorflow_plugin::manifest::PLUGIN_PARAM;
 use monitorflow_plugin::package::Package;
@@ -40,6 +43,11 @@ pub struct PluginChecks {
     runner: Runner,
     /// By name: the plugin, or why it cannot run.
     granted: Mutex<HashMap<String, Result<Arc<Granted>, String>>>,
+    /// When the newest signed set of grants seen was made, Unix
+    /// milliseconds; 0 before any. No older set is taken.
+    newest: Mutex<i64>,
+    /// Where `newest` is kept across restarts.
+    state: Option<PathBuf>,
 }
 
 impl PluginChecks {
@@ -63,16 +71,99 @@ impl PluginChecks {
             config,
             runner,
             granted: Mutex::default(),
+            newest: Mutex::default(),
+            state: None,
         }
     }
 
-    /// Replaces the plugins with those `grants` give, checking each.
-    pub fn prepare(&self, grants: &[PluginGrant]) {
+    /// Remembers the newest set of grants in `path`, so that a restart
+    /// does not make an older one acceptable again.
+    pub fn with_state(mut self, path: PathBuf) -> Self {
+        let newest = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+            .unwrap_or(0);
+        self.newest = Mutex::new(newest);
+        self.state = Some(path);
+        self
+    }
+
+    /// Whether `grants` are what the server lets this agent run now. The
+    /// server signs them as a set with the time it was made, and no set
+    /// older than the newest seen is taken: a relay, which forwards
+    /// configurations, could otherwise send an old one again after a
+    /// plugin was updated, turned off or removed.
+    fn check_set(
+        &self,
+        grants: &[PluginGrant],
+        set: Option<&PluginGrantSet>,
+        ca_certs: &[CertificateDer<'_>],
+    ) -> Result<(), String> {
+        let mut newest = self.newest.lock().expect("not poisoned");
+        let Some(set) = set else {
+            // A server older than sets signs each grant alone; one that
+            // sent a set before never stops.
+            return match *newest {
+                0 => Ok(()),
+                _ => Err("the server's list of plugins is missing".into()),
+            };
+        };
+        plugin_grant::verify_set(set, grants, &self.agent_id, ca_certs)
+            .map_err(|e| format!("the server's list of plugins: {e}"))?;
+        if set.issued_at_unix_ms < *newest {
+            return Err(
+                "the server's list of plugins is older than the one this server already has".into(),
+            );
+        }
+        if set.issued_at_unix_ms > *newest {
+            *newest = set.issued_at_unix_ms;
+            self.remember(set.issued_at_unix_ms);
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as i64);
+        if now >= set.expires_at_unix_ms {
+            return Err(
+                "the server's list of plugins has expired; a new one comes when this server connects"
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Saves `newest`, off the runtime when there is one.
+    fn remember(&self, newest: i64) {
+        let Some(path) = self.state.clone() else {
+            return;
+        };
+        let save = move || {
+            let saved = monitorflow_common::client::identity::write_atomic(
+                &path,
+                newest.to_string().as_bytes(),
+                0o600,
+            );
+            if let Err(error) = saved {
+                tracing::warn!(%error, "cannot remember the newest list of plugins; it will not survive a restart");
+            }
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => drop(runtime.spawn_blocking(save)),
+            Err(_) => save(),
+        }
+    }
+
+    /// Replaces the plugins with those `grants` give, checking the set
+    /// they come as, then each.
+    pub fn prepare(&self, grants: &[PluginGrant], set: Option<&PluginGrantSet>) {
         let ca_certs = (self.ca_certs)();
+        let refused = self.check_set(grants, set, &ca_certs).err();
         let granted = grants
             .iter()
             .map(|grant| {
-                let checked = self.check(grant, &ca_certs).map(Arc::new);
+                let checked = match &refused {
+                    Some(why) => Err(why.clone()),
+                    None => self.check(grant, &ca_certs).map(Arc::new),
+                };
                 if let Err(error) = &checked {
                     tracing::warn!(plugin = %grant.name, %error, "plugin refused");
                 }
