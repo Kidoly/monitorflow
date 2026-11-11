@@ -1,7 +1,7 @@
 # ADR-0087: TLS to the metric and log stores
 
 Date: 2026-11-03
-Status: accepted; amends ADR-0051 and ADR-0056; implemented in two stages (see the end)
+Status: accepted; amends ADR-0051 and ADR-0056; implemented in two stages (see the end); the compose file gains db-migrate in ADR-0109
 
 ## Context
 

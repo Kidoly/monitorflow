@@ -160,6 +160,8 @@ installer() {
 refuses() { ! installer "$1"; }
 compose() { in_host sh -c 'cd /opt/monitorflow && docker compose -f deploy/docker-compose.yml "$@"' sh "$@"; }
 psql() { compose exec -T postgres psql -U monitorflow -d monitorflow -tAc "$1"; }
+# shellcheck source=deploy/db-role-test.sh
+. "$repo/deploy/db-role-test.sh"
 env_value() { in_host sed -n "s/^$1=//p" /opt/monitorflow/deploy/.env; }
 absent() { ! in_host test -e "$1"; }
 server_version() { compose exec -T server monitorflow-server --version; }
@@ -200,6 +202,16 @@ older_install() {
         !/mirrors:\/(var|serverdata)|MIRROR_P|:7480"|MONITORFLOW_CERTIFICATE|MONITORFLOW_HTTPS_PORT/ { print }' \
         | in_host sh -c 'cat >/tmp/old.yml && mv /tmp/old.yml /opt/monitorflow/deploy/docker-compose.yml'
     in_host sed -i '/^MIRROR_IMAGE=/d; /^WEB_CERTIFICATE=/d' /opt/monitorflow/deploy/.env
+    # And from before the server's own database role (ADR-0109).
+    in_host sed -i '/^POSTGRES_APP_PASSWORD=/d' /opt/monitorflow/deploy/.env
+    # shellcheck disable=SC2016 # compose expands it
+    in_host sed -i -e '/^  # One-shot, before every start of the server/,/^$/d' -e '/db-migrate: {/d' \
+        -e '/MONITORFLOW_DATABASE_REQUIRE_RESTRICTED_ROLE/d' -e '/^    labels:$/{N;/pg-hba/d;}' \
+        -e 's#MONITORFLOW_DATABASE_URL: \*database-url#MONITORFLOW_DATABASE_URL: "postgres://monitorflow:${POSTGRES_PASSWORD}@postgres:5432/monitorflow?sslmode=verify-full\&sslrootcert=/certs/ca.pem"#' \
+        /opt/monitorflow/deploy/docker-compose.yml
+    printf 'local    all  all                 trust\nhostssl  all  all  all            scram-sha-256\n' \
+        | in_host sh -c 'cat >/opt/monitorflow/deploy/docker/pg_hba.conf'
+    compose up -d --no-build --force-recreate postgres >/dev/null
     compose up -d --no-build --wait --wait-timeout 300 >/dev/null
 }
 report_cleanly() { grep -q 'is running at https://' "$1" && ! grep -q 'error:' "$1"; }
@@ -240,6 +252,10 @@ check "the mirror image too" test "$(env_value MIRROR_IMAGE)" = "$base_mirror"
 check "the release URL follows the source" test "$(env_value RELEASE_URL)" = "$files/base"
 password=$(env_value POSTGRES_PASSWORD)
 check "a password was generated" test "${#password}" = 48
+app_password=$(env_value POSTGRES_APP_PASSWORD)
+check "and another for the server's database role" test "${#app_password}" = 48 -a "$app_password" != "$password"
+check "the server runs on that role" test "$(psql "$SERVER_RUNS_AS_APP")" = t
+check "which owns nothing and cannot change the audit log" test "$(psql "$APP_ROLE_RESTRICTED")" = t
 check "setup is pending" bash -c "docker exec $host curl -fsSk https://$guessed/api/setup | jq -e .pending"
 link=$(grep -o 'https://[^ ]*/setup/#[^ ]*' "$work/install.log" | tail -n 1)
 check "the setup link names the public name" grep -q "^https://$guessed/setup/#" <<<"$link"
@@ -285,6 +301,11 @@ check ".env pins the new images" test "$(env_value SERVER_IMAGE)" = "$next_serve
 check ".env pins the mirror image" test "$(env_value MIRROR_IMAGE)" = "$next_mirror"
 check "the mirror tools run after an upgrade" mirror_runs "$next_mirror"
 check "the certificate setting is added" test "$(env_value WEB_CERTIFICATE)" = internal
+new_app_password=$(env_value POSTGRES_APP_PASSWORD)
+check "a password for the server's database role is added" test "${#new_app_password}" = 48
+check "the server moved to that role" test "$(psql "$SERVER_RUNS_AS_APP")" = t
+check "PostgreSQL reads the release's pg_hba.conf" compose exec -T postgres grep -q monitorflow_app /etc/postgresql/pg_hba.conf
+check "which owns nothing and cannot change the audit log" test "$(psql "$APP_ROLE_RESTRICTED")" = t
 check "the same CA, the same fingerprint" test "$(printed_fingerprint "$work/upgrade.log")" = "$fingerprint"
 check "it keeps the secrets" test "$(env_value POSTGRES_PASSWORD)" = "$password"
 check "the data is kept" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
@@ -398,6 +419,8 @@ printf 'restored.internal\n' | in_host script -qefc \
     "env MF_DOWNLOAD_URL=$files/next sh /root/install-server.sh --restore /root/backup.tar.gz" /dev/null | tee "$work/restore.log"
 check "the name was typed" test "$(env_value DOMAIN)" = restored.internal
 check "the data is the backup's" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
+check "the restored database has the server's role again" test "$(psql "$APP_ROLE_RESTRICTED")" = t
+check "and the server runs on it" test "$(psql "$SERVER_RUNS_AS_APP")" = t
 check "the CA is the same" test "$(ca)" = "$serverdata_ca"
 check "no setup link: the backup has the administrator" bash -c "! grep -q /setup/ '$work/restore.log'"
 check "the server runs $NEXT" test "$(server_version)" = "monitorflow-server $NEXT"

@@ -29,7 +29,7 @@ The installer installs Docker with [Docker's official script](https://get.docker
 
 ## The installer
 
-Everything lives in `/opt/monitorflow/deploy`: the compose file, and `.env` with the settings and the database password. Commands on this page that start with `docker compose -f deploy/…` or `deploy/restore.sh` run from `/opt/monitorflow`.
+Everything lives in `/opt/monitorflow/deploy`: the compose file, and `.env` with the settings and the two database passwords. Commands on this page that start with `docker compose -f deploy/…` or `deploy/restore.sh` run from `/opt/monitorflow`.
 
 - **Without a terminal**, as under automation, it uses `MF_PUBLIC_NAME`, or its guess: the machine's full name if that resolves to a public address, else its IP address. To choose: `curl … | sudo MF_PUBLIC_NAME=monitor.example.com sh`.
 - **Run it again at any time.** Settings and secrets stay, the stack comes back up, and a newer release is installed through the updater, with a backup and a rollback. The compose file follows the release. After editing `.env`, run it again too.
@@ -94,7 +94,7 @@ Volumes are prefixed with the project name, like `monitorflow_serverdata`.
 
 The updater backs up the database and `serverdata` every day and keeps the 7 newest backups[^0058]. **Administration, Backups** shows the last one, takes one now and downloads any of them. A backup holds the CA keys: whoever has the file can impersonate the server, so keep copies somewhere safe. Metrics, logs and the mirror repositories are not in backups; the mirror signing key is.
 
-To restore one, on a fresh install or on this one: `deploy/restore.sh <file>`. A backup taken before the certificate authority changed brings the old one back, and the restore says so: servers and relays that moved cannot connect to it.
+To restore one, on a fresh install or on this one: `deploy/restore.sh <file>`. The server's database role and its rights are not taken from the backup: they are created again when the server starts, as at every start[^0109]. A backup taken before the certificate authority changed brings the old one back, and the restore says so: servers and relays that moved cannot connect to it.
 
 The certificate authority in `serverdata` lasts 10 years. **Administration, Certificate authority** changes it in one click, and the server starts a change by itself six months before it expires; every server and relay moves to the new one over its own connection, with nothing to do on them[^0088]. Use **Emergency change** if its key may have leaked. Install commands made before a change stop working after it: copy new ones. With several server instances, stop all but one before changing it, then copy `serverdata/ca` to the others.
 
@@ -112,6 +112,7 @@ In **Administration, Server update** (global administrators):
    - pulls the release's images by digest;
    - takes a backup (`monitorflow-backup-<time>-update.tar.gz`), as on the Backups page;
    - pins the images in `deploy/.env` (`SERVER_IMAGE`, `WEB_IMAGE`, `UPDATER_IMAGE`);
+   - applies database migrations with the new version, as the role that owns the database (the `db-migrate` service)[^0109];
    - recreates `server` and `web` and waits until the server is healthy and reports the new version;
    - adds the release's agents to the server's cache, so agents can follow[^0053];
    - replaces itself last;
@@ -122,6 +123,12 @@ The update is audited (`server.update`). The page follows it, keeps the last sta
 A deployment built from a checkout ([below](#from-a-checkout)) updates the same way: the first update switches it to the published images.
 
 The compose file follows the release, data kept; local changes belong in `docker-compose.override.yml`. A checkout keeps its own: `git pull`, then `docker compose -f deploy/docker-compose.yml up -d --wait`.
+
+### The server's database role
+
+The server runs on `monitorflow_app`, a PostgreSQL role that owns no table and is not a superuser: it can add to the audit log and the remediation history and read them, not change or delete them, nor switch off what protects them[^0109]. `monitorflow`, the role that owns the database, is used by the one-shot `db-migrate` service before each start, and by backups and restores. `deploy/.env` holds a password for each: `POSTGRES_PASSWORD` and `POSTGRES_APP_PASSWORD`. To change the second, edit it and run the installer again: the role follows.
+
+A server installed before this gets there by itself. The first update from the web interface ends with the updater adding `POSTGRES_APP_PASSWORD` to `deploy/.env` and putting the new compose file in place, which creates the role and restarts the server on it; the installer does the same when run again. If that last step fails, the updater puts the previous compose file back and the server keeps running as before, on the owner role, with a warning in its log at each start. A checkout needs the line added by hand: compose stops with "set POSTGRES_APP_PASSWORD in .env" until then. Added central servers need a new join file, once: see [Adding a central server](#adding-a-central-server).
 
 ### When an update fails
 
@@ -160,13 +167,14 @@ To run your own builds instead of the published images, you need Docker with the
 ```
 git clone https://github.com/Kidoly/monitorflow.git && cd monitorflow
 cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
-# Set DOMAIN, SERVER_NAMES and POSTGRES_PASSWORD (openssl rand -hex 24).
+# Set DOMAIN, SERVER_NAMES, POSTGRES_PASSWORD and POSTGRES_APP_PASSWORD
+# (openssl rand -hex 24, once for each).
 docker compose -f deploy/docker-compose.yml up -d --build --wait
 ```
 
 The first build compiles the server and the web interface, which takes several minutes. To update, `git pull` and run the last command again.
 
-The server applies database migrations when it starts. Remove the `*_IMAGE` lines from `deploy/.env` first if an update had pinned published images; going back to a build older than the release you ran is a downgrade, which the database refuses.
+The `db-migrate` service applies database migrations before the server starts. Remove the `*_IMAGE` lines from `deploy/.env` first if an update had pinned published images; going back to a build older than the release you ran is a downgrade, which the database refuses.
 
 ## Adding a central server
 
@@ -179,17 +187,19 @@ The server applies database migrations when it starts. Remove the `*_IMAGE` line
    curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install-server.sh | sudo sh -s -- --add-server
    ```
 
-   It checks that the license has room, publishes PostgreSQL, VictoriaMetrics and VictoriaLogs on this machine's address (ports 5432, 8428 and 9428, each with TLS and a password; `MF_SHARE_ADDRESS` picks another address), and writes `/root/monitorflow-join.tar`. That file holds the keys of the certificate authority: copy it to the new machine over SSH, and delete both copies once done. Allow only the added central servers to reach those three ports in your firewall.
+   It checks that the license has room, publishes PostgreSQL, VictoriaMetrics and VictoriaLogs on this machine's address (ports 5432, 8428 and 9428, each with TLS and a password; `MF_SHARE_ADDRESS` picks another address), and writes `/root/monitorflow-join.tar`. That file holds the keys of the certificate authority and the password of the server's database role, not the database owner's: copy it to the new machine over SSH, and delete both copies once done. Allow only the added central servers to reach those three ports in your firewall.
 3. On the new machine, with the file in the current directory:
 
    ```sh
    curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install-server.sh | sudo sh -s -- --join monitorflow-join.tar
    ```
 
-   It runs the server and the web interface only, on the first machine's database and stores. The server starts only if the license has a place for it; otherwise both commands say why and change nothing.
+   It runs the server and the web interface only, on the first machine's database and stores. It never changes the database's schema: the first central server does, which is why that one is updated first. The server starts only if the license has a place for it; otherwise both commands say why and change nothing.
 4. Add the new machine's address to the public name in your DNS, so the name has one address per central server. Agents and relays try each address; nothing changes on them.
 
 Once added, a central server keeps running and restarting even after the license expires or is removed: expiry only stops adding others, and administrators see a notice. Administration › License lists the central servers added; removing one there frees its place for another.
+
+A central server added before the server had a database role of its own[^0109] was given the database owner's password, which PostgreSQL no longer accepts from another machine. After updating the first central server, run `--add-server` on it again, copy the new file to each added machine and run `--join monitorflow-join.tar` there once. Until then the added central server cannot connect to the database, and the installer run on it with no option says so and changes nothing. Then change `POSTGRES_PASSWORD` on the first central server, since the old one was on those machines: `docker compose -f deploy/docker-compose.yml exec postgres psql -U monitorflow -c "ALTER ROLE monitorflow PASSWORD '<new>'"`, the same value in `deploy/.env`, and the installer again.
 
 What stays on the first central server: backups, updates from the web interface, package mirrors and the metric and log stores. After updating it, run the installer again on each added central server, with no option, to bring it to the same release. Changing the certificate authority refuses while several central servers run: stop the added ones, change it, then on each run the installer with `--uninstall --purge`, and `--join` with a new join file.
 
@@ -212,9 +222,9 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 
 ## Limits
 
-- VictoriaMetrics and VictoriaLogs are reached over TLS with a certificate of the built-in CA, and a password[^0087], on an internal Docker network that is never published[^0051]. PostgreSQL is reached over TLS.
+- VictoriaMetrics and VictoriaLogs are reached over TLS with a certificate of the built-in CA, and a password[^0087], on an internal Docker network that is never published[^0051]. PostgreSQL is reached over TLS, by a role that cannot change the schema or rewrite the audit log[^0109]; its owner role is accepted only from the Docker networks of the database container.
 - The server image trusts the release keys of `deploy/release-keys.pem` at build time; imports of releases signed with another key are refused.
-- The server can run as several instances on one database[^0089], but the installer sets up one; adding a second server is not packaged yet.
+- Whoever has root on the machine, the Docker socket or `deploy/.env` has the database owner's rights and can rewrite the audit log. The server's database role only bounds what the server process and its SQL can do.
 
 [^0051]: [ADR-0051: Production compose and the server's storage links](adr/0051-production-compose.md)
 [^0053]: [ADR-0053: Signed releases and agent self-update](adr/0053-agent-self-update.md)
@@ -226,4 +236,4 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 [^0069]: [ADR-0069: Settings page](adr/0069-settings-page.md)
 [^0071]: [ADR-0071: First-run setup in the browser](adr/0071-first-run-setup.md)
 [^0088]: [ADR-0088: Changing the certificate authority](adr/0088-changing-the-certificate-authority.md)
-[^0089]: [ADR-0089: Several server instances](adr/0089-several-server-instances.md)
+[^0109]: [ADR-0109: The server runs on a database role that owns nothing](adr/0109-database-roles.md)

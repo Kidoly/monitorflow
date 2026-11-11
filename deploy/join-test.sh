@@ -134,6 +134,8 @@ compose() {
         docker compose -f "$f" "$@"' sh "$@"
 }
 psql() { compose 1 exec -T postgres psql -U monitorflow -d monitorflow -tAc "$1"; }
+# shellcheck source=deploy/db-role-test.sh
+. "$(dirname "$0")/db-role-test.sh"
 env_value() { on "$1" sed -n "s/^$2=//p" /opt/monitorflow/deploy/.env; }
 api() { on "$1" curl -fsSk -b /tmp/cookies "https://monitor.internal/api/$2"; }
 healthy() { [ "$(on "$1" docker inspect --format '{{.State.Health.Status}}' "$(compose "$1" ps -q server)")" = healthy ]; }
@@ -170,6 +172,9 @@ installer 1 --add-server | tee "$work/add.log"
 check "it shares the stores on its address" test "$(env_value 1 SHARE_ADDRESS)" = "$first_ip"
 check "PostgreSQL answers there" on 1 bash -c "exec 3<>/dev/tcp/$first_ip/5432"
 check "the join file is root's only" test "$(on 1 stat -c '%U %a' /root/monitorflow-join.tar)" = "root 600"
+join_env() { on 1 tar -xOf /root/monitorflow-join.tar ./env; }
+check "it holds the password of the server's database role" grep -q '^POSTGRES_APP_PASSWORD=.' <<<"$(join_env)"
+check "and not the owner's (ADR-0109)" bash -c "! grep -q '^POSTGRES_PASSWORD=' <<<'$(join_env)'"
 check "it prints the command to run" grep -q -- '--join monitorflow-join.tar' "$work/add.log"
 
 echo "== the second central server joins"
@@ -181,6 +186,16 @@ check "it says to add it to the DNS name" grep -q 'add its address' "$work/join.
 check "it is marked as added" test "$(env_value 2 JOINED)" = 1
 check "it runs the server and the web interface only" test "$(compose 2 ps --services | sort | tr '\n' ' ')" = "server web "
 check "its server is healthy" healthy 2
+check "it has no password of the database owner" test -z "$(env_value 2 POSTGRES_PASSWORD)"
+check "every server runs on its own database role" test "$(psql "$SERVER_RUNS_AS_APP")" = t
+# The owner is refused from another machine, password or not.
+owner_password=$(env_value 1 POSTGRES_PASSWORD)
+as_owner_from_2() {
+    compose 2 run --rm --no-deps -T -e MONITORFLOW_DATABASE_REQUIRE_RESTRICTED_ROLE=false \
+        -e "MONITORFLOW_DATABASE_URL=postgres://monitorflow:$owner_password@postgres:5432/monitorflow?sslmode=verify-full&sslrootcert=/certs/ca.pem" \
+        server customer list 2>&1
+}
+check "the database refuses its owner from the added machine" grep -q 'no pg_hba.conf entry' <<<"$(as_owner_from_2)"
 check "two instances share the database" test "$(psql "SELECT count(*) FROM server_instances")" = 2
 check "it was added under its name" test "$(psql "SELECT name FROM server_instance_admissions")" = fresh2
 check "the addition is audited" test "$(psql "SELECT count(*) FROM audit_log WHERE action = 'server_instance.add'")" = 1
@@ -215,6 +230,18 @@ check "administrators are told" bash -c \
     "docker exec $host-1 curl -fsSk -b /tmp/cookies https://monitor.internal/api/license | jq -e '.state == \"expired\" and (.added | length) == 1'"
 installer 2 | tee "$work/rerun.log"
 check "running the installer again on it works" grep -q 'is running at https://' "$work/rerun.log"
+
+echo "== a central server added before ADR-0109 needs a new join file"
+app_password=$(env_value 2 POSTGRES_APP_PASSWORD)
+on 2 sed -i "/^POSTGRES_APP_PASSWORD=/d; \$a POSTGRES_PASSWORD=$owner_password" /opt/monitorflow/deploy/.env
+if installer 2 >"$work/old-join.log"; then failed=1; echo "the installer ran without a role of its own: FAILED"; fi
+check "it says to make a new join file" grep -q -- '--add-server again' "$work/old-join.log"
+check "and changed nothing" test "$(env_value 2 POSTGRES_PASSWORD)" = "$owner_password"
+installer 2 --join monitorflow-join.tar | tee "$work/rejoin.log"
+check "joining again with the file works" grep -q 'is running at https://' "$work/rejoin.log"
+check "it has the role's password" test "$(env_value 2 POSTGRES_APP_PASSWORD)" = "$app_password"
+check "and no longer the owner's" test -z "$(env_value 2 POSTGRES_PASSWORD)"
+check "its server is healthy" healthy 2
 
 echo "== the second leads when the first's server stops"
 compose 1 stop server >/dev/null

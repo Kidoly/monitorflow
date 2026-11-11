@@ -102,9 +102,18 @@ serve() { find "$work/serve" -mindepth 1 -delete; cp "$work/releases/$1"/* "$wor
 cp -r "$repo/deploy" "$work/deploy"
 rm -f "$work/deploy/.env"
 # The compose file of a release before ADR-0087: plain HTTP to the stores.
+# And before ADR-0109: the server on the role that owns the schema, which
+# any client may use, and no password for a role of its own in .env.
+# shellcheck disable=SC2016 # compose expands it
+owner_url='"postgres://monitorflow:${POSTGRES_PASSWORD}@postgres:5432/monitorflow?sslmode=verify-full\&sslrootcert=/certs/ca.pem"'
 sed -e '/^  storage-certs:$/,/^$/d' -e '/^    depends_on:$/{N;/storage-certs/d;}' -e '/^      - -tls/d' \
     -e '/^      - -httpAuth\./d' -e 's#https://victoria#http://victoria#' -e '/MONITORFLOW_STORAGE_TLS_DIR/d' \
+    -e '/^  # One-shot, before every start of the server/,/^$/d' -e '/db-migrate: {/d' \
+    -e '/MONITORFLOW_DATABASE_REQUIRE_RESTRICTED_ROLE/d' -e '/^    labels:$/{N;/pg-hba/d;}' \
+    -e "s#MONITORFLOW_DATABASE_URL: \\*database-url#MONITORFLOW_DATABASE_URL: $owner_url#" \
     "$repo/deploy/docker-compose.yml" >"$work/deploy/docker-compose.yml"
+printf 'local    all  all                 trust\nhostssl  all  all  all            scram-sha-256\n' \
+    >"$work/deploy/docker/pg_hba.conf"
 cat >"$work/deploy/.env" <<EOF
 DOMAIN=127.0.0.1
 SERVER_NAMES=localhost
@@ -142,6 +151,8 @@ curl -fsSk -c "$work/cookies" -H 'content-type: application/json' -H 'x-monitorf
 get() { curl -fsSk -b "$work/cookies" "$api/$1"; }
 post() { curl -sSk -b "$work/cookies" -H 'content-type: application/json' -H 'x-monitorflow-csrf: 1' -o "$work/answer" -w '%{http_code}' -d "$2" "$api/$1"; }
 psql() { compose exec -T postgres psql -U monitorflow -d monitorflow -tAc "$1"; }
+# shellcheck source=deploy/db-role-test.sh
+. "$repo/deploy/db-role-test.sh"
 
 until_true() { # seconds command...
     local deadline=$((SECONDS + $1))
@@ -187,6 +198,9 @@ compose exec -T server bash -c 'exec 3<>/dev/tcp/victoriametrics/8428 && printf 
 rm -f "$work/deploy/docker/"*.Dockerfile
 pinned() { grep -qx "SERVER_IMAGE=$1" "$work/deploy/.env"; }
 
+psql "SELECT bool_and(usename = 'monitorflow') FROM pg_stat_activity
+      WHERE backend_type = 'client backend' AND client_addr IS NOT NULL" >"$work/owner-before"
+chmod 600 "$work/deploy/.env"
 echo "updating to $NEXT"
 state=$(update "$NEXT") || state=error
 get server-update | jq '.update' >"$work/next.json" || true
@@ -203,6 +217,16 @@ compose_switched() { get server-update | jq -e '.update.steps | any(.message | t
 check "the updater restarted the stack with it" until_true 300 compose_switched
 compose_noted() { get server-update | jq -e '.update.steps | any(.message | test("compose file of this release in place"))'; }
 check "the update page says so" compose_noted
+# The server's own database role (ADR-0109), on a server installed before it.
+env_has() { grep -q "^$1=." "$work/deploy/.env"; }
+check "the server ran on the owner role before" grep -qx t "$work/owner-before"
+check ".env got a password for the server's role" env_has POSTGRES_APP_PASSWORD
+check ".env stays private" test "$(stat -c %a "$work/deploy/.env")" = 600
+runs_as_app() { [ "$(psql "$SERVER_RUNS_AS_APP")" = t ]; }
+check "the server now runs on its own role" until_true 60 runs_as_app
+check "which owns nothing and cannot change the audit log" test "$(psql "$APP_ROLE_RESTRICTED")" = t
+hba_narrowed() { compose exec -T postgres grep -q monitorflow_app /etc/postgresql/pg_hba.conf; }
+check "PostgreSQL reads the release's pg_hba.conf" hba_narrowed
 stores_reached() { compose exec -T server monitorflow-server storage-check; }
 check "the server reaches both stores over TLS" until_true 60 stores_reached
 tls_flag() { docker inspect --format '{{json .Config.Cmd}}' "$(compose ps -q "$1")" | grep -q '"-tls"'; }
