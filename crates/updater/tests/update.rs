@@ -117,6 +117,8 @@ struct HostState {
     hangs: bool,
     /// `pg_dump` fails.
     dump_fails: bool,
+    /// The migration step of the new image fails.
+    migrate_fails: bool,
     /// The next recreation of the stores fails.
     stores_fail: bool,
     /// The next check of the stores fails.
@@ -165,7 +167,17 @@ impl Host for FakeHost {
         std::fs::write(dest, b"PGDMP").map_err(|e| HostError(e.to_string()))
     }
 
+    async fn migrate(&self) -> Result<(), HostError> {
+        let mut state = self.state();
+        state.calls.push("migrate");
+        if state.migrate_fails {
+            return Err(HostError("db-migrate exited with code 1".into()));
+        }
+        Ok(())
+    }
+
     async fn recreate(&self) -> Result<(), HostError> {
+        self.state().calls.push("recreate");
         if self.state().hangs {
             std::future::pending::<()>().await;
         }
@@ -374,6 +386,9 @@ async fn updates_to_a_signed_release_after_a_backup() {
     );
     assert!(!volumes.update.join("release/0.2.0").exists());
     assert!(host.state().replaced, "the updater replaces itself");
+    // The new image migrates as the owner before the server restarts on
+    // its own role (ADR-0109).
+    assert_eq!(host.state().calls, ["migrate", "recreate"]);
 
     let backups = volumes.backups();
     assert_eq!(backups.len(), 1, "{backups:?}");
@@ -479,6 +494,39 @@ async fn a_broken_image_is_rolled_back() {
     assert!(run.error.unwrap().contains("did not start"));
     assert!(!host.state().replaced);
     assert_eq!(volumes.backups().len(), 1);
+}
+
+#[tokio::test]
+async fn a_failed_migration_step_is_rolled_back() {
+    let signer = Signer::new();
+    let release = signer.release("0.3.0", None);
+    let volumes = Volumes::new();
+    std::fs::write(
+        &volumes.env,
+        format!("DOMAIN=x\nSERVER_IMAGE={}\n", image("server", "0.2.0")),
+    )
+    .unwrap();
+    let host = FakeHost::new(&volumes.env, "0.2.0");
+    host.state().migrate_fails = true;
+    let source = dir_source(&release, signer.public());
+    let mut updater = volumes.updater(&host, &source);
+
+    assert_eq!(
+        updater.update(&request("0.3.0"), &v("0.3.0")).await,
+        UpdateState::RolledBack
+    );
+    // The new server never started: only the rollback recreated.
+    assert_eq!(host.state().calls, ["migrate", "recreate"]);
+    assert_eq!(host.state().version, "0.2.0");
+    assert_eq!(
+        volumes.pins().server.as_deref(),
+        Some(image("server", "0.2.0").as_str())
+    );
+    let error = volumes.status().update.unwrap().error.unwrap();
+    assert!(
+        error.contains("did not migrate the database: db-migrate exited with code 1"),
+        "{error}"
+    );
 }
 
 #[tokio::test]
@@ -1049,6 +1097,15 @@ async fn the_compose_file_follows_an_update_from_the_web_interface() {
     assert_eq!(dirs.compose(), "docker-compose.yml: tls\n");
     assert_eq!(host.state().calls, ["apply", "check"]);
     assert!(!compose_file::pending(&volumes.state));
+    // The password of the server's own database role, which the compose
+    // file of ADR-0109 needs, is added once and kept.
+    let env = std::fs::read_to_string(&volumes.env).unwrap();
+    let line = env
+        .lines()
+        .find(|l| l.starts_with("POSTGRES_APP_PASSWORD="))
+        .expect("a password for the server's role");
+    assert_eq!(line.len(), "POSTGRES_APP_PASSWORD=".len() + 48);
+    assert!(env.contains("POSTGRES_PASSWORD=x\n"), "{env}");
     let steps = volumes.status().update.unwrap().steps;
     assert!(steps
         .iter()
@@ -1059,6 +1116,7 @@ async fn the_compose_file_follows_an_update_from_the_web_interface() {
     dirs.refresh(&volumes, &host).await;
     assert_eq!(dirs.compose(), "edited\n");
     assert_eq!(host.state().calls, ["apply", "check"]);
+    assert_eq!(std::fs::read_to_string(&volumes.env).unwrap(), env);
 }
 
 #[tokio::test]
@@ -1094,6 +1152,9 @@ async fn the_installer_and_the_offline_path_keep_their_compose_file() {
     dirs.refresh(&volumes, &host).await;
     assert_eq!(dirs.compose(), "docker-compose.yml: plain\n");
     assert!(host.state().calls.is_empty());
+    // The installer adds the line itself.
+    let env = std::fs::read_to_string(&volumes.env).unwrap();
+    assert!(!env.contains("POSTGRES_APP_PASSWORD"), "{env}");
 }
 
 #[tokio::test]
