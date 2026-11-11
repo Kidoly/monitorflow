@@ -59,6 +59,11 @@ docker build -q -t "$host" - >/dev/null <<'EOF'
 FROM debian:trixie
 RUN apt-get update && apt-get install -y --no-install-recommends \
     systemd systemd-sysv dbus ca-certificates curl openssl iproute2 procps bsdextrautils
+# --privileged hands this container the host's /dev, its virtual consoles
+# included: a getty on tty1 there would hang up the desktop session of
+# whoever runs the test. Nothing here needs a console login.
+RUN systemctl mask getty.target getty@.service autovt@.service serial-getty@.service \
+    console-getty.service container-getty@.service systemd-vconsole-setup.service
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
 EOF
