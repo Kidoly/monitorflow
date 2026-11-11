@@ -411,9 +411,17 @@ mod tests {
         let text = env.text().unwrap();
         let secret = value(&text, POSTGRES_APP_PASSWORD).unwrap();
         assert_eq!(secret.len(), 48);
-        assert!(secret.bytes().all(|b| b.is_ascii_hexdigit()), "{secret}");
-        assert_eq!(text.matches(POSTGRES_APP_PASSWORD).count(), 1, "{text}");
-        assert!(text.starts_with("POSTGRES_PASSWORD=s3cret\n"), "{text}");
+        // Messages never print the file: it holds the new secret.
+        assert!(secret.bytes().all(|b| b.is_ascii_hexdigit()), "not hex");
+        assert_eq!(
+            text.matches(POSTGRES_APP_PASSWORD).count(),
+            1,
+            "line repeated"
+        );
+        assert!(
+            text.starts_with("POSTGRES_PASSWORD=s3cret\n"),
+            "other lines changed"
+        );
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
         // Set, it stays: the role's password follows this line.
