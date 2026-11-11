@@ -59,6 +59,10 @@ services:
       - pgdata:/var/lib/postgresql/data
       - dbcerts:/certs:ro
       - ./docker/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    # PostgreSQL reads pg_hba.conf from the file it mounted at creation:
+    # change this with the file, so the container is created again.
+    labels:
+      monitorflow.pg-hba: "2"
     networks: [storage]
     depends_on:
       db-certs: { condition: service_completed_successfully }
@@ -107,11 +111,29 @@ services:
       storage-certs: { condition: service_completed_successfully }
     restart: unless-stopped
 
+  # One-shot, before every start of the server: database migrations as the
+  # role that owns the schema, which also creates the server's own role and
+  # gives it its rights (ADR-0109). The only service with that role.
+  db-migrate:
+    build: *server-build
+    image: ${SERVER_IMAGE:-monitorflow-server:local}
+    command: ["migrate"]
+    environment:
+      MONITORFLOW_DATABASE_MIGRATE_URL: "postgres://monitorflow:${POSTGRES_PASSWORD}@postgres:5432/monitorflow?sslmode=verify-full&sslrootcert=/certs/ca.pem"
+      MONITORFLOW_DATABASE_URL: &database-url "postgres://monitorflow_app:${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD in .env}@postgres:5432/monitorflow?sslmode=verify-full&sslrootcert=/certs/ca.pem"
+      MONITORFLOW_LOG_FORMAT: json
+    volumes: ["dbcerts:/certs:ro"]
+    networks: [storage]
+    depends_on:
+      postgres: { condition: service_healthy }
+
   server:
     build: *server-build
     image: ${SERVER_IMAGE:-monitorflow-server:local}
     environment:
-      MONITORFLOW_DATABASE_URL: "postgres://monitorflow:${POSTGRES_PASSWORD}@postgres:5432/monitorflow?sslmode=verify-full&sslrootcert=/certs/ca.pem"
+      # A role that owns no table and cannot change the schema (ADR-0109).
+      MONITORFLOW_DATABASE_URL: *database-url
+      MONITORFLOW_DATABASE_REQUIRE_RESTRICTED_ROLE: "true"
       <<: *storage-tls
       # Reached by the web service only: the port is not published (ADR-0006).
       MONITORFLOW_API_LISTEN_ADDR: 0.0.0.0:7444
@@ -155,6 +177,7 @@ services:
       - "${MIRROR_PORT:-7480}:7480"
     depends_on:
       postgres: { condition: service_healthy }
+      db-migrate: { condition: service_completed_successfully }
       victoriametrics: { condition: service_started }
       victorialogs: { condition: service_started }
     healthcheck:

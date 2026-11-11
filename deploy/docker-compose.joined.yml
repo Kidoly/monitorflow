@@ -13,7 +13,10 @@ services:
     # The name this central server is added under, on the License page.
     hostname: ${INSTANCE_NAME:?set INSTANCE_NAME in .env}
     environment:
-      MONITORFLOW_DATABASE_URL: "postgres://monitorflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/monitorflow?sslmode=verify-full&sslrootcert=/certs/ca.pem"
+      # The server's own role, which cannot change the schema: the first
+      # central server migrates (ADR-0109).
+      MONITORFLOW_DATABASE_URL: "postgres://monitorflow_app:${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD in .env}@postgres:5432/monitorflow?sslmode=verify-full&sslrootcert=/certs/ca.pem"
+      MONITORFLOW_DATABASE_REQUIRE_RESTRICTED_ROLE: "true"
       MONITORFLOW_VICTORIAMETRICS_URL: https://victoriametrics:8428
       MONITORFLOW_VICTORIALOGS_URL: https://victorialogs:9428
       MONITORFLOW_STORAGE_TLS_DIR: /var/lib/monitorflow/storage-tls

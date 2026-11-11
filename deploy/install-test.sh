@@ -42,7 +42,8 @@ cd "$(dirname "$0")"
 
 export DOMAIN=127.0.0.1 SERVER_NAMES=localhost
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
-export POSTGRES_PASSWORD
+POSTGRES_APP_PASSWORD=$(openssl rand -hex 16)
+export POSTGRES_PASSWORD POSTGRES_APP_PASSWORD
 export HTTPS_PORT=28443 HTTP_PORT=28080 GRPC_PORT=27443 ENROLL_PORT=27445
 FILES_PORT=28444
 # Self-updates download from here; the directory is filled later.

@@ -280,9 +280,14 @@ install_bundle() {
     tar -xzf "$tmp/$BUNDLE" -C "$ROOT" --no-same-owner
 }
 
-# The only secret is the database's: the server keeps its keys in a volume.
+new_password() { od -An -tx1 -N24 /dev/urandom | tr -d ' \n'; }
+
+# The only secrets are the database's, of the role that owns the schema and
+# of the one the server runs on (ADR-0109): the server keeps its keys in a
+# volume.
 write_env() {
-    password=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
+    password=$(new_password)
+    app_password=$(new_password)
     ip=$(primary_ip)
     names=$name
     [ -z "$ip" ] || [ "$ip" = "$name" ] || names=$name,$ip
@@ -292,6 +297,7 @@ write_env() {
             printf '# Written by install-server.sh. Settings: .env.example, next to this file.\n'
             printf '# Run the installer again after a change.\n'
             printf 'DOMAIN=%s\nSERVER_NAMES=%s\nPOSTGRES_PASSWORD=%s\n' "$name" "$names" "$password"
+            printf 'POSTGRES_APP_PASSWORD=%s\n' "$app_password"
             [ -z "$MF_DOWNLOAD_URL" ] || printf 'RELEASE_URL=%s\n' "$base"
             image_lines | while read -r image reference; do
                 printf '%s=%s\n' "$(image_key "$image")" "$reference"
@@ -307,6 +313,15 @@ env_get() {
     printf '%s' "${value:-$2}"
 }
 
+# Removes $1 from .env.
+env_unset() {
+    (
+        umask 077
+        { grep -v "^$1=" "$ENV_FILE" || true; } >"$ENV_FILE.new"
+    )
+    mv -f "$ENV_FILE.new" "$ENV_FILE"
+}
+
 # Sets $1 to $2 in .env, which stays private.
 env_set() {
     (
@@ -314,6 +329,14 @@ env_set() {
         { grep -v "^$1=" "$ENV_FILE" || true; printf '%s=%s\n' "$1" "$2"; } >"$ENV_FILE.new"
     )
     mv -f "$ENV_FILE.new" "$ENV_FILE"
+}
+
+# A server installed before ADR-0109 has no password for the role the server
+# runs on: the compose file of this release needs one, and creates the role
+# with it when it starts.
+ensure_app_password() {
+    [ -z "$(env_get POSTGRES_APP_PASSWORD '')" ] || return 0
+    env_set POSTGRES_APP_PASSWORD "$(new_password)"
 }
 
 # WEB_CERTIFICATE follows the name each time, so a name that gets public DNS
@@ -446,6 +469,7 @@ refill_agent_cache() {
 # compose files follow the release, as the updater changes images only.
 repair_or_upgrade() {
     [ -f "$DEPLOY/docker-compose.yml" ] || install_bundle
+    ensure_app_password
     had_mirrors=$(grep -cF 'monitorflow-mirror:local' "$DEPLOY/docker-compose.yml") || true
     pin_new_images
     check_ports
@@ -581,7 +605,7 @@ add_server() {
     fi
     {
         printf 'FIRST_ADDRESS=%s\n' "$share"
-        for key in DOMAIN POSTGRES_PASSWORD WEB_CERTIFICATE RELEASE_URL AGENT_DOWNLOAD_URL HTTPS_PORT HTTP_PORT \
+        for key in DOMAIN POSTGRES_APP_PASSWORD WEB_CERTIFICATE RELEASE_URL AGENT_DOWNLOAD_URL HTTPS_PORT HTTP_PORT \
             GRPC_PORT ENROLL_PORT MIRROR_PORT; do
             value=$(env_get "$key" '')
             [ -z "$value" ] || printf '%s=%s\n' "$key" "$value"
@@ -631,18 +655,24 @@ copy_join_data() {
 }
 
 # On a new machine: another central server on the first one's database.
+# On one added before ADR-0109: the database role of the join file in place
+# of the owner's password it was given then.
 join_server() {
     [ ! -f "$ENV_FILE" ] || joined || die "this machine already runs a central server of its own"
+    mkdir "$tmp/join"
+    tar -xf "$join_file" -C "$tmp/join" || die "$join_file is not a file written by --add-server"
+    if [ ! -f "$tmp/join/env" ] || [ ! -f "$tmp/join/server.tar" ]; then
+        die "$join_file is not a file written by --add-server"
+    fi
+    app_password=$(sed -n 's/^POSTGRES_APP_PASSWORD=//p' "$tmp/join/env")
+    [ -n "$app_password" ] || die "$join_file was written by an older release: update the first central server, run --add-server there again, and use the new file"
     if joined; then
-        say "already added: updating this central server to $version"
+        say "already added: updating this central server to $version, with the database role of $join_file"
         rewrite_image_pins
+        env_set POSTGRES_APP_PASSWORD "$app_password"
+        env_unset POSTGRES_PASSWORD
         pull_images
     else
-        mkdir "$tmp/join"
-        tar -xf "$join_file" -C "$tmp/join" || die "$join_file is not a file written by --add-server"
-        if [ ! -f "$tmp/join/env" ] || [ ! -f "$tmp/join/server.tar" ]; then
-            die "$join_file is not a file written by --add-server"
-        fi
         say "adding this machine as a central server of $(sed -n 's/^DOMAIN=//p' "$tmp/join/env")"
         install_bundle
         write_joined_env
@@ -654,7 +684,18 @@ join_server() {
 }
 
 # An added central server follows the release it is given: the images of
-# this one, pulled, then started.
+# this one, pulled, then started. One added before ADR-0109 holds the
+# password of the role that owns the schema, which the database no longer
+# accepts from another machine: it needs a new join file, once.
+update_joined() {
+    [ -n "$(env_get POSTGRES_APP_PASSWORD '')" ] || die "this central server was added with the database owner's password, which the database no longer accepts from another machine: on the first central server, update it and run install-server.sh --add-server again, copy $(basename "$JOIN_FILE") here, then run this with --join $(basename "$JOIN_FILE"). Nothing was changed"
+    say "already added: updating this central server to $version"
+    rewrite_image_pins
+    pull_images
+    start
+}
+
+# The images of this release in .env.
 rewrite_image_pins() {
     install_bundle
     image_lines | while read -r image reference; do
@@ -765,8 +806,7 @@ if [ "$mode" = join ] || joined; then
     case $mode in
         restore | add) die "this is an added central server: run that on the first one" ;;
     esac
-    join_file=${join_file:-}
-    join_server
+    if [ "$mode" = join ]; then join_server; else update_joined; fi
     settle_certificate
     report
     say "this machine is a central server of $(env_get DOMAIN ''): add its address $(primary_ip) to that name in your DNS, so agents and browsers reach either. Back up and update the first central server; then run this installer again here"

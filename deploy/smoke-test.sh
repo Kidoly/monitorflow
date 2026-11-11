@@ -10,7 +10,10 @@ cd "$(dirname "$0")"
 # An IP address as DOMAIN: clients send no SNI to it, the harder case.
 export DOMAIN=127.0.0.1 SERVER_NAMES=localhost WEB_CERTIFICATE=internal
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
-export POSTGRES_PASSWORD
+POSTGRES_APP_PASSWORD=$(openssl rand -hex 16)
+export POSTGRES_PASSWORD POSTGRES_APP_PASSWORD
+# shellcheck source=deploy/db-role-test.sh
+. ./db-role-test.sh
 export HTTPS_PORT=18443 HTTP_PORT=18080 GRPC_PORT=17443 ENROLL_PORT=17445 MIRROR_PORT=17480
 
 # --env-file /dev/null: a real deploy/.env must not leak into the test.
@@ -52,6 +55,15 @@ db_link_uses_tls() {
         "SELECT count(*) > 0 AND bool_and(s.ssl) FROM pg_stat_ssl s JOIN pg_stat_activity a USING (pid)
          WHERE a.backend_type = 'client backend' AND a.pid <> pg_backend_pid()")" = t ]
 }
+# The server's database role (ADR-0109).
+psql() { compose exec -T postgres psql -U monitorflow -d monitorflow -tAc "$1"; }
+# As that role, through the container's socket: refused by its rights.
+# psql fails on the statement: keep its output, not its status.
+app_refused() {
+    local out
+    out=$(compose exec -T postgres psql -U monitorflow_app -d monitorflow -c "$1" 2>&1) && return 1
+    grep -q "$2" <<<"$out"
+}
 # No port of the service is bound on the host.
 not_published() {
     local ports
@@ -92,6 +104,12 @@ check "port 80: POST /api/auth/login too" redirected /api/auth/login POST
 check "enrollment listener: certificate" cert_names_localhost "$ENROLL_PORT"
 check "gRPC listener: certificate" cert_names_localhost "$GRPC_PORT"
 check "database connections use TLS" db_link_uses_tls
+check "the server runs on its own database role" test "$(psql "$SERVER_RUNS_AS_APP")" = t
+check "which owns nothing and cannot change the audit log" test "$(psql "$APP_ROLE_RESTRICTED")" = t
+check "it cannot switch off the audit log's triggers" app_refused 'ALTER TABLE audit_log DISABLE TRIGGER USER' 'must be owner of table audit_log'
+check "nor delete from it" app_refused 'DELETE FROM audit_log' 'permission denied for table audit_log'
+check "nor run a program in the database container" app_refused "COPY audit_log (actor_id) FROM PROGRAM 'id'" 'permission denied'
+check "the migration step ran and ended" test "$(docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' "$(compose ps -aq db-migrate)")" = "exited 0"
 check "PostgreSQL not published" not_published postgres
 check "VictoriaMetrics not published" not_published victoriametrics
 check "VictoriaLogs not published" not_published victorialogs
