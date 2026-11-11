@@ -34,6 +34,15 @@
 # PostgreSQL connection. Required. The password is redacted in logs; prefer
 # MONITORFLOW_DATABASE_URL so it does not stay on disk.
 database_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
+# The role that owns the schema, when database_url names a role of its own
+# that cannot change it (ADR-0109): migrations run through this one, which
+# also gives the other its rights. `monitorflow-server migrate` does only
+# that, so the server itself need not hold it. Prefer
+# MONITORFLOW_DATABASE_MIGRATE_URL.
+# database_migrate_url = "postgres://monitorflow:change-me@localhost:5432/monitorflow"
+# Refuse to start, instead of warning, when the role of database_url is a
+# superuser or owns the tables.
+# database_require_restricted_role = false
 
 # Time series and log storage. http is accepted for development.
 # victoriametrics_url = "http://localhost:8428"

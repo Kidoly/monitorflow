@@ -1,7 +1,7 @@
 # ADR-0042: Remediation incidents and their audit trail
 
 Date: 2026-10-26
-Status: accepted
+Status: accepted; privileges amended by ADR-0109
 
 ## Context
 
@@ -33,7 +33,7 @@ The two can be joined by the incident ID if the loop also writes summary rows (`
 
 **Verification.** `remediation::audit::verify` reads the head and the rows in one repeatable-read snapshot, recomputes every hash in Rust (ring's SHA-256) from the canonical text, and reports the first broken `seq` with a reason: `gap`, `prev_hash`, `hash` or `head`. SQL `remediation_verify_chain(incident)` does the same for operators. `GET /api/remediation/incidents/{id}` runs it on every request and logs an error when it fails.
 
-**Privileges.** The repository has no database role model. Like `audit_log`, production must grant the application role only INSERT and SELECT on `remediation_incident_events` (and INSERT, SELECT, UPDATE on `remediation_incidents`). Triggers stop the application. The chain shows what a table owner or superuser did with triggers off.
+**Privileges.** The repository has no database role model. Like `audit_log`, production must grant the application role only INSERT and SELECT on `remediation_incident_events` (and INSERT, SELECT, UPDATE on `remediation_incidents`). Triggers stop the application. The chain shows what a table owner or superuser did with triggers off. (Since ADR-0109 the repository has that role: the compose files run the server on `monitorflow_app`, with exactly these rights.)
 
 **API, read-only.** `GET /api/remediation/incidents` (filters `state`, `customer_id`, `site_id`, `server_id`, `alert_incident_id`; keyset pages newest first, `limit` 1 to 500) and `GET /api/remediation/incidents/{id}` (the item plus `events` and `chain`), scoped by readable sites as for `/api/incidents`: anything outside them is 404 or an empty list. There is no write route. The incident loop creates incidents with `remediation::audit::open`.
 

@@ -1006,7 +1006,16 @@ pub struct ServerConfig {
     /// Seconds without a request after which a session expires; locks the
     /// web interface like `api_session_lifetime`.
     pub api_session_idle_timeout: Option<u64>,
+    /// The connection the server runs on. In production its role owns no
+    /// table and is not a superuser (ADR-0109).
     pub database_url: DatabaseUrl,
+    /// The connection of the role that owns the schema. Set, migrations run
+    /// through it and it gives the role of `database_url` its rights; the
+    /// `migrate` command needs it.
+    pub database_migrate_url: Option<DatabaseUrl>,
+    /// Refuse to start when the role of `database_url` is a superuser or
+    /// owns the audit log, instead of warning.
+    pub database_require_restricted_role: bool,
     pub victoriametrics_url: String,
     pub victorialogs_url: String,
     /// Directory shared with VictoriaMetrics and VictoriaLogs (ADR-0087).
@@ -1148,6 +1157,8 @@ impl Default for ServerConfig {
             api_session_lifetime: None,
             api_session_idle_timeout: None,
             database_url: DatabaseUrl::default(),
+            database_migrate_url: None,
+            database_require_restricted_role: false,
             victoriametrics_url: "http://localhost:8428".into(),
             victorialogs_url: "http://localhost:9428".into(),
             storage_tls_dir: None,
@@ -1652,6 +1663,11 @@ impl LoadConfig for ServerConfig {
             &mut self.api_session_idle_timeout,
         )?;
         env.set("database_url", &mut self.database_url)?;
+        env.set_opt("database_migrate_url", &mut self.database_migrate_url)?;
+        env.set(
+            "database_require_restricted_role",
+            &mut self.database_require_restricted_role,
+        )?;
         env.set("victoriametrics_url", &mut self.victoriametrics_url)?;
         env.set("victorialogs_url", &mut self.victorialogs_url)?;
         env.set("data_dir", &mut self.data_dir)?;
@@ -1745,11 +1761,19 @@ impl LoadConfig for ServerConfig {
             "api_session_idle_timeout",
             self.api_session_idle_timeout.unwrap_or(1),
         )?;
-        let db = self.database_url.expose();
-        check.required("database_url", db)?;
-        // The value is never echoed: it may hold a password.
-        if !(db.starts_with("postgres://") || db.starts_with("postgresql://")) {
-            return Err(check.fail("database_url", "must start with postgres://"));
+        check.required("database_url", self.database_url.expose())?;
+        let urls = [
+            ("database_url", Some(&self.database_url)),
+            ("database_migrate_url", self.database_migrate_url.as_ref()),
+        ];
+        for (key, url) in urls {
+            let Some(url) = url.map(DatabaseUrl::expose) else {
+                continue;
+            };
+            // The value is never echoed: it may hold a password.
+            if !(url.starts_with("postgres://") || url.starts_with("postgresql://")) {
+                return Err(check.fail(key, "must start with postgres://"));
+            }
         }
         check.http_url("victoriametrics_url", &self.victoriametrics_url)?;
         check.http_url("victorialogs_url", &self.victorialogs_url)?;

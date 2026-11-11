@@ -1710,6 +1710,7 @@ dependencies = [
  "monitorflow-sensors",
  "monitorflow-server-ee",
  "pem",
+ "percent-encoding",
  "prost",
  "rcgen",
  "regex",

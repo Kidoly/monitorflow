@@ -3,10 +3,13 @@
 use std::str::FromStr;
 use std::time::Duration;
 
-use monitorflow_common::config::DatabaseUrl;
+use monitorflow_common::config::{DatabaseUrl, ServerConfig};
 use monitorflow_common::tls::{PeerIdentity, PeerRole};
 use sqlx::migrate::{MigrateError, Migrator};
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
+use sqlx::{ConnectOptions, Connection};
+
+pub mod roles;
 
 /// Migrations embedded at compile time from `crates/server/migrations`.
 pub static MIGRATOR: Migrator = sqlx::migrate!();
@@ -27,6 +30,10 @@ pub enum DbError {
     Migrate(#[from] MigrateError),
     #[error("database query failed: {0}")]
     Query(#[from] sqlx::Error),
+    #[error("database schema: {0}")]
+    Schema(String),
+    #[error("database role: {0}")]
+    Role(String),
 }
 
 /// Parses `url` into connection options without echoing it in errors.
@@ -56,6 +63,63 @@ pub async fn migrate(pool: &PgPool) -> Result<(), DbError> {
     MIGRATOR.run(pool).await?;
     tracing::info!("database migrations applied");
     Ok(())
+}
+
+/// As the owner role of `owner_url` (ADR-0109): applies pending migrations,
+/// then creates the role of `runtime_url` if needed and gives it its rights.
+/// Uses one connection, closed before returning.
+pub async fn migrate_as_owner(
+    owner_url: &DatabaseUrl,
+    runtime_url: &DatabaseUrl,
+) -> Result<(), DbError> {
+    let (name, password) = roles::credentials(runtime_url)?;
+    let mut owner = connect_options(owner_url)?
+        .connect()
+        .await
+        .map_err(DbError::Connect)?;
+    MIGRATOR.run(&mut owner).await?;
+    tracing::info!("database migrations applied");
+    roles::ensure_runtime_role(&mut owner, &name, &password).await?;
+    owner.close().await?;
+    Ok(())
+}
+
+/// Opens the pool the server runs on, with the schema of this build
+/// (ADR-0109):
+///
+/// - with `database_migrate_url`, migrations run through it and the role of
+///   `database_url` gets its rights;
+/// - without it, a role that owns the schema migrates as before, with a
+///   warning when `warn`, or an error when
+///   `database_require_restricted_role`: it can rewrite the audit log;
+/// - a role that owns nothing only checks that the migrations are there.
+pub async fn open(config: &ServerConfig, warn: bool) -> Result<PgPool, DbError> {
+    if let Some(owner_url) = &config.database_migrate_url {
+        migrate_as_owner(owner_url, &config.database_url).await?;
+        return connect(&config.database_url).await;
+    }
+    let pool = connect(&config.database_url).await?;
+    let status = roles::status(&pool).await?;
+    if !status.privileged() {
+        roles::verify_schema(&pool).await?;
+        return Ok(pool);
+    }
+    if config.database_require_restricted_role {
+        return Err(DbError::Role(format!(
+            "the role {:?} of database_url is a superuser or owns the tables, and database_require_restricted_role is set; give the server its own role (docs/deploy-server.md)",
+            status.name
+        )));
+    }
+    if warn {
+        tracing::warn!(
+            role = %status.name,
+            superuser = status.superuser,
+            "the server runs on a database role that can switch off the append-only protection of the audit log; \
+             set database_migrate_url to this role and database_url to a role of its own (ADR-0109)"
+        );
+    }
+    migrate(&pool).await?;
+    Ok(pool)
 }
 
 /// Site of the latest enrollment token consumed by the agent `$1`: where
