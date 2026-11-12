@@ -158,12 +158,17 @@ impl Forwarder {
                 }
                 Err(ended)
             }
-            Ok(Ok(response)) => Ok(Upstream::start(
-                agent_id,
-                up_tx,
-                response.into_inner(),
-                down,
-            )),
+            Ok(Ok(response)) => {
+                if let Err(error) = self.buffer.confirm(&buffer::lane_key(via)).await {
+                    tracing::error!(%agent_id, %error, "cannot record that the upstream accepted the agent");
+                }
+                Ok(Upstream::start(
+                    agent_id,
+                    up_tx,
+                    response.into_inner(),
+                    down,
+                ))
+            }
         }
     }
 

@@ -97,7 +97,19 @@ impl Buffer {
         Ok(bytes.as_deref().and_then(decode_hello))
     }
 
-    /// Appends `envelope`; false if it was too large to keep.
+    /// Records that the upstream accepted the agent through this relay
+    /// (ADR-0119).
+    pub async fn confirm(&self, agent: &str) -> io::Result<()> {
+        let agent = agent.to_owned();
+        self.blocking(move |s| s.confirm(&agent)).await
+    }
+
+    pub async fn is_confirmed(&self, agent: &str) -> io::Result<bool> {
+        let agent = agent.to_owned();
+        self.blocking(move |s| Ok(s.is_confirmed(&agent))).await
+    }
+
+    /// Appends `envelope`; false if it was dropped for lack of room.
     pub async fn append(&self, agent: &str, envelope: &Envelope) -> io::Result<bool> {
         let (agent, bytes) = (agent.to_owned(), envelope.encode_to_vec());
         let sync = self.fsync_interval.is_zero();
