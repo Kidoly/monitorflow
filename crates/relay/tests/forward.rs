@@ -185,7 +185,11 @@ async fn revoked_agents_are_refused_with_the_upstream_crl() {
     let (revoked, serial) = pki.issue(PeerRole::Agent, "web-09", &[]);
     upstream
         .crl
-        .revoke(serial, RevocationReason::KeyCompromise)
+        .revoke(
+            serial,
+            RevocationReason::KeyCompromise,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(86_400),
+        )
         .await
         .unwrap();
     // The relay fetches the CRL at start.

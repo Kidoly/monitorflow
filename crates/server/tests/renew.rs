@@ -296,7 +296,7 @@ db_tests! {
             .execute(&pool).await.unwrap();
         refused(renewer.renew(&other.presented, &fresh_csr()).await, "revoked");
         let third = pki.enroll(&pool, PeerRole::Agent, "web-03").await;
-        pki.ca.revoke(&third.presented.serial, RevocationReason::KeyCompromise).unwrap();
+        pki.ca.revoke(&third.presented.serial, RevocationReason::KeyCompromise, std::time::SystemTime::now() + std::time::Duration::from_secs(86_400)).unwrap();
         refused(renewer.renew(&third.presented, &fresh_csr()).await, "revoked");
 
         // Two certificates from the relay, one from each enrollment.

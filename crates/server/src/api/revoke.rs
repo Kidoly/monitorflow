@@ -10,6 +10,8 @@ use axum::extract::{Path, State};
 use axum::Json;
 use chrono::{DateTime, Utc};
 use monitorflow_common::tls::PeerRole;
+use std::time::SystemTime;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{Postgres, Transaction};
@@ -104,7 +106,7 @@ async fn revoke(
     .await?
     .ok_or_else(|| ApiError::Conflict(format!("the {kind} is already revoked")))?;
     let serials = revoke_certificates(&mut tx, role, &peer_id, reason).await?;
-    let shown: Vec<String> = serials.iter().map(Serial::to_string).collect();
+    let shown: Vec<String> = serials.iter().map(|(s, _)| s.to_string()).collect();
     // A token from before the removal must not bring the peer back.
     sqlx::query(
         "DELETE FROM enrollment_tokens WHERE role = $1 AND peer_id = $2 AND used_at IS NULL",
@@ -145,8 +147,8 @@ async fn revoke(
     .await?;
     // In the CA before the commit: a failure here rolls the rows back, and
     // a failed commit after it leaves the safe side, revoked in the CRL.
-    for serial in serials {
-        crl.revoke(serial, reason)
+    for (serial, not_after) in serials {
+        crl.revoke(serial, reason, not_after)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
     }
@@ -162,26 +164,29 @@ async fn revoke(
 }
 
 /// Marks every unexpired, unrevoked certificate of the peer revoked in
-/// `tx` and returns their serials, for the caller to pass to the CA before
-/// committing. Expired certificates are refused anyway and stay out of the
+/// `tx` and returns their serials and expiry, for the caller to pass to the
+/// CA before committing. Expired certificates are refused anyway and stay out of the
 /// CRL.
 pub(super) async fn revoke_certificates(
     tx: &mut Transaction<'_, Postgres>,
     role: PeerRole,
     peer_id: &str,
     reason: RevocationReason,
-) -> Result<Vec<Serial>, sqlx::Error> {
-    let serials: Vec<Vec<u8>> = sqlx::query_scalar(
+) -> Result<Vec<(Serial, SystemTime)>, sqlx::Error> {
+    let rows: Vec<(Vec<u8>, DateTime<Utc>)> = sqlx::query_as(
         "UPDATE certificates SET revoked_at = now(), revocation_reason = $3
          WHERE peer_role = $1 AND peer_id = $2 AND revoked_at IS NULL AND not_after > now()
-         RETURNING serial",
+         RETURNING serial, not_after",
     )
     .bind(role.as_str())
     .bind(peer_id)
     .bind(reason_name(reason))
     .fetch_all(&mut **tx)
     .await?;
-    Ok(serials.iter().map(|s| Serial::from_bytes(s)).collect())
+    Ok(rows
+        .iter()
+        .map(|(serial, not_after)| (Serial::from_bytes(serial), (*not_after).into()))
+        .collect())
 }
 
 /// `certificates.revocation_reason`, as the API spells it.
