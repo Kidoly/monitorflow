@@ -82,6 +82,9 @@ impl From<RenewError> for Status {
 pub struct PresentedCert {
     pub identity: PeerIdentity,
     pub serial: Serial,
+    /// SHA-256 of the certificate's DER, which must match the one recorded
+    /// with its serial (ADR-0121).
+    pub fingerprint: monitorflow_common::tls::Fingerprint,
     pub not_after: SystemTime,
     /// DNS names and IP addresses of a relay, copied into its next
     /// certificate unless an administrator confirmed others (ADR-0066).
@@ -110,6 +113,7 @@ impl PresentedCert {
         Ok(Self {
             identity,
             serial: Serial::from_bytes(cert.raw_serial()),
+            fingerprint: monitorflow_common::tls::fingerprint(der),
             not_after: UNIX_EPOCH + Duration::from_secs(not_after),
             server_names,
         })
@@ -342,24 +346,35 @@ impl Renewer {
             .await?;
         let recorded: Option<Recorded> = sqlx::query_as(
             "SELECT peer_role, peer_id, revoked_at IS NOT NULL, not_after <= now(),
-                    issuer_ca, trusted_cas
+                    issuer_ca, trusted_cas, cert_sha256
              FROM certificates WHERE serial = $1",
         )
         .bind(presented.serial.as_bytes())
         .fetch_optional(&mut *tx)
         .await?;
-        let (issuer, trusted) = match recorded {
+        let (issuer, trusted, recorded_sha256) = match recorded {
             None => return refused("the presented certificate was not issued by this server"),
             Some((r, i, ..)) if r != role.as_str() || i != id => {
                 return refused("the presented certificate is recorded for another peer")
             }
             Some((_, _, true, ..)) => return refused("the presented certificate is revoked"),
             Some((_, _, _, true, ..)) => return refused("the presented certificate has expired"),
-            Some((_, _, _, _, issuer, trusted)) => (issuer, trusted),
+            Some((_, _, _, _, issuer, trusted, sha256)) => (issuer, trusted, sha256),
         };
+        let trust = self.ca.trust();
+        // A serial is public: the certificate itself must be the one the
+        // CA issued with it, or a key of a CA being distrusted could mint
+        // a copy and renew into the new CA (ADR-0121).
+        match fingerprint_check(
+            recorded_sha256.as_deref(),
+            &presented.fingerprint,
+            trust.emergency,
+        ) {
+            Ok(()) => {}
+            Err(why) => return refused(why),
+        }
         // Rows from before ADR-0088 get their issuer at start; until then
         // they come from the first CA, the oldest one still trusted.
-        let trust = self.ca.trust();
         let oldest = trust.bundle.last().copied().unwrap_or(trust.issuer);
         let issuer = issuer.as_deref().and_then(from_hex).unwrap_or(oldest);
         let trusted: Vec<_> = match trusted {
@@ -425,7 +440,8 @@ impl Renewer {
     }
 }
 
-/// `peer_role`, `peer_id`, revoked, expired, `issuer_ca`, `trusted_cas`.
+/// `peer_role`, `peer_id`, revoked, expired, `issuer_ca`, `trusted_cas`,
+/// `cert_sha256`.
 type Recorded = (
     String,
     String,
@@ -433,7 +449,28 @@ type Recorded = (
     bool,
     Option<String>,
     Option<Vec<String>>,
+    Option<String>,
 );
+
+/// Whether the presented certificate, of SHA-256 `presented`, is the one
+/// recorded as `recorded` with its serial (ADR-0121). Rows from before the
+/// column have none and pass on their serial, except during an emergency
+/// change of certificate authority, when the old CA's key may be in other
+/// hands: such a peer enrolls again.
+fn fingerprint_check(
+    recorded: Option<&str>,
+    presented: &monitorflow_common::tls::Fingerprint,
+    emergency: bool,
+) -> Result<(), &'static str> {
+    match recorded.map(from_hex) {
+        Some(Some(recorded)) if &recorded == presented => Ok(()),
+        Some(_) => Err("the presented certificate is not the one recorded with its serial"),
+        None if emergency => Err(
+            "the presented certificate predates certificate fingerprints and cannot renew during an emergency change of certificate authority; enroll this peer again",
+        ),
+        None => Ok(()),
+    }
+}
 
 /// Issues a certificate for `peer` (in `spawn_blocking`) with the CAs it
 /// goes with. A change of certificate authority in between fails the call,
@@ -484,10 +521,13 @@ pub(crate) async fn record_certificate(
 ) -> Result<(), sqlx::Error> {
     let trusted: Option<Vec<String>> =
         accepts_ca_bundle.then(|| trust.bundle.iter().map(hex).collect());
+    let sha256 = monitorflow_common::ca_bundle::leaf_fingerprint(&cert.cert_pem)
+        .ok_or_else(|| sqlx::Error::Protocol("the issued certificate does not parse".into()))?;
     sqlx::query(
         "INSERT INTO certificates
-             (serial, peer_role, peer_id, not_before, not_after, issuer_ca, trusted_cas)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             (serial, peer_role, peer_id, not_before, not_after, issuer_ca, trusted_cas,
+              cert_sha256)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(cert.serial.as_bytes())
     .bind(peer.role().as_str())
@@ -496,6 +536,7 @@ pub(crate) async fn record_certificate(
     .bind(DateTime::<Utc>::from(cert.not_after))
     .bind(hex(&cert.issuer))
     .bind(trusted)
+    .bind(hex(&sha256))
     .execute(&mut **tx)
     .await
     .map(drop)
@@ -668,7 +709,28 @@ mod tests {
         assert_eq!(presented.identity, id);
         assert_eq!(presented.serial, issued.serial);
         assert_eq!(presented.not_after, issued.not_after);
+        assert_eq!(
+            Some(presented.fingerprint),
+            monitorflow_common::ca_bundle::leaf_fingerprint(&issued.cert_pem)
+        );
         assert!(PresentedCert::from_der(&CertificateDer::from(vec![1, 2, 3])).is_err());
+    }
+
+    #[test]
+    fn the_recorded_fingerprint_must_match() {
+        let (good, other) = ([7u8; 32], [8u8; 32]);
+        let recorded = hex(&good);
+        for emergency in [false, true] {
+            assert_eq!(fingerprint_check(Some(&recorded), &good, emergency), Ok(()));
+            assert!(fingerprint_check(Some(&recorded), &other, emergency).is_err());
+            assert!(fingerprint_check(Some("not hex"), &good, emergency).is_err());
+        }
+        // Rows from before the column renew on their serial, except
+        // during an emergency change.
+        assert_eq!(fingerprint_check(None, &good, false), Ok(()));
+        assert!(fingerprint_check(None, &good, true)
+            .unwrap_err()
+            .contains("enroll this peer again"));
     }
 
     #[test]

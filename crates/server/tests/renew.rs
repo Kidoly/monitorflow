@@ -413,4 +413,60 @@ db_tests! {
         let status = client.renew(RenewRequest { csr_pem: "x".repeat(32 * 1024), names_only: false, ..Default::default() }).await.unwrap_err();
         assert_eq!(status.code(), Code::OutOfRange, "{status:?}");
     }
+
+    #[sqlx::test]
+    async fn a_copy_with_a_recorded_serial_is_refused(pool: PgPool) {
+        let pki = Pki::new();
+        let agent = pki.enroll(&pool, PeerRole::Agent, "web-01").await;
+        // Someone holding a CA key (one an emergency change distrusts, say)
+        // mints the identity and the public serial of a real certificate
+        // with a key of their own (ADR-0121).
+        let mut params = CertificateParams::default();
+        params.serial_number = Some(agent.presented.serial.as_bytes().to_vec().into());
+        params.subject_alt_names = vec![SanType::URI("monitorflow://agent/web-01".try_into().unwrap())];
+        let forged = params.self_signed(&KeyPair::generate().unwrap()).unwrap();
+        let forged = PresentedCert::from_der(forged.der()).unwrap();
+        assert_eq!(forged.serial, agent.presented.serial);
+        assert_eq!(forged.identity, agent.presented.identity);
+        assert_ne!(forged.fingerprint, agent.presented.fingerprint);
+
+        let renewer = pki.renewer(&pool);
+        refused(renewer.renew(&forged, &fresh_csr()).await, "not the one recorded with its serial");
+        assert_eq!(count(&pool, "SELECT count(*) FROM certificates").await, 1);
+        // The real certificate still renews, and its successor is recorded
+        // with its own fingerprint.
+        let renewed = renewer.renew(&agent.presented, &fresh_csr()).await.unwrap();
+        let recorded: Option<String> = sqlx::query_scalar("SELECT cert_sha256 FROM certificates WHERE serial = $1")
+            .bind(renewed.cert.serial.as_bytes())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(recorded, Some(tls::fingerprint_hex(&presented(&renewed.cert.cert_pem).fingerprint)));
+    }
+
+    #[sqlx::test]
+    async fn rows_without_a_fingerprint_renew_except_in_an_emergency(pool: PgPool) {
+        let pki = Pki::new();
+        let old = pki.enroll(&pool, PeerRole::Agent, "web-01").await;
+        let current = pki.enroll(&pool, PeerRole::Agent, "web-02").await;
+        // As recorded before the column existed.
+        sqlx::query("UPDATE certificates SET cert_sha256 = NULL WHERE peer_id = 'web-01'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let renewer = pki.renewer(&pool);
+        let renewed = renewer.renew(&old.presented, &fresh_csr()).await.unwrap();
+        let old_again = presented(&renewed.cert.cert_pem);
+        sqlx::query("UPDATE certificates SET cert_sha256 = NULL WHERE peer_id = 'web-01'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        pki.ca.start_rotation(true).unwrap();
+        refused(renewer.renew(&old_again, &fresh_csr()).await, "enroll this peer again");
+        // A peer whose certificate has its fingerprint moves to the new CA.
+        let moved = renewer.renew(&current.presented, &fresh_csr()).await.unwrap();
+        assert_eq!(moved.cert.issuer, moved.trust.issuer);
+    }
+
 }
