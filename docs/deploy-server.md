@@ -24,6 +24,7 @@ The rest of this page is reference. The server runs with Docker Compose: the ser
 - Inbound ports: 443 and 80 for browsers, 7443 and 7445 for agents and relays (7445 for their first connection), 7480 (package mirrors) for servers that update from the central server. The installer stops and names a port that is taken.
 - For updates from the web interface: outbound HTTPS to `github.com` and `ghcr.io`, or to your own copy of the releases (see [Offline servers](#offline-servers)), and disk for the backups taken before each update.
 - The `updater` service mounts the Docker socket, `/var/run/docker.sock`, which gives it root on the machine. It has no listener and only installs releases signed by the project's key. With rootless Docker, set `DOCKER_SOCKET` in `deploy/.env` to your socket.
+- OpenSSL 3, which the installer needs to check the release signature: Debian 12, Ubuntu 22.04, RHEL 9 and later have it[^0111].
 
 The installer installs Docker with [Docker's official script](https://get.docker.com), which covers Debian, Ubuntu, Fedora, RHEL, CentOS and Rocky. On another distribution, install Docker Engine 23 or later and its compose plugin first, then run the installer.
 
@@ -35,7 +36,7 @@ Everything lives in `/opt/monitorflow/deploy`: the compose file, and `.env` with
 - **Run it again at any time.** Settings and secrets stay, the stack comes back up, and a newer release is installed through the updater, with a backup and a rollback. The compose file follows the release. After editing `.env`, run it again too.
 - **Moving to a new machine:** `curl … | sudo sh -s -- --restore monitorflow-backup-….tar.gz` installs, then restores the backup. Give the old server's name, so agents find it.
 - **Removing it:** `curl … | sudo sh -s -- --uninstall` removes the containers and, on a terminal, asks whether to delete the data. Without a terminal, or if you press Enter, the data stays in Docker volumes and `.env` stays too, and running the installer brings all of it back. `--uninstall --purge` deletes them without asking. Docker stays installed.
-- It checks `SHA256SUMS.sig` against the release keys it carries, with OpenSSL 3, and so the compose files and the image digests of `images.json`[^0056]; a machine without OpenSSL 3 gets a warning and checks the checksums only. `MF_VERSION=0.2.0` installs a given release, and `MF_DOWNLOAD_URL` a copy of the release files on your own https server, which then also serves updates.
+- It checks `SHA256SUMS.sig` against the release keys it carries, with OpenSSL 3, and so the compose files and the image digests of `images.json`[^0056]; on a machine without OpenSSL 3 it stops before installing anything[^0111]. `MF_VERSION=0.2.0` installs a given release, and `MF_DOWNLOAD_URL` a copy of the release files on your own https server, which then also serves updates.
 
 On the first start the server creates its CA and its own certificate for `SERVER_NAMES` in the `serverdata` volume, and `db-certs` the certificates of the database link in `dbcerts`. `storage-certs` has that CA issue the certificate of VictoriaMetrics and VictoriaLogs, and creates their password, in `storagetls`; the server renews the certificate by itself[^0087]. A name added to `SERVER_NAMES` later gets a new server certificate at the next start.
 
@@ -237,3 +238,4 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 [^0071]: [ADR-0071: First-run setup in the browser](adr/0071-first-run-setup.md)
 [^0088]: [ADR-0088: Changing the certificate authority](adr/0088-changing-the-certificate-authority.md)
 [^0109]: [ADR-0109: The server runs on a database role that owns nothing](adr/0109-database-roles.md)
+[^0111]: [ADR-0111: The server installer always checks the release signature](adr/0111-server-installer-requires-signature.md)
