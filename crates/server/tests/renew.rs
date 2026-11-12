@@ -12,6 +12,7 @@ use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::certificate_service_client::CertificateServiceClient;
 use monitorflow_common::proto::v1::RenewRequest;
 use monitorflow_common::tls::{self, Identity, PeerIdentity, PeerRole};
+use monitorflow_common::via::Via;
 use monitorflow_server::ca::{CaOptions, CertificateAuthority, RevocationReason, ServerName};
 use monitorflow_server::enroll::token::{self, Creator, TokenRequest};
 use monitorflow_server::enroll::{self, Enroller, FailureLimiter};
@@ -69,12 +70,36 @@ impl Pki {
             .await
     }
 
+    /// Enrolls a relay under `parent` (ADR-0028).
+    async fn enroll_child(&self, pool: &PgPool, peer_id: &str, parent: &str) -> Peer {
+        self.enroll_full(
+            pool,
+            PeerRole::Relay,
+            peer_id,
+            Vec::new(),
+            Some(parent.into()),
+        )
+        .await
+    }
+
     async fn enroll_with_names(
         &self,
         pool: &PgPool,
         role: PeerRole,
         peer_id: &str,
         server_names: Vec<String>,
+    ) -> Peer {
+        self.enroll_full(pool, role, peer_id, server_names, None)
+            .await
+    }
+
+    async fn enroll_full(
+        &self,
+        pool: &PgPool,
+        role: PeerRole,
+        peer_id: &str,
+        server_names: Vec<String>,
+        parent_relay: Option<String>,
     ) -> Peer {
         let site_id = token::site_id(pool, "paris", true).await.unwrap().unwrap();
         let request = TokenRequest {
@@ -84,7 +109,7 @@ impl Pki {
             ttl: token::DEFAULT_TTL,
             creator: Creator::Cli,
             server_names,
-            parent_relay: None,
+            parent_relay,
         };
         let created = token::create(pool, enroll::ca_fingerprint(&self.ca), &request)
             .await
@@ -151,7 +176,71 @@ fn write_identity(dir: &Path, name: &str, ca: &str, cert: &str, key: &str) -> Id
     Identity::load(&paths).unwrap()
 }
 
+/// `renewed_from`, `relay_path` and `relay_serial` of a certificate.
+type Source = (Option<Vec<u8>>, Option<Vec<String>>, Option<Vec<u8>>);
+
+async fn source(pool: &PgPool, serial: &monitorflow_server::ca::Serial) -> Source {
+    sqlx::query_as(
+        "SELECT renewed_from, relay_path, relay_serial FROM certificates WHERE serial = $1",
+    )
+    .bind(serial.as_bytes())
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
 db_tests! {
+    #[sqlx::test]
+    async fn renewals_record_where_they_came_from(pool: PgPool) {
+        let pki = Pki::new();
+        let parent = pki.enroll(&pool, PeerRole::Relay, "relay-1").await;
+        let child = pki.enroll_child(&pool, "relay-2", "relay-1").await;
+        let agent = pki.enroll(&pool, PeerRole::Agent, "web-01").await;
+        let renewer = pki.renewer(&pool);
+        let serial = |p: &Peer| p.presented.serial.as_bytes().to_vec();
+        assert_eq!(source(&pool, &agent.presented.serial).await, (None, None, None));
+
+        let direct = renewer.renew(&agent.presented, &fresh_csr()).await.unwrap();
+        assert_eq!(source(&pool, &direct.cert.serial).await, (Some(serial(&agent)), None, None));
+
+        let der = |p: &Peer| CertificateDer::from(pem::parse(&p.cert_pem).unwrap().into_contents());
+        let forwarded = renewer
+            .renew_forwarded(&parent.presented, None, &der(&agent), &fresh_csr())
+            .await
+            .unwrap();
+        assert_eq!(
+            source(&pool, &forwarded.cert.serial).await,
+            (Some(serial(&agent)), Some(vec!["relay-1".into()]), Some(serial(&parent))),
+        );
+
+        // agent -> relay-2 -> relay-1 -> server.
+        let via = Via::extend(Some(Via::origin(agent.presented.identity.clone())), &child.presented.identity).unwrap();
+        let chained = renewer
+            .renew_forwarded(&parent.presented, Some(&via), &der(&agent), &fresh_csr())
+            .await
+            .unwrap();
+        assert_eq!(
+            source(&pool, &chained.cert.serial).await,
+            (Some(serial(&agent)), Some(vec!["relay-1".into(), "relay-2".into()]), Some(serial(&parent))),
+        );
+        // A child relay renewed by its parent.
+        let relay = renewer
+            .renew_forwarded(&parent.presented, None, &der(&child), &fresh_csr())
+            .await
+            .unwrap();
+        assert_eq!(
+            source(&pool, &relay.cert.serial).await,
+            (Some(serial(&child)), Some(vec!["relay-1".into()]), Some(serial(&parent))),
+        );
+        let audit: Vec<Option<String>> = sqlx::query_scalar(
+            "SELECT details->>'via_relay' FROM audit_log WHERE action = 'peer.renew' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(audit, [None, Some("relay-1".into()), Some("relay-2".into()), Some("relay-1".into())]);
+    }
+
     #[sqlx::test]
     async fn renewal_records_the_certificate_and_keeps_the_old_one(pool: PgPool) {
         let pki = Pki::new();
