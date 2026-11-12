@@ -29,11 +29,13 @@ use serde_json::json;
 use sqlx::PgExecutor;
 use uuid::Uuid;
 
+use super::access::Scope;
 use super::audit::{self, Event};
 use super::auth::{self, CurrentUser};
 use super::dashboard_data::{self, DataRequest, DataResponse, Within};
-use super::dashboards::{may_link, may_see, Row, Sharing, Spec, MAX_NAME, SELECT};
+use super::dashboards::{may_link, may_see, named, Row, Servers, Sharing, Spec, MAX_NAME, SELECT};
 use super::one_time::OneTimeToken;
+use super::roles::Role;
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiSettings, ApiState};
 use crate::enroll::limiter::{FailureLimiter, UNKNOWN_SOURCE};
@@ -370,6 +372,56 @@ async fn linkable(state: &ApiState, user: &CurrentUser, id: Uuid) -> Result<Row,
     Ok(row)
 }
 
+/// Refuses an "Only me" dashboard whose panels reach a site the maker
+/// does not administer. Its screen reads only what they administer
+/// ([`CurrentUser::administering`]), so it would otherwise show less than
+/// its page without saying so.
+async fn check_personal_reach(
+    state: &ApiState,
+    user: &CurrentUser,
+    name: &str,
+    spec: &Spec,
+) -> Result<(), ApiError> {
+    let administered = user.sites_with(Role::Administrator);
+    if administered == Scope::All {
+        return Ok(());
+    }
+    let (mut reached, customers, servers) = named(spec);
+    let (all, readable) = user.readable_sites().bind();
+    let server_sites: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT site_id FROM servers WHERE id = ANY($1) AND ($2 OR site_id = ANY($3))",
+    )
+    .bind(&servers)
+    .bind(all)
+    .bind(&readable)
+    .fetch_all(&state.pool)
+    .await?;
+    let customer_sites: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM sites WHERE customer_id = ANY($1) AND ($2 OR id = ANY($3))",
+    )
+    .bind(&customers)
+    .bind(all)
+    .bind(&readable)
+    .fetch_all(&state.pool)
+    .await?;
+    reached.extend(server_sites);
+    reached.extend(customer_sites);
+    let every_server = spec.panels.iter().any(|p| p.servers == Servers::All);
+    if every_server {
+        reached.extend(&readable);
+    }
+    // Every server of a user who reads everything is more than a
+    // non-global administrator administers.
+    let ok = !(every_server && all) && reached.iter().all(|site| administered.contains(*site));
+    if ok {
+        Ok(())
+    } else {
+        Err(ApiError::Invalid(format!(
+            "A display link shows only what you administer, and \"{name}\" also shows servers you can only read. Share the dashboard with a site or customer, or change its panels to servers you administer."
+        )))
+    }
+}
+
 /// `GET /api/dashboards/{id}/display-links`: the links that show this
 /// dashboard, newest first, for those who may link it.
 pub async fn list(
@@ -459,7 +511,11 @@ pub async fn create(
         )));
     }
     for id in ids {
-        linkable(&state, &user, *id).await?;
+        let row = linkable(&state, &user, *id).await?;
+        if row.sharing() == Sharing::Personal {
+            let spec = Spec::parse(row.spec.clone()).map_err(ApiError::Internal)?;
+            check_personal_reach(&state, &user, &row.name, &spec).await?;
+        }
     }
 
     let token = OneTimeToken::generate();
@@ -731,12 +787,18 @@ pub async fn data(
         .into_iter()
         .find(|(row, _)| row.id == request.dashboard_id)
         .ok_or(ApiError::NotFound)?;
+    // An "Only me" dashboard has no place to keep it within: its screen
+    // reads as its maker narrowed to what they administer.
+    let reader = match row.sharing() {
+        Sharing::Personal => maker.administering(),
+        Sharing::Site { .. } | Sharing::Customer { .. } => maker,
+    };
     let data = DataRequest {
         range: spec.range,
         within: within(row.sharing()),
         panels: spec.panels,
     };
-    let answer = dashboard_data::compute(&state, &maker, &data).await?;
+    let answer = dashboard_data::compute(&state, &reader, &data).await?;
     touch(&state.pool, link.id).await?;
     Ok(Json(answer))
 }
