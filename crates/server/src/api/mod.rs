@@ -187,7 +187,7 @@
 //! | POST | `/api/notifications/channels/{id}/test` | administrator of what it covers | sends a test now; 200 [`notifications::TestResult`] `{"ok", "error"}`; 404 for a channel the user does not manage |
 //! | GET | `/api/integrations` | any administrator | [`integrations::EndpointList`]: the integration endpoints of what the user administers, without secrets, and every event one can ask for (ADR-0102) |
 //! | POST | `/api/integrations` | administrator of what it covers | body [`integrations::EndpointRequest`]; 201 [`integrations::WithSecret`], the only time the secret is returned; `allow_private` needs a global administrator (403); audited |
-//! | PUT | `/api/integrations/{id}` | administrator of what it covers | body [`integrations::EndpointRequest`]; 200 [`integrations::EndpointView`]; 404 for an endpoint the user does not manage, 403 for a coverage they do not; audited |
+//! | PUT | `/api/integrations/{id}` | administrator of what it covers | body [`integrations::EndpointRequest`]; 200 [`integrations::Updated`], with a new secret, this once, when the URL changed (the old one stops working); 404 for an endpoint the user does not manage, 403 for a coverage they do not; audited |
 //! | DELETE | `/api/integrations/{id}` | administrator of what it covers | 204; audited |
 //! | POST | `/api/integrations/{id}/state` | administrator of what it covers | body [`integrations::StateRequest`] `{"state": "on" or "paused"}`; 200 [`integrations::EndpointView`]; audited |
 //! | POST | `/api/integrations/{id}/secret` | administrator of what it covers | a new secret; 200 [`integrations::WithSecret`]; audited |

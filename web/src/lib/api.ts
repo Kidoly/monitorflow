@@ -2211,6 +2211,12 @@ export interface IntegrationWithSecret {
   secret: string;
 }
 
+/** Body of `PUT /api/integrations/{id}`: a new secret, shown once, only when the URL changed. */
+export interface IntegrationUpdated {
+  endpoint: IntegrationEndpoint;
+  secret: string | null;
+}
+
 export interface IntegrationTestResult {
   ok: boolean;
   /** The receiver's HTTP status, when it answered. */
@@ -2971,8 +2977,9 @@ export const api = {
   createIntegration: (body: IntegrationRequest) =>
     request<IntegrationWithSecret>("/api/integrations", { method: "POST", body }),
 
+  /** A new URL gets a new signing secret; the answer carries it, the only time it is shown. */
   updateIntegration: (id: string, body: IntegrationRequest) =>
-    request<IntegrationEndpoint>(`/api/integrations/${encodeURIComponent(id)}`, { method: "PUT", body }),
+    request<IntegrationUpdated>(`/api/integrations/${encodeURIComponent(id)}`, { method: "PUT", body }),
 
   deleteIntegration: (id: string) =>
     request<void>(`/api/integrations/${encodeURIComponent(id)}`, { method: "DELETE" }),
