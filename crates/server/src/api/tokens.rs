@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 
+use super::public_address::PublicAddress;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -43,6 +44,10 @@ pub struct EnrollmentSettings {
     /// Ports peers reach the gRPC and enrollment listeners at.
     pub grpc_port: u16,
     pub enroll_port: u16,
+    /// Hosts of `victoriametrics_url` and `victorialogs_url`. The server
+    /// sends the stores' password to whatever certificate answers there,
+    /// so a relay cannot have them.
+    pub store_names: Vec<String>,
 }
 
 impl EnrollmentSettings {
@@ -57,7 +62,17 @@ impl EnrollmentSettings {
             enroll_port: config
                 .enroll_public_port
                 .unwrap_or(config.enroll_listen_addr.port()),
+            store_names: store_hosts(&[&config.victoriametrics_url, &config.victorialogs_url]),
         }
+    }
+
+    /// The names a relay cannot have: those agents know the server by at
+    /// `address`, and the stores'.
+    pub fn central_names(&self, address: &PublicAddress) -> Vec<String> {
+        let mut names = address.names.clone();
+        names.push(address.address.clone());
+        names.extend(self.store_names.iter().cloned());
+        names
     }
 
     /// The first server name, the one the certificate is issued for
@@ -241,6 +256,28 @@ async fn fetch(state: &ApiState, id: Uuid) -> Result<TokenView, ApiError> {
     .ok_or(ApiError::NotFound)
 }
 
+/// The hosts of `urls`, lowercase, IPv6 without brackets. A URL that does
+/// not parse names nothing: the configuration already refused it.
+fn store_hosts(urls: &[&str]) -> Vec<String> {
+    let mut hosts = Vec::new();
+    for url in urls {
+        let Some(host) = reqwest::Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned))
+        else {
+            continue;
+        };
+        let host = host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_ascii_lowercase();
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    hosts
+}
+
 /// `POST /api/tokens`: administrators of the site's customer. A site the
 /// user does not read is 404.
 pub async fn create(
@@ -265,9 +302,8 @@ pub async fn create(
     let ttl = request
         .ttl_s
         .map_or(token::DEFAULT_TTL, Duration::from_secs);
-    // What agents may know the server by: a relay token cannot name them.
-    let mut central_names = address.names.clone();
-    central_names.push(address.address.clone());
+    // What agents know the server by, and the stores: a relay token cannot name them.
+    let central_names = settings.central_names(&address);
     let created = token::create_checked(
         &state.pool,
         state.ca_pin(settings),
@@ -461,6 +497,22 @@ mod tests {
             Ok(TokenState::Used)
         );
         assert!(TokenState::try_from("revoked".to_owned()).is_err());
+    }
+
+    #[test]
+    fn the_stores_hosts_are_central_names() {
+        let mut config = ServerConfig::default();
+        config.victoriametrics_url = "https://VictoriaMetrics:8428".into();
+        config.victorialogs_url = "https://[fd00::5]:9428/".into();
+        let settings = EnrollmentSettings::from_config(&config, [0; 32]);
+        assert_eq!(settings.store_names, ["victoriametrics", "fd00::5"]);
+        config.victorialogs_url = "http://victoriametrics:9428".into();
+        let settings = EnrollmentSettings::from_config(&config, [0; 32]);
+        assert_eq!(settings.store_names, ["victoriametrics"]);
+        let address = super::super::public_address::view(&settings, Some("mf.example"));
+        let mut expected = address.names.clone();
+        expected.extend(["mf.example".to_owned(), "victoriametrics".to_owned()]);
+        assert_eq!(settings.central_names(&address), expected);
     }
 
     #[test]

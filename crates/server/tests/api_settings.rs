@@ -50,6 +50,7 @@ async fn call(
             server_names: vec!["mf.example".into()],
             grpc_port: 7443,
             enroll_port: 7445,
+            store_names: Vec::new(),
         },
     );
     let mut request = Request::builder()
