@@ -407,6 +407,9 @@ async fn main() -> anyhow::Result<()> {
         )
         | None => {}
     }
+    // Before admission: an added central server without the first one's
+    // key must not take a place.
+    open_secrets(&config).await?;
     if config.additional_instance {
         admit_additional(&pool).await?;
     }
@@ -1178,6 +1181,21 @@ async fn storage_check_command(config: &ServerConfig) -> anyhow::Result<()> {
         }
     }
     anyhow::ensure!(!failed, "a store does not answer");
+    Ok(())
+}
+
+/// Loads `<data_dir>/secrets/keys` (ADR-0110), creating it on the first
+/// central server only: an added one must have the first one's key.
+async fn open_secrets(config: &ServerConfig) -> anyhow::Result<()> {
+    let (dir, create) = (config.data_dir.clone(), !config.additional_instance);
+    let keyring = tokio::task::spawn_blocking(move || {
+        monitorflow_server::secrets::Keyring::open_or_create(&dir, create)
+    })
+    .await?
+    .inspect_err(|error| tracing::error!(%error, "cannot load the secrets key"))
+    .context("loading the secrets key")?;
+    tracing::info!(keys = ?keyring.ids(), "secrets key loaded");
+    monitorflow_server::secrets::install(keyring)?;
     Ok(())
 }
 
