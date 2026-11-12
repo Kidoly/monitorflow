@@ -281,3 +281,34 @@ fn unsafe_agent_ids_and_stray_files_are_refused_or_ignored() {
     assert_eq!(store.pending(), [".."]);
     assert!(!dir.path().join("agent-..").join("hello.pb.tmp").exists());
 }
+
+#[test]
+fn path_lanes_have_their_own_directory_and_survive_a_restart() {
+    let dir = TempDir::new().unwrap();
+    let path = format!("{PATH_PREFIX}{}", "ab".repeat(32));
+    {
+        let mut store = Store::open(dir.path(), limits(1 << 20, 2)).unwrap();
+        store.set_hello(&path, b"relayed").unwrap();
+        store.append(&path, NOW, &record(0)).unwrap();
+        store.append("web-01", NOW, &record(1)).unwrap();
+        // Not 64 lowercase hex digits: an ID, or refused.
+        assert!(store.append("path-AB", NOW, &record(2)).is_ok());
+        assert!(dir.path().join("agent-path-AB").is_dir());
+        let long = format!("{PATH_PREFIX}{}", "g".repeat(64));
+        assert!(store.append(&long, NOW, &record(2)).is_err());
+        store.sync().unwrap();
+    }
+    assert!(dir.path().join(&path).join("hello.pb").is_file());
+    fs::create_dir(dir.path().join("path-nothex")).unwrap();
+    let mut store = Store::open(dir.path(), limits(1 << 20, 2)).unwrap();
+    let mut pending = store.pending();
+    pending.sort();
+    assert_eq!(pending, ["path-AB", path.as_str(), "web-01"]);
+    assert_eq!(store.hello(&path), Some(&b"relayed"[..]));
+    assert_eq!(read_all(&mut store, &path), [record(0)]);
+    // A refused lane loses its Hello too, and the other lanes nothing.
+    assert_eq!(store.discard(&path).unwrap(), 1);
+    assert_eq!(store.hello(&path), None);
+    assert!(!dir.path().join(&path).join("hello.pb").exists());
+    assert_eq!(read_all(&mut store, "web-01"), [record(1)]);
+}
