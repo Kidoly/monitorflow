@@ -501,9 +501,11 @@ mod tests {
 
     #[test]
     fn the_stores_hosts_are_central_names() {
-        let mut config = ServerConfig::default();
-        config.victoriametrics_url = "https://VictoriaMetrics:8428".into();
-        config.victorialogs_url = "https://[fd00::5]:9428/".into();
+        let mut config = ServerConfig {
+            victoriametrics_url: "https://VictoriaMetrics:8428".into(),
+            victorialogs_url: "https://[fd00::5]:9428/".into(),
+            ..ServerConfig::default()
+        };
         let settings = EnrollmentSettings::from_config(&config, [0; 32]);
         assert_eq!(settings.store_names, ["victoriametrics", "fd00::5"]);
         config.victorialogs_url = "http://victoriametrics:9428".into();
