@@ -63,7 +63,7 @@ function hook(
   return {
     id: "n1",
     kind: "webhook",
-    settings: { url: "https://hooks.slack.com/services/T0/B0/X" },
+    settings: { origin: "https://hooks.slack.com" },
     has_secret: true,
     customer_id: null,
     customer_name: null,
@@ -400,7 +400,7 @@ describe("NotificationsPage", () => {
             hook(),
             hook({
               id: "n3",
-              settings: { url: "http://n8n.lan/x" },
+              settings: { origin: "http://n8n.lan" },
               last_error: "Could not connect to n8n.lan",
             }),
           ],
@@ -438,6 +438,14 @@ describe("NotificationsPage", () => {
     const user = userEvent.setup();
     page();
     await user.click(await screen.findByRole("button", { name: "Edit" }));
+    // The path of the URL is never shown: empty keeps it.
+    const url = screen.getByLabelText(/^URL/);
+    expect(url).toHaveValue("");
+    expect(url).not.toBeRequired();
+    expect(url).toHaveAttribute(
+      "placeholder",
+      "https://hooks.slack.com/…, saved; leave empty to keep it",
+    );
     const secret = screen.getByLabelText(/Signing secret/);
     expect(secret).toHaveValue("");
     expect(secret).toHaveAttribute(
@@ -451,7 +459,7 @@ describe("NotificationsPage", () => {
     const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
     expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({
       secret: null,
-      settings: { url: "https://hooks.slack.com/services/T0/B0/X" },
+      settings: { url: "" },
     });
 
     await user.click(screen.getByRole("button", { name: "Edit" }));

@@ -39,7 +39,7 @@ function endpoint(
   return {
     id: "i1",
     name: "HaloPSA",
-    url: "https://psa.example/hooks/monitorflow",
+    origin: "https://psa.example",
     events: EVENTS,
     customer_id: null,
     customer_name: null,
@@ -138,6 +138,33 @@ describe("IntegrationsPage", () => {
     expect(await within(panel).findByText("Test accepted")).toBeInTheDocument();
     await user.click(within(panel).getByRole("button", { name: "Done" }));
     expect(screen.queryByDisplayValue("mfwh_abc")).not.toBeInTheDocument();
+  });
+
+  it("never shows the stored URL's path and keeps it when left empty", async () => {
+    const fetchMock = stubFetch({
+      [`GET ${ENDPOINTS}`]: list([
+        endpoint({ allow_private: true, customer_id: "c1", customer_name: "acme" }),
+      ]),
+      "GET /api/customers": oneCustomer,
+      "GET /api/sites": noSites,
+      [`PUT ${ENDPOINTS}/i1`]: { status: 200, body: endpoint() },
+    });
+    const user = userEvent.setup();
+    page(customerAdmin);
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const url = screen.getByLabelText(/^URL/);
+    expect(url).toHaveValue("");
+    expect(url).not.toBeRequired();
+    expect(url).toHaveAttribute(
+      "placeholder",
+      "https://psa.example/…, saved; leave empty to keep it",
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    // The same URL keeps a global administrator's private address choice.
+    expect(sent(fetchMock, "PUT", `${ENDPOINTS}/i1`)).toMatchObject({
+      url: "",
+      allow_private: true,
+    });
   });
 
   it("says when an integration was turned off and turns it back on", async () => {

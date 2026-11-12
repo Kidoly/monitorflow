@@ -352,7 +352,7 @@ function Endpoints({
       cell: (e) => (
         <>
           <strong>{e.name}</strong>{" "}
-          <span className={styles.dim}>{host(e.url)}</span>
+          <span className={styles.dim}>{host(e.origin)}</span>
           <br />
           <span className={styles.dim}>{eventsSummary(e.events, events)}</span>
         </>
@@ -457,7 +457,8 @@ function IntegrationForm({
 }) {
   const me = useMe();
   const [name, setName] = useState(endpoint?.name ?? "");
-  const [url, setUrl] = useState(endpoint?.url ?? "");
+  // The stored URL's path is never shown (ADR-0112): empty keeps it.
+  const [url, setUrl] = useState("");
   const [events, setEvents] = useState<string[]>(endpoint?.events ?? allEvents);
   const [allowPrivate, setAllowPrivate] = useState(
     endpoint?.allow_private ?? false,
@@ -473,7 +474,7 @@ function IntegrationForm({
   const scope = scopes.find((s) => s.value === wanted);
   // Someone else keeps a global administrator's choice only for the same URL.
   const keepsPrivate =
-    !global && !!endpoint?.allow_private && url.trim() === endpoint.url;
+    !global && !!endpoint?.allow_private && url.trim() === "";
 
   function toggle(event: string, on: boolean) {
     setEvents((current) =>
@@ -547,13 +548,17 @@ function IntegrationForm({
         <input
           className={fieldClass}
           type="url"
-          required
+          required={!endpoint}
           spellCheck={false}
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://psa.example.com/webhooks/monitorflow"
+          placeholder={
+            endpoint
+              ? `${endpoint.origin}/…, saved; leave empty to keep it`
+              : "https://psa.example.com/webhooks/monitorflow"
+          }
         />,
-        "Receives a signed JSON POST per event.",
+        "Receives a signed JSON POST per event. Its path is not shown again: it often holds a token.",
       )}
       {scopes.length > 1
         ? field(
