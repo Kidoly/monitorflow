@@ -84,6 +84,11 @@ impl Column {
             Self::AiApiKey => "server_settings.ai_api_key",
         }
     }
+
+    /// The table and the column of [`Column::name`].
+    fn parts(self) -> (&'static str, &'static str) {
+        self.name().split_once('.').unwrap_or_default()
+    }
 }
 
 struct Key {
@@ -331,6 +336,19 @@ pub fn seal(column: Column, plaintext: &str) -> Result<String, SecretsError> {
 pub fn open(column: Column, stored: &str) -> Result<Secret, SecretsError> {
     keyring()?.open(column, stored)
 }
+
+/// A stored secret's plaintext, or why it does not open, in words for the
+/// last error of what uses it.
+pub type Opened = Result<Secret, String>;
+
+/// A value of `column` as read from the database: `None` when there is
+/// none.
+pub fn open_stored(column: Column, stored: Option<String>) -> Option<Opened> {
+    stored.map(|value| open(column, &value).map_err(|error| error.to_string()))
+}
+
+mod store;
+pub use store::{seal_stored, SEALED};
 
 #[cfg(test)]
 mod tests;

@@ -1,10 +1,51 @@
-//! The secrets key of the server binary (ADR-0110): an added central server
-//! never makes a key of its own, and refuses to start without the first
-//! one's before it takes a place. Ignored without `DATABASE_URL`.
+//! Secrets sealed at rest (ADR-0110): an added central server never makes
+//! a key of its own and refuses to start without the first one's, values
+//! stored before are sealed once at startup, and a secret that does not
+//! open fails its own deliveries only, never going out without it. Ignored
+//! without `DATABASE_URL`.
 
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 
+use axum::http::HeaderMap;
+use monitorflow_common::redact::Secret;
+use monitorflow_server::api::users::{self, GrantScope};
+use monitorflow_server::api::Role;
+use monitorflow_server::notify::{self, Coverage, Destination, Dispatcher, Webhook};
+use monitorflow_server::secrets::{self, Column, Keyring};
 use sqlx::PgPool;
+use tokio::net::TcpListener;
+use uuid::Uuid;
+
+/// A webhook receiver: the signature header of each request.
+async fn receiver() -> (String, Arc<Mutex<Vec<Option<String>>>>) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let store = seen.clone();
+    let app = axum::Router::new().route(
+        "/hook",
+        axum::routing::post(move |headers: HeaderMap| {
+            let store = store.clone();
+            async move {
+                let signature = headers
+                    .get("x-monitorflow-signature")
+                    .map(|v| v.to_str().unwrap().to_owned());
+                store.lock().unwrap().push(signature);
+                "ok"
+            }
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/hook", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (url, seen)
+}
+
+async fn stored(pool: &PgPool, sql: &str) -> Vec<Option<String>> {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_owned()))
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
 
 macro_rules! db_tests {
     ($($item:item)*) => {
@@ -55,5 +96,109 @@ db_tests! {
             .await
             .unwrap();
         assert_eq!(places, 0);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn values_stored_before_are_sealed_once(pool: PgPool) {
+        secrets::install_for_tests();
+        sqlx::query(
+            "INSERT INTO notification_channels (kind, settings, secret)
+             VALUES ('webhook', '{\"url\": \"https://a.example/\"}', 's3cret'),
+                    ('webhook', '{\"url\": \"https://b.example/\"}', NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let alice = users::create_user_with(
+            &pool, "alice", &Secret::new("correct horse battery"), Role::Viewer, GrantScope::Global, "test",
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO user_contacts (user_id, kind, settings, secret)
+             VALUES ($1, 'slack', '{\"name\": \"me\", \"host\": \"hooks.slack.com\"}', 'https://hooks.slack.com/services/T/B/X')",
+        )
+        .bind(alice)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let sealed = secrets::seal_stored(&pool).await.unwrap();
+        assert_eq!(sealed, [Column::NotificationChannels, Column::UserContacts]);
+        let channels = "SELECT secret FROM notification_channels ORDER BY settings->>'url'";
+        let first = stored(&pool, channels).await;
+        assert_eq!(first[1], None, "no secret stays none");
+        let value = first[0].clone().unwrap();
+        assert!(value.starts_with("mfs1:"), "{value}");
+        assert_eq!(secrets::open(Column::NotificationChannels, &value).unwrap().expose(), "s3cret");
+        let contact = stored(&pool, "SELECT secret FROM user_contacts").await;
+        let contact = contact[0].as_deref().unwrap();
+        assert_eq!(
+            secrets::open(Column::UserContacts, contact).unwrap().expose(),
+            "https://hooks.slack.com/services/T/B/X"
+        );
+        let listed: Vec<String> = sqlx::query_scalar("SELECT name FROM sealed_columns ORDER BY name")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(listed, ["notification_channels.secret", "user_contacts.secret"]);
+
+        // The next start seals nothing: a value is never sealed twice.
+        assert!(secrets::seal_stored(&pool).await.unwrap().is_empty());
+        assert_eq!(stored(&pool, channels).await, first);
+
+        // What the server reads opens.
+        let loaded = notify::channels(&pool).await.unwrap();
+        let with_secret = loaded.iter().find(|c| c.secret.is_some()).unwrap();
+        assert_eq!(with_secret.secret.as_ref().unwrap().expose(), "s3cret");
+        assert!(loaded.iter().all(|c| c.secret_error.is_none()));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_secret_that_does_not_open_fails_alone_and_is_never_left_out(pool: PgPool) {
+        secrets::install_for_tests();
+        let (url, seen) = receiver().await;
+        let hook = Destination::Webhook(Webhook { url });
+        // Signed with a secret this server can open.
+        let good = notify::insert(&pool, &hook, Some(&Secret::new("ours")), Coverage::Everything, false)
+            .await
+            .unwrap();
+        // And one sealed with a key it does not have, as after a lost key.
+        let other = Keyring::generate().unwrap();
+        let lost = notify::insert(&pool, &hook, None, Coverage::Everything, false).await.unwrap();
+        sqlx::query("UPDATE notification_channels SET secret = $2 WHERE id = $1")
+            .bind(lost)
+            .bind(other.seal(Column::NotificationChannels, "theirs").unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        // A value copied from another column does not open either.
+        let moved = notify::insert(&pool, &hook, None, Coverage::Everything, false).await.unwrap();
+        sqlx::query("UPDATE notification_channels SET secret = $2 WHERE id = $1")
+            .bind(moved)
+            .bind(secrets::seal(Column::UserContacts, "from a contact").unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let dispatcher = Dispatcher::new(pool.clone(), "https://mf.example");
+        let channels = notify::channels(&pool).await.unwrap();
+        let by_id = |id: Uuid| channels.iter().find(|c| c.id == id).unwrap();
+        let failed = dispatcher.test(by_id(lost)).await.unwrap().unwrap_err();
+        assert!(failed.message.contains(&format!("key {}", other.ids()[0])), "{}", failed.message);
+        let failed = dispatcher.test(by_id(moved)).await.unwrap().unwrap_err();
+        assert!(failed.message.contains("does not open"), "{}", failed.message);
+        let last: Option<String> = sqlx::query_scalar("SELECT last_error FROM notification_channels WHERE id = $1")
+            .bind(lost)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(last.unwrap().contains("which this server does not have"));
+        assert!(seen.lock().unwrap().is_empty(), "nothing went out unsigned");
+
+        dispatcher.test(by_id(good)).await.unwrap().unwrap();
+        let signatures = seen.lock().unwrap().clone();
+        assert_eq!(signatures.len(), 1);
+        assert!(signatures[0].is_some(), "signed with the secret that opens");
     }
 }

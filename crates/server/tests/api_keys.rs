@@ -48,6 +48,7 @@ struct World {
 }
 
 async fn world_with(pool: &PgPool, limits: v1::Limits) -> World {
+    monitorflow_server::secrets::install_for_tests();
     let mut state = ApiState::new(pool.clone(), Registry::default(), ApiSettings::default());
     state.api_key_limits = Arc::new(limits);
     let app = v1::app(state);

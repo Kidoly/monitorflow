@@ -391,6 +391,7 @@ async fn sign(pool: &PgPool, cookie: &str, incident: Uuid) -> (bool, bool) {
 db_tests! {
     #[sqlx::test]
     async fn a_silenced_incident_opens_quietly_and_is_told_once_at_the_end(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         let admin = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
@@ -440,6 +441,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn opened_and_resolved_during_a_silence_says_nothing_but_stays_in_history(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         let admin = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
@@ -474,6 +476,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn an_incident_told_before_the_silence_gets_its_ending(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         let incident = open(&pool, a.server, "warning").await;
@@ -494,6 +497,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn only_what_changed_is_told_at_the_end(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         // Told as a warning; worse during the silence.
@@ -520,6 +524,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_message_at_the_end_gives_the_state_at_the_end(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         let id = silence(&pool, Scope::default(), -1, 60).await;
@@ -537,6 +542,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn overlapping_silences_hold_until_the_last_one_ends(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         let short = silence(&pool, Scope { server: Some(a.server), ..Scope::default() }, -1, 60).await;
@@ -553,6 +559,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_silence_acts_between_its_start_and_its_end_only(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         // Upcoming: holds nothing, and a past one neither.
@@ -576,6 +583,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_new_event_waits_behind_its_incidents_release(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         // The release is paced, so an incident can still be held when it
         // resolves after the silence: its resolution must not go first.
         let a = place(&pool, "a").await;
@@ -592,6 +600,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_silence_that_ends_on_its_own_sends_too_even_after_a_restart(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         let id = silence(&pool, Scope::default(), -1, 60).await;
@@ -622,6 +631,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn events_written_during_a_silence_are_held_if_the_server_only_sees_them_after(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         silence(&pool, Scope::default(), -120, -60).await;
@@ -637,6 +647,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_silence_stays_inside_its_scope(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let b = place(&pool, "b").await;
         let (dispatcher, seen) = channel(&pool).await;
@@ -649,6 +660,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn offline_incidents_follow_the_same_rules_and_the_relay_still_covers(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         let id = silence(&pool, Scope { relay: Some(a.relay), ..Scope::default() }, -1, 60).await;
@@ -675,6 +687,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn events_of_the_whole_server_wait_only_for_everything(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         let backup = |at: DateTime<Utc>| {
@@ -697,6 +710,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_command_still_waiting_is_told_and_a_decided_one_is_not(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let (dispatcher, seen) = channel(&pool).await;
         let id = silence(&pool, Scope::default(), -1, 60).await;
@@ -752,6 +766,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn turning_offline_alerts_off_is_not_a_silence(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         // The switch keeps resolving the incident, with its own message,
         // and a silence keeps that message back like any other.
         let a = place(&pool, "a").await;
@@ -777,6 +792,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_silence_holds_back_from_every_channel_and_routing_still_applies(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let b = place(&pool, "b").await;
         let (dispatcher, site_a, _) = scoped(&pool, Coverage::Site(a.site)).await;
@@ -801,6 +817,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_release_is_never_gathered_into_a_summary(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         // Teams takes 5 messages a pass and gathers the rest (ADR-0077);
         // each still-open incident is owed a line naming it.
         let a = place(&pool, "a").await;
@@ -851,6 +868,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_chat_channel_still_limiting_gets_the_release_at_the_next_pass(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         // Three limited tries: the pass gives up on Discord (ADR-0077).
         let discord = chat(&pool, Destination::Discord, vec![429, 429, 429]).await;
@@ -880,6 +898,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn roles_decide_what_can_be_silenced_and_ended(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let b = place(&pool, "b").await;
         let viewer = login(&pool, "viewer", Role::Viewer, GrantScope::Site(a.site)).await;
@@ -966,6 +985,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn another_customers_silences_stay_hidden(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let b = place(&pool, "b").await;
         let other = sqlx::query_scalar::<_, Uuid>(
@@ -1004,6 +1024,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_page_lists_what_covers_it_and_upcoming_silences(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "a").await;
         let root = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
         silence(&pool, Scope { server: Some(a.server), ..Scope::default() }, -1, 60).await;
@@ -1032,6 +1053,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_silence_has_an_end_and_a_reason(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let root = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
         let bad = |change: Value| {
             let mut body = request("all", None);

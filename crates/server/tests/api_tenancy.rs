@@ -455,6 +455,7 @@ struct Ctx {
 
 impl Ctx {
     fn app(&self) -> Router {
+        monitorflow_server::secrets::install_for_tests();
         let vm = VmQuery::with_timeout(&self.vm_url, Duration::from_millis(500)).unwrap();
         let mut state = ApiState::new(
             self.pool.clone(),

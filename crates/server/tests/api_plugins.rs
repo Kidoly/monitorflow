@@ -81,6 +81,7 @@ async fn send(
     cookie: &str,
     body: Body,
 ) -> (StatusCode, Value) {
+    monitorflow_server::secrets::install_for_tests();
     let request = Request::builder()
         .method(method)
         .uri(uri)
