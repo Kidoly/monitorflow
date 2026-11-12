@@ -1,7 +1,7 @@
 # ADR-0100: Enterprise edition and licensed high availability
 
 Date: 2026-11-07
-Status: accepted; the join file carries the server's database role, not the owner's, since ADR-0109
+Status: accepted; the join file carries the server's database role, not the owner's, since ADR-0109, and the secrets key since ADR-0110
 
 ## Context
 
