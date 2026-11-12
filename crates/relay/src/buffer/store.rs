@@ -1,7 +1,9 @@
 //! The segment files of the store-and-forward buffer (ADR-0027).
 //!
-//! `<dir>/agent-<id>/` holds the agent's last `Hello` in `hello.pb` and its
-//! records in `<n>.seg`, `n` from one counter for the whole store, so the
+//! Each lane (see [`super::lane_key`]) has a directory: `<dir>/agent-<id>/`
+//! for an agent connected directly, `<dir>/path-<sha256>/` for any other
+//! path. It holds the lane's last `Hello` in `hello.pb` and its records in
+//! `<n>.seg`, `n` from one counter for the whole store, so the
 //! smallest segment anywhere is the oldest. A record is a 16-byte header
 //! (payload length, CRC-32C of the rest, time written) and the payload.
 //!
@@ -25,6 +27,9 @@ pub const MAX_RECORD: u64 = 16 * 1024 * 1024;
 pub const MAX_SEGMENT: u64 = 16 * 1024 * 1024;
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 const AGENT_PREFIX: &str = "agent-";
+/// Keys, and directory names, of lanes other than direct agents: the
+/// prefix and 64 lowercase hex digits.
+pub const PATH_PREFIX: &str = "path-";
 const HELLO_FILE: &str = "hello.pb";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,10 +123,15 @@ impl Store {
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let name = entry.file_name();
-            let Some(id) = name.to_str().and_then(|n| n.strip_prefix(AGENT_PREFIX)) else {
+            let Some(name) = name.to_str() else {
                 continue;
             };
-            if tls::validate_id(id).is_err() || !entry.file_type()?.is_dir() {
+            let id = match name.strip_prefix(AGENT_PREFIX) {
+                Some(id) => id,
+                None if name.starts_with(PATH_PREFIX) => name,
+                None => continue,
+            };
+            if dir_name(id).is_err() || !entry.file_type()?.is_dir() {
                 tracing::warn!(path = %entry.path().display(), "ignoring unexpected entry in the buffer");
                 continue;
             }
@@ -297,11 +307,11 @@ impl Store {
     /// disk until [`Self::commit`].
     pub fn read(&mut self, agent: &str, now_ms: i64, max: usize) -> io::Result<Vec<Vec<u8>>> {
         let cutoff = now_ms.saturating_sub(self.limits.max_age.as_millis() as i64);
-        let dir = self.dir.join(format!("{AGENT_PREFIX}{agent}"));
         let mut out = Vec::new();
         let Some(queue) = self.agents.get_mut(agent) else {
             return Ok(out);
         };
+        let dir = self.dir.join(dir_name(agent)?);
         while out.len() < max {
             let from = queue.cursor.as_ref().map_or(0, |c| c.segment);
             let Some(index) = queue.segments.iter().position(|s| s.id >= from) else {
@@ -385,11 +395,19 @@ impl Store {
         }
     }
 
-    /// Deletes every record of `agent`, which the upstream refused.
+    /// Deletes every record of `agent`, which the upstream refused, and
+    /// its `Hello`, so the lane counts as never accepted.
     pub fn discard(&mut self, agent: &str) -> io::Result<u64> {
+        let hello = self.dir.join(dir_name(agent)?).join(HELLO_FILE);
         let Some(queue) = self.agents.get_mut(agent) else {
             return Ok(0);
         };
+        if queue.hello.take().is_some() {
+            match fs::remove_file(&hello) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
+        }
         queue.writer = None;
         queue.dirty = false;
         queue.cursor = None;
@@ -468,7 +486,7 @@ impl Store {
     fn remove(&mut self, agent: &str, segment: &Segment) -> io::Result<()> {
         self.stats.bytes -= segment.bytes;
         self.stats.segments -= 1;
-        let path = segment_path(&self.dir.join(format!("{AGENT_PREFIX}{agent}")), segment.id);
+        let path = segment_path(&self.dir.join(dir_name(agent)?), segment.id);
         match fs::remove_file(path) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
@@ -476,13 +494,24 @@ impl Store {
     }
 
     fn agent_dir(&self, agent: &str) -> io::Result<PathBuf> {
-        tls::validate_id(agent).map_err(io::Error::other)?;
-        let dir = self.dir.join(format!("{AGENT_PREFIX}{agent}"));
+        let dir = self.dir.join(dir_name(agent)?);
         if !self.agents.contains_key(agent) {
             fs::create_dir_all(&dir)?;
         }
         Ok(dir)
     }
+}
+
+/// The directory of the lane `key`: a path key as it is, an agent ID
+/// behind [`AGENT_PREFIX`], which keeps `.` and `..` safe.
+fn dir_name(key: &str) -> io::Result<String> {
+    if let Some(hex) = key.strip_prefix(PATH_PREFIX) {
+        if hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Ok(key.to_owned());
+        }
+    }
+    tls::validate_id(key).map_err(io::Error::other)?;
+    Ok(format!("{AGENT_PREFIX}{key}"))
 }
 
 fn segment_path(dir: &Path, id: u64) -> PathBuf {

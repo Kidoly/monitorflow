@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use monitorflow_common::client::shutdown::Shutdown;
 use monitorflow_common::config::RelayConfig;
 use monitorflow_common::proto::v1::Envelope;
+use monitorflow_common::tls::PeerRole;
 use monitorflow_common::via::{self, Via};
 use prost::Message;
 use tokio::time::{interval, MissedTickBehavior};
@@ -21,7 +22,7 @@ use tonic::metadata::{MetadataMap, MetadataValue};
 
 pub mod store;
 
-pub use store::{Limits, Stats, Store};
+pub use store::{Limits, Stats, Store, PATH_PREFIX};
 
 /// How often expired segments are dropped and counters logged.
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(60);
@@ -140,7 +141,8 @@ impl Buffer {
         .await
     }
 
-    /// Deletes the agent's records; returns how many there were.
+    /// Deletes the lane's records and its `Hello`, which the upstream
+    /// refused; returns how many records there were.
     pub async fn discard(&self, agent: &str) -> io::Result<u64> {
         let agent = agent.to_owned();
         self.blocking(move |s| s.discard(&agent)).await
@@ -219,6 +221,27 @@ fn log_stats(stats: &Stats, last: &Stats) {
     }
 }
 
+/// The key of a stream's lane and records: one per path, the sending peer
+/// included, so one sender never touches the records or the session of
+/// another (ADR-0027). An agent connected directly keeps its bare ID, the
+/// key of relays before paths were keys, so its records replay after an
+/// upgrade. Any other path, a relay speaking for itself included, is
+/// `path-` and the SHA-256 of the path in hex: longer than any ID, so it
+/// never meets one.
+pub fn lane_key(via: &Via) -> String {
+    let origin = via.origin_peer();
+    if origin.role() == PeerRole::Agent && via.relays().next().is_none() {
+        return origin.id().to_owned();
+    }
+    let digest = ring::digest::digest(&ring::digest::SHA256, via.to_string().as_bytes());
+    let mut key = String::with_capacity(PATH_PREFIX.len() + 64);
+    key.push_str(PATH_PREFIX);
+    for byte in digest.as_ref() {
+        key.push_str(&format!("{byte:02x}"));
+    }
+    key
+}
+
 /// `hello.pb`: the path's length (u16 LE), the path as in its metadata
 /// entry, then the `Hello` envelope.
 fn encode_hello(hello: &Envelope, via: &Via) -> Vec<u8> {
@@ -254,7 +277,7 @@ mod tests {
     use monitorflow_common::client::shutdown;
     use monitorflow_common::proto::v1::envelope::Payload;
     use monitorflow_common::proto::v1::{Hello, Sample, SampleBatch};
-    use monitorflow_common::tls::{PeerIdentity, PeerRole};
+    use monitorflow_common::tls::PeerIdentity;
 
     use super::*;
 
@@ -308,6 +331,31 @@ mod tests {
         let agent = PeerIdentity::new(PeerRole::Agent, "web-01").unwrap();
         let relay = PeerIdentity::new(PeerRole::Relay, "paris-2").unwrap();
         Via::extend(Some(Via::origin(agent)), &relay).unwrap()
+    }
+
+    #[test]
+    fn each_path_has_its_own_key() {
+        let agent = PeerIdentity::new(PeerRole::Agent, "web-01").unwrap();
+        let direct = Via::origin(agent.clone());
+        assert_eq!(lane_key(&direct), "web-01");
+        let via_b = chained_via();
+        let evil = PeerIdentity::new(PeerRole::Relay, "evil").unwrap();
+        let via_evil = Via::extend(Some(direct.clone()), &evil).unwrap();
+        let (b, e) = (lane_key(&via_b), lane_key(&via_evil));
+        assert_ne!(b, e);
+        assert!(
+            b.starts_with(PATH_PREFIX) && b.len() == PATH_PREFIX.len() + 64,
+            "{b}"
+        );
+        assert!(tls_id_is_invalid(&b));
+        assert_eq!(lane_key(&via_b), b);
+        // A relay speaking for itself is not the agent of its name.
+        let own = Via::origin(PeerIdentity::new(PeerRole::Relay, "web-01").unwrap());
+        assert_ne!(lane_key(&own), "web-01");
+    }
+
+    fn tls_id_is_invalid(key: &str) -> bool {
+        monitorflow_common::tls::validate_id(key).is_err()
     }
 
     #[tokio::test]
