@@ -175,12 +175,12 @@ Updates › Automatic updates (global administrators) shows the version being ro
 **Where agents download from.** The command lists, in order: the mirror listener of the agent's relay, when the relay mirrors and reported its `mirror.public_url` (relays copy the two newest releases the server holds, each cycle of their mirror sync, and check their signature first), the server's own copy at `<mirror_public_url>/agent/<version>/` when it holds that version, then `agent_download_url` (for GitHub, the release of that version; a self-hosted URL as it is, skipped by the agent if it serves another version). For sites without Internet access, give the server a copy of each release on its mirror listener, from a directory holding the release files:
 
 ```
-docker compose cp ./monitorflow-0.3.0 server:/tmp/release
+tar -C ./monitorflow-0.3.0 -cf - . | docker compose exec -T server sh -c 'mkdir -p /tmp/release && tar -C /tmp/release -xf -'
 docker compose exec server monitorflow-server agent-release import --dir /tmp/release
 docker compose exec server monitorflow-server agent-release list
 ```
 
-The import checks the signature first. The web interface offers the newest version the server holds.
+The server's image is read-only and its `/tmp` is a tmpfs, which `docker compose cp` cannot write to, hence `tar`[^0110]. The import checks the signature first. The web interface offers the newest version the server holds.
 
 **Servers installed before self-update** lack the sudo line above: run the installer once more, which installs the new rules with the new binary. Until then `self_update` fails with "a password is required" and nothing changes. A self-update replaces the binary only; when a release changes the unit or the sudo rules, its notes say to run the installer.
 
@@ -348,3 +348,4 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)
 [^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)
 [^0108]: [ADR-0108: Root helpers verify signed commands](adr/0108-root-helpers-verify-signed-commands.md)
+[^0110]: [ADR-0110: Containers without capabilities, third-party images by digest](adr/0110-container-hardening-and-pinned-images.md)

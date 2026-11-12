@@ -71,6 +71,26 @@ not_published() {
     ! grep -q HostPort <<<"$ports"
 }
 
+# Every container of the stack drops all capabilities and setuid gains,
+# and only the root ones add capabilities back (ADR-0110).
+hardened() {
+    local id
+    for id in $(compose ps -aq); do
+        [ "$(docker inspect -f '{{json .HostConfig.CapDrop}} {{json .HostConfig.SecurityOpt}}' "$id")" \
+            = '["ALL"] ["no-new-privileges:true"]' ] || return 1
+    done
+}
+# The processes of the service run as uid $2, with no effective capability.
+runs_as() {
+    local status
+    status=$(compose exec -T "$1" sh -c 'cat /proc/1/status') || return 1
+    grep -qE "^Uid:[[:space:]]+$2[[:space:]]" <<<"$status" && grep -qE '^CapEff:[[:space:]]+0+$' <<<"$status"
+}
+check "every container is hardened" hardened
+check "Caddy runs as its own user, no capability" runs_as web 10002
+check "the server too" runs_as server 10001
+check "web's image is read-only" compose exec -T web sh -c '! touch /srv/monitorflow/web/x'
+
 check "API ready behind Caddy" curl -fsk "https://127.0.0.1:$HTTPS_PORT/api/health/ready"
 check "web interface served" curl -fsk -o /dev/null "https://127.0.0.1:$HTTPS_PORT/"
 
@@ -97,7 +117,7 @@ check "the page's certificate verifies HTTPS" curl -fs --cacert "$work/ca.crt" "
 check "and so does the page, over HTTPS" curl -fs --cacert "$work/ca.crt" "https://127.0.0.1:$HTTPS_PORT/trust/"
 check "no HSTS with the internal CA" no_hsts
 for path in / /login/ /setup/ /_next/x.js /api/health/ready /api/setup /api/auth/me /agent/latest/install.sh \
-    /trust/x /trust/../api/health/ready /ca-fingerprint /public/trust/index.html; do
+    /trust/x /trust/../api/health/ready /ca-fingerprint /run/ca-fingerprint /run/public/trust/index.html; do
     check "port 80: $path goes to HTTPS" redirected "$path"
 done
 check "port 80: POST /api/auth/login too" redirected /api/auth/login POST

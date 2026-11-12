@@ -10,6 +10,17 @@ x-server-build: &server-build
   context: ..
   dockerfile: deploy/docker/server.Dockerfile
 
+x-web-build: &web-build
+  context: ..
+  dockerfile: deploy/docker/web.Dockerfile
+
+# Every service (ADR-0110): no process gains privileges through setuid
+# binaries, and no Linux capability unless the service adds it back with a
+# comment saying why.
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
 # The links to the metric and log stores: TLS with a certificate of the
 # server's CA, and a password (ADR-0087).
 x-storage-tls: &storage-tls
@@ -24,6 +35,10 @@ services:
     image: ${SERVER_IMAGE:-monitorflow-server:local}
     entrypoint: ["db-certs"]
     user: "0"
+    <<: *hardening
+    # Hands the key to PostgreSQL's user.
+    cap_add: [CHOWN]
+    read_only: true
     network_mode: none
     volumes: ["dbcerts:/certs"]
 
@@ -35,13 +50,23 @@ services:
     image: ${SERVER_IMAGE:-monitorflow-server:local}
     command: ["storage-certs"]
     environment: *storage-tls
+    <<: *hardening
+    read_only: true
     network_mode: none
     volumes:
       - serverdata:/var/lib/monitorflow/server
       - storagetls:/var/lib/monitorflow/storage-tls
 
   postgres:
-    image: postgres:17
+    # By digest (ADR-0110): the release signature covers this file, so it
+    # covers the image too. Dependabot updates both parts together.
+    image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
+    <<: *hardening
+    # The entrypoint starts as root, gives the data and socket directories
+    # to the postgres user, then switches to it with gosu.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    read_only: true
+    tmpfs: [/var/run/postgresql, /tmp]
     command:
       - -c
       - ssl=on
@@ -74,7 +99,13 @@ services:
     restart: unless-stopped
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.155.0
+    image: victoriametrics/victoria-metrics:v1.155.0@sha256:f60dc268b54ecf87f6e09d740c2b732838aa9193090cc741417c9f6386a130df
+    <<: *hardening
+    # Runs as root, and reads the key and password storage-certs wrote for
+    # the server's user, mode 0600.
+    cap_add: [DAC_READ_SEARCH]
+    read_only: true
+    tmpfs: [/tmp]
     # UI_*: set by the updater for Administration > Settings (ADR-0069).
     command:
       - -storageDataPath=/storage
@@ -94,7 +125,12 @@ services:
     restart: unless-stopped
 
   victorialogs:
-    image: victoriametrics/victoria-logs:v1.53.0
+    image: victoriametrics/victoria-logs:v1.53.0@sha256:251121fa882af99b95ba0c230a4a2f412ea602d2698c64a96c58dc9842bb755d
+    <<: *hardening
+    # As VictoriaMetrics.
+    cap_add: [DAC_READ_SEARCH]
+    read_only: true
+    tmpfs: [/tmp]
     command:
       - -storageDataPath=/storage
       - -retentionPeriod=${LOGS_RETENTION:-${UI_LOGS_RETENTION:-30d}}
@@ -118,6 +154,8 @@ services:
     build: *server-build
     image: ${SERVER_IMAGE:-monitorflow-server:local}
     command: ["migrate"]
+    <<: *hardening
+    read_only: true
     environment:
       MONITORFLOW_DATABASE_MIGRATE_URL: "postgres://monitorflow:${POSTGRES_PASSWORD}@postgres:5432/monitorflow?sslmode=verify-full&sslrootcert=/certs/ca.pem"
       MONITORFLOW_DATABASE_URL: &database-url "postgres://monitorflow_app:${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD in .env}@postgres:5432/monitorflow?sslmode=verify-full&sslrootcert=/certs/ca.pem"
@@ -130,6 +168,9 @@ services:
   server:
     build: *server-build
     image: ${SERVER_IMAGE:-monitorflow-server:local}
+    <<: *hardening
+    read_only: true
+    tmpfs: [/tmp]
     environment:
       # A role that owns no table and cannot change the schema (ADR-0109).
       MONITORFLOW_DATABASE_URL: *database-url
@@ -191,11 +232,38 @@ services:
       retries: 12
     restart: unless-stopped
 
-  web:
-    build:
-      context: ..
-      dockerfile: deploy/docker/web.Dockerfile
+  # One-shot, before every start of web: gives Caddy's data to the user
+  # web runs as. It was root's before ADR-0110.
+  web-data:
+    build: *web-build
     image: ${WEB_IMAGE:-monitorflow-web:local}
+    entrypoint: ["chown"]
+    command: ["-R", "10002:10002", "/data"]
+    user: "0"
+    <<: *hardening
+    # DAC_READ_SEARCH: Caddy's directories are its own, mode 0700.
+    cap_add: [CHOWN, DAC_READ_SEARCH]
+    read_only: true
+    network_mode: none
+    volumes: ["caddydata:/data"]
+
+  # Caddy as its own user, on ports 80 and 443 of the container's network
+  # namespace, which the sysctl opens to it (ADR-0110). The user is set
+  # here, not in the image: an update recreates web from the image of the
+  # release before the compose file of that release is in place.
+  web:
+    build: *web-build
+    image: ${WEB_IMAGE:-monitorflow-web:local}
+    user: "10002:10002"
+    <<: *hardening
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    read_only: true
+    # The trust page and Caddy's autosaved configuration, written at start.
+    tmpfs:
+      - /srv/monitorflow/run:uid=10002,gid=10002
+      - /config:uid=10002,gid=10002
+      - /tmp
     environment:
       MONITORFLOW_DOMAIN: ${DOMAIN:?set DOMAIN in .env}
       MONITORFLOW_API_UPSTREAM: server:7444
@@ -209,6 +277,7 @@ services:
       - "${HTTP_PORT:-80}:80"
     depends_on:
       server: { condition: service_healthy }
+      web-data: { condition: service_completed_successfully }
     restart: unless-stopped
 
   # Runs aptly, reposync, createrepo_c and gpg for the server, which asks
@@ -220,6 +289,10 @@ services:
       context: ..
       dockerfile: deploy/docker/mirror.Dockerfile
     image: ${MIRROR_IMAGE:-monitorflow-mirror:local}
+    # Not read-only: dnf, run by another user than root, keeps its metadata
+    # cache in /var/tmp whatever cachedir says, and a tmpfs there would
+    # hold it in memory (ADR-0110).
+    <<: *hardening
     volumes: ["mirrors:/var/lib/monitorflow/server/mirrors"]
     networks: [mirror]
     healthcheck:
@@ -237,6 +310,13 @@ services:
       context: ..
       dockerfile: deploy/docker/updater.Dockerfile
     image: ${UPDATER_IMAGE:-monitorflow-updater:local}
+    <<: *hardening
+    # Root, as the Docker socket is root's anyway (which makes these
+    # limits a guard against mistakes more than a boundary): it backs up
+    # and restores the server's data, owned by the server's user, and
+    # keeps the owners of the files it writes. FSETID keeps the setgid bit
+    # of the backups directory, which lets the server's group read them.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, FSETID]
     environment:
       # Unset: agent_download_url's release, GitHub's by default.
       MONITORFLOW_RELEASE_URL: ${RELEASE_URL:-}
