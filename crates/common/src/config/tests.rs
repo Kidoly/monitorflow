@@ -695,6 +695,28 @@ fn heartbeat_timeout_can_be_overridden() {
 }
 
 #[test]
+fn trusted_proxies_default_to_loopback_and_are_checked() {
+    let server: ServerConfig = parse(SERVER_MIN).unwrap();
+    assert_eq!(server.api_trusted_proxies, ["127.0.0.1", "::1"]);
+    let text = format!("{SERVER_MIN}\napi_trusted_proxies = [\"10.0.0.0/8\"]");
+    let server: ServerConfig = parse(&text).unwrap();
+    assert_eq!(server.api_trusted_proxies, ["10.0.0.0/8"]);
+    let vars = env(&[("MONITORFLOW_API_TRUSTED_PROXIES", "web, 127.0.0.1")]);
+    let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
+    assert_eq!(server.api_trusted_proxies, ["web", "127.0.0.1"]);
+    // Only separators: no proxy is trusted.
+    let vars = env(&[("MONITORFLOW_API_TRUSTED_PROXIES", ",")]);
+    let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
+    assert!(server.api_trusted_proxies.is_empty());
+
+    let msg = err::<ServerConfig>(
+        SERVER_MIN,
+        &[("MONITORFLOW_API_TRUSTED_PROXIES", "10.0.0.0/40")],
+    );
+    assert!(msg.contains("api_trusted_proxies"), "{msg}");
+}
+
+#[test]
 fn api_settings_can_be_overridden_and_must_be_positive() {
     let text = format!("{SERVER_MIN}\napi_cookie_secure = false\napi_session_lifetime = 3600");
     let server: ServerConfig = parse(&text).unwrap();

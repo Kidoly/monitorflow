@@ -4,11 +4,12 @@
 //! tenancy between customers, rate limits and audit. Ignored without
 //! `DATABASE_URL`.
 
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::extract::{OriginalUri, State};
+use axum::extract::{ConnectInfo, OriginalUri, State};
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use monitorflow_common::redact::Secret;
@@ -167,7 +168,9 @@ async fn call(
         .uri(uri)
         .header(CSRF_HEADER, "1")
         .header("content-type", "application/json")
-        .header("cookie", cookie);
+        .header("cookie", cookie)
+        // The reverse proxy on loopback, a trusted proxy by default.
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50_000))));
     if let Some(source) = source {
         request = request.header("x-forwarded-for", source);
     }
