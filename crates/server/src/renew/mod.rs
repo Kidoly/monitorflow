@@ -225,7 +225,7 @@ impl Renewer {
         presented: &PresentedCert,
         csr_pem: &str,
     ) -> Result<Renewed, RenewError> {
-        self.issue_renewal(presented, csr_pem, None, Ask::RENEWAL)
+        self.issue_renewal(presented, csr_pem, Source::DIRECT, Ask::RENEWAL)
             .await
     }
 
@@ -236,7 +236,8 @@ impl Renewer {
         csr_pem: &str,
         ask: Ask,
     ) -> Result<Renewed, RenewError> {
-        self.issue_renewal(presented, csr_pem, None, ask).await
+        self.issue_renewal(presented, csr_pem, Source::DIRECT, ask)
+            .await
     }
 
     /// [`Self::renew`] only for the names an administrator confirmed and
@@ -251,11 +252,13 @@ impl Renewer {
             names_only: true,
             ..Ask::RENEWAL
         };
-        self.issue_renewal(presented, csr_pem, None, ask).await
+        self.issue_renewal(presented, csr_pem, Source::DIRECT, ask)
+            .await
     }
 
     /// [`Self::renew`] for the peer whose certificate `relay` forwards
-    /// (ADR-0028), along `via` when it came through chained relays. The
+    /// (ADR-0028), along `via` when it came through chained relays.
+    /// `relay` is the certificate of the connection. The
     /// certificate must be one this CA issued, valid now, and the origin of
     /// `via`; the relay policy must allow the path to speak for its peer
     /// ([`crate::db::relay_route_allowed`]): agents of the attached relay's
@@ -263,7 +266,7 @@ impl Renewer {
     /// applies to the peer as if it had called directly.
     pub async fn renew_forwarded(
         &self,
-        relay: &PeerIdentity,
+        relay: &PresentedCert,
         via: Option<&Via>,
         peer_cert: &CertificateDer<'_>,
         csr_pem: &str,
@@ -275,13 +278,14 @@ impl Renewer {
     /// [`Self::renew_forwarded`] for `ask`.
     pub async fn forwarded(
         &self,
-        relay: &PeerIdentity,
+        relay_cert: &PresentedCert,
         via: Option<&Via>,
         peer_cert: &CertificateDer<'_>,
         csr_pem: &str,
         ask: Ask,
     ) -> Result<Renewed, RenewError> {
         let refused = |why: String| Err(RenewError::Refused(why));
+        let relay = &relay_cert.identity;
         if relay.role() != PeerRole::Relay {
             return refused(format!("{relay} may not forward renewals"));
         }
@@ -307,19 +311,23 @@ impl Renewer {
         if !allowed {
             return refused(format!("{relay} may not renew for {peer}"));
         }
-        let attached = relays.last().copied();
-        self.issue_renewal(&presented, csr_pem, attached, ask).await
+        let source = Source {
+            relays: &relays,
+            relay_serial: Some(&relay_cert.serial),
+        };
+        self.issue_renewal(&presented, csr_pem, source, ask).await
     }
 
     /// The checks of ADR-0010 and the issuance, for `presented` as seen by
-    /// the server or, when `via_relay` is set, by that relay.
+    /// the server or, through `source`, by a relay.
     async fn issue_renewal(
         &self,
         presented: &PresentedCert,
         csr_pem: &str,
-        via_relay: Option<&str>,
+        source: Source<'_>,
         ask: Ask,
     ) -> Result<Renewed, RenewError> {
+        let via_relay = source.relays.last().copied();
         let names_only = ask.names_only;
         let peer = &presented.identity;
         let refused = |why: &str| Err(RenewError::Refused(why.to_owned()));
@@ -411,6 +419,7 @@ impl Renewer {
         let (cert, trust) = issue(&self.ca, csr_pem, peer, names).await?;
         let ca_bundle_signatures = sign_bundle(&self.ca, &cert, &trust)?;
         record_certificate(&mut tx, &cert, peer, &trust, ask.accepts_ca_bundle).await?;
+        record_source(&mut tx, &cert.serial, &presented.serial, &source).await?;
         audit::record(
             &mut *tx,
             Event {
@@ -438,6 +447,45 @@ impl Renewer {
             ca_bundle_signatures,
         })
     }
+}
+
+/// Who asked for a renewal: the peer itself, or relays on its behalf.
+#[derive(Debug, Clone, Copy)]
+struct Source<'a> {
+    /// Peer IDs from the relay connected to the server down to the one the
+    /// peer is attached to; empty for a direct renewal.
+    relays: &'a [&'a str],
+    /// The certificate of the relay connected to the server.
+    relay_serial: Option<&'a Serial>,
+}
+
+impl Source<'_> {
+    const DIRECT: Self = Self {
+        relays: &[],
+        relay_serial: None,
+    };
+}
+
+/// Records where the certificate `serial` came from, so that revoking a
+/// relay revokes it too (`api::revoke`, ADR-0028).
+async fn record_source(
+    tx: &mut Transaction<'_, Postgres>,
+    serial: &Serial,
+    renewed_from: &Serial,
+    source: &Source<'_>,
+) -> Result<(), sqlx::Error> {
+    let relays = (!source.relays.is_empty()).then_some(source.relays);
+    sqlx::query(
+        "UPDATE certificates SET renewed_from = $2, relay_path = $3, relay_serial = $4
+         WHERE serial = $1",
+    )
+    .bind(serial.as_bytes())
+    .bind(renewed_from.as_bytes())
+    .bind(relays)
+    .bind(source.relay_serial.map(Serial::as_bytes))
+    .execute(&mut **tx)
+    .await
+    .map(drop)
 }
 
 /// `peer_role`, `peer_id`, revoked, expired, `issuer_ca`, `trusted_cas`,
@@ -609,7 +657,7 @@ impl CertificateService for Renewer {
         &self,
         request: Request<ForwardedRenewRequest>,
     ) -> Result<Response<RenewResponse>, Status> {
-        let relay = monitorflow_common::tls::peer_identity(&request)?;
+        let relay = PresentedCert::from_request(&request)?;
         let via = Via::from_metadata(request.metadata())?;
         let request = request.into_inner();
         let cert = CertificateDer::from(request.peer_cert_der);
@@ -621,7 +669,7 @@ impl CertificateService for Renewer {
         let result = self
             .forwarded(&relay, via.as_ref(), &cert, &request.csr_pem, ask)
             .await;
-        self.respond(&relay, ask, result)
+        self.respond(&relay.identity, ask, result)
     }
 }
 
