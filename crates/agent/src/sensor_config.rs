@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use monitorflow_common::config::AgentSensorsConfig;
+use monitorflow_common::config::{AgentSensorsConfig, ScriptArgs};
 use monitorflow_common::proto::v1::{SensorConfig, SensorConfigAck, SensorSpec, SensorSpecError};
 use monitorflow_plugin::manifest::CHECK_KIND;
 use monitorflow_sensors::registry::Local;
@@ -108,6 +108,7 @@ pub const LOG_POSITIONS_DIR: &str = "log-positions";
 pub fn local(config: &AgentSensorsConfig) -> Local {
     Local {
         script_dir: config.script_dir.clone(),
+        script_args: config.script_args == ScriptArgs::Any,
         log_dirs: config.log_dirs.clone(),
         log_positions: None,
         event_channels: config.event_channels.clone(),

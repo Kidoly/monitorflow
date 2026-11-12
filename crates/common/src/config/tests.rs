@@ -170,6 +170,19 @@ fn agent_sensor_limits_default_and_validate() {
         "{msg}"
     );
     assert_eq!(agent.sensors.log_dirs, [Path::new("/var/log")]);
+    assert_eq!(agent.sensors.script_args, ScriptArgs::None);
+    let text = format!("{AGENT_MIN}\n[sensors]\nscript_args = \"any\"\n");
+    assert_eq!(
+        parse::<AgentConfig>(&text).unwrap().sensors.script_args,
+        ScriptArgs::Any
+    );
+    let text = format!("{AGENT_MIN}\n[sensors]\nscript_args = \"some\"\n");
+    assert!(parse::<AgentConfig>(&text).is_err());
+    let vars = [("MONITORFLOW_SENSORS_SCRIPT_ARGS", "ANY")];
+    let any: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    assert_eq!(any.sensors.script_args, ScriptArgs::Any);
+    let msg = err::<AgentConfig>(AGENT_MIN, &[("MONITORFLOW_SENSORS_SCRIPT_ARGS", "all")]);
+    assert!(msg.contains("expected none or any"), "{msg}");
     let text = format!("{AGENT_MIN}\n[sensors]\nlog_dirs = [\"/var/log/app\", \"/srv/logs\"]\n");
     let agent: AgentConfig = parse(&text).unwrap();
     assert_eq!(

@@ -86,6 +86,8 @@ pub enum BuildError {
 pub struct Local {
     /// Where the `script` sensor finds the scripts it may run.
     pub script_dir: PathBuf,
+    /// Whether server-configured scripts may take arguments (ADR-0112).
+    pub script_args: bool,
     /// Directories the `log` sensor may read files under.
     pub log_dirs: Vec<PathBuf>,
     /// Where the `log` sensor saves how far it read each file, so a
@@ -100,6 +102,7 @@ impl Default for Local {
     fn default() -> Self {
         Self {
             script_dir: script::DEFAULT_DIR.into(),
+            script_args: false,
             log_dirs: log::DEFAULT_DIRS.iter().map(PathBuf::from).collect(),
             log_positions: None,
             event_channels: eventlog::DEFAULT_CHANNELS
