@@ -10,9 +10,12 @@ After=network-online.target
 User=monitorflow
 # The SMBIOS system UUID is root-only; a copy lets the agent tell
 # MonitorFlow which Proxmox VM it runs in (ADR-0093). "+" runs it as root,
-# "-" ignores machines without one.
+# "-" ignores machines without one. The copy stays readable by the agent
+# only, as the original is by root only; its group is left as root so it
+# does not depend on the user's primary group.
 RuntimeDirectory=monitorflow-agent
-ExecStartPre=+-/usr/bin/install -m 0444 /sys/class/dmi/id/product_uuid /run/monitorflow-agent/product_uuid
+RuntimeDirectoryMode=0700
+ExecStartPre=+-/usr/bin/install -m 0400 -o monitorflow /sys/class/dmi/id/product_uuid /run/monitorflow-agent/product_uuid
 # Reads the system journal to forward its warnings and errors (ADR-0091).
 SupplementaryGroups=systemd-journal
 ExecStart=/usr/bin/monitorflow-agent --config /etc/monitorflow/agent.toml
