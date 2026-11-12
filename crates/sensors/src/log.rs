@@ -100,11 +100,16 @@ fn windows_path(path: &str) -> bool {
         let device = matches!(
             stem.to_ascii_uppercase().as_str(),
             "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-        ) || (stem.len() == 4
-            && ["COM", "LPT"]
-                .iter()
-                .any(|d| stem[..3].eq_ignore_ascii_case(d))
-            && stem.as_bytes()[3].is_ascii_digit());
+        ) || {
+            // Bytes, not `str` slices: the path comes from the server, and
+            // byte 3 of `abé` is inside a character.
+            let stem = stem.as_bytes();
+            stem.len() == 4
+                && [b"COM", b"LPT"]
+                    .iter()
+                    .any(|d| stem[..3].eq_ignore_ascii_case(*d))
+                && stem[3].is_ascii_digit()
+        };
         !s.is_empty()
             && !s.ends_with(['.', ' '])
             && !s.contains(['<', '>', ':', '"', '/', '|', '?', '*'])
