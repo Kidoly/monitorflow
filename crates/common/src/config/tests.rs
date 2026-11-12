@@ -197,6 +197,16 @@ fn agent_sensor_limits_default_and_validate() {
     let vars = [("MONITORFLOW_SENSORS_EVENT_CHANNELS", "System, Setup")];
     let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
     assert_eq!(agent.sensors.event_channels, ["System", "Setup"]);
+    assert_eq!(agent.sensors.port_targets, None);
+    let text = format!("{AGENT_MIN}\n[sensors]\nport_targets = [\"10.0.0.0/8:22\"]\n");
+    assert_eq!(
+        parse::<AgentConfig>(&text).unwrap().sensors.port_targets,
+        Some(vec!["10.0.0.0/8:22".to_owned()])
+    );
+    let vars = [("MONITORFLOW_SENSORS_PORT_TARGETS", "127.0.0.1, db.lan:5432")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    let expected = ["127.0.0.1", "db.lan:5432"].map(String::from).to_vec();
+    assert_eq!(agent.sensors.port_targets, Some(expected));
     let msg = err::<AgentConfig>(&format!("{AGENT_MIN}\n[sensors]\nscripts = \"/x\""), &[]);
     assert!(msg.contains("scripts"), "{msg}");
 }

@@ -576,6 +576,10 @@ pub struct AgentSensorsConfig {
     /// Event Log channels the `eventlog` sensor may read on Windows
     /// (ADR-0048); empty disables it.
     pub event_channels: Vec<String>,
+    /// Address ranges and host names, with optional ports, the `port`
+    /// sensor may connect to (ADR-0111); unset allows any, empty disables
+    /// it. The agent parses them at start-up.
+    pub port_targets: Option<Vec<String>>,
 }
 
 #[cfg(unix)]
@@ -585,6 +589,7 @@ impl Default for AgentSensorsConfig {
             script_dir: "/etc/monitorflow/scripts.d".into(),
             log_dirs: vec!["/var/log".into()],
             event_channels: vec!["Application".into(), "System".into()],
+            port_targets: None,
         }
     }
 }
@@ -599,6 +604,7 @@ impl Default for AgentSensorsConfig {
             script_dir: windows_base_dir().join("scripts.d"),
             log_dirs: Vec::new(),
             event_channels: vec!["Application".into(), "System".into()],
+            port_targets: None,
         }
     }
 }
@@ -681,6 +687,9 @@ impl LoadConfig for AgentConfig {
         }
         if let Some(channels) = env.list("sensors.event_channels") {
             self.sensors.event_channels = channels;
+        }
+        if let Some(targets) = env.list("sensors.port_targets") {
+            self.sensors.port_targets = Some(targets);
         }
         self.tls.apply_env(env)?;
         self.log.apply_env(env)
