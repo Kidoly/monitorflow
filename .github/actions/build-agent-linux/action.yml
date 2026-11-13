@@ -27,7 +27,9 @@ runs:
         "$RUNNER_TEMP/zigbuild/bin/pip" install -q cargo-zigbuild==0.24.0 ziglang==0.14.1
         echo "$RUNNER_TEMP/zigbuild/bin" >>"$GITHUB_PATH"
         sudo apt-get update && sudo apt-get install -y protobuf-compiler
+    # The project's own runners keep target/ instead (ci.yml).
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      if: runner.environment == 'github-hosted'
       with:
         key: ${{ inputs.target }}
     - id: build

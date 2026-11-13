@@ -103,6 +103,11 @@ data_dir = "{data}"
 heartbeat_timeout = {HEARTBEAT_TIMEOUT_SECS}
 server_names = ["127.0.0.1"]
 
+# No VictoriaLogs here: whatever the agent sends is retried until the
+# deadline, which must stay under the 10 s the test gives SIGTERM.
+[ingest]
+shutdown_timeout = 2
+
 [tls]
 ca_cert = "{data}/tls/ca.pem"
 cert = "{data}/tls/cert.pem"
