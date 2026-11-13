@@ -13,6 +13,11 @@
 //! bounded by the deadline; while a lookup is still running, later
 //! collections report down without starting another. The connection is
 //! closed as soon as it is established; nothing is sent.
+//!
+//! On the agent, `sensors.port_targets` may limit where it connects
+//! ([`PortTargets`], ADR-0111): a target outside it is refused when the
+//! configuration is applied, and the addresses a host name resolves to
+//! outside it are skipped at every collection.
 
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,8 +27,12 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::{timeout_at, Instant};
 
-use crate::registry::{BuildError, Params};
+use crate::registry::{BuildError, Local, Params};
 use crate::{Sample, Sensor, SensorError};
+
+mod targets;
+
+pub use targets::{PortTargets, PortTargetsError};
 
 /// Time kept before the deadline to return `up 0` rather than be
 /// cancelled with nothing, which could not alert.
@@ -78,6 +87,9 @@ pub struct PortSensor {
     host: Host,
     port: u16,
     target: String,
+    /// The addresses it may connect to, when the host is a name the
+    /// agent's `sensors.port_targets` does not list itself.
+    allowed: Option<PortTargets>,
     /// A lookup is still running on the blocking pool.
     resolving: Arc<AtomicBool>,
 }
@@ -97,11 +109,17 @@ impl PortSensor {
             target: target(&host, port),
             host,
             port,
+            allowed: None,
             resolving: Arc::default(),
         }
     }
 
-    pub(crate) fn from_params(params: &mut Params<'_>) -> Result<Self, BuildError> {
+    /// Checks the parameters, and the target against the `local` limits
+    /// when given.
+    pub(crate) fn from_params(
+        params: &mut Params<'_>,
+        local: Option<&Local>,
+    ) -> Result<Self, BuildError> {
         match params.get("protocol") {
             None | Some("tcp") => {}
             Some("udp") => {
@@ -118,7 +136,35 @@ impl PortSensor {
             Some(port) => port.parse::<u16>().ok().filter(|p| *p > 0),
         };
         let port = port.ok_or_else(|| params.bad("port", "must be between 1 and 65535"))?;
-        Ok(Self::new(host, port))
+        let mut sensor = Self::new(host, port);
+        if let Some(targets) = local.and_then(|l| l.port_targets.as_ref()) {
+            sensor.allowed = sensor
+                .check(targets)
+                .map_err(|reason| params.refused(reason))?;
+        }
+        Ok(sensor)
+    }
+
+    /// Whether `targets` allows this sensor's target: `Err` with the reason
+    /// when not, otherwise the list to check resolved addresses against,
+    /// if any.
+    fn check(&self, targets: &PortTargets) -> Result<Option<PortTargets>, String> {
+        if targets.is_empty() {
+            return Err("this agent checks no ports: its sensors.port_targets is empty".into());
+        }
+        let allowed = match &self.host {
+            Host::Ip(ip) if targets.allows_ip(*ip, self.port) => return Ok(None),
+            Host::Name(name) if targets.allows_name(name, self.port) => return Ok(None),
+            Host::Name(_) => targets.has_range_for(self.port),
+            Host::Ip(_) => false,
+        };
+        if !allowed {
+            return Err(format!(
+                "`{}` is not in its sensors.port_targets",
+                self.target
+            ));
+        }
+        Ok(Some(targets.clone()))
     }
 
     /// The addresses to try, in resolver order; empty when the lookup
@@ -159,7 +205,18 @@ impl Sensor for PortSensor {
         let sample = |metric: &str, value: f64| {
             Sample::metric(metric, value).with_label("target", &self.target)
         };
-        for addr in self.resolve(cutoff).await {
+        let mut addrs = self.resolve(cutoff).await;
+        if let Some(allowed) = &self.allowed {
+            let resolved = addrs.len();
+            addrs.retain(|a| allowed.allows_ip(a.ip(), a.port()));
+            if resolved > 0 && addrs.is_empty() {
+                tracing::warn!(
+                    endpoint = %self.target,
+                    "the host name resolves only to addresses outside sensors.port_targets; reporting down"
+                );
+            }
+        }
+        for addr in addrs {
             let started = Instant::now();
             match timeout_at(cutoff, TcpStream::connect(addr)).await {
                 Ok(Ok(_stream)) => {

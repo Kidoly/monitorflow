@@ -365,6 +365,8 @@ enum Logs {
 /// Loads the configuration and starts logging.
 fn load(path: &Path, logs: Logs) -> anyhow::Result<AgentConfig> {
     let config: AgentConfig = config::load(path)?;
+    // Before enrolling, like the configuration's own checks.
+    sensor_config::local(&config.sensors)?;
     match logs {
         Logs::Stdout => logging::init(&config.log),
         #[cfg(windows)]
@@ -415,7 +417,7 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     let plugin_checks = Arc::new(plugin_checks);
     let sensors = Sensors::new(
         Arc::new(
-            Builtin::from_config(&config.sensors, &config.data_dir).with_plugins(plugin_checks),
+            Builtin::from_config(&config.sensors, &config.data_dir)?.with_plugins(plugin_checks),
         ),
         ConfigFile::in_dir(&config.data_dir),
         uplink.clone(),
@@ -864,7 +866,7 @@ fn probe_limits(path: &Path) -> anyhow::Result<registry::Local> {
         return Ok(registry::Local::default());
     }
     let config: AgentConfig = config::load(path)?;
-    Ok(sensor_config::local(&config.sensors))
+    Ok(sensor_config::local(&config.sensors)?)
 }
 
 /// One round of samples per sensor kind on stdout, in Prometheus text
@@ -1138,20 +1140,22 @@ mod update_service {
         if matches!(request, Request::Scan | Request::Status) {
             return Ok(request.clone());
         }
-        let place = pinned().map_err(|e| format!("{e:#}"))?;
-        authorized(request, &place, monitorflow_agent::self_update::unix_ms())
+        let (place, data_dir) = pinned().map_err(|e| format!("{e:#}"))?;
+        let now = monitorflow_agent::self_update::unix_ms();
+        authorized(request, &place, &data_dir, now)
     }
 
     /// The helper's place, with the CA of the token in `agent.toml`
     /// pinned if nothing was pinned or adopted yet (ADR-0108). Run when
     /// the service starts too, before the agent's account can change its
-    /// files, and not first at the first signed request.
-    fn pinned() -> anyhow::Result<Place> {
+    /// files, and not first at the first signed request. With the
+    /// agent's data directory, from `agent.toml`.
+    fn pinned() -> anyhow::Result<(Place, std::path::PathBuf)> {
         let config: monitorflow_common::config::AgentConfig =
             config::load(&super::default_config())?;
         let place = Place::agent(&config.tls_paths());
         pin_once(&place, config.enrollment_token.as_ref().map(|t| t.expose()));
-        Ok(place)
+        Ok((place, config.data_dir))
     }
 
     fn serve() -> anyhow::Result<()> {

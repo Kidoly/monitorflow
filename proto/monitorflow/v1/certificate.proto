@@ -79,11 +79,16 @@ service RevocationService {
   rpc GetCrl(GetCrlRequest) returns (GetCrlResponse);
 }
 
-message GetCrlRequest {}
+message GetCrlRequest {
+  // The caller reads `crl_ders`, so `crl_der` may stay empty: each CRL then
+  // travels once (ADR-0113). Callers without it get both, as before.
+  bool reads_crl_ders = 1;
+}
 
 message GetCrlResponse {
   // The current CRL in DER, signed by the CA. The same list the server's
-  // listener enforces, including its next_update.
+  // listener enforces, including its next_update. Empty when the request
+  // set `reads_crl_ders`.
   bytes crl_der = 1;
   // One CRL per trusted CA, `crl_der` first: two during a change of
   // certificate authority (ADR-0088). A relay enforces all of them.
