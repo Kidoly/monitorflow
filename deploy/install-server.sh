@@ -671,15 +671,20 @@ copy_join_data() {
 }
 
 # The key of the stored secrets of the join file in $tmp/join, on a central
-# server added before ADR-0125.
+# server added before ADR-0125. As root with what the services drop
+# (ADR-0126), keeping the owners of the files.
 copy_secrets_key() {
-    compose run --rm --no-deps -T --user 0 --entrypoint tar server -C /var/lib/monitorflow -xf - server/secrets \
+    as_root="--user 0 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER"
+    # shellcheck disable=SC2086
+    compose run --rm --no-deps -T $as_root --entrypoint tar server -C /var/lib/monitorflow -xf - server/secrets \
         <"$tmp/join/server.tar" >/dev/null || die "cannot copy the secrets key"
 }
 
-# Whether this added central server has the first one's secrets key.
+# Whether this added central server has the first one's secrets key. As
+# the server's user, who owns the directory: root without capabilities
+# cannot enter it (ADR-0126).
 has_secrets_key() {
-    compose run --rm --no-deps -T --user 0 --entrypoint sh server \
+    compose run --rm --no-deps -T --entrypoint sh server \
         -c 'test -s /var/lib/monitorflow/server/secrets/keys' >/dev/null 2>&1
 }
 

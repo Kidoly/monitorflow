@@ -249,7 +249,7 @@ check "and no longer the owner's" test -z "$(env_value 2 POSTGRES_PASSWORD)"
 check "its server is healthy" healthy 2
 
 echo "== a central server added before ADR-0125 needs a new join file"
-compose 2 exec -T --user 0 server rm -rf /var/lib/monitorflow/server/secrets
+compose 2 exec -T server rm -rf /var/lib/monitorflow/server/secrets
 if installer 2 >"$work/no-key.log"; then failed=1; echo "the installer ran without the secrets key: FAILED"; fi
 check "it says to make a new join file" grep -q -- '--add-server again' "$work/no-key.log"
 check "and its server still runs" healthy 2
