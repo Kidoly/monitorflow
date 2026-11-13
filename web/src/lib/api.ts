@@ -1113,6 +1113,8 @@ export interface BackupsView {
   enabled: boolean;
   /** Files can be downloaded. */
   downloads: boolean;
+  /** Backups are in `BACKUP_DIR`, readable by root alone: no downloads. */
+  host_dir: boolean;
   updater_alive: boolean;
   /** "Back up now" waits for the updater. */
   requested: boolean;

@@ -477,6 +477,7 @@ db_tests! {
         let (status, body) = h.call("GET", "/api/backups", &admin, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!((body["enabled"].clone(), body["downloads"].clone(), body["updater_alive"].clone()), (json!(true), json!(true), json!(true)));
+        assert_eq!(body["host_dir"], false);
         assert_eq!(body["keep"], 7);
         assert_eq!(body["last"]["state"], "failed");
         assert_eq!(body["last"]["error"], "pg_dump: connection refused");
@@ -503,6 +504,20 @@ db_tests! {
         let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action IN ('server.backup', 'server.backup.download')")
             .fetch_one(&pool).await.unwrap();
         assert_eq!(audited, 2);
+
+        // A host directory (BACKUP_DIR) is root's alone (ADR-0129): the
+        // server says so and serves nothing. Root reads it anyway.
+        if !rustix::process::geteuid().is_root() {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = h.dir().join("backups");
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let (_, body) = h.call("GET", "/api/backups", &admin, None).await;
+            let (status, download) = h.call("GET", &format!("/api/backups/{name}"), &admin, None).await;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!((body["downloads"].clone(), body["host_dir"].clone()), (json!(false), json!(true)));
+            assert_eq!(status, StatusCode::CONFLICT, "{download}");
+            assert!(download["error"].as_str().unwrap().contains("BACKUP_DIR"), "{download}");
+        }
     }
 
     #[sqlx::test]

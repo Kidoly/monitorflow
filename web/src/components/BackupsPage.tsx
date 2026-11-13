@@ -208,6 +208,8 @@ function Files({ view, now, action }: { view: BackupsView; now: Date; action: Re
           <a className={buttonClass({ size: "small" })} href={backupDownloadHref(f.name)} download={f.name}>
             Download
           </a>
+        ) : view.host_dir ? (
+          <span className={styles.dim}>In BACKUP_DIR on the server</span>
         ) : (
           <span className={styles.dim}>Download needs the current compose file</span>
         )

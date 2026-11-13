@@ -241,6 +241,8 @@ services:
       # Unset: agent_download_url's release, GitHub's by default.
       MONITORFLOW_RELEASE_URL: ${RELEASE_URL:-}
       MONITORFLOW_AGENT_DOWNLOAD_URL: ${AGENT_DOWNLOAD_URL:-}
+      # Set: backups are in a host directory, which only root may read.
+      MONITORFLOW_BACKUP_HOST_DIR: ${BACKUP_DIR:-}
     volumes:
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       # This directory: the compose files and .env, where it pins images.

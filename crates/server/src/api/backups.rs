@@ -29,6 +29,9 @@ pub struct BackupsView {
     pub enabled: bool,
     /// The backups volume is mounted: files can be downloaded.
     pub downloads: bool,
+    /// Backups are mounted but only root can read them: they are in a
+    /// host directory, `BACKUP_DIR`, and are copied from there.
+    pub host_dir: bool,
     pub updater_alive: bool,
     /// "Back up now" waits for the updater to take it.
     pub requested: bool,
@@ -53,14 +56,33 @@ pub async fn get(
     let settings = &state.settings.server_update;
     let (status, requested) = read_backup_state(&state).await?;
     let updater_alive = status.as_ref().is_some_and(alive);
+    let readable = match settings.backup_dir.clone() {
+        None => None,
+        Some(dir) => Some(
+            tokio::task::spawn_blocking(move || readable(&dir))
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?,
+        ),
+    };
     Ok(Json(BackupsView {
         enabled: settings.dir.is_some(),
-        downloads: settings.backup_dir.is_some(),
+        downloads: readable == Some(true),
+        host_dir: readable == Some(false),
         updater_alive,
         requested,
         keep: KEEP,
         backups: status.map(|s| s.backups).unwrap_or_default(),
     }))
+}
+
+/// The server can list the backups directory. The updater makes a host
+/// directory root's alone (ADR-0129); a volume not created yet counts as
+/// readable, as the updater will share it.
+fn readable(dir: &std::path::Path) -> bool {
+    match std::fs::read_dir(dir) {
+        Ok(_) => true,
+        Err(e) => e.kind() != std::io::ErrorKind::PermissionDenied,
+    }
 }
 
 async fn read_backup_state(
@@ -121,6 +143,9 @@ pub async fn start(
     Ok((StatusCode::ACCEPTED, Json(Started { id })))
 }
 
+const HOST_DIR: &str =
+    "backups are in a directory of the host only root can read: copy them from BACKUP_DIR";
+
 /// `GET /api/backups/{name}`: the file, audited.
 pub async fn download(
     State(state): State<ApiState>,
@@ -140,13 +165,16 @@ pub async fn download(
     }
     let path = dir.join(&name);
     let check = path.clone();
-    let is_file = tokio::task::spawn_blocking(move || {
-        std::fs::symlink_metadata(check).is_ok_and(|m| m.is_file())
-    })
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if !is_file {
-        return Err(ApiError::NotFound);
+    let is_file =
+        tokio::task::spawn_blocking(move || std::fs::symlink_metadata(check).map(|m| m.is_file()))
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    match is_file {
+        Ok(true) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Err(ApiError::Conflict(HOST_DIR.into()));
+        }
+        _ => return Err(ApiError::NotFound),
     }
     audit::record(
         &state.pool,
@@ -184,4 +212,32 @@ pub async fn download(
     );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok(response.into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_or_listable_directory_is_readable() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert!(readable(dir.path()));
+        assert!(readable(&dir.path().join("missing")));
+    }
+
+    /// Root reads anything, so the case only shows for another user.
+    #[test]
+    fn a_directory_of_root_alone_is_not() {
+        use std::os::unix::fs::PermissionsExt;
+        if rustix::process::geteuid().is_root() {
+            return;
+        }
+        let dir = tempfile::TempDir::new().unwrap();
+        let private = dir.path().join("backups");
+        std::fs::create_dir(&private).unwrap();
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let result = readable(&private);
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(!result);
+    }
 }

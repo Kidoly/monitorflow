@@ -89,7 +89,7 @@ Volumes are prefixed with the project name, like `monitorflow_serverdata`.
 | `dbcerts` | Certificates of the database link, created again when the volume is empty |
 | `storagetls` | Certificate, key and password of the links to VictoriaMetrics and VictoriaLogs, created again when the volume is empty |
 | `caddydata` | Caddy's certificates and CA. Not in backups: after a restore on a new machine, devices trust the new CA from `/trust/` |
-| `backups` | Backups: daily, on request and before each update, the 7 newest kept; `BACKUP_DIR` in `deploy/.env` puts them in a directory of the machine instead |
+| `backups` | Backups: daily, on request and before each update, the 7 newest kept; `BACKUP_DIR` in `deploy/.env` puts them in a directory of the machine instead, which the updater makes `root:root`, mode `0700`: copy them from there, as the page cannot download them[^0129] |
 | `update`, `updater` | Update requests and status, and the updater's own state |
 
 The updater backs up the database and `serverdata` every day and keeps the 7 newest backups[^0058]. **Administration, Backups** shows the last one, takes one now and downloads any of them. A backup holds the CA keys: whoever has the file can impersonate the server, so keep copies somewhere safe. Metrics, logs and the mirror repositories are not in backups; the mirror signing key is.
@@ -237,3 +237,4 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 [^0071]: [ADR-0071: First-run setup in the browser](adr/0071-first-run-setup.md)
 [^0088]: [ADR-0088: Changing the certificate authority](adr/0088-changing-the-certificate-authority.md)
 [^0109]: [ADR-0109: The server runs on a database role that owns nothing](adr/0109-database-roles.md)
+[^0129]: [ADR-0129: A host backup directory belongs to root alone](adr/0129-private-host-backup-dir.md)
