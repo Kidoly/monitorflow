@@ -11,7 +11,9 @@ use axum::http::HeaderMap;
 use monitorflow_common::redact::Secret;
 use monitorflow_server::api::users::{self, GrantScope};
 use monitorflow_server::api::Role;
+use monitorflow_server::integrations::{self, Clients, StoredEvent};
 use monitorflow_server::notify::{self, Coverage, Destination, Dispatcher, Webhook};
+use monitorflow_server::remediation::switch;
 use monitorflow_server::secrets::{self, Column, Keyring};
 use sqlx::PgPool;
 use tokio::net::TcpListener;
@@ -123,8 +125,26 @@ db_tests! {
         .await
         .unwrap();
 
+        sqlx::query(
+            "INSERT INTO integration_endpoints (name, url, secret, events)
+             VALUES ('psa', 'https://psa.example/hook', 'mfi_plain', '{incident.opened}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO server_settings (singleton, ai_enabled, ai_api_key)
+             VALUES (true, true, 'sk-ant-plain')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
         let sealed = secrets::seal_stored(&pool).await.unwrap();
-        assert_eq!(sealed, [Column::NotificationChannels, Column::UserContacts]);
+        assert_eq!(
+            sealed,
+            [Column::NotificationChannels, Column::UserContacts, Column::IntegrationEndpoints, Column::AiApiKey]
+        );
         let channels = "SELECT secret FROM notification_channels ORDER BY settings->>'url'";
         let first = stored(&pool, channels).await;
         assert_eq!(first[1], None, "no secret stays none");
@@ -141,7 +161,20 @@ db_tests! {
             .fetch_all(&pool)
             .await
             .unwrap();
-        assert_eq!(listed, ["notification_channels.secret", "user_contacts.secret"]);
+        assert_eq!(
+            listed,
+            [
+                "integration_endpoints.secret",
+                "notification_channels.secret",
+                "server_settings.ai_api_key",
+                "user_contacts.secret",
+            ]
+        );
+        let endpoint = stored(&pool, "SELECT secret FROM integration_endpoints").await;
+        let endpoint = endpoint[0].as_deref().unwrap();
+        assert_eq!(secrets::open(Column::IntegrationEndpoints, endpoint).unwrap().expose(), "mfi_plain");
+        let wanted = switch::wanted(&pool).await.unwrap().unwrap();
+        assert_eq!(wanted.api_key.unwrap().expose(), "sk-ant-plain");
 
         // The next start seals nothing: a value is never sealed twice.
         assert!(secrets::seal_stored(&pool).await.unwrap().is_empty());
@@ -200,5 +233,44 @@ db_tests! {
         let signatures = seen.lock().unwrap().clone();
         assert_eq!(signatures.len(), 1);
         assert!(signatures[0].is_some(), "signed with the secret that opens");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_endpoint_or_ai_key_that_does_not_open_is_never_used(pool: PgPool) {
+        secrets::install_for_tests();
+        let (url, seen) = receiver().await;
+        let other = Keyring::generate().unwrap();
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO integration_endpoints (name, url, secret, events, allow_private)
+             VALUES ('psa', $1, $2, '{incident.opened}', true) RETURNING id",
+        )
+        .bind(&url)
+        .bind(other.seal(Column::IntegrationEndpoints, "mfi_theirs").unwrap())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let endpoint = integrations::load(&pool, id).await.unwrap().unwrap();
+        let event = StoredEvent {
+            id: Uuid::new_v4(),
+            event: "incident.opened".into(),
+            details: serde_json::json!({}),
+            created_at: chrono::Utc::now(),
+        };
+        let failure = Clients::default()
+            .post(&endpoint, &event, "https://mf.example", false)
+            .await
+            .unwrap_err();
+        assert!(failure.message.contains("which this server does not have"), "{}", failure.message);
+        assert!(seen.lock().unwrap().is_empty(), "nothing went out unsigned");
+
+        // AI stays off rather than calling without its key.
+        sqlx::query(
+            "INSERT INTO server_settings (singleton, ai_enabled, ai_api_key) VALUES (true, true, $1)",
+        )
+        .bind(other.seal(Column::AiApiKey, "sk-ant-theirs").unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(switch::wanted(&pool).await.unwrap().is_none());
     }
 }

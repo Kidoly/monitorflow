@@ -5,7 +5,12 @@ use sqlx::{PgPool, Row};
 use super::{keyring, Column, SecretsError};
 
 /// The columns whose values the server keeps sealed.
-pub const SEALED: &[Column] = &[Column::NotificationChannels, Column::UserContacts];
+pub const SEALED: &[Column] = &[
+    Column::NotificationChannels,
+    Column::UserContacts,
+    Column::IntegrationEndpoints,
+    Column::AiApiKey,
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {

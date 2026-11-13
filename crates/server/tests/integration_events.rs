@@ -139,7 +139,13 @@ async fn endpoint(
          VALUES ('psa', $1, $2, $3, $4, $5, true) RETURNING id",
     )
     .bind(url)
-    .bind(SECRET)
+    .bind(
+        monitorflow_server::secrets::seal(
+            monitorflow_server::secrets::Column::IntegrationEndpoints,
+            SECRET,
+        )
+        .unwrap(),
+    )
     .bind(&wanted)
     .bind(customer)
     .bind(site)
@@ -151,6 +157,7 @@ async fn endpoint(
 db_tests! {
     #[sqlx::test]
     async fn triggers_write_every_kind_of_event(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (customer, site, server) = place(&pool, "acme").await;
         incident(
             &pool,
@@ -287,6 +294,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn each_endpoint_gets_the_events_it_wants_and_covers(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (acme, _, acme_server) = place(&pool, "acme").await;
         let (_, globex_site, globex_server) = place(&pool, "globex").await;
         let url = "https://psa.example/hook";
