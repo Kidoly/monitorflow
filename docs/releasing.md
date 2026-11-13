@@ -4,7 +4,7 @@ How a maintainer publishes releases: the agent and relay files (ADR-0052, ADR-00
 
 ## The signing key, once
 
-Agents install a new binary only when `SHA256SUMS.sig` verifies against a key in `deploy/release-keys.pem`, compiled into them. The private key stays off every server and host. GitHub Actions reads it from the `release` environment. Only a job running on a `v*` tag can use that environment, and only after the maintainer approves the job (ADR-0110).
+Agents install a new binary only when `SHA256SUMS.sig` verifies against a key in `deploy/release-keys.pem`, compiled into them. The private key stays off every server and host. GitHub Actions reads it from the `release` environment. Only a job running on a `v*` tag can use that environment, and only after the maintainer approves the job (ADR-0128).
 
 ### The environment and the tag rule
 
@@ -57,7 +57,7 @@ Check the pair before the first release: `openssl pkey -in monitorflow-release.p
 
 ### Moving a repository secret to the environment
 
-A repository set up before ADR-0110 has the key as a repository secret. Create the environment as above, then, from the offline copy of the key:
+A repository set up before ADR-0128 has the key as a repository secret. Create the environment as above, then, from the offline copy of the key:
 
 ```
 gh secret set RELEASE_SIGNING_KEY --repo Kidoly/monitorflow --env release <monitorflow-release.pem

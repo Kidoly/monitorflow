@@ -1,7 +1,7 @@
 # ADR-0053: Signed releases and agent self-update
 
 Date: 2026-10-27
-Status: accepted; implemented in stages (see the end); the cache keeps whole releases since ADR-0054; the per-site policy amended by ADR-0055 (automatic updates); the helper takes `allow_downgrade` from the signed command only (ADR-0108); the signing key moves to the `release` environment in ADR-0110
+Status: accepted; implemented in stages (see the end); the cache keeps whole releases since ADR-0054; the per-site policy amended by ADR-0055 (automatic updates); the helper takes `allow_downgrade` from the signed command only (ADR-0108); the signing key moves to the `release` environment in ADR-0128
 
 ## Context
 
@@ -28,7 +28,7 @@ Rejected:
 - **GPG**, like the mirror key. A large format to parse in the agent for one signature, and the same online-key problem if the server signed.
 - **Authenticode** on the Windows files is still worth having for SmartScreen and administrators, but it needs a paid certificate; the agent checks `SHA256SUMS.sig` on Windows too.
 
-**The private key** never touches a server or a host. The maintainer generates it offline, stores it as the secret `RELEASE_SIGNING_KEY` (of the `release` environment since ADR-0110), which only the publishing run of `release.yml` reads (a `v*` tag), and commits the public half to `deploy/release-keys.pem`. The release job refuses to publish without the secret, and `release-files.sh` refuses a signing key whose public half is not in `release-keys.pem`, since agents would never accept that release. Other runs of the workflow sign with a throwaway key and publish nothing. The steps are in `docs/releasing.md`.
+**The private key** never touches a server or a host. The maintainer generates it offline, stores it as the secret `RELEASE_SIGNING_KEY` (of the `release` environment since ADR-0128), which only the publishing run of `release.yml` reads (a `v*` tag), and commits the public half to `deploy/release-keys.pem`. The release job refuses to publish without the secret, and `release-files.sh` refuses a signing key whose public half is not in `release-keys.pem`, since agents would never accept that release. Other runs of the workflow sign with a throwaway key and publish nothing. The steps are in `docs/releasing.md`.
 
 **Key rotation.** Agents accept any key in their list. To rotate: release N adds the new public key to `release-keys.pem` and is signed with the old key; once agents run N, release N+1 is signed with the new key and drops the old one. An agent older than N must go through N, or be reinstalled. If the old key is compromised, an attacker can sign for every agent that still trusts it, so the recovery is the same rotation done quickly, plus reinstalling hosts that cannot be updated through N; the installer of the new release carries only the new key.
 

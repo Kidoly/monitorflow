@@ -1,4 +1,4 @@
-# ADR-0110: The release signing key lives in a gated environment
+# ADR-0128: The release signing key lives in a gated environment
 
 Date: 2026-11-12
 Status: accepted; amends ADR-0053
