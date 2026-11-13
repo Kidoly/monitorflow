@@ -13,7 +13,6 @@
 
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::net::IpAddr;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -32,13 +31,14 @@ use uuid::Uuid;
 use super::access::Scope;
 use super::audit::{self, Event};
 use super::auth::{self, CurrentUser};
+use super::client_addr::Peer;
 use super::dashboard_data::{self, DataRequest, DataResponse, Within};
 use super::dashboards::{may_link, may_see, named, Row, Servers, Sharing, Spec, MAX_NAME, SELECT};
 use super::one_time::OneTimeToken;
 use super::roles::Role;
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiSettings, ApiState};
-use crate::enroll::limiter::{FailureLimiter, UNKNOWN_SOURCE};
+use crate::enroll::limiter::FailureLimiter;
 
 /// The page a link opens; the secret follows `#`.
 pub const PAGE_PATH: &str = "/display/";
@@ -147,20 +147,6 @@ impl Default for Limits {
             requests: Counter::new(REQUESTS_PER_MINUTE, Duration::from_secs(60)),
         }
     }
-}
-
-/// The client's address as the reverse proxy in front of the API saw it:
-/// the last `X-Forwarded-For` entry, which the proxy appends. Without one,
-/// every client shares one bucket.
-pub(super) fn source(headers: &HeaderMap) -> IpAddr {
-    headers
-        .get_all("x-forwarded-for")
-        .iter()
-        .next_back()
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.rsplit(',').next())
-        .and_then(|v| v.trim().parse().ok())
-        .unwrap_or(UNKNOWN_SOURCE)
 }
 
 fn too_many() -> ApiError {
@@ -678,11 +664,12 @@ fn screen_view(link: &Live, shown: Vec<(Row, Spec)>) -> ScreenView {
 /// 429 over the limits.
 pub async fn start(
     State(state): State<ApiState>,
+    peer: Peer,
     headers: HeaderMap,
     request: Result<Json<StartRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let request = body(request)?;
-    let from = source(&headers);
+    let from = state.settings.trusted_proxies.source(&peer, &headers).await;
     let limits = &state.display_limits;
     if limits.failures.is_blocked(from) {
         return Err(too_many());
@@ -817,19 +804,6 @@ mod tests {
         assert!(!counter.allow(&a, &Uuid::nil(), t0));
         assert!(counter.allow(&b, &Uuid::nil(), t0));
         assert!(counter.allow(&a, &Uuid::nil(), t0 + Duration::from_secs(60)));
-    }
-
-    #[test]
-    fn the_source_is_the_address_the_proxy_appended() {
-        let mut headers = HeaderMap::new();
-        assert_eq!(source(&headers), UNKNOWN_SOURCE);
-        headers.insert(
-            "x-forwarded-for",
-            HeaderValue::from_static("203.0.113.9, 198.51.100.4"),
-        );
-        assert_eq!(source(&headers), "198.51.100.4".parse::<IpAddr>().unwrap());
-        headers.insert("x-forwarded-for", HeaderValue::from_static("nonsense"));
-        assert_eq!(source(&headers), UNKNOWN_SOURCE);
     }
 
     #[test]

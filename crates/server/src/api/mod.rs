@@ -629,6 +629,7 @@ pub mod backups;
 pub mod campaigns;
 pub mod certificate_authority;
 pub mod check_interval;
+pub mod client_addr;
 pub mod commands;
 pub mod customers;
 pub mod dashboard_data;
@@ -717,6 +718,9 @@ const BODY_LIMIT: usize = 64 * 1024;
 #[derive(Debug, Clone)]
 pub struct ApiSettings {
     pub cookie_secure: bool,
+    /// Proxies whose `X-Forwarded-For` gives the client's address
+    /// (ADR-0110).
+    pub trusted_proxies: Arc<client_addr::TrustedProxies>,
     /// Session lifetimes and the mirror URL, which change at runtime
     /// (ADR-0069). Shared with `agent_releases`.
     pub live: Live,
@@ -750,6 +754,9 @@ impl ApiSettings {
         let agent_releases = agent_releases::Sources::from_config(config);
         Self {
             cookie_secure: config.api_cookie_secure,
+            trusted_proxies: Arc::new(client_addr::TrustedProxies::new(
+                &config.api_trusted_proxies,
+            )),
             live: agent_releases.live.clone(),
             agent_releases,
             server_update: server_update::ServerUpdateSettings::from_config(config),
@@ -1309,9 +1316,14 @@ pub async fn serve(
             tracing::warn!(%addr, "API listens on plain HTTP beyond loopback; keep it behind a TLS reverse proxy (ADR-0006)");
         }
     }
-    axum::serve(listener, v1::app(state))
-        .with_graceful_shutdown(shutdown)
-        .await
+    // The peer address tells a trusted proxy from a local user who reaches
+    // the listener directly (ADR-0110).
+    axum::serve(
+        listener,
+        v1::app(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await
 }
 
 async fn not_found() -> ApiError {

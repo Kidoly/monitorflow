@@ -2,10 +2,12 @@
 //! sign-in limits, and that the setup and password links are checked
 //! before a password is hashed. Ignored without `DATABASE_URL`.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use monitorflow_common::redact::Secret;
@@ -55,8 +57,10 @@ async fn send(
     let mut request = Request::post(uri)
         .header("content-type", "application/json")
         .header(CSRF_HEADER, "1")
-        // As the reverse proxy appends it; what the client sent comes first.
-        .header("x-forwarded-for", format!("203.0.113.200, {source}"));
+        // As the reverse proxy on loopback appends it; what the client sent
+        // comes first.
+        .header("x-forwarded-for", format!("203.0.113.200, {source}"))
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50_000))));
     if let Some(cookie) = cookie {
         request = request.header("cookie", cookie);
     }
