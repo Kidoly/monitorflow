@@ -39,8 +39,10 @@ impl RevocationService for CrlService {
             return Err(Status::permission_denied("only relays may fetch the CRL"));
         }
         let crl_ders: Vec<Vec<u8>> = self.crl.borrow().iter().map(|crl| crl.to_vec()).collect();
-        let crl_der = crl_ders.first().cloned().unwrap_or_default();
         tracing::debug!(%peer, crls = crl_ders.len(), "CRL sent");
-        Ok(Response::new(GetCrlResponse { crl_der, crl_ders }))
+        Ok(Response::new(tls::crl_response(
+            crl_ders,
+            request.get_ref().reads_crl_ders,
+        )))
     }
 }

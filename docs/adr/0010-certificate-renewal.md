@@ -17,7 +17,7 @@ Peer certificates are valid for 7 days by default (ADR-0007). An agent loads its
 
 - the role is `server` (the server renews its own certificate at start, ADR-0007);
 - the presented certificate has expired, or is revoked in the CA's list: a long HTTP/2 connection can outlive both checks of its handshake;
-- its serial is not in `certificates`, is recorded for another peer, or is revoked or expired there;
+- its serial is not in `certificates`, is recorded for another peer, or is revoked or expired there, or the certificate is not the one recorded with that serial (ADR-0121);
 - the peer's inventory row (`servers` or `relays`) is revoked, or a relay has no row. The row is read `FOR SHARE`, so a revocation waits for the renewal to commit or sees it. An agent that never said Hello has no row yet; its recorded certificate proves the enrollment.
 
 The caller is authenticated, so the reason is safe to return and helps whoever reads the peer's logs. Then the CA issues the certificate (in `spawn_blocking`), and its `certificates` row and a `peer.renew` audit row (new serial, previous serial, `not_after`) commit together.

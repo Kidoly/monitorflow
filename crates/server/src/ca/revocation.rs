@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::sync::{MutexGuard, PoisonError};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rcgen::{CertificateRevocationListParams, RevokedCertParams, SerialNumber};
 use rustls::pki_types::CertificateRevocationListDer;
@@ -48,6 +49,34 @@ pub(super) struct Revoked {
     /// Unix seconds.
     pub revoked_at: i64,
     pub reason: RevocationReason,
+    /// Unix seconds: when the certificate expires. Absent in records made
+    /// before ADR-0113; [`CaOptions::max_cert_validity`] after `revoked_at`
+    /// bounds it.
+    ///
+    /// [`CaOptions::max_cert_validity`]: super::CaOptions::max_cert_validity
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_after: Option<i64>,
+}
+
+impl Revoked {
+    /// Unix seconds after which the serial is left out and forgotten.
+    fn listed_until(&self, max_validity: Duration, margin: Duration) -> i64 {
+        let expires = self
+            .not_after
+            .unwrap_or_else(|| self.revoked_at.saturating_add(secs(max_validity)));
+        expires.saturating_add(secs(margin))
+    }
+}
+
+fn secs(duration: Duration) -> i64 {
+    i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
+}
+
+fn unix(time: SystemTime) -> i64 {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(after) => secs(after),
+        Err(before) => -secs(before.duration()),
+    }
 }
 
 /// Reads the store; a missing file is an empty store.
@@ -65,9 +94,19 @@ fn save(path: &Path, revocations: &Revocations) -> Result<(), CaError> {
 }
 
 impl CertificateAuthority {
-    /// Records the revocation of `serial`, which appears in every later
-    /// [`Self::crl`]. Revoking a serial twice keeps the first record.
-    pub fn revoke(&self, serial: &Serial, reason: RevocationReason) -> Result<(), CaError> {
+    /// Records the revocation of `serial`, a certificate that expires at
+    /// `not_after`. It appears in every later [`Self::crl`] until
+    /// [`CaOptions::revocation_margin`] after `not_after`, when it is
+    /// forgotten: an expired certificate is refused anyway. Revoking a
+    /// serial twice keeps the first record.
+    ///
+    /// [`CaOptions::revocation_margin`]: super::CaOptions::revocation_margin
+    pub fn revoke(
+        &self,
+        serial: &Serial,
+        reason: RevocationReason,
+        not_after: SystemTime,
+    ) -> Result<(), CaError> {
         let mut state = self.lock();
         if state.revoked.iter().any(|r| &r.serial == serial) {
             return Ok(());
@@ -77,6 +116,7 @@ impl CertificateAuthority {
             serial: serial.clone(),
             revoked_at: now().unix_timestamp(),
             reason,
+            not_after: Some(unix(not_after)),
         });
         save(&self.dir.join(REVOCATIONS_FILE), &next)?;
         *state = next;
@@ -90,8 +130,9 @@ impl CertificateAuthority {
     }
 
     /// A new DER CRL per trusted CA generation, the active one first, each
-    /// listing every revoked serial, valid from now for
-    /// [`CaOptions::crl_validity`], with a CRL number one above the last.
+    /// listing every revoked serial whose certificate has not expired, valid
+    /// from now for [`CaOptions::crl_validity`], with a CRL number one above
+    /// the last.
     ///
     /// The revocation list is shared: serials are 128 random bits, so a
     /// serial of one generation in the other's CRL revokes nothing else.
@@ -99,13 +140,27 @@ impl CertificateAuthority {
     /// [`CaOptions::crl_validity`]: super::CaOptions::crl_validity
     pub fn crls(&self) -> Result<Vec<CertificateRevocationListDer<'static>>, CaError> {
         let mut state = self.lock();
+        let this_update = now();
         let mut next = state.clone();
         next.crl_number += 1;
+        // Expired certificates fail verification without the CRL; listing
+        // them forever would grow it past what relays accept (ADR-0113).
+        let before = next.revoked.len();
+        let cutoff = this_update.unix_timestamp();
+        let (max, margin) = (
+            self.options.max_cert_validity,
+            self.options.revocation_margin,
+        );
+        next.revoked
+            .retain(|r| r.listed_until(max, margin) >= cutoff);
         // Persist first, so a number is never handed out twice.
         save(&self.dir.join(REVOCATIONS_FILE), &next)?;
         *state = next;
+        let pruned = before - state.revoked.len();
+        if pruned > 0 {
+            info!(pruned, "forgot revocations of expired certificates");
+        }
 
-        let this_update = now();
         let next_update = time::Duration::try_from(self.options.crl_validity)
             .ok()
             .and_then(|v| this_update.checked_add(v))

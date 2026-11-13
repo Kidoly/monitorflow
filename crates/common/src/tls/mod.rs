@@ -8,6 +8,7 @@
 //! is calling.
 
 mod cert;
+mod crl;
 mod peer;
 mod pinned;
 mod token;
@@ -35,6 +36,7 @@ use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use crate::config::TlsPaths;
 
 pub use cert::{certs_from_pem, not_before_unix, signed_by};
+pub use crl::{crl_response, MAX_CRL_RESPONSE_BYTES};
 pub use peer::{peer_identity, validate_id, PeerIdentity, PeerRole, URI_SCHEME};
 pub use pinned::pinned_client_config;
 pub use token::{

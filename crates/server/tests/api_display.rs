@@ -4,11 +4,12 @@
 //! tenancy between customers, rate limits and audit. Ignored without
 //! `DATABASE_URL`.
 
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::extract::{OriginalUri, State};
+use axum::extract::{ConnectInfo, OriginalUri, State};
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use monitorflow_common::redact::Secret;
@@ -167,7 +168,9 @@ async fn call(
         .uri(uri)
         .header(CSRF_HEADER, "1")
         .header("content-type", "application/json")
-        .header("cookie", cookie);
+        .header("cookie", cookie)
+        // The reverse proxy on loopback, a trusted proxy by default.
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50_000))));
     if let Some(source) = source {
         request = request.header("x-forwarded-for", source);
     }
@@ -502,6 +505,66 @@ db_tests! {
         sqlx::query("DELETE FROM users WHERE id = $1").bind(maker).execute(&w.pool).await.unwrap();
         let left: i64 = sqlx::query_scalar("SELECT count(*) FROM display_links").fetch_one(&w.pool).await.unwrap();
         assert_eq!(left, 0);
+    }
+
+    #[sqlx::test]
+    async fn a_personal_dashboard_shows_only_what_its_maker_administers(pool: PgPool) {
+        let w = world(&pool).await;
+        // A technician: administrator of site a1, viewer of everything.
+        let technician: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = 'site_admin1'")
+            .fetch_one(&w.pool).await.unwrap();
+        users::grant(&w.pool, technician, Role::Viewer, GrantScope::Global, "test").await.unwrap();
+        let site_admin1 = login(&w.app, "site_admin1").await;
+        let mine = json!({ "kind": "personal" });
+        let everything = dashboard(&w.app, &site_admin1, "Everything", mine.clone(), json!([top("t")])).await;
+        let other = dashboard(&w.app, &site_admin1, "Customer B", mine.clone(),
+            json!([figure("f", json!({ "kind": "customer", "id": w.customer_b }))])).await;
+        let own_site = dashboard(&w.app, &site_admin1, "a1", mine.clone(),
+            json!([figure("f", json!({ "kind": "site", "id": w.site_a1 }))])).await;
+
+        // Refused up front, rather than a screen silently showing less.
+        for board in [&everything, &other] {
+            let (status, body) = send(&w.app, &site_admin1, "POST", "/api/display-links",
+                Some(link_request(&[board], "never"))).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert!(body["error"].as_str().unwrap().contains("only what you administer"), "{body}");
+        }
+        let (status, created) = send(&w.app, &site_admin1, "POST", "/api/display-links",
+            Some(link_request(&[&own_site], "never"))).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let screen = start(&w.app, &secret(&created), None).await.cookie.unwrap();
+
+        // Edited afterwards to name everything: the screen still reads only
+        // the administered site, though its maker reads both customers.
+        sqlx::query("UPDATE dashboards SET spec = (SELECT spec FROM dashboards WHERE id = $2) WHERE id = $1")
+            .bind(Uuid::parse_str(&own_site).unwrap())
+            .bind(Uuid::parse_str(&everything).unwrap())
+            .execute(&w.pool).await.unwrap();
+        let (status, data) = screen_data(&w.app, &screen, &own_site).await;
+        assert_eq!(status, StatusCode::OK, "{data}");
+        let rows = data["panels"][0]["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{data}");
+        assert_eq!(rows[0]["hostname"], "host-agent-a1");
+        for query in w.vm.seen() {
+            assert!(!query.contains("b1"), "{query}");
+        }
+        // The dashboard's own page still shows the maker all they read.
+        let page = json!({ "range": "1h", "within": { "kind": "all" }, "panels": [top("t")] });
+        let (status, data) = send(&w.app, &site_admin1, "POST", "/api/dashboard-data", Some(page)).await;
+        assert_eq!(status, StatusCode::OK, "{data}");
+        assert_eq!(data["panels"][0]["rows"].as_array().unwrap().len(), 2, "{data}");
+
+        // A global administrator's own dashboards show everything.
+        let global = login(&w.app, "global").await;
+        let board = dashboard(&w.app, &global, "All", mine, json!([top("t"),
+            figure("f", json!({ "kind": "customer", "id": w.customer_b }))])).await;
+        let (status, created) = send(&w.app, &global, "POST", "/api/display-links",
+            Some(link_request(&[&board], "1y"))).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let screen = start(&w.app, &secret(&created), None).await.cookie.unwrap();
+        let (status, data) = screen_data(&w.app, &screen, &board).await;
+        assert_eq!(status, StatusCode::OK, "{data}");
+        assert_eq!(data["panels"][0]["rows"].as_array().unwrap().len(), 2, "{data}");
     }
 
     #[sqlx::test]

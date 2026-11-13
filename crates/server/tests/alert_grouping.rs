@@ -442,6 +442,7 @@ db_tests! {
             let server = server(&pool, site, name, None).await;
             ids.push(down(&pool, Peer::Server(server)).await);
         }
+        let paris_incident = ids[0];
         let alone = server(&pool, acme.paris, "p-2", None).await;
         let unrelated = down(&pool, Peer::Server(alone)).await;
         sqlx::query("DELETE FROM notification_outbox WHERE details #>> '{incident,id}' = $1")
@@ -482,6 +483,12 @@ db_tests! {
             .map(|i| i["hostname"].as_str().unwrap())
             .collect();
         assert_eq!(hosts, ["p-1"]);
+        // Nor does it learn how many incidents of other sites were told
+        // with its own.
+        let (status, detail, _) = call(&pool, &format!("/api/incidents/{paris_incident}"), Some(&paris), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(detail["notification_groups"][0]["id"], group.to_string());
+        assert_eq!(detail["notification_groups"][0]["incidents"], 1);
         let (status, _, _) = call(&pool, "/api/incidents?group=nope", Some(&everyone), None).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
