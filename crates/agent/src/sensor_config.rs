@@ -265,6 +265,23 @@ impl Sensor for Watched {
     }
 }
 
+/// `factory.build`, with a panic turned into an invalid spec: the specs
+/// come from the server, and one that trips a bug must not take down the
+/// sensors task and every other sensor with it.
+pub fn guarded_build(
+    factory: &dyn SensorFactory,
+    kind: &str,
+    config: &sensors::SensorConfig,
+) -> Result<Arc<dyn Sensor>, FactoryError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| factory.build(kind, config)))
+        .unwrap_or_else(|_| {
+            tracing::error!(sensor = %config.name, kind, "building the sensor panicked");
+            Err(FactoryError::Invalid(format!(
+                "building a `{kind}` sensor failed unexpectedly"
+            )))
+        })
+}
+
 /// A scheduler for the specs that can run, reporting permanent errors to
 /// `failures`, and why the others cannot.
 pub fn build(
@@ -283,8 +300,7 @@ pub fn build(
             .validate()
             .map_err(|e| (DownKind::Invalid, e.to_string()))
             .and_then(|()| {
-                factory
-                    .build(&spec.kind, &sensor_config)
+                guarded_build(factory, &spec.kind, &sensor_config)
                     .map_err(|e| (e.down_kind(), e.to_string()))
             })
             .and_then(|sensor| {
@@ -394,6 +410,7 @@ mod tests {
                 "fake" if config.params.contains_key("fail") => {
                     Err(FactoryError::Invalid("told to fail".into()))
                 }
+                "fake" if config.params.contains_key("panic") => panic!("told to panic"),
                 "fake" => Ok(Arc::new(FakeSensor::new())),
                 other => Err(FactoryError::UnknownKind(other.into())),
             }
@@ -453,6 +470,25 @@ mod tests {
         );
         assert!(errors[3].message.contains("told to fail"), "{errors:?}");
         assert!(errors[4].message.contains("twice"), "{errors:?}");
+    }
+
+    #[test]
+    fn a_panicking_build_is_reported_and_the_others_run() {
+        let mut panics = spec("fake", "panics", 10_000);
+        panics.params.insert("panic".into(), "1".into());
+        let config = SensorConfig {
+            plugins: Vec::new(),
+            plugin_set: None,
+            revision: 1,
+            sensors: vec![panics, spec("fake", "good", 10_000)],
+        };
+        let (failures, _) = mpsc::unbounded_channel();
+        let (scheduler, errors) = build(&config, &Fakes, SchedulerOptions::default(), &failures);
+        assert_eq!(scheduler.len(), 1);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].spec.name, "panics");
+        assert_eq!(errors[0].kind, DownKind::Invalid);
+        assert!(errors[0].message.contains("unexpectedly"), "{errors:?}");
     }
 
     // The Linux kinds; Windows refuses them until it has its own.

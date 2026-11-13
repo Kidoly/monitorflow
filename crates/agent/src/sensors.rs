@@ -272,7 +272,11 @@ impl Sensors {
                 continue;
             }
             let config = sensor_config::sensor_config(&current.spec);
-            let sensor = match self.factory.build(&current.spec.kind, &config) {
+            let sensor = match sensor_config::guarded_build(
+                self.factory.as_ref(),
+                &current.spec.kind,
+                &config,
+            ) {
                 Ok(sensor) => sensor,
                 Err(error) => {
                     results.push((index, Retried::Down(Down::refused(&current.spec, error))));
