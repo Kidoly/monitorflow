@@ -17,9 +17,10 @@ use uuid::Uuid;
 
 use super::access::Access;
 use super::audit::{self, Event};
+use super::client_addr::Peer;
 use super::roles::RoleGrant;
 use super::session::{self, SessionToken};
-use super::{api_keys, display, password, v1, ApiError, ApiState};
+use super::{api_keys, password, v1, ApiError, ApiState};
 
 /// Header the web interface sends on every state-changing request. A
 /// cross-origin page cannot set it without a CORS preflight, which the API
@@ -204,11 +205,12 @@ struct Account {
 /// limit up says so in its own row.
 pub async fn login(
     State(state): State<ApiState>,
+    peer: Peer,
     headers: HeaderMap,
     request: Result<Json<LoginRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Json(request) = request.map_err(|_| ApiError::BadRequest)?;
-    let source = display::source(&headers);
+    let source = state.settings.trusted_proxies.source(&peer, &headers).await;
     let Some(attempt) = state.login_limits.begin(source, &request.username) else {
         tracing::debug!(%source, "login refused: too many attempts");
         return Err(ApiError::TooManyRequests(

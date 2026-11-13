@@ -473,6 +473,7 @@ impl Ctx {
             server_names: vec!["mf.example".into()],
             grpc_port: 7443,
             enroll_port: 7445,
+            store_names: Vec::new(),
         });
         state.api_key_limits = Arc::new(v1::Limits::new(u32::MAX));
         v1::app(state)

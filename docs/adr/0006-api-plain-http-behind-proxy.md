@@ -28,6 +28,6 @@ server links are unchanged: mTLS only.
 - Deployments need a reverse proxy; an example configuration in `deploy/` is a follow-up.
 - Binding `api_listen_addr` to a non-loopback address exposes plain HTTP;
   the server logs a warning when it does.
-- Client IPs seen by the API are the proxy's. Trusting `X-Forwarded-For` needs
-  an explicit list of trusted proxies, left for later.
+- Client IPs seen by the API are the proxy's. `X-Forwarded-For` is trusted
+  only from the proxies listed in `api_trusted_proxies` (ADR-0110).
 - Native TLS on the API listener can be added later without changing the API.
