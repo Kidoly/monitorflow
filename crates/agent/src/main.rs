@@ -1123,7 +1123,8 @@ mod update_service {
             config::load(&super::default_config()).map_err(|e| e.to_string())?;
         let place = Place::agent(&config.tls_paths());
         pin_once(&place, config.enrollment_token.as_ref().map(|t| t.expose()));
-        authorized(request, &place, monitorflow_agent::self_update::unix_ms())
+        let now = monitorflow_agent::self_update::unix_ms();
+        authorized(request, &place, &config.data_dir, now)
     }
 
     fn serve() -> anyhow::Result<()> {
