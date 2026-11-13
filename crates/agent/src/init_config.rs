@@ -61,6 +61,8 @@ pub fn render(settings: &Settings) -> String {
         text += &format!("enroll_url = {}\n", quote(url));
     }
     if let Some(token) = &settings.enrollment_token {
+        // The MSI pinned the token's CA already (ADR-0108): removing the
+        // token changes nothing for the update service.
         text += "# One-time token: remove it once agent.log says `identity loaded`.\n";
         text += &format!("enrollment_token = {}\n", quote(token.expose()));
     }

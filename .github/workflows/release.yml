@@ -2,13 +2,14 @@
 # the relay (ADR-0055) for x86_64 and aarch64, the Windows executable and
 # MSI, the installers of the agent and the server with the compose files
 # the latter deploys (ADR-0065), the systemd units and sudo rules, VERSION,
-# SHA256SUMS and its signature SHA256SUMS.sig (ADR-0053). A `v*` tag publishes them as a GitHub Release with stable
-# asset names, so releases/latest/download/<name> works; it signs with the
-# RELEASE_SIGNING_KEY secret, whose public half must be in
-# deploy/release-keys.pem (docs/releasing.md). A manual run, or a pull
-# request that changes these files, builds the same files as the
-# `release-files` artifact, signed with a throwaway key, and publishes
-# nothing.
+# SHA256SUMS and its signature SHA256SUMS.sig (ADR-0053). A `v*` tag
+# publishes them as a GitHub Release with stable asset names, so
+# releases/latest/download/<name> works; it signs with the
+# RELEASE_SIGNING_KEY secret of the `release` environment, whose public
+# half must be in deploy/release-keys.pem (docs/releasing.md, ADR-0128).
+# A manual run, or a pull request that changes these files, builds the
+# same files as the `release-files` artifact, signed with a throwaway key,
+# and publishes nothing.
 # It also builds the server, web, updater and mirror images for amd64 and arm64
 # (ADR-0056); a tag pushes them to GHCR and lists their digests in
 # images.json, a release file covered by the signature. Other runs build
@@ -220,6 +221,11 @@ jobs:
   release:
     needs: [version, linux, windows, manifests]
     runs-on: ubuntu-latest
+    # The signing key is a secret of the `release` environment, which only
+    # `v*` tags may deploy to, after a maintainer approves (ADR-0128). Other
+    # runs use no environment: they never wait for approval and cannot read
+    # the key.
+    environment: ${{ needs.version.outputs.publish == 'true' && 'release' || '' }}
     permissions:
       contents: write
     steps:
@@ -239,9 +245,10 @@ jobs:
         with:
           path: dist
           name: images-json
-      # Only the publishing run sees the secret. Other runs sign with a
-      # throwaway key, added to the keys the installer gets, so the files
-      # are complete but trusted by no released agent.
+      # Only the publishing run, in the `release` environment, sees the
+      # secret. Other runs sign with a throwaway key, added to the keys the
+      # installer gets, so the files are complete but trusted by no
+      # released agent.
       - name: Sign the release files
         env:
           PUBLISH: ${{ needs.version.outputs.publish }}
@@ -252,7 +259,7 @@ jobs:
           key=$RUNNER_TEMP/release-signing.pem
           if [ "$PUBLISH" = true ]; then
             if [ -z "$RELEASE_SIGNING_KEY" ]; then
-              echo "::error::the RELEASE_SIGNING_KEY secret is not set; see docs/releasing.md"
+              echo "::error::the RELEASE_SIGNING_KEY secret is not set in the release environment; see docs/releasing.md"
               exit 1
             fi
             printf '%s\n' "$RELEASE_SIGNING_KEY" >"$key"

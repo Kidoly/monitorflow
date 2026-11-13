@@ -161,7 +161,10 @@
     <!-- agent.toml from the properties, unless it exists. As SYSTEM, after
          the folders have their ACLs, so the file inherits them. The command
          line carries the token: HideTarget keeps it out of the log, and
-         only administrators can read a SYSTEM process's command line. -->
+         only administrators can read a SYSTEM process's command line.
+         With a token, it also pins the token's certificate authority in
+         ca.pin for the update service (ADR-0108), even when agent.toml is
+         kept, before the agent's service first starts. -->
     <CustomAction Id="WriteAgentConfig" FileRef="AgentExe" Execute="deferred" Impersonate="no"
                   Return="check" HideTarget="yes"
                   ExeCommand="--config &quot;[DATAFOLDER]agent.toml&quot; init-config --upstream-url &quot;[UPSTREAM_URL]&quot; --enroll-url &quot;[ENROLL_URL]&quot; --enrollment-token &quot;[ENROLLMENT_TOKEN]&quot;" />

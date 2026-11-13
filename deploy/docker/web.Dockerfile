@@ -13,6 +13,12 @@ COPY web/ ./
 RUN npm run build
 
 FROM caddy:2.11.8
+# The user the compose file runs Caddy as (ADR-0126), which owns what Caddy
+# and web-start.sh write: a new data volume starts with these owners.
+RUN addgroup -S -g 10002 monitorflow-web \
+    && adduser -S -D -H -u 10002 -G monitorflow-web -h /data monitorflow-web \
+    && install -d -o 10002 -g 10002 /srv/monitorflow/run \
+    && chown 10002:10002 /data /config
 COPY deploy/caddy/Caddyfile deploy/caddy/trust.html /etc/caddy/
 COPY --chmod=755 deploy/docker/web-start.sh /usr/local/bin/web-start
 COPY --from=build /web/out /srv/monitorflow/web

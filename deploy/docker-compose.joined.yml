@@ -7,11 +7,19 @@
 # updating it.
 name: monitorflow
 
+# As in docker-compose.yml (ADR-0126).
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
 services:
   server:
     image: ${SERVER_IMAGE:?set SERVER_IMAGE in .env}
     # The name this central server is added under, on the License page.
     hostname: ${INSTANCE_NAME:?set INSTANCE_NAME in .env}
+    <<: *hardening
+    read_only: true
+    tmpfs: [/tmp]
     environment:
       # The server's own role, which cannot change the schema: the first
       # central server migrates (ADR-0109).
@@ -61,8 +69,28 @@ services:
       retries: 12
     restart: unless-stopped
 
+  web-data:
+    image: ${WEB_IMAGE:?set WEB_IMAGE in .env}
+    entrypoint: ["chown"]
+    command: ["-R", "10002:10002", "/data"]
+    user: "0"
+    <<: *hardening
+    cap_add: [CHOWN, DAC_READ_SEARCH]
+    read_only: true
+    network_mode: none
+    volumes: ["caddydata:/data"]
+
   web:
     image: ${WEB_IMAGE:?set WEB_IMAGE in .env}
+    user: "10002:10002"
+    <<: *hardening
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    read_only: true
+    tmpfs:
+      - /srv/monitorflow/run:uid=10002,gid=10002
+      - /config:uid=10002,gid=10002
+      - /tmp
     environment:
       MONITORFLOW_DOMAIN: ${DOMAIN}
       MONITORFLOW_API_UPSTREAM: server:7444
@@ -76,6 +104,7 @@ services:
       - "${HTTP_PORT:-80}:80"
     depends_on:
       server: { condition: service_healthy }
+      web-data: { condition: service_completed_successfully }
     restart: unless-stopped
 
 networks:

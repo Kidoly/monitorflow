@@ -6,7 +6,8 @@
 set -eu
 
 ca=/data/caddy/pki/authorities/local/root.crt
-out=/srv/monitorflow
+# A tmpfs in the compose file, which makes the rest of the image read-only.
+out=/srv/monitorflow/run
 
 # Copies what is public out of /data, where the CA's key stays.
 publish_trust_page() {

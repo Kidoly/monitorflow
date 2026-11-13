@@ -392,9 +392,7 @@ pub enum Pinned {
 /// may come back under another name.
 pub fn write_pin(place: &Place, token: &tls::EnrollmentToken) -> Result<Pinned, TrustError> {
     let pin = token.ca_fingerprint();
-    let enrolled = read_small(&place.cert)
-        .map_err(io_error(&place.cert))?
-        .is_some();
+    let enrolled = enrolled(place)?;
     if enrolled {
         let held = read_small(&place.ca_cert)
             .map_err(io_error(&place.ca_cert))?
@@ -403,7 +401,30 @@ pub fn write_pin(place: &Place, token: &tls::EnrollmentToken) -> Result<Pinned, 
         if !held.iter().any(|ca| tls::fingerprint(ca) == *pin) {
             return Ok(Pinned::Stale);
         }
-    } else {
+    }
+    record_pin(place, pin, enrolled)?;
+    Ok(Pinned::Written)
+}
+
+/// [`write_pin`] for Windows, where the token comes from `agent.toml` or
+/// the MSI, both LocalSystem's: the token is never judged stale from the
+/// service's CA bundle, which the agent's account writes and could empty
+/// to keep any pin from being written. A token of a CA the service no
+/// longer holds pins it all the same, and helpers then refuse commands
+/// until the MSI is run again with a current token.
+pub fn pin_token(place: &Place, token: &tls::EnrollmentToken) -> Result<(), TrustError> {
+    record_pin(place, token.ca_fingerprint(), enrolled(place)?)
+}
+
+/// Whether the service has a certificate: it connected at least once.
+fn enrolled(place: &Place) -> Result<bool, TrustError> {
+    Ok(read_small(&place.cert)
+        .map_err(io_error(&place.cert))?
+        .is_some())
+}
+
+fn record_pin(place: &Place, pin: &Fingerprint, enrolled: bool) -> Result<(), TrustError> {
+    if !enrolled {
         let anchor = place.state_dir.join(ANCHOR_FILE);
         match fs::remove_file(&anchor) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(io_error(&anchor)(e)),
@@ -411,24 +432,24 @@ pub fn write_pin(place: &Place, token: &tls::EnrollmentToken) -> Result<Pinned, 
         }
     }
     let line = format!("{}\n", tls::fingerprint_hex(pin));
-    write_synced(&place.pin_file, line.as_bytes()).map_err(io_error(&place.pin_file))?;
-    Ok(Pinned::Written)
+    write_synced(&place.pin_file, line.as_bytes()).map_err(io_error(&place.pin_file))
 }
 
-/// Writes the pin from `token` when there is none yet. The update service
-/// on Windows has no installer step of its own: it reads the token the
-/// MSI wrote, as LocalSystem, in `agent.toml`, which the agent's account
-/// cannot write. A pin already there is never replaced from here, so the
-/// agent's account cannot have the anchor made again by removing its own
-/// certificate.
+/// The update service's step on Windows, when it starts and before each
+/// signed request: pins the CA of the token the MSI wrote, as
+/// LocalSystem, in `agent.toml`, which the agent's account cannot write.
+/// Nothing is done once there is a pin or an anchor: a pin is never
+/// replaced from here, so the agent's account cannot have the anchor made
+/// again by removing its own certificate, and a machine that adopted
+/// before pins existed keeps its anchor (ADR-0108).
 pub fn pin_once(place: &Place, token: Option<&str>) {
-    if place.pin_file.exists() {
+    if place.pin_file.exists() || place.state_dir.join(ANCHOR_FILE).exists() {
         return;
     }
     let Some(Ok(token)) = token.map(tls::EnrollmentToken::parse) else {
         return;
     };
-    if let Err(error) = write_pin(place, &token) {
+    if let Err(error) = pin_token(place, &token) {
         tracing::warn!(%error, "cannot record the certificate authority of the install command");
     }
 }

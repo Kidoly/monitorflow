@@ -104,18 +104,21 @@ try_fetch() {
 
 fetch() { try_fetch "$1" "$2" || die "cannot download $1"; }
 
+# Whether OpenSSL 3 is here: `pkeyutl -rawin` verifies Ed25519 signatures.
+has_openssl3() {
+    command -v openssl >/dev/null 2>&1 && openssl pkeyutl -help 2>&1 | grep -q -- -rawin
+}
+
 # Checks SHA256SUMS.sig against the release keys with OpenSSL 3, which
-# covers the compose files and the image digests of images.json. Without
-# OpenSSL 3 only the checksums, from the same HTTPS source as this script.
+# covers the compose files and the image digests of images.json. There is
+# no fallback to checksums alone: SHA256SUMS comes from the same place as
+# the files it covers, which may be a mirror (ADR-0127).
 verify_signature() {
     case $RELEASE_KEYS in
         *'BEGIN PUBLIC KEY'*) ;;
         *) die "this copy of the installer carries no release key: use the one published with a release" ;;
     esac
-    if ! command -v openssl >/dev/null 2>&1 || ! openssl pkeyutl -help 2>&1 | grep -q -- -rawin; then
-        say "warning: OpenSSL 3 is not installed, so the release signature is not checked; checking checksums only"
-        return
-    fi
+    has_openssl3 || die "OpenSSL 3 is needed to check the release signature, and this machine does not have it; nothing was installed. Install OpenSSL 3 (Debian 12, Ubuntu 22.04, RHEL 9 and later have it), then run this again"
     fetch "$base/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig"
     # One file per key; any of them may have signed (key rotation).
     printf '%s\n' "$RELEASE_KEYS" | awk -v dir="$tmp" '
@@ -427,9 +430,13 @@ download_release_files() {
     [ ! -d "$tmp/release" ] || return 0
     mkdir "$tmp/release"
     awk '{ sub(/^\*/, "", $2); print $2 }' "$tmp/SHA256SUMS" | while read -r file; do
+        # A name is a file of the release directory, nothing else.
+        case $file in
+            '' | .* | *..* | */*) die "SHA256SUMS lists an unsafe file name, $file: this is not a MonitorFlow release; nothing was changed" ;;
+        esac
         fetch "$base/$file" "$tmp/release/$file"
         verify "$file" "$tmp/release"
-    done
+    done || exit 1
     cp "$tmp/SHA256SUMS" "$tmp/release/"
     [ ! -f "$tmp/SHA256SUMS.sig" ] || cp "$tmp/SHA256SUMS.sig" "$tmp/release/"
 }
@@ -458,7 +465,10 @@ refill_agent_cache() {
     compose exec -T server monitorflow-server agent-release list | grep -qxF "$version" && return 0
     say "caching release $version on the server for its agents"
     download_release_files
-    if ! { compose cp "$tmp/release" server:/tmp/release \
+    # Through tar, not `compose cp`: the server's image is read-only and its
+    # /tmp a tmpfs, which `cp` cannot write to (ADR-0126).
+    if ! { tar -C "$tmp/release" -cf - . \
+        | compose exec -T server sh -c 'rm -rf /tmp/release && mkdir /tmp/release && tar -C /tmp/release -xf -' \
         && compose exec -T server monitorflow-server agent-release import --dir /tmp/release; } >"$tmp/import.log" 2>&1; then
         tail -n 5 "$tmp/import.log" >&2
         say "warning: the agent release is not cached; run this installer again"
@@ -536,7 +546,7 @@ settle_certificate() {
 # happens just after Caddy creates the CA.
 ca_fingerprint() {
     waited=0
-    until compose exec -T web cat /srv/monitorflow/ca-fingerprint 2>/dev/null; do
+    until compose exec -T web cat /srv/monitorflow/run/ca-fingerprint 2>/dev/null; do
         [ "$waited" -lt 15 ] || return 0
         sleep 1
         waited=$((waited + 1))
@@ -642,14 +652,19 @@ write_joined_env() {
     mv -f "$ENV_FILE.new" "$ENV_FILE"
 }
 
-# Fills the volumes of an added central server from the join file.
+# Fills the volumes of an added central server from the join file. As root
+# with what the services drop (ADR-0126): into directories of their users,
+# keeping the owners of the files.
 copy_join_data() {
-    compose run --rm --no-deps -T --user 0 --entrypoint tar server -C /var/lib/monitorflow -xf - \
+    as_root="--user 0 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER"
+    # shellcheck disable=SC2086
+    compose run --rm --no-deps -T $as_root --entrypoint tar server -C /var/lib/monitorflow -xf - \
         <"$tmp/join/server.tar" >/dev/null || die "cannot copy the certificate authority"
     compose run --rm --no-deps -T --user 0 -v "${PROJECT}_dbcerts:/dbcerts" --entrypoint sh server \
         -c 'cat >/dbcerts/ca.pem' <"$tmp/join/db-ca.pem" >/dev/null || die "cannot copy the database's CA"
     if [ -f "$tmp/join/caddy.tar" ]; then
-        compose run --rm --no-deps -T --user 0 --entrypoint sh web \
+        # shellcheck disable=SC2086
+        compose run --rm --no-deps -T $as_root --entrypoint sh web \
             -c 'mkdir -p /data/caddy/pki/authorities && tar -C /data/caddy/pki/authorities -xf -' \
             <"$tmp/join/caddy.tar" >/dev/null || die "cannot copy the browser certificate authority"
     fi

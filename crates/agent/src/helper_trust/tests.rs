@@ -437,7 +437,6 @@ fn bundles_nobody_trusted_signed_change_nothing() {
 #[test]
 fn the_installer_pins_the_ca_of_its_token() {
     let (ca, old) = (Ca::new(), Ca::new());
-    let token = |ca: &Ca| tls::EnrollmentToken::new([7; 32], tls::fingerprint(ca.0.der()));
 
     // Connected with `ca`: its token pins it, an older CA's does not.
     let host = Host::enrolled(&ca);
@@ -467,6 +466,100 @@ fn the_installer_pins_the_ca_of_its_token() {
     renamed.agent_id = "web-09".into();
     host.run(&ca.sign(renamed), CONFIGURE_SOURCES).unwrap();
     assert_eq!(host.anchor().peer_id, "web-09");
+}
+
+fn token(ca: &Ca) -> tls::EnrollmentToken {
+    tls::EnrollmentToken::new([7; 32], tls::fingerprint(ca.0.der()))
+}
+
+/// The audit's attack on Windows: before the first signed command, the
+/// agent's account puts a CA of its own and a certificate it issued in
+/// the service's files. The token in `agent.toml` still pins the real CA.
+#[test]
+fn the_update_service_pins_the_token_whatever_the_service_holds() {
+    let (ca, intruder) = (Ca::new(), Ca::new());
+    let host = Host::enrolled(&intruder);
+    pin_once(&host.place, Some(token(&ca).to_secret_string().expose()));
+    assert_eq!(
+        fs::read_to_string(&host.place.pin_file).unwrap().trim(),
+        ca.pin()
+    );
+    // No adoption of the intruder's CA, with a forged signature or its own.
+    let mut forged = command("c1");
+    forged.signature = vec![1; 64];
+    for command in [forged, intruder.sign(command("c2"))] {
+        let error = host.run(&command, CONFIGURE_SOURCES).unwrap_err();
+        assert!(error.contains("is not in"), "{error}");
+    }
+    assert!(!host.place.state_dir.join(ANCHOR_FILE).exists());
+
+    // The service's real files back: the pinned CA, and nothing else.
+    fs::write(&host.place.ca_cert, ca.0.pem()).unwrap();
+    fs::write(&host.place.cert, ca.issue(PeerRole::Agent, "web-01")).unwrap();
+    host.run(&ca.sign(command("c3")), CONFIGURE_SOURCES)
+        .unwrap();
+    assert_eq!(host.anchor().origin, Origin::Pinned);
+}
+
+#[test]
+fn the_update_service_pins_only_where_nothing_is_pinned_or_adopted() {
+    let (ca, other) = (Ca::new(), Ca::new());
+
+    // A pin stays, so the agent's account cannot have it made again.
+    let host = Host::pinned(&ca);
+    pin_once(&host.place, Some(token(&other).to_secret_string().expose()));
+    assert_eq!(
+        fs::read_to_string(&host.place.pin_file).unwrap().trim(),
+        ca.pin()
+    );
+
+    // A machine that adopted before pins keeps its anchor (ADR-0108),
+    // even with a token of another CA left in agent.toml.
+    let host = Host::enrolled(&ca);
+    host.run(&ca.sign(command("c1")), CONFIGURE_SOURCES)
+        .unwrap();
+    pin_once(&host.place, Some(token(&other).to_secret_string().expose()));
+    assert!(!host.place.pin_file.exists());
+    host.run(&ca.sign(command("c2")), CONFIGURE_SOURCES)
+        .unwrap();
+
+    // No token, or not a token: nothing is written.
+    let host = Host::enrolled(&ca);
+    pin_once(&host.place, None);
+    pin_once(&host.place, Some("not a token"));
+    assert!(!host.place.pin_file.exists());
+}
+
+#[test]
+fn the_msi_pins_its_token_and_never_judges_it_stale() {
+    let (ca, next) = (Ca::new(), Ca::new());
+    let host = Host::pinned(&ca);
+    host.run(&ca.sign(command("c1")), CONFIGURE_SOURCES)
+        .unwrap();
+
+    // The agent's account empties its CA bundle: on Linux the token would
+    // read as stale; here it pins all the same.
+    fs::write(&host.place.ca_cert, "").unwrap();
+    assert_eq!(
+        write_pin(&host.place, &token(&next)).unwrap(),
+        Pinned::Stale
+    );
+    pin_token(&host.place, &token(&next)).unwrap();
+    assert_eq!(
+        fs::read_to_string(&host.place.pin_file).unwrap().trim(),
+        next.pin()
+    );
+    // The anchor is made again from the new pin, and refuses until the
+    // service holds that CA and a certificate it issued.
+    fs::write(&host.place.ca_cert, ca.0.pem()).unwrap();
+    assert!(host
+        .run(&ca.sign(command("c2")), CONFIGURE_SOURCES)
+        .is_err());
+    fs::write(&host.place.ca_cert, next.0.pem()).unwrap();
+    fs::write(&host.place.cert, next.issue(PeerRole::Agent, "web-01")).unwrap();
+    host.run(&next.sign(command("c3")), CONFIGURE_SOURCES)
+        .unwrap();
+    assert_eq!(host.anchor().pin, Some(next.pin()));
 }
 
 #[cfg(unix)]
