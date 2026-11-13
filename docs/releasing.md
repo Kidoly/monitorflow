@@ -4,7 +4,38 @@ How a maintainer publishes releases: the agent and relay files (ADR-0052, ADR-00
 
 ## The signing key, once
 
-Agents install a new binary only when `SHA256SUMS.sig` verifies against a key in `deploy/release-keys.pem`, compiled into them. The private key stays off every server and host; GitHub Actions reads it from a repository secret when a tag is pushed.
+Agents install a new binary only when `SHA256SUMS.sig` verifies against a key in `deploy/release-keys.pem`, compiled into them. The private key stays off every server and host. GitHub Actions reads it from the `release` environment. Only a job running on a `v*` tag can use that environment, and only after the maintainer approves the job (ADR-0128).
+
+### The environment and the tag rule
+
+Once per repository, as an admin. Create the `release` environment: the maintainer must approve each job, and only `v*` tags may use it:
+
+```
+gh api -X PUT repos/Kidoly/monitorflow/environments/release --input - <<JSON
+{"reviewers": [{"type": "User", "id": $(gh api users/Kidoly -q .id)}],
+ "prevent_self_review": false,
+ "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
+JSON
+gh api -X POST repos/Kidoly/monitorflow/environments/release/deployment-branch-policies \
+  -f name='v*' -f type=tag
+```
+
+`prevent_self_review` stays off because the maintainer who pushes the tag is also the one who approves it.
+
+Then protect `v*` tags: only admins may create, move or delete them.
+
+```
+gh api -X POST repos/Kidoly/monitorflow/rulesets --input - <<'JSON'
+{"name": "Release tags", "target": "tag", "enforcement": "active",
+ "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
+ "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}],
+ "bypass_actors": [{"actor_type": "RepositoryRole", "actor_id": 5, "bypass_mode": "always"}]}
+JSON
+```
+
+(`actor_id` 5 is the Admin role.) Check with `gh api repos/Kidoly/monitorflow/environments/release` and `gh api repos/Kidoly/monitorflow/rulesets`.
+
+### The key
 
 On a trusted machine, with OpenSSL 3:
 
@@ -12,22 +43,34 @@ On a trusted machine, with OpenSSL 3:
 umask 077
 openssl genpkey -algorithm ed25519 -out monitorflow-release.pem
 openssl pkey -in monitorflow-release.pem -pubout >>deploy/release-keys.pem
-gh secret set RELEASE_SIGNING_KEY --repo Kidoly/monitorflow <monitorflow-release.pem
+gh secret set RELEASE_SIGNING_KEY --repo Kidoly/monitorflow --env release <monitorflow-release.pem
 ```
+
+Never set it as a repository secret (without `--env`). Every workflow run on any pushed branch can read a repository secret. `gh secret list --repo Kidoly/monitorflow` must not list it, and `gh secret list --repo Kidoly/monitorflow --env release` must.
 
 Then:
 
 1. Keep `monitorflow-release.pem` offline, for example encrypted on two separate media (`openssl pkey -in monitorflow-release.pem -aes256 -out monitorflow-release.enc.pem`), and delete the clear copy. Without it nobody can publish a release the agents accept; with it anyone can.
 2. Commit `deploy/release-keys.pem` with the new public key, in a pull request like any other change. Releases built from that commit trust it.
-3. Optionally, move the secret to a GitHub environment with required reviewers and add `environment:` to the `release` job of `.github/workflows/release.yml`, so a tag alone cannot sign.
 
 Check the pair before the first release: `openssl pkey -in monitorflow-release.pem -pubout` must print the key you committed.
+
+### Moving a repository secret to the environment
+
+A repository set up before ADR-0128 has the key as a repository secret. Create the environment as above, then, from the offline copy of the key:
+
+```
+gh secret set RELEASE_SIGNING_KEY --repo Kidoly/monitorflow --env release <monitorflow-release.pem
+gh secret delete RELEASE_SIGNING_KEY --repo Kidoly/monitorflow
+```
+
+Do this before `release.yml` asks for the environment, or the next tag fails at signing.
 
 ## Publishing
 
 1. Set `version` in `[workspace.package]` of `Cargo.toml` and merge it.
-2. Tag the merge commit `v<version>` and push the tag: `git tag v0.2.0 && git push origin v0.2.0`.
-3. `release.yml` checks that the tag matches `Cargo.toml`, builds the files and the images, pushes the images to GHCR, writes `images.json`, signs `SHA256SUMS` with `RELEASE_SIGNING_KEY` and publishes the GitHub Release. It fails without the secret, or when the secret's public half is not in `deploy/release-keys.pem`.
+2. Tag the merge commit `v<version>` and push the tag: `git tag v0.2.0 && git push origin v0.2.0`. Only an admin can push it.
+3. `release.yml` checks that the tag matches `Cargo.toml`, builds the files and the images, pushes the images to GHCR and writes `images.json`. The `release` job then waits for approval: open the run in the Actions tab, Review deployments, tick `release`, Approve. It signs `SHA256SUMS` with `RELEASE_SIGNING_KEY` and publishes the GitHub Release. It fails without the secret in the environment, or when the secret's public half is not in `deploy/release-keys.pem`.
 
 ## Images
 
@@ -67,6 +110,6 @@ Sites without Internet access import the assets of the release, all of them, int
 
 1. Generate the new key as above and append its public half to `deploy/release-keys.pem`; keep the old one.
 2. Release with the **old** key. Agents updated to this release trust both keys.
-3. Once the fleet runs it, `gh secret set RELEASE_SIGNING_KEY` with the new key, remove the old public key from `deploy/release-keys.pem`, and release.
+3. Once the fleet runs it, `gh secret set RELEASE_SIGNING_KEY --env release` with the new key, remove the old public key from `deploy/release-keys.pem`, and release.
 
 Agents older than the release of step 2 must update through it, or be reinstalled with the installer, which carries the keys of its own release. If the old key leaked, do the same without waiting, and reinstall hosts that cannot update through step 2: whoever holds the old key can sign for every agent that still trusts it.
