@@ -1180,4 +1180,52 @@ db_tests! {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(test(uri).await["ok"], false);
     }
+
+    #[sqlx::test]
+    async fn a_webhook_shows_only_its_origin_and_an_edit_without_url_keeps_it(pool: PgPool) {
+        let (acme, _, _) = place(&pool, "acme").await;
+        let root = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let boss = login(&pool, "boss", Role::Administrator, GrantScope::Customer(acme)).await;
+        let url = "https://psa.example:8443/hooks/T0KEN?key=QSECRET";
+        let hook = |url: &str| json!({"kind": "webhook", "customer_id": acme, "settings": {"url": url}});
+        let mut signed = hook(url);
+        signed["secret"] = json!("signing-secret");
+        let (status, created, _) = call(&pool, "POST", CHANNELS, Some(&root), Some(signed)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        assert_eq!(created["settings"], json!({"origin": "https://psa.example:8443"}));
+        let uri = format!("{CHANNELS}/{}", created["id"].as_str().unwrap());
+
+        // Neither the MSP's nor the customer's administrator reads the path.
+        for user in [&root, &boss] {
+            let (status, list, _) = call(&pool, "GET", CHANNELS, Some(user), None).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(list["channels"][0]["settings"], json!({"origin": "https://psa.example:8443"}));
+            assert!(!list.to_string().contains("T0KEN"), "{list}");
+            assert!(!list.to_string().contains("QSECRET"), "{list}");
+        }
+
+        // An edit without a URL keeps it, and with it the signing secret
+        // and the MSP's vouching.
+        for settings in [json!({"url": ""}), json!({})] {
+            let edit = json!({"kind": "webhook", "customer_id": acme, "settings": settings,
+                              "follow_up_only": true});
+            let (status, body, _) = call(&pool, "PUT", &uri, Some(&boss), Some(edit)).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let stored = notify::channels(&pool).await.unwrap();
+            assert_eq!(stored[0].destination, Destination::Webhook(Webhook { url: url.into() }));
+            assert_eq!(stored[0].secret.as_ref().unwrap().expose(), "signing-secret");
+            assert!(!stored[0].public_only);
+        }
+
+        // A new URL is a new target, though the origin stays the same.
+        let moved = hook("https://psa.example:8443/hooks/OTHER");
+        let (status, body, _) = call(&pool, "PUT", &uri, Some(&boss), Some(moved)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body.to_string().contains("signing secret"), "{body}");
+
+        // A new channel needs one.
+        let (status, body, _) = call(&pool, "POST", CHANNELS, Some(&boss), Some(hook(""))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body.to_string().contains("Enter the URL"), "{body}");
+    }
 }
