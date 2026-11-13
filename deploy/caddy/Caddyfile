@@ -90,8 +90,10 @@
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
-		# Next's static export uses inline scripts, hence 'unsafe-inline'
-		# (ADR-0014). Everything else is same-origin only.
+		# Next's static export uses inline scripts. Each page carries a CSP
+		# <meta> allowing its own by hash, and the browser enforces both
+		# policies, so 'unsafe-inline' here lets no other inline script run
+		# (ADR-0124). Everything else is same-origin only.
 		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 		-Server
 	}

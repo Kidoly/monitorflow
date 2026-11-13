@@ -5,20 +5,28 @@
 use std::ffi::c_void;
 use std::io;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::io::AsRawHandle;
 use std::ptr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
 use tokio::sync::Mutex;
-use windows_sys::Win32::Foundation::{LocalFree, ERROR_PIPE_BUSY};
+use windows_sys::Win32::Foundation::{LocalFree, ERROR_PIPE_BUSY, ERROR_SUCCESS};
 use windows_sys::Win32::Security::Authorization::{
-    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo,
+    SDDL_REVISION_1, SE_KERNEL_OBJECT,
 };
-use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+use windows_sys::Win32::Security::{
+    OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
+};
+use windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId;
 
 use super::client::UpdateService;
-use super::{read_frame, write_frame, Reply, Request, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
+use super::{
+    check_pipe_owner, pipe_taken, read_frame, write_frame, Reply, Request, MAX_REPLY_BYTES,
+    MAX_REQUEST_BYTES, TRUSTED_PIPE_OWNERS,
+};
 use crate::packages::PackageError;
 use crate::shutdown::Shutdown;
 
@@ -72,6 +80,59 @@ pub fn create(name: &str, sddl: &str, first: bool) -> io::Result<NamedPipeServer
     pipe
 }
 
+/// The owner SID of `pipe`, as a string such as `S-1-5-18`. Needs `READ_CONTROL`, which a read handle has.
+pub fn owner_sid(pipe: &impl AsRawHandle) -> io::Result<String> {
+    let mut owner: PSID = ptr::null_mut();
+    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    // SAFETY: the handle of `pipe` stays open while it is borrowed.
+    // `owner` points into `descriptor`, which GetSecurityInfo allocates
+    // and which is freed with LocalFree below, after the last use of
+    // `owner`; the other out pointers are null, as allowed.
+    let status = unsafe {
+        GetSecurityInfo(
+            pipe.as_raw_handle(),
+            SE_KERNEL_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return Err(io::Error::from_raw_os_error(status as i32));
+    }
+    let mut text: *mut u16 = ptr::null_mut();
+    // SAFETY: `owner` is the valid SID inside `descriptor`, still
+    // allocated; `text` is allocated by the call and freed with LocalFree.
+    let converted = unsafe { ConvertSidToStringSidW(owner, &mut text) };
+    let result = if converted == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        // SAFETY: on success `text` is a NUL-terminated UTF-16 string.
+        let units = unsafe {
+            let len = (0..).take_while(|&i| *text.add(i) != 0).count();
+            std::slice::from_raw_parts(text, len)
+        };
+        let sid = String::from_utf16_lossy(units);
+        // SAFETY: allocated by ConvertSidToStringSidW and no longer used.
+        unsafe { LocalFree(text.cast()) };
+        Ok(sid)
+    };
+    // SAFETY: allocated by GetSecurityInfo; `owner` is not used after this.
+    unsafe { LocalFree(descriptor) };
+    result
+}
+
+/// The process holding the server end of `pipe`.
+fn server_pid(pipe: &impl AsRawHandle) -> Option<u32> {
+    let mut pid = 0u32;
+    // SAFETY: the handle of `pipe` stays open while it is borrowed, and
+    // `pid` is a valid u32 the call writes.
+    (unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle(), &mut pid) } != 0).then_some(pid)
+}
+
 /// Serves `name` with the DACL `sddl` until `shutdown`: one request per
 /// connection, answered by `handle` on the blocking pool, one at a time.
 pub async fn serve<H>(name: &str, sddl: &str, handle: H, mut shutdown: Shutdown) -> io::Result<()>
@@ -80,7 +141,18 @@ where
 {
     let handle = Arc::new(handle);
     let one_at_a_time = Arc::new(Mutex::new(()));
-    let mut server = create(name, sddl, true)?;
+    // Access denied, or busy if the holder allowed one instance: the
+    // name is taken.
+    let mut server = create(name, sddl, true).map_err(|error| {
+        let taken = error.kind() == io::ErrorKind::PermissionDenied
+            || error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32);
+        if !taken {
+            return error;
+        }
+        let message = pipe_taken(name, &error);
+        tracing::error!(pipe = name, %error, "{message}");
+        io::Error::new(error.kind(), message)
+    })?;
     tracing::info!(pipe = name, "update service listening");
     loop {
         tokio::select! {
@@ -131,11 +203,21 @@ where
 /// The agent's side of the pipe.
 pub struct PipeClient {
     name: String,
+    /// Owner SIDs the pipe may have; see [`TRUSTED_PIPE_OWNERS`].
+    owners: Vec<String>,
 }
 
 impl PipeClient {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into() }
+        Self::with_owners(name, TRUSTED_PIPE_OWNERS.map(String::from).to_vec())
+    }
+
+    /// A client that accepts a pipe owned by one of `owners`.
+    pub fn with_owners(name: impl Into<String>, owners: Vec<String>) -> Self {
+        Self {
+            name: name.into(),
+            owners,
+        }
     }
 
     async fn call(&self, request: &Request) -> Result<Reply, String> {
@@ -161,6 +243,15 @@ impl PipeClient {
                 Err(e) => return Err(format!("cannot open {}: {e}", self.name)),
             }
         };
+        // While the service is stopped, any user may create the pipe; only
+        // SYSTEM or an administrator can create one these owners have.
+        let owner =
+            owner_sid(&pipe).map_err(|e| format!("cannot read the owner of {}: {e}", self.name))?;
+        let owners: Vec<&str> = self.owners.iter().map(String::as_str).collect();
+        if let Err(error) = check_pipe_owner(&self.name, &owner, server_pid(&pipe), &owners) {
+            tracing::error!(%error, "the update service's pipe is held by another process");
+            return Err(error);
+        }
         write_frame(&mut pipe, request)
             .await
             .map_err(|e| format!("cannot send to the update service: {e}"))?;
@@ -188,6 +279,12 @@ mod tests {
         format!(r"\\.\pipe\monitorflow-test-{name}-{}", std::process::id())
     }
 
+    /// The owner of the pipes this process creates.
+    fn own_owner(test: &str) -> String {
+        let probe = create(&unique(&format!("{test}-probe")), &pipe_sddl("WD"), true).unwrap();
+        owner_sid(&probe).unwrap()
+    }
+
     #[tokio::test]
     async fn requests_are_answered_and_checked() {
         let name = unique("answer");
@@ -211,7 +308,7 @@ mod tests {
             }
         });
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let client = PipeClient::new(name.clone());
+        let client = PipeClient::with_owners(name.clone(), vec![own_owner("answer")]);
         for _ in 0..3 {
             let reply = client.call(&Request::Status).await.unwrap();
             assert_eq!(
@@ -234,6 +331,61 @@ mod tests {
         assert!(create(&name, &pipe_sddl("WD"), true).is_err());
         trigger.fire();
         server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_pipe_another_account_owns_gets_nothing() {
+        let name = unique("squatted");
+        let (trigger, stop) = crate::shutdown::channel();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let server = tokio::spawn({
+            let (name, calls) = (name.clone(), calls.clone());
+            async move {
+                serve(
+                    &name,
+                    &pipe_sddl("WD"),
+                    move |_| {
+                        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Reply::Status(Status::default())
+                    },
+                    stop,
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let owner = own_owner("squatted");
+        // The test runs as neither SYSTEM nor, for this client, a trusted
+        // owner: it plays the user who took the name.
+        let client = PipeClient::with_owners(name.clone(), vec!["S-1-5-18".into()]);
+        let error = client.call(&Request::Status).await.unwrap_err();
+        assert!(error.starts_with(&format!("refusing {name}: ")), "{error}");
+        assert!(
+            error.contains(&format!("process {} owned by {owner}", std::process::id())),
+            "{error}"
+        );
+        trigger.fire();
+        server.await.unwrap().unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_taken_name_stops_the_service_with_a_reason() {
+        let name = unique("taken");
+        let _squatter = create(&name, &pipe_sddl("WD"), true).unwrap();
+        let (_trigger, stop) = crate::shutdown::channel();
+        let error = serve(
+            &name,
+            &pipe_sddl("WD"),
+            |_| Reply::Status(Status::default()),
+            stop,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("another process holds the name"),
+            "{error}"
+        );
     }
 
     #[tokio::test]

@@ -1157,6 +1157,11 @@ mod update_service {
             Ok(()) => ok,
             Err(error) => {
                 tracing::error!(error = format!("{error:#}"), "the update service failed");
+                // Also where administrators look first, such as when
+                // another process took the pipe's name.
+                monitorflow_agent::eventlog::report_error(&format!(
+                    "The MonitorFlow update service stopped: {error:#}"
+                ));
                 ServiceExitCode::ServiceSpecific(1)
             }
         };

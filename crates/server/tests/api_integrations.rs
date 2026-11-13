@@ -298,6 +298,58 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn an_endpoint_shows_only_its_origin_and_an_edit_without_url_keeps_it(pool: PgPool) {
+        let (acme, _) = place(&pool, "acme").await;
+        let global = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let admin = login(&pool, "boss", Role::Administrator, GrantScope::Customer(acme)).await;
+        let url = "https://psa.example/hooks/T0KEN?key=QSECRET";
+        let ask = json!({ "name": "HaloPSA", "url": url, "customer_id": acme });
+        let (status, created, _) = call(&pool, "POST", ENDPOINTS, Some(&global), Some(ask)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        assert_eq!(created["endpoint"]["origin"], "https://psa.example");
+        let path = format!("{ENDPOINTS}/{}", created["endpoint"]["id"].as_str().unwrap());
+
+        // Neither the MSP's nor the customer's administrator reads the path.
+        for user in [&global, &admin] {
+            let (status, list, _) = call(&pool, "GET", ENDPOINTS, Some(user), None).await;
+            assert_eq!(status, StatusCode::OK);
+            let endpoint = &list["endpoints"][0];
+            assert_eq!(endpoint["origin"], "https://psa.example");
+            assert!(endpoint.get("url").is_none(), "{endpoint}");
+            assert!(!list.to_string().contains("T0KEN"), "{list}");
+            assert!(!list.to_string().contains("QSECRET"), "{list}");
+        }
+
+        // An edit without a URL keeps it.
+        for edit in [
+            json!({ "name": "Halo", "url": "", "customer_id": acme }),
+            json!({ "name": "Halo", "customer_id": acme }),
+        ] {
+            let (status, view, _) = call(&pool, "PUT", &path, Some(&admin), Some(edit)).await;
+            assert_eq!(status, StatusCode::OK, "{view}");
+            assert_eq!(view["endpoint"]["name"], "Halo");
+            assert_eq!(view["secret"], Value::Null, "{view}");
+            let stored: String = sqlx::query_scalar("SELECT url FROM integration_endpoints")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(stored, url);
+        }
+
+        // A new endpoint needs one.
+        let (status, error, _) = call(
+            &pool,
+            "POST",
+            ENDPOINTS,
+            Some(&admin),
+            Some(json!({ "name": "PSA", "url": " ", "customer_id": acme })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(error.to_string().contains("Enter the URL"), "{error}");
+    }
+
+    #[sqlx::test]
     async fn a_new_url_gets_a_new_secret(pool: PgPool) {
         let (acme, _) = place(&pool, "acme").await;
         let global = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
@@ -329,7 +381,11 @@ db_tests! {
         let new = saved["secret"].as_str().unwrap().to_owned();
         assert!(new.starts_with("mfwh_"));
         assert_ne!(new, old);
-        assert_eq!(saved["endpoint"]["url"], own_url);
+        let stored: String = sqlx::query_scalar("SELECT url FROM integration_endpoints")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stored, own_url);
         let stored: String = sqlx::query_scalar("SELECT secret FROM integration_endpoints")
             .fetch_one(&pool)
             .await

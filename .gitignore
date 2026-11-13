@@ -14,3 +14,6 @@
 *.key
 /deploy/data
 /deploy/dev-certs
+
+# Core dumps from crashed test processes.
+/core.[0-9]*

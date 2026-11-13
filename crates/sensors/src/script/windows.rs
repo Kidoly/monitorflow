@@ -104,7 +104,7 @@ impl ScriptSensor {
         params: &mut Params<'_>,
         local: Option<&Local>,
     ) -> Result<Self, BuildError> {
-        let (script, args) = parse_params(params)?;
+        let (script, args) = parse_params(params, local)?;
         let dir = local.map_or_else(|| DEFAULT_DIR.into(), |l| l.script_dir.clone());
         let sensor = Self::new(script, args, dir);
         if local.is_some() {
