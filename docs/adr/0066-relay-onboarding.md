@@ -1,7 +1,7 @@
 # ADR-0066: Relay onboarding without typing
 
 Date: 2026-10-31
-Status: accepted; names typed in a token are checked too since ADR-0105
+Status: accepted; names typed in a token are checked too since ADR-0105; the stores' hosts are refused since ADR-0087's amendment
 
 ## Context
 
@@ -32,6 +32,7 @@ Administrators can also be careless, and an administrator of one customer must n
 
 - wildcards, `localhost` and `*.localhost`, loopback, link-local, multicast and unspecified addresses;
 - whatever the server's certificate or public address covers, `*.` matching as a TLS client matches, so a relay cannot pose as the server, for any administrator;
+- the hosts of `victoriametrics_url` and `victorialogs_url`, since the server sends the stores' password to whoever answers there (added with ADR-0087's store verifier, below it in depth);
 - a DNS name or public address held by an unrevoked relay of another site, in any customer. The refusal does not say which relay. Relays of one site may share a name, as they may speak for the same agents;
 - except that private addresses (RFC 1918, RFC 6598, unique local) may repeat across sites: `10.0.0.5` is a different host on each isolated network, and an MSP's sites overlap all the time. Reaching the agents of another site at that address takes being on that network already.
 

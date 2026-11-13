@@ -97,7 +97,7 @@ impl Area {
         let read = method == Method::GET;
         Some(match (first, sub) {
             ("health", _) => return None,
-            ("servers" | "relays", None) if read => return None,
+            ("servers" | "relays", None) if read && segments.len() == 1 => return None,
             ("sites" | "customers", None) if read && segments.len() == 1 => return None,
             ("servers" | "relays" | "sites", Some(sub)) => match sub {
                 "sensors" | "sensor_configs" | "thresholds" | "offline-alerts"
@@ -748,10 +748,13 @@ mod tests {
         let post = Method::POST;
         let cases = [
             (&get, "/api/servers", None),
-            (&get, "/api/servers/{id}", None),
+            (&get, "/api/relays", None),
             (&get, "/api/sites", None),
             (&get, "/api/customers", None),
-            (&get, "/api/relays/{id}", None),
+            // Only the listings are open to every key (ADR-0101); one
+            // server or relay is in the "servers" area.
+            (&get, "/api/servers/{id}", Some(Area::Servers)),
+            (&get, "/api/relays/{id}", Some(Area::Servers)),
             (&get, "/api/health", None),
             (&post, "/api/customers", Some(Area::Administration)),
             (

@@ -199,10 +199,13 @@ async fn the_resumer_claims_only_its_command_and_waits_for_the_outcome() {
     assert_eq!(output.exit_code, 0);
 }
 
-/// Answers self-updates as the update service would, keeping the request.
+/// Answers self-updates as the update service would, keeping the request
+/// and the staged files it would read.
 struct FakeService {
     seen: std::sync::Mutex<Vec<crate::packages::windows_update::Request>>,
     reply: crate::packages::windows_update::Reply,
+    staged: std::path::PathBuf,
+    read: std::sync::Mutex<Vec<(String, Vec<u8>)>>,
 }
 
 #[async_trait::async_trait]
@@ -212,6 +215,13 @@ impl crate::packages::windows_update::client::UpdateService for FakeService {
         request: &crate::packages::windows_update::Request,
     ) -> Result<crate::packages::windows_update::Reply, crate::packages::PackageError> {
         self.seen.lock().unwrap().push(request.clone());
+        let mut read = self.read.lock().unwrap();
+        for entry in std::fs::read_dir(&self.staged).unwrap() {
+            let entry = entry.unwrap();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            read.push((name, std::fs::read(entry.path()).unwrap()));
+        }
+        read.sort();
         Ok(self.reply.clone())
     }
 }
@@ -223,7 +233,10 @@ async fn the_windows_installer_stages_the_release_for_the_update_service() {
     use base64::Engine;
 
     let data = TempDir::new().unwrap();
+    let staged = swap::staged_dir(data.path());
     let service = Arc::new(FakeService {
+        staged: staged.clone(),
+        read: Default::default(),
         seen: Default::default(),
         reply: Reply::SelfUpdate(SelfUpdated {
             restarting: true,
@@ -250,14 +263,17 @@ async fn the_windows_installer_stages_the_release_for_the_update_service() {
     assert!(
         matches!(installed, Installed::Restarting(text) if text.contains("restarting into 0.3.0"))
     );
-    let staged = swap::staged_dir(data.path());
-    assert_eq!(std::fs::read(staged.join(asset)).unwrap(), b"MZ binary");
-    assert_eq!(
-        std::fs::read(staged.join("SHA256SUMS.sig")).unwrap(),
-        files.signature
-    );
+    let read = service.read.lock().unwrap();
+    let file = |name: &str| read.iter().find(|(n, _)| n == name).map(|(_, b)| b.clone());
+    assert_eq!(read.len(), 4);
+    assert_eq!(file(asset).unwrap(), b"MZ binary");
+    assert_eq!(file("SHA256SUMS.sig").unwrap(), files.signature);
+    // The service read them before it answered; the agent removes them,
+    // the service never does.
+    assert!(!staged.exists());
     let seen = service.seen.lock().unwrap();
-    // The service gets the command itself, and where the release is.
+    // The service gets the command itself; the data directory is for a
+    // service older than this agent, the current one ignores it.
     assert_eq!(
         seen.as_slice(),
         [Request::signed(

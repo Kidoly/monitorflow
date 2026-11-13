@@ -324,6 +324,31 @@ impl Registry {
         count
     }
 
+    /// Closes with `reason` every stream whose connection presented one of
+    /// `serials`, and removes them at once. Returns how many were closed.
+    pub fn close_serials(&self, serials: &[Serial], reason: CloseReason) -> usize {
+        let closed: Vec<Entry> = {
+            let mut inner = self.lock();
+            let keys: Vec<Key> = inner
+                .peers
+                .iter()
+                .filter(|(_, e)| {
+                    e.info
+                        .cert_serial
+                        .as_ref()
+                        .is_some_and(|s| serials.contains(s))
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+            keys.iter().filter_map(|k| inner.peers.remove(k)).collect()
+        };
+        let count = closed.len();
+        for entry in closed {
+            entry.close(reason);
+        }
+        count
+    }
+
     /// Closes every stream and refuses new registrations.
     pub fn close_all(&self) {
         let peers = {
@@ -383,6 +408,26 @@ mod tests {
         assert_eq!(ids, ["here", "there"]);
         registry.set_remote(Vec::new());
         assert_eq!(registry.live(PeerRole::Agent, "there"), None);
+    }
+
+    #[tokio::test]
+    async fn closing_serials_closes_only_those_connections() {
+        let registry = Registry::default();
+        let (tx, _rx) = mpsc::channel(4);
+        let with = |id: &str, serial: Option<u8>| PeerInfo {
+            cert_serial: serial.map(|s| Serial::from_bytes(&[s])),
+            ..info(id)
+        };
+        let minted = registry.register(with("a", Some(1)), tx.clone()).unwrap();
+        let _kept = registry.register(with("b", Some(2)), tx.clone()).unwrap();
+        let _unknown = registry.register(with("c", None), tx).unwrap();
+        let serials = [Serial::from_bytes(&[1]), Serial::from_bytes(&[3])];
+        assert_eq!(registry.close_serials(&serials, CloseReason::Revoked), 1);
+        assert_eq!(minted.close.await, Ok(CloseReason::Revoked));
+        assert!(registry.get(PeerRole::Agent, "a").is_none());
+        assert!(registry.get(PeerRole::Agent, "b").is_some());
+        assert!(registry.get(PeerRole::Agent, "c").is_some());
+        assert_eq!(registry.close_serials(&[], CloseReason::Revoked), 0);
     }
 
     #[test]

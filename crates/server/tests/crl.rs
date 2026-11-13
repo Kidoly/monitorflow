@@ -9,7 +9,7 @@ use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::revocation_service_client::RevocationServiceClient;
-use monitorflow_common::proto::v1::{Envelope, GetCrlRequest, Hello};
+use monitorflow_common::proto::v1::{Envelope, GetCrlRequest, GetCrlResponse, Hello};
 use monitorflow_common::tls::{self, Identity, PeerIdentity, PeerRole};
 use monitorflow_common::PROTOCOL_VERSION;
 use monitorflow_server::ca::{CaOptions, CertificateAuthority, RevocationReason, Serial};
@@ -103,18 +103,27 @@ impl Setup {
 
     /// Opens a stream; with TLS 1.3 a rejected client certificate shows up
     /// on the first call rather than on connect.
-    /// Calls `GetCrl` as `peer`.
+    /// Calls `GetCrl` as `peer`, as a relay older than ADR-0113 does.
     async fn get_crl(&self, peer: &Identity) -> Result<Vec<u8>, Box<tonic::Status>> {
+        Ok(self.get_crls(peer, false).await?.crl_der)
+    }
+
+    /// Calls `GetCrl` as `peer`.
+    async fn get_crls(
+        &self,
+        peer: &Identity,
+        reads_crl_ders: bool,
+    ) -> Result<GetCrlResponse, Box<tonic::Status>> {
         let channel = tls::connect(&self.url, peer.client_config().unwrap(), TIMEOUT)
             .await
             .unwrap();
         let mut client = RevocationServiceClient::new(channel);
-        let call = client.get_crl(GetCrlRequest {});
+        let call = client.get_crl(GetCrlRequest { reads_crl_ders });
         let response = tokio::time::timeout(TIMEOUT, call)
             .await
             .unwrap()
             .map_err(Box::new)?;
-        Ok(response.into_inner().crl_der)
+        Ok(response.into_inner())
     }
 
     async fn connects(&self, agent: &Identity, id: &str) -> bool {
@@ -150,7 +159,11 @@ async fn revoked_certificate_is_rejected_right_after_revoke() {
     assert!(s.connects(&agent, "agent-1").await);
 
     s.publisher
-        .revoke(serial, RevocationReason::KeyCompromise)
+        .revoke(
+            serial,
+            RevocationReason::KeyCompromise,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(86_400),
+        )
         .await
         .unwrap();
     assert!(!s.connects(&agent, "agent-1").await);
@@ -203,7 +216,11 @@ async fn relays_fetch_the_crl_the_listener_enforces() {
     assert!(revoked_serials(&before).is_empty());
 
     s.publisher
-        .revoke(serial.clone(), RevocationReason::KeyCompromise)
+        .revoke(
+            serial.clone(),
+            RevocationReason::KeyCompromise,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(86_400),
+        )
         .await
         .unwrap();
     let after = s.get_crl(&relay).await.unwrap();
@@ -218,4 +235,60 @@ async fn relays_fetch_the_crl_the_listener_enforces() {
 fn unsigned(serial: &[u8]) -> Vec<u8> {
     let start = serial.iter().position(|&b| b != 0).unwrap_or(serial.len());
     serial[start..].to_vec()
+}
+
+#[tokio::test]
+async fn relays_that_read_the_list_get_each_crl_once() {
+    let s = setup(CaOptions::default()).await;
+    let (relay, _) = s.peer(PeerRole::Relay, "relay-1");
+    let response = s.get_crls(&relay, true).await.unwrap();
+    assert!(response.crl_der.is_empty());
+    assert_eq!(response.crl_ders.len(), 1);
+    let older = s.get_crls(&relay, false).await.unwrap();
+    assert_eq!(older.crl_der, older.crl_ders[0]);
+}
+
+#[tokio::test]
+async fn revocations_leave_the_crl_once_the_certificate_expires() {
+    let options = CaOptions {
+        revocation_margin: Duration::ZERO,
+        ..CaOptions::default()
+    };
+    let s = setup(options).await;
+    let (relay, _) = s.peer(PeerRole::Relay, "relay-1");
+    let csr = CertificateParams::default()
+        .serialize_request(&KeyPair::generate().unwrap())
+        .unwrap()
+        .pem()
+        .unwrap();
+    let agent = PeerIdentity::new(PeerRole::Agent, "agent-1").unwrap();
+    let short =
+        s.ca.issue(&csr, &agent, Some(Duration::from_secs(1)), &[])
+            .unwrap();
+    let (_, long) = s.agent("agent-2");
+    let in_a_week = std::time::SystemTime::now() + Duration::from_secs(7 * 86_400);
+    s.publisher
+        .revoke(
+            short.serial.clone(),
+            RevocationReason::KeyCompromise,
+            short.not_after,
+        )
+        .await
+        .unwrap();
+    s.publisher
+        .revoke(long.clone(), RevocationReason::KeyCompromise, in_a_week)
+        .await
+        .unwrap();
+    let listed = |crl: &GetCrlResponse| revoked_serials(&crl.crl_ders[0]);
+    let before = s.get_crls(&relay, true).await.unwrap();
+    assert_eq!(listed(&before).len(), 2);
+
+    // Past its not_after, at the next refresh.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    s.publisher.refresh().await.unwrap();
+    let after = s.get_crls(&relay, true).await.unwrap();
+    assert_eq!(listed(&after), vec![unsigned(long.as_bytes())]);
+    assert!(!s.publisher.is_revoked(&short.serial));
+    let stored = std::fs::read_to_string(s.dir.path().join("ca/revocations.json")).unwrap();
+    assert!(!stored.contains(&short.serial.to_string()), "{stored}");
 }

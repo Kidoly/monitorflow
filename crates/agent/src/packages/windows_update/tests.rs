@@ -329,6 +329,11 @@ mod signed {
         .encode_to_vec()
     }
 
+    /// The data directory of the service's `agent.toml`.
+    fn configured() -> std::path::PathBuf {
+        std::env::temp_dir().join("configured")
+    }
+
     /// A command valid now, signed by `ca`.
     fn command(ca: &Ca, id: &str, kind: &str, payload: &[u8]) -> Command {
         let mut command = unsigned(kind, payload);
@@ -341,7 +346,7 @@ mod signed {
     fn reads_pass_and_anything_else_needs_its_signed_command() {
         let ca = Ca::new();
         let host = Host::pinned(&ca);
-        let check = |request: &Request| authorized(request, &host.place, unix_ms());
+        let check = |request: &Request| authorized(request, &host.place, &configured(), unix_ms());
         assert_eq!(check(&Request::Scan), Ok(Request::Scan));
         assert_eq!(check(&Request::Status), Ok(Request::Status));
 
@@ -381,7 +386,7 @@ mod signed {
     fn an_update_installs_then_restarts_once_each_and_only_when_allowed() {
         let ca = Ca::new();
         let host = Host::pinned(&ca);
-        let check = |request: &Request| authorized(request, &host.place, unix_ms());
+        let check = |request: &Request| authorized(request, &host.place, &configured(), unix_ms());
 
         let allowed = command(&ca, "c-1", APPLY_UPDATES, &apply(&["KB5034441"], true));
         let step = |step| Request::signed(&allowed, step, None);
@@ -415,23 +420,46 @@ mod signed {
             allow_downgrade: true,
             health_timeout_seconds: 60,
         };
-        let signed = command(&ca, "c-1", SELF_UPDATE, &spec.encode_to_vec());
-        let data_dir = std::env::temp_dir();
-        let check = |request: &Request| authorized(request, &host.place, unix_ms());
-
-        let missing = Request::signed(&signed, Step::SelfUpdate, None);
-        assert!(check(&missing).is_err());
-        let signed = command(&ca, "c-2", SELF_UPDATE, &spec.encode_to_vec());
-        let request = Request::signed(&signed, Step::SelfUpdate, Some(&data_dir));
-        assert_eq!(
-            check(&request),
+        let check = |request: &Request| authorized(request, &host.place, &configured(), unix_ms());
+        let expected = |id: &str| {
             Ok(Request::SelfUpdate(crate::self_update::swap::Request {
-                command_id: "c-2".into(),
+                command_id: id.into(),
                 version: "0.1.0".into(),
-                data_dir,
+                data_dir: configured(),
                 allow_downgrade: true,
                 health_timeout_ms: 60_000,
             }))
-        );
+        };
+
+        // The data directory is the service's, whatever the pipe says or
+        // does not say: the agent's account cannot point LocalSystem at a
+        // folder it controls or at another host.
+        for (id, said) in [
+            ("c-1", None),
+            ("c-2", Some(std::path::PathBuf::from(r"\\attacker\share\x"))),
+            ("c-3", Some(std::env::temp_dir().join("junction"))),
+        ] {
+            let signed = command(&ca, id, SELF_UPDATE, &spec.encode_to_vec());
+            let request = Request::signed(&signed, Step::SelfUpdate, said.as_deref());
+            assert_eq!(check(&request), expected(id), "{said:?}");
+        }
+        // A configured network path is refused.
+        let signed = command(&ca, "c-4", SELF_UPDATE, &spec.encode_to_vec());
+        let request = Request::signed(&signed, Step::SelfUpdate, None);
+        let unc = std::path::Path::new(r"\\host\share\agent");
+        let error = authorized(&request, &host.place, unc, unix_ms()).unwrap_err();
+        assert!(error.contains("network"), "{error}");
+    }
+
+    #[test]
+    fn signed_requests_keep_their_wire_format_both_ways() {
+        // An older agent sends its data directory; a newer one too, for an
+        // older service. Both still parse.
+        let old = r#"{"op":"signed","command":"AA==","step":"self_update","data_dir":"C:\\ProgramData\\MonitorFlow\\agent"}"#;
+        let request: Request = serde_json::from_str(old).unwrap();
+        assert_eq!(serde_json::to_string(&request).unwrap(), old);
+        let install = r#"{"op":"signed","command":"AA==","step":"install"}"#;
+        let request: Request = serde_json::from_str(install).unwrap();
+        assert_eq!(serde_json::to_string(&request).unwrap(), install);
     }
 }

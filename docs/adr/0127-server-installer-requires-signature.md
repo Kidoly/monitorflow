@@ -1,4 +1,4 @@
-# ADR-0111: The server installer always checks the release signature
+# ADR-0127: The server installer always checks the release signature
 
 Date: 2026-11-12
 Status: accepted; amends ADR-0065

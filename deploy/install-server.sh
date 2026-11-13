@@ -112,7 +112,7 @@ has_openssl3() {
 # Checks SHA256SUMS.sig against the release keys with OpenSSL 3, which
 # covers the compose files and the image digests of images.json. There is
 # no fallback to checksums alone: SHA256SUMS comes from the same place as
-# the files it covers, which may be a mirror (ADR-0110).
+# the files it covers, which may be a mirror (ADR-0127).
 verify_signature() {
     case $RELEASE_KEYS in
         *'BEGIN PUBLIC KEY'*) ;;

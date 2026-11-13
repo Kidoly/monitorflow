@@ -121,7 +121,8 @@ fn swaps_the_executable_and_keeps_the_new_one_when_it_connects() {
     );
     assert_eq!(host.exe(), pe("0.3.0"));
     assert_eq!(fs::read(host.paths.previous()).unwrap(), pe("0.2.0"));
-    assert!(!request.staged().exists(), "staged files are removed");
+    // LocalSystem leaves the agent's directory alone: the agent cleans up.
+    assert!(request.staged().join(ASSET).exists());
     assert_eq!(host.status().phase, Phase::Watching);
     // A second update waits for this one.
     let again = host.stage("0.4.0", &pe("0.4.0"));
@@ -202,4 +203,73 @@ fn refuses_what_does_not_verify_and_changes_nothing() {
     let mut relative = host.stage("0.3.0", &pe("0.3.0"));
     relative.data_dir = "agent".into();
     assert!(matches!(host.install(&relative), Err(SwapError::Input(_))));
+}
+
+#[test]
+fn local_paths_only() {
+    for bad in [
+        r"\\host\share\agent",
+        "//host/share/agent",
+        r"\\?\C:\ProgramData\MonitorFlow\agent",
+        r"\\.\C:\ProgramData",
+        r"\\?\UNC\host\share",
+        r"\/host/share",
+        "agent",
+        "/var/lib/../../etc",
+        r"C:\ProgramData\..\Windows",
+    ] {
+        assert!(local_absolute(Path::new(bad)).is_err(), "{bad}");
+    }
+    let good = if cfg!(windows) {
+        r"C:\ProgramData\MonitorFlow\agent"
+    } else {
+        "/var/lib/monitorflow/agent"
+    };
+    assert_eq!(local_absolute(Path::new(good)), Ok(()));
+    // Windows' rule, whatever the platform.
+    assert!(windows_drive_absolute(r"C:\ProgramData"));
+    assert!(windows_drive_absolute("d:/data"));
+    for bad in [r"C:ProgramData", r"\??\C:\x", r"\\?\C:\x", "/x", "1:\\x"] {
+        assert!(!windows_drive_absolute(bad), "{bad}");
+    }
+}
+
+#[test]
+fn a_network_data_directory_or_service_path_is_refused_before_reading() {
+    let host = Host::new();
+    let mut request = host.stage("0.3.0", &pe("0.3.0"));
+    request.data_dir = r"\\attacker\share\agent".into();
+    assert!(matches!(host.install(&request), Err(SwapError::Input(_))));
+    let request = host.stage("0.3.0", &pe("0.3.0"));
+    let mut paths = host.paths.clone();
+    paths.state_dir = "//attacker/share/state".into();
+    let error = install(
+        &request,
+        &paths,
+        &[host.signer.public()],
+        &"0.2.0".parse().unwrap(),
+        Platform::WindowsX86_64,
+    )
+    .unwrap_err();
+    assert!(matches!(error, SwapError::Input(_)), "{error}");
+    assert_eq!(host.exe(), pe("0.2.0"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_staged_symlink_is_refused_not_followed() {
+    let host = Host::new();
+    let request = host.stage("0.3.0", &pe("0.3.0"));
+    let staged = request.staged();
+    // The agent's account swaps a staged file for a link to one of
+    // LocalSystem's; the service does not read through it.
+    let elsewhere = host.dir.path().join("elsewhere");
+    fs::rename(staged.join(SUMS), &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, staged.join(SUMS)).unwrap();
+    assert!(matches!(host.install(&request), Err(SwapError::Io(..))));
+    // A directory is not a file either.
+    fs::remove_file(staged.join(SUMS)).unwrap();
+    fs::create_dir(staged.join(SUMS)).unwrap();
+    assert!(matches!(host.install(&request), Err(SwapError::Io(..))));
+    assert_eq!(host.exe(), pe("0.2.0"));
 }

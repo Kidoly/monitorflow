@@ -134,7 +134,7 @@ db_tests! {
         .execute(&pool).await.unwrap();
         backdate_certificates(&pool).await;
         assert_refused(renew(&pki, &relay.url, &web03).await, "PermissionDenied", "may not renew for agent web-03");
-        pki.ca.revoke(&serial(&web04), RevocationReason::KeyCompromise).unwrap();
+        pki.ca.revoke(&serial(&web04), RevocationReason::KeyCompromise, std::time::SystemTime::now() + std::time::Duration::from_secs(86_400)).unwrap();
         assert_refused(renew(&pki, &relay.url, &web04).await, "PermissionDenied", "revoked");
 
         // Only relays may forward: an agent calling the server directly

@@ -465,8 +465,7 @@ pub async fn confirm_names(
         .as_deref()
         .ok_or_else(|| ApiError::Internal("enrollment is not configured".into()))?;
     let address = super::public_address::current(&state.pool, settings).await?;
-    let mut server_names = address.names;
-    server_names.push(address.address);
+    let server_names = settings.central_names(&address);
     let names = relay_names::check(&request.names, &server_names).map_err(|e| match e {
         NameError::ServerName(_) => ApiError::Conflict(e.to_string()),
         _ => ApiError::Invalid(e.to_string()),

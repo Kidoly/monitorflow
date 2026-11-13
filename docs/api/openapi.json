@@ -2608,7 +2608,7 @@
           "incidents": {
             "type": "integer",
             "format": "int32",
-            "description": "How many incidents it told, this one included."
+            "description": "How many incidents it told that the user may read, this one\nincluded. Members on sites outside the user's scope are not counted."
           }
         }
       },
