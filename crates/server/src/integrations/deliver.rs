@@ -72,7 +72,11 @@ impl Claimed {
             id: self.endpoint_id,
             name: self.name.clone(),
             url: self.url.clone(),
-            secret: monitorflow_common::redact::Secret::new(self.secret.clone()),
+            secret: crate::secrets::open(
+                crate::secrets::Column::IntegrationEndpoints,
+                &self.secret,
+            )
+            .map_err(|e| e.to_string()),
             events: self.events.clone(),
             // Not needed to send.
             coverage: Coverage::Everything,

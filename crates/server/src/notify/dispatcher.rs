@@ -554,6 +554,10 @@ impl Dispatcher {
     /// One try: a plugin channel by its plugin (ADR-0103), the others
     /// with the client for their [`Channel::public_only`].
     async fn deliver(&self, channel: &Channel, message: &Message) -> Result<(), SendError> {
+        // Never without its password or signing secret (ADR-0125).
+        if let Some(error) = &channel.secret_error {
+            return Err(SendError::new(error.clone()));
+        }
         match &channel.destination {
             Destination::Plugin(_) => {
                 crate::plugins::channel::deliver(&self.pool, channel, message).await

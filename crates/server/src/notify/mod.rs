@@ -25,6 +25,8 @@ use serde_json::Value;
 use sqlx::{PgExecutor, Row};
 use uuid::Uuid;
 
+use crate::secrets::{self, Column};
+
 pub use chat::Service;
 pub use dispatcher::Dispatcher;
 pub use message::Event;
@@ -342,6 +344,9 @@ pub struct Channel {
     /// The SMTP password, the webhook signing secret or the chat webhook
     /// URL.
     pub secret: Option<Secret>,
+    /// Why the stored secret does not open (ADR-0125): every delivery
+    /// fails with it rather than going out without the secret.
+    pub secret_error: Option<String>,
     pub coverage: Coverage,
     /// Delivered only to public addresses: someone other than a global
     /// administrator chose the destination (ADR-0078).
@@ -361,16 +366,38 @@ fn channel(row: &sqlx::postgres::PgRow) -> Result<Channel, sqlx::Error> {
     let kind: String = row.try_get("kind")?;
     let destination = Destination::from_row(&kind, row.try_get("settings")?)
         .map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+    let (secret, secret_error) = split(secrets::open_stored(
+        Column::NotificationChannels,
+        row.try_get("secret")?,
+    ));
     Ok(Channel {
         id: row.try_get("id")?,
         destination,
-        secret: row.try_get::<Option<String>, _>("secret")?.map(Secret::new),
+        secret,
+        secret_error,
         coverage: Coverage::from_columns(row.try_get("customer_id")?, row.try_get("site_id")?)
             .ok_or_else(|| sqlx::Error::Decode("a channel with two scopes".into()))?,
         public_only: row.try_get("public_only")?,
         person: false,
         follow_up_only: row.try_get("follow_up_only")?,
     })
+}
+
+/// A secret read with [`secrets::open_stored`] as a [`Channel`] holds it.
+pub fn split(stored: Option<secrets::Opened>) -> (Option<Secret>, Option<String>) {
+    match stored {
+        None => (None, None),
+        Some(Ok(secret)) => (Some(secret), None),
+        Some(Err(error)) => (None, Some(error)),
+    }
+}
+
+/// `secret` sealed for `column`, as a database error when it cannot be.
+pub fn sealed(column: Column, secret: Option<&Secret>) -> Result<Option<String>, sqlx::Error> {
+    secret
+        .map(|s| secrets::seal(column, s.expose()))
+        .transpose()
+        .map_err(|e| sqlx::Error::Encode(Box::new(e)))
 }
 
 /// Every channel.
@@ -424,13 +451,14 @@ pub async fn insert(
     public_only: bool,
 ) -> Result<Uuid, sqlx::Error> {
     let (customer_id, site_id) = coverage.columns();
+    let secret = sealed(Column::NotificationChannels, secret)?;
     sqlx::query_scalar(
         "INSERT INTO notification_channels (kind, settings, secret, customer_id, site_id, public_only)
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
     )
     .bind(destination.kind())
     .bind(destination.settings())
-    .bind(secret.map(Secret::expose))
+    .bind(secret)
     .bind(customer_id)
     .bind(site_id)
     .bind(public_only)
@@ -449,6 +477,7 @@ pub async fn update(
     public_only: bool,
 ) -> Result<bool, sqlx::Error> {
     let (customer_id, site_id) = coverage.columns();
+    let new_secret = sealed(Column::NotificationChannels, secret.flatten())?;
     let done = sqlx::query(
         "UPDATE notification_channels
          SET kind = $2, settings = $3, customer_id = $4, site_id = $5, public_only = $6,
@@ -462,7 +491,7 @@ pub async fn update(
     .bind(site_id)
     .bind(public_only)
     .bind(secret.is_some())
-    .bind(secret.flatten().map(Secret::expose))
+    .bind(new_secret)
     .execute(db)
     .await?;
     Ok(done.rows_affected() == 1)

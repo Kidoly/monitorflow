@@ -202,6 +202,11 @@ check "the addition is audited" test "$(psql "SELECT count(*) FROM audit_log WHE
 check "the same certificate authority" test \
     "$(compose 1 exec -T server sha256sum /var/lib/monitorflow/server/ca/ca-key.pem)" = \
     "$(compose 2 exec -T server sha256sum /var/lib/monitorflow/server/ca/ca-key.pem)"
+check "the same secrets key (ADR-0125)" test \
+    "$(compose 1 exec -T server sha256sum /var/lib/monitorflow/server/secrets/keys)" = \
+    "$(compose 2 exec -T server sha256sum /var/lib/monitorflow/server/secrets/keys)"
+check "readable by the server only" test \
+    "$(compose 2 exec -T server stat -c %a /var/lib/monitorflow/server/secrets/keys)" = 600
 # Through the runner: systemd mounts a tmpfs on the hosts' /tmp, which
 # docker cp does not see.
 on 1 curl -fs "http://monitor.internal/trust/monitorflow-ca.crt" | on 2 sh -c 'cat >/root/browser-ca.crt'
@@ -241,6 +246,18 @@ installer 2 --join monitorflow-join.tar | tee "$work/rejoin.log"
 check "joining again with the file works" grep -q 'is running at https://' "$work/rejoin.log"
 check "it has the role's password" test "$(env_value 2 POSTGRES_APP_PASSWORD)" = "$app_password"
 check "and no longer the owner's" test -z "$(env_value 2 POSTGRES_PASSWORD)"
+check "its server is healthy" healthy 2
+
+echo "== a central server added before ADR-0125 needs a new join file"
+compose 2 exec -T server rm -rf /var/lib/monitorflow/server/secrets
+if installer 2 >"$work/no-key.log"; then failed=1; echo "the installer ran without the secrets key: FAILED"; fi
+check "it says to make a new join file" grep -q -- '--add-server again' "$work/no-key.log"
+check "and its server still runs" healthy 2
+installer 2 --join monitorflow-join.tar | tee "$work/key-rejoin.log"
+check "joining again with the file works" grep -q 'is running at https://' "$work/key-rejoin.log"
+check "it has the first one's secrets key" test \
+    "$(compose 1 exec -T server sha256sum /var/lib/monitorflow/server/secrets/keys)" = \
+    "$(compose 2 exec -T server sha256sum /var/lib/monitorflow/server/secrets/keys)"
 check "its server is healthy" healthy 2
 
 echo "== the second leads when the first's server stops"

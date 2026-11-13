@@ -365,7 +365,7 @@ pub async fn create(
     )
     .bind(&valid.name)
     .bind(&valid.url)
-    .bind(secret.expose())
+    .bind(integrations::sealed(&secret)?)
     .bind(&valid.events)
     .bind(customer_id)
     .bind(site_id)
@@ -420,7 +420,7 @@ pub async fn update(
     .bind(customer_id)
     .bind(site_id)
     .bind(valid.allow_private)
-    .bind(secret.as_ref().map(|s| s.expose()))
+    .bind(secret.as_ref().map(integrations::sealed).transpose()?)
     .execute(&mut *tx)
     .await?;
     let mut details = audited(&valid);
@@ -515,7 +515,7 @@ pub async fn renew_secret(
     let secret = integrations::generate_secret();
     sqlx::query("UPDATE integration_endpoints SET secret = $2 WHERE id = $1")
         .bind(endpoint.id)
-        .bind(secret.expose())
+        .bind(integrations::sealed(&secret)?)
         .execute(&mut *tx)
         .await?;
     record(

@@ -596,7 +596,8 @@ check_license() {
 
 # On the first central server: publishes its stores on its address, and
 # writes what another central server needs to join it. The file holds the
-# certificate authority's key.
+# certificate authority's key and the key of the secrets stored in the
+# database (ADR-0125).
 add_server() {
     joined && die "this is an added central server: run --add-server on the first one"
     check_license compose exec -T server monitorflow-server license check-add
@@ -606,8 +607,8 @@ add_server() {
     say "sharing the database and the metric and log stores on $share, ports 5432, 8428 and 9428, with TLS and a password; allow only the added central servers to reach them"
     start
     mkdir "$tmp/join"
-    compose exec -T server tar -C /var/lib/monitorflow -cf - server/ca storage-tls >"$tmp/join/server.tar" \
-        || die "cannot read the certificate authority from the server"
+    compose exec -T server tar -C /var/lib/monitorflow -cf - server/ca server/secrets storage-tls >"$tmp/join/server.tar" \
+        || die "cannot read the certificate authority or the secrets key from the server"
     compose exec -T server cat /certs/ca.pem >"$tmp/join/db-ca.pem" || die "cannot read the database's CA"
     if [ "$(env_get WEB_CERTIFICATE '')" = internal ]; then
         compose exec -T web tar -C /data/caddy/pki/authorities -cf - local >"$tmp/join/caddy.tar" \
@@ -626,7 +627,7 @@ add_server() {
 }
 
 join_instructions() {
-    say "wrote $JOIN_FILE. It holds the keys of this server's certificate authority: copy it to the new machine, then run there:"
+    say "wrote $JOIN_FILE. It holds the keys of this server's certificate authority and of its stored secrets: copy it to the new machine, then run there:"
     printf '\n    curl -fsSL %s/install-server.sh | sudo sh -s -- --join %s\n\n' "$base" "$(basename "$JOIN_FILE")"
     say "then delete both copies of the file"
 }
@@ -669,9 +670,28 @@ copy_join_data() {
     fi
 }
 
+# The key of the stored secrets of the join file in $tmp/join, on a central
+# server added before ADR-0125. As root with what the services drop
+# (ADR-0126), keeping the owners of the files.
+copy_secrets_key() {
+    as_root="--user 0 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER"
+    # shellcheck disable=SC2086
+    compose run --rm --no-deps -T $as_root --entrypoint tar server -C /var/lib/monitorflow -xf - server/secrets \
+        <"$tmp/join/server.tar" >/dev/null || die "cannot copy the secrets key"
+}
+
+# Whether this added central server has the first one's secrets key. As
+# the server's user, who owns the directory: root without capabilities
+# cannot enter it (ADR-0126).
+has_secrets_key() {
+    compose run --rm --no-deps -T --entrypoint sh server \
+        -c 'test -s /var/lib/monitorflow/server/secrets/keys' >/dev/null 2>&1
+}
+
 # On a new machine: another central server on the first one's database.
 # On one added before ADR-0109: the database role of the join file in place
-# of the owner's password it was given then.
+# of the owner's password it was given then; before ADR-0125: the key of
+# the stored secrets.
 join_server() {
     [ ! -f "$ENV_FILE" ] || joined || die "this machine already runs a central server of its own"
     mkdir "$tmp/join"
@@ -681,12 +701,15 @@ join_server() {
     fi
     app_password=$(sed -n 's/^POSTGRES_APP_PASSWORD=//p' "$tmp/join/env")
     [ -n "$app_password" ] || die "$join_file was written by an older release: update the first central server, run --add-server there again, and use the new file"
+    tar -tf "$tmp/join/server.tar" | grep -x 'server/secrets/keys' >/dev/null \
+        || die "$join_file was written by an older release: update the first central server, run --add-server there again, and use the new file"
     if joined; then
         say "already added: updating this central server to $version, with the database role of $join_file"
         rewrite_image_pins
         env_set POSTGRES_APP_PASSWORD "$app_password"
         env_unset POSTGRES_PASSWORD
         pull_images
+        copy_secrets_key
     else
         say "adding this machine as a central server of $(sed -n 's/^DOMAIN=//p' "$tmp/join/env")"
         install_bundle
@@ -701,8 +724,11 @@ join_server() {
 # An added central server follows the release it is given: the images of
 # this one, pulled, then started. One added before ADR-0109 holds the
 # password of the role that owns the schema, which the database no longer
-# accepts from another machine: it needs a new join file, once.
+# accepts from another machine, and one added before ADR-0125 lacks the key
+# of the stored secrets, which it must not make itself: each needs a new
+# join file, once.
 update_joined() {
+    has_secrets_key || die "this central server was added before its stored secrets were sealed, and does not have the key that opens them: on the first central server, update it and run install-server.sh --add-server again, copy $(basename "$JOIN_FILE") here, then run this with --join $(basename "$JOIN_FILE"). Nothing was changed"
     [ -n "$(env_get POSTGRES_APP_PASSWORD '')" ] || die "this central server was added with the database owner's password, which the database no longer accepts from another machine: on the first central server, update it and run install-server.sh --add-server again, copy $(basename "$JOIN_FILE") here, then run this with --join $(basename "$JOIN_FILE"). Nothing was changed"
     say "already added: updating this central server to $version"
     rewrite_image_pins

@@ -54,6 +54,7 @@ fn channel(id: u128, destination: Destination, coverage: Coverage) -> Channel {
         id: Uuid::from_u128(id),
         destination,
         secret: Some(Secret::new("pw")),
+        secret_error: None,
         coverage,
         public_only: false,
         person: false,

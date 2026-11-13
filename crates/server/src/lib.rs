@@ -25,6 +25,7 @@ pub mod relay_commands;
 pub mod release_check;
 pub mod remediation;
 pub mod renew;
+pub mod secrets;
 pub mod sensor_config;
 pub mod storage_tls;
 pub mod vm_query;

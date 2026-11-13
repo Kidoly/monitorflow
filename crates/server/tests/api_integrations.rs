@@ -129,6 +129,7 @@ async fn receiver() -> (String, Seen) {
 db_tests! {
     #[sqlx::test]
     async fn an_endpoint_is_set_up_tested_and_replayed(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (_, server) = place(&pool, "acme").await;
         let admin = login(&pool, "admin", Role::Administrator, GrantScope::Global).await;
         let (url, seen) = receiver().await;
@@ -224,7 +225,12 @@ db_tests! {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(stored, new_secret);
+        let opened = monitorflow_server::secrets::open(
+            monitorflow_server::secrets::Column::IntegrationEndpoints,
+            &stored,
+        )
+        .unwrap();
+        assert_eq!(opened.expose(), new_secret, "stored sealed: {stored}");
 
         // The audit keeps the host, never the secret or the path.
         let audit: Vec<(String, Value)> =
@@ -248,6 +254,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn customer_administrators_manage_theirs_but_not_private_addresses(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (acme, _) = place(&pool, "acme").await;
         let global = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
         let admin = login(&pool, "acme-admin", Role::Administrator, GrantScope::Customer(acme)).await;
@@ -386,11 +393,18 @@ db_tests! {
             .await
             .unwrap();
         assert_eq!(stored, own_url);
+        // Stored sealed, like any secret (ADR-0125).
         let stored: String = sqlx::query_scalar("SELECT secret FROM integration_endpoints")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(stored, new);
+        assert!(stored.starts_with("mfs1:"), "{stored}");
+        let opened = monitorflow_server::secrets::open(
+            monitorflow_server::secrets::Column::IntegrationEndpoints,
+            &stored,
+        )
+        .unwrap();
+        assert_eq!(opened.expose(), new);
 
         // A global administrator allows the loopback receiver without
         // moving it; the new secret signs what reaches it, never the old.

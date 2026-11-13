@@ -15,7 +15,6 @@ use chrono::{
     TimeZone, Utc, Weekday,
 };
 use chrono_tz::Tz;
-use monitorflow_common::redact::Secret;
 use serde::Serialize;
 use sqlx::Row;
 use uuid::Uuid;
@@ -280,9 +279,9 @@ pub struct Person {
     /// who may acknowledge incidents there (ADR-0082).
     pub operates: Vec<(Option<Uuid>, Option<Uuid>)>,
     pub email: Option<String>,
-    /// Their chat or webhook destination, its secret, and whether only
-    /// public addresses may be reached.
-    pub chat: Option<(Destination, Option<Secret>, bool)>,
+    /// Their chat or webhook destination, its secret or why it does not
+    /// open (ADR-0125), and whether only public addresses may be reached.
+    pub chat: Option<(Destination, Option<crate::secrets::Opened>, bool)>,
 }
 
 /// Every user, and which customer each site belongs to.
@@ -310,7 +309,10 @@ impl Directory {
                     match Destination::from_row(&kind, settings) {
                         Ok(destination) => Some((
                             destination,
-                            row.try_get::<Option<String>, _>("secret")?.map(Secret::new),
+                            crate::secrets::open_stored(
+                                crate::secrets::Column::UserContacts,
+                                row.try_get("secret")?,
+                            ),
                             row.try_get("public_only")?,
                         )),
                         Err(error) => {
@@ -590,6 +592,7 @@ pub fn contact_channels(person: &Person, mail: Option<&Channel>) -> Vec<Channel>
                     ..server.clone()
                 }),
                 secret: mail.secret.clone(),
+                secret_error: mail.secret_error.clone(),
                 coverage: Coverage::Everything,
                 public_only: mail.public_only,
                 person: true,
@@ -598,10 +601,12 @@ pub fn contact_channels(person: &Person, mail: Option<&Channel>) -> Vec<Channel>
         }
     }
     if let Some((destination, secret, public_only)) = &person.chat {
+        let (secret, secret_error) = crate::notify::split(secret.clone());
         out.push(Channel {
             id: person.id,
             destination: destination.clone(),
-            secret: secret.clone(),
+            secret,
+            secret_error,
             coverage: Coverage::Everything,
             public_only: *public_only,
             person: true,
@@ -1066,7 +1071,8 @@ mod tests {
                 from: "mf@x.io".into(),
                 to: vec!["team@x.io".into()],
             }),
-            secret: Some(Secret::new("pw")),
+            secret: Some(monitorflow_common::redact::Secret::new("pw")),
+            secret_error: None,
             coverage,
             public_only: false,
             person: false,

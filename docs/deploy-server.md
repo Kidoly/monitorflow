@@ -83,7 +83,7 @@ Volumes are prefixed with the project name, like `monitorflow_serverdata`.
 
 | Volume | Holds |
 | --- | --- |
-| `serverdata` | The built-in CA, the server's certificate, the command signing key. Without it every agent and relay must be installed again |
+| `serverdata` | The built-in CA, the server's certificate, the command signing key, the secrets key. Without it every agent and relay must be installed again, and the passwords and webhook URLs of notifications, integrations and AI entered again |
 | `mirrors` | Package mirrors and their signing key, and the agent release cache. Tens to hundreds of GB once in use |
 | `pgdata` | Inventory, configuration, campaigns, incidents, audit log |
 | `vmdata`, `vldata` | Metrics and logs |
@@ -93,7 +93,7 @@ Volumes are prefixed with the project name, like `monitorflow_serverdata`.
 | `backups` | Backups: daily, on request and before each update, the 7 newest kept; `BACKUP_DIR` in `deploy/.env` puts them in a directory of the machine instead, which the updater makes `root:root`, mode `0700`: copy them from there, as the page cannot download them[^0129] |
 | `update`, `updater` | Update requests and status, and the updater's own state |
 
-The updater backs up the database and `serverdata` every day and keeps the 7 newest backups[^0058]. **Administration, Backups** shows the last one, takes one now and downloads any of them. A backup holds the CA keys: whoever has the file can impersonate the server, so keep copies somewhere safe. Metrics, logs and the mirror repositories are not in backups; the mirror signing key is.
+The updater backs up the database and `serverdata` every day and keeps the 7 newest backups[^0058]. **Administration, Backups** shows the last one, takes one now and downloads any of them. A backup holds the CA keys and the secrets key, which opens the passwords, webhook URLs, signing secrets and AI key stored in the database[^0125]: whoever has the file can impersonate the server and reach those services, so keep copies somewhere safe. A copy of the database alone does not reveal them. Metrics, logs and the mirror repositories are not in backups; the mirror signing key is.
 
 To restore one, on a fresh install or on this one: `deploy/restore.sh <file>`. The server's database role and its rights are not taken from the backup: they are created again when the server starts, as at every start[^0109]. A backup taken before the certificate authority changed brings the old one back, and the restore says so: servers and relays that moved cannot connect to it.
 
@@ -188,7 +188,7 @@ The `db-migrate` service applies database migrations before the server starts. R
    curl -fsSL https://github.com/Kidoly/monitorflow/releases/latest/download/install-server.sh | sudo sh -s -- --add-server
    ```
 
-   It checks that the license has room, publishes PostgreSQL, VictoriaMetrics and VictoriaLogs on this machine's address (ports 5432, 8428 and 9428, each with TLS and a password; `MF_SHARE_ADDRESS` picks another address), and writes `/root/monitorflow-join.tar`. That file holds the keys of the certificate authority and the password of the server's database role, not the database owner's: copy it to the new machine over SSH, and delete both copies once done. Allow only the added central servers to reach those three ports in your firewall.
+   It checks that the license has room, publishes PostgreSQL, VictoriaMetrics and VictoriaLogs on this machine's address (ports 5432, 8428 and 9428, each with TLS and a password; `MF_SHARE_ADDRESS` picks another address), and writes `/root/monitorflow-join.tar`. That file holds the keys of the certificate authority, the secrets key and the password of the server's database role, not the database owner's: copy it to the new machine over SSH, and delete both copies once done. Allow only the added central servers to reach those three ports in your firewall.
 3. On the new machine, with the file in the current directory:
 
    ```sh
@@ -201,6 +201,8 @@ The `db-migrate` service applies database migrations before the server starts. R
 Once added, a central server keeps running and restarting even after the license expires or is removed: expiry only stops adding others, and administrators see a notice. Administration › License lists the central servers added; removing one there frees its place for another.
 
 A central server added before the server had a database role of its own[^0109] was given the database owner's password, which PostgreSQL no longer accepts from another machine. After updating the first central server, run `--add-server` on it again, copy the new file to each added machine and run `--join monitorflow-join.tar` there once. Until then the added central server cannot connect to the database, and the installer run on it with no option says so and changes nothing. Then change `POSTGRES_PASSWORD` on the first central server, since the old one was on those machines: `docker compose -f deploy/docker-compose.yml exec postgres psql -U monitorflow -c "ALTER ROLE monitorflow PASSWORD '<new>'"`, the same value in `deploy/.env`, and the installer again.
+
+A central server added before the stored secrets were sealed[^0125] does not have the secrets key, and never makes one of its own. After updating the first central server, run `--add-server` on it again, copy the new file to each added machine and run `--join monitorflow-join.tar` there once. Until then the installer run on it with no option says so and changes nothing.
 
 What stays on the first central server: backups, updates from the web interface, package mirrors and the metric and log stores. After updating it, run the installer again on each added central server, with no option, to bring it to the same release. Changing the certificate authority refuses while several central servers run: stop the added ones, change it, then on each run the installer with `--uninstall --purge`, and `--join` with a new join file.
 
@@ -240,5 +242,6 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 [^0088]: [ADR-0088: Changing the certificate authority](adr/0088-changing-the-certificate-authority.md)
 [^0109]: [ADR-0109: The server runs on a database role that owns nothing](adr/0109-database-roles.md)
 [^0110]: [ADR-0110: Trusted proxies for the client's address](adr/0110-trusted-proxies.md)
+[^0125]: [ADR-0125: Outbound secrets are sealed at rest](adr/0125-secrets-sealed-at-rest.md)
 [^0127]: [ADR-0127: The server installer always checks the release signature](adr/0127-server-installer-requires-signature.md)
 [^0129]: [ADR-0129: A host backup directory belongs to root alone](adr/0129-private-host-backup-dir.md)

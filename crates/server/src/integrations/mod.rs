@@ -70,7 +70,9 @@ pub struct Endpoint {
     pub id: Uuid,
     pub name: String,
     pub url: String,
-    pub secret: Secret,
+    /// The signing secret, or why it does not open (ADR-0125): nothing is
+    /// sent unsigned.
+    pub secret: crate::secrets::Opened,
     pub events: Vec<String>,
     pub coverage: Coverage,
     pub allow_private: bool,
@@ -97,7 +99,8 @@ impl From<EndpointRow> for Endpoint {
             id: row.id,
             name: row.name,
             url: row.url,
-            secret: Secret::new(row.secret),
+            secret: crate::secrets::open(crate::secrets::Column::IntegrationEndpoints, &row.secret)
+                .map_err(|e| e.to_string()),
             events: row.events,
             // The table's check allows at most one of the two.
             coverage: Coverage::from_columns(row.customer_id, row.site_id)
@@ -126,6 +129,16 @@ pub async fn lock(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Endpoint>,
             .fetch_optional(db)
             .await?;
     Ok(row.map(Endpoint::from))
+}
+
+/// `secret` sealed for its column (ADR-0125), as a database error when it
+/// cannot be.
+pub fn sealed(secret: &Secret) -> Result<String, sqlx::Error> {
+    crate::secrets::seal(
+        crate::secrets::Column::IntegrationEndpoints,
+        secret.expose(),
+    )
+    .map_err(|e| sqlx::Error::Encode(Box::new(e)))
 }
 
 /// A new signing secret: the prefix and 256 random bits in hex.
@@ -297,6 +310,10 @@ impl Clients {
             refuse_private_address_in(&endpoint.url)?;
             &self.public
         };
+        let secret = endpoint.secret.as_ref().map_err(|message| Failure {
+            status: None,
+            message: message.clone(),
+        })?;
         let body = serde_json::to_vec(&payload(event, web_url)).unwrap_or_default();
         let timestamp = Utc::now().timestamp();
         let mut request = http
@@ -307,7 +324,7 @@ impl Clients {
             .header(TIMESTAMP_HEADER, timestamp.to_string())
             .header(
                 SIGNATURE_HEADER,
-                signature(endpoint.secret.expose(), timestamp, &body),
+                signature(secret.expose(), timestamp, &body),
             );
         if replay {
             request = request.header(REPLAY_HEADER, "1");

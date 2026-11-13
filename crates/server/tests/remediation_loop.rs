@@ -698,6 +698,7 @@ async fn last_escalation(h: &Harness) -> String {
 db_tests! {
     #[sqlx::test]
     async fn automatic_commands_run_redacted_until_the_sensor_confirms(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let script = [
             ("df -h", Reply::Run { exit_code: 0, stdout: "/dev/sda1 97% /\npassword=hunter2Sup3r\n" }),
             ("systemctl restart rsyslog", Reply::Run { exit_code: 0, stdout: "" }),
@@ -779,6 +780,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn changes_wait_for_approval_until_the_alert_resolves(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         record_leases_at_commit(&pool).await;
         let h = Harness::start(&pool, &[]).await;
         let ai = Arc::new(MockProvider::new([Step::run(
@@ -832,6 +834,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn stored_settings_start_replace_and_stop_the_loop(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[]).await;
         let ai = Arc::new(MockProvider::new([Step::run(
             "the disk is full",
@@ -867,11 +870,18 @@ db_tests! {
             async move {
                 sqlx::query(
                     "INSERT INTO server_settings (singleton, ai_enabled, ai_api_key, ai_model)
-                     VALUES (true, $1, 'sk-ant-test', $2)
+                     VALUES (true, $1, $3, $2)
                      ON CONFLICT (singleton) DO UPDATE SET ai_enabled = $1, ai_model = $2",
                 )
                 .bind(enabled)
                 .bind(model)
+                .bind(
+                    monitorflow_server::secrets::seal(
+                        monitorflow_server::secrets::Column::AiApiKey,
+                        "sk-ant-test",
+                    )
+                    .unwrap(),
+                )
                 .execute(&pool)
                 .await
                 .unwrap();
@@ -918,6 +928,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn forbidden_commands_escalate_without_running(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[]).await;
         let ai = Arc::new(MockProvider::new([Step::run(
             "the disk is full",
@@ -944,6 +955,7 @@ db_tests! {
     /// as Claude: its forbidden command is refused and nothing runs.
     #[sqlx::test]
     async fn a_local_models_forbidden_command_escalates_like_any_other(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[]).await;
         let answer = serde_json::json!({
             "tool": "propose_command",
@@ -975,6 +987,7 @@ db_tests! {
     /// as from any provider, whatever its reasoning claims.
     #[sqlx::test]
     async fn an_openai_high_impact_command_waits_for_approval(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[]).await;
         sqlx::query("INSERT INTO remediation_policies (customer_id, low_impact_auto) VALUES ($1, true)")
             .bind(h.customer)
@@ -1016,6 +1029,7 @@ db_tests! {
     /// rules included.
     #[sqlx::test]
     async fn windows_servers_get_powershell_rules_and_prompt(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let script = [("Get-Volume", Reply::Run { exit_code: 0, stdout: "C NTFS 97%" })];
         let h = Harness::start_on(&pool, &script, "windows").await;
         let ai = Arc::new(MockProvider::new([
@@ -1043,6 +1057,7 @@ db_tests! {
     /// it waits for a person rather than running.
     #[sqlx::test]
     async fn linux_commands_wait_on_windows(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start_on(&pool, &[], "windows").await;
         let ai = Arc::new(MockProvider::new([Step::run("full", "df -h", "usage")]));
         let running = h.remediation(&ai, settings());
@@ -1056,6 +1071,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_command_limit_escalates(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[("df -h", Reply::Run { exit_code: 0, stdout: "97%" })]).await;
         let ai = Arc::new(MockProvider::new([
             Step::run("full", "df -h", "usage"),
@@ -1072,6 +1088,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_command_without_a_result_times_out_and_escalates(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[("uptime", Reply::Hold)]).await;
         let ai = Arc::new(MockProvider::new([Step::run("load", "uptime", "load")]));
         let settings = Settings { command_timeout: Duration::from_secs(1), ..settings() };
@@ -1088,6 +1105,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_duration_limit_expires_a_pending_approval(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[]).await;
         let ai = Arc::new(MockProvider::new([Step::run("full", "apt-get autoremove -y", "free space")]));
         let settings = Settings { max_duration: Duration::from_secs(2), ..settings() };
@@ -1109,6 +1127,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn an_unconfirmed_fix_escalates(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[]).await;
         let ai = Arc::new(MockProvider::new([Step::stop("fine", StopOutcome::Resolved, "nothing to do")]));
         let settings = Settings { resolve_wait: Duration::from_millis(300), ..settings() };
@@ -1121,6 +1140,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_crashed_server_is_resumed_once_and_never_driven_twice(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[("df -h", Reply::Hold)]).await;
         // Two servers race for the incident: only one asks the AI.
         let first = Arc::new(MockProvider::new([Step::run("full", "df -h", "usage")]));
@@ -1166,6 +1186,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_hook_snapshots_before_changes_only(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let script = [
             ("df -h", Reply::Run { exit_code: 0, stdout: "97%" }),
             ("systemctl restart rsyslog", Reply::Run { exit_code: 0, stdout: "" }),
@@ -1203,6 +1224,7 @@ db_tests! {
     /// is spent on a server that said it would refuse.
     #[sqlx::test]
     async fn a_server_that_refuses_commands_escalates_before_anything_runs(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[]).await;
         low_impact_auto(&h).await;
         sqlx::query("UPDATE servers SET command_kinds = '{\"shell\": \"off\"}'")
@@ -1223,6 +1245,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_failed_snapshot_escalates_without_running_the_change(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[("systemctl restart rsyslog", Reply::Run { exit_code: 0, stdout: "" })]).await;
         low_impact_auto(&h).await;
         let ai = Arc::new(MockProvider::new([Step::run("stuck", "systemctl restart rsyslog", "restart")]));
@@ -1244,6 +1267,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_hanging_snapshot_stops_at_the_duration_limit(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[("systemctl restart rsyslog", Reply::Run { exit_code: 0, stdout: "" })]).await;
         low_impact_auto(&h).await;
         let ai = Arc::new(MockProvider::new([Step::run("stuck", "systemctl restart rsyslog", "restart")]));
@@ -1260,6 +1284,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_driver_that_lost_its_lease_records_nothing(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[]).await;
         low_impact_auto(&h).await;
         let ai = Arc::new(MockProvider::new([Step::run("full", "systemctl restart rsyslog", "restart")]));
@@ -1288,6 +1313,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn an_edited_approval_resumes_the_loop(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[("systemctl reload nginx", Reply::Run { exit_code: 0, stdout: "" })]).await;
         let ai = Arc::new(MockProvider::new([
             Step::run("nginx leaks memory", "systemctl restart nginx", "restart it"),
@@ -1323,6 +1349,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_rejection_goes_back_to_the_ai(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::start(&pool, &[]).await;
         let ai = Arc::new(MockProvider::new([
             Step::run("nginx leaks memory", "systemctl restart nginx", "restart it"),

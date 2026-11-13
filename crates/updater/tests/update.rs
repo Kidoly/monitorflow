@@ -286,6 +286,14 @@ impl Volumes {
         let serverdata = dir("serverdata");
         std::fs::create_dir_all(serverdata.join("ca")).unwrap();
         std::fs::write(serverdata.join("ca/ca-key.pem"), "secret").unwrap();
+        // The key of the secrets stored in the database (ADR-0125).
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::create_dir_all(serverdata.join("secrets")).unwrap();
+            let keys = serverdata.join("secrets/keys");
+            std::fs::write(&keys, "key").unwrap();
+            std::fs::set_permissions(&keys, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
         std::fs::create_dir_all(serverdata.join("mirrors/aptly/pool")).unwrap();
         std::fs::write(serverdata.join("mirrors/aptly/pool/big.deb"), "deb").unwrap();
         std::fs::create_dir_all(serverdata.join("mirrors/gnupg")).unwrap();
@@ -741,6 +749,7 @@ async fn a_backup_holds_the_database_and_the_server_data_without_mirrors() {
         "manifest.json",
         "database.dump",
         "serverdata/ca/ca-key.pem",
+        "serverdata/secrets/keys",
         "serverdata/mirrors/gnupg/key",
     ] {
         assert!(
@@ -767,6 +776,7 @@ async fn a_backup_holds_the_database_and_the_server_data_without_mirrors() {
 
     // Restored on a deployment whose data changed since.
     std::fs::write(volumes.serverdata.join("ca/ca-key.pem"), "new").unwrap();
+    std::fs::remove_dir_all(volumes.serverdata.join("secrets")).unwrap();
     std::fs::write(volumes.serverdata.join("stray"), "x").unwrap();
     let work = TempDir::new().unwrap();
     let mut lines = Vec::new();
@@ -787,6 +797,13 @@ async fn a_backup_holds_the_database_and_the_server_data_without_mirrors() {
     assert_eq!(
         std::fs::read_to_string(volumes.serverdata.join("ca/ca-key.pem")).unwrap(),
         "secret"
+    );
+    // Without the key, the restored database's secrets would not open.
+    let keys = volumes.serverdata.join("secrets/keys");
+    assert_eq!(std::fs::read_to_string(&keys).unwrap(), "key");
+    assert_eq!(
+        std::fs::metadata(&keys).unwrap().permissions().mode() & 0o777,
+        0o600
     );
     assert!(!volumes.serverdata.join("stray").exists());
     assert!(

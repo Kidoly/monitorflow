@@ -392,6 +392,7 @@ fn token_of(body: &Value) -> String {
 db_tests! {
     #[sqlx::test]
     async fn by_default_the_administrators_hear_of_what_nobody_acknowledged(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
         let boss = user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
@@ -442,6 +443,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn warnings_are_not_followed_up_until_they_get_worse(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let boss = user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
         let inbox = Inbox::start().await;
@@ -471,6 +473,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn acknowledging_stops_the_follow_up_and_says_who(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
         user(&pool, "victor", Role::Viewer, GrantScope::Customer(a.customer)).await;
@@ -529,6 +532,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_silence_puts_the_next_step_off_until_after_it(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
         let boss = user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
@@ -568,6 +572,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn each_step_tells_whoever_is_on_call_then(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
         let bob = user(&pool, "bob", Role::Operator, GrantScope::Customer(a.customer)).await;
@@ -628,6 +633,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_page_names_who_is_on_call_at_the_step_s_time(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
         let bob = user(&pool, "bob", Role::Operator, GrantScope::Customer(a.customer)).await;
@@ -662,6 +668,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn steps_due_together_go_as_one_message_within_the_window(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let boss = user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
         let inbox = Inbox::start().await;
@@ -670,7 +677,13 @@ db_tests! {
              VALUES ($1, 'slack', '{\"name\": \"me\", \"host\": \"hooks.slack.com\"}', $2, false)",
         )
         .bind(boss)
-        .bind(format!("{}boss", inbox.base))
+        .bind(
+            monitorflow_server::secrets::seal(
+                monitorflow_server::secrets::Column::UserContacts,
+                &format!("{}boss", inbox.base),
+            )
+            .unwrap(),
+        )
         .execute(&pool)
         .await
         .unwrap();
@@ -709,6 +722,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_link_acknowledges_as_its_person_and_only_when_asked(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let boss = user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
         let victor = user(&pool, "victor", Role::Viewer, GrantScope::Customer(a.customer)).await;
@@ -793,6 +807,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_link_follows_its_person_s_roles_now(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let boss = user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
         let inbox = Inbox::start().await;
@@ -831,6 +846,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn administrators_set_the_follow_up_of_what_they_administer(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (a, b) = (place(&pool, "acme").await, place(&pool, "beta").await);
         user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
         user(&pool, "olga", Role::Operator, GrantScope::Customer(a.customer)).await;

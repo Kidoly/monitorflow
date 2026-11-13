@@ -177,6 +177,7 @@ const CONSENT: fn() -> Value = || json!({"ai_commands": "accepted", "shell": "of
 db_tests! {
     #[sqlx::test]
     async fn site_administrators_switch_and_others_cannot(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::new(&pool).await;
         h.report(h.server, CONSENT()).await;
         let other = sqlx::query_scalar::<_, Uuid>("INSERT INTO customers (name) VALUES ('other') RETURNING id")
@@ -250,6 +251,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn on_needs_the_hosts_consent_and_off_does_not(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::new(&pool).await;
         let admin = h.login("alice", Role::Administrator, GrantScope::Site(h.site)).await;
         let uri = format!("/api/servers/{}/ai-commands", h.server);
@@ -290,6 +292,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_site_switches_the_servers_that_can_and_says_why_not(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let h = Harness::new(&pool).await;
         let admin = h.login("alice", Role::Administrator, GrantScope::Site(h.site)).await;
         let operator = h.login("op", Role::Operator, GrantScope::Site(h.site)).await;

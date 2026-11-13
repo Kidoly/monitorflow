@@ -1017,6 +1017,11 @@ pub async fn set_contact(
             .and_then(|u| u.host_str().map(str::to_owned)),
         other => other.chat().map(|(_, c)| c.host.clone()),
     });
+    let sealed = secret
+        .as_deref()
+        .map(|s| crate::secrets::seal(crate::secrets::Column::UserContacts, s))
+        .transpose()
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     if email.is_none() && chat.is_none() {
         sqlx::query("DELETE FROM user_contacts WHERE user_id = $1")
             .bind(user.id)
@@ -1035,7 +1040,7 @@ pub async fn set_contact(
         .bind(&email)
         .bind(kind)
         .bind(settings)
-        .bind(secret.as_deref())
+        .bind(sealed)
         .bind(keep)
         .bind(public_only)
         .execute(&mut *tx)

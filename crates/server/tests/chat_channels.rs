@@ -18,6 +18,7 @@ use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::db::MIGRATOR;
 use monitorflow_server::grpc::Registry;
 use monitorflow_server::notify::{self, Chat, Coverage, Destination, Dispatcher, Webhook};
+use monitorflow_server::secrets::{self, Column};
 use serde_json::{json, Value};
 use sqlx::migrate::Migrator;
 use sqlx::PgPool;
@@ -243,17 +244,28 @@ async fn status(pool: &PgPool, id: Uuid) -> Option<String> {
         .unwrap()
 }
 
+/// The stored secret of channel `id`, which must be sealed (ADR-0125),
+/// opened.
 async fn stored_secret(pool: &PgPool, id: &str) -> Option<String> {
-    sqlx::query_scalar("SELECT secret FROM notification_channels WHERE id = $1::uuid")
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .unwrap()
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT secret FROM notification_channels WHERE id = $1::uuid")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    stored.map(|value| {
+        assert!(value.starts_with("mfs1:"), "stored sealed: {value}");
+        secrets::open(Column::NotificationChannels, &value)
+            .unwrap()
+            .expose()
+            .to_owned()
+    })
 }
 
 db_tests! {
     #[sqlx::test]
     async fn the_url_is_written_and_never_read_back(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let cookie = admin(&pool).await;
         let cookie = Some(cookie.as_str());
         let body = json!({ "kind": "slack", "settings": { "name": " #ops " }, "secret": SLACK_URL });
@@ -298,6 +310,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn only_the_services_own_urls_are_accepted(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let cookie = admin(&pool).await;
         let cookie = Some(cookie.as_str());
         let cases = [
@@ -342,6 +355,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_saved_url_stays_with_its_service(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let cookie = admin(&pool).await;
         let cookie = Some(cookie.as_str());
         let chat_id = channel(&pool, Destination::Slack(chat()), SLACK_URL).await;
@@ -376,6 +390,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn chat_channels_follow_coverage_and_who_manages_it(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (acme, paris) = customer_and_site(&pool, "acme").await;
         let (globex, _) = customer_and_site(&pool, "globex").await;
         let root = admin(&pool).await;
@@ -435,6 +450,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_limited_chat_channel_never_reaches_a_private_address(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         // Saving refuses addresses; a row written another way is still
         // stopped before any connection.
         let (url, fake) = service(Vec::new()).await;
@@ -457,6 +473,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_test_button_reaches_each_service_in_its_format(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let cookie = admin(&pool).await;
         let cookie = Some(cookie.as_str());
         let (url, fake) = service(Vec::new()).await;
@@ -484,6 +501,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn an_event_arrives_with_its_server_name_harmless(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let customer: Uuid = sqlx::query_scalar("INSERT INTO customers (name) VALUES ('acme') RETURNING id")
             .fetch_one(&pool)
             .await
@@ -534,6 +552,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_rate_limit_is_waited_out_as_the_service_asks(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let limited = Answer {
             status: 429,
             headers: vec![("retry-after", "1")],
@@ -551,6 +570,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_limit_that_stays_stops_the_pass_for_that_channel(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let limited = Answer {
             status: 429,
             headers: Vec::new(),
@@ -568,6 +588,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_burst_goes_out_gathered(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (url, fake) = service(Vec::new()).await;
         channel(&pool, Destination::Teams(chat()), &url).await;
         events(&pool, 12).await;
@@ -582,6 +603,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn messages_keep_the_services_pace(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (url, fake) = service(Vec::new()).await;
         channel(&pool, Destination::Slack(chat()), &url).await;
         events(&pool, 2).await;
@@ -597,6 +619,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn failures_read_plainly_and_never_show_the_url(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         // A refusal Slack explains, a redirect, which is not followed, and
         // a service that repeats the URL back.
         let moved = Answer {
@@ -641,6 +664,7 @@ db_tests! {
 
     #[sqlx::test(migrations = false)]
     async fn the_migration_leaves_existing_channels_alone(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let before = Migrator {
             migrations: MIGRATOR
                 .migrations

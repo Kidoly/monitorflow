@@ -254,6 +254,7 @@ async fn login(pool: &PgPool, name: &str, scope: GrantScope) -> String {
 db_tests! {
     #[sqlx::test]
     async fn a_site_going_dark_is_one_message_and_its_return_another(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let acme = customer(&pool, "acme").await;
         let chat = slack(&pool, Coverage::Everything).await;
         let hook = webhook(&pool).await;
@@ -287,6 +288,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_window_survives_a_restart(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let acme = customer(&pool, "acme").await;
         let chat = slack(&pool, Coverage::Everything).await;
         let first = server(&pool, acme.paris, "web-1", None).await;
@@ -308,6 +310,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_wait_is_per_customer(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let acme = customer(&pool, "acme").await;
         let globex = customer(&pool, "globex").await;
         let chat = slack(&pool, Coverage::Everything).await;
@@ -337,6 +340,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_relay_speaks_once_for_the_servers_behind_it(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let acme = customer(&pool, "acme").await;
         let chat = slack(&pool, Coverage::Everything).await;
         let gateway = relay(&pool, acme.paris, "gw-1").await;
@@ -366,6 +370,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_channel_sees_only_the_members_in_its_scope(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let acme = customer(&pool, "acme").await;
         let globex = customer(&pool, "globex").await;
         let everything = slack(&pool, Coverage::Everything).await;
@@ -394,6 +399,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn silenced_members_are_held_and_named_when_it_ends(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let acme = customer(&pool, "acme").await;
         let chat = slack(&pool, Coverage::Everything).await;
         let silence: Uuid = sqlx::query_scalar(
@@ -435,6 +441,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_link_lists_the_group_to_those_who_may_read_it(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let acme = customer(&pool, "acme").await;
         let chat = slack(&pool, Coverage::Everything).await;
         let mut ids = Vec::new();
