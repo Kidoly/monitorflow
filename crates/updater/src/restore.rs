@@ -7,17 +7,19 @@ use std::path::Path;
 use monitorflow_common::release::Version;
 use monitorflow_common::server_update::backup::{Manifest, DATABASE};
 
-use crate::backup::{extract_database, extract_serverdata};
+use crate::backup::{check_serverdata, extract_database, extract_serverdata, Owner};
 use crate::host::Host;
 use crate::retired_ca;
 
 /// Replaces the database and the server's data with those of `archive`,
-/// then starts the deployment. `work` is an empty directory for the
+/// then starts the deployment. `owner` is who owns the server data,
+/// [`Owner::SERVER`] but in tests; `work` is an empty directory for the
 /// dump; `say` reports each step.
 pub async fn restore(
     host: &dyn Host,
     archive: &Path,
     serverdata_dir: &Path,
+    owner: Owner,
     work: &Path,
     say: &mut dyn FnMut(&str),
 ) -> Result<Manifest, String> {
@@ -49,6 +51,13 @@ pub async fn restore(
             serverdata_dir.display()
         ));
     }
+    // Before anything stops: a refused backup leaves the deployment as
+    // it was.
+    let checked = if manifest.serverdata {
+        Some(check_serverdata(archive, owner).await?)
+    } else {
+        None
+    };
 
     say("stopping the server and the web interface");
     host.stop_server().await.map_err(|e| e.to_string())?;
@@ -56,7 +65,7 @@ pub async fn restore(
     host.restore_database(&work.join(DATABASE))
         .await
         .map_err(|e| format!("database restore failed: {e}"))?;
-    if manifest.serverdata {
+    if let Some(checked) = checked {
         say("restoring the server data");
         // The database is restored already: what cannot be read is lost
         // with a warning, the restore goes on.
@@ -66,7 +75,7 @@ pub async fn restore(
             ));
             retired_ca::Retired::default()
         });
-        extract_serverdata(archive, serverdata_dir).await?;
+        extract_serverdata(checked, serverdata_dir).await?;
         match retired_ca::put_back(serverdata_dir, &retired) {
             Ok(Some(warning)) => say(&format!("warning: {warning}")),
             Ok(None) => {}

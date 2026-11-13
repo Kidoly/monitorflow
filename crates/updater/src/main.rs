@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 use monitorflow_common::config::LogConfig;
 use monitorflow_common::release::trusted_keys;
 use monitorflow_common::server_update::Request;
+use monitorflow_updater::backup;
 use monitorflow_updater::env_file::EnvFile;
 use monitorflow_updater::host::{self, Compose};
 use monitorflow_updater::project::Project;
@@ -89,6 +90,7 @@ async fn main() -> anyhow::Result<()> {
             &compose,
             file,
             &settings.serverdata_dir,
+            backup::Owner::SERVER,
             &work,
             &mut |line| println!("{line}"),
         )
