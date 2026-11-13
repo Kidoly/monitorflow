@@ -18,6 +18,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{interval, MissedTickBehavior};
 
 use super::runner::Remediation;
+use crate::secrets::Column;
 
 /// What the stored settings ask the loop to run with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,18 +52,28 @@ pub async fn wanted(pool: &PgPool) -> Result<Option<Wanted>, sqlx::Error> {
     )
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|(provider, key, base_url, model)| {
+    Ok(row.and_then(|(provider, key, base_url, model)| {
+        // A key that does not open (ADR-0110) leaves AI off rather than
+        // calling without it; startup logs why, and the settings page's
+        // test says it again.
+        let api_key = match crate::secrets::open_stored(Column::AiApiKey, key).transpose() {
+            Ok(key) => key,
+            Err(error) => {
+                tracing::debug!(%error, "AI stays off: its stored key does not open");
+                return None;
+            }
+        };
         let provider: AiProviderKind = provider.parse().unwrap_or_default();
         let model = model.unwrap_or_else(|| match provider {
             AiProviderKind::OpenAi => DEFAULT_OPENAI_MODEL.to_owned(),
             _ => DEFAULT_AI_MODEL.to_owned(),
         });
-        Wanted {
+        Some(Wanted {
             provider,
-            api_key: key.map(Secret::new),
+            api_key,
             base_url,
             model,
-        }
+        })
     }))
 }
 

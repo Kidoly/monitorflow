@@ -357,6 +357,7 @@ fn fast(pool: &PgPool) -> Dispatcher {
 db_tests! {
     #[sqlx::test]
     async fn triggers_fill_the_outbox_from_incidents_and_updates(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (customer, server, relay) = place(&pool, "acme").await;
         incident(
             &pool,
@@ -446,6 +447,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_command_parked_for_approval_notifies(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (customer, server, _) = place(&pool, "acme").await;
         let remediation: Uuid = sqlx::query_scalar(
             "INSERT INTO remediation_incidents (customer_id, server_id, metric, max_commands, max_duration_s)
@@ -485,6 +487,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn events_reach_signed_webhooks_and_email_of_their_customer(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (acme, acme_server, _) = place(&pool, "acme").await;
         let (globex, _, _) = place(&pool, "globex").await;
         let (url, hooks) = receiver(StatusCode::NO_CONTENT).await;
@@ -537,6 +540,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_single_company_reads_no_customer_until_a_second_one_exists(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         // The install's own customer, renamed, is the only one (ADR-0104).
         let own: Uuid = sqlx::query_scalar("UPDATE customers SET name = 'acme' RETURNING id")
             .fetch_one(&pool)
@@ -591,6 +595,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn offline_servers_and_relays_notify_with_the_right_ending(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (customer, _, relay) = place(&pool, "acme").await;
         for table in ["servers", "relays"] {
             // SQL-safe: `table` is a literal name from this test.
@@ -640,6 +645,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_failed_backup_notifies_once_per_outage(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (customer, _, _) = place(&pool, "acme").await;
         let (url, hooks) = receiver(StatusCode::OK).await;
         let (scoped_url, scoped) = receiver(StatusCode::OK).await;
@@ -676,6 +682,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_api_never_returns_secrets_and_tests_in_plain_words(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (customer, _, _) = place(&pool, "acme").await;
         let root = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
         let boss = login(&pool, "boss", Role::Administrator, GrantScope::Customer(customer)).await;
@@ -747,6 +754,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn every_event_reaches_only_the_channels_that_cover_it(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (acme, paris_server, paris_relay) = place(&pool, "acme").await;
         let (globex, globex_server, _) = place(&pool, "globex").await;
         let paris = site_of(&pool, paris_server).await;
@@ -882,6 +890,7 @@ db_tests! {
 
     #[sqlx::test(migrations = false)]
     async fn existing_channels_keep_their_reach_after_the_migration(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         // The schema as released before routing, with data in it.
         let before = Migrator {
             migrations: Cow::Owned(
@@ -912,6 +921,8 @@ db_tests! {
             .unwrap();
 
         db::migrate(&pool).await.unwrap();
+        // What the server does next at startup (ADR-0110).
+        monitorflow_server::secrets::seal_stored(&pool).await.unwrap();
         let channels = notify::channels(&pool).await.unwrap();
         let coverage: Vec<Coverage> = channels.iter().map(|c| c.coverage).collect();
         assert_eq!(coverage.len(), 2);
@@ -934,6 +945,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_channel_leaves_with_its_customer_or_site(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (customer, kept_server, _) = place(&pool, "acme").await;
         let (site, _) = other_site(&pool, customer, "lyon").await;
         let empty: Uuid = sqlx::query_scalar("INSERT INTO customers (name) VALUES ('gone') RETURNING id")
@@ -969,6 +981,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn administrators_manage_the_channels_of_what_they_administer(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (acme, acme_server, _) = place(&pool, "acme").await;
         let (globex, _, _) = place(&pool, "globex").await;
         let paris = site_of(&pool, acme_server).await;
@@ -1087,6 +1100,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_saved_secret_stays_with_its_destination(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (acme, _, _) = place(&pool, "acme").await;
         let root = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
         let boss = login(&pool, "boss", Role::Administrator, GrantScope::Customer(acme)).await;
@@ -1122,6 +1136,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn destinations_chosen_below_global_reach_only_public_addresses(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (acme, _, _) = place(&pool, "acme").await;
         let root = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
         let boss = login(&pool, "boss", Role::Administrator, GrantScope::Customer(acme)).await;

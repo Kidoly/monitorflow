@@ -23,6 +23,7 @@ use super::auth::CurrentUser;
 use super::notifications::TestResult;
 use super::sensors::body;
 use super::{ApiError, ApiState};
+use crate::secrets::Column;
 
 /// Longest accepted API key.
 const MAX_KEY: usize = 1024;
@@ -96,8 +97,12 @@ impl Stored {
         self.ai_provider.parse().unwrap_or_default()
     }
 
-    fn key(&self) -> Option<Secret> {
-        self.ai_api_key.clone().map(Secret::new)
+    /// The stored key, opened (ADR-0110); one that does not open must be
+    /// entered again.
+    fn key(&self) -> Result<Option<Secret>, ApiError> {
+        crate::secrets::open_stored(Column::AiApiKey, self.ai_api_key.clone())
+            .transpose()
+            .map_err(|reason| ApiError::Invalid(format!("{reason}. Enter the API key again.")))
     }
 
     /// The stored key, for whom it was entered: the stored provider and,
@@ -113,10 +118,10 @@ impl Stored {
         }
         let moved =
             kind == AiProviderKind::OpenAiCompatible && self.ai_base_url.as_deref() != base_url;
-        match self.key() {
-            Some(_) if moved => Err(ApiError::Invalid(KEY_OF_ANOTHER_ADDRESS.into())),
-            key => Ok(key),
+        if moved && self.ai_api_key.is_some() {
+            return Err(ApiError::Invalid(KEY_OF_ANOTHER_ADDRESS.into()));
         }
+        self.key()
     }
 
     /// The stored model, while Anthropic still offers it.
@@ -370,7 +375,12 @@ pub async fn set(
              ai_model = $3, ai_provider = $4, ai_base_url = $5",
     )
     .bind(request.enabled)
-    .bind(key.as_ref().map(Secret::expose))
+    .bind(
+        key.as_ref()
+            .map(|k| crate::secrets::seal(Column::AiApiKey, k.expose()))
+            .transpose()
+            .map_err(|e| ApiError::Internal(e.to_string()))?,
+    )
     .bind(&model)
     .bind(kind.as_str())
     .bind(&base_url)
@@ -662,12 +672,17 @@ mod tests {
         assert_eq!(shown.provider, AiProviderKind::OpenAiCompatible);
     }
 
+    fn sealed(key: &str) -> Option<String> {
+        crate::secrets::install_for_tests();
+        Some(crate::secrets::seal(Column::AiApiKey, key).unwrap())
+    }
+
     #[test]
     fn the_stored_key_stays_with_its_provider_and_address() {
         let compatible = AiProviderKind::OpenAiCompatible;
         let stored = Stored {
             ai_provider: "openai_compatible".into(),
-            ai_api_key: Some("sk-local".into()),
+            ai_api_key: sealed("sk-local"),
             ai_base_url: Some("http://ollama.lan:11434/v1".into()),
             ..Stored::default()
         };
@@ -697,11 +712,21 @@ mod tests {
 
         // Anthropic and OpenAI have one address each, never the caller's.
         let anthropic = Stored {
-            ai_api_key: Some("sk-ant-1".into()),
+            ai_api_key: sealed("sk-ant-1"),
             ..Stored::default()
         };
         let key = anthropic.key_for(AiProviderKind::Anthropic, None);
         assert_eq!(key.unwrap().unwrap().expose(), "sk-ant-1");
+
+        // One that does not open is asked for again, never sent.
+        let lost = Stored {
+            ai_api_key: Some("mfs1:00000000:AAAA".into()),
+            ..Stored::default()
+        };
+        match lost.key_for(AiProviderKind::Anthropic, None) {
+            Err(ApiError::Invalid(reason)) => assert!(reason.contains("again"), "{reason}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

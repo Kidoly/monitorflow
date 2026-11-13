@@ -413,6 +413,10 @@ async fn main() -> anyhow::Result<()> {
     if config.additional_instance {
         admit_additional(&pool).await?;
     }
+    // Before anything reads or writes a secret (ADR-0110).
+    monitorflow_server::secrets::seal_stored(&pool)
+        .await
+        .context("sealing the stored secrets")?;
     announce_setup(&config, &pool).await?;
 
     let ca = Arc::new(open_ca(&config).await?);

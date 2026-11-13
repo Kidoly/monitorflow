@@ -186,6 +186,7 @@ async fn audit_details(pool: &PgPool) -> Vec<Value> {
 db_tests! {
     #[sqlx::test]
     async fn off_by_default_and_readable_by_every_user(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let cookie = login(&pool, "viewer", Role::Viewer, GrantScope::Global).await;
         let (status, view, _) =
             call(&pool, ApiSettings::default(), "GET", AI, Some(&cookie), None).await;
@@ -200,6 +201,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn only_global_administrators_change_or_test_it(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let cookie = login(&pool, "viewer", Role::Operator, GrantScope::Global).await;
         let body = json!({ "api_key": KEY, "model": SONNET, "enabled": true });
         for (method, uri, body) in [
@@ -216,6 +218,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_test_saves_nothing_and_answers_in_plain_words(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (mock, settings) = mock_api().await;
         let cookie = admin(&pool).await;
         let test = |key: Option<&str>, settings| {
@@ -249,6 +252,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn enabling_stores_the_key_and_never_returns_it(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (mock, settings) = mock_api().await;
         let cookie = admin(&pool).await;
         // Off, a key and a model can be kept for later.
@@ -311,6 +315,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn removing_the_key_turns_ai_off(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (_mock, settings) = mock_api().await;
         let cookie = admin(&pool).await;
         let body = json!({ "api_key": KEY, "model": SONNET, "enabled": true });
@@ -327,6 +332,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_configuration_takes_precedence_and_locks_the_page(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (mock, mut settings) = mock_api().await;
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("ai.key");
@@ -361,6 +367,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_customers_administrator_cannot_point_ai_anywhere(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (mock, settings, local) = mock_apis().await;
         let customer: uuid::Uuid =
             sqlx::query_scalar("INSERT INTO customers (name) VALUES ('acme') RETURNING id")
@@ -384,6 +391,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_local_model_needs_an_address_and_no_key(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (mock, settings, local) = mock_apis().await;
         let cookie = admin(&pool).await;
         let put = |body: Value| {
@@ -431,6 +439,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_key_stays_with_the_provider_it_was_entered_for(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (mock, settings, local) = mock_apis().await;
         let cookie = admin(&pool).await;
         let put = |body: Value| {
@@ -468,6 +477,7 @@ db_tests! {
     }
     #[sqlx::test]
     async fn a_local_models_key_stays_with_its_address(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (mock, settings, local) = mock_apis().await;
         let cookie = admin(&pool).await;
         let post = |uri: &'static str, body: Value| {
@@ -497,7 +507,12 @@ db_tests! {
         assert_eq!(requests(), before, "nothing was sent to the new address");
         let stored: (Option<String>, Option<String>) = sqlx::query_as("SELECT ai_api_key, ai_base_url FROM server_settings")
             .fetch_one(&pool).await.unwrap();
-        assert_eq!(stored, (Some(OPENAI_KEY.into()), Some(local.clone())));
+        let opened = monitorflow_server::secrets::open(
+            monitorflow_server::secrets::Column::AiApiKey,
+            stored.0.as_deref().unwrap(),
+        )
+        .unwrap();
+        assert_eq!((opened.expose(), stored.1), (OPENAI_KEY, Some(local.clone())));
 
         // The stored address keeps its key, a trailing slash or not.
         let answer = post(TEST, json!({ "base_url": format!("{local}/") })).await;

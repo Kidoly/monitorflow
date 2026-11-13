@@ -16,6 +16,7 @@ use monitorflow_server::api::{self, ApiSettings, ApiState, Role};
 use monitorflow_server::grpc::Registry;
 use monitorflow_server::notify::on_call::{self, Directory};
 use monitorflow_server::notify::{self, Coverage, Destination, Dispatcher, Webhook};
+use monitorflow_server::secrets::{self, seal, Column};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use tokio::net::TcpListener;
@@ -175,7 +176,7 @@ impl Inbox {
              VALUES ($1, 'slack', '{\"name\": \"me\", \"host\": \"hooks.slack.com\"}', $2, false)",
         )
         .bind(user)
-        .bind(format!("{}{name}", self.base))
+        .bind(seal(Column::UserContacts, &format!("{}{name}", self.base)).unwrap())
         .execute(pool)
         .await
         .unwrap();
@@ -343,6 +344,7 @@ async fn open(pool: &PgPool, server: Uuid) -> Uuid {
 db_tests! {
     #[sqlx::test]
     async fn a_site_going_dark_reaches_the_person_on_call_as_one_message(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
         let bob = user(&pool, "bob", Role::Operator, GrantScope::Site(a.site)).await;
@@ -384,6 +386,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_hand_off_within_the_window_sends_the_group_to_the_new_person(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
         let bob = user(&pool, "bob", Role::Operator, GrantScope::Customer(a.customer)).await;
@@ -412,6 +415,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn what_a_silence_owes_the_person_on_call_survives_a_rate_limit(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
         let inbox = Inbox::start().await;
@@ -465,6 +469,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn the_person_on_call_hears_of_their_place_and_the_channels_still_do(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (a, b) = (place(&pool, "acme").await, place(&pool, "beta").await);
         let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
         let bob = user(&pool, "bob", Role::Operator, GrantScope::Customer(a.customer)).await;
@@ -505,6 +510,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_hand_off_during_a_pass_goes_to_one_person(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
         let bob = user(&pool, "bob", Role::Operator, GrantScope::Customer(a.customer)).await;
@@ -539,6 +545,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn gaps_go_to_the_nearest_administrators(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let bob = user(&pool, "bob", Role::Operator, GrantScope::Customer(a.customer)).await;
         let boss = user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
@@ -592,6 +599,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_silence_holds_personal_messages_for_whoever_is_on_call_at_its_end(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
         let bob = user(&pool, "bob", Role::Operator, GrantScope::Customer(a.customer)).await;
@@ -634,6 +642,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn overrides_put_someone_else_on_and_the_newest_wins(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (a, b) = (place(&pool, "acme").await, place(&pool, "beta").await);
         user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
         let alice = user(&pool, "alice", Role::Operator, GrantScope::Customer(a.customer)).await;
@@ -697,6 +706,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn editing_a_schedule_keeps_who_is_on_call_now(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
         let mut people = Vec::new();
@@ -745,6 +755,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn administrators_manage_their_own_schedules_and_members_only_look(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (a, b) = (place(&pool, "acme").await, place(&pool, "beta").await);
         user(&pool, "boss", Role::Administrator, GrantScope::Customer(a.customer)).await;
         user(&pool, "root", Role::Administrator, GrantScope::Global).await;
@@ -801,6 +812,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_user_keeps_their_own_contact(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let a = place(&pool, "acme").await;
         let alice = user(&pool, "alice", Role::Viewer, GrantScope::Customer(a.customer)).await;
         let cookie = login(&pool, "alice").await;
@@ -831,7 +843,9 @@ db_tests! {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(row, (true, slack.to_owned()));
+        assert!(row.1.starts_with("mfs1:"), "stored sealed: {}", row.1);
+        let opened = secrets::open(Column::UserContacts, &row.1).unwrap();
+        assert_eq!((row.0, opened.expose()), (true, slack));
         let audit: String = sqlx::query_scalar("SELECT details::text FROM audit_log WHERE action = 'user.contact_update' ORDER BY id DESC LIMIT 1")
             .fetch_one(&pool)
             .await

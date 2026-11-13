@@ -121,7 +121,13 @@ async fn endpoint(
          VALUES ('psa', $1, $2, $3, $4, $5, true) RETURNING id",
     )
     .bind(url)
-    .bind(SECRET)
+    .bind(
+        monitorflow_server::secrets::seal(
+            monitorflow_server::secrets::Column::IntegrationEndpoints,
+            SECRET,
+        )
+        .unwrap(),
+    )
     .bind(&wanted)
     .bind(customer)
     .bind(site)
@@ -182,6 +188,7 @@ async fn deliveries(pool: &PgPool) -> Vec<(String, i32, Option<i32>, Option<Stri
 db_tests! {
     #[sqlx::test]
     async fn deliveries_are_signed_and_retried_until_they_succeed(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (_, _, server) = place(&pool, "acme").await;
         let (url, seen, status) = receiver().await;
         let id = endpoint(&pool, &url, None, None, None).await;
@@ -243,6 +250,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_subject_waits_for_its_earlier_events_but_others_do_not(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (_, _, server) = place(&pool, "acme").await;
         let (url, seen, status) = receiver().await;
         endpoint(&pool, &url, None, None, Some(&["incident.opened", "incident.resolved"])).await;
@@ -274,6 +282,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn two_instances_never_send_one_delivery_at_once(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (_, _, server) = place(&pool, "acme").await;
         let (url, seen, _) = receiver().await;
         endpoint(&pool, &url, None, None, None).await;
@@ -295,6 +304,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_claim_left_by_a_dead_instance_is_sent_after_its_lease(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (_, _, server) = place(&pool, "acme").await;
         let (url, seen, _) = receiver().await;
         endpoint(&pool, &url, None, None, None).await;
@@ -314,6 +324,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn a_day_of_failures_gives_up_and_disables_the_endpoint(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (customer, _, server) = place(&pool, "acme").await;
         let (url, _, status) = receiver().await;
         let id = endpoint(&pool, &url, Some(customer), None, None).await;
@@ -356,6 +367,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn private_addresses_need_to_be_allowed(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (_, _, server) = place(&pool, "acme").await;
         let (url, seen, _) = receiver().await;
         let id = endpoint(&pool, &url, None, None, None).await;
@@ -375,6 +387,7 @@ db_tests! {
 
     #[sqlx::test]
     async fn events_are_replayed_with_their_id_and_old_ones_pruned(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
         let (_, _, server) = place(&pool, "acme").await;
         let (url, seen, _) = receiver().await;
         let id = endpoint(&pool, &url, None, None, Some(&["incident.opened"])).await;
