@@ -367,3 +367,91 @@ async fn a_spent_deadline_reports_unknown_without_waiting() {
         .unwrap();
     assert_eq!(value(&samples, "status"), Some(UNKNOWN));
 }
+
+fn local(dir: &Path, script_args: bool) -> registry::Local {
+    registry::Local {
+        script_dir: dir.into(),
+        script_args,
+        ..registry::Local::default()
+    }
+}
+
+fn pairs(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+#[test]
+fn arguments_need_the_agents_consent() {
+    let dir = script_dir();
+    install(dir.path(), "check", "#!/bin/sh\nexit 0\n", 0o755);
+    let with_args = pairs(&[("script", "check"), ("args", "-w,80")]);
+    // The server's API checks syntax only: arguments are fine there.
+    assert!(registry::build("script", &with_args).is_ok());
+
+    let error = registry::build_local("script", &with_args, &local(dir.path(), false))
+        .err()
+        .unwrap();
+    assert!(
+        matches!(error, BuildError::Refused { kind: "script", .. }),
+        "{error}"
+    );
+    assert!(error.to_string().contains("script_args"), "{error}");
+    // Without arguments, or once the host allows them, it builds.
+    let bare = pairs(&[("script", "check")]);
+    assert!(registry::build_local("script", &bare, &local(dir.path(), false)).is_ok());
+    assert!(registry::build_local("script", &with_args, &local(dir.path(), true)).is_ok());
+    // The default limits refuse them.
+    assert!(!registry::Local::default().script_args);
+}
+
+#[test]
+fn command_running_wrappers_are_refused_by_name() {
+    for name in [
+        "negate",
+        "urlize",
+        "check_by_ssh",
+        "NEGATE",
+        "urlize.pl",
+        "check_by_ssh.exe",
+    ] {
+        assert!(wrapper(name).is_some(), "{name}");
+        let error = registry::build("script", &pairs(&[("script", name)]))
+            .err()
+            .unwrap();
+        assert!(
+            matches!(error, BuildError::BadParam { name: "script", .. }),
+            "{error}"
+        );
+        assert!(error.to_string().contains("runs its arguments"), "{error}");
+    }
+    for name in ["check_disk", "negated", "my_negate", "check_ssh"] {
+        assert_eq!(wrapper(name), None, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn command_running_wrappers_are_refused_through_symlinks() {
+    // As if `/usr/lib/nagios/plugins` were linked in, whatever the policy.
+    let dir = script_dir();
+    let plugins = script_dir();
+    install(plugins.path(), "negate", "#!/bin/sh\necho ran=1\n", 0o755);
+    std::os::unix::fs::symlink(plugins.path().join("negate"), dir.path().join("check_ok")).unwrap();
+    let params = pairs(&[("script", "check_ok")]);
+    for allow in [false, true] {
+        let error = registry::build_local("script", &params, &local(dir.path(), allow))
+            .err()
+            .unwrap();
+        assert!(matches!(error, BuildError::Refused { .. }), "{error}");
+        assert!(error.to_string().contains("`negate`"), "{error}");
+    }
+    // And before each run, if the link changed after the build.
+    let error = sensor(dir.path(), "check_ok", &[])
+        .collect(deadline(10))
+        .await
+        .unwrap_err();
+    assert!(error.is_permanent(), "{error}");
+    assert!(error.to_string().contains("runs its arguments"), "{error}");
+}

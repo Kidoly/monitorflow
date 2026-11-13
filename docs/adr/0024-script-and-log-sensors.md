@@ -1,7 +1,7 @@
 # ADR-0024: Script and log sensors, and what the server may make an agent do
 
 Date: 2026-10-19
-Status: accepted; log reading amended by ADR-0085 (positions kept across restarts, late writers, rewritten files, access denied is permanent)
+Status: accepted; log reading amended by ADR-0085 (positions kept across restarts, late writers, rewritten files, access denied is permanent); script arguments amended by ADR-0112 (off unless the host allows them, command-running wrappers refused)
 
 ## Context
 
@@ -17,9 +17,9 @@ Neither sensor is in the built-in defaults; both need parameters only the operat
 
 ### Script
 
-**What the server can name.** Parameter `script`, a file name of `[A-Za-z0-9_.-]`, at most 64 bytes, not starting with `.` or `-`, without `..`: never a path or a command. The agent runs it only from `sensors.script_dir` (default `/etc/monitorflow/scripts.d`, rather than under `data_dir`, which the agent writes itself). Optional `args`, a comma-separated list of at most 8 plain words of `[A-Za-z0-9_.:/=@%+-]`, up to 128 bytes each, passed as separate arguments. There is no shell, so the charset is not what prevents injection; it keeps arguments readable in logs and harmless for scripts that pass them on. A script that should not take arguments from the server must refuse them itself.
+**What the server can name.** Parameter `script`, a file name of `[A-Za-z0-9_.-]`, at most 64 bytes, not starting with `.` or `-`, without `..`: never a path or a command. The agent runs it only from `sensors.script_dir` (default `/etc/monitorflow/scripts.d`, rather than under `data_dir`, which the agent writes itself). Optional `args`, a comma-separated list of at most 8 plain words of `[A-Za-z0-9_.:/=@%+-]`, up to 128 bytes each, passed as separate arguments. There is no shell, so the charset is not what prevents injection; it keeps arguments readable in logs and harmless for scripts that pass them on. A script that should not take arguments from the server must refuse them itself. Since ADR-0112 the agent refuses `args` unless its `sensors.script_args` is `"any"`, and never runs `negate`, `urlize` or `check_by_ssh`.
 
-**Checks, at build and before every run.** The script directory and the file's own directory (after resolving symlinks) are directories owned by root or the agent's user and not writable by group or other. The file, symlinks resolved, is a regular file with the same owner and mode rules, executable, and starts with `#!` or an ELF header: a file of plain shell commands is refused rather than handed to `/bin/sh`, which glibc's `execvp` does on `ENOEXEC` when the process is not started with `posix_spawn`. A symlink is followed only to a file and directory that pass the same checks, so packaged plugins (`/usr/lib/nagios/plugins`) can be linked in. Only someone who can already write the script directory, root or the agent's user, can change what runs between the check and the `exec`.
+**Checks, at build and before every run.** The script directory and the file's own directory (after resolving symlinks) are directories owned by root or the agent's user and not writable by group or other. The file, symlinks resolved, is a regular file with the same owner and mode rules, executable, and starts with `#!` or an ELF header: a file of plain shell commands is refused rather than handed to `/bin/sh`, which glibc's `execvp` does on `ENOEXEC` when the process is not started with `posix_spawn`. A symlink is followed only to a file and directory that pass the same checks, so packaged plugins (`/usr/lib/nagios/plugins`) can be linked in, one by one: some of them run their arguments as a command (ADR-0112). Only someone who can already write the script directory, root or the agent's user, can change what runs between the check and the `exec`.
 
 **How it runs.** `tokio::process` with the resolved path, the fixed arguments, an empty environment apart from `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` and `LC_ALL=C`, working directory `/`, stdin from `/dev/null`, stderr discarded, in a new process group. It stops 200 ms before the collection deadline (at most half the remaining time), like the port sensor (ADR-0021), so a hung script still reports instead of being cancelled with nothing. The process group is killed with SIGKILL at that point, when the scheduler cancels the collection, and after a normal exit, so nothing the script left in the background outlives the run. Standard output is read up to 64 KiB.
 
@@ -42,7 +42,7 @@ install -d -o root -g root -m 0755 /etc/monitorflow/scripts.d
 install -o root -g root -m 0755 check_backup /etc/monitorflow/scripts.d/
 ```
 
-Then create a sensor with `kind = "script"`, `name = "backup"`, `params = {"script": "check_backup"}` and a threshold on `monitorflow_backup_status`. Test it locally first: `monitorflow-agent sensors probe script --param script=check_backup --param args=-w,2`, which reads `script_dir` from the agent's configuration file when it exists.
+Then create a sensor with `kind = "script"`, `name = "backup"`, `params = {"script": "check_backup"}` and a threshold on `monitorflow_backup_status`. Test it locally first: `monitorflow-agent sensors probe script --param script=check_backup`, which reads `script_dir` and `script_args` from the agent's configuration file when it exists.
 
 ### Log
 
@@ -69,7 +69,7 @@ With label `path` and the configured instance. `matches` is a gauge of the last 
 
 ## Consequences
 
-- The server can at worst run, with chosen plain-word arguments, scripts the host's administrator installed. Arguments are the remaining channel, so scripts must treat them as untrusted input.
+- The server can at worst run scripts the host's administrator installed, with chosen plain-word arguments only where `sensors.script_args` allows them (ADR-0112). Arguments are then the remaining channel, so scripts must treat them as untrusted input.
 - A script installed or fixed after the configuration arrived runs within five minutes (amendment below); before it, only after the configuration was resent with other specs or the agent restarted.
 - Scripts run as the agent's user. Dropping privileges per script (a `User=` setting, systemd-run) is a follow-up if agents run as root.
 - Lines written while the agent is stopped, or between the last collection and a configuration change (which rebuilds the sensor), are not counted. Persisting offsets is a possible follow-up.

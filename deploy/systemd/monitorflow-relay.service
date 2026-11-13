@@ -18,6 +18,22 @@ Restart=on-failure
 RestartSec=10
 # Forwarded agent streams get a few seconds to close (ADR-0025).
 TimeoutStopSec=30
+# Sandboxing that leaves the self-update intact (ADR-0055): its helper runs
+# as root through sudo, a setuid binary, and replaces /usr/bin's binary,
+# so NoNewPrivileges and ProtectSystem stay off. RestrictSUIDSGID only
+# stops new setuid files; sudo itself still runs. The relay writes only
+# under its data directory and mirror_dir, neither of which may be in
+# /home, /root or /run/user.
+PrivateTmp=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
 
 [Install]
 WantedBy=multi-user.target

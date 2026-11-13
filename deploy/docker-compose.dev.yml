@@ -1,4 +1,5 @@
-# Development dependencies only. Not for production.
+# Development dependencies only. Not for production. Published on loopback
+# only: the password is public and the stores have no authentication.
 services:
   postgres:
     image: postgres:17
@@ -6,7 +7,7 @@ services:
       POSTGRES_USER: monitorflow
       POSTGRES_PASSWORD: monitorflow
       POSTGRES_DB: monitorflow
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U monitorflow -d monitorflow"]
@@ -17,13 +18,13 @@ services:
   victoriametrics:
     image: victoriametrics/victoria-metrics:latest
     command: ["-storageDataPath=/storage", "-retentionPeriod=30d"]
-    ports: ["8428:8428"]
+    ports: ["127.0.0.1:8428:8428"]
     volumes: ["vmdata:/storage"]
 
   victorialogs:
     image: victoriametrics/victoria-logs:latest
     command: ["-storageDataPath=/storage", "-retentionPeriod=30d"]
-    ports: ["9428:9428"]
+    ports: ["127.0.0.1:9428:9428"]
     volumes: ["vldata:/storage"]
 
 volumes:
