@@ -188,7 +188,7 @@ fn a_corrupt_record_ends_its_segment_and_empty_segments_go() {
 }
 
 #[test]
-fn a_full_buffer_drops_the_oldest_segments_of_any_agent() {
+fn a_full_buffer_drops_from_the_agent_using_the_most_space() {
     let dir = TempDir::new().unwrap();
     // Room for 6 records, in segments of 2.
     let mut store = Store::open(dir.path(), limits(6 * RECORD_LEN, 2)).unwrap();
@@ -197,22 +197,73 @@ fn a_full_buffer_drops_the_oldest_segments_of_any_agent() {
     }
     store.append("web-02", NOW, &record(100)).unwrap();
     store.append("web-02", NOW, &record(101)).unwrap();
-    // Full: the next record drops web-01's first segment, then the next
-    // drops web-01's second, older than web-02's.
+    // Full: web-01 is the largest and loses its oldest segment.
     store.append("web-02", NOW, &record(102)).unwrap();
     assert_eq!(store.stats().dropped_full, 2);
     store.append("web-02", NOW, &record(103)).unwrap();
+    // Now web-02 is the largest: it pays for its own records.
     store.append("web-02", NOW, &record(104)).unwrap();
     assert_eq!(store.stats().dropped_full, 4);
     assert!(store.stats().bytes <= 6 * RECORD_LEN);
-    assert!(!store.has_pending("web-01"));
+    assert_eq!(read_all(&mut store, "web-01"), [record(2), record(3)]);
     assert_eq!(
         read_all(&mut store, "web-02"),
-        (100..105).map(record).collect::<Vec<_>>()
+        (102..105).map(record).collect::<Vec<_>>()
     );
     // A record larger than the whole buffer is dropped alone.
     assert!(!store.append("web-02", NOW, &[0; 200]).unwrap());
     assert_eq!(store.stats().dropped_full, 5);
+}
+
+#[test]
+fn an_unconfirmed_flood_never_drops_a_confirmed_agents_records() {
+    let dir = TempDir::new().unwrap();
+    let mut store = Store::open(dir.path(), limits(6 * RECORD_LEN, 2)).unwrap();
+    store.confirm("web-01").unwrap();
+    for i in 0..2 {
+        store.append("web-01", NOW, &record(i)).unwrap();
+    }
+    // A stranger fills the rest, then only evicts itself.
+    for i in 100..140 {
+        store.append("stranger", NOW, &record(i)).unwrap();
+    }
+    assert_eq!(read_all(&mut store, "web-01"), [record(0), record(1)]);
+    assert!(store.stats().bytes <= 6 * RECORD_LEN);
+    // The confirmed agent takes the stranger's room first, even while
+    // using more space.
+    for i in 2..6 {
+        store.append("web-01", NOW, &record(i)).unwrap();
+    }
+    assert!(!store.has_pending("stranger"));
+    // Once only confirmed records are left, the stranger's are dropped.
+    let dropped = store.stats().dropped_full;
+    assert!(!store.append("stranger", NOW, &record(200)).unwrap());
+    assert_eq!(store.stats().dropped_full, dropped + 1);
+    store.rewind("web-01");
+    assert_eq!(
+        read_all(&mut store, "web-01"),
+        (0..6).map(record).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn confirmations_survive_a_restart_and_go_with_a_refusal() {
+    let dir = TempDir::new().unwrap();
+    {
+        let mut store = Store::open(dir.path(), limits(1 << 20, 2)).unwrap();
+        assert!(!store.is_confirmed("web-01"));
+        store.confirm("web-01").unwrap();
+        store.confirm("web-01").unwrap();
+        store.append("web-02", NOW, &record(0)).unwrap();
+    }
+    let mut store = Store::open(dir.path(), limits(1 << 20, 2)).unwrap();
+    assert!(store.is_confirmed("web-01"));
+    assert!(!store.is_confirmed("web-02"));
+    store.discard("web-01").unwrap();
+    assert!(!store.is_confirmed("web-01"));
+    assert!(!dir.path().join("agent-web-01/confirmed").exists());
+    let store = Store::open(dir.path(), limits(1 << 20, 2)).unwrap();
+    assert!(!store.is_confirmed("web-01"));
 }
 
 #[test]

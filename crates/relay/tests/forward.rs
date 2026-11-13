@@ -365,6 +365,62 @@ async fn a_full_buffer_drops_the_oldest_batches() {
     assert_eq!(values, expected);
 }
 
+/// ADR-0119: during an outage, an agent the upstream never accepted
+/// through this relay cannot push out the backlog of one it did.
+#[tokio::test]
+async fn a_stranger_flooding_a_full_buffer_does_not_drop_known_agents() {
+    let pki = Pki::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let captured = Captured::default();
+    let mut upstream = pki.serve(capturing(&captured)).await;
+    // Room for about ten batches.
+    let relay = Relay::start_with(
+        pki.relay("paris-1"),
+        &upstream.url,
+        BufferOptions::at(dir.path(), 600),
+    )
+    .await;
+    let web01 = open(&relay.url, &pki.agent("web-01"), hello("web-01"))
+        .await
+        .unwrap();
+    web01.send(2, samples(1.0)).await;
+    support::wait_until("live sample", || captured.values("web-01") == [1.0]).await;
+    assert!(relay.buffer.is_confirmed("web-01").await.unwrap());
+
+    stop(&mut upstream, &relay).await;
+    for (sequence, value) in (3..).zip([2.0, 3.0, 4.0]) {
+        web01.send(sequence, samples(value)).await;
+    }
+    appended(&relay, 3).await;
+    let stranger = open(&relay.url, &pki.agent("intruder"), hello("intruder"))
+        .await
+        .unwrap();
+    assert!(!relay.buffer.is_confirmed("intruder").await.unwrap());
+    for value in 1..=40 {
+        stranger
+            .send(value + 1, samples(f64::from(value as u32) + 100.0))
+            .await;
+    }
+    // Each of its batches was kept or dropped, some of the kept later
+    // dropped again: both counters then reach at least 3 + 40.
+    support::wait_for("flood buffered or dropped", || async {
+        let stats = relay.buffer.stats().await.unwrap();
+        stats.appended + stats.dropped_full >= 43
+    })
+    .await;
+    let stats = relay.buffer.stats().await.unwrap();
+    assert!(stats.dropped_full > 0 && stats.bytes <= 600, "{stats:?}");
+
+    let _upstream = pki
+        .serve_at(upstream.addr, capturing(&captured), None)
+        .await;
+    web01.send(6, samples(5.0)).await;
+    support::wait_until("web-01's backlog, whole and in order", || {
+        captured.values("web-01") == [1.0, 2.0, 3.0, 4.0, 5.0]
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn records_of_agents_the_upstream_refuses_are_dropped() {
     let pki = Pki::new();
