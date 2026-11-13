@@ -410,10 +410,12 @@ async fn main() -> anyhow::Result<()> {
     // Before admission: an added central server without the first one's
     // key must not take a place.
     open_secrets(&config).await?;
+    // Honour-based by design (ADR-0100, "Not DRM"): a server started
+    // without the flag runs as a first server and is not counted.
     if config.additional_instance {
         admit_additional(&pool).await?;
     }
-    // Before anything reads or writes a secret (ADR-0110).
+    // Before anything reads or writes a secret (ADR-0125).
     monitorflow_server::secrets::seal_stored(&pool)
         .await
         .context("sealing the stored secrets")?;
@@ -1188,7 +1190,7 @@ async fn storage_check_command(config: &ServerConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Loads `<data_dir>/secrets/keys` (ADR-0110), creating it on the first
+/// Loads `<data_dir>/secrets/keys` (ADR-0125), creating it on the first
 /// central server only: an added one must have the first one's key.
 async fn open_secrets(config: &ServerConfig) -> anyhow::Result<()> {
     let (dir, create) = (config.data_dir.clone(), !config.additional_instance);

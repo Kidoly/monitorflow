@@ -587,7 +587,7 @@ check_license() {
 # On the first central server: publishes its stores on its address, and
 # writes what another central server needs to join it. The file holds the
 # certificate authority's key and the key of the secrets stored in the
-# database (ADR-0110).
+# database (ADR-0125).
 add_server() {
     joined && die "this is an added central server: run --add-server on the first one"
     check_license compose exec -T server monitorflow-server license check-add
@@ -656,7 +656,7 @@ copy_join_data() {
 }
 
 # The key of the stored secrets of the join file in $tmp/join, on a central
-# server added before ADR-0110.
+# server added before ADR-0125.
 copy_secrets_key() {
     compose run --rm --no-deps -T --user 0 --entrypoint tar server -C /var/lib/monitorflow -xf - server/secrets \
         <"$tmp/join/server.tar" >/dev/null || die "cannot copy the secrets key"
@@ -670,7 +670,7 @@ has_secrets_key() {
 
 # On a new machine: another central server on the first one's database.
 # On one added before ADR-0109: the database role of the join file in place
-# of the owner's password it was given then; before ADR-0110: the key of
+# of the owner's password it was given then; before ADR-0125: the key of
 # the stored secrets.
 join_server() {
     [ ! -f "$ENV_FILE" ] || joined || die "this machine already runs a central server of its own"
@@ -704,7 +704,7 @@ join_server() {
 # An added central server follows the release it is given: the images of
 # this one, pulled, then started. One added before ADR-0109 holds the
 # password of the role that owns the schema, which the database no longer
-# accepts from another machine, and one added before ADR-0110 lacks the key
+# accepts from another machine, and one added before ADR-0125 lacks the key
 # of the stored secrets, which it must not make itself: each needs a new
 # join file, once.
 update_joined() {

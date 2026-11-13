@@ -53,7 +53,7 @@ pub async fn wanted(pool: &PgPool) -> Result<Option<Wanted>, sqlx::Error> {
     .fetch_optional(pool)
     .await?;
     Ok(row.and_then(|(provider, key, base_url, model)| {
-        // A key that does not open (ADR-0110) leaves AI off rather than
+        // A key that does not open (ADR-0125) leaves AI off rather than
         // calling without it; startup logs why, and the settings page's
         // test says it again.
         let api_key = match crate::secrets::open_stored(Column::AiApiKey, key).transpose() {

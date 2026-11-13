@@ -280,7 +280,7 @@ pub struct Person {
     pub operates: Vec<(Option<Uuid>, Option<Uuid>)>,
     pub email: Option<String>,
     /// Their chat or webhook destination, its secret or why it does not
-    /// open (ADR-0110), and whether only public addresses may be reached.
+    /// open (ADR-0125), and whether only public addresses may be reached.
     pub chat: Option<(Destination, Option<crate::secrets::Opened>, bool)>,
 }
 

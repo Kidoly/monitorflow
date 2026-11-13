@@ -97,7 +97,7 @@ impl Stored {
         self.ai_provider.parse().unwrap_or_default()
     }
 
-    /// The stored key, opened (ADR-0110); one that does not open must be
+    /// The stored key, opened (ADR-0125); one that does not open must be
     /// entered again.
     fn key(&self) -> Result<Option<Secret>, ApiError> {
         crate::secrets::open_stored(Column::AiApiKey, self.ai_api_key.clone())

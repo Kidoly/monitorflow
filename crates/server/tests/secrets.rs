@@ -1,4 +1,4 @@
-//! Secrets sealed at rest (ADR-0110): an added central server never makes
+//! Secrets sealed at rest (ADR-0125): an added central server never makes
 //! a key of its own and refuses to start without the first one's, values
 //! stored before are sealed once at startup, and a secret that does not
 //! open fails its own deliveries only, never going out without it. Ignored

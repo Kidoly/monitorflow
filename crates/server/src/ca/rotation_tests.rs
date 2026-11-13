@@ -334,10 +334,18 @@ fn crls_of_both_cas_list_every_revocation() {
     ca.start_rotation(false).unwrap();
     ca.switch().unwrap();
     let after = issue(&ca, "web-02");
-    ca.revoke(&before.serial, RevocationReason::KeyCompromise)
-        .unwrap();
-    ca.revoke(&after.serial, RevocationReason::KeyCompromise)
-        .unwrap();
+    ca.revoke(
+        &before.serial,
+        RevocationReason::KeyCompromise,
+        before.not_after,
+    )
+    .unwrap();
+    ca.revoke(
+        &after.serial,
+        RevocationReason::KeyCompromise,
+        after.not_after,
+    )
+    .unwrap();
     let crls = ca.crls().unwrap();
     let bundle = ca.trust_bundle_pem();
     assert!(!accepted(&bundle, &crls, &before));

@@ -92,7 +92,7 @@ Volumes are prefixed with the project name, like `monitorflow_serverdata`.
 | `backups` | Backups: daily, on request and before each update, the 7 newest kept; `BACKUP_DIR` in `deploy/.env` puts them in a directory of the machine instead |
 | `update`, `updater` | Update requests and status, and the updater's own state |
 
-The updater backs up the database and `serverdata` every day and keeps the 7 newest backups[^0058]. **Administration, Backups** shows the last one, takes one now and downloads any of them. A backup holds the CA keys and the secrets key, which opens the passwords, webhook URLs, signing secrets and AI key stored in the database[^0110]: whoever has the file can impersonate the server and reach those services, so keep copies somewhere safe. A copy of the database alone does not reveal them. Metrics, logs and the mirror repositories are not in backups; the mirror signing key is.
+The updater backs up the database and `serverdata` every day and keeps the 7 newest backups[^0058]. **Administration, Backups** shows the last one, takes one now and downloads any of them. A backup holds the CA keys and the secrets key, which opens the passwords, webhook URLs, signing secrets and AI key stored in the database[^0125]: whoever has the file can impersonate the server and reach those services, so keep copies somewhere safe. A copy of the database alone does not reveal them. Metrics, logs and the mirror repositories are not in backups; the mirror signing key is.
 
 To restore one, on a fresh install or on this one: `deploy/restore.sh <file>`. The server's database role and its rights are not taken from the backup: they are created again when the server starts, as at every start[^0109]. A backup taken before the certificate authority changed brings the old one back, and the restore says so: servers and relays that moved cannot connect to it.
 
@@ -201,7 +201,7 @@ Once added, a central server keeps running and restarting even after the license
 
 A central server added before the server had a database role of its own[^0109] was given the database owner's password, which PostgreSQL no longer accepts from another machine. After updating the first central server, run `--add-server` on it again, copy the new file to each added machine and run `--join monitorflow-join.tar` there once. Until then the added central server cannot connect to the database, and the installer run on it with no option says so and changes nothing. Then change `POSTGRES_PASSWORD` on the first central server, since the old one was on those machines: `docker compose -f deploy/docker-compose.yml exec postgres psql -U monitorflow -c "ALTER ROLE monitorflow PASSWORD '<new>'"`, the same value in `deploy/.env`, and the installer again.
 
-A central server added before the stored secrets were sealed[^0110] does not have the secrets key, and never makes one of its own. After updating the first central server, run `--add-server` on it again, copy the new file to each added machine and run `--join monitorflow-join.tar` there once. Until then the installer run on it with no option says so and changes nothing.
+A central server added before the stored secrets were sealed[^0125] does not have the secrets key, and never makes one of its own. After updating the first central server, run `--add-server` on it again, copy the new file to each added machine and run `--join monitorflow-join.tar` there once. Until then the installer run on it with no option says so and changes nothing.
 
 What stays on the first central server: backups, updates from the web interface, package mirrors and the metric and log stores. After updating it, run the installer again on each added central server, with no option, to bring it to the same release. Changing the certificate authority refuses while several central servers run: stop the added ones, change it, then on each run the installer with `--uninstall --purge`, and `--join` with a new join file.
 
@@ -225,6 +225,7 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 ## Limits
 
 - VictoriaMetrics and VictoriaLogs are reached over TLS with a certificate of the built-in CA, and a password[^0087], on an internal Docker network that is never published[^0051]. PostgreSQL is reached over TLS, by a role that cannot change the schema or rewrite the audit log[^0109]; its owner role is accepted only from the Docker networks of the database container.
+- The API listens in plain HTTP on the `front` network, reached by the web service only; its `X-Forwarded-For` is believed from that service alone, so a local user who reaches the API directly is counted as their own address by the sign-in limits[^0110].
 - The server image trusts the release keys of `deploy/release-keys.pem` at build time; imports of releases signed with another key are refused.
 - Whoever has root on the machine, the Docker socket or `deploy/.env` has the database owner's rights and can rewrite the audit log. The server's database role only bounds what the server process and its SQL can do.
 
@@ -239,4 +240,5 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 [^0071]: [ADR-0071: First-run setup in the browser](adr/0071-first-run-setup.md)
 [^0088]: [ADR-0088: Changing the certificate authority](adr/0088-changing-the-certificate-authority.md)
 [^0109]: [ADR-0109: The server runs on a database role that owns nothing](adr/0109-database-roles.md)
-[^0110]: [ADR-0110: Outbound secrets are sealed at rest](adr/0110-secrets-sealed-at-rest.md)
+[^0110]: [ADR-0110: Trusted proxies for the client's address](adr/0110-trusted-proxies.md)
+[^0125]: [ADR-0125: Outbound secrets are sealed at rest](adr/0125-secrets-sealed-at-rest.md)

@@ -372,7 +372,8 @@ db_tests! {
         let response = w.with_key("POST", "/api/v1/incidents/acknowledge", &alerts, Some(ack)).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(w.hostnames(&alerts).await, ["agent-a", "agent-b"]);
-        for (method, uri) in [("GET", format!("/api/v1/servers/{}/commands", w.server_a)),
+        for (method, uri) in [("GET", format!("/api/v1/servers/{}", w.server_a)),
+                              ("GET", format!("/api/v1/servers/{}/commands", w.server_a)),
                               ("GET", "/api/v1/dashboards".into()),
                               ("GET", "/api/v1/settings/server".into()),
                               ("GET", "/api/v1/remediation/approvals".into())] {

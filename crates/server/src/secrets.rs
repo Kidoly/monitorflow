@@ -1,4 +1,4 @@
-//! Secrets the server keeps to call out, sealed at rest (ADR-0110): SMTP
+//! Secrets the server keeps to call out, sealed at rest (ADR-0125): SMTP
 //! passwords, webhook signing secrets, chat URLs and the AI key are stored
 //! encrypted, with a key kept in the server's data directory, outside the
 //! database.
@@ -33,7 +33,7 @@ const PREFIX: &str = "mfs1";
 const KEY_LEN: usize = 32;
 const TAG_LEN: usize = 16;
 const HEADER: &str =
-    "# MonitorFlow secrets key (ADR-0110). It opens the passwords, signing secrets\n\
+    "# MonitorFlow secrets key (ADR-0125). It opens the passwords, signing secrets\n\
 # and keys stored in the database: keep it with the server's data and its\n\
 # backups. One key per line; the first one seals, the others only open.\n";
 
@@ -56,7 +56,7 @@ pub enum SecretsError {
     AlreadyLoaded,
     #[error("a stored secret is not sealed")]
     NotSealed,
-    #[error("a stored secret was sealed with key {0}, which this server does not have: restore its secrets key (ADR-0110), or enter the secret again")]
+    #[error("a stored secret was sealed with key {0}, which this server does not have: restore its secrets key (ADR-0125), or enter the secret again")]
     UnknownKey(String),
     #[error("a stored secret does not open: it was changed, or it belongs to another column")]
     Corrupted,

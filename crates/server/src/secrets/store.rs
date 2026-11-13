@@ -1,4 +1,4 @@
-//! Sealing the values stored before ADR-0110, once per column.
+//! Sealing the values stored before ADR-0125, once per column.
 
 use sqlx::{PgPool, Row};
 

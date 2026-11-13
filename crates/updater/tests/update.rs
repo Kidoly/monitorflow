@@ -284,7 +284,7 @@ impl Volumes {
         let serverdata = dir("serverdata");
         std::fs::create_dir_all(serverdata.join("ca")).unwrap();
         std::fs::write(serverdata.join("ca/ca-key.pem"), "secret").unwrap();
-        // The key of the secrets stored in the database (ADR-0110).
+        // The key of the secrets stored in the database (ADR-0125).
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::create_dir_all(serverdata.join("secrets")).unwrap();

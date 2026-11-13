@@ -1,4 +1,4 @@
-# ADR-0110: Outbound secrets are sealed at rest
+# ADR-0125: Outbound secrets are sealed at rest
 
 Date: 2026-11-12
 Status: accepted; amends ADR-0058, ADR-0060, ADR-0064, ADR-0081, ADR-0100 and ADR-0102; implemented in four stages (see the end)

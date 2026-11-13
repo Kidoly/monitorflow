@@ -242,7 +242,7 @@ db_tests! {
         let config = dir.path().join("server.toml");
         std::fs::write(&config, "").unwrap();
         // The first central server's secrets key, as the join file brings
-        // it (ADR-0110), so that only the license is missing.
+        // it (ADR-0125), so that only the license is missing.
         monitorflow_server::secrets::Keyring::open_or_create(dir.path(), true).unwrap();
         let output = tokio::task::spawn_blocking(move || {
             Command::new(env!("CARGO_BIN_EXE_monitorflow-server"))

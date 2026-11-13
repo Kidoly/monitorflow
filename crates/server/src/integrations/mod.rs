@@ -70,7 +70,7 @@ pub struct Endpoint {
     pub id: Uuid,
     pub name: String,
     pub url: String,
-    /// The signing secret, or why it does not open (ADR-0110): nothing is
+    /// The signing secret, or why it does not open (ADR-0125): nothing is
     /// sent unsigned.
     pub secret: crate::secrets::Opened,
     pub events: Vec<String>,
@@ -131,7 +131,7 @@ pub async fn lock(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Endpoint>,
     Ok(row.map(Endpoint::from))
 }
 
-/// `secret` sealed for its column (ADR-0110), as a database error when it
+/// `secret` sealed for its column (ADR-0125), as a database error when it
 /// cannot be.
 pub fn sealed(secret: &Secret) -> Result<String, sqlx::Error> {
     crate::secrets::seal(

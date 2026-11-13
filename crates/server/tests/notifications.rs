@@ -921,7 +921,7 @@ db_tests! {
             .unwrap();
 
         db::migrate(&pool).await.unwrap();
-        // What the server does next at startup (ADR-0110).
+        // What the server does next at startup (ADR-0125).
         monitorflow_server::secrets::seal_stored(&pool).await.unwrap();
         let channels = notify::channels(&pool).await.unwrap();
         let coverage: Vec<Coverage> = channels.iter().map(|c| c.coverage).collect();

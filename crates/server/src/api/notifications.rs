@@ -434,7 +434,7 @@ pub async fn update(
     // A new chat URL is a new target, though the host may stay the same.
     let new_chat_url = valid.destination.chat().is_some() && valid.secret.is_some();
     let same_target = current.destination.same_target(&valid.destination) && !new_chat_url;
-    // A stored secret that does not open (ADR-0110) is still one.
+    // A stored secret that does not open (ADR-0125) is still one.
     let stored = current.secret.is_some() || current.secret_error.is_some();
     if !same_target && stored && valid.secret.is_none() {
         return Err(ApiError::Invalid(

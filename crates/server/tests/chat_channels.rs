@@ -244,7 +244,7 @@ async fn status(pool: &PgPool, id: Uuid) -> Option<String> {
         .unwrap()
 }
 
-/// The stored secret of channel `id`, which must be sealed (ADR-0110),
+/// The stored secret of channel `id`, which must be sealed (ADR-0125),
 /// opened.
 async fn stored_secret(pool: &PgPool, id: &str) -> Option<String> {
     let stored: Option<String> =

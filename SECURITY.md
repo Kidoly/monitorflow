@@ -38,6 +38,7 @@ These are known limits or design choices, not vulnerabilities:
 - Releases before `v0.2.0` being unsigned, installers checking only checksums without OpenSSL 3, and Windows files having no Authenticode signature ([ADR-0053](docs/adr/0053-agent-self-update.md)).
 - A short password in a shape the redaction rules do not recognise ([ADR-0040](docs/adr/0040-incident-context-and-redaction.md)), and a database superuser rewriting a whole remediation history ([ADR-0042](docs/adr/0042-remediation-incident-audit.md)).
 - A machine installed before root helpers checked commands, whose service user was already someone else's when its helper first ran, and that user restarting the host through the `shutdown` sudo rule ([ADR-0108](docs/adr/0108-root-helpers-verify-signed-commands.md)).
+- Running more central servers than the Enterprise license allows, by starting one without `MONITORFLOW_ADDITIONAL_INSTANCE` or under the name of a host already added: the count is honour-based and the fence is the license, not technical protection ([ADR-0100](docs/adr/0100-enterprise-edition-and-licensed-high-availability.md#not-drm)).
 - A wrong AI diagnosis, or a harmful command an approver accepted.
 - Development setups: `deploy/docker-compose.dev.yml` and its default password, `scripts/dev-certs.sh`, and `api_cookie_secure = false`.
 - Flaws in third-party software, such as PostgreSQL, Caddy, VictoriaMetrics, aptly, or the packages being mirrored. Report those upstream, unless the way MonitorFlow uses them is the problem.

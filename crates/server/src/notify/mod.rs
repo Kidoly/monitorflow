@@ -339,7 +339,7 @@ pub struct Channel {
     /// The SMTP password, the webhook signing secret or the chat webhook
     /// URL.
     pub secret: Option<Secret>,
-    /// Why the stored secret does not open (ADR-0110): every delivery
+    /// Why the stored secret does not open (ADR-0125): every delivery
     /// fails with it rather than going out without the secret.
     pub secret_error: Option<String>,
     pub coverage: Coverage,
