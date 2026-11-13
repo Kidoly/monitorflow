@@ -6,6 +6,9 @@
 //! `server_instance_admissions` by the name of its host and starts again
 //! after that whatever the license says, so expiry stops adding central
 //! servers, never the ones running.
+//!
+//! The count is honour-based (ADR-0100, "Not DRM"): it trusts the flag,
+//! and several servers under one host name take one place.
 
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::Serialize;

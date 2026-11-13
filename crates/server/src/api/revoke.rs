@@ -1,7 +1,9 @@
 //! `POST /api/servers/{id}/revoke` and `POST /api/relays/{id}/revoke`
 //! (ADR-0029): marks the peer and its certificates revoked, puts the
 //! serials in the CRL through [`CrlPublisher::revoke`](crate::crl::CrlPublisher::revoke)
-//! and closes its live streams. This is "Remove" in the interface
+//! and closes its live streams. Revoking a relay also revokes the
+//! certificates obtained through it, and those renewed from them
+//! (ADR-0028). This is "Remove" in the interface
 //! (ADR-0062): it also resolves the peer's open incidents and drops its
 //! unused tokens, and the peer leaves every list until it enrolls again.
 
@@ -10,6 +12,8 @@ use axum::extract::{Path, State};
 use axum::Json;
 use chrono::{DateTime, Utc};
 use monitorflow_common::tls::PeerRole;
+use std::time::SystemTime;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{Postgres, Transaction};
@@ -23,6 +27,14 @@ use super::{ApiError, ApiState};
 use crate::alerting::offline;
 use crate::ca::{RevocationReason, Serial};
 use crate::grpc::CloseReason;
+
+/// A certificate of another peer revoked with a relay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IssuedThrough {
+    pub serial: String,
+    pub peer_role: String,
+    pub peer_id: String,
+}
 
 /// Body of both revoke routes.
 #[derive(Debug, Default, Deserialize)]
@@ -39,6 +51,10 @@ pub struct Revoked {
     pub reason: RevocationReason,
     /// Certificates put in the CRL, lowercase hexadecimal.
     pub serials: Vec<String>,
+    /// For a relay, the certificates of other peers among `serials`: those
+    /// obtained through it (ADR-0028).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub issued_through: Vec<IssuedThrough>,
     /// Live streams closed: the peer's and, for a relay, those it forwards.
     pub closed_streams: usize,
 }
@@ -103,8 +119,21 @@ async fn revoke(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| ApiError::Conflict(format!("the {kind} is already revoked")))?;
-    let serials = revoke_certificates(&mut tx, role, &peer_id, reason).await?;
-    let shown: Vec<String> = serials.iter().map(Serial::to_string).collect();
+    let mut serials = revoke_certificates(&mut tx, role, &peer_id, reason).await?;
+    let issued_through = match role {
+        PeerRole::Relay => revoke_issued_through(&mut tx, &peer_id, reason).await?,
+        _ => Vec::new(),
+    };
+    serials.extend(issued_through.iter().map(|c| (c.0.clone(), c.3)));
+    let shown: Vec<String> = serials.iter().map(|(s, _)| s.to_string()).collect();
+    let issued_through: Vec<IssuedThrough> = issued_through
+        .into_iter()
+        .map(|(serial, peer_role, peer_id, _)| IssuedThrough {
+            serial: serial.to_string(),
+            peer_role,
+            peer_id,
+        })
+        .collect();
     // A token from before the removal must not bring the peer back.
     sqlx::query(
         "DELETE FROM enrollment_tokens WHERE role = $1 AND peer_id = $2 AND used_at IS NULL",
@@ -138,6 +167,7 @@ async fn revoke(
                 "site_id": site_id,
                 "reason": reason,
                 "serials": shown,
+                "issued_through": issued_through,
                 "incidents_resolved": incidents,
             }),
         },
@@ -145,43 +175,90 @@ async fn revoke(
     .await?;
     // In the CA before the commit: a failure here rolls the rows back, and
     // a failed commit after it leaves the safe side, revoked in the CRL.
-    for serial in serials {
-        crl.revoke(serial, reason)
+    for (serial, not_after) in serials.iter().cloned() {
+        crl.revoke(serial, reason, not_after)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
     }
     tx.commit().await?;
-    let closed_streams = state.registry.close(role, &peer_id, CloseReason::Revoked);
+    let revoked: Vec<Serial> = serials.into_iter().map(|(s, _)| s).collect();
+    let closed_streams = state.registry.close(role, &peer_id, CloseReason::Revoked)
+        + state.registry.close_serials(&revoked, CloseReason::Revoked);
     tracing::info!(user = %user.id, %kind, %peer_id, ?reason, closed_streams, "revoked a peer");
     Ok(Json(Revoked {
         revoked_at,
         reason,
         serials: shown,
+        issued_through,
         closed_streams,
     }))
 }
 
 /// Marks every unexpired, unrevoked certificate of the peer revoked in
-/// `tx` and returns their serials, for the caller to pass to the CA before
-/// committing. Expired certificates are refused anyway and stay out of the
+/// `tx` and returns their serials and expiry, for the caller to pass to the
+/// CA before committing. Expired certificates are refused anyway and stay out of the
 /// CRL.
 pub(super) async fn revoke_certificates(
     tx: &mut Transaction<'_, Postgres>,
     role: PeerRole,
     peer_id: &str,
     reason: RevocationReason,
-) -> Result<Vec<Serial>, sqlx::Error> {
-    let serials: Vec<Vec<u8>> = sqlx::query_scalar(
+) -> Result<Vec<(Serial, SystemTime)>, sqlx::Error> {
+    let rows: Vec<(Vec<u8>, DateTime<Utc>)> = sqlx::query_as(
         "UPDATE certificates SET revoked_at = now(), revocation_reason = $3
          WHERE peer_role = $1 AND peer_id = $2 AND revoked_at IS NULL AND not_after > now()
-         RETURNING serial",
+         RETURNING serial, not_after",
     )
     .bind(role.as_str())
     .bind(peer_id)
     .bind(reason_name(reason))
     .fetch_all(&mut **tx)
     .await?;
-    Ok(serials.iter().map(|s| Serial::from_bytes(s)).collect())
+    Ok(rows
+        .iter()
+        .map(|(serial, not_after)| (Serial::from_bytes(serial), (*not_after).into()))
+        .collect())
+}
+
+/// Marks revoked in `tx` every unexpired, unrevoked certificate of another
+/// peer that the relay `peer_id` could have obtained (ADR-0028): those
+/// renewed through it, anywhere on the path, and then, transitively, those
+/// renewed from one of them or through a relay presenting one of them. The
+/// relay chose the keys of the first ones, so none can be trusted.
+/// Returns serial, role, peer ID and expiry of each.
+async fn revoke_issued_through(
+    tx: &mut Transaction<'_, Postgres>,
+    peer_id: &str,
+    reason: RevocationReason,
+) -> Result<Vec<(Serial, String, String, SystemTime)>, sqlx::Error> {
+    let rows: Vec<(Vec<u8>, String, String, DateTime<Utc>)> = sqlx::query_as(
+        "WITH RECURSIVE tainted (serial) AS (
+             SELECT serial FROM certificates
+             WHERE relay_path @> ARRAY[$1::text]
+                OR relay_serial IN (SELECT serial FROM certificates
+                                    WHERE peer_role = 'relay' AND peer_id = $1)
+             UNION
+             SELECT c.serial FROM certificates c JOIN tainted t
+                 ON c.renewed_from = t.serial OR c.relay_serial = t.serial
+         )
+         UPDATE certificates SET revoked_at = now(), revocation_reason = $2
+         WHERE serial IN (SELECT serial FROM tainted)
+           AND NOT (peer_role = 'relay' AND peer_id = $1)
+           AND revoked_at IS NULL AND not_after > now()
+         RETURNING serial, peer_role, peer_id, not_after",
+    )
+    .bind(peer_id)
+    .bind(reason_name(reason))
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut rows: Vec<_> = rows
+        .into_iter()
+        .map(|(serial, role, id, not_after)| {
+            (Serial::from_bytes(&serial), role, id, not_after.into())
+        })
+        .collect();
+    rows.sort_by(|a, b| (&a.2, a.0.as_bytes()).cmp(&(&b.2, b.0.as_bytes())));
+    Ok(rows)
 }
 
 /// `certificates.revocation_reason`, as the API spells it.

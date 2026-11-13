@@ -186,3 +186,84 @@ async fn a_spent_deadline_still_answers() {
         .unwrap();
     assert_eq!(values(&samples), BTreeMap::from([("up", 0.0)]));
 }
+
+fn limited(entries: &[&str]) -> registry::Local {
+    registry::Local {
+        port_targets: Some(PortTargets::parse(entries).unwrap()),
+        ..registry::Local::default()
+    }
+}
+
+fn build_local(pairs: &[(&str, &str)], local: &registry::Local) -> Result<PortSensor, BuildError> {
+    let map = pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let mut params = registry::Params::new("port", &map).unwrap();
+    PortSensor::from_params(&mut params, Some(local))
+}
+
+#[test]
+fn port_targets_refuse_what_they_do_not_list() {
+    let local = limited(&["10.0.0.0/8:22", "db.example.com:5432", "[::1]:9100"]);
+    for allowed in [
+        &[("host", "10.1.2.3"), ("port", "22")][..],
+        &[("host", "DB.example.com"), ("port", "5432")],
+        &[("host", "::1"), ("port", "9100")],
+        // A name the list does not hold, checked once resolved.
+        &[("host", "app.example.com"), ("port", "22")],
+    ] {
+        assert!(build_local(allowed, &local).is_ok(), "{allowed:?}");
+    }
+    for refused in [
+        &[("port", "22")][..],
+        &[("host", "10.1.2.3"), ("port", "23")],
+        &[("host", "169.254.169.254"), ("port", "80")],
+        &[("host", "::ffff:127.0.0.1"), ("port", "22")],
+        &[("host", "db.example.com"), ("port", "23")][..],
+        &[("host", "::1"), ("port", "22")],
+        // No range for this port, so no name may resolve into one.
+        &[("host", "app.example.com"), ("port", "5432")],
+    ] {
+        let error = build_local(refused, &local).unwrap_err();
+        assert!(
+            matches!(error, BuildError::Refused { kind: "port", .. }),
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("is not in its sensors.port_targets"),
+            "{error}"
+        );
+    }
+    let error = build_local(&[("port", "22")], &limited(&[])).unwrap_err();
+    assert!(error.to_string().contains("checks no ports"), "{error}");
+    // Without the setting, anything goes, as before.
+    let open = registry::Local::default();
+    assert!(build_local(&[("host", "169.254.169.254"), ("port", "80")], &open).is_ok());
+    // Only the names the list holds connect wherever they resolve.
+    assert!(build_local(&[("host", "::1"), ("port", "9100")], &local)
+        .unwrap()
+        .allowed
+        .is_none());
+    let name = build_local(&[("host", "db.example.com"), ("port", "5432")], &local);
+    assert!(name.unwrap().allowed.is_none());
+    let name = build_local(&[("host", "app.example.com"), ("port", "22")], &local);
+    assert!(name.unwrap().allowed.is_some());
+}
+
+#[tokio::test]
+async fn resolved_addresses_outside_port_targets_are_skipped() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let pairs = [("host", "localhost"), ("port", &port.to_string()[..])];
+    let deadline = || in_ms(if cfg!(windows) { 6000 } else { 2000 });
+    // localhost resolves to loopback addresses, not in 10.0.0.0/8.
+    let elsewhere = build_local(&pairs, &limited(&["10.0.0.0/8"])).unwrap();
+    let samples = elsewhere.collect(deadline()).await.unwrap();
+    assert_eq!(values(&samples), BTreeMap::from([("up", 0.0)]));
+    let loopback = build_local(&pairs, &limited(&["127.0.0.0/8", "::1"])).unwrap();
+    let samples = loopback.collect(deadline()).await.unwrap();
+    assert_eq!(values(&samples)["up"], 1.0);
+}

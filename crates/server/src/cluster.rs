@@ -83,6 +83,8 @@ struct Stream {
 }
 
 type StreamKey = (PeerRole, String);
+/// serial, peer_role, peer_id, revocation_reason, not_after of `certificates`.
+type RevokedRow = (Vec<u8>, String, String, Option<String>, DateTime<Utc>);
 
 /// Handle to this instance; clones share it.
 #[derive(Clone)]
@@ -404,13 +406,15 @@ impl Cluster {
         let Some(crl) = &self.inner.links.crl else {
             return Ok(());
         };
-        let rows: Vec<(Vec<u8>, String, String, Option<String>)> = sqlx::query_as(
-            "SELECT serial, peer_role, peer_id, revocation_reason FROM certificates
+        // Unexpired ones only: the CA forgets a revocation after its
+        // certificate expires (ADR-0113), and this must not bring it back.
+        let rows: Vec<RevokedRow> = sqlx::query_as(
+            "SELECT serial, peer_role, peer_id, revocation_reason, not_after FROM certificates
              WHERE revoked_at IS NOT NULL AND not_after > now()",
         )
         .fetch_all(&self.inner.pool)
         .await?;
-        for (serial, role, peer_id, reason) in rows {
+        for (serial, role, peer_id, reason, not_after) in rows {
             let serial = Serial::from_bytes(&serial);
             if crl.is_revoked(&serial) {
                 continue;
@@ -418,7 +422,7 @@ impl Cluster {
             let reason: RevocationReason = reason
                 .and_then(|r| serde_json::from_value(serde_json::Value::String(r)).ok())
                 .unwrap_or(RevocationReason::Unspecified);
-            match crl.revoke(serial.clone(), reason).await {
+            match crl.revoke(serial.clone(), reason, not_after.into()).await {
                 Ok(()) => {
                     // The streams of that role only: an agent and a relay may
                     // share an ID (ADR-0105).

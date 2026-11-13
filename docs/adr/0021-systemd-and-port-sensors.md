@@ -39,6 +39,8 @@ The unit is the instance, not a `unit` label, because thresholds target `(metric
 
 **Mechanism.** A TCP connect with `tokio::net::TcpStream`, closed as soon as it is established; nothing is sent, so any TCP service can be checked without a protocol client (a service may log a connection closed early). Parameters: `port` (required, 1 to 65535), `host` (default `127.0.0.1`; an IPv4 or IPv6 address, brackets optional, or a host name of letters, digits, `-`, `_` and dots, at most 253 bytes) and `protocol` (`tcp`, the default and only value). A host name is resolved once per collection with the system resolver on the blocking pool; while a lookup is still running from an earlier collection, the sensor reports down without starting another, so a dead DNS server holds one thread, not one per tick. Addresses are tried in resolver order (`localhost` may give `::1` before `127.0.0.1`) until one connects.
 
+**Where it may connect.** Anywhere by default; the agent's `sensors.port_targets` can limit the addresses, host names and ports (ADR-0111).
+
 **Deadline.** Lookup and connects stop 200 ms before the collection deadline (at most half the remaining time), so a port that does not answer reports `up 0` instead of being cancelled by the scheduler with no sample, which could not alert. The connect timeout is therefore the configured sensor timeout (ADR-0012, 10 s by default) minus that margin; there is no separate parameter.
 
 **Metrics.** With label `target` (`host:port`, `[v6]:port`), and the configured instance:

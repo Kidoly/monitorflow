@@ -167,6 +167,11 @@ fn check_agent_hello(hello: &Hello) -> Result<(), HandshakeError> {
     if hello.hostname.is_empty() || hello.hostname.len() > MAX_HOSTNAME {
         return bad(format!("hostname must be 1 to {MAX_HOSTNAME} bytes"));
     }
+    // It reaches alert emails and the event text; a newline would let the
+    // host write lines of its own there. Unicode names are fine.
+    if hello.hostname.chars().any(char::is_control) {
+        return bad("hostname must not contain control characters".into());
+    }
     if hello.os_version.len() > MAX_VERSION || hello.agent_version.len() > MAX_VERSION {
         return bad(format!(
             "os_version and agent_version must be at most {MAX_VERSION} bytes"
@@ -967,5 +972,27 @@ mod tests {
             ..agent_hello("debian", "web-01")
         };
         assert!(check_agent_hello(&long).is_err());
+    }
+
+    #[test]
+    fn agent_hello_refuses_control_characters_in_the_hostname() {
+        for hostname in ["café-01", "サーバー", "web-01.example.com", "WEB 01"] {
+            assert!(
+                check_agent_hello(&agent_hello("debian", hostname)).is_ok(),
+                "{hostname}"
+            );
+        }
+        for hostname in [
+            "web-01\nApprove here: https://evil.example",
+            "web-01\r",
+            "\tweb-01",
+            "web\u{0}01",
+            "web\u{1b}[31m01",
+            "web\u{7f}01",
+            "web\u{85}01",
+        ] {
+            let error = check_agent_hello(&agent_hello("debian", hostname)).unwrap_err();
+            assert_eq!(Status::from(error).code(), tonic::Code::InvalidArgument);
+        }
     }
 }

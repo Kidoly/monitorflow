@@ -86,7 +86,7 @@ function verify(secret, headers, rawBody) {
 }
 ```
 
-The signing secret is shown once, when the integration is added or given a **New secret**. Keep it in your receiver's secret store.
+The signing secret is shown once, when the integration is added, given a **New secret**, or saved with a new URL. A new URL always gets a new secret, so the old one never signs for another receiver. Keep it in your receiver's secret store.
 
 ## Addresses
 

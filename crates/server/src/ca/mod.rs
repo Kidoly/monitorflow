@@ -65,6 +65,9 @@ pub const REVOCATIONS_FILE: &str = "revocations.json";
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);
 /// How far `not_before` is backdated, for peers whose clock runs late.
 pub const CLOCK_SKEW: Duration = Duration::from_secs(5 * 60);
+/// The longest validity the CA issues by default
+/// ([`CaOptions::max_cert_validity`]), the server's and the stores'.
+pub const MAX_CERT_VALIDITY: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 const SERIAL_BYTES: usize = 16;
 
 #[derive(Debug, thiserror::Error)]
@@ -131,6 +134,14 @@ pub struct CaOptions {
     pub cert_validity: Duration,
     /// Time from a CRL's `this_update` to its `next_update`.
     pub crl_validity: Duration,
+    /// How long after a revoked certificate expires its serial stays in
+    /// the CRL, for relays and other instances whose clock runs late
+    /// (ADR-0113).
+    pub revocation_margin: Duration,
+    /// The longest validity [`CertificateAuthority::issue`] accepts. A
+    /// revocation recorded without its certificate's `not_after` is kept
+    /// this long after it (ADR-0113).
+    pub max_cert_validity: Duration,
 }
 
 impl Default for CaOptions {
@@ -140,6 +151,8 @@ impl Default for CaOptions {
             ca_validity: 3650 * DAY,
             cert_validity: 7 * DAY,
             crl_validity: DAY,
+            revocation_margin: DAY,
+            max_cert_validity: MAX_CERT_VALIDITY,
         }
     }
 }
@@ -547,10 +560,13 @@ impl CertificateAuthority {
         let not_after = time::Duration::try_from(validity)
             .ok()
             .and_then(|v| now.checked_add(v))
-            .filter(|&t| t > now && t <= active.not_after)
+            .filter(|&t| {
+                t > now && t <= active.not_after && validity <= self.options.max_cert_validity
+            })
             .ok_or_else(|| {
                 invalid(format!(
-                    "validity of {validity:?} is zero or ends after the CA certificate"
+                    "validity of {validity:?} is zero, over {:?} or ends after the CA certificate",
+                    self.options.max_cert_validity
                 ))
             })?;
 

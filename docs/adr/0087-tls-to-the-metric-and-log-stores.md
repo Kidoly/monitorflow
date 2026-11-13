@@ -1,7 +1,7 @@
 # ADR-0087: TLS to the metric and log stores
 
 Date: 2026-11-03
-Status: accepted; amends ADR-0051 and ADR-0056; implemented in two stages (see the end); the compose file gains db-migrate in ADR-0109
+Status: accepted; amends ADR-0051 and ADR-0056; implemented in two stages (see the end); the compose file gains db-migrate in ADR-0109; the clients refuse peer certificates since 2026-11-12 (below)
 
 ## Context
 
@@ -26,6 +26,13 @@ A new setting, `storage_tls_dir`, names a directory the server shares with the s
 - **The stores read the new files without a restart.** Their open source builds re-read `-tlsCertFile` and `-tlsKeyFile` every second (`-help` of both images). The compose smoke test proves it: it removes the certificate, issues a new one, and sees the new serial served within seconds.
 
 Both stores run with `-tls`, the two files, `-tlsMinVersion=TLS13`, and basic auth. The server's clients (`RemoteWrite`, `JsonLines`, `VmQuery`) trust the CA alone, with public roots off, and send the password. With `storage_tls_dir` set, both URLs must be https or the server does not start, so the password never travels in plain text.
+
+**Amendment (2026-11-12): only the stores' certificate.** Trusting the CA was not enough. Relays get `serverAuth` certificates from the same CA, under DNS names a customer administrator chooses, and nothing kept those names away from the stores' hosts. A relay certificate for `victoriametrics`, with a network position on the server-to-store link, would have received the password, and with it every customer's metrics and logs. So:
+
+- Both clients, the running server's and `storage-check`'s, refuse a certificate with any URI SAN or with `clientAuth`, after the usual chain, name and validity checks. Every peer certificate has its `monitorflow://` URI and `clientAuth`; `issue_tls_server` gives neither. The password is never sent to a peer.
+- The stores' hosts join the names a relay cannot have, in tokens and in name confirmation (ADR-0066), so no such certificate is issued in the first place.
+
+Pinning the exact certificate or key in `storage_tls_dir` was rejected: the server would need to follow the file across renewals and changes of CA, and the stores re-read it every second, so a renewal could fail handshakes until the next read. Telling a store certificate from a peer's needs no state.
 
 ### Authentication: basic auth, as mTLS is not open source
 

@@ -304,7 +304,11 @@ async fn revoked_certificate_is_reported_as_such() {
     let (identity, serial) = s.pki.agent_identity(&s.config, "web-01");
     s.upstream
         .crl
-        .revoke(serial, RevocationReason::KeyCompromise)
+        .revoke(
+            serial,
+            RevocationReason::KeyCompromise,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(86_400),
+        )
         .await
         .unwrap();
     let mut agent = Agent::new(settings(&s.config), identity, host());
