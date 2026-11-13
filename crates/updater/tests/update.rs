@@ -9,12 +9,14 @@ use async_trait::async_trait;
 use chrono::Utc;
 use monitorflow_common::release::{sha256, PublicKey, Version};
 use monitorflow_common::server_update::backup::{
-    file_name, BackupKind, BackupState, Manifest, BACKUP_REQUEST_FILE, KEEP,
+    file_name, BackupKind, BackupState, Manifest, BACKUP_REQUEST_FILE, DATABASE, FORMAT, KEEP,
+    MANIFEST,
 };
 use monitorflow_common::server_update::retention::RetentionRequest;
 use monitorflow_common::server_update::{
     ImageRef, Request, Status, UpdateRun, UpdateState, REQUEST_FILE, STATUS_FILE,
 };
+use monitorflow_updater::backup::Owner;
 use monitorflow_updater::compose_file;
 use monitorflow_updater::env_file::{EnvFile, Pins};
 use monitorflow_updater::host::{Host, HostError};
@@ -320,6 +322,16 @@ impl Volumes {
 
     fn status(&self) -> Status {
         serde_json::from_slice(&std::fs::read(self.update.join(STATUS_FILE)).unwrap()).unwrap()
+    }
+
+    /// Who owns the server data here: the user running the tests.
+    fn owner(&self) -> Owner {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(&self.serverdata).unwrap();
+        Owner {
+            uid: meta.uid(),
+            gid: meta.gid(),
+        }
     }
 
     fn backups(&self) -> Vec<String> {
@@ -762,6 +774,7 @@ async fn a_backup_holds_the_database_and_the_server_data_without_mirrors() {
         &host,
         &archive,
         &volumes.serverdata,
+        volumes.owner(),
         work.path(),
         &mut |l| lines.push(l.to_owned()),
     )
@@ -805,6 +818,7 @@ async fn a_restore_refuses_a_backup_newer_than_the_server_image() {
         &host,
         &volumes.backups.join(name),
         &volumes.serverdata,
+        volumes.owner(),
         work.path(),
         &mut |_| {},
     )
@@ -812,6 +826,207 @@ async fn a_restore_refuses_a_backup_newer_than_the_server_image() {
     .unwrap_err();
     assert!(error.contains("install 0.3.0 or later"), "{error}");
     assert!(host.state().calls.is_empty(), "nothing was touched");
+}
+
+/// One entry of a hand-made archive: what GNU tar cannot write without
+/// root, a device node, is written all the same.
+struct Entry {
+    name: &'static str,
+    /// `0` file, `3` character device, `4` block device, `5` directory,
+    /// `6` FIFO.
+    kind: u8,
+    mode: u32,
+    owner: Owner,
+    data: Vec<u8>,
+}
+
+impl Entry {
+    fn new(name: &'static str, kind: u8, mode: u32, owner: Owner) -> Self {
+        Self {
+            name,
+            kind,
+            mode,
+            owner,
+            data: Vec::new(),
+        }
+    }
+}
+
+/// A ustar header field: octal digits, then a NUL.
+fn octal(field: &mut [u8], value: u64) {
+    let text = format!("{value:0width$o}", width = field.len() - 1);
+    field[..text.len()].copy_from_slice(text.as_bytes());
+}
+
+/// A `.tar.gz` of `entries`, as a server could forge it.
+fn crafted_archive(dir: &Path, entries: &[Entry]) -> PathBuf {
+    let mut tar = Vec::new();
+    for entry in entries {
+        let mut header = [0u8; 512];
+        header[..entry.name.len()].copy_from_slice(entry.name.as_bytes());
+        octal(&mut header[100..108], entry.mode.into());
+        octal(&mut header[108..116], entry.owner.uid.into());
+        octal(&mut header[116..124], entry.owner.gid.into());
+        octal(&mut header[124..136], entry.data.len() as u64);
+        octal(&mut header[136..148], 1_700_000_000);
+        header[156] = b'0' + entry.kind;
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+        // Major 8, minor 0: /dev/sda.
+        octal(&mut header[329..337], 8);
+        octal(&mut header[337..345], 0);
+        header[148..156].fill(b' ');
+        let sum: u32 = header.iter().map(|&b| u32::from(b)).sum();
+        octal(&mut header[148..155], sum.into());
+        tar.extend_from_slice(&header);
+        tar.extend_from_slice(&entry.data);
+        tar.resize(tar.len().div_ceil(512) * 512, 0);
+    }
+    tar.resize(tar.len() + 1024, 0);
+    let path = dir.join("crafted.tar.gz");
+    let mut gzip = std::process::Command::new("gzip")
+        .arg("-c")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::fs::File::create(&path).unwrap())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    gzip.stdin.take().unwrap().write_all(&tar).unwrap();
+    assert!(gzip.wait().unwrap().success());
+    path
+}
+
+/// The manifest, the dump and a server data owned by `owner`, then
+/// `extra`.
+fn crafted_backup(dir: &Path, owner: Owner, extra: Entry) -> PathBuf {
+    let root = Owner { uid: 0, gid: 0 };
+    let manifest = Manifest {
+        format: FORMAT,
+        created_at: Utc::now(),
+        kind: BackupKind::Manual,
+        server_version: Some("0.2.0".into()),
+        migration: 1,
+        serverdata: true,
+    };
+    let mut entries = vec![
+        Entry {
+            data: serde_json::to_vec(&manifest).unwrap(),
+            ..Entry::new(MANIFEST, 0, 0o644, root)
+        },
+        Entry {
+            data: b"PGDMP".to_vec(),
+            ..Entry::new(DATABASE, 0, 0o644, root)
+        },
+        Entry::new("serverdata/", 5, 0o700, owner),
+        Entry::new("serverdata/ca/", 5, 0o700, owner),
+        Entry {
+            data: b"restored".to_vec(),
+            ..Entry::new("serverdata/ca/ca-key.pem", 0, 0o600, owner)
+        },
+    ];
+    entries.push(extra);
+    crafted_archive(dir, &entries)
+}
+
+#[tokio::test]
+async fn a_restore_refuses_setuid_files_foreign_owners_and_devices() {
+    use std::os::unix::fs::PermissionsExt;
+    let volumes = Volumes::new();
+    let owner = volumes.owner();
+    let foreign = Owner {
+        uid: owner.uid + 1,
+        gid: owner.gid,
+    };
+    let root = Owner { uid: 0, gid: 0 };
+
+    // The same archive, without a forged entry, restores: what refuses
+    // the others is the entry alone.
+    let work = TempDir::new().unwrap();
+    let plain = Entry {
+        data: b"x".to_vec(),
+        ..Entry::new("serverdata/ca/plain", 0, 0o640, owner)
+    };
+    let archive = crafted_backup(work.path(), owner, plain);
+    let host = FakeHost::new(&volumes.env, "0.2.0");
+    restore::restore(
+        &host,
+        &archive,
+        &volumes.serverdata,
+        owner,
+        work.path(),
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
+    let key = volumes.serverdata.join("ca/ca-key.pem");
+    assert_eq!(std::fs::read_to_string(&key).unwrap(), "restored");
+    let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o7777;
+    assert_eq!(mode(&key), 0o600, "modes are restored as taken");
+    assert_eq!(mode(&volumes.serverdata.join("ca/plain")), 0o640);
+    std::fs::write(&key, "live").unwrap();
+
+    let cases = [
+        (
+            Entry::new("serverdata/sh", 0, 0o4755, root),
+            "serverdata/sh has a setuid, setgid or sticky bit",
+        ),
+        (
+            Entry::new("serverdata/sh", 0, 0o4755, owner),
+            "serverdata/sh has a setuid, setgid or sticky bit",
+        ),
+        (
+            Entry::new("serverdata/g", 0, 0o2755, owner),
+            "serverdata/g has a setuid, setgid or sticky bit",
+        ),
+        (
+            Entry::new("serverdata/tmp/", 5, 0o1777, owner),
+            "serverdata/tmp/ has a setuid, setgid or sticky bit",
+        ),
+        (
+            Entry::new("serverdata/x", 0, 0o644, foreign),
+            &format!(
+                "serverdata/x belongs to {}/{}, not to the server's {}/{}",
+                foreign.uid, foreign.gid, owner.uid, owner.gid
+            ),
+        ),
+        (
+            Entry::new("serverdata/x", 0, 0o644, root),
+            &format!(
+                "serverdata/x belongs to 0/0, not to the server's {}/{}",
+                owner.uid, owner.gid
+            ),
+        ),
+        (
+            Entry::new("serverdata/sda", 4, 0o600, owner),
+            "serverdata/sda is not a file, a directory or a link",
+        ),
+        (
+            Entry::new("serverdata/tty", 3, 0o600, owner),
+            "serverdata/tty is not a file, a directory or a link",
+        ),
+        (
+            Entry::new("serverdata/fifo", 6, 0o600, owner),
+            "serverdata/fifo is not a file, a directory or a link",
+        ),
+    ];
+    for (extra, expected) in cases {
+        let work = TempDir::new().unwrap();
+        let archive = crafted_backup(work.path(), owner, extra);
+        let host = FakeHost::new(&volumes.env, "0.2.0");
+        let error = restore::restore(
+            &host,
+            &archive,
+            &volumes.serverdata,
+            owner,
+            work.path(),
+            &mut |_| {},
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, format!("the backup is refused: {expected}"));
+        assert!(host.state().calls.is_empty(), "nothing was touched");
+        assert_eq!(std::fs::read_to_string(&key).unwrap(), "live");
+    }
 }
 
 #[tokio::test]

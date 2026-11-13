@@ -44,12 +44,12 @@
 	@trust {
 		path /trust/ /trust/monitorflow-ca.crt
 		file {
-			root /srv/monitorflow/public
+			root /srv/monitorflow/run/public
 			try_files {path} {path}index.html
 		}
 	}
 	handle @trust {
-		root * /srv/monitorflow/public
+		root * /srv/monitorflow/run/public
 		header Cache-Control no-cache
 		# Lets a phone or Firefox offer to install it, not only to save it.
 		header /trust/monitorflow-ca.crt Content-Type application/x-x509-ca-cert

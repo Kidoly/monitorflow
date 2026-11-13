@@ -383,7 +383,9 @@ if [ -n "$newer" ]; then
     echo "== automatic update"
     # The server caches the newer release; nothing else asks for it.
     publish "$newer" "$newer_relay" "$new_version"
-    compose cp "$work/files/next" server:/tmp/release
+    # Through tar: the server's image is read-only, /tmp a tmpfs (ADR-0126).
+    tar -C "$work/files/next" -cf - . \
+        | compose exec -T server sh -c 'rm -rf /tmp/release && mkdir /tmp/release && tar -C /tmp/release -xf -'
     check "server caches $new_version" compose exec -T server monitorflow-server agent-release import --dir /tmp/release
     check "agent updated itself to $new_version" reports_version "$new_version" 240
     check "binary is $new_version" test "$(/usr/bin/monitorflow-agent --version)" = "monitorflow-agent $new_version"

@@ -264,16 +264,25 @@ fn remove_partial(dir: &Path) {
 
 /// `tar` with `args`; `Ok(true)` when files changed while being read.
 async fn tar(args: &[&std::ffi::OsStr]) -> Result<bool, String> {
+    tar_output(args).await.map(|(changed, _)| changed)
+}
+
+/// `tar` with `args`, and what it printed. The C locale keeps listings
+/// in the format [`check_entry`] reads.
+async fn tar_output(args: &[&std::ffi::OsStr]) -> Result<(bool, Vec<u8>), String> {
     let output = Command::new("tar")
         .args(args)
+        .env("LC_ALL", "C")
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true)
         .output()
         .await
         .map_err(|e| format!("cannot run tar: {e}"))?;
     match output.status.code() {
-        Some(0) => Ok(false),
-        Some(TAR_CHANGED) if args.first() == Some(&"--create".as_ref()) => Ok(true),
+        Some(0) => Ok((false, output.stdout)),
+        Some(TAR_CHANGED) if args.first() == Some(&"--create".as_ref()) => {
+            Ok((true, output.stdout))
+        }
         _ => {
             let text = String::from_utf8_lossy(&output.stderr);
             let tail: Vec<&str> = text.lines().rev().take(3).collect();
@@ -343,9 +352,101 @@ pub async fn extract_database(archive: &Path, dest: &Path) -> Result<Manifest, S
     Ok(manifest)
 }
 
+/// The owner of every file of the server data, as the server writes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Owner {
+    pub uid: u32,
+    pub gid: u32,
+}
+
+impl Owner {
+    /// The server's user and group in its image.
+    pub const SERVER: Owner = Owner {
+        uid: crate::SERVER_UID,
+        gid: crate::SERVER_GID,
+    };
+}
+
+/// An archive whose entries passed [`check_serverdata`].
+#[derive(Debug, Clone, Copy)]
+pub struct Checked<'a>(&'a Path);
+
+/// Refuses an archive that root's extraction would turn into more than
+/// the server's own data: an entry that is not a file, a directory or a
+/// link (a device node, a FIFO), one with a setuid, setgid or sticky bit,
+/// and, but for the manifest and the dump, one `owner` does not own.
+///
+/// A backup is a file the server hands over, and the restore runs as root
+/// with `--numeric-owner --same-permissions`: a crafted one could plant a
+/// setuid-root program in the server's data. Refusing, rather than
+/// extracting with other owners and modes, keeps a genuine backup
+/// restored exactly as it was taken.
+pub async fn check_serverdata(archive: &Path, owner: Owner) -> Result<Checked<'_>, String> {
+    let (_, listing) = tar_output(&[
+        "--list".as_ref(),
+        "--verbose".as_ref(),
+        "--gzip".as_ref(),
+        "--numeric-owner".as_ref(),
+        // One line per entry, whatever the names hold.
+        "--quoting-style=escape".as_ref(),
+        "--file".as_ref(),
+        archive.as_os_str(),
+    ])
+    .await?;
+    let listing = String::from_utf8_lossy(&listing);
+    for line in listing.lines() {
+        check_entry(line, owner).map_err(|e| format!("the backup is refused: {e}"))?;
+    }
+    Ok(Checked(archive))
+}
+
+/// Checks one line of `tar --list --verbose --numeric-owner`:
+/// `-rw-r--r-- 10001/10001  42 2026-11-12 10:00 serverdata/ca/x`.
+fn check_entry(line: &str, owner: Owner) -> Result<(), String> {
+    let mut rest = line;
+    let mut fields = [""; 5];
+    for field in &mut fields {
+        rest = rest.trim_start_matches(' ');
+        let end = rest
+            .find(' ')
+            .ok_or_else(|| format!("unreadable entry `{line}`"))?;
+        *field = &rest[..end];
+        rest = &rest[end..];
+    }
+    let name = rest
+        .strip_prefix(' ')
+        .ok_or_else(|| format!("unreadable entry `{line}`"))?;
+    let [mode, owners, ..] = fields;
+    let mode = mode.as_bytes();
+    if mode.len() != 10 {
+        return Err(format!("unreadable entry `{line}`"));
+    }
+    // `-` file, `d` directory, `l` symbolic link, `h` hard link.
+    if !matches!(mode[0], b'-' | b'd' | b'l' | b'h') {
+        return Err(format!("{name} is not a file, a directory or a link"));
+    }
+    if [mode[3], mode[6], mode[9]]
+        .iter()
+        .any(|c| matches!(c, b's' | b'S' | b't' | b'T'))
+    {
+        return Err(format!("{name} has a setuid, setgid or sticky bit"));
+    }
+    // Written by the updater as root, and never extracted with the data.
+    if name == MANIFEST || name == DATABASE {
+        return Ok(());
+    }
+    let expected = format!("{}/{}", owner.uid, owner.gid);
+    if owners != expected {
+        return Err(format!(
+            "{name} belongs to {owners}, not to the server's {expected}"
+        ));
+    }
+    Ok(())
+}
+
 /// Replaces the content of `dir`, except [`EXCLUDED`], with the
 /// `serverdata/` of `archive`, owners and modes included.
-pub async fn extract_serverdata(archive: &Path, dir: &Path) -> Result<(), String> {
+pub async fn extract_serverdata(archive: Checked<'_>, dir: &Path) -> Result<(), String> {
     clear(dir, "").map_err(|e| format!("emptying {}: {e}", dir.display()))?;
     tar(&[
         "--extract".as_ref(),
@@ -353,7 +454,7 @@ pub async fn extract_serverdata(archive: &Path, dir: &Path) -> Result<(), String
         "--numeric-owner".as_ref(),
         "--same-permissions".as_ref(),
         "--file".as_ref(),
-        archive.as_os_str(),
+        archive.0.as_os_str(),
         "--directory".as_ref(),
         dir.as_os_str(),
         "--strip-components=1".as_ref(),
@@ -397,6 +498,73 @@ fn clear(dir: &Path, prefix: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listed_entries_are_checked() {
+        let server = Owner::SERVER;
+        let ok = [
+            "drwx------ 10001/10001       0 2026-11-12 10:00 serverdata/",
+            "-rw------- 10001/10001    1675 2026-11-12 10:00 serverdata/ca/ca-key.pem",
+            "-rw-r--r-- 10001/10001       0 2026-11-12 10:00 serverdata/a name with spaces",
+            "lrwxrwxrwx 10001/10001       0 2026-11-12 10:00 serverdata/l -> /etc",
+            "hrw-r--r-- 10001/10001       0 2026-11-12 10:00 serverdata/h link to serverdata/a",
+            "-rw-r--r-- 0/0             512 2026-11-12 10:00 manifest.json",
+            "-rw-r--r-- 0/0          123456 2026-11-12 10:00 database.dump",
+        ];
+        for line in ok {
+            assert_eq!(check_entry(line, server), Ok(()), "{line}");
+        }
+        let refused = [
+            (
+                "-rwsr-xr-x 10001/10001 0 2026-11-12 10:00 serverdata/sh",
+                "setuid",
+            ),
+            (
+                "-rwxr-sr-x 10001/10001 0 2026-11-12 10:00 serverdata/sh",
+                "setuid",
+            ),
+            (
+                "-rw-r-Sr-- 10001/10001 0 2026-11-12 10:00 serverdata/g",
+                "setuid",
+            ),
+            (
+                "drwxrwxrwt 10001/10001 0 2026-11-12 10:00 serverdata/tmp/",
+                "sticky",
+            ),
+            ("-rwsr-xr-x 0/0 0 2026-11-12 10:00 manifest.json", "setuid"),
+            (
+                "crw------- 10001/10001 8,1 2026-11-12 10:00 serverdata/dev",
+                "not a file",
+            ),
+            (
+                "brw------- 10001/10001 8,1 2026-11-12 10:00 serverdata/sda",
+                "not a file",
+            ),
+            (
+                "prw------- 10001/10001 0 2026-11-12 10:00 serverdata/fifo",
+                "not a file",
+            ),
+            (
+                "-rw-r--r-- 0/0 0 2026-11-12 10:00 serverdata/x",
+                "belongs to 0/0",
+            ),
+            (
+                "-rw-r--r-- 10001/0 0 2026-11-12 10:00 serverdata/x",
+                "belongs to 10001/0",
+            ),
+            (
+                "-rw-r--r-- 0/0 0 2026-11-12 10:00 ./manifest.json",
+                "belongs to",
+            ),
+            ("-rw-r--r-- 10001/10001 0 2026-11-12 10:00", "unreadable"),
+            ("-rw-r--r--x 10001/10001 0 2026-11-12 10:00 x", "unreadable"),
+            ("", "unreadable"),
+        ];
+        for (line, why) in refused {
+            let error = check_entry(line, server).unwrap_err();
+            assert!(error.contains(why), "{line}: {error}");
+        }
+    }
 
     #[test]
     fn clearing_keeps_the_excluded_trees_only() {

@@ -1,7 +1,7 @@
 # ADR-0065: One-line server installer
 
 Date: 2026-10-31
-Status: accepted
+Status: accepted; amended by ADR-0127 (OpenSSL 3 required)
 
 ## Context
 
@@ -20,7 +20,7 @@ Installing the central server took 11 steps: Docker with two plugins, `git clone
 
 ### Checks
 
-The download comes first and changes nothing: `SHA256SUMS`, then `SHA256SUMS.sig` against the keys `release-files.sh` puts in the script, then each file, then that `images.json` is for that version and names the three images by digest. Only then does Docker get installed. A failed signature is final; there is no `MF_ALLOW_UNSIGNED` here, as every release with images is signed. A copy of the script without keys refuses to run. With no OpenSSL 3 on the host the signature cannot be checked, and the installer warns and checks checksums: those come over HTTPS from the source the script came from, so this trusts what the one-liner already trusted.
+The download comes first and changes nothing: `SHA256SUMS`, then `SHA256SUMS.sig` against the keys `release-files.sh` puts in the script, then each file, then that `images.json` is for that version and names the three images by digest. Only then does Docker get installed. A failed signature is final; there is no `MF_ALLOW_UNSIGNED` here, as every release with images is signed. A copy of the script without keys refuses to run. With no OpenSSL 3 on the host the signature cannot be checked, and the installer stops (ADR-0127).
 
 Docker comes from Docker's official script. It says so first. Where that script does not support the distribution, the installer stops and says to install Docker with the package manager. It does not start guessing package names.
 
