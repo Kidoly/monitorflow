@@ -214,6 +214,7 @@ mod tests {
             server_names: names.iter().map(|&n| n.into()).collect(),
             grpc_port: 27443,
             enroll_port: 27445,
+            store_names: Vec::new(),
         }
     }
 

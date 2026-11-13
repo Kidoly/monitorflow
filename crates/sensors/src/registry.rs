@@ -29,7 +29,7 @@ use crate::diskio::DiskIoSensor;
 use crate::eventlog::{self, EventLogSensor};
 use crate::log::{self, LogSensor};
 use crate::memory::MemorySensor;
-use crate::port::PortSensor;
+use crate::port::{PortSensor, PortTargets};
 use crate::script::{self, ScriptSensor};
 #[cfg(unix)]
 use crate::systemd::SystemdSensor;
@@ -94,6 +94,8 @@ pub struct Local {
     /// Event Log channels the `eventlog` sensor may read, compared without
     /// case.
     pub event_channels: Vec<String>,
+    /// Where the `port` sensor may connect; `None` for anywhere.
+    pub port_targets: Option<PortTargets>,
 }
 
 impl Default for Local {
@@ -106,6 +108,7 @@ impl Default for Local {
                 .iter()
                 .map(|c| c.to_string())
                 .collect(),
+            port_targets: None,
         }
     }
 }
@@ -143,7 +146,7 @@ fn build_with(
         "eventlog" => Arc::new(EventLogSensor::from_params(&mut params, local)?),
         "log" => Arc::new(LogSensor::from_params(&mut params, local)?),
         "memory" => Arc::new(MemorySensor),
-        "port" => Arc::new(PortSensor::from_params(&mut params)?),
+        "port" => Arc::new(PortSensor::from_params(&mut params, local)?),
         "script" => Arc::new(ScriptSensor::from_params(&mut params, local)?),
         #[cfg(unix)]
         "systemd" => Arc::new(SystemdSensor::from_params(&mut params)?),

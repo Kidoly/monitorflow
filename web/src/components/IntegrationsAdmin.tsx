@@ -500,8 +500,13 @@ function IntegrationForm({
     };
     try {
       if (endpoint) {
-        await api.updateIntegration(endpoint.id, body);
-        onSaved({});
+        // A new URL gets a new secret, shown like a new integration's.
+        const saved = await api.updateIntegration(endpoint.id, body);
+        onSaved(
+          saved.secret === null
+            ? {}
+            : { secret: { endpoint: saved.endpoint, secret: saved.secret } },
+        );
       } else {
         onSaved({ secret: await api.createIntegration(body) });
       }
@@ -553,7 +558,9 @@ function IntegrationForm({
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://psa.example.com/webhooks/monitorflow"
         />,
-        "Receives a signed JSON POST per event.",
+        endpoint && url.trim() !== endpoint.url
+          ? "Receives a signed JSON POST per event. A new URL gets a new signing secret; the current one stops working."
+          : "Receives a signed JSON POST per event.",
       )}
       {scopes.length > 1
         ? field(
