@@ -9,8 +9,9 @@
 # path: MF_DOWNLOAD_URL is the self-hosted source, and a test release names
 # its registry in images.json like any other.
 #
-# Checks: tampered and foreign releases change nothing; the one-liner run
-# without a terminal; the setup link; a re-run; an upgrade through the
+# Checks: tampered and foreign releases, and a host without OpenSSL 3,
+# change nothing; a release naming a file outside its directory is refused;
+# the one-liner run without a terminal; the setup link; a re-run; an upgrade through the
 # updater, from an install older than the mirror tools; --uninstall, with and without the data; MF_PUBLIC_NAME; the browser certificate;
 # --restore on a new install, with the public name typed on a terminal.
 #
@@ -126,6 +127,13 @@ openssl pkeyutl -sign -inkey "$key" -rawin -in "$work/serve/tampered/SHA256SUMS"
     -out "$work/serve/tampered/SHA256SUMS.sig"
 openssl pkeyutl -sign -inkey "$work/other.pem" -rawin -in "$work/serve/base/SHA256SUMS" \
     -out "$work/serve/foreign/SHA256SUMS.sig"
+# A signed release whose SHA256SUMS names a file outside its directory,
+# which exists, so only the name check stops it.
+cp -r "$work/serve/next" "$work/serve/escape"
+printf 'outside\n' >"$work/serve/escaped"
+printf '%s  ../escaped\n' "$(sha256sum "$work/serve/escaped" | cut -d ' ' -f 1)" >>"$work/serve/escape/SHA256SUMS"
+openssl pkeyutl -sign -inkey "$key" -rawin -in "$work/serve/escape/SHA256SUMS" \
+    -out "$work/serve/escape/SHA256SUMS.sig"
 
 # HTTPS with a CA of its own, which the host trusts: its curl also reaches
 # get.docker.com.
@@ -236,6 +244,10 @@ done
 echo "== refused releases"
 check "a checksum mismatch is refused" refuses tampered
 check "another key's signature is refused" refuses foreign
+# An openssl without -rawin, as OpenSSL 1.1 is.
+in_host sh -c 'mkdir -p /usr/local/openssl11 && printf "#!/bin/sh\nexit 1\n" >/usr/local/openssl11/openssl && chmod +x /usr/local/openssl11/openssl'
+VARS=PATH=/usr/local/openssl11:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin installer base >"$work/openssl11.log" || true
+check "without OpenSSL 3 the release is refused" grep -q 'OpenSSL 3 is needed' "$work/openssl11.log"
 check "and nothing changed, Docker included" bash -c "! docker exec $host sh -c 'command -v docker || test -e /opt/monitorflow'"
 
 echo "== first install, no terminal, no setting"
@@ -291,6 +303,11 @@ check "nor the web interface" test "$(compose ps -q web)" = "$web_id"
 check "the same CA, the same fingerprint" test "$(printed_fingerprint "$work/rerun.log")" = "$fingerprint"
 check "no setup link once a user exists" bash -c "! grep -q /setup/ '$work/rerun.log'"
 check "the session and the data are kept" test "$(psql "SELECT count(*) FROM sites WHERE name = 'kept'")" = 1
+
+echo "== a release naming a file outside its directory"
+installer escape >"$work/escape.log" || true
+check "it is refused" grep -q 'unsafe file name, ../escaped' "$work/escape.log"
+check "and the server still runs $BASE" test "$(server_version)" = "monitorflow-server $BASE"
 
 echo "== upgrade by running it again, from before the mirror tools"
 older_install

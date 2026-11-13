@@ -104,18 +104,21 @@ try_fetch() {
 
 fetch() { try_fetch "$1" "$2" || die "cannot download $1"; }
 
+# Whether OpenSSL 3 is here: `pkeyutl -rawin` verifies Ed25519 signatures.
+has_openssl3() {
+    command -v openssl >/dev/null 2>&1 && openssl pkeyutl -help 2>&1 | grep -q -- -rawin
+}
+
 # Checks SHA256SUMS.sig against the release keys with OpenSSL 3, which
-# covers the compose files and the image digests of images.json. Without
-# OpenSSL 3 only the checksums, from the same HTTPS source as this script.
+# covers the compose files and the image digests of images.json. There is
+# no fallback to checksums alone: SHA256SUMS comes from the same place as
+# the files it covers, which may be a mirror (ADR-0127).
 verify_signature() {
     case $RELEASE_KEYS in
         *'BEGIN PUBLIC KEY'*) ;;
         *) die "this copy of the installer carries no release key: use the one published with a release" ;;
     esac
-    if ! command -v openssl >/dev/null 2>&1 || ! openssl pkeyutl -help 2>&1 | grep -q -- -rawin; then
-        say "warning: OpenSSL 3 is not installed, so the release signature is not checked; checking checksums only"
-        return
-    fi
+    has_openssl3 || die "OpenSSL 3 is needed to check the release signature, and this machine does not have it; nothing was installed. Install OpenSSL 3 (Debian 12, Ubuntu 22.04, RHEL 9 and later have it), then run this again"
     fetch "$base/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig"
     # One file per key; any of them may have signed (key rotation).
     printf '%s\n' "$RELEASE_KEYS" | awk -v dir="$tmp" '
@@ -427,9 +430,13 @@ download_release_files() {
     [ ! -d "$tmp/release" ] || return 0
     mkdir "$tmp/release"
     awk '{ sub(/^\*/, "", $2); print $2 }' "$tmp/SHA256SUMS" | while read -r file; do
+        # A name is a file of the release directory, nothing else.
+        case $file in
+            '' | .* | *..* | */*) die "SHA256SUMS lists an unsafe file name, $file: this is not a MonitorFlow release; nothing was changed" ;;
+        esac
         fetch "$base/$file" "$tmp/release/$file"
         verify "$file" "$tmp/release"
-    done
+    done || exit 1
     cp "$tmp/SHA256SUMS" "$tmp/release/"
     [ ! -f "$tmp/SHA256SUMS.sig" ] || cp "$tmp/SHA256SUMS.sig" "$tmp/release/"
 }
