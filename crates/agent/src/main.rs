@@ -98,7 +98,8 @@ enum Command {
     CheckDataFolder,
     /// Write the configuration file `--config` with these keys, unless it
     /// already exists; the MSI package runs this (ADR-0050). Empty values
-    /// count as unset.
+    /// count as unset. On Windows, a token also pins its certificate
+    /// authority for the update service (ADR-0108).
     InitConfig {
         #[arg(long)]
         upstream_url: String,
@@ -284,9 +285,13 @@ async fn console(cli: Cli) -> anyhow::Result<()> {
             let settings =
                 init_config::Settings::from_args(upstream_url, enroll_url, enrollment_token);
             let path = cli.config.clone();
-            let outcome =
-                tokio::task::spawn_blocking(move || init_config::write_new(&path, &settings))
-                    .await??;
+            let outcome = tokio::task::spawn_blocking(move || {
+                let outcome = init_config::write_new(&path, &settings)?;
+                #[cfg(windows)]
+                pin_installed_token(&path, &settings)?;
+                anyhow::Ok(outcome)
+            })
+            .await??;
             let done = match outcome {
                 init_config::Outcome::Written => "wrote",
                 init_config::Outcome::Kept => "kept the existing",
@@ -755,6 +760,22 @@ async fn packages_update(config: PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The MSI's pin, as LocalSystem, right after `init-config` and before
+/// the agent runs: the CA of the token it was given is the one the update
+/// service trusts (ADR-0108). Run again with a new token, it replaces the
+/// pin, as `pin-ca` does on Linux.
+#[cfg(windows)]
+fn pin_installed_token(path: &Path, settings: &init_config::Settings) -> anyhow::Result<()> {
+    let Some(token) = &settings.enrollment_token else {
+        return Ok(());
+    };
+    let token = monitorflow_common::tls::EnrollmentToken::parse(token.expose())?;
+    let config: AgentConfig = config::load(path)?;
+    let place = monitorflow_agent::helper_trust::Place::agent(&config.tls_paths());
+    monitorflow_agent::helper_trust::pin_token(&place, &token)?;
+    Ok(())
+}
+
 /// The installer's `pin-ca`, as root: writes the CA of the token in
 /// MONITORFLOW_ENROLLMENT_TOKEN where the root helpers read it (ADR-0108).
 #[cfg(unix)]
@@ -1117,11 +1138,20 @@ mod update_service {
         if matches!(request, Request::Scan | Request::Status) {
             return Ok(request.clone());
         }
+        let place = pinned().map_err(|e| format!("{e:#}"))?;
+        authorized(request, &place, monitorflow_agent::self_update::unix_ms())
+    }
+
+    /// The helper's place, with the CA of the token in `agent.toml`
+    /// pinned if nothing was pinned or adopted yet (ADR-0108). Run when
+    /// the service starts too, before the agent's account can change its
+    /// files, and not first at the first signed request.
+    fn pinned() -> anyhow::Result<Place> {
         let config: monitorflow_common::config::AgentConfig =
-            config::load(&super::default_config()).map_err(|e| e.to_string())?;
+            config::load(&super::default_config())?;
         let place = Place::agent(&config.tls_paths());
         pin_once(&place, config.enrollment_token.as_ref().map(|t| t.expose()));
-        authorized(request, &place, monitorflow_agent::self_update::unix_ms())
+        Ok(place)
     }
 
     fn serve() -> anyhow::Result<()> {
@@ -1131,6 +1161,14 @@ mod update_service {
         let log = config::windows_base_dir().join("update").join("update.log");
         let result = logging::init_file(&LogConfig::default(), &log)
             .map_err(anyhow::Error::from)
+            .map(|()| {
+                if let Err(error) = pinned() {
+                    tracing::warn!(
+                        error = format!("{error:#}"),
+                        "cannot pin the agent's CA yet"
+                    );
+                }
+            })
             .and_then(|()| Ok(tokio::runtime::Runtime::new()?))
             .and_then(|runtime| {
                 runtime.block_on(async {

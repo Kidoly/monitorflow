@@ -40,9 +40,9 @@ The helper keeps the CA certificates it trusts and the machine's ID in a directo
 The anchor is made once, the first time a helper runs:
 
 - **From the install command.** Every enrollment token carries the SHA-256 of the CA it trusts (ADR-0007). The installer, which runs as root, writes it to `/etc/monitorflow/agent-ca.pin` or `relay-ca.pin` (the hidden `pin-ca` subcommand, whenever it is given a token; a token of another CA than the one a connected machine uses is an old one and changes nothing). The helper then takes, from the service's CA bundle, the CA of that fingerprint and no other, checks that it signed the service's certificate, and keeps the ID and role that certificate names. Whatever else the service's user put in its files is ignored.
-On Windows there is no installer step: the MSI already writes the token in `agent.toml` as LocalSystem, where the agent's account cannot write, and the update service takes the pin from it the first time it needs one, into `%ProgramData%\MonitorFlow\ca.pin`. It never replaces a pin from there.
+On Windows the pin is written as LocalSystem, into `%ProgramData%\MonitorFlow\ca.pin`, which the agent's account cannot write: by the MSI, as `init-config` writes `agent.toml` (or keeps it, then replacing the pin as `pin-ca` does), before the agent's service first starts; and by the update service when it starts and before each signed request, from the token in `agent.toml`, if there is neither a pin nor an anchor yet. The update service never replaces a pin. Unlike `pin-ca` on Linux, neither ever finds a token stale from the service's CA bundle: the agent's account writes that file, and the audit of 2026-11-12 found that emptying it, or swapping in a CA of its own, kept any pin from being written, so that the update service adopted the account's CA at its first signed request, on new installs too. A token of a CA the service no longer holds is pinned all the same, and the update service then refuses commands until the MSI is run again with a current token. The pin no longer depends on the token staying in `agent.toml` once the machine is enrolled.
 
-- **Adopted,** on a machine installed before this decision, which has no pin: the helper trusts the CAs the service holds at that moment, once, and records in the anchor that it was adopted. A machine whose service user is already someone else's at that moment gains nothing; every other one is protected from then on, and none needs a visit. Running the install command again writes a pin, and the anchor is made again from it.
+- **Adopted,** on a machine installed before this decision, which has no pin: the helper trusts the CAs the service holds at that moment, once, and records in the anchor that it was adopted. A machine whose service user is already someone else's at that moment gains nothing; every other one is protected from then on, and none needs a visit. Running the install command again writes a pin, and the anchor is made again from it. On Windows only a machine installed before stage 6, with its token already removed from `agent.toml` and no anchor yet, still adopts; running the MSI again with a token pins it.
 
 After that the service's files are not read again for trust. A helper asked before the machine ever connected refuses.
 
@@ -63,6 +63,7 @@ The agent's journal (ADR-0031) is the service user's and stops nothing here. The
 - **A root-owned version floor** for downgrades alone. It closes the smaller finding and leaves the larger one.
 - **Checking the repository URL and key against a list on the host.** The list would be one more thing to install and keep current on every host, and package updates, snapshots and the next helper would each need their own rule.
 - **A broker running as root** that holds the stream and verifies commands itself, the agent becoming its client. It is the cleaner split and a rewrite of the agent; helpers that verify give the same guarantee for the commands that reach root.
+- **Storing an adopted anchor only after a command verifies against it.** The service's user who planted a CA holds its key and signs its own command, so it would change nothing; the pin is what stops it.
 - **Refusing until the install command is run again** on machines without a pin. Updates, sources, snapshots and further self-updates would stop on every existing host at once.
 
 ## Consequences
@@ -84,3 +85,4 @@ The agent's journal (ADR-0031) is the service user's and stops nothing here. The
 3. The self-update helper of the agent and the relay, and the installer's pin.
 4. The `sources`, `packages` and `snapshots` helpers.
 5. The Windows update service: `signed` requests on its pipe, its anchor and its pin.
+6. The Windows pin is written by the MSI and when the update service starts, and never judged stale from the service's files (audit of 2026-11-12).
