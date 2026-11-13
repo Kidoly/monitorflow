@@ -420,7 +420,7 @@ pub async fn update(
     .bind(customer_id)
     .bind(site_id)
     .bind(valid.allow_private)
-    .bind(secret.as_ref().map(|s| s.expose()))
+    .bind(secret.as_ref().map(integrations::sealed).transpose()?)
     .execute(&mut *tx)
     .await?;
     let mut details = audited(&valid);

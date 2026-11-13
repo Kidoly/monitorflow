@@ -393,11 +393,18 @@ db_tests! {
             .await
             .unwrap();
         assert_eq!(stored, own_url);
+        // Stored sealed, like any secret (ADR-0125).
         let stored: String = sqlx::query_scalar("SELECT secret FROM integration_endpoints")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(stored, new);
+        assert!(stored.starts_with("mfs1:"), "{stored}");
+        let opened = monitorflow_server::secrets::open(
+            monitorflow_server::secrets::Column::IntegrationEndpoints,
+            &stored,
+        )
+        .unwrap();
+        assert_eq!(opened.expose(), new);
 
         // A global administrator allows the loopback receiver without
         // moving it; the new secret signs what reaches it, never the old.
