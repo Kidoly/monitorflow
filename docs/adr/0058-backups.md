@@ -1,7 +1,7 @@
 # ADR-0058: Daily backups and restore
 
 Date: 2026-10-29
-Status: accepted; amends ADR-0056
+Status: accepted; amends ADR-0056; a host `BACKUP_DIR` is root's alone since ADR-0129
 
 ## Context
 

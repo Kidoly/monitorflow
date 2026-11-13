@@ -46,6 +46,9 @@ pub struct Settings {
     pub update_dir: PathBuf,
     pub state_dir: PathBuf,
     pub backup_dir: PathBuf,
+    /// `backup_dir` is a directory of the host (`BACKUP_DIR`), not a
+    /// volume: see [`backup_dir_access`].
+    pub backup_host_dir: bool,
     /// The server's data volume, saved in backups.
     pub serverdata_dir: PathBuf,
     /// Where compose mounts the project directory.
@@ -91,6 +94,7 @@ impl Settings {
                 "/var/lib/monitorflow/updater",
             ),
             backup_dir: path("MONITORFLOW_BACKUP_DIR", "/backups"),
+            backup_host_dir: var("MONITORFLOW_BACKUP_HOST_DIR").is_some(),
             serverdata_dir: path("MONITORFLOW_SERVERDATA_DIR", "/serverdata"),
             deploy_dir: path("MONITORFLOW_DEPLOY_DIR", "/deploy"),
             release_url,
@@ -107,19 +111,25 @@ impl Settings {
     }
 
     /// Creates the volumes' directories: the update volume and the private
-    /// one for root, the inbox for the server's user, and the backups
-    /// readable by the server's group, which new files inherit, for
-    /// downloads (ADR-0058).
+    /// one for root, the inbox for the server's user, and the backups as
+    /// [`backup_dir_access`] says.
     pub fn prepare_dirs(&self) -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
+        let (backup_group, backup_mode) = backup_dir_access(self.backup_host_dir);
         for (dir, group, mode) in [
             (&self.update_dir, 0, 0o755),
             (&self.state_dir, 0, 0o700),
-            (&self.backup_dir, SERVER_GID, 0o2750),
+            (&self.backup_dir, backup_group, backup_mode),
         ] {
             std::fs::create_dir_all(dir)?;
             std::os::unix::fs::chown(dir, Some(0), Some(group))?;
             std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode))?;
+        }
+        if self.backup_host_dir {
+            // Backups written while the directory was shared.
+            for name in shared_backups(&self.backup_dir)? {
+                std::os::unix::fs::lchown(self.backup_dir.join(name), Some(0), Some(0))?;
+            }
         }
         let inbox = self.update_dir.join(INBOX);
         if std::fs::symlink_metadata(&inbox).is_ok_and(|m| !m.is_dir()) {
@@ -129,6 +139,34 @@ impl Settings {
         std::os::unix::fs::lchown(&inbox, Some(SERVER_UID), Some(SERVER_UID))?;
         std::fs::set_permissions(&inbox, std::fs::Permissions::from_mode(0o700))
     }
+}
+
+/// Group and mode of the backups directory. In a volume, which only root
+/// on the host can reach under Docker's directory, the server's group
+/// reads backups, and new files inherit it, for downloads (ADR-0058). In
+/// a host directory the same numbers apply on the host, where gid 10001
+/// may be a real group, so it belongs to root alone and the server cannot
+/// offer downloads (ADR-0129).
+pub fn backup_dir_access(host_dir: bool) -> (u32, u32) {
+    if host_dir {
+        (0, 0o700)
+    } else {
+        (SERVER_GID, 0o2750)
+    }
+}
+
+/// Regular files directly in `dir` that are not root's group, by name.
+fn shared_backups(dir: &Path) -> std::io::Result<Vec<std::ffi::OsString>> {
+    use std::os::unix::fs::MetadataExt;
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let meta = std::fs::symlink_metadata(entry.path())?;
+        if meta.is_file() && meta.gid() != 0 {
+            names.push(entry.file_name());
+        }
+    }
+    Ok(names)
 }
 
 /// An exclusive lock on the state volume: one update at a time, between
@@ -284,6 +322,36 @@ pub async fn serve(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_volume_is_shared_with_the_servers_group() {
+        assert_eq!(backup_dir_access(false), (SERVER_GID, 0o2750));
+    }
+
+    /// Gid 10001 can be a real group of the host, LDAP's for instance.
+    #[test]
+    fn a_host_directory_is_roots_alone() {
+        let (group, mode) = backup_dir_access(true);
+        assert_eq!(group, 0);
+        assert_eq!(mode & 0o077, 0, "{mode:o}");
+    }
+
+    #[test]
+    fn shared_backups_are_the_files_not_in_roots_group() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("monitorflow-backup.tar.gz");
+        std::fs::write(&file, b"x").unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        std::os::unix::fs::symlink(&file, dir.path().join("link")).unwrap();
+        let gid = std::fs::metadata(&file).unwrap().gid();
+        let found = shared_backups(dir.path()).unwrap();
+        if gid == 0 {
+            assert!(found.is_empty());
+        } else {
+            assert_eq!(found, ["monitorflow-backup.tar.gz"]);
+        }
+    }
 
     /// The server owns the inbox: a FIFO it plants there is refused like
     /// any bad request, at once, and the loop goes on to the backups.

@@ -19,6 +19,7 @@ function view(overrides: Partial<BackupsView> = {}): BackupsView {
   return {
     enabled: true,
     downloads: true,
+    host_dir: false,
     updater_alive: true,
     requested: false,
     keep: 7,
@@ -74,6 +75,14 @@ describe("BackupsPage", () => {
     expect(download).toHaveAttribute("href", `/api/backups/${NAME}`);
     expect(download).toHaveAttribute("download", NAME);
     expect(screen.getByText(`deploy/restore.sh ${NAME}`)).toBeInTheDocument();
+  });
+
+  it("points to BACKUP_DIR when only root can read the backups", async () => {
+    stubFetch({ "GET /api/backups": { status: 200, body: view({ downloads: false, host_dir: true }) } });
+    renderPage();
+    const table = await screen.findByRole("table", { name: "Backups" });
+    expect(within(table).queryByRole("link", { name: "Download" })).toBeNull();
+    expect(within(table).getByText("In BACKUP_DIR on the server")).toBeInTheDocument();
   });
 
   it("backs up now and follows the run", async () => {
