@@ -311,6 +311,48 @@ fn service_sids_match_windows() {
     );
 }
 
+#[test]
+fn only_system_or_administrators_may_own_the_pipe() {
+    for owner in TRUSTED_PIPE_OWNERS {
+        assert_eq!(
+            check_pipe_owner(PIPE_NAME, owner, Some(4), &TRUSTED_PIPE_OWNERS),
+            Ok(())
+        );
+    }
+    let user = "S-1-5-21-1-2-3-1001";
+    let refused = check_pipe_owner(PIPE_NAME, user, Some(4242), &TRUSTED_PIPE_OWNERS).unwrap_err();
+    assert!(
+        refused.starts_with(r"refusing \\.\pipe\MonitorFlowUpdate: "),
+        "{refused}"
+    );
+    assert!(
+        refused.contains("process 4242 owned by S-1-5-21-1-2-3-1001"),
+        "{refused}"
+    );
+    assert!(refused.contains("nothing was sent"), "{refused}");
+    let refused = check_pipe_owner(PIPE_NAME, user, None, &TRUSTED_PIPE_OWNERS).unwrap_err();
+    assert!(refused.contains("held by a process owned by"), "{refused}");
+    // The agent's own service SID may write the pipe, not own it.
+    assert!(check_pipe_owner(
+        PIPE_NAME,
+        &service_sid(AGENT_SERVICE),
+        None,
+        &TRUSTED_PIPE_OWNERS
+    )
+    .is_err());
+}
+
+#[test]
+fn a_taken_pipe_name_is_explained() {
+    let error = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    let message = pipe_taken(PIPE_NAME, &error);
+    assert!(
+        message.contains("another process holds the name"),
+        "{message}"
+    );
+    assert!(message.contains("restarted"), "{message}");
+}
+
 /// The service's side of ADR-0108: what its pipe received against its own
 /// trust anchor.
 mod signed {
