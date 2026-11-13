@@ -59,9 +59,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-    # A setuid program, the image's or one planted in a volume, never
-    # raises the user's privileges.
-    security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
   web:
@@ -79,9 +76,6 @@ services:
       - "${HTTP_PORT:-80}:80"
     depends_on:
       server: { condition: service_healthy }
-    # A setuid program, the image's or one planted in a volume, never
-    # raises the user's privileges.
-    security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
 networks:
