@@ -360,6 +360,8 @@ enum Logs {
 /// Loads the configuration and starts logging.
 fn load(path: &Path, logs: Logs) -> anyhow::Result<AgentConfig> {
     let config: AgentConfig = config::load(path)?;
+    // Before enrolling, like the configuration's own checks.
+    sensor_config::local(&config.sensors)?;
     match logs {
         Logs::Stdout => logging::init(&config.log),
         #[cfg(windows)]
@@ -410,7 +412,7 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     let plugin_checks = Arc::new(plugin_checks);
     let sensors = Sensors::new(
         Arc::new(
-            Builtin::from_config(&config.sensors, &config.data_dir).with_plugins(plugin_checks),
+            Builtin::from_config(&config.sensors, &config.data_dir)?.with_plugins(plugin_checks),
         ),
         ConfigFile::in_dir(&config.data_dir),
         uplink.clone(),
@@ -843,7 +845,7 @@ fn probe_limits(path: &Path) -> anyhow::Result<registry::Local> {
         return Ok(registry::Local::default());
     }
     let config: AgentConfig = config::load(path)?;
-    Ok(sensor_config::local(&config.sensors))
+    Ok(sensor_config::local(&config.sensors)?)
 }
 
 /// One round of samples per sensor kind on stdout, in Prometheus text
