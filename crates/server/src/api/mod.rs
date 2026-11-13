@@ -182,12 +182,12 @@
 //! | GET | `/api/servers/{id}/rollback` | read | [`rollback::RollbackView`]: what a change gets first, a Proxmox, LVM or ZFS snapshot or why none, and the local snapshots with when they are deleted (ADR-0094) |
 //! | GET | `/api/notifications/channels` | any administrator | [`notifications::ChannelList`]: the channels of what the user administers, without secrets, with `has_secret` and the last error (ADR-0060, ADR-0078) |
 //! | POST | `/api/notifications/channels` | administrator of what it covers | body [`notifications::ChannelRequest`]; 201 [`notifications::ChannelView`]; 403 for anything else; audited |
-//! | PUT | `/api/notifications/channels/{id}` | administrator of what it covers | body [`notifications::ChannelRequest`], an empty secret keeps the stored one unless the destination changes, an empty webhook URL keeps the stored one, whose path views never show (ADR-0112); 200 [`notifications::ChannelView`]; 404 for a channel the user does not manage, 403 for a coverage they do not; audited |
+//! | PUT | `/api/notifications/channels/{id}` | administrator of what it covers | body [`notifications::ChannelRequest`], an empty secret keeps the stored one unless the destination changes, an empty webhook URL keeps the stored one, whose path views never show (ADR-0123); 200 [`notifications::ChannelView`]; 404 for a channel the user does not manage, 403 for a coverage they do not; audited |
 //! | DELETE | `/api/notifications/channels/{id}` | administrator of what it covers | 204; 404 for a channel the user does not manage; audited |
 //! | POST | `/api/notifications/channels/{id}/test` | administrator of what it covers | sends a test now; 200 [`notifications::TestResult`] `{"ok", "error"}`; 404 for a channel the user does not manage |
 //! | GET | `/api/integrations` | any administrator | [`integrations::EndpointList`]: the integration endpoints of what the user administers, without secrets, and every event one can ask for (ADR-0102) |
 //! | POST | `/api/integrations` | administrator of what it covers | body [`integrations::EndpointRequest`]; 201 [`integrations::WithSecret`], the only time the secret is returned; `allow_private` needs a global administrator (403); audited |
-//! | PUT | `/api/integrations/{id}` | administrator of what it covers | body [`integrations::EndpointRequest`], an empty URL keeps the stored one, whose path views never show (ADR-0112); 200 [`integrations::EndpointView`]; 404 for an endpoint the user does not manage, 403 for a coverage they do not; audited |
+//! | PUT | `/api/integrations/{id}` | administrator of what it covers | body [`integrations::EndpointRequest`], an empty URL keeps the stored one, whose path views never show (ADR-0123); 200 [`integrations::Updated`], with a new secret, this once, when the URL changed (the old one stops working); 404 for an endpoint the user does not manage, 403 for a coverage they do not; audited |
 //! | DELETE | `/api/integrations/{id}` | administrator of what it covers | 204; audited |
 //! | POST | `/api/integrations/{id}/state` | administrator of what it covers | body [`integrations::StateRequest`] `{"state": "on" or "paused"}`; 200 [`integrations::EndpointView`]; audited |
 //! | POST | `/api/integrations/{id}/secret` | administrator of what it covers | a new secret; 200 [`integrations::WithSecret`]; audited |
@@ -629,6 +629,7 @@ pub mod backups;
 pub mod campaigns;
 pub mod certificate_authority;
 pub mod check_interval;
+pub mod client_addr;
 pub mod commands;
 pub mod customers;
 pub mod dashboard_data;
@@ -717,6 +718,9 @@ const BODY_LIMIT: usize = 64 * 1024;
 #[derive(Debug, Clone)]
 pub struct ApiSettings {
     pub cookie_secure: bool,
+    /// Proxies whose `X-Forwarded-For` gives the client's address
+    /// (ADR-0110).
+    pub trusted_proxies: Arc<client_addr::TrustedProxies>,
     /// Session lifetimes and the mirror URL, which change at runtime
     /// (ADR-0069). Shared with `agent_releases`.
     pub live: Live,
@@ -750,6 +754,9 @@ impl ApiSettings {
         let agent_releases = agent_releases::Sources::from_config(config);
         Self {
             cookie_secure: config.api_cookie_secure,
+            trusted_proxies: Arc::new(client_addr::TrustedProxies::new(
+                &config.api_trusted_proxies,
+            )),
             live: agent_releases.live.clone(),
             agent_releases,
             server_update: server_update::ServerUpdateSettings::from_config(config),
@@ -1309,9 +1316,14 @@ pub async fn serve(
             tracing::warn!(%addr, "API listens on plain HTTP beyond loopback; keep it behind a TLS reverse proxy (ADR-0006)");
         }
     }
-    axum::serve(listener, v1::app(state))
-        .with_graceful_shutdown(shutdown)
-        .await
+    // The peer address tells a trusted proxy from a local user who reaches
+    // the listener directly (ADR-0110).
+    axum::serve(
+        listener,
+        v1::app(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await
 }
 
 async fn not_found() -> ApiError {

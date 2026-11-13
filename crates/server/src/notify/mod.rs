@@ -58,7 +58,7 @@ fn default_port() -> u16 {
 }
 
 /// Where a webhook channel posts; the signing secret is in
-/// [`Channel::secret`]. Views show only the URL's origin (ADR-0112).
+/// [`Channel::secret`]. Views show only the URL's origin (ADR-0123).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Webhook {

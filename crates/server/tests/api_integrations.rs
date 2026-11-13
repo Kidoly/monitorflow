@@ -1,7 +1,7 @@
 //! Integration endpoints through the API (ADR-0102): the secret returned
-//! once, the test button, private addresses, pausing and resuming, a new
-//! secret, the delivery log, replays, and the audit. Customers apart are
-//! in `api_tenancy.rs`. Ignored without `DATABASE_URL`.
+//! once, a new one for a new URL, the test button, private addresses,
+//! pausing and resuming, a new secret, the delivery log, replays, and the
+//! audit. Customers apart are in `api_tenancy.rs`. Ignored without `DATABASE_URL`.
 
 use std::sync::{Arc, Mutex};
 
@@ -148,9 +148,10 @@ db_tests! {
 
         let mut allowed = ask.clone();
         allowed["allow_private"] = json!(true);
-        let (status, _, _) =
+        let (status, saved, _) =
             call(&pool, "PUT", &format!("{ENDPOINTS}/{id}"), Some(&admin), Some(allowed)).await;
-        assert_eq!(status, StatusCode::OK);
+        // The same URL keeps its secret.
+        assert_eq!((status, &saved["secret"]), (StatusCode::OK, &Value::Null), "{saved}");
         let (_, result, _) = call(&pool, "POST", &test, Some(&admin), None).await;
         assert_eq!((&result["ok"], &result["status"]), (&json!(true), &json!(204)), "{result}");
         {
@@ -270,18 +271,18 @@ db_tests! {
         let mut private = ask.clone();
         private["allow_private"] = json!(true);
         let (status, view, _) = call(&pool, "PUT", &path, Some(&global), Some(private.clone())).await;
-        assert_eq!((status, &view["allow_private"]), (StatusCode::OK, &json!(true)));
+        assert_eq!((status, &view["endpoint"]["allow_private"]), (StatusCode::OK, &json!(true)));
         let mut renamed = private.clone();
         renamed["name"] = json!("Halo");
         let (status, view, _) = call(&pool, "PUT", &path, Some(&admin), Some(renamed)).await;
-        assert_eq!((status, &view["allow_private"]), (StatusCode::OK, &json!(true)));
+        assert_eq!((status, &view["endpoint"]["allow_private"]), (StatusCode::OK, &json!(true)));
         let mut moved = private;
         moved["url"] = json!("http://10.0.0.6/hook");
         let (status, _, _) = call(&pool, "PUT", &path, Some(&admin), Some(moved.clone())).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         moved["allow_private"] = json!(false);
         let (status, view, _) = call(&pool, "PUT", &path, Some(&admin), Some(moved)).await;
-        assert_eq!((status, &view["allow_private"]), (StatusCode::OK, &json!(false)));
+        assert_eq!((status, &view["endpoint"]["allow_private"]), (StatusCode::OK, &json!(false)));
 
         let (status, error, _) = call(
             &pool,
@@ -326,7 +327,8 @@ db_tests! {
         ] {
             let (status, view, _) = call(&pool, "PUT", &path, Some(&admin), Some(edit)).await;
             assert_eq!(status, StatusCode::OK, "{view}");
-            assert_eq!(view["name"], "Halo");
+            assert_eq!(view["endpoint"]["name"], "Halo");
+            assert_eq!(view["secret"], Value::Null, "{view}");
             let stored: String = sqlx::query_scalar("SELECT url FROM integration_endpoints")
                 .fetch_one(&pool)
                 .await
@@ -345,5 +347,80 @@ db_tests! {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(error.to_string().contains("Enter the URL"), "{error}");
+    }
+
+    #[sqlx::test]
+    async fn a_new_url_gets_a_new_secret(pool: PgPool) {
+        let (acme, _) = place(&pool, "acme").await;
+        let global = login(&pool, "root", Role::Administrator, GrantScope::Global).await;
+        let admin = login(&pool, "acme-admin", Role::Administrator, GrantScope::Customer(acme)).await;
+        let (msp_url, msp_seen) = receiver().await;
+        let (own_url, own_seen) = receiver().await;
+
+        // The MSP sets up an endpoint for the customer.
+        let ask = json!({ "name": "MSP PSA", "url": msp_url, "customer_id": acme,
+                          "allow_private": true });
+        let (status, created, _) = call(&pool, "POST", ENDPOINTS, Some(&global), Some(ask.clone())).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let old = created["secret"].as_str().unwrap().to_owned();
+        let id = created["endpoint"]["id"].as_str().unwrap().to_owned();
+        let path = format!("{ENDPOINTS}/{id}");
+
+        // The customer administrator renames it: same URL, same secret,
+        // even written differently.
+        let mut renamed = ask.clone();
+        renamed["name"] = json!("PSA");
+        renamed["url"] = json!(format!("  {msp_url}  "));
+        let (status, saved, _) = call(&pool, "PUT", &path, Some(&admin), Some(renamed)).await;
+        assert_eq!((status, &saved["secret"]), (StatusCode::OK, &Value::Null), "{saved}");
+
+        // Then points it at their own server: the MSP's secret stays behind.
+        let moved = json!({ "name": "PSA", "url": own_url, "customer_id": acme });
+        let (status, saved, _) = call(&pool, "PUT", &path, Some(&admin), Some(moved.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+        let new = saved["secret"].as_str().unwrap().to_owned();
+        assert!(new.starts_with("mfwh_"));
+        assert_ne!(new, old);
+        let stored: String = sqlx::query_scalar("SELECT url FROM integration_endpoints")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stored, own_url);
+        let stored: String = sqlx::query_scalar("SELECT secret FROM integration_endpoints")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stored, new);
+
+        // A global administrator allows the loopback receiver without
+        // moving it; the new secret signs what reaches it, never the old.
+        let mut allowed = moved;
+        allowed["allow_private"] = json!(true);
+        let (status, saved, _) = call(&pool, "PUT", &path, Some(&global), Some(allowed)).await;
+        assert_eq!((status, &saved["secret"]), (StatusCode::OK, &Value::Null), "{saved}");
+        let (_, result, _) =
+            call(&pool, "POST", &format!("{path}/test"), Some(&admin), None).await;
+        assert_eq!(result["ok"], true, "{result}");
+        assert!(msp_seen.lock().unwrap().is_empty());
+        {
+            let requests = own_seen.lock().unwrap();
+            let (headers, body) = &requests[0];
+            let timestamp: i64 = headers[TIMESTAMP_HEADER].to_str().unwrap().parse().unwrap();
+            let given = headers[SIGNATURE_HEADER].to_str().unwrap();
+            assert_eq!(given, signature(&new, timestamp, body));
+            assert_ne!(given, signature(&old, timestamp, body));
+        }
+
+        // The audit says which saves renewed it, and never shows either.
+        let audit: Vec<Value> = sqlx::query_scalar(
+            "SELECT details FROM audit_log WHERE action = 'integration.update' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let renewed: Vec<&Value> = audit.iter().map(|d| &d["secret_renewed"]).collect();
+        assert_eq!(renewed, [&json!(false), &json!(true), &json!(false)]);
+        let text = format!("{audit:?}");
+        assert!(!text.contains(&old) && !text.contains(&new));
     }
 }

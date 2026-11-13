@@ -88,8 +88,11 @@ pub async fn fetch_crl(
     let channel = tls::connect(&settings.upstream_url, config, settings.connect_timeout)
         .await
         .map_err(|e| CrlError::Fetch(e.to_string()))?;
-    let mut client = RevocationServiceClient::new(channel);
-    let call = client.get_crl(GetCrlRequest {});
+    let mut client = RevocationServiceClient::new(channel)
+        .max_decoding_message_size(tls::MAX_CRL_RESPONSE_BYTES);
+    let call = client.get_crl(GetCrlRequest {
+        reads_crl_ders: true,
+    });
     match tokio::time::timeout(CALL_TIMEOUT, call).await {
         Err(_) => Err(CrlError::Fetch("no answer in time".into())),
         Ok(Err(status)) if status.code() == tonic::Code::PermissionDenied => {
@@ -281,9 +284,11 @@ impl RevocationService for CrlCache {
             ));
         }
         let crl_ders: Vec<Vec<u8>> = self.crl.borrow().iter().map(|crl| crl.to_vec()).collect();
-        let crl_der = crl_ders.first().cloned().unwrap_or_default();
         tracing::debug!(%peer, crls = crl_ders.len(), "CRL sent");
-        Ok(tonic::Response::new(GetCrlResponse { crl_der, crl_ders }))
+        Ok(tonic::Response::new(tls::crl_response(
+            crl_ders,
+            request.get_ref().reads_crl_ders,
+        )))
     }
 }
 

@@ -2,10 +2,10 @@
 //! such as a PSA. Each covers everything, one customer or one site, and is
 //! managed by the administrators of what it covers, exactly like a
 //! notification channel (ADR-0078): others do not exist for them. The
-//! signing secret is made here and returned once, at creation and when it
-//! is renewed. Private addresses need a global administrator. A URL's path
-//! and query often hold a token, so views show only its origin and an edit
-//! without a URL keeps it (ADR-0112).
+//! signing secret is made here and returned once, at creation, when it
+//! is renewed and when the URL changes. Private addresses need a global
+//! administrator. A URL's path and query often hold a token, so views show
+//! only its origin and an edit without a URL keeps it (ADR-0123).
 
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
@@ -37,7 +37,7 @@ pub struct EndpointView {
     pub id: Uuid,
     pub name: String,
     /// The URL's scheme, host and port: its path and query may hold a
-    /// token (ADR-0112).
+    /// token (ADR-0123).
     pub origin: String,
     pub events: Vec<String>,
     /// The customer it covers, or the customer of the site it covers;
@@ -95,6 +95,14 @@ pub struct EndpointRequest {
 pub struct WithSecret {
     pub endpoint: EndpointView,
     pub secret: String,
+}
+
+/// Body of `PUT /api/integrations/{id}`: the secret only when the URL
+/// changed, as a new one, this once.
+#[derive(Debug, Serialize)]
+pub struct Updated {
+    pub endpoint: EndpointView,
+    pub secret: Option<String>,
 }
 
 /// Body of `POST /api/integrations/{id}/state`.
@@ -380,21 +388,29 @@ pub async fn create(
 /// `PUT /api/integrations/{id}`: administrators of what it covers now and
 /// of what it will cover; replaces the name, URL, events, coverage and the
 /// private address choice; audited as `integration.update`.
+///
+/// The signing secret stays only with the URL it was made for, or a
+/// customer administrator could point an endpoint an MSP set up at their
+/// own server and collect events signed with the MSP's secret, replays
+/// included. A new URL gets a new secret, returned this once, whoever
+/// saves it, as a notification channel's typed secret must be typed
+/// again (ADR-0078).
 pub async fn update(
     State(state): State<ApiState>,
     user: CurrentUser,
     Path(id): Path<String>,
     request: Result<Json<EndpointRequest>, JsonRejection>,
-) -> Result<Json<EndpointView>, ApiError> {
+) -> Result<Json<Updated>, ApiError> {
     require_administrator(&user)?;
     let request = body(request)?;
     let mut tx = state.pool.begin().await?;
     let current = managed(&mut *tx, &user, &id).await?;
     let valid = validate(&mut *tx, &user, request, Some(&current)).await?;
+    let secret = (valid.url != current.url).then(integrations::generate_secret);
     let (customer_id, site_id) = valid.coverage.columns();
     sqlx::query(
         "UPDATE integration_endpoints SET name = $2, url = $3, events = $4, customer_id = $5,
-             site_id = $6, allow_private = $7
+             site_id = $6, allow_private = $7, secret = coalesce($8, secret)
          WHERE id = $1",
     )
     .bind(current.id)
@@ -404,19 +420,21 @@ pub async fn update(
     .bind(customer_id)
     .bind(site_id)
     .bind(valid.allow_private)
+    .bind(secret.as_ref().map(|s| s.expose()))
     .execute(&mut *tx)
     .await?;
-    record(
-        &mut *tx,
-        &user,
-        "integration.update",
-        current.id,
-        audited(&valid),
-    )
-    .await?;
+    let mut details = audited(&valid);
+    details["secret_renewed"] = secret.is_some().into();
+    record(&mut *tx, &user, "integration.update", current.id, details).await?;
     let endpoint = view(&mut *tx, current.id).await?;
     tx.commit().await?;
-    Ok(Json(endpoint))
+    if secret.is_some() {
+        tracing::info!(user = %user.id, endpoint = %current.id, "moved an integration endpoint to a new URL with a new secret");
+    }
+    Ok(Json(Updated {
+        endpoint,
+        secret: secret.map(|s| s.expose().to_owned()),
+    }))
 }
 
 /// `DELETE /api/integrations/{id}`: administrators of what it covers; 204;

@@ -144,6 +144,17 @@ What the rules allow:
 
 There are no wildcards. The agent never runs `apt-get` or `dnf` through sudo: the `packages update` helper reads the kind of update and the package names on stdin, refuses names that are not package names (options, paths, shell characters), and runs `apt-get update` and the upgrade, or `dnf upgrade`, itself[^0036]. Security-only updates use `dnf upgrade --security` on dnf, and on apt the packages whose candidate comes from a `-security` suite.
 
+## Port targets
+
+By default a port check connects wherever the central server names: a database or a load balancer next to the server, a service on localhost. Someone who took over the central server could use that to probe your network from every server, cloud metadata addresses included. To prevent it, list in `agent.toml` where this server's port checks may connect, then restart the agent[^0111]:
+
+```toml
+[sensors]
+port_targets = ["127.0.0.1", "::1", "10.0.0.0/8:22", "192.168.0.0/16:8000-8999", "db.example.com:5432"]
+```
+
+Each entry is an address, an address range (CIDR) or a host name, with an optional port or port range; write IPv6 with ports in brackets, like `"[fd00::/8]:443"`. A listed host name connects to whatever it resolves to; any other host name connects only to the addresses it resolves to inside a range listed for its port, and reports down otherwise. Checks outside the list show as refused by this server's agent. An empty list turns port checks off. The agent does not start if an entry cannot be read, and says which.
+
 ## Snapshots before a change
 
 When `/` is on LVM (thin or classic) or ZFS, MonitorFlow snapshots the system volumes (`/`, `/usr`, `/var`, `/opt` and `/boot`, whichever are on LVM or ZFS) before an update campaign updates it and before an AI remediation change, on a server that is not a Proxmox VM or container MonitorFlow knows of[^0094]; those get a Proxmox snapshot instead. Nothing needs setting up. The Rollback line of the server page says in advance what a change would get, like "Snapshot first: LVM snapshot of / and /var (the thin pool has 40.0 GiB free)", or why rollback is limited, like "/ is on plain ext4".
@@ -348,3 +359,4 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0094]: [ADR-0094: Local LVM and ZFS snapshots before a change](adr/0094-local-snapshots.md)
 [^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)
 [^0108]: [ADR-0108: Root helpers verify signed commands](adr/0108-root-helpers-verify-signed-commands.md)
+[^0111]: [ADR-0111: Agent-side limit on where port checks connect](adr/0111-port-check-targets.md)

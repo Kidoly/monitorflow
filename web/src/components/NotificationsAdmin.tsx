@@ -433,7 +433,7 @@ function ChannelForm({
   const [port, setPort] = useState(String(email?.port ?? 587));
   const [username, setUsername] = useState(email?.username ?? "");
   const [from, setFrom] = useState(email?.from ?? "");
-  // The stored URL's path is never shown (ADR-0112): empty keeps it.
+  // The stored URL's path is never shown (ADR-0123): empty keeps it.
   const [url, setUrl] = useState("");
   const [name, setName] = useState(chat?.name ?? pluginSettings?.name ?? "");
   const [values, setValues] = useState<Record<string, string>>(

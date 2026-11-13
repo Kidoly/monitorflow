@@ -132,8 +132,12 @@ pub enum Request {
         /// The [`HelperRequest`] holding the command, in base64.
         command: String,
         step: Step,
-        /// For a self-update: the agent's data directory, where the
-        /// release is staged and the new agent proves it connected.
+        /// The agent's data directory, as the agent says it. Read and
+        /// ignored: the service uses the one in its own `agent.toml`, so
+        /// the agent's account cannot point LocalSystem elsewhere. Still
+        /// sent for a self-update, for a service older than the agent
+        /// that needs it, and still read, for an agent older than the
+        /// service (`deny_unknown_fields`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         data_dir: Option<std::path::PathBuf>,
     },
@@ -210,15 +214,18 @@ impl Request {
 /// `status` change nothing and pass; anything else must be a step of a
 /// command the central server signed for this machine, checked against
 /// the service's own trust anchor at `place`, and each step runs once.
-/// Returns the request to run, built from the signed payload.
-pub fn authorized(request: &Request, place: &Place, now_unix_ms: i64) -> Result<Request, String> {
-    let (command, step, data_dir) = match request {
+/// Returns the request to run, built from the signed payload and, for a
+/// self-update, `data_dir`, the agent's data directory from the service's
+/// own configuration; the one the request carries is ignored.
+pub fn authorized(
+    request: &Request,
+    place: &Place,
+    data_dir: &std::path::Path,
+    now_unix_ms: i64,
+) -> Result<Request, String> {
+    let (command, step) = match request {
         Request::Scan | Request::Status => return Ok(request.clone()),
-        Request::Signed {
-            command,
-            step,
-            data_dir,
-        } => (command, *step, data_dir),
+        Request::Signed { command, step, .. } => (command, *step),
         Request::Install { .. } | Request::Reboot | Request::SelfUpdate(_) => {
             return Err("this needs the command the central server signed for it".into())
         }
@@ -253,9 +260,7 @@ pub fn authorized(request: &Request, place: &Place, now_unix_ms: i64) -> Result<
             Request::SelfUpdate(crate::self_update::swap::Request {
                 command_id: command.command_id,
                 version: spec.version,
-                data_dir: data_dir
-                    .clone()
-                    .ok_or("a self-update needs the data directory")?,
+                data_dir: data_dir.to_owned(),
                 allow_downgrade: spec.allow_downgrade,
                 health_timeout_ms: health.as_millis() as u64,
             })

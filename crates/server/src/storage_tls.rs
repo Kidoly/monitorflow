@@ -175,42 +175,72 @@ impl StorageAuth {
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, value);
         let builder = builder.default_headers(headers);
-        match &self.trust {
-            StoreTrust::Fixed(pem) => {
-                let mut builder = builder.tls_built_in_root_certs(false);
-                for ca in
-                    reqwest::Certificate::from_pem_bundle(pem.as_bytes()).map_err(|e| client(&e))?
-                {
-                    builder = builder.add_root_certificate(ca);
-                }
-                Ok(builder)
-            }
-            StoreTrust::Live(ca) => {
-                let provider = Arc::new(rustls::crypto::ring::default_provider());
-                let config = rustls::ClientConfig::builder_with_provider(provider.clone())
-                    .with_safe_default_protocol_versions()
+        let roots = match &self.trust {
+            StoreTrust::Fixed(bundle) => Roots::Fixed(
+                pem::parse_many(bundle)
                     .map_err(|e| client(&e))?
-                    .dangerous()
-                    .with_custom_certificate_verifier(Arc::new(LiveCas {
-                        ca: ca.clone(),
-                        provider,
-                    }))
-                    .with_no_client_auth();
-                Ok(builder.use_preconfigured_tls(config))
-            }
-        }
+                    .into_iter()
+                    .map(|ca| rustls::pki_types::CertificateDer::from(ca.into_contents()))
+                    .collect(),
+            ),
+            StoreTrust::Live(ca) => Roots::Live(ca.clone()),
+        };
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = rustls::ClientConfig::builder_with_provider(provider.clone())
+            .with_safe_default_protocol_versions()
+            .map_err(|e| client(&e))?
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(StoreVerifier { roots, provider }))
+            .with_no_client_auth();
+        Ok(builder.use_preconfigured_tls(config))
     }
 }
 
-/// Verifies a store's certificate against the CAs the server trusts now,
-/// with the usual name, validity and usage checks.
+/// The CAs a [`StoreVerifier`] checks against.
 #[derive(Debug)]
-struct LiveCas {
-    ca: Arc<CertificateAuthority>,
+enum Roots {
+    Fixed(Vec<rustls::pki_types::CertificateDer<'static>>),
+    Live(Arc<CertificateAuthority>),
+}
+
+/// Verifies a store's certificate against the CA, with the usual name,
+/// validity and usage checks, and refuses any certificate the CA issued to
+/// a peer. Relays have `serverAuth` certificates under names their
+/// administrators choose: without this, one named like a store could take
+/// the stores' password from the link. [`ensure`] issues the stores' with
+/// no URI and no `clientAuth`; every peer's has its `monitorflow://` URI.
+#[derive(Debug)]
+struct StoreVerifier {
+    roots: Roots,
     provider: Arc<rustls::crypto::CryptoProvider>,
 }
 
-impl rustls::client::danger::ServerCertVerifier for LiveCas {
+/// Why `cert` cannot be a store's, if it cannot.
+fn not_a_store(cert: &rustls::pki_types::CertificateDer<'_>) -> Option<String> {
+    use x509_parser::prelude::{FromDer, GeneralName, X509Certificate};
+    let Ok((_, cert)) = X509Certificate::from_der(cert) else {
+        return Some("unreadable certificate".into());
+    };
+    let Ok(san) = cert.subject_alternative_name() else {
+        return Some("invalid subjectAltName".into());
+    };
+    let uri = san
+        .iter()
+        .flat_map(|san| &san.value.general_names)
+        .any(|name| matches!(name, GeneralName::URI(_)));
+    if uri {
+        return Some("a peer's certificate (it has a URI), not the stores'".into());
+    }
+    match cert.extended_key_usage() {
+        Ok(Some(eku)) if eku.value.client_auth || eku.value.any => {
+            Some("a client certificate, not the stores'".into())
+        }
+        Ok(_) => None,
+        Err(_) => Some("invalid extendedKeyUsage".into()),
+    }
+}
+
+impl rustls::client::danger::ServerCertVerifier for StoreVerifier {
     fn verify_server_cert(
         &self,
         end_entity: &rustls::pki_types::CertificateDer<'_>,
@@ -220,16 +250,34 @@ impl rustls::client::danger::ServerCertVerifier for LiveCas {
         now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
         let mut roots = rustls::RootCertStore::empty();
-        for ca in self.ca.trusted_certs() {
-            roots.add(ca)?;
+        match &self.roots {
+            Roots::Fixed(cas) => {
+                for ca in cas {
+                    roots.add(ca.clone())?;
+                }
+            }
+            Roots::Live(ca) => {
+                for ca in ca.trusted_certs() {
+                    roots.add(ca)?;
+                }
+            }
         }
-        rustls::client::WebPkiServerVerifier::builder_with_provider(
+        let verified = rustls::client::WebPkiServerVerifier::builder_with_provider(
             Arc::new(roots),
             self.provider.clone(),
         )
         .build()
         .map_err(|e| rustls::Error::General(e.to_string()))?
-        .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+        .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)?;
+        match not_a_store(end_entity) {
+            None => Ok(verified),
+            Some(why) => {
+                tracing::warn!(server_name = ?server_name, %why, "refused the certificate of a metric or log store");
+                Err(rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::ApplicationVerificationFailure,
+                ))
+            }
+        }
     }
 
     fn verify_tls12_signature(
@@ -410,6 +458,47 @@ mod tests {
             fs::read_to_string(out.join(PASSWORD_FILE)).unwrap(),
             password
         );
+    }
+
+    #[test]
+    fn only_the_stores_certificate_is_a_store() {
+        use monitorflow_common::tls::{PeerIdentity, PeerRole};
+
+        let dir = TempDir::new().unwrap();
+        let ca = new_ca(&dir, "ca");
+        let out = dir.path().join("tls");
+        ensure(&ca, &out, &stores()).unwrap();
+        let der = |cert_pem: &[u8]| {
+            rustls::pki_types::CertificateDer::from(pem::parse(cert_pem).unwrap().into_contents())
+        };
+        assert_eq!(
+            not_a_store(&der(&fs::read(out.join(CERT_FILE)).unwrap())),
+            None
+        );
+
+        let key = KeyPair::generate().unwrap();
+        let csr = CertificateParams::default()
+            .serialize_request(&key)
+            .unwrap()
+            .pem()
+            .unwrap();
+        for (role, names) in [
+            (PeerRole::Relay, stores()),
+            (PeerRole::Server, stores()),
+            (PeerRole::Agent, vec![]),
+        ] {
+            let peer = PeerIdentity::new(role, "peer-1").unwrap();
+            let issued = ca.issue(&csr, &peer, None, &names).unwrap();
+            let why = not_a_store(&der(issued.cert_pem.as_bytes()));
+            assert!(why.is_some_and(|why| why.contains("peer")), "{role}");
+        }
+        // No URI, but a client certificate.
+        let mut params = CertificateParams::new(vec!["victoriametrics".to_owned()]).unwrap();
+        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+        let client = params.self_signed(&key).unwrap();
+        let why = not_a_store(client.der());
+        assert!(why.is_some_and(|why| why.contains("client")));
+        assert!(not_a_store(&rustls::pki_types::CertificateDer::from(vec![1, 2, 3])).is_some());
     }
 
     #[test]

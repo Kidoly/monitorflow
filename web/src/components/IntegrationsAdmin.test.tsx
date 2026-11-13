@@ -147,7 +147,10 @@ describe("IntegrationsPage", () => {
       ]),
       "GET /api/customers": oneCustomer,
       "GET /api/sites": noSites,
-      [`PUT ${ENDPOINTS}/i1`]: { status: 200, body: endpoint() },
+      [`PUT ${ENDPOINTS}/i1`]: {
+        status: 200,
+        body: { endpoint: endpoint(), secret: null },
+      },
     });
     const user = userEvent.setup();
     page(customerAdmin);
@@ -165,6 +168,56 @@ describe("IntegrationsPage", () => {
       url: "",
       allow_private: true,
     });
+  });
+
+  it("keeps the secret for the same URL and shows a new one for a new URL", async () => {
+    const moved = endpoint({ origin: "https://psa2.example" });
+    const fetchMock = stubFetch({
+      [`GET ${ENDPOINTS}`]: [
+        list([endpoint()]),
+        list([endpoint({ name: "Halo" })]),
+        list([moved]),
+      ],
+      "GET /api/customers": oneCustomer,
+      "GET /api/sites": noSites,
+      [`PUT ${ENDPOINTS}/i1`]: [
+        {
+          status: 200,
+          body: { endpoint: endpoint({ name: "Halo" }), secret: null },
+        },
+        { status: 200, body: { endpoint: moved, secret: "mfwh_new" } },
+      ],
+    });
+    const user = userEvent.setup();
+    page();
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const name = screen.getByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "Halo");
+    expect(
+      screen.queryByText(/A new URL gets a new signing secret/),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Halo")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Signing secret" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const url = screen.getByLabelText(/^URL/);
+    await user.type(url, "https://psa2.example/hooks");
+    expect(
+      screen.getByText(/A new URL gets a new signing secret/),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByDisplayValue("mfwh_new")).toBeInTheDocument();
+    const puts = fetchMock.mock.calls.filter(
+      ([, init]) => init?.method === "PUT",
+    );
+    expect(puts.map(([, init]) => JSON.parse(String(init?.body)).url)).toEqual([
+      "",
+      "https://psa2.example/hooks",
+    ]);
   });
 
   it("says when an integration was turned off and turns it back on", async () => {
@@ -283,7 +336,12 @@ describe("IntegrationsPage", () => {
         status: 200,
         body: {
           sites: [
-            { id: "site-1", name: "paris", customer_id: "c1", customer_name: "acme" },
+            {
+              id: "site-1",
+              name: "paris",
+              customer_id: "c1",
+              customer_name: "acme",
+            },
           ],
         },
       },
@@ -296,7 +354,9 @@ describe("IntegrationsPage", () => {
     await user.click(screen.getByRole("button", { name: "Add integration" }));
     const picker = screen.getByLabelText(/^Send events about/);
     expect(
-      within(picker).getAllByRole("option").map((o) => o.textContent),
+      within(picker)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
     ).toEqual(["All sites", "paris"]);
     expect(screen.getByText("Events of all your sites.")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/customer|acme/i);

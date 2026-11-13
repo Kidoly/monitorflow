@@ -2108,7 +2108,7 @@ export interface WebhookSettings {
   url: string;
 }
 
-/** A webhook channel as shown: its URL's path and query may hold a token, so only scheme, host and port (ADR-0112). */
+/** A webhook channel as shown: its URL's path and query may hold a token, so only scheme, host and port (ADR-0123). */
 export interface WebhookView {
   origin: string;
 }
@@ -2174,7 +2174,7 @@ export type NotificationChannelRequest = (
 export interface IntegrationEndpoint {
   id: string;
   name: string;
-  /** The URL's scheme, host and port: its path and query may hold a token (ADR-0112). */
+  /** The URL's scheme, host and port: its path and query may hold a token (ADR-0123). */
   origin: string;
   /** The events it wants, among `IntegrationList.events`. */
   events: string[];
@@ -2217,6 +2217,12 @@ export interface IntegrationRequest {
 export interface IntegrationWithSecret {
   endpoint: IntegrationEndpoint;
   secret: string;
+}
+
+/** Body of `PUT /api/integrations/{id}`: a new secret, shown once, only when the URL changed. */
+export interface IntegrationUpdated {
+  endpoint: IntegrationEndpoint;
+  secret: string | null;
 }
 
 export interface IntegrationTestResult {
@@ -2979,8 +2985,9 @@ export const api = {
   createIntegration: (body: IntegrationRequest) =>
     request<IntegrationWithSecret>("/api/integrations", { method: "POST", body }),
 
+  /** A new URL gets a new signing secret; the answer carries it, the only time it is shown. */
   updateIntegration: (id: string, body: IntegrationRequest) =>
-    request<IntegrationEndpoint>(`/api/integrations/${encodeURIComponent(id)}`, { method: "PUT", body }),
+    request<IntegrationUpdated>(`/api/integrations/${encodeURIComponent(id)}`, { method: "PUT", body }),
 
   deleteIntegration: (id: string) =>
     request<void>(`/api/integrations/${encodeURIComponent(id)}`, { method: "DELETE" }),

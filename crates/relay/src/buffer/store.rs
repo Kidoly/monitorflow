@@ -1,8 +1,11 @@
 //! The segment files of the store-and-forward buffer (ADR-0027).
 //!
-//! `<dir>/agent-<id>/` holds the agent's last `Hello` in `hello.pb` and its
-//! records in `<n>.seg`, `n` from one counter for the whole store, so the
-//! smallest segment anywhere is the oldest. A record is a 16-byte header
+//! Each lane (see [`super::lane_key`]) has a directory: `<dir>/agent-<id>/`
+//! for an agent connected directly, `<dir>/path-<sha256>/` for any other
+//! path. It holds the lane's last `Hello` in `hello.pb`, an empty
+//! `confirmed` once the upstream accepted the lane through this relay
+//! (ADR-0119), and its records in `<n>.seg`, `n` from one counter for the
+//! whole store, so the smallest segment anywhere is the oldest. A record is a 16-byte header
 //! (payload length, CRC-32C of the rest, time written) and the payload.
 //!
 //! This is synchronous file I/O: callers on the runtime go through
@@ -25,7 +28,11 @@ pub const MAX_RECORD: u64 = 16 * 1024 * 1024;
 pub const MAX_SEGMENT: u64 = 16 * 1024 * 1024;
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 const AGENT_PREFIX: &str = "agent-";
+/// Keys, and directory names, of lanes other than direct agents: the
+/// prefix and 64 lowercase hex digits.
+pub const PATH_PREFIX: &str = "path-";
 const HELLO_FILE: &str = "hello.pb";
+const CONFIRMED_FILE: &str = "confirmed";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
@@ -93,6 +100,10 @@ struct Queue {
     dirty: bool,
     cursor: Option<Cursor>,
     hello: Option<Vec<u8>>,
+    /// The upstream accepted this agent through this relay.
+    confirmed: bool,
+    /// Size of `segments`.
+    bytes: u64,
 }
 
 pub struct Store {
@@ -118,10 +129,15 @@ impl Store {
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let name = entry.file_name();
-            let Some(id) = name.to_str().and_then(|n| n.strip_prefix(AGENT_PREFIX)) else {
+            let Some(name) = name.to_str() else {
                 continue;
             };
-            if tls::validate_id(id).is_err() || !entry.file_type()?.is_dir() {
+            let id = match name.strip_prefix(AGENT_PREFIX) {
+                Some(id) => id,
+                None if name.starts_with(PATH_PREFIX) => name,
+                None => continue,
+            };
+            if dir_name(id).is_err() || !entry.file_type()?.is_dir() {
                 tracing::warn!(path = %entry.path().display(), "ignoring unexpected entry in the buffer");
                 continue;
             }
@@ -141,6 +157,7 @@ impl Store {
     fn load_queue(&mut self, dir: &Path) -> io::Result<Queue> {
         let mut queue = Queue {
             hello: read_optional(&dir.join(HELLO_FILE))?,
+            confirmed: dir.join(CONFIRMED_FILE).is_file(),
             ..Queue::default()
         };
         let mut ids = Vec::new();
@@ -166,6 +183,7 @@ impl Store {
                 Some(segment) => {
                     self.stats.bytes += segment.bytes;
                     self.stats.segments += 1;
+                    queue.bytes += segment.bytes;
                     queue.segments.push_back(segment);
                 }
                 None => fs::remove_file(&path)?,
@@ -218,17 +236,35 @@ impl Store {
         self.agents.get(agent)?.hello.as_deref()
     }
 
-    /// Appends a record written at `now_ms`, dropping the oldest segments
-    /// of the store until it fits. Returns false if the record alone is
-    /// larger than the buffer, and is dropped.
+    /// Records that the upstream accepted `agent` through this relay, so
+    /// its records outrank those of agents it never accepted (ADR-0119).
+    pub fn confirm(&mut self, agent: &str) -> io::Result<()> {
+        if self.is_confirmed(agent) {
+            return Ok(());
+        }
+        let dir = self.agent_dir(agent)?;
+        File::create(dir.join(CONFIRMED_FILE))?.sync_all()?;
+        self.agents.entry(agent.to_owned()).or_default().confirmed = true;
+        Ok(())
+    }
+
+    pub fn is_confirmed(&self, agent: &str) -> bool {
+        self.agents.get(agent).is_some_and(|q| q.confirmed)
+    }
+
+    /// Appends a record written at `now_ms`, making room as
+    /// [`Self::make_room`] says. Returns false if the record is dropped:
+    /// larger than the buffer, or no room without evicting a confirmed
+    /// agent for an unconfirmed one.
     pub fn append(&mut self, agent: &str, now_ms: i64, payload: &[u8]) -> io::Result<bool> {
         let len = HEADER_LEN + payload.len() as u64;
         if payload.len() as u64 > MAX_RECORD || len > self.limits.max_bytes {
             self.stats.dropped_full += 1;
             return Ok(false);
         }
-        while self.stats.bytes + len > self.limits.max_bytes {
-            self.drop_oldest()?;
+        if !self.make_room(agent, len)? {
+            self.stats.dropped_full += 1;
+            return Ok(false);
         }
         let dir = self.agent_dir(agent)?;
         let segment_bytes = self.limits.segment_bytes;
@@ -276,6 +312,7 @@ impl Store {
         segment.records += 1;
         segment.newest_ms = segment.newest_ms.max(now_ms);
         queue.dirty = true;
+        queue.bytes += len;
         self.stats.bytes += len;
         self.stats.appended += 1;
         Ok(true)
@@ -297,11 +334,11 @@ impl Store {
     /// disk until [`Self::commit`].
     pub fn read(&mut self, agent: &str, now_ms: i64, max: usize) -> io::Result<Vec<Vec<u8>>> {
         let cutoff = now_ms.saturating_sub(self.limits.max_age.as_millis() as i64);
-        let dir = self.dir.join(format!("{AGENT_PREFIX}{agent}"));
         let mut out = Vec::new();
         let Some(queue) = self.agents.get_mut(agent) else {
             return Ok(out);
         };
+        let dir = self.dir.join(dir_name(agent)?);
         while out.len() < max {
             let from = queue.cursor.as_ref().map_or(0, |c| c.segment);
             let Some(index) = queue.segments.iter().position(|s| s.id >= from) else {
@@ -385,14 +422,31 @@ impl Store {
         }
     }
 
-    /// Deletes every record of `agent`, which the upstream refused.
+    /// Deletes every record of `agent`, which the upstream refused, and
+    /// its `Hello`, so the lane counts as never accepted.
     pub fn discard(&mut self, agent: &str) -> io::Result<u64> {
+        let hello = self.dir.join(dir_name(agent)?).join(HELLO_FILE);
         let Some(queue) = self.agents.get_mut(agent) else {
             return Ok(0);
         };
+        if queue.hello.take().is_some() {
+            match fs::remove_file(&hello) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
+        }
+        // Refused for good: it starts over as unconfirmed.
+        if queue.confirmed {
+            queue.confirmed = false;
+            match fs::remove_file(hello.with_file_name(CONFIRMED_FILE)) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
+        }
         queue.writer = None;
         queue.dirty = false;
         queue.cursor = None;
+        queue.bytes = 0;
         let segments: Vec<_> = queue.segments.drain(..).collect();
         let mut records = 0;
         for segment in segments {
@@ -422,22 +476,36 @@ impl Store {
         Ok(dropped)
     }
 
-    /// Deletes the oldest segment of the whole store.
-    fn drop_oldest(&mut self) -> io::Result<()> {
-        let oldest = self
-            .agents
-            .iter()
-            .filter_map(|(agent, q)| Some((q.segments.front()?.id, agent.clone())))
-            .min();
-        let Some((_, agent)) = oldest else {
-            return Err(io::Error::other(
-                "buffer accounting is wrong: full but empty",
-            ));
-        };
-        let segment = self.agents[&agent].segments.front().expect("found above");
-        let unread = self.unread(&agent, segment);
-        self.stats.dropped_full += unread;
-        self.pop_front(&agent)
+    /// Drops segments until `len` more bytes fit, each time the oldest
+    /// segment of the agent that uses the most space, taking agents the
+    /// upstream never accepted first (ADR-0119). An unconfirmed `agent`
+    /// never evicts a confirmed one: false when only those are left.
+    fn make_room(&mut self, agent: &str, len: u64) -> io::Result<bool> {
+        let confirmed = self.is_confirmed(agent);
+        while self.stats.bytes + len > self.limits.max_bytes {
+            let victim = self
+                .agents
+                .iter()
+                .filter_map(|(id, q)| {
+                    let oldest = q.segments.front()?.id;
+                    Some((q.confirmed, std::cmp::Reverse(q.bytes), oldest, id))
+                })
+                .min()
+                .map(|(victim_confirmed, _, _, id)| (victim_confirmed, id.clone()));
+            let Some((victim_confirmed, victim)) = victim else {
+                return Err(io::Error::other(
+                    "buffer accounting is wrong: full but empty",
+                ));
+            };
+            if victim_confirmed && !confirmed {
+                return Ok(false);
+            }
+            let segment = self.agents[&victim].segments.front().expect("found above");
+            let unread = self.unread(&victim, segment);
+            self.stats.dropped_full += unread;
+            self.pop_front(&victim)?;
+        }
+        Ok(true)
     }
 
     fn unread(&self, agent: &str, segment: &Segment) -> u64 {
@@ -451,6 +519,7 @@ impl Store {
     fn pop_front(&mut self, agent: &str) -> io::Result<()> {
         let queue = self.agents.get_mut(agent).expect("caller checked");
         let segment = queue.segments.pop_front().expect("caller checked");
+        queue.bytes -= segment.bytes;
         if queue.segments.is_empty() {
             queue.writer = None;
             queue.dirty = false;
@@ -468,7 +537,7 @@ impl Store {
     fn remove(&mut self, agent: &str, segment: &Segment) -> io::Result<()> {
         self.stats.bytes -= segment.bytes;
         self.stats.segments -= 1;
-        let path = segment_path(&self.dir.join(format!("{AGENT_PREFIX}{agent}")), segment.id);
+        let path = segment_path(&self.dir.join(dir_name(agent)?), segment.id);
         match fs::remove_file(path) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
@@ -476,13 +545,24 @@ impl Store {
     }
 
     fn agent_dir(&self, agent: &str) -> io::Result<PathBuf> {
-        tls::validate_id(agent).map_err(io::Error::other)?;
-        let dir = self.dir.join(format!("{AGENT_PREFIX}{agent}"));
+        let dir = self.dir.join(dir_name(agent)?);
         if !self.agents.contains_key(agent) {
             fs::create_dir_all(&dir)?;
         }
         Ok(dir)
     }
+}
+
+/// The directory of the lane `key`: a path key as it is, an agent ID
+/// behind [`AGENT_PREFIX`], which keeps `.` and `..` safe.
+fn dir_name(key: &str) -> io::Result<String> {
+    if let Some(hex) = key.strip_prefix(PATH_PREFIX) {
+        if hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Ok(key.to_owned());
+        }
+    }
+    tls::validate_id(key).map_err(io::Error::other)?;
+    Ok(format!("{AGENT_PREFIX}{key}"))
 }
 
 fn segment_path(dir: &Path, id: u64) -> PathBuf {

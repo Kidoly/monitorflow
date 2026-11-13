@@ -1,4 +1,4 @@
-# ADR-0112: The path and query of a webhook or integration URL are secret
+# ADR-0123: The path and query of a webhook or integration URL are secret
 
 Date: 2026-11-12
 Status: accepted; amends ADR-0060, ADR-0078 and ADR-0102

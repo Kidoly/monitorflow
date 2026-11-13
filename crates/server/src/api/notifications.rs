@@ -5,7 +5,7 @@
 //! (ADR-0078): others do not exist for them. The SMTP password, webhook
 //! signing secret or chat webhook URL is written, never read back: views
 //! say `has_secret`. A webhook's path and query often hold a token, so
-//! views show only its origin (ADR-0112).
+//! views show only its origin (ADR-0123).
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -37,7 +37,7 @@ pub struct ChannelView {
     /// `email`, `webhook`, `slack`, `teams`, `discord` or `plugin`.
     pub kind: String,
     /// email: `{"host", "port", "username", "from", "to"}`; webhook:
-    /// `{"origin"}`, the URL's scheme, host and port (ADR-0112); chat:
+    /// `{"origin"}`, the URL's scheme, host and port (ADR-0123); chat:
     /// `{"name", "host"}`; plugin: `{"plugin", "name", "values"}`, its
     /// secret settings apart (ADR-0103).
     pub settings: Value,
@@ -203,7 +203,7 @@ async fn validate(
 /// secret is its URL: a new one is checked for its service, and without
 /// one the stored chat URL's host is kept, so that
 /// [`Destination::same_target`] sees the same place. An empty webhook URL
-/// keeps the stored one (ADR-0112).
+/// keeps the stored one (ADR-0123).
 pub(super) fn checked(
     kind: &str,
     mut settings: Value,

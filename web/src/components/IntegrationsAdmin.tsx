@@ -457,7 +457,7 @@ function IntegrationForm({
 }) {
   const me = useMe();
   const [name, setName] = useState(endpoint?.name ?? "");
-  // The stored URL's path is never shown (ADR-0112): empty keeps it.
+  // The stored URL's path is never shown (ADR-0123): empty keeps it.
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState<string[]>(endpoint?.events ?? allEvents);
   const [allowPrivate, setAllowPrivate] = useState(
@@ -501,8 +501,13 @@ function IntegrationForm({
     };
     try {
       if (endpoint) {
-        await api.updateIntegration(endpoint.id, body);
-        onSaved({});
+        // A new URL gets a new secret, shown like a new integration's.
+        const saved = await api.updateIntegration(endpoint.id, body);
+        onSaved(
+          saved.secret === null
+            ? {}
+            : { secret: { endpoint: saved.endpoint, secret: saved.secret } },
+        );
       } else {
         onSaved({ secret: await api.createIntegration(body) });
       }
@@ -558,7 +563,9 @@ function IntegrationForm({
               : "https://psa.example.com/webhooks/monitorflow"
           }
         />,
-        "Receives a signed JSON POST per event. Its path is not shown again: it often holds a token.",
+        endpoint && url.trim() !== ""
+          ? "Receives a signed JSON POST per event. A new URL gets a new signing secret; the current one stops working."
+          : "Receives a signed JSON POST per event. Its path is not shown again: it often holds a token.",
       )}
       {scopes.length > 1
         ? field(

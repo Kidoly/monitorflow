@@ -16,7 +16,7 @@ ADR-0059 and ADR-0071 describe the links; nothing in them changes. This ADR adds
 
 ## Decision
 
-**Sign-in is limited per source address and per account**, in memory per instance of the central server, with the limiter of enrollment (ADR-0007) and screens (ADR-0099). The source is the address the reverse proxy appends to `X-Forwarded-For`; IPv6 counts by /64.
+**Sign-in is limited per source address and per account**, in memory per instance of the central server, with the limiter of enrollment (ADR-0007) and screens (ADR-0099). The source is the address a trusted reverse proxy appends to `X-Forwarded-For` (ADR-0110); IPv6 counts by /64.
 
 - **10 wrong attempts per source in 10 minutes**, on any accounts. Then the source gets 429 until the window ends.
 - **20 wrong attempts per account in 10 minutes**, from all sources together. Then that name gets 429. The account is the name as typed, lowercased, whether it exists or not: an unknown name fills up and answers exactly like a real one, so the limit tells nobody which accounts exist.
