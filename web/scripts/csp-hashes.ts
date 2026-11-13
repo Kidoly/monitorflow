@@ -1,4 +1,4 @@
-// Pins the inline scripts of each exported page by hash (ADR-0110). Next
+// Pins the inline scripts of each exported page by hash (ADR-0124). Next
 // writes inline scripts into every page: the theme script of the root
 // layout, its bootstrap and the page's `self.__next_f.push` payload, which
 // differs per page and per build. After `next build`, this adds to the
@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 // Next escapes "</script" inside its payloads, so the first closing tag ends
 // the element. Scripts with a src attribute are covered by 'self'.
-const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi;
 const SRC = /\ssrc\s*=/i;
 // Inline handlers and javascript: URLs need 'unsafe-hashes' or
 // 'unsafe-inline'; neither is allowed.

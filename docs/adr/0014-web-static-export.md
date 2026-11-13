@@ -1,7 +1,7 @@
 # ADR-0014: Web interface as a static Next.js export
 
 Date: 2026-10-19
-Status: accepted; script hashes instead of `'unsafe-inline'` since ADR-0110
+Status: accepted; script hashes instead of `'unsafe-inline'` since ADR-0124
 
 ## Context
 
@@ -50,4 +50,4 @@ a small team can keep up to date.
 - Without Node at runtime the export cannot set per-request headers. Security
   headers (CSP, `frame-ancestors`) come from whatever serves the files. Next
   emits inline scripts, which each page's CSP `<meta>` allows by hash
-  (ADR-0110).
+  (ADR-0124).

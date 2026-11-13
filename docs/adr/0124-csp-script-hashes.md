@@ -1,4 +1,4 @@
-# ADR-0110: Inline scripts of the web export allowed by hash
+# ADR-0124: Inline scripts of the web export allowed by hash
 
 Date: 2026-11-12
 Status: accepted; amends ADR-0014
