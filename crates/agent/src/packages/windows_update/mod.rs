@@ -615,6 +615,41 @@ pub fn service_sid(name: &str) -> String {
     format!("S-1-5-80-{}", parts.join("-"))
 }
 
+/// Owners the agent accepts for the pipe it opened: LocalSystem, which
+/// the update service runs as, and Administrators, the default owner of
+/// what an elevated administrator creates. An object's owner must be a SID
+/// of its creator's token marked as a possible owner, so a user who is
+/// neither cannot create a pipe that passes (ADR-0049).
+pub const TRUSTED_PIPE_OWNERS: [&str; 2] = ["S-1-5-18", "S-1-5-32-544"];
+
+/// Refuses a pipe `name` whose owner is not among `trusted`: another
+/// process took the name while the update service was stopped.
+/// `server_pid` is the process holding it, when Windows says.
+pub fn check_pipe_owner(
+    name: &str,
+    owner: &str,
+    server_pid: Option<u32>,
+    trusted: &[&str],
+) -> Result<(), String> {
+    if trusted.contains(&owner) {
+        return Ok(());
+    }
+    let process = server_pid.map_or_else(|| "a process".to_owned(), |pid| format!("process {pid}"));
+    Err(format!(
+        "refusing {name}: it is held by {process} owned by {owner}, not by the {SERVICE_NAME} \
+         service; nothing was sent. Stop that process and restart {SERVICE_NAME}"
+    ))
+}
+
+/// Why the update service cannot create the first instance of its pipe.
+pub fn pipe_taken(name: &str, error: &std::io::Error) -> String {
+    format!(
+        "cannot create {name} ({error}): another process holds the name, so the agent \
+         would talk to it instead of this service. Windows Update and agent updates are \
+         stopped on this host until that process is stopped and {SERVICE_NAME} is restarted"
+    )
+}
+
 /// The pipe's protected DACL: full access for SYSTEM, read and write for
 /// `client`, nothing for anyone else.
 pub fn pipe_sddl(client: &str) -> String {

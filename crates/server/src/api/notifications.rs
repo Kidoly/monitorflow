@@ -4,7 +4,8 @@
 //! administrator manages exactly the channels of what they administer
 //! (ADR-0078): others do not exist for them. The SMTP password, webhook
 //! signing secret or chat webhook URL is written, never read back: views
-//! say `has_secret`.
+//! say `has_secret`. A webhook's path and query often hold a token, so
+//! views show only its origin (ADR-0123).
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -36,8 +37,9 @@ pub struct ChannelView {
     /// `email`, `webhook`, `slack`, `teams`, `discord` or `plugin`.
     pub kind: String,
     /// email: `{"host", "port", "username", "from", "to"}`; webhook:
-    /// `{"url"}`; chat: `{"name", "host"}`; plugin: `{"plugin", "name",
-    /// "values"}`, its secret settings apart (ADR-0103).
+    /// `{"origin"}`, the URL's scheme, host and port (ADR-0123); chat:
+    /// `{"name", "host"}`; plugin: `{"plugin", "name", "values"}`, its
+    /// secret settings apart (ADR-0103).
     pub settings: Value,
     /// Whether a password, signing secret or chat webhook URL is stored.
     pub has_secret: bool,
@@ -95,7 +97,13 @@ pub struct TestResult {
     pub error: Option<String>,
 }
 
-const VIEW: &str = "SELECT n.id, n.kind, n.settings, n.secret IS NOT NULL AS has_secret,
+/// A webhook's URL is normalized and has no user or password, so its
+/// origin is everything before the first `/`, `?` or `#` after `://`.
+const VIEW: &str = "SELECT n.id, n.kind,
+        CASE WHEN n.kind = 'webhook' THEN jsonb_build_object('origin',
+            substring(n.settings->>'url' from '^[a-z]+://[^/?#]+'))
+        ELSE n.settings END AS settings,
+        n.secret IS NOT NULL AS has_secret,
         coalesce(n.customer_id, s.customer_id) AS customer_id, c.name AS customer_name,
         n.site_id, s.name AS site_name, n.created_at, n.last_sent_at,
         n.last_error, n.last_error_at, n.follow_up_only
@@ -149,7 +157,8 @@ struct Valid {
 /// no lookup, so a refusal says nothing about which customers and sites
 /// exist. A chat channel's secret is its URL: a new one is checked for its
 /// service, and an edit without one keeps the stored URL's host, so that
-/// [`Destination::same_target`] sees the same place.
+/// [`Destination::same_target`] sees the same place. A webhook edit without
+/// a URL keeps the stored one, which views do not show in full.
 async fn validate(
     db: impl PgExecutor<'_>,
     user: &CurrentUser,
@@ -193,7 +202,8 @@ async fn validate(
 /// the secret to store: `None` keeps the stored one. A chat destination's
 /// secret is its URL: a new one is checked for its service, and without
 /// one the stored chat URL's host is kept, so that
-/// [`Destination::same_target`] sees the same place.
+/// [`Destination::same_target`] sees the same place. An empty webhook URL
+/// keeps the stored one (ADR-0123).
 pub(super) fn checked(
     kind: &str,
     mut settings: Value,
@@ -204,8 +214,15 @@ pub(super) fn checked(
         return Err(ApiError::Invalid("settings must be an object".into()));
     };
     object.insert("kind".into(), kind.into());
-    let destination: Destination = serde_json::from_value(settings)
+    let mut destination: Destination = serde_json::from_value(settings)
         .map_err(|error| ApiError::Invalid(format!("invalid {kind} settings: {error}")))?;
+    if let (Destination::Webhook(new), Some(Destination::Webhook(stored))) =
+        (&mut destination, current)
+    {
+        if new.url.trim().is_empty() {
+            new.url.clone_from(&stored.url);
+        }
+    }
     let mut destination = destination.normalize().map_err(ApiError::Invalid)?;
     let mut secret = secret.filter(|s| !s.is_empty());
     if secret.as_ref().is_some_and(|s| s.len() > MAX_SECRET) {

@@ -2103,8 +2103,14 @@ export interface EmailSettings {
   to: string[];
 }
 
+/** What a webhook channel sends to, in a request; on edit an empty `url` keeps the stored one. */
 export interface WebhookSettings {
   url: string;
+}
+
+/** A webhook channel as shown: its URL's path and query may hold a token, so only scheme, host and port (ADR-0123). */
+export interface WebhookView {
+  origin: string;
 }
 
 /** A Slack, Teams or Discord channel; its webhook URL is the secret, never sent back (ADR-0077). */
@@ -2120,7 +2126,7 @@ export type ChatKind = "slack" | "teams" | "discord";
 /** One channel of `GET /api/notifications/channels`: those of what the user administers (ADR-0078). */
 export type NotificationChannel = (
   | { kind: "email"; settings: EmailSettings }
-  | { kind: "webhook"; settings: WebhookSettings }
+  | { kind: "webhook"; settings: WebhookView }
   | { kind: ChatKind; settings: ChatSettings }
   | { kind: "plugin"; settings: PluginChannelSettings }
 ) & {
@@ -2168,7 +2174,8 @@ export type NotificationChannelRequest = (
 export interface IntegrationEndpoint {
   id: string;
   name: string;
-  url: string;
+  /** The URL's scheme, host and port: its path and query may hold a token (ADR-0123). */
+  origin: string;
   /** The events it wants, among `IntegrationList.events`. */
   events: string[];
   /** The customer it covers, or the site's; null with `site_id` too: everything. */
@@ -2197,6 +2204,7 @@ export interface IntegrationList {
 
 export interface IntegrationRequest {
   name: string;
+  /** On edit, empty keeps the stored one. */
   url: string;
   /** Empty: every event. */
   events: string[];

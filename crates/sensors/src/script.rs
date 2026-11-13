@@ -14,7 +14,10 @@
 //!   most [`MAX_PERFDATA`]; other lines are ignored.
 //!
 //! Parameters: `script` (required, a file name) and `args` (optional, a
-//! comma-separated list of plain words passed as arguments).
+//! comma-separated list of plain words passed as arguments). The agent
+//! refuses `args` unless [`Local::script_args`] allows them, and always
+//! refuses the [`WRAPPERS`] that run their arguments as a command
+//! (ADR-0112).
 //!
 //! The script runs without a shell, with an empty environment apart from
 //! `PATH` and `LC_ALL=C`, in `/`, in its own process group, which is
@@ -37,9 +40,7 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::time::{timeout_at, Instant};
 
-#[cfg(unix)]
-use crate::registry::Local;
-use crate::registry::{BuildError, Params};
+use crate::registry::{BuildError, Local, Params};
 #[cfg(unix)]
 use crate::Sensor;
 use crate::{validate, Sample, SensorError};
@@ -68,6 +69,21 @@ const MARGIN: Duration = Duration::from_millis(200);
 /// The only environment, with `LC_ALL=C`.
 #[cfg(unix)]
 const PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+/// Packaged Nagios plugins that run their arguments as a command, or a
+/// command on another host: never run, whatever [`Local::script_args`]
+/// says, under their name or through a symlink (ADR-0112).
+pub const WRAPPERS: [&str; 3] = ["negate", "urlize", "check_by_ssh"];
+
+/// The wrapper `name` is, with or without an extension, in any case.
+pub fn wrapper(name: &str) -> Option<&'static str> {
+    let stem = name.split('.').next().unwrap_or(name);
+    WRAPPERS.into_iter().find(|w| w.eq_ignore_ascii_case(stem))
+}
+
+fn wrapper_refused(wrapper: &str) -> String {
+    format!("is `{wrapper}`, which runs its arguments as a command; the agent never runs it")
+}
 
 /// A file name of `[A-Za-z0-9_.-]`, not starting with `.` or `-`: no path
 /// separator, no `..`, nothing hidden or read as an option.
@@ -126,6 +142,9 @@ pub fn check(dir: &Path, name: &str, owners: &[u32]) -> Result<PathBuf, String> 
     })?;
     let meta = std::fs::metadata(&path).map_err(|e| format!("script `{name}`: {e}"))?;
     let refuse = |why: &str| Err(format!("script `{name}` ({}) {why}", path.display()));
+    if let Some(wrapper) = path.file_name().and_then(|n| n.to_str()).and_then(wrapper) {
+        return refuse(&wrapper_refused(wrapper));
+    }
     if !meta.is_file() {
         return refuse("is not a regular file");
     }
@@ -222,18 +241,30 @@ impl Drop for Group {
     }
 }
 
-/// The `script` and `args` parameters, checked.
-fn parse_params(params: &mut Params<'_>) -> Result<(String, Vec<String>), BuildError> {
+/// The `script` and `args` parameters, checked, and with `local`, refused
+/// when it does not allow arguments.
+fn parse_params(
+    params: &mut Params<'_>,
+    local: Option<&Local>,
+) -> Result<(String, Vec<String>), BuildError> {
     let Some(script) = params.get("script") else {
         return Err(params.bad("script", "is required"));
     };
     script_name(script).map_err(|reason| params.bad("script", reason))?;
+    if let Some(wrapper) = wrapper(script) {
+        return Err(params.bad("script", wrapper_refused(wrapper)));
+    }
     let args = params.list("args")?.unwrap_or_default();
     if args.len() > MAX_ARGS {
         return Err(params.bad("args", format!("may list at most {MAX_ARGS} arguments")));
     }
     for arg in &args {
         script_arg(arg).map_err(|reason| params.bad("args", reason))?;
+    }
+    if local.is_some_and(|l| !l.script_args) && !args.is_empty() {
+        return Err(params.refused(format!(
+            "script `{script}` has arguments, which this agent does not allow; its administrator can set `script_args = \"any\"` in the [sensors] section of agent.toml"
+        )));
     }
     Ok((script.to_owned(), args))
 }
@@ -332,7 +363,7 @@ impl ScriptSensor {
         params: &mut Params<'_>,
         local: Option<&Local>,
     ) -> Result<Self, BuildError> {
-        let (script, args) = parse_params(params)?;
+        let (script, args) = parse_params(params, local)?;
         let owners = vec![0, rustix::process::geteuid().as_raw()];
         let dir = local.map_or_else(|| DEFAULT_DIR.into(), |l| l.script_dir.clone());
         let sensor = Self::new(script, args, dir, owners);

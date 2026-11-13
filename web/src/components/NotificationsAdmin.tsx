@@ -108,9 +108,9 @@ export function destination(channel: NotificationChannel): string {
     return `${CHAT[channel.kind].name}: ${name || host}`;
   }
   try {
-    return `Webhook to ${new URL(channel.settings.url).host}`;
+    return `Webhook to ${new URL(channel.settings.origin).host}`;
   } catch {
-    return `Webhook to ${channel.settings.url}`;
+    return `Webhook to ${channel.settings.origin}`;
   }
 }
 
@@ -433,7 +433,8 @@ function ChannelForm({
   const [port, setPort] = useState(String(email?.port ?? 587));
   const [username, setUsername] = useState(email?.username ?? "");
   const [from, setFrom] = useState(email?.from ?? "");
-  const [url, setUrl] = useState(hook?.url ?? "");
+  // The stored URL's path is never shown (ADR-0123): empty keeps it.
+  const [url, setUrl] = useState("");
   const [name, setName] = useState(chat?.name ?? pluginSettings?.name ?? "");
   const [values, setValues] = useState<Record<string, string>>(
     () =>
@@ -682,12 +683,17 @@ function ChannelForm({
             <input
               className={fieldClass}
               type="url"
-              required
+              required={!hook}
+              spellCheck={false}
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://hooks.example.com/monitorflow"
+              placeholder={
+                hook
+                  ? `${hook.origin}/…, saved; leave empty to keep it`
+                  : "https://hooks.example.com/monitorflow"
+              }
             />,
-            "Receives a JSON POST per event. Mattermost shows its text as is.",
+            "Receives a JSON POST per event. Mattermost shows its text as is. Its path is not shown again: it often holds a token.",
           )}
           {field(
             "Signing secret (optional)",

@@ -154,6 +154,9 @@ pub fn generate_secret() -> Secret {
 /// The URL trimmed and checked; the error is a sentence for the form.
 pub fn normalize_url(url: &str) -> Result<String, String> {
     let url = url.trim();
+    if url.is_empty() {
+        return Err("Enter the URL to send events to.".into());
+    }
     let parsed = reqwest::Url::parse(url)
         .map_err(|_| format!("`{url}` is not a URL; it starts with https://."))?;
     if !matches!(parsed.scheme(), "https" | "http") || parsed.host_str().is_none() {
