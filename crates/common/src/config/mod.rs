@@ -20,6 +20,8 @@ use crate::redact::{redact_url_password, Secret};
 
 #[cfg(all(test, unix))]
 mod tests;
+mod trusted_proxy;
+pub use trusted_proxy::TrustedProxy;
 #[cfg(all(test, windows))]
 mod windows_tests;
 
@@ -578,6 +580,10 @@ pub struct AgentSensorsConfig {
     /// Event Log channels the `eventlog` sensor may read on Windows
     /// (ADR-0048); empty disables it.
     pub event_channels: Vec<String>,
+    /// Address ranges and host names, with optional ports, the `port`
+    /// sensor may connect to (ADR-0111); unset allows any, empty disables
+    /// it. The agent parses them at start-up.
+    pub port_targets: Option<Vec<String>>,
 }
 
 #[cfg(unix)]
@@ -588,6 +594,7 @@ impl Default for AgentSensorsConfig {
             script_args: ScriptArgs::default(),
             log_dirs: vec!["/var/log".into()],
             event_channels: vec!["Application".into(), "System".into()],
+            port_targets: None,
         }
     }
 }
@@ -603,6 +610,7 @@ impl Default for AgentSensorsConfig {
             script_args: ScriptArgs::default(),
             log_dirs: Vec::new(),
             event_channels: vec!["Application".into(), "System".into()],
+            port_targets: None,
         }
     }
 }
@@ -713,6 +721,9 @@ impl LoadConfig for AgentConfig {
         }
         if let Some(channels) = env.list("sensors.event_channels") {
             self.sensors.event_channels = channels;
+        }
+        if let Some(targets) = env.list("sensors.port_targets") {
+            self.sensors.port_targets = Some(targets);
         }
         self.tls.apply_env(env)?;
         self.log.apply_env(env)
@@ -1032,6 +1043,12 @@ pub struct ServerConfig {
     /// Mark the session cookie `Secure`. Only turn off for local development
     /// over plain HTTP without a proxy.
     pub api_cookie_secure: bool,
+    /// Reverse proxies whose `X-Forwarded-For` the API believes for the
+    /// client's address, which sign-in and screen limits count by
+    /// (ADR-0110): addresses, CIDR networks or host names. Other peers
+    /// count by their own address. The environment override is a
+    /// comma-separated list.
+    pub api_trusted_proxies: Vec<String>,
     /// Seconds a session lasts after login, whatever its activity. Set, it
     /// locks the setting in the web interface (ADR-0069).
     pub api_session_lifetime: Option<u64>,
@@ -1186,6 +1203,7 @@ impl Default for ServerConfig {
             enroll_public_port: None,
             api_listen_addr: SocketAddr::from(([127, 0, 0, 1], 7444)),
             api_cookie_secure: true,
+            api_trusted_proxies: vec!["127.0.0.1".into(), "::1".into()],
             api_session_lifetime: None,
             api_session_idle_timeout: None,
             database_url: DatabaseUrl::default(),
@@ -1688,6 +1706,9 @@ impl LoadConfig for ServerConfig {
         env.set_opt("enroll_public_port", &mut self.enroll_public_port)?;
         env.set("api_listen_addr", &mut self.api_listen_addr)?;
         env.set("api_cookie_secure", &mut self.api_cookie_secure)?;
+        if let Some(proxies) = env.list("api_trusted_proxies") {
+            self.api_trusted_proxies = proxies;
+        }
         env.set("additional_instance", &mut self.additional_instance)?;
         env.set_opt("api_session_lifetime", &mut self.api_session_lifetime)?;
         env.set_opt(
@@ -1778,6 +1799,13 @@ impl LoadConfig for ServerConfig {
                 "agent_install_source",
                 "`custom` needs agent_download_url set to the files' https URL",
             ));
+        }
+        if let Some(message) = self
+            .api_trusted_proxies
+            .iter()
+            .find_map(|p| p.parse::<TrustedProxy>().err())
+        {
+            return Err(check.fail("api_trusted_proxies", message));
         }
         if self.server_names.is_empty() || self.server_names.iter().any(String::is_empty) {
             return Err(check.fail(

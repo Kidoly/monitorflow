@@ -70,6 +70,18 @@ upstream_url = "https://relay.example.com:7443"
 # An empty list disables the sensor.
 # event_channels = ["Application", "System"]
 
+# Where port checks may connect (ADR-0111). Unset, the default: anywhere the
+# central server names, as before. Set it to limit what a compromised
+# central server could probe from this machine's network. Entries are
+# address ranges (CIDR) or addresses, and host names, each with an optional
+# port or port range; IPv6 with ports in brackets. A listed host name may
+# connect to whatever it resolves to; any other host name only to the
+# addresses it resolves to inside a range listed for its port. An empty
+# list disables port checks. The agent does not start with an unreadable
+# entry.
+# port_targets = ["127.0.0.1", "10.0.0.0/8:22", "192.168.0.0/16:8000-8999",
+#                 "[fd00::/8]:443", "db.example.com:5432"]
+
 [packages]
 # Seconds between two reports of the installed packages and the reboot
 # state; one is also sent at start and after every update (ADR-0031).

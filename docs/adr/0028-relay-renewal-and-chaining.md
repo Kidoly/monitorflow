@@ -20,7 +20,7 @@ Renewal must be authenticated as the peer itself (architecture §3), which is wh
 - the relay policy of ADR-0004 must allow the relay to speak for that agent (`db::relay_may_speak_for`: same site, neither revoked). A relay cannot renew for an agent of another site, and cannot renew for another relay (or the server) at all;
 - then every check of ADR-0010 applies to the agent's certificate as if the agent had called directly: serial recorded for that peer and not revoked or expired, not in the CA's list (even if the relay's copy of the CRL is older), inventory row not revoked, and at most one certificate per hour per agent, under the same advisory lock. The limit is per agent, not per relay.
 
-The identity of the new certificate is the forwarded certificate's, as for a direct renewal; the CSR only provides the key. The `peer.renew` audit row records `via_relay`.
+The identity of the new certificate is the forwarded certificate's, as for a direct renewal; the CSR only provides the key. The `peer.renew` audit row records `via_relay`, and the certificate row the relay path and the serial of the relay's certificate (ADR-0122).
 
 **Statuses go down unchanged.** The agent gets the upstream's code and message, as for streams (ADR-0025), so `RESOURCE_EXHAUSTED` and `PERMISSION_DENIED` keep their meaning in its retry logic. A failure of the relay's own link becomes `UNAVAILABLE` "upstream unavailable".
 
@@ -75,7 +75,7 @@ A relay-hosted enrollment proxy was considered instead. It would have to hold to
 ## Consequences
 
 - Agents behind a relay renew like direct agents, with no configuration change.
-- A compromised relay can obtain certificates, one per hour per agent and each in the audit log, for agents of its own site whose current certificate it holds. It could already speak for them on streams (ADR-0004); with such a certificate it can also connect as them directly. Revoking the relay stops it.
+- A compromised relay can obtain certificates, one per hour per agent and each in the audit log, for agents of its own site whose current certificate it holds. It could already speak for them on streams (ADR-0004); with such a certificate it can also connect as them directly, and renew it there. Revoking the relay revokes every certificate obtained through it and those renewed from them (ADR-0122); the peers concerned enroll again. Proof of possession for forwarded renewals, which would spare them, is a follow-up there.
 - The relay's `serve` takes `Services`: the stream forwarder, the renewal proxy and the CRL cache.
 - A chained relay must be enrolled with `--parent-relay`; a relay of the server keeps none.
 - For the admin API (not in this change): relay listings should show `parent_relay_id`, as the parent's peer ID, and token creation should accept a parent relay for relay tokens, with the same check as the CLI.

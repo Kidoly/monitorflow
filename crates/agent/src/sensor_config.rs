@@ -16,6 +16,7 @@ use std::time::Duration;
 use monitorflow_common::config::{AgentSensorsConfig, ScriptArgs};
 use monitorflow_common::proto::v1::{SensorConfig, SensorConfigAck, SensorSpec, SensorSpecError};
 use monitorflow_plugin::manifest::CHECK_KIND;
+use monitorflow_sensors::port::{PortTargets, PortTargetsError};
 use monitorflow_sensors::registry::Local;
 use monitorflow_sensors::{
     self as sensors, Sample, Scheduler, SchedulerOptions, Sensor, SensorError,
@@ -92,11 +93,14 @@ impl Builtin {
 
     /// The limits set by the `[sensors]` section of the agent's config,
     /// with log positions saved under `data_dir` (ADR-0085).
-    pub fn from_config(config: &AgentSensorsConfig, data_dir: &Path) -> Self {
-        Self::new(Local {
+    pub fn from_config(
+        config: &AgentSensorsConfig,
+        data_dir: &Path,
+    ) -> Result<Self, PortTargetsError> {
+        Ok(Self::new(Local {
             log_positions: Some(data_dir.join(LOG_POSITIONS_DIR)),
-            ..local(config)
-        })
+            ..local(config)?
+        }))
     }
 }
 
@@ -104,15 +108,20 @@ impl Builtin {
 pub const LOG_POSITIONS_DIR: &str = "log-positions";
 
 /// The registry's [`Local`] limits from the agent's configuration, without
-/// saved log positions.
-pub fn local(config: &AgentSensorsConfig) -> Local {
-    Local {
+/// saved log positions; an error for an unreadable `port_targets` entry.
+pub fn local(config: &AgentSensorsConfig) -> Result<Local, PortTargetsError> {
+    Ok(Local {
         script_dir: config.script_dir.clone(),
         script_args: config.script_args == ScriptArgs::Any,
         log_dirs: config.log_dirs.clone(),
         log_positions: None,
         event_channels: config.event_channels.clone(),
-    }
+        port_targets: config
+            .port_targets
+            .as_deref()
+            .map(PortTargets::parse)
+            .transpose()?,
+    })
 }
 
 impl SensorFactory for Builtin {
@@ -266,6 +275,23 @@ impl Sensor for Watched {
     }
 }
 
+/// `factory.build`, with a panic turned into an invalid spec: the specs
+/// come from the server, and one that trips a bug must not take down the
+/// sensors task and every other sensor with it.
+pub fn guarded_build(
+    factory: &dyn SensorFactory,
+    kind: &str,
+    config: &sensors::SensorConfig,
+) -> Result<Arc<dyn Sensor>, FactoryError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| factory.build(kind, config)))
+        .unwrap_or_else(|_| {
+            tracing::error!(sensor = %config.name, kind, "building the sensor panicked");
+            Err(FactoryError::Invalid(format!(
+                "building a `{kind}` sensor failed unexpectedly"
+            )))
+        })
+}
+
 /// A scheduler for the specs that can run, reporting permanent errors to
 /// `failures`, and why the others cannot.
 pub fn build(
@@ -284,8 +310,7 @@ pub fn build(
             .validate()
             .map_err(|e| (DownKind::Invalid, e.to_string()))
             .and_then(|()| {
-                factory
-                    .build(&spec.kind, &sensor_config)
+                guarded_build(factory, &spec.kind, &sensor_config)
                     .map_err(|e| (e.down_kind(), e.to_string()))
             })
             .and_then(|sensor| {
@@ -395,6 +420,7 @@ mod tests {
                 "fake" if config.params.contains_key("fail") => {
                     Err(FactoryError::Invalid("told to fail".into()))
                 }
+                "fake" if config.params.contains_key("panic") => panic!("told to panic"),
                 "fake" => Ok(Arc::new(FakeSensor::new())),
                 other => Err(FactoryError::UnknownKind(other.into())),
             }
@@ -456,6 +482,25 @@ mod tests {
         assert!(errors[4].message.contains("twice"), "{errors:?}");
     }
 
+    #[test]
+    fn a_panicking_build_is_reported_and_the_others_run() {
+        let mut panics = spec("fake", "panics", 10_000);
+        panics.params.insert("panic".into(), "1".into());
+        let config = SensorConfig {
+            plugins: Vec::new(),
+            plugin_set: None,
+            revision: 1,
+            sensors: vec![panics, spec("fake", "good", 10_000)],
+        };
+        let (failures, _) = mpsc::unbounded_channel();
+        let (scheduler, errors) = build(&config, &Fakes, SchedulerOptions::default(), &failures);
+        assert_eq!(scheduler.len(), 1);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].spec.name, "panics");
+        assert_eq!(errors[0].kind, DownKind::Invalid);
+        assert!(errors[0].message.contains("unexpectedly"), "{errors:?}");
+    }
+
     // The Linux kinds; Windows refuses them until it has its own.
     #[cfg(unix)]
     #[test]
@@ -476,7 +521,8 @@ mod tests {
                 ..AgentSensorsConfig::default()
             },
             scripts.path(),
-        );
+        )
+        .unwrap();
         let log = format!("{}/app.log", scripts.path().display());
         let required: [(&str, &[(&str, &str)]); 4] = [
             ("log", &[("path", &log), ("pattern", "error")]),
@@ -513,6 +559,27 @@ mod tests {
             matches!(&error, FactoryError::Invalid(m) if m.contains("per_cores")),
             "{error}"
         );
+    }
+
+    #[test]
+    fn port_targets_are_parsed_once_at_start_up() {
+        let mut config = AgentSensorsConfig::default();
+        assert_eq!(local(&config).unwrap().port_targets, None);
+        config.port_targets = Some(vec!["10.0.0.0/8:22".into()]);
+        let builtin = Builtin::new(local(&config).unwrap());
+        let mut port = sensors::SensorConfig::new("port", Duration::from_secs(60));
+        port.params.insert("host".into(), "10.0.0.5".into());
+        port.params.insert("port".into(), "22".into());
+        assert!(builtin.build("port", &port).is_ok());
+        port.params.insert("host".into(), "169.254.169.254".into());
+        let error = builtin.build("port", &port).err().unwrap();
+        assert!(
+            matches!(&error, FactoryError::Refused(m) if m.contains("sensors.port_targets")),
+            "{error}"
+        );
+        config.port_targets = Some(vec!["10.0.0.1/8".into()]);
+        let error = local(&config).unwrap_err().to_string();
+        assert!(error.contains("10.0.0.0/8"), "{error}");
     }
 
     #[test]

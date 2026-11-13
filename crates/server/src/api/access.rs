@@ -151,9 +151,31 @@ impl Access {
         }
         Scope::Only(customers.into_iter().collect())
     }
+
+    /// Only the grants whose role is `role` or above.
+    fn at_least(&self, role: Role) -> Self {
+        Self {
+            grants: self
+                .grants
+                .iter()
+                .filter(|(r, _)| *r >= role)
+                .cloned()
+                .collect(),
+        }
+    }
 }
 
 impl CurrentUser {
+    /// The same user with only their administrator grants: what a display
+    /// link of their own "Only me" dashboard reads as (ADR-0099), so the
+    /// screen shows what they administer, not all they can read.
+    pub(super) fn administering(&self) -> Self {
+        let mut narrowed = self.clone();
+        narrowed.roles.retain(|g| g.role >= Role::Administrator);
+        narrowed.access = self.access.at_least(Role::Administrator);
+        narrowed
+    }
+
     /// Every role includes read access to the sites it covers.
     pub fn can_read(&self) -> bool {
         !self.access.is_empty()
@@ -350,6 +372,25 @@ mod tests {
         assert!(user(&[(Role::Administrator, Some(C2), None)]).is_administrator());
         assert!(!user(&[(Role::Operator, None, None)]).is_administrator());
         assert!(!user(&[]).is_administrator());
+    }
+
+    #[test]
+    fn administering_keeps_only_administrator_grants() {
+        let user =
+            |grants: &[(Role, Option<Uuid>, Option<Uuid>)]| CurrentUser::for_tests(access(grants));
+        let technician = user(&[
+            (Role::Administrator, None, Some(site(1))),
+            (Role::Viewer, None, None),
+        ]);
+        assert_eq!(technician.readable_sites(), Scope::All);
+        let narrowed = technician.administering();
+        assert_eq!(narrowed.readable_sites(), only(&[site(1)]));
+        assert_eq!(narrowed.visible_customers(), only(&[]));
+        assert!(narrowed.can_read());
+        let global = user(&[(Role::Administrator, None, None)]).administering();
+        assert_eq!(global.readable_sites(), Scope::All);
+        let viewer = user(&[(Role::Viewer, Some(C1), None)]).administering();
+        assert!(!viewer.can_read());
     }
 
     #[test]

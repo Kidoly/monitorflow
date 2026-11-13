@@ -7,8 +7,10 @@
 //! A session runs for a connected agent, or without one to replay the
 //! records of an agent that left or of a previous run of the relay; such a
 //! session closes its upstream stream once the records are sent.
-//! [`Lanes`] keeps one session per agent: a new one stops the current one
-//! and waits for it, so two never touch the same records.
+//! [`Lanes`] keeps one session per lane, a stream's path with the peer that
+//! sent it ([`crate::buffer::lane_key`]): a new one stops the current one
+//! and waits for it, so two never touch the same records, and one sender
+//! never stops, or touches the records of, another sender's stream.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -98,9 +100,21 @@ impl Upstream {
 struct Lane {
     lock: Arc<tokio::sync::Mutex<()>>,
     cancel: watch::Sender<bool>,
+    /// URI of the origin of the lane's path, once known.
+    origin: String,
 }
 
-/// The session slot of each agent.
+impl Lane {
+    fn new() -> Self {
+        Self {
+            lock: Arc::default(),
+            cancel: watch::channel(false).0,
+            origin: String::new(),
+        }
+    }
+}
+
+/// The session slot of each lane.
 #[derive(Default)]
 pub(crate) struct Lanes(Mutex<HashMap<String, Lane>>);
 
@@ -109,34 +123,53 @@ pub(crate) type Held = (OwnedMutexGuard<()>, watch::Receiver<bool>);
 impl Lanes {
     /// Replaces the receiver the current holder watches with a new one,
     /// after telling the holder to stop.
-    fn claim(&self, agent_id: &str) -> (Arc<tokio::sync::Mutex<()>>, watch::Receiver<bool>) {
+    fn claim(
+        &self,
+        lane: &str,
+        origin: &str,
+    ) -> (Arc<tokio::sync::Mutex<()>>, watch::Receiver<bool>) {
         let mut lanes = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let lane = lanes.entry(agent_id.to_owned()).or_insert_with(|| Lane {
-            lock: Arc::default(),
-            cancel: watch::channel(false).0,
-        });
+        let slot = lanes.entry(lane.to_owned()).or_insert_with(Lane::new);
+        origin.clone_into(&mut slot.origin);
         let (cancel, cancelled) = watch::channel(false);
-        std::mem::replace(&mut lane.cancel, cancel).send_replace(true);
-        (lane.lock.clone(), cancelled)
+        std::mem::replace(&mut slot.cancel, cancel).send_replace(true);
+        (slot.lock.clone(), cancelled)
     }
 
-    /// Stops the agent's current session, if any, and waits for it.
-    pub async fn take(&self, agent_id: &str) -> Held {
-        let (lock, cancelled) = self.claim(agent_id);
+    /// Stops the lane's current session, if any, and waits for it.
+    /// `origin` is the URI of its path's origin.
+    pub async fn take(&self, lane: &str, origin: &str) -> Held {
+        let (lock, cancelled) = self.claim(lane, origin);
         (lock.lock_owned().await, cancelled)
     }
 
-    /// The agent's slot, only if no session holds it.
-    pub fn try_take(&self, agent_id: &str) -> Option<Held> {
+    /// The lane's slot, only if no session holds it.
+    pub fn try_take(&self, lane: &str) -> Option<Held> {
         let mut lanes = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let lane = lanes.entry(agent_id.to_owned()).or_insert_with(|| Lane {
-            lock: Arc::default(),
-            cancel: watch::channel(false).0,
-        });
-        let guard = lane.lock.clone().try_lock_owned().ok()?;
+        let slot = lanes.entry(lane.to_owned()).or_insert_with(Lane::new);
+        let guard = slot.lock.clone().try_lock_owned().ok()?;
         let (cancel, cancelled) = watch::channel(false);
-        lane.cancel = cancel;
+        slot.cancel = cancel;
         Some((guard, cancelled))
+    }
+
+    /// Records the origin of a lane taken with [`Self::try_take`].
+    pub fn set_origin(&self, lane: &str, origin: &str) {
+        let mut lanes = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(slot) = lanes.get_mut(lane) {
+            origin.clone_into(&mut slot.origin);
+        }
+    }
+
+    /// Whether a session of another lane with the same origin runs: an
+    /// agent that came by another path. Its older records wait for it to
+    /// leave, rather than open a second stream the server would trade
+    /// with the agent's live one.
+    pub fn origin_busy_elsewhere(&self, lane: &str, origin: &str) -> bool {
+        let lanes = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        lanes.iter().any(|(key, slot)| {
+            key != lane && slot.origin == origin && slot.lock.try_lock().is_err()
+        })
     }
 }
 
@@ -178,6 +211,8 @@ struct Counts {
 pub(crate) struct Session {
     pub forwarder: Forwarder,
     pub agent_id: String,
+    /// Key of the session's slot and records.
+    pub lane: String,
     pub hello: Envelope,
     /// The stream's path (ADR-0028), sent on every upstream stream opened
     /// for it, replays included.
@@ -199,13 +234,14 @@ impl Session {
         let buffer = self.forwarder.buffer().clone();
         let settings = self.forwarder.settings().clone();
         let id = self.agent_id.clone();
+        let lane = self.lane.clone();
         let mut backoff = settings.backoff.clone();
         let mut up_flag = self.forwarder.upstream_up();
         let (mut up_tx, mut up_ended) = match upstream {
             Some(up) => (Some(up.tx), Some(up.ended)),
             None => (None, None),
         };
-        let mut draining = up_tx.is_some() && buffer.has_pending(&id).await.unwrap_or(false);
+        let mut draining = up_tx.is_some() && buffer.has_pending(&lane).await.unwrap_or(false);
         let mut replay = VecDeque::new();
         let mut opening: Option<tokio::task::JoinHandle<Result<Upstream, Ended>>> = None;
         let mut counts = Counts::default();
@@ -276,10 +312,10 @@ impl Session {
                 Event::Room(false) => continue,
                 Event::Room(true) => {
                     if replay.is_empty() {
-                        if let Err(error) = buffer.commit(&id).await {
+                        if let Err(error) = buffer.commit(&lane).await {
                             tracing::error!(agent_id = %id, %error, "cannot delete sent buffer segments");
                         }
-                        match buffer.read(&id, settings.replay_batch).await {
+                        match buffer.read(&lane, settings.replay_batch).await {
                             Ok(batch) => replay.extend(batch),
                             Err(error) => {
                                 tracing::error!(agent_id = %id, %error, "cannot read the buffer; sending live data")
@@ -315,7 +351,7 @@ impl Session {
                     backoff.reset();
                     up_tx = Some(up.tx);
                     up_ended = Some(up.ended);
-                    draining = buffer.has_pending(&id).await.unwrap_or(false);
+                    draining = buffer.has_pending(&lane).await.unwrap_or(false);
                     continue;
                 }
                 Event::Opened(Err(ended)) => {
@@ -336,7 +372,7 @@ impl Session {
             up_tx = None;
             up_ended = None;
             replay.clear();
-            if let Err(error) = buffer.rewind(&id).await {
+            if let Err(error) = buffer.rewind(&lane).await {
                 tracing::error!(agent_id = %id, %error, "cannot rewind the buffer");
             }
             match ended {
@@ -369,12 +405,7 @@ impl Session {
     }
 
     async fn append(&self, envelope: &Envelope) -> bool {
-        match self
-            .forwarder
-            .buffer()
-            .append(&self.agent_id, envelope)
-            .await
-        {
+        match self.forwarder.buffer().append(&self.lane, envelope).await {
             Ok(kept) => kept,
             Err(error) => {
                 tracing::error!(agent_id = %self.agent_id, %error, "cannot buffer a batch; dropping it");
@@ -384,7 +415,7 @@ impl Session {
     }
 
     async fn discard(&self) {
-        match self.forwarder.buffer().discard(&self.agent_id).await {
+        match self.forwarder.buffer().discard(&self.lane).await {
             Ok(0) => {}
             Ok(records) => {
                 tracing::warn!(agent_id = %self.agent_id, records, "the upstream refuses the agent; its buffered batches are dropped");
@@ -487,17 +518,33 @@ mod tests {
     #[tokio::test]
     async fn a_new_session_stops_the_current_one_and_waits_for_it() {
         let lanes = Arc::new(Lanes::default());
-        let (guard, mut cancelled) = lanes.take("web-01").await;
+        let (guard, mut cancelled) = lanes.take("web-01", "agent/web-01").await;
         assert!(lanes.try_take("web-01").is_none());
         assert!(lanes.try_take("web-02").is_some());
         let next = tokio::spawn({
             let lanes = lanes.clone();
-            async move { lanes.take("web-01").await }
+            async move { lanes.take("web-01", "agent/web-01").await }
         });
         cancelled.wait_for(|c| *c).await.unwrap();
         assert!(!next.is_finished());
         drop(guard);
         let (_guard, cancelled) = next.await.unwrap();
         assert!(!*cancelled.borrow());
+    }
+
+    #[tokio::test]
+    async fn lanes_of_one_origin_see_each_other_but_never_stop_each_other() {
+        let lanes = Lanes::default();
+        let (direct, cancelled) = lanes.take("web-01", "agent/web-01").await;
+        // Another path of web-01 gets its own slot, and the direct session
+        // is not told to stop.
+        let relayed = lanes.try_take("path-b").expect("its own slot");
+        assert!(!*cancelled.borrow());
+        assert!(lanes.origin_busy_elsewhere("path-b", "agent/web-01"));
+        assert!(!lanes.origin_busy_elsewhere("web-01", "agent/web-01"));
+        assert!(!lanes.origin_busy_elsewhere("path-b", "agent/web-02"));
+        drop(direct);
+        assert!(!lanes.origin_busy_elsewhere("path-b", "agent/web-01"));
+        drop(relayed);
     }
 }

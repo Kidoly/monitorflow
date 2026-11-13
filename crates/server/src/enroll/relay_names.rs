@@ -20,7 +20,7 @@ const NAMES_LOCK: i64 = 0x6d66_726e; // "mfrn"
 pub enum NameError {
     #[error("`{0}` is not a DNS name or an IP address agents can reach")]
     Unusable(String),
-    #[error("`{0}` is the central server's address: a relay cannot have it")]
+    #[error("`{0}` is an address of the central server or of its metric and log stores: a relay cannot have it")]
     ServerName(String),
     #[error("`{0}` is already the address of a relay of another site")]
     Taken(String),

@@ -225,6 +225,17 @@ impl Harness {
     }
 }
 
+/// serial, role, peer, renewed_from, relay_path, relay_serial, expired.
+type CertRow = (
+    u8,
+    &'static str,
+    &'static str,
+    Option<u8>,
+    Option<Vec<&'static str>>,
+    Option<u8>,
+    bool,
+);
+
 fn live(id: &str, role: PeerRole, via_relay: Option<&str>) -> PeerInfo {
     let now = Utc::now();
     PeerInfo {
@@ -437,6 +448,107 @@ db_tests! {
             .await
             .unwrap();
         assert_eq!(actions, ["relay.revoke"]);
+    }
+
+    #[sqlx::test]
+    async fn revoking_a_relay_revokes_what_was_obtained_through_it(pool: PgPool) {
+        let h = Harness::new(&pool).await;
+        // (serial, role, peer, renewed_from, relay_path, relay_serial, expired)
+        let rows: [CertRow; 9] = [
+            // Renewed through relay-1, then directly from that one.
+            (0x30, "agent", "agent-1", Some(0x10), Some(vec!["relay-1"]), Some(0x20), false),
+            (0x31, "agent", "agent-1", Some(0x30), None, None, false),
+            // Expired: refused anyway, kept out of the CRL.
+            (0x32, "agent", "agent-1", Some(0x10), Some(vec!["relay-1"]), Some(0x20), true),
+            // A child relay renewed by relay-1, and an agent renewed through
+            // a connection presenting that certificate.
+            (0x40, "relay", "relay-2", Some(0x42), Some(vec!["relay-1"]), Some(0x20), false),
+            (0x41, "agent", "agent-2", None, Some(vec!["relay-2"]), Some(0x40), false),
+            // relay-2's own certificate, and what it obtained with it.
+            (0x42, "relay", "relay-2", None, None, None, false),
+            (0x43, "agent", "agent-3", None, Some(vec!["relay-2"]), Some(0x42), false),
+            // relay-1 further down a path, below another relay.
+            (0x50, "agent", "agent-4", None, Some(vec!["relay-0", "relay-1"]), Some(0x60), false),
+            // A previous certificate of relay-1 on the connection, from
+            // before relay paths were recorded in full.
+            (0x51, "agent", "agent-5", None, None, Some(0x21), false),
+        ];
+        for (serial, role, peer, from, path, relay, expired) in rows {
+            sqlx::query(
+                "INSERT INTO certificates (serial, peer_role, peer_id, not_before, not_after,
+                                           renewed_from, relay_path, relay_serial)
+                 VALUES ($1, $2, $3, now() - interval '9 days',
+                         now() + CASE WHEN $7 THEN interval '-1 day' ELSE interval '1 day' END,
+                         $4, $5, $6)",
+            )
+            .bind(vec![serial])
+            .bind(role)
+            .bind(peer)
+            .bind(from.map(|f| vec![f]))
+            .bind(path)
+            .bind(relay.map(|r| vec![r]))
+            .bind(expired)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let with = |id: &str, serial: u8| PeerInfo {
+            cert_serial: Some(Serial::from_bytes(&[serial])),
+            ..live(id, PeerRole::Agent, None)
+        };
+        let minted = h.registry.register(with("agent-1", 0x31), tx.clone()).unwrap();
+        let _kept = h.registry.register(with("agent-3", 0x43), tx).unwrap();
+        let cookie = h.login("root", Role::Administrator, GrantScope::Global).await;
+
+        let (status, body) = h.call(&format!("/api/relays/{}/revoke", h.relay), &cookie, json!({ "reason": "key_compromise" })).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let expected = ["30", "31", "41", "50", "51", "40"];
+        assert_eq!(body["serials"], json!(["20"].iter().chain(&expected).collect::<Vec<_>>()));
+        let through: Vec<(String, String)> = body["issued_through"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| (c["serial"].as_str().unwrap().into(), c["peer_id"].as_str().unwrap().into()))
+            .collect();
+        assert_eq!(through, [
+            ("30".into(), "agent-1".into()),
+            ("31".into(), "agent-1".into()),
+            ("41".into(), "agent-2".into()),
+            ("50".into(), "agent-4".into()),
+            ("51".into(), "agent-5".into()),
+            ("40".into(), "relay-2".into()),
+        ]);
+        assert_eq!(body["closed_streams"], 1);
+        assert_eq!(minted.close.await, Ok(CloseReason::Revoked));
+        assert!(h.registry.get(PeerRole::Agent, "agent-3").is_some());
+
+        let mut crl = h.revoked_in_crl();
+        crl.sort();
+        assert_eq!(crl, [[0x20], [0x30], [0x31], [0x40], [0x41], [0x50], [0x51]]);
+        let revoked: Vec<(Vec<u8>, String)> = sqlx::query_as(
+            "SELECT serial, revocation_reason FROM certificates
+             WHERE revoked_at IS NOT NULL AND revocation_reason <> 'superseded' ORDER BY serial",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(revoked.len(), 7, "{revoked:?}");
+        assert!(revoked.iter().all(|r| r.1 == "key_compromise"), "{revoked:?}");
+        for kept in [0x10, 0x32, 0x42, 0x43] {
+            assert!(!h.ca.is_revoked(&Serial::from_bytes(&[kept])), "{kept:x}");
+        }
+        let audit: Value = sqlx::query_scalar("SELECT details FROM audit_log WHERE action = 'relay.revoke'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(audit["issued_through"].as_array().unwrap().len(), 6);
+        // agent-1's enrollment certificate and relay-2's own line stay valid.
+        let valid: i64 = sqlx::query_scalar("SELECT count(*) FROM certificates WHERE revoked_at IS NULL AND not_after > now()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(valid, 3);
     }
 
     #[sqlx::test]

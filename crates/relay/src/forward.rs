@@ -34,7 +34,7 @@ use tokio_stream::Stream;
 use tonic::transport::Channel;
 use tonic::{Code, Request, Response, Status, Streaming};
 
-use crate::buffer::Buffer;
+use crate::buffer::{self, Buffer};
 use crate::session::{self, AgentSide, Down, Ended, Lanes, Session, Upstream};
 
 /// What agents get when the relay cannot reach its upstream. Details stay
@@ -158,12 +158,17 @@ impl Forwarder {
                 }
                 Err(ended)
             }
-            Ok(Ok(response)) => Ok(Upstream::start(
-                agent_id,
-                up_tx,
-                response.into_inner(),
-                down,
-            )),
+            Ok(Ok(response)) => {
+                if let Err(error) = self.buffer.confirm(&buffer::lane_key(via)).await {
+                    tracing::error!(%agent_id, %error, "cannot record that the upstream accepted the agent");
+                }
+                Ok(Upstream::start(
+                    agent_id,
+                    up_tx,
+                    response.into_inner(),
+                    down,
+                ))
+            }
         }
     }
 
@@ -190,26 +195,42 @@ impl Forwarder {
                     continue;
                 }
             };
-            for agent_id in pending {
-                let Some(held) = self.lanes.try_take(&agent_id) else {
+            for lane in pending {
+                let Some(held) = self.lanes.try_take(&lane) else {
                     continue;
                 };
-                let (hello, via) = match self.buffer.hello(&agent_id).await {
-                    Ok(Some((hello, via))) if names_origin(&hello, &via, &agent_id) => (hello, via),
+                let (hello, via) = match self.buffer.hello(&lane).await {
+                    Ok(Some((hello, via))) if files_under(&hello, &via, &lane) => (hello, via),
+                    Ok(Some((_, via))) if via.relays().next().is_some() => {
+                        // Written by a relay that filed every path under
+                        // its origin's ID: any relay below could have added
+                        // to them, so they are not replayed.
+                        tracing::warn!(lane = %lane, %via, "dropping batches buffered under a bare agent ID through relays by an earlier version");
+                        let _ = self.buffer.discard(&lane).await;
+                        continue;
+                    }
                     Ok(_) => {
-                        tracing::warn!(%agent_id, "buffered batches without a valid Hello and path; dropping them");
-                        let _ = self.buffer.discard(&agent_id).await;
+                        tracing::warn!(lane = %lane, "buffered batches without a valid Hello and path; dropping them");
+                        let _ = self.buffer.discard(&lane).await;
                         continue;
                     }
                     Err(error) => {
-                        tracing::error!(%agent_id, %error, "cannot read the stored Hello");
+                        tracing::error!(lane = %lane, %error, "cannot read the stored Hello");
                         continue;
                     }
                 };
+                let agent_id = via.origin_peer().id().to_owned();
+                let origin = via.origin_peer().uri();
+                self.lanes.set_origin(&lane, &origin);
+                if self.lanes.origin_busy_elsewhere(&lane, &origin) {
+                    tracing::debug!(%agent_id, %via, "replay waits: the agent is connected by another path");
+                    continue;
+                }
                 tracing::info!(%agent_id, %via, "replaying buffered batches");
                 let replay = Session {
                     forwarder: self.clone(),
                     agent_id,
+                    lane,
                     hello,
                     via,
                     held,
@@ -217,6 +238,19 @@ impl Forwarder {
                 };
                 tokio::spawn(replay.run(None, None, Instant::now()));
             }
+        }
+    }
+
+    /// Whether the upstream accepted `via` before: its lane has a stored
+    /// `Hello`, which is written for a relayed path only once accepted.
+    async fn accepted(&self, lane: &str, via: &Via) -> bool {
+        matches!(self.buffer.hello(lane).await, Ok(Some((_, stored))) if &stored == via)
+    }
+
+    async fn store_hello(&self, lane: &str, hello: &Envelope, via: &Via) {
+        if let Err(error) = self.buffer.set_hello(lane, hello, via).await {
+            let agent_id = via.origin_peer().id();
+            tracing::error!(%agent_id, %error, "cannot store the Hello; buffered batches cannot be replayed without the agent");
         }
     }
 
@@ -283,10 +317,12 @@ pub fn downstream_status(agent_id: &str, status: Status) -> Status {
     Status::new(status.code(), status.message())
 }
 
-/// A stored `Hello` and path are the agent's they are filed under.
-fn names_origin(envelope: &Envelope, via: &Via, agent_id: &str) -> bool {
-    via.origin_peer().id() == agent_id
-        && matches!(&envelope.payload, Some(Payload::Hello(hello)) if hello.agent_id == agent_id)
+/// A stored `Hello` and path belong to the lane they are filed under, and
+/// the `Hello` names the path's origin.
+fn files_under(envelope: &Envelope, via: &Via, lane: &str) -> bool {
+    let origin = via.origin_peer().id();
+    buffer::lane_key(via) == lane
+        && matches!(&envelope.payload, Some(Payload::Hello(hello)) if hello.agent_id == origin)
 }
 
 async fn first_envelope(
@@ -328,28 +364,47 @@ impl AgentService for Forwarder {
             tracing::warn!(%peer, %status, "stream refused");
         })?;
         let agent_id = via.origin_peer().id().to_owned();
-        // Waits for an older session of this agent to stop, so its records
-        // stay in order.
-        let held = self.lanes.take(&agent_id).await;
-        if let Err(error) = self.buffer.set_hello(&agent_id, &hello, &via).await {
-            tracing::error!(%agent_id, %error, "cannot store the Hello; buffered batches cannot be replayed without the agent");
+        // The lane of this path and this sender only: whatever origin a
+        // relay claims, it never stops, overwrites or adds to the stream
+        // of another sender. Waits for an older session of the same lane
+        // to stop, so its records stay in order.
+        let lane = buffer::lane_key(&via);
+        let held = self.lanes.take(&lane, &via.origin_peer().uri()).await;
+        // A path through a relay is that relay's claim until the upstream
+        // accepts it: its Hello, which makes it replayable, is stored only
+        // then, and nothing is buffered for it before.
+        let relayed = via.relays().next().is_some();
+        let accepted = !relayed || self.accepted(&lane, &via).await;
+        if accepted {
+            self.store_hello(&lane, &hello, &via).await;
         }
         let (down_tx, down_rx) = mpsc::channel(self.settings.queue.max(1));
         let mut retry_at = Instant::now();
         let upstream = if *self.upstream_up.borrow() {
             match self.open(&hello, &via, Some(down_tx.clone())).await {
-                Ok(upstream) => Some(upstream),
+                Ok(upstream) => {
+                    if !accepted {
+                        self.store_hello(&lane, &hello, &via).await;
+                    }
+                    Some(upstream)
+                }
                 Err(Ended::Status(status)) => {
                     if session::is_permanent(&status) {
-                        let _ = self.buffer.discard(&agent_id).await;
+                        let _ = self.buffer.discard(&lane).await;
                     }
                     return Err(status);
+                }
+                Err(Ended::Link) if !accepted => {
+                    return Err(Status::unavailable(UPSTREAM_UNAVAILABLE));
                 }
                 Err(Ended::Link) => {
                     retry_at += self.settings.backoff.clone().next_delay();
                     None
                 }
             }
+        } else if !accepted {
+            tracing::info!(%agent_id, %via, "stream refused: a path the upstream has not accepted yet, while it is down");
+            return Err(Status::unavailable(UPSTREAM_UNAVAILABLE));
         } else {
             None
         };
@@ -367,6 +422,7 @@ impl AgentService for Forwarder {
         let session = Session {
             forwarder: self.clone(),
             agent_id,
+            lane,
             hello,
             via,
             held,
