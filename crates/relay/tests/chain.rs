@@ -116,10 +116,15 @@ db_tests! {
 
         // The CRL b serves downstream is the server's.
         let channel = tls::connect(&b.url, b_id.tls.client_config().unwrap(), TIMEOUT).await.unwrap();
-        let served = RevocationServiceClient::new(channel).get_crl(GetCrlRequest {}).await.unwrap().into_inner();
+        let served = RevocationServiceClient::new(channel.clone()).get_crl(GetCrlRequest::default()).await.unwrap().into_inner();
         assert_eq!(served.crl_der, upstream.crl.subscribe().borrow()[0].to_vec());
+        // A relay of this version reads the list: each CRL travels once.
+        let request = GetCrlRequest { reads_crl_ders: true };
+        let served = RevocationServiceClient::new(channel).get_crl(request).await.unwrap().into_inner();
+        assert!(served.crl_der.is_empty());
+        assert_eq!(served.crl_ders, vec![upstream.crl.subscribe().borrow()[0].to_vec()]);
         let channel = tls::connect(&b.url, web01.tls.client_config().unwrap(), TIMEOUT).await.unwrap();
-        let status = RevocationServiceClient::new(channel).get_crl(GetCrlRequest {}).await.unwrap_err();
+        let status = RevocationServiceClient::new(channel).get_crl(GetCrlRequest::default()).await.unwrap_err();
         assert_eq!(status.code(), Code::PermissionDenied);
 
         // Hello accepted through both relays; the configuration comes down.

@@ -459,7 +459,7 @@ refill_agent_cache() {
     say "caching release $version on the server for its agents"
     download_release_files
     # Through tar, not `compose cp`: the server's image is read-only and its
-    # /tmp a tmpfs, which `cp` cannot write to (ADR-0110).
+    # /tmp a tmpfs, which `cp` cannot write to (ADR-0126).
     if ! { tar -C "$tmp/release" -cf - . \
         | compose exec -T server sh -c 'rm -rf /tmp/release && mkdir /tmp/release && tar -C /tmp/release -xf -' \
         && compose exec -T server monitorflow-server agent-release import --dir /tmp/release; } >"$tmp/import.log" 2>&1; then
@@ -645,7 +645,7 @@ write_joined_env() {
 }
 
 # Fills the volumes of an added central server from the join file. As root
-# with what the services drop (ADR-0110): into directories of their users,
+# with what the services drop (ADR-0126): into directories of their users,
 # keeping the owners of the files.
 copy_join_data() {
     as_root="--user 0 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER"

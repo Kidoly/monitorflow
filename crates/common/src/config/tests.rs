@@ -197,6 +197,16 @@ fn agent_sensor_limits_default_and_validate() {
     let vars = [("MONITORFLOW_SENSORS_EVENT_CHANNELS", "System, Setup")];
     let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
     assert_eq!(agent.sensors.event_channels, ["System", "Setup"]);
+    assert_eq!(agent.sensors.port_targets, None);
+    let text = format!("{AGENT_MIN}\n[sensors]\nport_targets = [\"10.0.0.0/8:22\"]\n");
+    assert_eq!(
+        parse::<AgentConfig>(&text).unwrap().sensors.port_targets,
+        Some(vec!["10.0.0.0/8:22".to_owned()])
+    );
+    let vars = [("MONITORFLOW_SENSORS_PORT_TARGETS", "127.0.0.1, db.lan:5432")];
+    let agent: AgentConfig = parse_with_env(AGENT_MIN, path(), &env(&vars)).unwrap();
+    let expected = ["127.0.0.1", "db.lan:5432"].map(String::from).to_vec();
+    assert_eq!(agent.sensors.port_targets, Some(expected));
     let msg = err::<AgentConfig>(&format!("{AGENT_MIN}\n[sensors]\nscripts = \"/x\""), &[]);
     assert!(msg.contains("scripts"), "{msg}");
 }
@@ -692,6 +702,28 @@ fn heartbeat_timeout_can_be_overridden() {
     let vars = env(&[("MONITORFLOW_HEARTBEAT_TIMEOUT", "45")]);
     let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
     assert_eq!(server.heartbeat_timeout, 45);
+}
+
+#[test]
+fn trusted_proxies_default_to_loopback_and_are_checked() {
+    let server: ServerConfig = parse(SERVER_MIN).unwrap();
+    assert_eq!(server.api_trusted_proxies, ["127.0.0.1", "::1"]);
+    let text = format!("{SERVER_MIN}\napi_trusted_proxies = [\"10.0.0.0/8\"]");
+    let server: ServerConfig = parse(&text).unwrap();
+    assert_eq!(server.api_trusted_proxies, ["10.0.0.0/8"]);
+    let vars = env(&[("MONITORFLOW_API_TRUSTED_PROXIES", "web, 127.0.0.1")]);
+    let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
+    assert_eq!(server.api_trusted_proxies, ["web", "127.0.0.1"]);
+    // Only separators: no proxy is trusted.
+    let vars = env(&[("MONITORFLOW_API_TRUSTED_PROXIES", ",")]);
+    let server: ServerConfig = parse_with_env(&text, path(), &vars).unwrap();
+    assert!(server.api_trusted_proxies.is_empty());
+
+    let msg = err::<ServerConfig>(
+        SERVER_MIN,
+        &[("MONITORFLOW_API_TRUSTED_PROXIES", "10.0.0.0/40")],
+    );
+    assert!(msg.contains("api_trusted_proxies"), "{msg}");
 }
 
 #[test]

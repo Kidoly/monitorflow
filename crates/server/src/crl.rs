@@ -12,7 +12,7 @@
 
 use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use monitorflow_common::tls::{Identity, TlsError};
 use rustls::pki_types::CertificateRevocationListDer;
@@ -115,12 +115,18 @@ impl CrlPublisher {
         self.ca.is_revoked(serial)
     }
 
-    /// Revokes `serial` in the CA, then publishes a CRL listing it: new
-    /// connections with that certificate fail from then on. Recording the
-    /// revocation in the database and the audit log is the caller's job.
-    pub async fn revoke(&self, serial: Serial, reason: RevocationReason) -> Result<(), CrlError> {
+    /// Revokes `serial`, a certificate that expires at `not_after`, in the
+    /// CA, then publishes a CRL listing it: new connections with that
+    /// certificate fail from then on. Recording the revocation in the
+    /// database and the audit log is the caller's job.
+    pub async fn revoke(
+        &self,
+        serial: Serial,
+        reason: RevocationReason,
+        not_after: SystemTime,
+    ) -> Result<(), CrlError> {
         let ca = self.ca.clone();
-        tokio::task::spawn_blocking(move || ca.revoke(&serial, reason)).await??;
+        tokio::task::spawn_blocking(move || ca.revoke(&serial, reason, not_after)).await??;
         self.refresh().await
     }
 
@@ -207,9 +213,13 @@ mod tests {
             .unwrap();
         let new = ca.issue(&csr(), &agent, None, &[]).unwrap();
 
-        for serial in [&old.serial, &new.serial] {
+        for cert in [&old, &new] {
             publisher
-                .revoke(serial.clone(), RevocationReason::KeyCompromise)
+                .revoke(
+                    cert.serial.clone(),
+                    RevocationReason::KeyCompromise,
+                    cert.not_after,
+                )
                 .await
                 .unwrap();
         }

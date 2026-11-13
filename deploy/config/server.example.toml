@@ -21,6 +21,13 @@
 # front of it and keep it on loopback (ADR-0006).
 # api_listen_addr = "127.0.0.1:7444"
 
+# Reverse proxies whose X-Forwarded-For gives the client's address, which
+# sign-in and screen limits count by (ADR-0110): IP addresses, CIDR networks
+# or host names. Any other peer counts as its own address. The compose files
+# set the web service, `web`. On loopback, other local users can claim any
+# address too; trust nothing ([]) if they must not.
+# api_trusted_proxies = ["127.0.0.1", "::1"]
+
 # Send the session cookie with the Secure attribute. Only disable for local
 # development over plain HTTP.
 # api_cookie_secure = true

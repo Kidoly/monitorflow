@@ -13,7 +13,7 @@ COPY web/ ./
 RUN npm run build
 
 FROM caddy:2.11.8
-# The user the compose file runs Caddy as (ADR-0110), which owns what Caddy
+# The user the compose file runs Caddy as (ADR-0126), which owns what Caddy
 # and web-start.sh write: a new data volume starts with these owners.
 RUN addgroup -S -g 10002 monitorflow-web \
     && adduser -S -D -H -u 10002 -G monitorflow-web -h /data monitorflow-web \

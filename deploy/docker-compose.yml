@@ -14,7 +14,7 @@ x-web-build: &web-build
   context: ..
   dockerfile: deploy/docker/web.Dockerfile
 
-# Every service (ADR-0110): no process gains privileges through setuid
+# Every service (ADR-0126): no process gains privileges through setuid
 # binaries, and no Linux capability unless the service adds it back with a
 # comment saying why.
 x-hardening: &hardening
@@ -58,7 +58,7 @@ services:
       - storagetls:/var/lib/monitorflow/storage-tls
 
   postgres:
-    # By digest (ADR-0110): the release signature covers this file, so it
+    # By digest (ADR-0126): the release signature covers this file, so it
     # covers the image too. Dependabot updates both parts together.
     image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
     <<: *hardening
@@ -178,6 +178,9 @@ services:
       <<: *storage-tls
       # Reached by the web service only: the port is not published (ADR-0006).
       MONITORFLOW_API_LISTEN_ADDR: 0.0.0.0:7444
+      # Only the web service's X-Forwarded-For gives the client's address;
+      # the host reaching the API directly counts as itself (ADR-0110).
+      MONITORFLOW_API_TRUSTED_PROXIES: web
       MONITORFLOW_SERVER_NAMES: ${SERVER_NAMES:?set SERVER_NAMES in .env}
       # Where the setup link points (ADR-0071).
       MONITORFLOW_WEB_URL: https://${DOMAIN:?set DOMAIN in .env}:${HTTPS_PORT:-443}
@@ -233,7 +236,7 @@ services:
     restart: unless-stopped
 
   # One-shot, before every start of web: gives Caddy's data to the user
-  # web runs as. It was root's before ADR-0110.
+  # web runs as. It was root's before ADR-0126.
   web-data:
     build: *web-build
     image: ${WEB_IMAGE:-monitorflow-web:local}
@@ -248,7 +251,7 @@ services:
     volumes: ["caddydata:/data"]
 
   # Caddy as its own user, on ports 80 and 443 of the container's network
-  # namespace, which the sysctl opens to it (ADR-0110). The user is set
+  # namespace, which the sysctl opens to it (ADR-0126). The user is set
   # here, not in the image: an update recreates web from the image of the
   # release before the compose file of that release is in place.
   web:
@@ -291,7 +294,7 @@ services:
     image: ${MIRROR_IMAGE:-monitorflow-mirror:local}
     # Not read-only: dnf, run by another user than root, keeps its metadata
     # cache in /var/tmp whatever cachedir says, and a tmpfs there would
-    # hold it in memory (ADR-0110).
+    # hold it in memory (ADR-0126).
     <<: *hardening
     volumes: ["mirrors:/var/lib/monitorflow/server/mirrors"]
     networks: [mirror]

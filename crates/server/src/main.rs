@@ -407,6 +407,8 @@ async fn main() -> anyhow::Result<()> {
         )
         | None => {}
     }
+    // Honour-based by design (ADR-0100, "Not DRM"): a server started
+    // without the flag runs as a first server and is not counted.
     if config.additional_instance {
         admit_additional(&pool).await?;
     }

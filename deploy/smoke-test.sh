@@ -72,7 +72,7 @@ not_published() {
 }
 
 # Every container of the stack drops all capabilities and setuid gains,
-# and only the root ones add capabilities back (ADR-0110).
+# and only the root ones add capabilities back (ADR-0126).
 hardened() {
     local id
     for id in $(compose ps -aq); do

@@ -1,4 +1,4 @@
-# ADR-0110: Containers without capabilities, third-party images by digest
+# ADR-0126: Containers without capabilities, third-party images by digest
 
 Date: 2026-11-12
 Status: accepted; amends ADR-0051, ADR-0056, ADR-0068 and ADR-0100

@@ -660,18 +660,25 @@ db_tests! {
 
         // A relay of the same ID is revoked on a: another peer (ADR-0105),
         // so b lists its certificate and leaves the agent connected.
+        // An expired one revoked with it stays out: the CA forgets
+        // revocations of expired certificates (ADR-0113).
         let relay = Serial::from_bytes(&[0x42; 8]);
+        let expired = Serial::from_bytes(&[0x43; 8]);
         sqlx::query(
             "INSERT INTO certificates (serial, peer_role, peer_id, not_before, not_after,
                                        revoked_at, revocation_reason)
              VALUES ($1, 'relay', 'web-01', now() - interval '1 minute', now() + interval '1 day',
+                     now(), 'key_compromise'),
+                    ($2, 'relay', 'web-01', now() - interval '8 days', now() - interval '1 day',
                      now(), 'key_compromise')",
         )
         .bind(relay.as_bytes())
+        .bind(expired.as_bytes())
         .execute(&pool)
         .await
         .unwrap();
         eventually("b lists the relay's certificate", || async { b.crl.is_revoked(&relay) }).await;
+        assert!(!b.crl.is_revoked(&expired));
         agent.no_command(Duration::from_millis(200)).await;
         assert!(b.registry.get(PeerRole::Agent, "web-01").is_some());
 
@@ -684,7 +691,7 @@ db_tests! {
         .execute(&pool)
         .await
         .unwrap();
-        a.crl.revoke(serial.clone(), RevocationReason::KeyCompromise).await.unwrap();
+        a.crl.revoke(serial.clone(), RevocationReason::KeyCompromise, std::time::SystemTime::now() + std::time::Duration::from_secs(86_400)).await.unwrap();
 
         let status = agent.closed().await.expect("b closes the stream");
         assert_eq!(status.code(), tonic::Code::PermissionDenied);

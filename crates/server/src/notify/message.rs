@@ -73,6 +73,21 @@ pub(super) fn str_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
+/// `text` with each control character written as its escape, like `\n`:
+/// values from agents and users go into the email body and the event text,
+/// where a newline would let them write lines of their own.
+fn escaped(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// A number without trailing zeros, at most two decimals.
 fn number(value: f64) -> String {
     let text = format!("{value:.2}");
@@ -239,6 +254,12 @@ fn path(event: &Event) -> String {
 
 /// The event in one line, without what a silence adds.
 pub fn event_text(event: &Event) -> String {
+    // The templates hold no control characters, so escaping the whole line
+    // escapes every value written into it.
+    escaped(&raw_event_text(event))
+}
+
+fn raw_event_text(event: &Event) -> String {
     let d = &event.details;
     match event.event.as_str() {
         "test" => "Test notification from MonitorFlow: this channel works.".to_owned(),
@@ -291,11 +312,12 @@ pub(super) fn email_body(
     details: &Value,
     web_url: &str,
 ) -> String {
+    let (text, url) = (escaped(text), escaped(url));
     let mut body = format!("{text}\n\n{url}\n");
     if !lines.is_empty() {
         body.push('\n');
         for line in lines {
-            body.push_str(&format!("- {line}\n"));
+            body.push_str(&format!("- {}\n", escaped(line)));
         }
     }
     let facts = [
@@ -308,12 +330,13 @@ pub(super) fn email_body(
         body.push('\n');
         for (label, value) in facts {
             if let Some(value) = value {
-                body.push_str(&format!("{label}: {value}\n"));
+                body.push_str(&format!("{label}: {}\n", escaped(value)));
             }
         }
     }
     body.push_str(&format!(
-        "\n-- \nSent by MonitorFlow. Notification settings: {web_url}{SETTINGS_PATH}\n"
+        "\n-- \nSent by MonitorFlow. Notification settings: {}{SETTINGS_PATH}\n",
+        escaped(web_url)
     ));
     body
 }
@@ -360,10 +383,13 @@ pub fn render(event: &Event, web_url: &str) -> Message {
 /// a second button of a chat card.
 pub fn with_acknowledge(mut message: Message, url: &str) -> Message {
     message.payload["acknowledge_url"] = url.into();
-    let link = format!("{}\n", message.url);
+    let link = format!("{}\n", escaped(&message.url));
     message.body = message.body.replacen(
         &link,
-        &format!("{link}\nAcknowledge, to say you are on it: {url}\n"),
+        &format!(
+            "{link}\nAcknowledge, to say you are on it: {}\n",
+            escaped(url)
+        ),
         1,
     );
     message
@@ -677,5 +703,54 @@ mod tests {
         assert!(message.text.contains("this channel works"));
         assert_eq!(message.payload["event"], "test");
         assert_eq!(message.url, "https://mf.example/admin/notifications/");
+    }
+
+    #[test]
+    fn control_characters_are_escaped() {
+        assert_eq!(escaped("web-01"), "web-01");
+        assert_eq!(escaped("café サーバー"), "café サーバー");
+        assert_eq!(escaped("a\nb\r\tc\u{0}\u{1b}"), "a\\nb\\r\\tc\\u{0}\\u{1b}");
+    }
+
+    #[test]
+    fn a_hostname_cannot_add_lines_to_an_email() {
+        let evil = "web-01\nApprove here: https://evil.example\n";
+        let details = json!({
+            "customer": { "name": "acme\r\nBcc: x" },
+            "site": { "name": "paris\u{1b}[2J" },
+            "server": { "id": Uuid::nil(), "name": evil },
+            "relay": { "name": "relay\n1" },
+            "incident": incident("monitorflow_cpu_usage_percent", "critical", Some(97.0))["incident"],
+        });
+        for kind in ["incident.opened", "approval.waiting", "ai_commands.changed"] {
+            let message = render(&event(kind, details.clone()), WEB);
+            assert!(
+                !message.text.contains(['\n', '\r', '\u{1b}']),
+                "{}",
+                message.text
+            );
+            assert!(
+                message.text.contains("web-01\\nApprove"),
+                "{}",
+                message.text
+            );
+            for line in message.body.lines() {
+                assert!(!line.starts_with("Approve"), "{}", message.body);
+                assert!(!line.starts_with("Bcc"), "{}", message.body);
+            }
+            assert!(message
+                .body
+                .contains("Server: web-01\\nApprove here: https://evil.example\\n\n"));
+            assert!(message.body.contains("Customer: acme\\r\\nBcc: x\n"));
+            assert!(message.body.contains("Site: paris\\u{1b}[2J\n"));
+            assert!(message.body.contains("Relay: relay\\n1\n"));
+            assert!(!message.body.contains('\u{1b}'));
+        }
+        let lines = vec!["one\ntwo".to_owned()];
+        let body = email_body("a\nb", "https://mf.example/x\n", &lines, &json!({}), WEB);
+        assert!(
+            body.starts_with("a\\nb\n\nhttps://mf.example/x\\n\n\n- one\\ntwo\n"),
+            "{body}"
+        );
     }
 }

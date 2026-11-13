@@ -117,6 +117,25 @@ fn params_are_checked() {
         check(&[("path", r"C:\Logs\console.log"), ("pattern", "x")]),
         None
     );
+    // Segments of 4 bytes whose 4th byte is inside a character are checked
+    // for device names without panicking (security audit part 4).
+    for multibyte in [
+        r"C:\Logs\abé",
+        r"C:\abé.log",
+        r"C:\Logs\é1\x.log",
+        r"C:\Logs\€x\x.log",
+        r"C:\Logs\comé",
+        r"C:\Logs\日志.log",
+    ] {
+        assert_eq!(
+            check(&[("path", multibyte), ("pattern", "x")]),
+            None,
+            "{multibyte}"
+        );
+    }
+    for device in [r"C:\Logs\LPT9", r"C:\Logs\Com3.txt"] {
+        assert!(!windows_path(device), "{device}");
+    }
     let long = format!("/var/log/{}", "x".repeat(validate::MAX_VALUE_LEN));
     assert!(check(&[("path", &long), ("pattern", "x")]).is_some());
     assert!(check(&[path, ("pattern", "(")])
