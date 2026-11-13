@@ -59,6 +59,7 @@ impl Harness {
                 server_names: vec!["mf.example".into()],
                 grpc_port: 7443,
                 enroll_port: 7445,
+                store_names: vec!["victoriametrics".into(), "victorialogs".into()],
             })
         } else {
             state
@@ -320,6 +321,8 @@ db_tests! {
             (json!(["localhost"]), StatusCode::BAD_REQUEST),
             // The server's own name, and the name of another site's relay.
             (json!(["MF.example"]), StatusCode::CONFLICT),
+            // A store's host: the server sends its password there.
+            (json!(["VictoriaMetrics"]), StatusCode::CONFLICT),
             (json!(["relay1.example", "theirs.example"]), StatusCode::CONFLICT),
         ] {
             let (got, body, _) = confirm(names.clone()).await;
@@ -637,6 +640,8 @@ db_tests! {
             // The name of their relay, and the server's own.
             token("relay", "relay-9", &["relay.globex.example"]),
             token("relay", "relay-9", &["mf.example"]),
+            // A store's host.
+            token("relay", "relay-9", &["victorialogs"]),
         ] {
             let (status, body, _) = h.call("POST", "/api/tokens", Some(&cookie), Some(request.clone())).await;
             assert_eq!(status, StatusCode::CONFLICT, "{request}: {body}");

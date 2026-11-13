@@ -364,9 +364,17 @@ impl Installer for UpdateServiceInstaller {
                 staged.display()
             ))
         })?;
-        // The service reads what to install from the signed command.
+        // The service reads what to install from the signed command, and
+        // where from its own configuration; the data directory is only
+        // for an older service.
         let request = Request::signed(command, Step::SelfUpdate, Some(&self.data_dir));
-        match self.service.call(&request).await {
+        let reply = self.service.call(&request).await;
+        // The service read the files into memory before it answered, and
+        // never removes them itself (ADR-0053).
+        if let Err(error) = tokio::fs::remove_dir_all(&staged).await {
+            tracing::warn!(%error, path = %staged.display(), "cannot remove the staged release");
+        }
+        match reply {
             Ok(Reply::SelfUpdate(done)) if done.restarting => {
                 Ok(Installed::Restarting(done.message + "\n"))
             }

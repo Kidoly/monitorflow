@@ -26,6 +26,7 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Watches | The disk, port or service a sensor measures | instance | `instance` |
 | Every 30 s, every 1 h | How often a check runs: "Checked every 5 min". The built-in checks run at their site's interval | interval, frequency, polling rate, scrape interval (on screen) | `interval_ms`, `check_interval_ms` |
 | Log folders | The folders whose files a server's log checks may read, set by its administrator in `agent.toml`: `/var/log` on Linux by default, none on Windows | log directories, allowlist | `sensors.log_dirs` |
+| Port targets | The addresses, address ranges and host names, with ports, that a server's port checks may connect to, set by its administrator in `agent.toml`. Anywhere by default | port allowlist, scan scope | `sensors.port_targets` |
 | Disk busy | Share of the time a disk had work in flight, per disk (`sda`, `vg0-root`, `PhysicalDrive0`) | utilisation, util, I/O % | `diskio_busy_ratio` |
 | Disk wait | Average time a disk took to answer one read or write, waiting in its queue included | latency, await | `diskio_wait_seconds` |
 | Disk activity | The check that reports how busy and how slow each disk is | disk I/O, diskio (on screen) | `diskio` |

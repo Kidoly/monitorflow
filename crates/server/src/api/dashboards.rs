@@ -473,7 +473,7 @@ async fn visible_row(
 }
 
 /// The sites, customers and servers the panels name.
-fn named(spec: &Spec) -> (Vec<Uuid>, Vec<Uuid>, Vec<Uuid>) {
+pub(super) fn named(spec: &Spec) -> (Vec<Uuid>, Vec<Uuid>, Vec<Uuid>) {
     let (mut sites, mut customers, mut servers) = (Vec::new(), Vec::new(), Vec::new());
     for panel in &spec.panels {
         match &panel.servers {

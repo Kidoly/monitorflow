@@ -31,8 +31,8 @@ pub const MAX_BINARY: u64 = 512 * 1024 * 1024;
 const MAX_SMALL: u64 = 64 * 1024;
 
 /// What a self-update installs, as the update service read it from the
-/// signed `self_update` command (ADR-0108); only `data_dir` is the
-/// agent's to say.
+/// signed `self_update` command (ADR-0108), and `data_dir` from its own
+/// copy of `agent.toml`, which the agent's account cannot write.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -51,9 +51,7 @@ impl Request {
         if !crate::commands::journal::valid_id(&self.command_id) {
             return Err("invalid command ID".into());
         }
-        if !self.data_dir.is_absolute() {
-            return Err("the data directory must be an absolute path".into());
-        }
+        local_absolute(&self.data_dir).map_err(|e| format!("the data directory {e}"))?;
         let max = u64::from(super::MAX_HEALTH_TIMEOUT_S) * 1000;
         if self.health_timeout_ms > max {
             return Err(format!("the health timeout is at most {max} ms"));
@@ -69,6 +67,37 @@ impl Request {
 
 pub fn staged_dir(data_dir: &Path) -> PathBuf {
     data_dir.join(AGENT_DIR).join(STAGED_DIR)
+}
+
+/// Refuses a path LocalSystem should not open: relative, with `..`, or a
+/// network or device path (`\\host\share`, `\\?\`, `\\.\`), which would
+/// make it authenticate to another host or reach a raw device. On Windows
+/// only a drive path, `C:\…`, passes.
+pub fn local_absolute(path: &Path) -> Result<(), String> {
+    let text = path.to_string_lossy();
+    let sep = |c: char| c == '\\' || c == '/';
+    let mut chars = text.chars();
+    if chars.next().is_some_and(sep) && chars.next().is_some_and(sep) {
+        return Err("must not be a network or device path".into());
+    }
+    if text.split(sep).any(|part| part == "..") {
+        return Err("must not contain `..`".into());
+    }
+    let absolute = if cfg!(windows) {
+        windows_drive_absolute(&text)
+    } else {
+        path.is_absolute()
+    };
+    if !absolute {
+        return Err("must be an absolute local path".into());
+    }
+    Ok(())
+}
+
+/// `X:\` or `X:/` and more, nothing else.
+fn windows_drive_absolute(text: &str) -> bool {
+    let b = text.as_bytes();
+    b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'\\' | b'/')
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -113,6 +142,11 @@ impl Paths {
 
     pub fn status(&self) -> PathBuf {
         self.state_dir.join(STATUS_FILE)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        local_absolute(&self.exe).map_err(|e| format!("the executable {e}"))?;
+        local_absolute(&self.state_dir).map_err(|e| format!("the state directory {e}"))
     }
 }
 
@@ -184,9 +218,38 @@ pub enum Swapped {
     Current(Version),
 }
 
+/// Opens a staged file, in a directory the agent's account writes, for
+/// reading: a final symlink or junction is opened as itself and refused,
+/// not followed. On Windows the open also asks for identification-level
+/// impersonation, so a named pipe the agent's account put in its place
+/// cannot act as LocalSystem; what is read is checked against the
+/// release's signature anyway.
+fn open_staged(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_OPEN_REPARSE_POINT; SECURITY_IDENTIFICATION, to which
+        // std adds SECURITY_SQOS_PRESENT.
+        options.custom_flags(0x0020_0000);
+        options.security_qos_flags(0x0001_0000);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("not a regular file"));
+    }
+    Ok(file)
+}
+
 fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, SwapError> {
     use std::io::Read;
-    let file = fs::File::open(path).map_err(io_error(path))?;
+    let file = open_staged(path).map_err(io_error(path))?;
     let mut bytes = Vec::new();
     file.take(limit + 1)
         .read_to_end(&mut bytes)
@@ -207,9 +270,12 @@ pub fn install(
     platform: Platform,
 ) -> Result<Swapped, SwapError> {
     request.validate().map_err(SwapError::Input)?;
+    paths.validate().map_err(SwapError::Input)?;
     let staged = request.staged();
-    // Read once: what is checked is what is installed, whatever the
-    // agent's user does to the files meanwhile.
+    // Read once into the service's memory: what is checked is what is
+    // installed, whatever the agent's user does to the files meanwhile.
+    // Nothing is written or removed there as LocalSystem: the agent
+    // removes its staged files itself.
     let sums = read_limited(&staged.join(SUMS), MAX_SMALL)?;
     let signature = read_limited(&staged.join(SIGNATURE), MAX_SMALL)?;
     let version_file = read_limited(&staged.join(VERSION_FILE), MAX_SMALL)?;
@@ -260,7 +326,6 @@ pub fn install(
     }
     .write(&paths.status())
     .map_err(io_error(paths.status()))?;
-    let _ = fs::remove_dir_all(&staged);
     Ok(Swapped::Restarting {
         from: current.clone(),
         to: verified.version,
