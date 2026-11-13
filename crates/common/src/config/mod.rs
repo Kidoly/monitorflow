@@ -572,6 +572,8 @@ impl Default for AgentPackagesConfig {
 pub struct AgentSensorsConfig {
     /// Directory of the scripts the `script` sensor may run.
     pub script_dir: PathBuf,
+    /// Whether the server may pass arguments to those scripts (ADR-0112).
+    pub script_args: ScriptArgs,
     /// Directories the `log` sensor may read files under; empty disables
     /// it.
     pub log_dirs: Vec<PathBuf>,
@@ -589,6 +591,7 @@ impl Default for AgentSensorsConfig {
     fn default() -> Self {
         Self {
             script_dir: "/etc/monitorflow/scripts.d".into(),
+            script_args: ScriptArgs::default(),
             log_dirs: vec!["/var/log".into()],
             event_channels: vec!["Application".into(), "System".into()],
             port_targets: None,
@@ -604,9 +607,37 @@ impl Default for AgentSensorsConfig {
     fn default() -> Self {
         Self {
             script_dir: windows_base_dir().join("scripts.d"),
+            script_args: ScriptArgs::default(),
             log_dirs: Vec::new(),
             event_channels: vec!["Application".into(), "System".into()],
             port_targets: None,
+        }
+    }
+}
+
+/// Whether server-configured `script` sensors may pass arguments
+/// (ADR-0112). Arguments steer what a script does, and some packaged
+/// plugins run them as a command, so the host's administrator opts in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScriptArgs {
+    /// A sensor with `args` is refused.
+    #[default]
+    None,
+    /// Any plain-word arguments, as checked by the sensor.
+    Any,
+}
+
+impl FromStr for ScriptArgs {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "none" => Ok(Self::None),
+            "any" => Ok(Self::Any),
+            _ => Err(format!(
+                "unknown script arguments policy `{s}`, expected none or any"
+            )),
         }
     }
 }
@@ -678,6 +709,7 @@ impl LoadConfig for AgentConfig {
         env.set_opt("enrollment_token", &mut self.enrollment_token)?;
         env.set("heartbeat_interval", &mut self.heartbeat_interval)?;
         env.set("sensors.script_dir", &mut self.sensors.script_dir)?;
+        env.set("sensors.script_args", &mut self.sensors.script_args)?;
         env.set(
             "packages.report_interval",
             &mut self.packages.report_interval,

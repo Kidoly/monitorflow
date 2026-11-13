@@ -225,6 +225,11 @@ check "data dir monitorflow 0700" mode_is /var/lib/monitorflow/agent "monitorflo
 check "agent.toml root:monitorflow 0640" mode_is /etc/monitorflow/agent.toml "root:monitorflow 640"
 check "sudoers root 0440" mode_is /etc/sudoers.d/monitorflow-agent "root:root 440"
 check "CA pin root 0644" mode_is /etc/monitorflow/agent-ca.pin "root:root 644"
+check "runtime dir monitorflow 0700" mode_is /run/monitorflow-agent "monitorflow:monitorflow 700"
+# The root-only SMBIOS UUID, copied for the agent alone (ADR-0093).
+if sudo test -e /sys/class/dmi/id/product_uuid; then
+    check "UUID copy monitorflow:root 0400" mode_is /run/monitorflow-agent/product_uuid "monitorflow:root 400"
+fi
 # The service's user asking the root helper itself, with what the helper
 # read before ADR-0108 and no command the server signed: refused, and
 # nothing replaced.

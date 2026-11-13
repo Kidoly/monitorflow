@@ -4,7 +4,8 @@
 //! notification channel (ADR-0078): others do not exist for them. The
 //! signing secret is made here and returned once, at creation, when it
 //! is renewed and when the URL changes. Private addresses need a global
-//! administrator.
+//! administrator. A URL's path and query often hold a token, so views show
+//! only its origin and an edit without a URL keeps it (ADR-0123).
 
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
@@ -35,7 +36,9 @@ const PAGE_SIZE: i64 = 50;
 pub struct EndpointView {
     pub id: Uuid,
     pub name: String,
-    pub url: String,
+    /// The URL's scheme, host and port: its path and query may hold a
+    /// token (ADR-0123).
+    pub origin: String,
     pub events: Vec<String>,
     /// The customer it covers, or the customer of the site it covers;
     /// `null` for everything.
@@ -69,6 +72,8 @@ pub struct EndpointList {
 #[serde(deny_unknown_fields)]
 pub struct EndpointRequest {
     pub name: String,
+    /// On `PUT`, absent or empty keeps the stored one.
+    #[serde(default)]
     pub url: String,
     /// Absent, `null` or empty: every event.
     #[serde(default)]
@@ -172,7 +177,10 @@ pub struct DeliveryList {
     pub next_before: Option<i64>,
 }
 
-const VIEW: &str = "SELECT n.id, n.name, n.url, n.events,
+/// The URL is normalized and has no user or password, so its origin is
+/// everything before the first `/`, `?` or `#` after `://`.
+const VIEW: &str = "SELECT n.id, n.name,
+        substring(n.url from '^[a-z]+://[^/?#]+') AS origin, n.events,
         coalesce(n.customer_id, s.customer_id) AS customer_id, c.name AS customer_name,
         n.site_id, s.name AS site_name, n.allow_private, n.state, n.created_at,
         n.failing_since, n.last_success_at,
@@ -205,8 +213,9 @@ struct Valid {
 
 /// Checks a request `user` may make; `current` is the endpoint it edits.
 /// Whether `user` manages what it asks to cover comes first, without a
-/// lookup, as for channels. Only a global administrator allows private
-/// addresses; anyone else keeps the current choice only for the same URL.
+/// lookup, as for channels. An edit without a URL keeps the stored one.
+/// Only a global administrator allows private addresses; anyone else keeps
+/// the current choice only for the same URL.
 async fn validate(
     db: impl PgExecutor<'_>,
     user: &CurrentUser,
@@ -224,7 +233,10 @@ async fn validate(
             "Enter a name of at most {MAX_NAME} characters, like the tool it sends to."
         )));
     }
-    let url = normalize_url(&request.url).map_err(ApiError::Invalid)?;
+    let url = match current {
+        Some(current) if request.url.trim().is_empty() => current.url.clone(),
+        _ => normalize_url(&request.url).map_err(ApiError::Invalid)?,
+    };
     let events = normalize_events(request.events).map_err(ApiError::Invalid)?;
     let allow_private = if is_global_admin(user) {
         request.allow_private

@@ -58,10 +58,12 @@ fn default_port() -> u16 {
 }
 
 /// Where a webhook channel posts; the signing secret is in
-/// [`Channel::secret`].
+/// [`Channel::secret`]. Views show only the URL's origin (ADR-0123).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Webhook {
+    /// Empty in an edit: keep the stored one.
+    #[serde(default)]
     pub url: String,
 }
 
@@ -243,6 +245,9 @@ fn normalize_email(email: Email) -> Result<Email, String> {
 
 fn normalize_webhook(webhook: Webhook) -> Result<Webhook, String> {
     let url = webhook.url.trim();
+    if url.is_empty() {
+        return Err("Enter the URL to post to.".into());
+    }
     let parsed = reqwest::Url::parse(url)
         .map_err(|_| format!("`{url}` is not a URL; it starts with https://."))?;
     if !matches!(parsed.scheme(), "https" | "http") || parsed.host_str().is_none() {

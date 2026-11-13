@@ -208,6 +208,18 @@ The first request points the server at the mirrors, `current` snapshot by defaul
 
 Behind a relay with mirroring enabled (`[mirror] enabled = true`), set `mirror.public_url` in the relay's configuration to the URL the servers of its site reach the relay's `mirror_listen_addr` at, for example `http://relay.example.net:7480`. The relay reports it to the server with the snapshots it holds, and `GET /api/relays/{id}` shows it as `mirror_url`. Sources then point at the relay when it holds every snapshot requested (for `current`, any snapshot of the mirror), and at `mirror_public_url` otherwise[^0037]. The choice is made when the command is queued: if the relay later drops the snapshot or stops mirroring, send the sources again.
 
+## Script checks
+
+The "A script reports OK" check runs only scripts an administrator installed in the agent's scripts folder, `/etc/monitorflow/scripts.d` (`script_dir` under `[sensors]` in `agent.toml`), owned by root and not writable by others:
+
+```sh
+install -o root -g root -m 0755 check_backup /etc/monitorflow/scripts.d/
+```
+
+A packaged Nagios plugin can be linked in one by one, like `ln -s /usr/lib/nagios/plugins/check_disk /etc/monitorflow/scripts.d/`; never point `script_dir` at the whole plugin folder. The agent never runs `negate`, `urlize` or `check_by_ssh`, which run whatever command they are given[^0112].
+
+Arguments set through the API are refused unless the server allows them: add `script_args = "any"` under `[sensors]` and restart the agent. Agents updated from an earlier version stop running checks with arguments until then; the check shows as refused by this agent, with that setting in the reason. Allow arguments only if every script in the folder treats them as untrusted.
+
 ## Windows
 
 The Windows agent is the same binary built for `x86_64-pc-windows-msvc`[^0047]. CI uploads it as the `monitorflow-agent-windows-x86_64` artifact, and its MSI package as `monitorflow-agent-windows-x86_64-msi`. It runs as the service `MonitorFlowAgent` under its virtual account `NT SERVICE\MonitorFlowAgent`, which has no administrator rights.
@@ -360,3 +372,4 @@ Each command runs in Windows PowerShell 5.1 from the system directory, as `NT SE
 [^0098]: [ADR-0098: AI commands turned on and off from the web interface](adr/0098-ai-commands-from-the-web-interface.md)
 [^0108]: [ADR-0108: Root helpers verify signed commands](adr/0108-root-helpers-verify-signed-commands.md)
 [^0111]: [ADR-0111: Agent-side limit on where port checks connect](adr/0111-port-check-targets.md)
+[^0112]: [ADR-0112: Script arguments need the host's consent](adr/0112-script-arguments-policy.md)
