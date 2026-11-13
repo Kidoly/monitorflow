@@ -340,12 +340,12 @@ pub async fn reject(
     take(&mut tx, &peer_id).await?;
     let reason = RevocationReason::Unspecified;
     let serials = revoke_certificates(&mut tx, PeerRole::Agent, &peer_id, reason).await?;
-    let shown: Vec<String> = serials.iter().map(ToString::to_string).collect();
+    let shown: Vec<String> = serials.iter().map(|(s, _)| s.to_string()).collect();
     let details = json!({ "site_id": site_id, "serials": shown });
     record(&mut tx, &user, "pending_host.reject", &peer_id, details).await?;
     // In the CA before the commit, as for revocation (ADR-0029).
-    for serial in serials {
-        crl.revoke(serial, reason)
+    for (serial, not_after) in serials {
+        crl.revoke(serial, reason, not_after)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
     }

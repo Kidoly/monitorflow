@@ -146,7 +146,8 @@ pub struct EventView {
 pub struct GroupView {
     /// `group` of `GET /api/incidents` lists them.
     pub id: Uuid,
-    /// How many incidents it told, this one included.
+    /// How many incidents it told that the user may read, this one
+    /// included. Members on sites outside the user's scope are not counted.
     pub incidents: i32,
     pub created_at: DateTime<Utc>,
 }
@@ -305,12 +306,23 @@ pub async fn detail(
     .bind(id)
     .fetch_all(&state.pool)
     .await?;
+    // A group mixes the sites of one customer: count only the members the
+    // user may read, as `GET /api/incidents?group=` lists them.
+    let (all_sites, sites) = user.readable_sites().bind();
     let notification_groups = sqlx::query_as(
-        "SELECT id, cardinality(incident_ids) AS incidents, created_at
-         FROM notification_groups WHERE incident_ids @> ARRAY[$1]
-         ORDER BY created_at, id",
+        "SELECT g.id, g.created_at,
+                (SELECT count(*)::int4
+                 FROM unnest(g.incident_ids) AS m(id)
+                 JOIN incidents i ON i.id = m.id
+                 LEFT JOIN servers s ON s.id = i.server_id
+                 LEFT JOIN relays r ON r.id = i.relay_id
+                 WHERE $2 OR COALESCE(s.site_id, r.site_id) = ANY($3)) AS incidents
+         FROM notification_groups g WHERE g.incident_ids @> ARRAY[$1]
+         ORDER BY g.created_at, g.id",
     )
     .bind(id)
+    .bind(all_sites)
+    .bind(&sites)
     .fetch_all(&state.pool)
     .await?;
     let acknowledged_via =

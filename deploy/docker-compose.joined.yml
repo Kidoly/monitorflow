@@ -23,6 +23,7 @@ services:
       # Starts only with a place under the Enterprise license.
       MONITORFLOW_ADDITIONAL_INSTANCE: "true"
       MONITORFLOW_API_LISTEN_ADDR: 0.0.0.0:7444
+      MONITORFLOW_API_TRUSTED_PROXIES: web
       MONITORFLOW_SERVER_NAMES: ${SERVER_NAMES:?set SERVER_NAMES in .env}
       MONITORFLOW_WEB_URL: https://${DOMAIN:?set DOMAIN in .env}:${HTTPS_PORT:-443}
       MONITORFLOW_LOG_FORMAT: json

@@ -248,3 +248,41 @@ async fn the_stores_follow_a_change_of_certificate_authority() {
     assert!(matches!(err, WriteError::Retryable(_)), "{err:?}");
     assert_eq!(store.requests().len(), 4);
 }
+
+#[tokio::test]
+async fn refuses_a_relay_certificate_for_the_stores_name() {
+    use monitorflow_common::tls::{PeerIdentity, PeerRole};
+
+    let dir = TempDir::new().unwrap();
+    let ca = Arc::new(open_ca(&dir, "ca"));
+    let tls = dir.path().join("tls");
+    storage_tls::ensure(&ca, &tls, &names()).unwrap();
+    // What a customer administrator could get for a relay named after the
+    // store: the same CA, serverAuth, the store's name.
+    let key = rcgen::KeyPair::generate().unwrap();
+    let csr = rcgen::CertificateParams::default()
+        .serialize_request(&key)
+        .unwrap()
+        .pem()
+        .unwrap();
+    let relay = PeerIdentity::new(PeerRole::Relay, "relay-9").unwrap();
+    let issued = ca.issue(&csr, &relay, None, &names()).unwrap();
+    std::fs::write(tls.join(CERT_FILE), &issued.cert_pem).unwrap();
+    std::fs::write(tls.join(KEY_FILE), key.serialize_pem()).unwrap();
+    let store = Store::start(tls.clone()).await;
+
+    // The one-off check's client and the running server's.
+    let fixed = StorageAuth::load(ca.ca_cert_pem(), &tls).unwrap();
+    let live = StorageAuth::load(ca.ca_cert_pem(), &tls)
+        .unwrap()
+        .following(ca.clone());
+    for auth in [&fixed, &live] {
+        let err = sink(&store.url, auth).write(&series()).await.unwrap_err();
+        assert!(matches!(err, WriteError::Retryable(_)), "{err:?}");
+        let query = VmQuery::with_auth(&store.url, Duration::from_secs(5), Some(auth)).unwrap();
+        let err = query.get_raw("/api/v1/query", &[]).await.unwrap_err();
+        assert!(matches!(err, QueryError::Unavailable(_)), "{err:?}");
+    }
+    // The password never left.
+    assert!(store.requests().is_empty());
+}

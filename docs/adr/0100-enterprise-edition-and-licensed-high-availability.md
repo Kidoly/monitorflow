@@ -1,7 +1,7 @@
 # ADR-0100: Enterprise edition and licensed high availability
 
 Date: 2026-11-07
-Status: accepted; the join file carries the server's database role, not the owner's, since ADR-0109
+Status: accepted; the join file carries the server's database role, not the owner's, since ADR-0109; the count of central servers stated as honour-based (2026-11-12, see "Not DRM")
 
 ## Context
 
@@ -98,6 +98,13 @@ Without a valid license both refuse before sharing or installing anything: "Addi
 ### Not DRM
 
 The fence is the license of the Enterprise code plus a license key, not technical protection. The code is public; anyone can find the check and remove it, or build without the feature. Doing so in production breaches the Enterprise license, as using any commercial software without paying does. We do not obfuscate, call home, watermark, count servers behind the customer's back, or degrade anything that runs. Customers pay for a supported feature from the people who make it; the key states what they bought and lets the product say plainly when it is not covered.
+
+The count of central servers is honour-based too, and the code says so rather than pretend otherwise. Two things it trusts, by design:
+
+- **The flag.** Only a server started with `MONITORFLOW_ADDITIONAL_INSTANCE`, which `install-server.sh --join` sets, asks for a place. One started without it runs as a first server and is never counted, as anyone starting a second instance by hand from AGPL code may (above).
+- **The host's name.** Places are recorded by the name of the host (`HOSTNAME`, or the kernel's). Several servers under one name take one place.
+
+Enforcing the count in the database (a persistent identity per instance, live instances counted at every start) was considered after the security audit of November 2026 and refused: the check would still be one line to delete in public code, the AGPL build could not run it, and it would let a first server refuse to start after a restore or a move while the old host is still up, which breaks the rule that the first central server always runs. Running more central servers than the license allows breaches the Enterprise license, whichever way it is done; `SECURITY.md` lists it as out of scope.
 
 ## Consequences
 

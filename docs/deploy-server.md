@@ -223,6 +223,7 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 ## Limits
 
 - VictoriaMetrics and VictoriaLogs are reached over TLS with a certificate of the built-in CA, and a password[^0087], on an internal Docker network that is never published[^0051]. PostgreSQL is reached over TLS, by a role that cannot change the schema or rewrite the audit log[^0109]; its owner role is accepted only from the Docker networks of the database container.
+- The API listens in plain HTTP on the `front` network, reached by the web service only; its `X-Forwarded-For` is believed from that service alone, so a local user who reaches the API directly is counted as their own address by the sign-in limits[^0110].
 - The server image trusts the release keys of `deploy/release-keys.pem` at build time; imports of releases signed with another key are refused.
 - Whoever has root on the machine, the Docker socket or `deploy/.env` has the database owner's rights and can rewrite the audit log. The server's database role only bounds what the server process and its SQL can do.
 
@@ -237,4 +238,5 @@ Every other server setting has a `MONITORFLOW_*` variable (see `deploy/config/se
 [^0071]: [ADR-0071: First-run setup in the browser](adr/0071-first-run-setup.md)
 [^0088]: [ADR-0088: Changing the certificate authority](adr/0088-changing-the-certificate-authority.md)
 [^0109]: [ADR-0109: The server runs on a database role that owns nothing](adr/0109-database-roles.md)
+[^0110]: [ADR-0110: Trusted proxies for the client's address](adr/0110-trusted-proxies.md)
 [^0129]: [ADR-0129: A host backup directory belongs to root alone](adr/0129-private-host-backup-dir.md)

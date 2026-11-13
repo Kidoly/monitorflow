@@ -207,7 +207,8 @@ fn validity_can_be_overridden_within_the_ca_lifetime() {
         unix(issued.not_after) - unix(issued.not_before),
         86400 + 300
     );
-    for bad in [Duration::ZERO, 3651 * DAY] {
+    // Over MAX_CERT_VALIDITY: revocations would be forgotten too early.
+    for bad in [Duration::ZERO, 91 * DAY, 3651 * DAY] {
         let err = ca.issue(&csr, &agent, Some(bad), &[]).unwrap_err();
         assert!(matches!(err, CaError::InvalidRequest(_)), "{err}");
     }
@@ -325,10 +326,18 @@ fn revocations_appear_in_signed_crls_and_persist() {
         .issue(&csr, &identity(PeerRole::Agent, "a1"), None, &[])
         .unwrap();
     assert!(!ca.is_revoked(&issued.serial));
-    ca.revoke(&issued.serial, RevocationReason::KeyCompromise)
-        .unwrap();
-    ca.revoke(&issued.serial, RevocationReason::Superseded)
-        .unwrap();
+    ca.revoke(
+        &issued.serial,
+        RevocationReason::KeyCompromise,
+        issued.not_after,
+    )
+    .unwrap();
+    ca.revoke(
+        &issued.serial,
+        RevocationReason::Superseded,
+        issued.not_after,
+    )
+    .unwrap();
     assert!(ca.is_revoked(&issued.serial));
     let (number, serials, _, _) = parse_crl(&ca.crl().unwrap());
     assert_eq!(number, 2);
@@ -346,6 +355,77 @@ fn revocations_appear_in_signed_crls_and_persist() {
     assert_eq!(number, 3);
     assert_eq!(serials.len(), 1);
     assert_eq!(next_update - this_update, 3600);
+}
+
+/// The CA in `dir` with `revocations.json` as given.
+fn with_revocations(dir: &Path, json: serde_json::Value) -> CertificateAuthority {
+    open(dir);
+    std::fs::write(dir.join(REVOCATIONS_FILE), json.to_string()).unwrap();
+    open(dir)
+}
+
+#[test]
+fn revocations_of_expired_certificates_leave_the_crl_and_the_file() {
+    let dir = TempDir::new().unwrap();
+    let ca_dir = dir.path().join("ca");
+    let now = OffsetDateTime::now_utc().unix_timestamp();
+    let ca = with_revocations(
+        &ca_dir,
+        serde_json::json!({
+            "crl_number": 7,
+            "revoked": [
+                // Expired more than a margin ago: forgotten.
+                { "serial": "0a", "revoked_at": now - 3 * 86400, "reason": "key_compromise",
+                  "not_after": now - 86400 - 60 },
+                // Expired within the margin: still listed.
+                { "serial": "0b", "revoked_at": now - 3 * 86400, "reason": "key_compromise",
+                  "not_after": now - 3600 },
+                // Recorded before ADR-0113: kept for the longest validity
+                // and the margin.
+                { "serial": "0c", "revoked_at": now - 91 * 86400 - 60, "reason": "superseded" },
+                { "serial": "0d", "revoked_at": now - 89 * 86400, "reason": "superseded" },
+            ],
+        }),
+    );
+    let serial = |hex: &str| Serial::from_str(hex).unwrap();
+    let (number, listed, _, _) = parse_crl(&ca.crl().unwrap());
+    assert_eq!(number, 8);
+    assert_eq!(listed, vec![serial("0b"), serial("0d")]);
+    assert!(!ca.is_revoked(&serial("0a")) && !ca.is_revoked(&serial("0c")));
+
+    let stored = revocation::load(&ca_dir.join(REVOCATIONS_FILE)).unwrap();
+    let kept: Vec<_> = stored.revoked.iter().map(|r| r.serial.clone()).collect();
+    assert_eq!(kept, vec![serial("0b"), serial("0d")]);
+    assert_eq!(stored.revoked[1].not_after, None);
+}
+
+#[test]
+fn a_revocation_records_when_the_certificate_expires() {
+    let dir = TempDir::new().unwrap();
+    let options = CaOptions {
+        revocation_margin: Duration::ZERO,
+        ..CaOptions::default()
+    };
+    let ca = CertificateAuthority::open_or_create(&dir.path().join("ca"), options).unwrap();
+    let (_, csr) = csr();
+    let agent = identity(PeerRole::Agent, "a1");
+    let issued = ca.issue(&csr, &agent, None, &[]).unwrap();
+    ca.revoke(
+        &issued.serial,
+        RevocationReason::KeyCompromise,
+        issued.not_after,
+    )
+    .unwrap();
+    let stored = revocation::load(&dir.path().join("ca").join(REVOCATIONS_FILE)).unwrap();
+    assert_eq!(stored.revoked[0].not_after, Some(unix(issued.not_after)));
+    assert_eq!(parse_crl(&ca.crl().unwrap()).1, vec![issued.serial.clone()]);
+
+    // Revoked after it expired: refused anyway, so not listed.
+    let expired = SystemTime::now() - Duration::from_secs(60);
+    let other = Serial::from_bytes(&[0x2a]);
+    ca.revoke(&other, RevocationReason::KeyCompromise, expired)
+        .unwrap();
+    assert_eq!(parse_crl(&ca.crl().unwrap()).1, vec![issued.serial]);
 }
 
 #[test]
@@ -421,8 +501,12 @@ async fn assert_revocation_is_enforced(dir: &Path, ca: &CertificateAuthority) {
     let config = server.server_config(vec![ca.crl().unwrap()]).unwrap();
     handshake(config, agent.clone()).await.unwrap();
 
-    ca.revoke(&agent_cert.serial, RevocationReason::KeyCompromise)
-        .unwrap();
+    ca.revoke(
+        &agent_cert.serial,
+        RevocationReason::KeyCompromise,
+        agent_cert.not_after,
+    )
+    .unwrap();
     let config = server.server_config(vec![ca.crl().unwrap()]).unwrap();
     let err = handshake(config, agent).await.unwrap_err();
     assert!(err.contains("Revoked"), "{err}");
@@ -523,7 +607,12 @@ fn v0_2_0_ca() -> (TempDir, CertificateAuthority) {
     fs::write(ca_dir.join(KEY_FILE), V0_2_0_CA_KEY).unwrap();
     fs::set_permissions(ca_dir.join(KEY_FILE), fs::Permissions::from_mode(0o600)).unwrap();
     fs::write(ca_dir.join(CERT_FILE), V0_2_0_CA_CERT).unwrap();
-    let ca = open(&ca_dir);
+    // v0.2.0 issued for any validity; this fixture uses 90 years.
+    let options = CaOptions {
+        max_cert_validity: V0_2_0_VALIDITY,
+        ..CaOptions::default()
+    };
+    let ca = CertificateAuthority::open_or_create(&ca_dir, options).unwrap();
     (dir, ca)
 }
 
