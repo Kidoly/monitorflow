@@ -48,6 +48,15 @@ upstream_url = "https://relay.example.com:7443"
 #   install -o root -g root -m 0755 check_backup /etc/monitorflow/scripts.d/
 # script_dir = "/etc/monitorflow/scripts.d"
 
+# Whether a server configuration may pass arguments to those scripts: "none"
+# refuses a script sensor with arguments, "any" passes them (plain words,
+# at most 8). Arguments steer what a script does, and some packaged Nagios
+# plugins run them as a command, so allow them only if every script in
+# script_dir treats them as untrusted. Link plugins in one by one; never
+# point script_dir at /usr/lib/nagios/plugins. negate, urlize and
+# check_by_ssh are never run, whatever this says (ADR-0112).
+# script_args = "none"
+
 # Directories the `log` sensor may read files under. A server configuration
 # names a file; it is read only if it resolves, symlinks included, under one
 # of these. Only match counts go upstream, but a pattern still reveals
