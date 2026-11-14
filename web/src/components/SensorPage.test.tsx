@@ -105,7 +105,10 @@ describe("SensorPage", () => {
     expect(configuration).toHaveTextContent(/Kind\s*disk\s*Watches\s*\/var\s*How often\s*every 30 s\s*Timeout\s*10 s/);
     expect(configuration).toHaveTextContent(/Warning\s*> 80%\s*Critical\s*> 90%\s*Duration\s*5 min/);
     expect(configuration).toHaveTextContent(/Recovery margin\s*2% below the threshold before resolving/);
-    expect(configuration).toHaveTextContent(/Set by\s*This server · thresholds from the site/);
+    expect(configuration).toHaveTextContent(/Applies from\s*This server/);
+    expect(configuration).toHaveTextContent(/Set by\s*How often: This server · thresholds: Site default/);
+    // Viewers see the configuration, not the way to change it.
+    expect(within(configuration).queryByRole("combobox")).not.toBeInTheDocument();
     expect(configuration).toHaveTextContent(/Configuration\s*Out of date/);
 
     const incidents = screen.getByRole("region", { name: "Incidents on this sensor" });
@@ -170,34 +173,95 @@ describe("SensorPage", () => {
     expect(rangeCalls(fetchMock).every((c) => c.instance === "sda")).toBe(true);
   });
 
-  it("lets operators change how often an hourly check runs, and says what it does to the alert", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+  describe("editing the configuration", () => {
+    const operator = me({ role: "operator", customer_id: null, site_id: "site-1" });
+    const editable = { ...server, site_id: "site-1", customer_id: "c1", revoked_at: null };
     const hourly = { ...config.sensors[0]!, origin: "site" as const, entry_id: "s1", interval_ms: 3_600_000, timeout_ms: null };
-    const fetchMock = stub({
-      [`GET /api/servers/${ID}`]: { status: 200, body: { ...server, site_id: "site-1", customer_id: "c1", revoked_at: null } },
-      [`GET /api/servers/${ID}/sensors`]: { status: 200, body: { ...config, sensors: [hourly] } },
-      [`GET /api/servers/${ID}/sensor_configs`]: { status: 200, body: { entries: [] } },
-      "GET /api/sites/site-1/sensors": { status: 200, body: { site_id: "site-1", check_interval_ms: 60_000, check_interval_origin: "default", sensors: [hourly] } },
-      [`POST /api/servers/${ID}/sensor_configs`]: { status: 201, body: {} },
-    });
-    render(
-      <As user={me({ role: "operator", customer_id: null, site_id: "site-1" })}>
-        <SensorPage id={ID} sensor="disk_used_ratio" instance="/var" />
-      </As>,
-    );
-    const often = await screen.findByRole("combobox", { name: "How often to check Disk used /var" });
-    expect(often).toHaveDisplayValue("every 1 h (site default)");
-    const configuration = screen.getByRole("region", { name: "Configuration" });
-    expect(configuration).toHaveTextContent(/Timeout\s*automatic, 1 min/);
-    expect(configuration).toHaveTextContent("Checked every 1 h, so this alert opens up to 2 h after the problem starts.");
-    expect(screen.getByText(/checked every 1 h · hover/)).toBeInTheDocument();
-    // One point an hour, each step summarizing the hour.
-    expect(rangeCalls(fetchMock)[0]).toMatchObject({ step: "3600", rollup: "max" });
 
-    await user.selectOptions(often, "every 5 min");
-    await vi.waitFor(() => {
-      const call = fetchMock.mock.calls.find(([input, init]) => init?.method === "POST" && String(input) === `/api/servers/${ID}/sensor_configs`);
-      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ kind: "disk", name: "disk", instance: "", interval_ms: 300_000, params: {}, enabled: true });
+    function edit(overrides: Record<string, unknown> = {}, page = { sensor: "disk_used_ratio", instance: "/var" }) {
+      const fetchMock = stub({
+        [`GET /api/servers/${ID}`]: { status: 200, body: editable },
+        [`GET /api/servers/${ID}/sensors`]: { status: 200, body: { ...config, sensors: [hourly] } },
+        [`GET /api/servers/${ID}/sensor_configs`]: { status: 200, body: { entries: [] } },
+        "GET /api/sites/site-1/sensors": { status: 200, body: { site_id: "site-1", check_interval_ms: 60_000, check_interval_origin: "default", sensors: [hourly] } },
+        [`POST /api/servers/${ID}/sensor_configs`]: { status: 201, body: {} },
+        [`GET /api/servers/${ID}/thresholds`]: { status: 200, body: { entries: [] } },
+        [`POST /api/servers/${ID}/thresholds`]: { status: 201, body: {} },
+        "GET /api/sites/site-1/thresholds": { status: 200, body: { entries: [{ id: "t1", metric: "monitorflow_disk_used_ratio", instance: null }] } },
+        "PUT /api/thresholds/t1": { status: 200, body: {} },
+        ...overrides,
+      });
+      render(
+        <As user={operator}>
+          <SensorPage id={ID} sensor={page.sensor} instance={page.instance} />
+        </As>,
+      );
+      return fetchMock;
+    }
+
+    const sent = (fetchMock: ReturnType<typeof stubFetch>, method: string, path: string) => {
+      const call = fetchMock.mock.calls.find(([input, init]) => init?.method === method && String(input) === path);
+      return call && JSON.parse(String(call[1]?.body));
+    };
+
+    it("says what a slow check does to the alert, and changes how often it runs for this server", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      const fetchMock = edit();
+      const configuration = await screen.findByRole("region", { name: "Configuration" });
+      const often = await within(configuration).findByRole("combobox", { name: "How often to check" });
+      expect(often).toHaveDisplayValue("every 1 h (site default)");
+      expect(configuration).toHaveTextContent(/Timeout\s*automatic, 1 min/);
+      expect(configuration).toHaveTextContent("Checked every 1 h, so this alert opens up to 2 h after the problem starts.");
+      expect(screen.getByText(/checked every 1 h · hover/)).toBeInTheDocument();
+      // One point an hour, each step summarizing the hour.
+      expect(rangeCalls(fetchMock)[0]).toMatchObject({ step: "3600", rollup: "max" });
+
+      await user.selectOptions(often, "every 5 min");
+      await vi.waitFor(() =>
+        expect(sent(fetchMock, "POST", `/api/servers/${ID}/sensor_configs`)).toEqual({
+          kind: "disk",
+          name: "disk",
+          instance: "",
+          interval_ms: 300_000,
+          params: {},
+          enabled: true,
+        }),
+      );
+    });
+
+    it("resets this sensor's own threshold to the inherited one", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      const own = { ...thresholds.thresholds[0]!, origin: "server", threshold_id: "t2", instance: "/var", warning: 0.6 };
+      const fetchMock = edit({
+        [`GET /api/servers/${ID}/thresholds/effective`]: { status: 200, body: { ...thresholds, thresholds: [own] } },
+        "DELETE /api/thresholds/t2": { status: 204 },
+      });
+      const configuration = await screen.findByRole("region", { name: "Configuration" });
+      await within(configuration).findByRole("button", { name: "Reset to inherited" });
+      expect(configuration).toHaveTextContent(/Applies from\s*This sensor/);
+      await user.click(within(configuration).getByRole("button", { name: "Reset to inherited" }));
+      await vi.waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith("/api/thresholds/t2", expect.objectContaining({ method: "DELETE" })),
+      );
+    });
+
+    it("words a pass or fail check as when it fails", async () => {
+      const port = { origin: "server", entry_id: "p1", kind: "port", name: "port_443", instance: "", interval_ms: 60_000, timeout_ms: null, params: { port: "443" } };
+      const rule = { origin: "server", threshold_id: "t3", metric: "monitorflow_port_443_up", instance: null, enabled: true, comparison: "<", warning: null, critical: 1, duration_s: 60, hysteresis: 0 };
+      setUrl(`/servers/sensor/?id=${ID}&sensor=port_443_up`);
+      edit(
+        {
+          [`GET /api/servers/${ID}/sensors`]: { status: 200, body: { ...config, sensors: [port] } },
+          [`GET /api/servers/${ID}/thresholds/effective`]: { status: 200, body: { ...thresholds, thresholds: [rule] } },
+          "GET /api/sites/site-1/sensors": { status: 200, body: { site_id: "site-1", check_interval_ms: 60_000, check_interval_origin: "default", sensors: [] } },
+        },
+        { sensor: "port_443_up", instance: "" },
+      );
+      const configuration = await screen.findByRole("region", { name: "Configuration" });
+      await within(configuration).findByRole("combobox", { name: "How often to check" });
+      expect(configuration).toHaveTextContent(/Alert\s*Critical when it fails\s*Duration\s*1 min/);
+      // A check added on this server has nothing to go back to.
+      expect(within(configuration).queryByRole("button", { name: "Reset to inherited" })).not.toBeInTheDocument();
     });
   });
 

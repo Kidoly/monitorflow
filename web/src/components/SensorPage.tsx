@@ -6,7 +6,6 @@ import { useCallback, useEffect } from "react";
 
 import {
   ApiError,
-  type EffectiveSensor,
   type EffectiveSensors,
   type EffectiveThreshold,
   type Incident,
@@ -18,11 +17,10 @@ import {
   isUnauthorized,
   isAbortError,
 } from "@/lib/api";
-import { saveCheckInterval } from "@/lib/alerts";
 import { RANGES, type Range, chartWindow, metricsError, seriesCsv } from "@/lib/charts";
 import { diskIoCharts } from "@/lib/diskio";
 import { formatSeconds, unitOf } from "@/lib/format";
-import { defaultTimeoutMs, every, slowAlertNote } from "@/lib/intervals";
+import { every } from "@/lib/intervals";
 import { modifiesSite, useMe } from "@/lib/me";
 import { DEFAULT_INTERVAL_S, METRIC_PREFIX } from "@/lib/metrics";
 import { incidentHref, serverHref } from "@/lib/routes";
@@ -33,20 +31,18 @@ import { usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
 import { UUID } from "@/lib/uuid";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { cx } from "@/components/ui/cx";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { type Column, DataTable } from "@/components/ui/DataTable";
-import { FactsBox } from "@/components/ui/FactsBox";
 import { Page } from "@/components/ui/Page";
 import { Banner, ErrorState, LoadingBlock, NotFound, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
-import { Label, StatusLabel } from "@/components/ui/StatusLabel";
+import { StatusLabel } from "@/components/ui/StatusLabel";
 import { StatTiles } from "@/components/ui/StatTiles";
 import { TableBox } from "@/components/ui/TableBox";
 import { TimeChart } from "@/components/ui/TimeChart";
 import { formatClock, formatDay, formatDuration } from "@/components/ui/time";
 import type { Tone } from "@/components/ui/tone";
 
-import { IntervalControl } from "./IntervalSelect";
+import { SensorConfiguration } from "./SensorConfiguration";
 import styles from "./DetailPages.module.css";
 
 /** A metric name without the prefix, as in `?sensor=disk_used_ratio`. */
@@ -210,7 +206,7 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
     );
   }
 
-  const { server, config, thresholds, incidents, chart } = data;
+  const { server, thresholds, incidents, chart } = data;
   const now = updatedAt;
   const format = (v: number) => formatSensorValue(metric, v);
   const open = incidents?.find((i) => i.state === "open");
@@ -311,47 +307,14 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
         <CompanionChart key={c.title} companion={c} />
       ))}
       <div className={styles.pair}>
-        <FactsBox
-          title="Configuration"
-          facts={[
-            { label: "Kind", value: effective?.kind ?? "unknown" },
-            { label: "Watches", value: instance || effective?.instance || "—", mono: Boolean(instance || effective?.instance) },
-            {
-              label: "How often",
-              value: effective ? (
-                <IntervalFact
-                  data={data}
-                  sensor={effective}
-                  title={title}
-                  canEdit={!server.revoked_at && modifiesSite(me, server.customer_id, server.site_id)}
-                  onChanged={refresh}
-                />
-              ) : (
-                "—"
-              ),
-            },
-            {
-              label: "Timeout",
-              value: effective
-                ? effective.timeout_ms === null
-                  ? `automatic, ${formatSeconds(defaultTimeoutMs(effective.interval_ms) / 1000)}`
-                  : formatSeconds(effective.timeout_ms / 1000)
-                : "—",
-            },
-            ...thresholdFacts(rule, format, thresholds === null, effective?.interval_ms),
-            {
-              label: "Alerts",
-              value: <Link href={scopedHref(serverHref(server.id, "alerts"), scope)}>Change when to alert</Link>,
-            },
-            ...(effective && Object.keys(effective.params).length > 0
-              ? [{ label: "Parameters", value: Object.entries(effective.params).map(([k, v]) => `${k}=${v}`).join(" "), mono: true }]
-              : []),
-            ...(config ? [configurationFact(config)] : []),
-          ]}
-          details={[
-            ...(rule ? [marginFact(rule, format)] : []),
-            ...(config && effective ? [setByFact(effective.origin, rule)] : []),
-          ]}
+        <SensorConfiguration
+          data={data}
+          sensor={effective}
+          metric={metric}
+          instance={instance}
+          format={format}
+          canEdit={!server.revoked_at && modifiesSite(me, server.customer_id, server.site_id)}
+          onChanged={refresh}
         />
         <TableBox
           title="Incidents on this sensor"
@@ -395,91 +358,6 @@ function CompanionChart({ companion }: { companion: Companion }) {
       emptyText="No data in this range yet."
     />
   );
-}
-
-function thresholdFacts(rule: EffectiveThreshold | undefined, format: (v: number) => string, failed: boolean, intervalMs: number | undefined) {
-  if (!rule) return [{ label: "Thresholds", value: failed ? "could not be read" : "none: this sensor never opens incidents" }];
-  const slow = intervalMs === undefined ? null : slowAlertNote(rule.duration_s, intervalMs / 1000);
-  return [
-    { label: "Warning", value: rule.warning === null ? "none" : `${rule.comparison} ${format(rule.warning)}` },
-    { label: "Critical", value: rule.critical === null ? "none" : `${rule.comparison} ${format(rule.critical)}` },
-    {
-      label: "Duration",
-      value: (
-        <>
-          {formatSeconds(rule.duration_s)} <span className={styles.muted}>past the threshold before opening</span>
-          {slow && <span className={cx(styles.muted, styles.block)}>{slow}</span>}
-        </>
-      ),
-    },
-  ];
-}
-
-/**
- * How often the check runs; operators change it for this server, which
- * writes the server's own row, and go back to the site's (ADR-0097).
- */
-function IntervalFact({
-  data,
-  sensor,
-  title,
-  canEdit,
-  onChanged,
-}: {
-  data: SensorData;
-  sensor: EffectiveSensor;
-  title: string;
-  canEdit: boolean;
-  onChanged: () => void;
-}) {
-  if (!canEdit || data.rows === null || data.siteSensors === null) return <>{every(sensor.interval_ms)}</>;
-  const row = data.rows.find((r) => r.enabled && r.name === sensor.name && r.instance === sensor.instance);
-  const inherited = data.siteSensors.find((s) => s.name === sensor.name && s.instance === sensor.instance)?.interval_ms;
-  return (
-    <IntervalControl
-      label={`How often to check ${title}`}
-      value={row || inherited === undefined ? sensor.interval_ms : null}
-      inherit={inherited === undefined ? undefined : { ms: inherited, label: "site default" }}
-      save={async (ms) => {
-        await saveCheckInterval({ kind: "servers", id: data.server.id }, sensor, row, ms);
-        onChanged();
-      }}
-    />
-  );
-}
-
-function marginFact(rule: EffectiveThreshold, format: (v: number) => string) {
-  const above = rule.comparison === ">" || rule.comparison === ">=";
-  return {
-    label: "Recovery margin",
-    value: (
-      <>
-        {format(rule.hysteresis)} <span className={styles.muted}>{above ? "below" : "above"} the threshold before resolving</span>
-      </>
-    ),
-  };
-}
-
-const ORIGINS = { default: "Built-in default", site: "The site", server: "This server" } as const;
-
-function setByFact(origin: keyof typeof ORIGINS, rule: EffectiveThreshold | undefined) {
-  return {
-    label: "Set by",
-    value: (
-      <>
-        {ORIGINS[origin]}
-        {rule && <span className={styles.muted}> · thresholds from {ORIGINS[rule.origin].toLowerCase()}</span>}
-      </>
-    ),
-  };
-}
-
-function configurationFact(config: EffectiveSensors) {
-  if (config.applied_revision === null) return { label: "Configuration", value: <Label tone="neutral">Waiting for the agent</Label> };
-  return {
-    label: "Configuration",
-    value: <Label tone={config.in_sync ? "ok" : "warn"}>{config.in_sync ? "Up to date" : "Out of date"}</Label>,
-  };
 }
 
 function SensorIncidents({ incidents, now, format }: { incidents: Incident[]; now: Date; format: (v: number) => string }) {

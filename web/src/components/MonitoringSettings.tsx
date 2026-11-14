@@ -180,7 +180,7 @@ function Alerts({ target, data, canEdit, onChanged }: { target: Target; data: Da
 }
 
 /** When checks are slower than the alert reads: "Checked every 1 h, so…". */
-function SlowNote({ durationS, intervalS }: { durationS: number; intervalS: number | undefined }) {
+export function SlowNote({ durationS, intervalS }: { durationS: number; intervalS: number | undefined }) {
   const note = slowAlertNote(durationS, intervalS);
   return note && <span className={cx(admin.dim, styles.note)}>{note}</span>;
 }
