@@ -2,7 +2,7 @@ import { type IncidentFilters, NO_FILTERS, filtersToQuery } from "./incidents";
 import { shortMetric } from "./metrics";
 
 /** Link to the page of the server `id` (a query parameter, ADR-0020), on `tab` when given. */
-export function serverHref(id: string, tab?: "sensors" | "alerts" | "updates" | "commands" | "logs"): string {
+export function serverHref(id: string, tab?: "sensors" | "updates" | "commands" | "logs"): string {
   return `/servers/view/?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ""}`;
 }
 
@@ -25,10 +25,14 @@ export function siteHref(id: string): string {
   return `/sites/view/?id=${encodeURIComponent(id)}`;
 }
 
-/** Link to the page of one sensor's metric on the server `id`; `instance` "" is none. */
-export function sensorHref(id: string, metric: string, instance = ""): string {
+/**
+ * Link to the page of one sensor's metric on the server `id`; `instance`
+ * "" is none. `edit` opens its Configuration card's form.
+ */
+export function sensorHref(id: string, metric: string, instance = "", edit = false): string {
   const params = new URLSearchParams({ id, sensor: shortMetric(metric) });
   if (instance) params.set("instance", instance);
+  if (edit) params.set("edit", "1");
   return `/servers/sensor/?${params}`;
 }
 
