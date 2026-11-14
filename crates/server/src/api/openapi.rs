@@ -22,6 +22,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
 use super::ERROR_CODES;
 use super::{approvals, commands, customers, incidents, metrics, servers, silences, sites};
 
+#[path = "openapi_integrations.rs"]
+mod integrations;
 #[path = "openapi_notifications.rs"]
 mod notifications;
 
@@ -44,6 +46,7 @@ pub async fn document() -> Json<Document> {
 pub fn build() -> Document {
     let mut doc = ApiDoc::openapi();
     doc.merge(notifications::Doc::openapi());
+    doc.merge(integrations::Doc::openapi());
     doc
 }
 
@@ -197,7 +200,6 @@ fn errors(operation: &mut Operation) {
 // Routes reachable through v1 that the document does not describe yet,
 // in the order ADR-0101 gives. Moving one into the document is additive.
 pub const NOT_YET_DOCUMENTED: &[&str] = &[
-    "/api/integrations",
     "/api/on-call/",
     "/api/follow-up/",
     "/api/tokens",
