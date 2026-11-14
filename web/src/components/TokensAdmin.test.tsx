@@ -1,4 +1,4 @@
-// @vitest-environment-options {"url": "https://mf.example/admin/tokens/"}
+// @vitest-environment-options {"url": "https://mf.example/settings/add-servers/"}
 import { render, screen, within } from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
 import userEvent from "@testing-library/user-event";
@@ -522,7 +522,7 @@ describe("TokensAdmin", () => {
     await user.click(within(form).getByRole("button", { name: "Create token" }));
     const group = await screen.findByRole("group", { name: "Install the agent" });
     expect(group).toHaveTextContent(
-      "This server holds no agent release yet. A global administrator imports one under Administration › Server update.",
+      "This server holds no agent release yet. A global administrator imports one under Settings › Server update.",
     );
     expect(within(group).queryByLabelText(/^Linux/)).not.toBeInTheDocument();
     expect(within(group).queryByLabelText(/^Windows/)).not.toBeInTheDocument();

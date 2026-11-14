@@ -42,7 +42,8 @@ function Retry({ onRetry }: { onRetry?: () => void }) {
 /**
  * The title line of every page: title, optional status label, the grey
  * refresh line (announced politely) and actions at the right. `detail`
- * is the 26 px variant of detail pages.
+ * is the 26 px variant of detail pages. A `tone` tints the line by status,
+ * and `reason` says why in one sentence under the title.
  */
 export function PageHeader({
   title,
@@ -50,15 +51,19 @@ export function PageHeader({
   meta,
   actions,
   detail,
+  tone,
+  reason,
 }: {
   title: ReactNode;
   status?: ReactNode;
   meta?: ReactNode;
   actions?: ReactNode;
   detail?: boolean;
+  tone?: Tone;
+  reason?: ReactNode;
 }) {
   return (
-    <div className={cx(styles.header, detail && styles.detail)}>
+    <div className={cx(styles.header, detail && styles.detail, tone && styles.tinted, tone && styles[`tint-${tone}`])}>
       <h1 className={styles.title}>{title}</h1>
       {status}
       {meta !== undefined && (
@@ -67,6 +72,7 @@ export function PageHeader({
         </span>
       )}
       {actions && <div className={styles.actions}>{actions}</div>}
+      {reason && <p className={styles.reason}>{reason}</p>}
     </div>
   );
 }

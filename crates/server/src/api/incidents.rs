@@ -23,6 +23,7 @@ use super::auth::CurrentUser;
 use super::follow_up::{follow_up_view, FollowUpView};
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
+use crate::alerting::reason;
 use crate::notify::follow_up;
 
 /// Page size without `limit`.
@@ -106,10 +107,36 @@ pub struct IncidentView {
     /// does. The name stays when the account is removed.
     pub acknowledged_by: Option<String>,
     pub acknowledged_at: Option<DateTime<Utc>>,
+    /// What they said they are doing (ADR-0130); `null` from a
+    /// notification link, or from an API key that sent none.
+    pub acknowledged_note: Option<String>,
     /// Whether the reader may acknowledge it: open, not acknowledged, and
     /// the reader an operator or above of its site.
     #[sqlx(skip)]
     pub can_acknowledge: bool,
+    /// Why it opened, in one sentence: "9% available is below the
+    /// warning limit of 12%"; for a resolved incident, its peak.
+    #[sqlx(skip)]
+    pub reason: String,
+}
+
+impl IncidentView {
+    /// Fills the fields computed from the row.
+    fn complete(&mut self, modifiable: &Scope) {
+        self.can_acknowledge = acknowledgeable(self, modifiable);
+        let open = self.state == "open";
+        self.reason = reason::incident(
+            &self.metric,
+            &self.severity,
+            open,
+            if open {
+                self.last_value
+            } else {
+                self.peak_value
+            },
+            &self.threshold,
+        );
+    }
 }
 
 /// Body of `GET /api/incidents`.
@@ -193,7 +220,8 @@ const SELECT: &str = "SELECT i.id, i.server_id, i.relay_id,
                              END AS silenced_until,
                              EXISTS (SELECT 1 FROM incident_events e
                                      WHERE e.incident_id = i.id AND e.kind = 'silenced') AS silenced,
-                             a.username AS acknowledged_by, a.acknowledged_at
+                             a.username AS acknowledged_by, a.acknowledged_at,
+                             a.note AS acknowledged_note
                       FROM incidents i
                       LEFT JOIN incident_acknowledgements a ON a.incident_id = i.id
                       LEFT JOIN servers s ON s.id = i.server_id
@@ -267,7 +295,7 @@ pub async fn list(
     .await?;
     let modifiable = user.modifiable_sites();
     for row in &mut rows {
-        row.can_acknowledge = acknowledgeable(row, &modifiable);
+        row.complete(&modifiable);
     }
     let next_cursor = if rows.len() > limit as usize {
         rows.truncate(limit as usize);
@@ -297,7 +325,7 @@ pub async fn detail(
             .await?;
     authorize(&user, incident.as_ref().map(|i| i.site_id), false)?;
     let mut incident = incident.ok_or(ApiError::NotFound)?;
-    incident.can_acknowledge = acknowledgeable(&incident, &user.modifiable_sites());
+    incident.complete(&user.modifiable_sites());
     // Events are appended as they happen, so their ID is their order.
     let events = sqlx::query_as(
         "SELECT id, kind, severity, value, occurred_at, recorded_at, details
@@ -352,6 +380,27 @@ fn acknowledgeable(incident: &IncidentView, modifiable: &Scope) -> bool {
 pub struct AcknowledgeRequest {
     /// 1 to [`MAX_LIMIT`] incidents, like a group of a notification.
     pub incident_ids: Vec<Uuid>,
+    /// What the user is doing about them, up to 500 characters, shown with
+    /// the acknowledgement (ADR-0130). Required when signed in; optional
+    /// for API keys, so older scripts keep working.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// Longest acknowledgement note, in characters.
+pub const MAX_NOTE: usize = 500;
+
+/// The note trimmed, `None` when blank, or why it is refused: a person
+/// signed in must say something, a script need not.
+pub fn acknowledgement_note(note: Option<&str>, required: bool) -> Result<Option<String>, String> {
+    let note = note.map(str::trim).filter(|n| !n.is_empty());
+    match note {
+        None if required => Err("Say what you are doing about it in the note.".into()),
+        Some(n) if n.chars().count() > MAX_NOTE => {
+            Err(format!("Keep the note under {MAX_NOTE} characters."))
+        }
+        _ => Ok(note.map(str::to_owned)),
+    }
 }
 
 /// Body of the answer: the incidents this request acknowledged. The
@@ -402,10 +451,19 @@ pub async fn acknowledge(
     for (_, site) in &sites {
         authorize(&user, Some(*site), true)?;
     }
+    // After the permissions, so a note never tells what an ID is.
+    let note = acknowledgement_note(request.note.as_deref(), user.api_key.is_none())
+        .map_err(ApiError::Invalid)?;
     let mut tx = state.pool.begin().await?;
-    let acknowledged =
-        follow_up::acknowledge(&mut tx, &ids, (user.id, &user.username), "page", Utc::now())
-            .await?;
+    let acknowledged = follow_up::acknowledge(
+        &mut tx,
+        &ids,
+        (user.id, &user.username),
+        "page",
+        note.as_deref(),
+        Utc::now(),
+    )
+    .await?;
     let actor = user.id.to_string();
     for incident in &acknowledged {
         let target = incident.to_string();
@@ -416,7 +474,10 @@ pub async fn acknowledge(
                 actor_id: &actor,
                 action: "incident.acknowledge",
                 target: Some(("incident", &target)),
-                details: json!({ "via": "page" }),
+                details: match &note {
+                    Some(note) => json!({ "via": "page", "note": note }),
+                    None => json!({ "via": "page" }),
+                },
             },
         )
         .await?;
@@ -445,6 +506,21 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn a_person_says_what_they_do_a_script_need_not() {
+        assert_eq!(
+            acknowledgement_note(Some("  swapping the disk "), true),
+            Ok(Some("swapping the disk".into()))
+        );
+        assert!(acknowledgement_note(None, true).is_err());
+        assert!(acknowledgement_note(Some("   "), true).is_err());
+        assert_eq!(acknowledgement_note(None, false), Ok(None));
+        assert_eq!(acknowledgement_note(Some(" "), false), Ok(None));
+        let long = "x".repeat(MAX_NOTE + 1);
+        assert!(acknowledgement_note(Some(&long), false).is_err());
+        assert!(acknowledgement_note(Some(&long[1..]), true).is_ok());
     }
 
     #[test]

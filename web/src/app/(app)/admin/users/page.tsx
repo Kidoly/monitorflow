@@ -1,9 +1,6 @@
-import type { Metadata } from "next";
+import { MovedPage } from "@/components/MovedPage";
 
-import { UsersAdminPage } from "@/components/UsersAdmin";
-
-export const metadata: Metadata = { title: "Users and roles · MonitorFlow" };
-
-export default function UsersPage() {
-  return <UsersAdminPage />;
+// Moved under /settings/; old links still work.
+export default function Moved() {
+  return <MovedPage from="/admin/users/" />;
 }

@@ -34,7 +34,7 @@ import {
 import { RelativeTime } from "./ui/RelativeTime";
 import { Label } from "./ui/StatusLabel";
 
-/** `/admin/notifications/`: administrators, each of what they administer, like the API (ADR-0078). */
+/** `/settings/notifications/`: administrators, each of what they administer, like the API (ADR-0078). */
 export function NotificationsPage() {
   const me = useMe();
   if (!isAdministrator(me)) {

@@ -1,9 +1,6 @@
-import type { Metadata } from "next";
+import { MovedPage } from "@/components/MovedPage";
 
-import { CertificateAuthorityPage } from "@/components/CertificateAuthorityPage";
-
-export const metadata: Metadata = { title: "Certificate authority · MonitorFlow" };
-
-export default function CertificateAuthorityRoute() {
-  return <CertificateAuthorityPage />;
+// Moved under /settings/; old links still work.
+export default function Moved() {
+  return <MovedPage from="/admin/certificate-authority/" />;
 }

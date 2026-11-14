@@ -77,7 +77,7 @@ function renderPage(user = globalAdmin) {
 }
 
 describe("PluginsPage", () => {
-  beforeEach(() => setUrl("/admin/plugins/"));
+  beforeEach(() => setUrl("/settings/plugins/"));
 
   it("is for global administrators only", () => {
     stubFetch({});

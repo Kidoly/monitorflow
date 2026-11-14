@@ -25,56 +25,92 @@ use crate::remediation::risk::store::{self, Kind, NewRule, Policy, StoredRule};
 use crate::remediation::risk::{self, Decision, Shell, Tier};
 
 /// Body of `POST /api/remediation/rules`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = RemediationRuleRequest)]
 #[serde(deny_unknown_fields)]
 pub struct RuleRequest {
+    /// The customer the rule belongs to.
     pub customer_id: Uuid,
+    /// One of the customer's sites to narrow the rule to; `null` or absent
+    /// for every site of the customer.
     pub site_id: Option<Uuid>,
     pub kind: Kind,
+    /// For `allow` and `deny`, words where `*` and `?` match within a word
+    /// and `**` spans words; an `allow` pattern starts with a program name
+    /// without wildcards. For `cache_dir`, an absolute directory of two
+    /// components or more, outside system directories. Spaces are
+    /// normalized and a trailing `/` dropped before the rule is stored.
     pub pattern: String,
+    /// `read_only` or `low_impact` for an `allow` rule; `null` or absent
+    /// for the other kinds.
     pub tier: Option<Tier>,
+    /// Up to 256 characters, no control characters; empty by default.
     #[serde(default)]
     pub description: String,
 }
 
-#[derive(Debug, Serialize)]
+/// Body of `GET /api/remediation/rules`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = RemediationRuleList)]
 pub struct RuleList {
+    /// By customer, then site (customer-wide rules first), kind and
+    /// pattern.
     pub rules: Vec<StoredRule>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+/// Query string of `GET /api/remediation/rules`. Both filters are
+/// optional.
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
+    /// Only this customer's rules.
     pub customer_id: Option<Uuid>,
+    /// Only the rules narrowed to this site (customer-wide rules are left
+    /// out).
     pub site_id: Option<Uuid>,
 }
 
 /// Body of `PUT /api/remediation/policies`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = RemediationPolicyRequest)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyRequest {
     pub customer_id: Uuid,
+    /// One of the customer's sites; `null` or absent sets the customer's
+    /// own row, which applies to sites without a row of their own.
     pub site_id: Option<Uuid>,
+    /// `true`: low-impact commands run without a person's approval.
     pub low_impact_auto: bool,
 }
 
-#[derive(Debug, Serialize)]
+/// Body of `GET /api/remediation/policies`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = RemediationPolicyList)]
 pub struct PolicyList {
     pub policies: Vec<Policy>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+/// Query string of `GET /api/remediation/policies`.
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyParams {
+    /// Only this customer's policies.
     pub customer_id: Option<Uuid>,
 }
 
 /// Body of `POST /api/remediation/classify`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = ClassifyRequest)]
 #[serde(deny_unknown_fields)]
 pub struct ClassifyRequest {
     pub customer_id: Uuid,
+    /// The site whose rules apply as well; `null` or absent for the
+    /// customer-wide rules only.
     pub site_id: Option<Uuid>,
+    /// The command line, as the AI would propose it. Neither stored nor
+    /// logged.
     pub command: String,
     /// `posix` (the default) for Linux servers, `powershell` for Windows
     /// ones (ADR-0084).

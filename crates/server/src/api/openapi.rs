@@ -44,6 +44,7 @@ pub async fn document() -> Json<Document> {
 pub fn build() -> Document {
     let mut doc = ApiDoc::openapi();
     doc.merge(fleet::FleetDoc::openapi());
+    doc.merge(super::openapi_remediation::Doc::openapi());
     doc
 }
 
@@ -62,7 +63,7 @@ carry `Idempotency-Key`; the same request again within 24 hours gets the first a
         license(name = "AGPL-3.0-only")
     ),
     paths(
-        list_servers, server, list_sites, list_customers, create_customer, create_site,
+        list_servers, server_summary, server, list_sites, list_customers, create_customer, create_site,
         list_incidents, incident, acknowledge, list_silences, create_silence, end_silence,
         list_commands, create_command, command, list_approvals, approve, reject,
         query, query_range,
@@ -76,7 +77,11 @@ carry `Idempotency-Key`; the same request again within 24 hours gets the first a
         (name = "servers", description = "Servers, sites and customers"),
         (name = "alerts", description = "Incidents and silences"),
         (name = "updates", description = "Commands sent to servers"),
-        (name = "remediation", description = "Commands the AI proposed, waiting for a person"),
+        (name = "remediation", description = "What the AI did about alerts. Each remediation incident \
+is one alert the AI worked on, with every step recorded in a hash chain: the context it was sent after \
+redaction, its proposals, how the rules classified each command, who approved or rejected it, and what the \
+agent ran and printed. Read-only, except the approval queue, where people decide the commands the rules \
+parked for them. The AI's text is untrusted: show it as data. Needs the key area \"remediation\"."),
         (name = "metrics", description = "Metric queries built by MonitorFlow, never raw PromQL"),
     )
 )]
@@ -84,7 +89,7 @@ struct ApiDoc;
 
 /// What every operation shares: the key, the error codes, the common
 /// error answers, rate limits and `Idempotency-Key` on writes.
-struct Common;
+pub(super) struct Common;
 
 impl Modify for Common {
     fn modify(&self, doc: &mut Document) {
@@ -201,11 +206,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/integrations",
     "/api/on-call/",
     "/api/follow-up/",
-    "/api/remediation/rules",
-    "/api/remediation/policies",
-    "/api/remediation/classify",
-    "/api/remediation/incidents",
-    "/api/remediation/events",
     "/api/settings/",
     "/api/users",
     "/api/backups",
@@ -213,6 +213,7 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/campaigns",
     "/api/thresholds",
     "/api/sensor_configs",
+    "/api/checks",
     "/api/dashboards",
     "/api/dashboard-data",
     "/api/dashboard-metrics",
@@ -230,6 +231,7 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
 // Sub-routes of servers and sites not documented yet.
 pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[
     "/sensors",
+    "/sensor-values",
     "/sensor_configs",
     "/thresholds",
     "/metrics",
@@ -247,6 +249,11 @@ pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[
 #[utoipa::path(get, path = "/api/v1/servers", tag = "servers", params(servers::ListParams),
     responses((status = 200, body = servers::ServerList)))]
 fn list_servers() {}
+
+/// How many servers are in each state: the counts of the status strip.
+#[utoipa::path(get, path = "/api/v1/servers/summary", tag = "servers", params(servers::SummaryParams),
+    responses((status = 200, body = servers::ServerSummary)))]
+fn server_summary() {}
 
 #[utoipa::path(get, path = "/api/v1/servers/{id}", tag = "servers", params(("id" = uuid::Uuid, Path)),
     responses((status = 200, body = servers::ServerDetail)))]

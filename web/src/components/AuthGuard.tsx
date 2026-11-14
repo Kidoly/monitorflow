@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
 
+import { SettingsStatusProvider } from "@/components/settings/SettingsStatus";
 import { AppShell } from "@/components/shell/AppShell";
 import { Banner, LoadingBlock } from "@/components/ui/PageState";
 import {
@@ -64,7 +65,9 @@ export function AuthGuard({ children }: { children: ReactNode }) {
     <MeContext.Provider value={user}>
       <RefreshMeContext.Provider value={refresh}>
         <Suspense fallback={loading}>
-          <AppShell me={user}>{children}</AppShell>
+          <SettingsStatusProvider me={user}>
+            <AppShell me={user}>{children}</AppShell>
+          </SettingsStatusProvider>
         </Suspense>
       </RefreshMeContext.Provider>
     </MeContext.Provider>

@@ -190,7 +190,7 @@ function AiOff() {
       {administersEverything(me) ? (
         <Link href={AI_SETTINGS_PATH}>Turn on AI</Link>
       ) : (
-        "A global administrator can turn it on under Administration › AI."
+        "A global administrator can turn it on under Settings › AI."
       )}
     </Banner>
   );

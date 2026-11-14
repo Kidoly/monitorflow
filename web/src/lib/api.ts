@@ -33,6 +33,12 @@ export interface Me {
 
 export type ServerStatus = "online" | "offline";
 
+/** A server's one status on the fleet's pages, worst first (ADR-0130). */
+export type ServerState = "critical" | "warning" | "acknowledged" | "silenced" | "offline" | "ok";
+
+/** `GET /api/servers/summary`: servers per state, out of `total`. */
+export type ServerSummary = Record<ServerState | "total", number>;
+
 /** One entry of `GET /api/servers`. Timestamps are RFC 3339 in UTC. */
 export interface Server {
   id: string;
@@ -63,6 +69,8 @@ export interface Server {
   via_relay: string | null;
   /** Open incidents of the server (ADR-0019). */
   open_incidents: number;
+  /** Its one status (ADR-0130); absent from a central server older than it. */
+  state?: ServerState;
   /** Latest expiry among the agent's unrevoked certificates; null when it has none. */
   cert_not_after: string | null;
   /** Offline incidents of this one (ADR-0072); absent is on. Muted when this or `site_offline_alerts` is false. */
@@ -70,6 +78,10 @@ export interface Server {
   site_offline_alerts?: boolean;
   /** While a silence covers it, when the last one ends (ADR-0079). */
   silenced_until?: string | null;
+  /** That silence: who made it, until when and why (ADR-0130). */
+  silence?: { by: string | null; until: string; reason: string } | null;
+  /** The latest acknowledgement of its open incidents (ADR-0130). */
+  acknowledgement?: { by: string; at: string; note: string | null } | null;
 }
 
 /** The certificate the CA issued last to an agent, revoked or not. */
@@ -373,6 +385,36 @@ export interface QueryResult {
   /** The PromQL the server built, for display. */
   query: string;
   series: MetricSeries[];
+}
+
+/** One instance of a sensor's metric, as `GET /api/servers/{id}/sensor-values` gives it. */
+export interface SensorSeries {
+  /** "" for a metric without instances. */
+  instance: string;
+  /** The last hour, one worst value per step. */
+  points: [number, number | null][];
+  last_value: number | null;
+  last_at: string | null;
+  /** Set when the last sample is late: "No data for 5 minutes". */
+  reason: string | null;
+}
+
+/** A sensor's recent values, by its name and configured instance. */
+export interface SensorValue {
+  name: string;
+  instance: string;
+  metric: string;
+  series: SensorSeries[];
+  /** Why there is no series at all: "No data yet". */
+  reason: string | null;
+}
+
+/** Body of `GET /api/servers/{id}/sensor-values`: every sensor in one answer. */
+export interface SensorValueList {
+  start: number;
+  end: number;
+  step: number;
+  sensors: SensorValue[];
 }
 
 /** Which layer an effective sensor comes from (ADR-0016). */
@@ -752,8 +794,12 @@ export interface Incident {
   /** Who said they are on it, and when (ADR-0082); null until someone does. */
   acknowledged_by?: string | null;
   acknowledged_at?: string | null;
+  /** What they said they are doing; null when acknowledged from a link or by a script without one. */
+  acknowledged_note?: string | null;
   /** Open, not acknowledged, and the reader an operator or above of its site. */
   can_acknowledge?: boolean;
+  /** Why it opened, in one sentence: "9% available is below the warning limit of 12%"; once resolved, its peak. */
+  reason?: string;
 }
 
 /** What a silence covers (ADR-0079). */
@@ -2328,6 +2374,14 @@ export interface PluginInspection {
 }
 
 /** A plugin turned on where the user can see, for the channel and check forms. */
+/** How many servers run one check (`GET /api/checks/usage`). */
+export interface CheckUsage {
+  kind: string;
+  name: string;
+  plugin: string | null;
+  servers: number;
+}
+
 export interface UsablePlugin {
   name: string;
   kind: PluginKind;
@@ -2610,6 +2664,10 @@ export const api = {
       { signal },
     ),
 
+  /** The first 500 servers of one site, by hostname. */
+  siteServers: (siteId: string, signal?: AbortSignal) =>
+    request<ServerList>(`/api/servers?site_id=${encodeURIComponent(siteId)}&limit=500`, { signal }),
+
   /** Every server the user may read, following `next_cursor` across pages. */
   servers: async (signal?: AbortSignal): Promise<ServerList> => {
     const servers: Server[] = [];
@@ -2622,9 +2680,22 @@ export const api = {
     return { servers, next_cursor: null };
   },
 
+  /** Servers per state in `scope`, for the status strip (ADR-0130). */
+  serverSummary: (scope: { customerId: string | null; siteId: string | null }, signal?: AbortSignal) => {
+    const query = scope.siteId
+      ? `?site_id=${encodeURIComponent(scope.siteId)}`
+      : scope.customerId
+        ? `?customer_id=${encodeURIComponent(scope.customerId)}`
+        : "";
+    return request<ServerSummary>(`/api/servers/summary${query}`, { signal });
+  },
+
   /** One server with its certificate; 404 when missing or outside the user's sites. */
   server: (id: string, signal?: AbortSignal) =>
     request<ServerDetail>(`/api/servers/${encodeURIComponent(id)}`, { signal }),
+
+  sensorValues: (serverId: string, signal?: AbortSignal) =>
+    request<SensorValueList>(`/api/servers/${encodeURIComponent(serverId)}/sensor-values`, { signal }),
 
   serverSensors: (serverId: string, signal?: AbortSignal) =>
     request<EffectiveSensors>(
@@ -2942,6 +3013,8 @@ export const api = {
     request<void>(`/api/plugins/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** Plugins turned on at places the user sees. */
+  checkUsage: (signal?: AbortSignal) => request<{ checks: CheckUsage[] }>("/api/checks/usage", { signal }),
+
   usablePlugins: (signal?: AbortSignal) =>
     request<{ plugins: UsablePlugin[] }>("/api/plugins/usable", { signal }),
 
@@ -3068,10 +3141,10 @@ export const api = {
     }),
 
   /** Says the user is on these incidents, so nobody else is told next (ADR-0082). */
-  acknowledgeIncidents: (ids: string[]) =>
+  acknowledgeIncidents: (ids: string[], note: string) =>
     request<{ acknowledged: string[] }>("/api/incidents/acknowledge", {
       method: "POST",
-      body: { incident_ids: ids },
+      body: { incident_ids: ids, note },
     }),
 
   /** Follow-ups of what the user administers, the default, and what steps may name. */

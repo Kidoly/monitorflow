@@ -1,9 +1,6 @@
-import type { Metadata } from "next";
+import { MovedPage } from "@/components/MovedPage";
 
-import { RelayListPage } from "@/components/RelayList";
-
-export const metadata: Metadata = { title: "Relays · MonitorFlow" };
-
-export default function RelaysPage() {
-  return <RelayListPage />;
+// Moved under /settings/; old links still work.
+export default function Moved() {
+  return <MovedPage from="/admin/relays/" />;
 }

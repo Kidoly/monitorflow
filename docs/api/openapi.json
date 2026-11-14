@@ -2697,6 +2697,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "Only the servers of this site; none outside the user's sites.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -3662,6 +3672,1185 @@
         }
       }
     },
+    "/api/v1/remediation/classify": {
+      "post": {
+        "tags": [
+          "risk rules"
+        ],
+        "summary": "Classify a command",
+        "description": "What the classifier would decide for `command` on the servers of a\nsite (built-in rules, then the customer's and the site's rules), or\nwith the customer-wide rules only when `site_id` is null. A dry run:\nnothing is stored, logged or sent to an agent. `shell` is `posix` for\nLinux servers, `powershell` for Windows ones.\n\nThe answer's `tier` is what would happen: `read_only` runs at once,\n`low_impact` waits for an approver unless the site's policy lets it\nrun, `high_impact` waits for an administrator, `forbidden` never runs.\n\nNeeds any role on the customer as a whole and the key area\n\"remediation\". Safe to repeat.",
+        "operationId": "classify",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClassifyRequest"
+              },
+              "example": {
+                "command": "systemctl restart nginx",
+                "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                "shell": "posix",
+                "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Classification"
+                },
+                "example": {
+                  "reason": "`systemctl restart` of a service",
+                  "rule": {
+                    "id": "low.systemctl",
+                    "source": "builtin"
+                  },
+                  "tier": "low_impact"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`, with `error` saying why: not the expected JSON, or `unknown site` for a site of another customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: a customer the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/events": {
+      "get": {
+        "tags": [
+          "remediation"
+        ],
+        "summary": "List remediation events",
+        "description": "The remediation audit log: the events of every remediation incident on\nthe sites the caller reads, newest first, across incidents. Each event\ncarries its incident's customer, site, server, metric and instance.\n`payload` leaves out the context sent to the AI (`context.rendered`)\nand command output (`stdout`, `stderr`); read the incident for them\nand to verify its chain.\n\nNeeds any role and the key area \"remediation\". Filters are ANDed; a\nfilter outside the caller's sites gives an empty list. Paginated with\n`limit` and `cursor`; unknown parameters and bad values are 400.",
+        "operationId": "list_events",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "incident_id",
+            "in": "query",
+            "description": "A remediation incident.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RemediationEventKind"
+            }
+          },
+          {
+            "name": "actor_kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RemediationActorKind"
+            }
+          },
+          {
+            "name": "actor_id",
+            "in": "query",
+            "description": "A user ID, `server`, a model or a peer ID.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Events at or after this time (RFC 3339).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Events before this time (RFC 3339).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to 500, default 100.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationEventList"
+                },
+                "example": {
+                  "events": [
+                    {
+                      "actor_id": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
+                      "actor_kind": "user",
+                      "actor_name": "alice",
+                      "created_at": "2026-11-05T03:13:02Z",
+                      "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                      "customer_name": "acme",
+                      "hash": "a1c3e5f7092b4d6f8a0c2e4f6a8b0d2e4f6a8c0e2a4c6e8f0b2d4f6a8c0e2f4a",
+                      "hostname": "web-1",
+                      "incident_id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+                      "instance": "nginx",
+                      "kind": "approval",
+                      "metric": "monitorflow_service_active",
+                      "payload": {
+                        "command": "systemctl restart nginx"
+                      },
+                      "seq": 2,
+                      "server_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                      "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "site_name": "paris"
+                    }
+                  ],
+                  "next_cursor": "MjAyNi0xMS0wNVQwMzoxMzowMlo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/incidents": {
+      "get": {
+        "tags": [
+          "remediation"
+        ],
+        "summary": "List remediation incidents",
+        "description": "What the AI did about alerts: one remediation incident per alert it\nworked on, newest `opened_at` first. Read-only: the remediation loop\nopens, drives and closes them. An incident in `awaiting_approval`\ncarries the command waiting for a person in `pending_command`; the\napproval queue (`/remediation/approvals`) decides it.\n\nNeeds any role and the key area \"remediation\"; lists the incidents of\nthe servers of the sites the caller reads. A filter outside them gives\nan empty list. Paginated with `limit` and `cursor`; unknown parameters\nand bad values are 400.",
+        "operationId": "list_incidents",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RemediationIncidentState"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "alert_incident_id",
+            "in": "query",
+            "description": "The threshold incident that opened it.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to 500, default 100.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationIncidentList"
+                },
+                "example": {
+                  "incidents": [
+                    {
+                      "alert_incident_id": "2f3a4b5c-6d7e-4f80-9a1b-2c3d4e5f6a7b",
+                      "closed_at": null,
+                      "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                      "customer_name": "acme",
+                      "event_count": 6,
+                      "hostname": "web-1",
+                      "id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+                      "instance": "nginx",
+                      "max_commands": 10,
+                      "max_duration_s": 1800,
+                      "metric": "monitorflow_service_active",
+                      "opened_at": "2026-11-05T03:12:04Z",
+                      "pending_command": {
+                        "command": "systemctl restart nginx",
+                        "diagnosis": "nginx exited after a configuration reload.",
+                        "id": "8b9c0d1e-2f3a-4b4c-9d5e-6f7a8b9c0d1e",
+                        "proposed_at": "2026-11-05T03:12:40Z",
+                        "reason": "`systemctl restart` of a service",
+                        "reasoning": "The configuration test passes now; a restart should bring it back.",
+                        "rule": {
+                          "id": "low.systemctl",
+                          "source": "builtin"
+                        },
+                        "tier": "low_impact"
+                      },
+                      "server_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                      "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "site_name": "paris",
+                      "state": "awaiting_approval"
+                    }
+                  ],
+                  "next_cursor": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/incidents/{id}": {
+      "get": {
+        "tags": [
+          "remediation"
+        ],
+        "summary": "Read a remediation incident",
+        "description": "The incident with its full history: every event in order (the context\nsent to the AI after redaction, its proposals, each classification,\napprovals and rejections, the commands sent to the agent and their\noutput), and `chain`, the hash chain recomputed at this request.\n`chain.valid` false means an event was changed, removed or inserted in\nthe database since it was written. Texts from the AI are untrusted:\nshow them as data.\n\nNeeds any role on the server's site and the key area \"remediation\".",
+        "operationId": "incident",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The remediation incident",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationIncidentDetail"
+                },
+                "example": {
+                  "alert_incident_id": "2f3a4b5c-6d7e-4f80-9a1b-2c3d4e5f6a7b",
+                  "chain": {
+                    "broken_at": null,
+                    "events": 3,
+                    "head_hash": "7e9f1a3b5c7d9e1f3a5b7c9d1e3f5a7b9c1d3e5f7a9b1c3d5e7f9a1b3c5d7e9f",
+                    "reason": null,
+                    "valid": true
+                  },
+                  "closed_at": null,
+                  "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                  "customer_name": "acme",
+                  "event_count": 3,
+                  "events": [
+                    {
+                      "actor_id": "server",
+                      "actor_kind": "system",
+                      "created_at": "2026-11-05T03:12:05Z",
+                      "hash": "4f8a2c1e9b7d3a6f5e0c8b2a7d9f1e3c6b4a8d2f0e9c7b5a3d1f8e6c4b2a0d9f",
+                      "kind": "context_sent",
+                      "payload": {
+                        "context": {
+                          "redactions": {},
+                          "rendered": "Alert: nginx is not active on web-1 ..."
+                        },
+                        "model": "example/model-1"
+                      },
+                      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+                      "seq": 1
+                    },
+                    {
+                      "actor_id": "example/model-1",
+                      "actor_kind": "ai",
+                      "created_at": "2026-11-05T03:12:31Z",
+                      "hash": "a1c3e5f7092b4d6f8a0c2e4f6a8b0d2e4f6a8c0e2a4c6e8f0b2d4f6a8c0e2f4a",
+                      "kind": "ai_proposal",
+                      "payload": {
+                        "command": "systemctl status nginx",
+                        "diagnosis": "nginx stopped; its last log lines may say why.",
+                        "reasoning": "Reading the unit's status is harmless."
+                      },
+                      "prev_hash": "4f8a2c1e9b7d3a6f5e0c8b2a7d9f1e3c6b4a8d2f0e9c7b5a3d1f8e6c4b2a0d9f",
+                      "seq": 2
+                    },
+                    {
+                      "actor_id": "server",
+                      "actor_kind": "system",
+                      "created_at": "2026-11-05T03:12:31Z",
+                      "hash": "7e9f1a3b5c7d9e1f3a5b7c9d1e3f5a7b9c1d3e5f7a9b1c3d5e7f9a1b3c5d7e9f",
+                      "kind": "classification",
+                      "payload": {
+                        "command": "systemctl status nginx",
+                        "reason": "`systemctl status` only reports unit state",
+                        "rule": {
+                          "id": "readonly.systemctl",
+                          "source": "builtin"
+                        },
+                        "tier": "read_only"
+                      },
+                      "prev_hash": "a1c3e5f7092b4d6f8a0c2e4f6a8b0d2e4f6a8c0e2a4c6e8f0b2d4f6a8c0e2f4a",
+                      "seq": 3
+                    }
+                  ],
+                  "hostname": "web-1",
+                  "id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+                  "instance": "nginx",
+                  "max_commands": 10,
+                  "max_duration_s": 1800,
+                  "metric": "monitorflow_service_active",
+                  "opened_at": "2026-11-05T03:12:04Z",
+                  "pending_command": null,
+                  "server_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                  "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "site_name": "paris",
+                  "state": "running"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such incident, or one on a site the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/policies": {
+      "get": {
+        "tags": [
+          "risk rules"
+        ],
+        "summary": "List low-impact policies",
+        "description": "Whether low-impact commands run without a person's approval, per\ncustomer and per site. A site's row wins over its customer's; with\nneither, low-impact commands wait for approval. Read-only commands\nalways run on their own and high-impact ones always wait, whatever the\npolicy. Only rows that were set are listed.\n\nNeeds any role on the customer as a whole and the key area\n\"remediation\". Not paginated.",
+        "operationId": "list_policies",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only this customer's policies.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationPolicyList"
+                },
+                "example": {
+                  "policies": [
+                    {
+                      "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                      "low_impact_auto": false,
+                      "site_id": null,
+                      "updated_at": "2026-11-01T08:00:00Z",
+                      "updated_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d"
+                    },
+                    {
+                      "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                      "low_impact_auto": true,
+                      "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "updated_at": "2026-11-04T16:45:30Z",
+                      "updated_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "risk rules"
+        ],
+        "summary": "Set a low-impact policy",
+        "description": "Sets whether low-impact commands run without approval on the servers\nof a customer (`site_id` null) or of one of its sites. With `true`,\nthe next low-impact commands the AI proposes there are approved by\nMonitorFlow itself and sent to the agent at once; commands already\nwaiting for approval still wait. It never lets high-impact commands\nrun on their own. An agent runs AI commands only when its own\nadministrator allowed them on the server (ADR-0098).\n\nNeeds an administrator role on the customer as a whole and the key\narea \"remediation\". Audited as `remediation_policy.update`. Safe to\nrepeat: it sets the value.",
+        "operationId": "set_policy",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemediationPolicyRequest"
+              },
+              "example": {
+                "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                "low_impact_auto": true,
+                "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The row as stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationPolicy"
+                },
+                "example": {
+                  "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                  "low_impact_auto": true,
+                  "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "updated_at": "2026-11-04T16:45:30Z",
+                  "updated_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`, with `error` saying why: not the expected JSON, or `unknown site` for a site of another customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller reads the customer without administering it as a whole. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: a customer the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/rules": {
+      "get": {
+        "tags": [
+          "risk rules"
+        ],
+        "summary": "List risk rules",
+        "description": "The administrator rules of the customers the caller reads as a whole,\nby customer, site (customer-wide first), kind and pattern. Built-in\nrules are not listed: they are part of MonitorFlow and the same\neverywhere.\n\nNeeds any role on the customer as a whole (everything or the customer;\na site role sees an empty list) and the key area \"remediation\". Rules\nof customers the caller does not read are left out, without error. Not\npaginated: a customer has few rules.",
+        "operationId": "list_rules",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only this customer's rules.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "Only the rules narrowed to this site (customer-wide rules are left\nout).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationRuleList"
+                },
+                "example": {
+                  "rules": [
+                    {
+                      "created_at": "2026-11-02T09:15:00Z",
+                      "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
+                      "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                      "description": "Configuration test only",
+                      "id": "6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5b",
+                      "kind": "allow",
+                      "pattern": "nginx -t",
+                      "site_id": null,
+                      "tier": "read_only"
+                    },
+                    {
+                      "created_at": "2026-11-03T14:02:11Z",
+                      "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
+                      "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                      "description": "",
+                      "id": "7a2d3b8f-4c5e-4f60-9bac-1d2e3f4a5b6c",
+                      "kind": "cache_dir",
+                      "pattern": "/var/cache/app",
+                      "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "tier": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "risk rules"
+        ],
+        "summary": "Add a risk rule",
+        "description": "Adds an administrator rule to the classifier of a customer, or of one\nof its sites. It applies to the next command the AI proposes on the\nservers it covers; nothing is sent to agents. A command already waiting\nfor approval keeps its tier, but is classified again when approved.\n\n- `allow`: a command no built-in rule knows, matching `pattern` as a\n  whole, gets `tier`, `read_only` (runs without approval) or\n  `low_impact` (needs approval unless the site's policy lets it run).\n  An allow rule never applies to a command a built-in rule decides,\n  and its program may not be one the built-in rules reserve (`sudo`,\n  shells and interpreters, package managers, `systemctl`, `rm`,\n  `kill`, `reboot` and the like): that is 400.\n- `deny`: a command containing a match anywhere, after `;`, `&&`, `|`\n  too, is `forbidden`, whatever the other rules say. Deny wins over\n  every allow rule.\n- `cache_dir`: `find <pattern> -mindepth 1 -delete` becomes a\n  low-impact command for that directory.\n\nNeeds an administrator role on the customer as a whole and the key\narea \"remediation\". Audited as `remediation_rule.create`. Not safe to\nrepeat with a different body; the same rule twice is 409.",
+        "operationId": "create_rule",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemediationRuleRequest"
+              },
+              "example": {
+                "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                "description": "Configuration test only",
+                "kind": "allow",
+                "pattern": "nginx -t",
+                "site_id": null,
+                "tier": "read_only"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The rule as stored, pattern normalized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemediationRule"
+                },
+                "example": {
+                  "created_at": "2026-11-02T09:15:00Z",
+                  "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
+                  "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
+                  "description": "Configuration test only",
+                  "id": "6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5b",
+                  "kind": "allow",
+                  "pattern": "nginx -t",
+                  "site_id": null,
+                  "tier": "read_only"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`, with `error` saying why: not the expected JSON, a wrong pattern, tier or description (an allow rule without `read_only` or `low_impact`, a tier on another kind, a wildcard in an allow rule's program, a program the built-in rules reserve, a cache directory under a system directory), or `unknown site` for a site of another customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller reads the customer without administering it as a whole. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: a customer the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: this rule already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/remediation/rules/{id}": {
+      "delete": {
+        "tags": [
+          "risk rules"
+        ],
+        "summary": "Delete a risk rule",
+        "description": "Removes an administrator rule; the next commands the AI proposes are\nclassified without it. Commands already approved or run are not\naffected. Needs an administrator role on the rule's customer as a whole\nand the key area \"remediation\". Audited as `remediation_rule.delete`\nwith the rule's pattern. Deleting again is 404.",
+        "operationId": "delete_rule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The rule",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller reads the customer without administering it as a whole. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such rule, or one of a customer the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers": {
       "get": {
         "tags": [
@@ -3688,6 +4877,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "Only the servers of this site; none outside the user's sites.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -3697,6 +4896,99 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ServerList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/summary": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "How many servers are in each state: the counts of the status strip.",
+        "operationId": "server_summary",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "Only the servers of this site.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only the servers of this customer's sites.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerSummary"
                 }
               }
             }
@@ -5628,6 +6920,13 @@
               "format": "uuid"
             },
             "description": "1 to [`MAX_LIMIT`] incidents, like a group of a notification."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the user is doing about them, up to 500 characters, shown with\nthe acknowledgement (ADR-0130). Required when signed in; optional\nfor API keys, so older scripts keep working."
           }
         },
         "additionalProperties": false
@@ -5645,6 +6944,30 @@
               "type": "string",
               "format": "uuid"
             }
+          }
+        }
+      },
+      "AcknowledgementNote": {
+        "type": "object",
+        "description": "Who acknowledged a server's latest acknowledged open incident, when,\nand what they said they are doing (ADR-0130).",
+        "required": [
+          "by",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "by": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` from a notification link or a script that sent none."
           }
         }
       },
@@ -5926,6 +7249,103 @@
             "description": "Lowercase hexadecimal without leading zeros."
           }
         }
+      },
+      "Classification": {
+        "type": "object",
+        "description": "What [`classify`] answers.",
+        "required": [
+          "tier",
+          "rule",
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "One sentence for the approval queue and the audit log."
+          },
+          "rule": {
+            "$ref": "#/components/schemas/ClassifierRule",
+            "description": "The rule that decided: `{\"source\": \"builtin\", \"id\": \"readonly.df\"}`\nor `{\"source\": \"configured\", \"id\": \"<rule UUID>\"}`."
+          },
+          "tier": {
+            "$ref": "#/components/schemas/Tier"
+          }
+        }
+      },
+      "ClassifierRule": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A built-in rule, by its stable ID such as `readonly.df`.",
+            "required": [
+              "id",
+              "source"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "builtin"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A row of `remediation_rules`.",
+            "required": [
+              "id",
+              "source"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "configured"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "The rule that decided."
+      },
+      "ClassifyRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/remediation/classify`.",
+        "required": [
+          "customer_id",
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The command line, as the AI would propose it. Neither stored nor\nlogged."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "shell": {
+            "$ref": "#/components/schemas/Shell",
+            "description": "`posix` (the default) for Linux servers, `powershell` for Windows\nones (ADR-0084)."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site whose rules apply as well; `null` or absent for the\ncustomer-wide rules only."
+          }
+        },
+        "additionalProperties": false
       },
       "CommandDetail": {
         "allOf": [
@@ -6754,7 +8174,8 @@
           "peak_value",
           "threshold",
           "silenced",
-          "can_acknowledge"
+          "can_acknowledge",
+          "reason"
         ],
         "properties": {
           "acknowledged_at": {
@@ -6770,6 +8191,13 @@
               "null"
             ],
             "description": "Who said they are on it, and when (ADR-0082); `null` until someone\ndoes. The name stays when the account is removed."
+          },
+          "acknowledged_note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What they said they are doing (ADR-0130); `null` from a\nnotification link, or from an API key that sent none."
           },
           "can_acknowledge": {
             "type": "boolean",
@@ -6812,6 +8240,10 @@
             "type": "number",
             "format": "double",
             "description": "The worst value seen while open."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it opened, in one sentence: \"9% available is below the\nwarning limit of 12%\"; for a resolved incident, its peak."
           },
           "relay_id": {
             "type": [
@@ -8201,6 +9633,603 @@
           }
         }
       },
+      "RemediationActorKind": {
+        "type": "string",
+        "description": "`actor_kind` values, as in `audit_log`.",
+        "enum": [
+          "user",
+          "system",
+          "ai",
+          "peer"
+        ]
+      },
+      "RemediationChain": {
+        "type": "object",
+        "description": "Result of [`verify`]. Field names are part of the API contract.",
+        "required": [
+          "valid",
+          "events"
+        ],
+        "properties": {
+          "broken_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The first sequence number that does not check out."
+          },
+          "events": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Events checked.",
+            "minimum": 0
+          },
+          "head_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Hash of the last event, hex; `null` without events."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`gap`, `prev_hash`, `hash` or `head`."
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "`false` when an event was changed, removed or inserted."
+          }
+        }
+      },
+      "RemediationEvent": {
+        "type": "object",
+        "description": "One event with its incident's server. Field names and types are part\nof the API contract: add fields, never rename or remove them.",
+        "required": [
+          "incident_id",
+          "seq",
+          "kind",
+          "actor_kind",
+          "actor_id",
+          "payload",
+          "created_at",
+          "hash",
+          "customer_id",
+          "customer_name",
+          "site_id",
+          "site_name",
+          "server_id",
+          "hostname",
+          "metric",
+          "instance"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": "string",
+            "description": "A user ID, `server`, the AI's provider and model, or a peer ID."
+          },
+          "actor_kind": {
+            "type": "string",
+            "description": "`user`, `system`, `ai` or `peer`."
+          },
+          "actor_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The user's name when `actor_kind` is `user` and the user still\nexists, else `null`."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string",
+            "description": "Hex, as in the incident detail."
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "incident_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "instance": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RemediationEventKind"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "payload": {
+            "description": "As stored, without `context.rendered` (`context_sent`) and\n`stdout`/`stderr` (`command_result`)."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          }
+        }
+      },
+      "RemediationEventKind": {
+        "type": "string",
+        "description": "What an event of a remediation incident records.",
+        "enum": [
+          "context_sent",
+          "ai_proposal",
+          "classification",
+          "approval",
+          "rejection",
+          "edit",
+          "command_queued",
+          "command_result",
+          "snapshot",
+          "escalation",
+          "state_change",
+          "note"
+        ]
+      },
+      "RemediationEventList": {
+        "type": "object",
+        "description": "Body of `GET /api/remediation/events`.",
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemediationEvent"
+            },
+            "description": "Newest first."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last one."
+          }
+        }
+      },
+      "RemediationIncident": {
+        "type": "object",
+        "description": "One remediation incident. Field names and types are part of the API\ncontract: add fields, never rename or remove them.",
+        "required": [
+          "id",
+          "customer_id",
+          "customer_name",
+          "site_id",
+          "site_name",
+          "server_id",
+          "hostname",
+          "metric",
+          "instance",
+          "state",
+          "opened_at",
+          "max_commands",
+          "max_duration_s",
+          "event_count"
+        ],
+        "properties": {
+          "alert_incident_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The threshold incident that opened it, see `/api/incidents`."
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "event_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of events."
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "instance": {
+            "type": "string",
+            "description": "`\"\"` for a series without an instance."
+          },
+          "max_commands": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Limits as they were when it opened: commands it may run, and\nseconds from `opened_at` before it escalates."
+          },
+          "max_duration_s": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "pending_command": {
+            "description": "The command waiting for approval in `awaiting_approval`, else\n`null` (ADR-0043): `id`, `command`, the AI's `diagnosis` and\n`reasoning` (untrusted text), the rules' `tier`, `rule` and\n`reason`, and `proposed_at`."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/RemediationIncidentState"
+          }
+        }
+      },
+      "RemediationIncidentDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RemediationIncident"
+          },
+          {
+            "type": "object",
+            "required": [
+              "events",
+              "chain"
+            ],
+            "properties": {
+              "chain": {
+                "$ref": "#/components/schemas/RemediationChain",
+                "description": "The hash chain recomputed at this request."
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RemediationIncidentEvent"
+                },
+                "description": "By sequence number, from 1."
+              }
+            }
+          }
+        ],
+        "description": "Body of `GET /api/remediation/incidents/{id}`."
+      },
+      "RemediationIncidentEvent": {
+        "type": "object",
+        "description": "One stored event.",
+        "required": [
+          "seq",
+          "kind",
+          "actor_kind",
+          "actor_id",
+          "payload",
+          "created_at",
+          "prev_hash",
+          "hash"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": "string",
+            "description": "A user ID, `server`, the AI's provider and model, or a peer ID."
+          },
+          "actor_kind": {
+            "type": "string",
+            "description": "`user`, `system`, `ai` or `peer`."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "hash": {
+            "type": "string",
+            "description": "SHA-256 of `prev_hash` and this event, hex."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RemediationEventKind"
+          },
+          "payload": {
+            "description": "The kind's fields, as recorded. Secrets were redacted before the\nevent was written; texts from the AI are untrusted."
+          },
+          "prev_hash": {
+            "type": "string",
+            "description": "SHA-256 of the previous event, hex; zeros for the first one."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Position in the incident's chain, from 1."
+          }
+        }
+      },
+      "RemediationIncidentList": {
+        "type": "object",
+        "description": "Body of `GET /api/remediation/incidents`.",
+        "required": [
+          "incidents"
+        ],
+        "properties": {
+          "incidents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemediationIncident"
+            },
+            "description": "Newest `opened_at` first."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last one."
+          }
+        }
+      },
+      "RemediationIncidentState": {
+        "type": "string",
+        "description": "Where a remediation incident is.",
+        "enum": [
+          "open",
+          "running",
+          "awaiting_approval",
+          "resolved",
+          "escalated",
+          "failed"
+        ]
+      },
+      "RemediationPolicy": {
+        "type": "object",
+        "description": "A row of `remediation_policies`.",
+        "required": [
+          "customer_id",
+          "low_impact_auto",
+          "updated_at"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "low_impact_auto": {
+            "type": "boolean",
+            "description": "`true`: low-impact commands run without a person's approval."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site the row is for; `null` for the customer's row, which\napplies to its sites without a row of their own."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The user who last set it; `null` once that user is deleted."
+          }
+        }
+      },
+      "RemediationPolicyList": {
+        "type": "object",
+        "description": "Body of `GET /api/remediation/policies`.",
+        "required": [
+          "policies"
+        ],
+        "properties": {
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemediationPolicy"
+            }
+          }
+        }
+      },
+      "RemediationPolicyRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/remediation/policies`.",
+        "required": [
+          "customer_id",
+          "low_impact_auto"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "low_impact_auto": {
+            "type": "boolean",
+            "description": "`true`: low-impact commands run without a person's approval."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "One of the customer's sites; `null` or absent sets the customer's\nown row, which applies to sites without a row of their own."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RemediationRule": {
+        "type": "object",
+        "description": "A row of `remediation_rules`.",
+        "required": [
+          "id",
+          "customer_id",
+          "kind",
+          "pattern",
+          "description",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The user who made it; `null` once that user is deleted."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`allow`, `deny` or `cache_dir`."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "Normalized: single spaces between words, no trailing `/`."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site it is narrowed to; `null` for every site of the customer."
+          },
+          "tier": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`read_only` or `low_impact` for allow rules, else `null`."
+          }
+        }
+      },
+      "RemediationRuleKind": {
+        "type": "string",
+        "description": "What a rule does.",
+        "enum": [
+          "allow",
+          "deny",
+          "cache_dir"
+        ]
+      },
+      "RemediationRuleList": {
+        "type": "object",
+        "description": "Body of `GET /api/remediation/rules`.",
+        "required": [
+          "rules"
+        ],
+        "properties": {
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemediationRule"
+            },
+            "description": "By customer, then site (customer-wide rules first), kind and\npattern."
+          }
+        }
+      },
+      "RemediationRuleRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/remediation/rules`.",
+        "required": [
+          "customer_id",
+          "kind",
+          "pattern"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The customer the rule belongs to."
+          },
+          "description": {
+            "type": "string",
+            "description": "Up to 256 characters, no control characters; empty by default."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RemediationRuleKind"
+          },
+          "pattern": {
+            "type": "string",
+            "description": "For `allow` and `deny`, words where `*` and `?` match within a word\nand `**` spans words; an `allow` pattern starts with a program name\nwithout wildcards. For `cache_dir`, an absolute directory of two\ncomponents or more, outside system directories. Spaces are\nnormalized and a trailing `/` dropped before the rule is stored."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "One of the customer's sites to narrow the rule to; `null` or absent\nfor every site of the customer."
+          },
+          "tier": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Tier",
+                "description": "`read_only` or `low_impact` for an `allow` rule; `null` or absent\nfor the other kinds."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "RevocationReason": {
         "type": "string",
         "description": "Why a certificate was revoked (RFC 5280 §5.3.1).",
@@ -8375,12 +10404,74 @@
           }
         }
       },
+      "ServerState": {
+        "type": "string",
+        "description": "The one status of a server on the fleet's pages, worst first\n(ADR-0130): a silence wins, then being offline, then the worst open\nincident nobody acknowledged; a server whose open incidents are all\nacknowledged is `acknowledged`, the rest `ok`.",
+        "enum": [
+          "critical",
+          "warning",
+          "acknowledged",
+          "silenced",
+          "offline",
+          "ok"
+        ]
+      },
       "ServerStatus": {
         "type": "string",
         "enum": [
           "online",
           "offline"
         ]
+      },
+      "ServerSummary": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/summary`: how many servers are in each\n[`ServerState`], out of `total`.",
+        "required": [
+          "critical",
+          "warning",
+          "acknowledged",
+          "silenced",
+          "offline",
+          "ok",
+          "total"
+        ],
+        "properties": {
+          "acknowledged": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "critical": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "offline": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "ok": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "silenced": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "warning": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       },
       "ServerView": {
         "type": "object",
@@ -8398,10 +10489,22 @@
           "created_at",
           "status",
           "open_incidents",
+          "state",
           "offline_alerts",
           "site_offline_alerts"
         ],
         "properties": {
+          "acknowledgement": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AcknowledgementNote",
+                "description": "The latest acknowledgement of its open incidents (ADR-0130);\n`null` when none is acknowledged."
+              }
+            ]
+          },
           "agent_version": {
             "type": [
               "string",
@@ -8506,6 +10609,17 @@
             ],
             "format": "date-time"
           },
+          "silence": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SilenceNote",
+                "description": "That silence: who made it and why (ADR-0130); `null` without one."
+              }
+            ]
+          },
           "silenced_until": {
             "type": [
               "string",
@@ -8523,6 +10637,10 @@
           },
           "site_offline_alerts": {
             "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ServerState",
+            "description": "Its one status on the fleet's pages (ADR-0130)."
           },
           "status": {
             "$ref": "#/components/schemas/ServerStatus"
@@ -8563,6 +10681,30 @@
             "items": {
               "$ref": "#/components/schemas/SilenceView"
             }
+          }
+        }
+      },
+      "SilenceNote": {
+        "type": "object",
+        "description": "Who silenced a server, until when and why (ADR-0130).",
+        "required": [
+          "until",
+          "reason"
+        ],
+        "properties": {
+          "by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who made the silence; `null` once the account is removed."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -9318,7 +11460,7 @@
     },
     {
       "name": "remediation",
-      "description": "Commands the AI proposed, waiting for a person"
+      "description": "What the AI did about alerts. Each remediation incident is one alert the AI worked on, with every step recorded in a hash chain: the context it was sent after redaction, its proposals, how the rules classified each command, who approved or rejected it, and what the agent ran and printed. Read-only, except the approval queue, where people decide the commands the rules parked for them. The AI's text is untrusted: show it as data. Needs the key area \"remediation\"."
     },
     {
       "name": "metrics",
@@ -9343,6 +11485,10 @@
     {
       "name": "package sources",
       "description": "Where a server's apt or dnf takes its packages from: its own sources or the mirrors of this install. Changing them sends the server a signed `configure_sources` or `revert_sources` command, which the agent applies and can undo. Reading them needs any role on the server's site; changing them needs the administrator role on its customer. Through an API key, these routes are in the \"updates\" area. Windows servers have no mirror: their status says where Windows Update takes their updates from instead."
+    },
+    {
+      "name": "risk rules",
+      "description": "How MonitorFlow decides what an AI command may do. Every command the AI proposes is classified by rules, never by the AI: `read_only` runs at once, `low_impact` waits for a person with an approver role unless the site's policy lets it run on its own, `high_impact` waits for an administrator, and `forbidden` never runs and hands the incident to a person. Built-in rules cover the commands MonitorFlow knows; administrators add allow rules for other commands (read-only or low impact only), deny patterns that forbid commands, and cache directories that may be cleared, for a customer or one of its sites. Rules and policies need a role on the customer as a whole (everything, or the customer): a role on one site, or a key that reaches one site, sees none. They need the key area \"remediation\"."
     }
   ]
 }
