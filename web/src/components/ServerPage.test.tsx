@@ -101,17 +101,35 @@ const THRESHOLDS = [
   { origin: "default", threshold_id: null, metric: "monitorflow_disk_used_ratio", instance: null, enabled: true, comparison: ">", warning: 0.85, critical: 0.95, duration_s: 300, hysteresis: 0.02 },
   { origin: "default", threshold_id: null, metric: "monitorflow_cpu_usage_ratio", instance: "total", enabled: true, comparison: ">", warning: 0.9, critical: null, duration_s: 600, hysteresis: 0.02 },
 ];
-const value = (instance: string, v: number) => ({ labels: instance ? { instance } : {}, points: [[NOW.getTime() / 1000, v]] });
+const T = NOW.getTime() / 1000;
+const series = (instance: string, v: number, reason: string | null = null) => ({
+  instance,
+  points: [[T - 120, v], [T, v]],
+  last_value: v,
+  last_at: NOW.toISOString(),
+  reason,
+});
+const values = (disk: unknown[] = [series("/", 0.61), series("/var", 0.94)]) =>
+  ok({
+    start: T - 3600,
+    end: T,
+    step: 120,
+    sensors: [
+      { name: "cpu", instance: "", metric: "monitorflow_cpu_usage_ratio", series: [series("total", 0.384)], reason: null },
+      { name: "disk", instance: "", metric: "monitorflow_disk_used_ratio", series: disk, reason: null },
+    ],
+  });
 
 /** The page's requests; `overrides` replaces some. */
 function routes(overrides: Record<string, unknown> = {}) {
   return {
     [`GET /api/servers/${ID}`]: ok(web1),
     [`GET /api/servers/${ID}/sensors`]: ok(config()),
-    [`GET /api/metrics/query?server_id=${ID}&metric=monitorflow_cpu_usage_ratio&instance=total`]: ok({ query: "", series: [value("total", 0.384)] }),
-    [`GET /api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio`]: ok({ query: "", series: [value("/", 0.61), value("/var", 0.94)] }),
+    [`GET /api/servers/${ID}/sensor-values`]: values(),
     [`GET /api/incidents?state=open&server_id=${ID}&limit=500`]: ok({
-      incidents: [incident({ server_id: ID, opened_at: new Date(2026, 9, 22, 11, 40).toISOString(), last_value: 0.942 })],
+      incidents: [
+        incident({ server_id: ID, opened_at: new Date(2026, 9, 22, 11, 40).toISOString(), last_value: 0.942, reason: "94.2% used is above the critical limit of 95%" }),
+      ],
       next_cursor: null,
     }),
     [`GET /api/servers/${ID}/commands?limit=${COMMANDS_PAGE}`]: ok({ commands: [command({}), failed], next_cursor: null }),
@@ -180,13 +198,14 @@ describe("ServerPage", () => {
     expect(screen.getByRole("tab", { name: "Commands · 1 running" })).toBeInTheDocument();
     expect(screen.getByText("Configuration up to date").parentElement).toHaveTextContent(/applied 3 min ago/);
     const rows = within(screen.getByRole("table", { name: "Sensors" })).getAllByRole("row").slice(1);
-    // Each row: the sensor, its status and value, then its rule and where the rule comes from.
+    // Each row: the sensor, its status, why, its value, then its rule and where the rule comes from.
     expect(rows.map((r) => r.textContent)).toEqual([
-      "Disk used /vardisk · /varCritical94.2% · since 11:40, 2 h 52 minevery 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
+      "Disk used /vardisk · /varCritical94.2% used is above the critical limit of 95%94.2% · since 11:40, 2 h 52 minevery 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
       "CPU usagecpuOK38.4%every 15 s · warn > 90% · for 10 minBuilt-in⋯",
       "Disk used /disk · /OK61%every 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
     ]);
     expect(screen.queryByRole("tab", { name: "Alerts and checks" })).not.toBeInTheDocument();
+    expect(within(rows[1]!).getByRole("img", { name: "CPU usage, last hour" })).toBeInTheDocument();
     expect(within(rows[0]!).getByRole("link", { name: "Disk used /var" })).toHaveAttribute(
       "href",
       expect.stringMatching(new RegExp(`^/servers/sensor/?\\?id=${ID}&sensor=disk_used_ratio&instance=%2Fvar$`)),
@@ -212,30 +231,23 @@ describe("ServerPage", () => {
     expect(screen.getByRole("heading", { level: 1, name: "web-1" })).toBeInTheDocument();
   });
 
-  it("reads the latest value of a slow check over two of its intervals", async () => {
-    const hourly = config().sensors.map((s) => (s.kind === "disk" ? { ...s, interval_ms: 3_600_000 } : s));
-    const fetchMock = stubFetch(
-      routes({
-        [`GET /api/servers/${ID}/sensors`]: ok(config({ sensors: hourly })),
-        [`GET /api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio`]: { status: 500, body: { error: "unexpected" } },
-        [`GET /api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio&lookback=7200`]: ok({ query: "", series: [value("/", 0.61)] }),
-      }),
-    );
+  it("reads every sensor's values in one request and says when one is late", async () => {
+    const fetchMock = stubFetch(routes({
+        [`GET /api/servers/${ID}/sensor-values`]: values([series("/", 0.61, "No data for 15 minutes")]),
+        [`GET /api/incidents?state=open&server_id=${ID}&limit=500`]: ok({ incidents: [], next_cursor: null }),
+      }));
     render(<ServerPage id={ID} />);
-    await heading();
-    const rows = within(await screen.findByRole("table", { name: "Sensors" })).getAllByRole("row").slice(1);
-    expect(rows.map((r) => r.textContent)).toContain("CPU usagecpuOK38.4%every 15 s · warn > 90% · for 10 minBuilt-in⋯");
-    const instant = fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => url.startsWith("/api/metrics/query?"));
-    expect(instant).toContain(`/api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio&lookback=7200`);
-    expect(instant).not.toContain(`/api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio`);
-    // A check every 15 s keeps VictoriaMetrics' own look-back.
-    expect(instant).toContain(`/api/metrics/query?server_id=${ID}&metric=monitorflow_cpu_usage_ratio&instance=total`);
+    const table = await screen.findByRole("table", { name: "Sensors" });
+    expect(within(table).getByRole("row", { name: /Disk used \// })).toHaveTextContent(/Unknown\s*No data for 15 minutes/);
+    const urls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(urls.filter((u) => u.startsWith("/api/metrics/"))).toEqual([]);
+    expect(urls.filter((u) => u.endsWith("/sensor-values"))).toHaveLength(1);
   });
 
   it("says why a sensor has no value", async () => {
     stubFetch(
       routes({
-        [`GET /api/metrics/query?server_id=${ID}&metric=monitorflow_cpu_usage_ratio&instance=total`]: { status: 502, body: { error: "bad gateway" } },
+        [`GET /api/servers/${ID}/sensor-values`]: { status: 502, body: { error: "bad gateway" } },
       }),
     );
     render(<ServerPage id={ID} />);
@@ -595,7 +607,6 @@ describe("ServerPage", () => {
       const port = { origin: "server" as const, entry_id: "p1", kind: "port", name: "port_443", instance: "", interval_ms: 60_000, timeout_ms: null, params: { port: "443", host: "127.0.0.1" } };
       const fetchMock = open(operator, {
         [`GET /api/servers/${ID}/sensors`]: [ok(config()), ok(config({ sensors: [...config().sensors, port] }))],
-        [`GET /api/metrics/query?server_id=${ID}&metric=monitorflow_port_443_up`]: ok({ query: "", series: [] }),
         "GET /api/plugins/usable": ok({ plugins: [] }),
         "GET /api/sites": ok({ sites: [] }),
         [`POST /api/servers/${ID}/sensor_configs`]: { status: 201, body: {} },
@@ -603,6 +614,8 @@ describe("ServerPage", () => {
         [`POST /api/servers/${ID}/thresholds`]: { status: 201, body: {} },
       });
       await user.click(await screen.findByRole("button", { name: "Add a check" }));
+      const catalogue = await screen.findByRole("group", { name: "Check catalogue" });
+      await user.click(within(catalogue).getAllByRole("button", { name: /^A port answers/ })[0]!);
       const form = screen.getByRole("form", { name: "Add a check" });
       await user.type(within(form).getByLabelText("Port"), "443");
       await user.click(within(form).getByRole("button", { name: "Add check" }));
@@ -677,7 +690,7 @@ describe("ServerPage", () => {
     expect(await within(panel).findByText(/MF_UNINSTALL=1 MF_PURGE=1/)).toHaveTextContent(
       "curl -fsSL https://github.com/x/releases/latest/download/install.sh",
     );
-    expect(within(panel).getByRole("link", { name: "Add servers" })).toHaveAttribute("href", expect.stringContaining("/admin/tokens"));
+    expect(within(panel).getByRole("link", { name: "Add servers" })).toHaveAttribute("href", expect.stringContaining("/settings/add-servers"));
   });
 
   it("shows readers of a removed server no uninstall command", async () => {

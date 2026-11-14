@@ -6,11 +6,13 @@ import { useCallback, useEffect } from "react";
 
 import {
   ApiError,
+  type EffectiveSensor,
   type EffectiveSensors,
   type EffectiveThreshold,
   type Incident,
   type MetricSeries,
   type SensorConfigEntry,
+  type SensorValueList,
   type ServerDetail,
   api,
   describeError,
@@ -25,7 +27,7 @@ import { modifiesSite, useMe } from "@/lib/me";
 import { DEFAULT_INTERVAL_S, METRIC_PREFIX } from "@/lib/metrics";
 import { incidentHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
-import { type SensorStatus, formatSensorValue, sensorOf, seriesTitle } from "@/lib/sensors";
+import { type SensorStatus, formatSensorValue, primaryMetric, sensorOf, seriesTitle } from "@/lib/sensors";
 import { thresholdFor } from "@/lib/thresholds";
 import { usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
@@ -42,6 +44,7 @@ import { TimeChart } from "@/components/ui/TimeChart";
 import { formatClock, formatDay, formatDuration } from "@/components/ui/time";
 import type { Tone } from "@/components/ui/tone";
 
+import { sensorSiblings, serverSiblings } from "./breadcrumbSiblings";
 import { SensorConfiguration } from "./SensorConfiguration";
 import styles from "./DetailPages.module.css";
 
@@ -65,6 +68,10 @@ interface SensorData {
   rows: SensorConfigEntry[] | null;
   siteSensors: EffectiveSensors["sensors"] | null;
   thresholds: EffectiveThreshold[] | null;
+  /** Why the sensor's last sample is late or missing, in the server's words; null when it is not. */
+  late: string | null;
+  /** Every sensor's recent values, for the breadcrumb's list; null when unreadable. */
+  recent: SensorValueList | null;
   /** Every incident of this metric and instance, newest first; null when they could not be read. */
   incidents: Incident[] | null;
   chart: Chart<MetricSeries>;
@@ -89,12 +96,13 @@ const orNull = <T,>(promise: Promise<T>) =>
   });
 
 async function loadSensor(id: string, metric: string, instance: string, range: Range, signal: AbortSignal): Promise<SensorData> {
-  const [server, config, rows, thresholds, incidents] = await Promise.all([
+  const [server, config, rows, thresholds, incidents, recent] = await Promise.all([
     api.server(id, signal),
     orNull(api.serverSensors(id, signal)),
     orNull(api.sensorRows({ kind: "servers", id }, signal).then((r) => r.entries)),
     orNull(api.serverThresholds(id, signal).then((t) => t.thresholds)),
     orNull(api.incidents({ server_id: id, limit: 500 }, signal).then((p) => p.incidents)),
+    orNull(api.sensorValues(id, signal)),
   ]);
   const siteSensors = config ? await orNull(api.siteSensors(config.site_id, signal).then((s) => s.sensors)) : null;
   const effective = config ? sensorOf(config.sensors, metric) : undefined;
@@ -111,10 +119,20 @@ async function loadSensor(id: string, metric: string, instance: string, range: R
     siteSensors,
     thresholds,
     incidents: incidents?.filter((i) => i.metric === metric && i.instance === instance) ?? null,
+    late: lateReason(recent, effective, metric, instance),
+    recent,
     chart,
     companions,
     range,
   };
+}
+
+/** The server's sentence for late or missing data of the sensor's own metric, if any. */
+function lateReason(list: SensorValueList | null, sensor: EffectiveSensor | undefined, metric: string, instance: string): string | null {
+  const entry = sensor && list?.sensors.find((v) => v.name === sensor.name && v.instance === sensor.instance && v.metric === metric);
+  if (!entry) return null;
+  const shown = entry.series.find((s) => s.instance === (instance || primaryMetric(sensor).instance || ""));
+  return shown ? shown.reason : entry.series.length === 0 ? entry.reason : null;
 }
 
 /** `metric` of `instance` (every instance when empty) over `range`, or why it could not be read. */
@@ -206,7 +224,7 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
     );
   }
 
-  const { server, thresholds, incidents, chart } = data;
+  const { server, config, thresholds, incidents, chart } = data;
   const now = updatedAt;
   const format = (v: number) => formatSensorValue(metric, v);
   const open = incidents?.find((i) => i.state === "open");
@@ -214,7 +232,7 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
   const values = series.flatMap((s) => s.points.map((p) => p[1])).filter((v): v is number => v !== null);
   const lastPoints = series[0]?.points.filter((p) => p[1] !== null) ?? [];
   const current = lastPoints[lastPoints.length - 1]?.[1] ?? null;
-  const status: SensorStatus = open ? open.severity : current === null ? "unknown" : "ok";
+  const status: SensorStatus = open ? open.severity : current === null || data.late ? "unknown" : "ok";
   const rule = thresholds ? thresholdFor(thresholds, metric, instance) : undefined;
   const ratio = unitOf(metric) === "ratio";
   const serverLink = scopedHref(serverHref(server.id), scope);
@@ -224,13 +242,16 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
       <Breadcrumb
         parents={[
           { label: "Fleet", href: scopedHref("/", scope) },
-          { label: server.hostname, href: serverLink },
+          { label: server.hostname, href: serverLink, siblings: serverSiblings(server, scope) },
         ]}
         current={title}
+        siblings={config ? sensorSiblings(server, config.sensors, data.recent, { metric, instance }, scope) : undefined}
       />
       <PageHeader
         detail
         title={title}
+        tone={TONES[status]}
+        reason={open ? open.reason : data.late}
         status={
           <>
             <StatusLabel kind="sensor" value={status} />

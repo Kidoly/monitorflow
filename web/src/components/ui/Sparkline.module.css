@@ -1,0 +1,26 @@
+.spark {
+  display: block;
+  overflow: visible;
+}
+
+.spark path {
+  stroke: var(--spark);
+}
+
+.ok,
+.neutral,
+.info {
+  --spark: var(--series-1);
+}
+
+.warn {
+  --spark: var(--threshold-warn);
+}
+
+.bad {
+  --spark: var(--threshold-crit);
+}
+
+.none {
+  color: var(--muted);
+}

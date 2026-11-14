@@ -1469,6 +1469,15 @@ impl RemediationConfig {
 
 /// Where install commands download the agent from (ADR-0054).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[cfg_attr(
+    feature = "openapi",
+    derive(utoipa::ToSchema),
+    schema(
+        description = "`github`: the project's latest public release. `central`: the central \
+        server's release cache, behind the web interface. `custom`: an https directory the \
+        operator gives."
+    )
+)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentInstallSource {
     /// The latest GitHub release.
@@ -1507,6 +1516,15 @@ impl FromStr for AgentInstallSource {
 /// Who answers: Anthropic, OpenAI, or any server speaking OpenAI's Chat
 /// Completions API, local models included (ADR-0096).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[cfg_attr(
+    feature = "openapi",
+    derive(utoipa::ToSchema),
+    schema(
+        description = "Who answers: `anthropic` or `openai`, hosted services with their own \
+        address, or `openai_compatible`, any server speaking the same chat completions \
+        protocol at `base_url`, local models included."
+    )
+)]
 pub enum AiProviderKind {
     #[default]
     #[serde(rename = "anthropic", alias = "claude")]

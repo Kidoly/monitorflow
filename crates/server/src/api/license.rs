@@ -27,7 +27,9 @@ pub struct LicenseView {
     pub added: Vec<crate::edition::Added>,
 }
 
-#[derive(Debug, Deserialize)]
+/// Body of `PUT /api/license`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = LicenseRequest)]
 pub struct InstallRequest {
     /// The license key's text, both blocks.
     pub text: String,

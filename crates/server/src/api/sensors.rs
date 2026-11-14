@@ -39,19 +39,32 @@ pub(super) const FOREIGN_KEY_VIOLATION: &str = "23503";
 pub(super) const CHECK_VIOLATION: &str = "23514";
 
 /// Body of a create or an update. An update replaces every field.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
+#[schema(as = SensorConfigRequest)]
 #[serde(deny_unknown_fields)]
 pub struct EntryRequest {
+    /// The sensor: `cpu`, `memory`, `disk`, `diskio`, `systemd`, `port`,
+    /// `log`, `script`, `eventlog`, `windows_service`, or `plugin` for a
+    /// check plugin.
     pub kind: String,
-    /// Defaults to `kind`.
+    /// Lowercase letters, digits and `_`, starting with a letter, at most
+    /// 64; defaults to `kind`. With `instance`, what a row overrides in the layers
+    /// below.
     pub name: Option<String>,
+    /// What it watches, like a disk or a service: at most 256 bytes
+    /// without control characters, `""` by default.
     #[serde(default)]
     pub instance: String,
+    /// How often it runs, in milliseconds: 10000 (10 s) to 86400000 (24 h).
     pub interval_ms: u64,
-    /// `null` or absent: the agent's default.
+    /// Milliseconds it may take, at most `interval_ms`; `null` or absent:
+    /// one that grows with the interval.
     pub timeout_ms: Option<u64>,
-    /// A flat object of strings, numbers and booleans.
+    /// The kind's settings: a flat object of strings, numbers and
+    /// booleans, at most 32, each value at most 1024 bytes. Unknown
+    /// settings are refused.
     #[serde(default)]
+    #[schema(value_type = Object)]
     pub params: Map<String, Value>,
     /// `false` removes the sensor of the same name and instance from the
     /// layers below.
@@ -154,40 +167,53 @@ pub fn check_interval(interval_ms: u64) -> Result<(), String> {
 
 /// One row of `sensor_configs`. Exactly one of `site_id` and `server_id`
 /// is set.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = SensorConfig)]
 pub struct Entry {
     pub id: Uuid,
+    /// Set for a site's row, which its servers inherit.
     pub site_id: Option<Uuid>,
+    /// Set for one server's row.
     pub server_id: Option<Uuid>,
     pub kind: String,
     pub name: String,
     pub instance: String,
+    /// Milliseconds.
     pub interval_ms: i64,
+    /// Milliseconds; `null`: one that grows with the interval.
     pub timeout_ms: Option<i64>,
+    /// As sent, with its types.
+    #[schema(value_type = Object)]
     pub params: Value,
+    /// `false`: removes the sensor of the same name and instance from the
+    /// layers below.
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 /// Body of the list endpoints, sorted by name and instance.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = SensorConfigList)]
 pub struct EntryList {
     pub entries: Vec<Entry>,
 }
 
-/// Which layer an effective sensor comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// Which layer an effective sensor or threshold comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = LayerOrigin)]
 #[serde(rename_all = "lowercase")]
 pub enum Origin {
     /// The built-in defaults in server code.
     Default,
+    /// A row of the site.
     Site,
+    /// A row of the server itself.
     Server,
 }
 
 /// One sensor as the agent receives it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct EffectiveSensor {
     pub origin: Origin,
     /// The row it comes from; `null` for a built-in default.
@@ -195,17 +221,21 @@ pub struct EffectiveSensor {
     pub kind: String,
     pub name: String,
     pub instance: String,
+    /// Milliseconds.
     pub interval_ms: u64,
+    /// Milliseconds; `null`: one that grows with the interval.
     pub timeout_ms: Option<u64>,
     /// As sent to the agent: every value is a string.
     pub params: std::collections::BTreeMap<String, String>,
 }
 
 /// Whether the built-in checks run at the built-in interval or the site's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum IntervalOrigin {
+    /// Every minute, the built-in interval.
     Default,
+    /// The site's own, set with `PUT /sites/{id}/check-interval`.
     Site,
 }
 
@@ -222,31 +252,36 @@ fn builtin_interval(check_interval_ms: Option<i32>) -> (u64, IntervalOrigin) {
 }
 
 /// Body of `GET /api/servers/{id}/sensors`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = EffectiveSensors)]
 pub struct Effective {
     pub server_id: Uuid,
     pub site_id: Uuid,
-    /// Interval of the built-in checks (ADR-0097).
+    /// Interval of the built-in checks, in milliseconds (ADR-0097).
     pub check_interval_ms: u64,
     pub check_interval_origin: IntervalOrigin,
     /// Revision of the current configuration.
     pub revision: i64,
     /// Revision the agent last acknowledged, `null` if it never did.
     pub applied_revision: Option<i64>,
+    /// When it acknowledged it; `null` if it never did.
     pub applied_at: Option<DateTime<Utc>>,
     /// Whether the agent acknowledged the current revision.
     pub in_sync: bool,
+    /// By name and instance.
     pub sensors: Vec<EffectiveSensor>,
 }
 
 /// Body of `GET /api/sites/{id}/sensors`: what the site's servers run
 /// unless they override it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = SiteSensors)]
 pub struct SiteEffective {
     pub site_id: Uuid,
-    /// Interval of the built-in checks (ADR-0097).
+    /// Interval of the built-in checks, in milliseconds (ADR-0097).
     pub check_interval_ms: u64,
     pub check_interval_origin: IntervalOrigin,
+    /// By name and instance.
     pub sensors: Vec<EffectiveSensor>,
 }
 
@@ -667,6 +702,29 @@ pub async fn effective_site(
         check_interval_origin,
         sensors: effective_sensors(&entries, check_interval_ms),
     }))
+}
+
+/// The sensors `server_id` of `site_id` runs, as
+/// `GET /api/servers/{id}/sensors` lists them, for a site whose built-in
+/// checks run every `site_interval` milliseconds when set.
+pub(super) async fn server_effective(
+    pool: &PgPool,
+    server_id: Uuid,
+    site_id: Uuid,
+    site_interval: Option<i32>,
+) -> Result<Vec<EffectiveSensor>, sqlx::Error> {
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entries: Vec<Entry> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {ENTRY_COLUMNS} FROM sensor_configs WHERE site_id = $1 OR server_id = $2"
+    )))
+    .bind(site_id)
+    .bind(server_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(effective_sensors(
+        &entries,
+        builtin_interval(site_interval).0,
+    ))
 }
 
 /// Resolves `entries` over the built-in checks every

@@ -44,46 +44,70 @@ pub const MAX_MEMBERS: usize = 50;
 const MAX_NAME: usize = 80;
 
 /// One period with one person on call.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = OnCallTurn)]
 pub struct TurnView {
+    /// Start of the period; in the past for the turn running now.
     pub starts_at: DateTime<Utc>,
+    /// End of the period, at a hand-off or an end of a cover.
     pub ends_at: DateTime<Utc>,
     /// `null` for a removed user's turn or a schedule without members.
     pub user_id: Option<Uuid>,
+    /// Name of `user_id`; `null` with it.
     pub username: Option<String>,
-    /// Set when an override puts this person on.
+    /// Set when a cover puts this person on.
     pub override_id: Option<Uuid>,
-    /// Why this person cannot be told: the period is a gap.
+    /// Why this person cannot be told: the period is a gap. `null` when
+    /// they can be.
     pub problem: Option<Problem>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// A member of a schedule, in the order of their turns.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = OnCallMember)]
 pub struct MemberView {
+    /// `null` for a removed user.
     pub user_id: Option<Uuid>,
+    /// Name of `user_id`; `null` with it.
     pub username: Option<String>,
+    /// Why they could not be told now; `null` when they can be.
     pub problem: Option<Problem>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// A cover: someone on call for a period instead of the rotation.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = OnCallCover)]
 pub struct OverrideView {
+    /// The cover's ID, to remove it.
     pub id: Uuid,
+    /// Who is on call during it.
     pub user_id: Uuid,
+    /// Name of `user_id`; `null` once the user is removed.
     pub username: Option<String>,
+    /// Start of the cover.
     pub starts_at: DateTime<Utc>,
+    /// End of the cover.
     pub ends_at: DateTime<Utc>,
 }
 
 /// A schedule as the screen shows it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = OnCallSchedule)]
 pub struct ScheduleView {
+    /// The schedule's ID.
     pub id: Uuid,
+    /// 1 to 80 characters.
     pub name: String,
     /// The customer it covers, or the customer of its site; `null` for
     /// everything.
     pub customer_id: Option<Uuid>,
+    /// Name of `customer_id`; `null` with it.
     pub customer_name: Option<String>,
+    /// The site it covers; `null` for a whole customer or everything.
     pub site_id: Option<Uuid>,
+    /// Name of `site_id`; `null` with it.
     pub site_name: Option<String>,
+    /// IANA name of the time zone of hand-offs, like `Europe/Paris`.
     pub time_zone: String,
     /// `daily` or `weekly`.
     pub rotation: Rotation,
@@ -91,15 +115,17 @@ pub struct ScheduleView {
     pub handoff_time: String,
     /// ISO weekday of a weekly hand-off, 1 for Monday; `null` when daily.
     pub handoff_day: Option<u32>,
+    /// In the order of their turns.
     pub members: Vec<MemberView>,
-    /// Overrides not over yet, by start.
+    /// Covers not over yet, by start.
     pub overrides: Vec<OverrideView>,
     /// Who is on call now; `null` only without members.
     pub now: Option<TurnView>,
-    /// The next one who takes over.
+    /// The next one who takes over; `null` when nobody else does within
+    /// the horizon.
     pub next: Option<TurnView>,
-    /// The turns that start within [`HORIZON_DAYS`], the one running now
-    /// first.
+    /// The turns that start within the next 28 days, the one running
+    /// now first.
     pub turns: Vec<TurnView>,
     /// Who is told during a gap; empty when nobody can be, and for members
     /// who do not manage it.
@@ -107,64 +133,89 @@ pub struct ScheduleView {
     /// The mail server personal email goes through; `null` when there is
     /// none, and for members who do not manage it.
     pub mail_host: Option<String>,
+    /// Whether the caller may change it; always true through an API key.
     pub can_manage: bool,
 }
 
-#[derive(Debug, Serialize)]
+/// Body of `GET /api/on-call/schedules`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = OnCallScheduleList)]
 pub struct ScheduleList {
+    /// By name.
     pub schedules: Vec<ScheduleView>,
 }
 
 /// Body of `POST /api/on-call/schedules` and of `PUT` on one.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = OnCallScheduleRequest)]
 #[serde(deny_unknown_fields)]
 pub struct ScheduleRequest {
+    /// 1 to 80 characters, trimmed.
     pub name: String,
+    /// The customer it is for; with `site_id` also `null`, everything.
     #[serde(default)]
     pub customer_id: Option<Uuid>,
+    /// The site it is for. Not together with `customer_id`.
     #[serde(default)]
     pub site_id: Option<Uuid>,
     /// An IANA name, like `Europe/Paris`.
     pub time_zone: String,
+    /// `daily` or `weekly`.
     pub rotation: String,
     /// `HH:MM`, local.
     pub handoff_time: String,
     /// ISO weekday, 1 for Monday; needed when weekly.
     #[serde(default)]
     pub handoff_day: Option<u32>,
-    /// In order of their turns.
+    /// User IDs in order of their turns: 1 to 50, each once, people who
+    /// see all of the place (see `GET /api/v1/on-call/people`); members
+    /// already on it may stay.
     pub members: Vec<Uuid>,
 }
 
 /// Body of `POST /api/on-call/schedules/{id}/overrides`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = OnCallCoverRequest)]
 #[serde(deny_unknown_fields)]
 pub struct OverrideRequest {
+    /// Who covers: a member, or someone who could be one.
     pub user_id: Uuid,
     /// Now when absent or past.
     #[serde(default)]
     pub starts_at: Option<DateTime<Utc>>,
+    /// After the start, at most 90 days after it; the start within a
+    /// year.
     pub ends_at: DateTime<Utc>,
 }
 
 /// Query of `GET /api/on-call/people`: the coverage of a schedule.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct PeopleParams {
+    /// A customer; with `site_id` also absent, everything.
     pub customer_id: Option<Uuid>,
+    /// A site. Not together with `customer_id`.
     pub site_id: Option<Uuid>,
 }
 
-#[derive(Debug, Serialize)]
+/// Someone who can be on call for a place.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = OnCallPerson)]
 pub struct PersonView {
+    /// The user's ID.
     pub id: Uuid,
+    /// Their username.
     pub username: String,
     /// Whether they set an email address or a chat.
     pub has_contact: bool,
 }
 
-#[derive(Debug, Serialize)]
+/// Body of `GET /api/on-call/people`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = OnCallPeople)]
 pub struct PeopleList {
+    /// By username; disabled users left out.
     pub people: Vec<PersonView>,
 }
 

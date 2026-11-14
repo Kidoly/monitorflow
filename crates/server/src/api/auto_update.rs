@@ -33,10 +33,12 @@ use crate::auto_update::{self, server_version};
 const HISTORY: i64 = 10;
 
 /// Body of `GET /api/auto-update`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdateStatus)]
 pub struct StatusView {
     pub settings: Settings,
-    /// Peers never move past it.
+    /// The central server's version; agents and relays never move past
+    /// it.
     pub server_version: String,
     pub agents: KindView,
     /// Updated before the agents behind them.
@@ -44,21 +46,28 @@ pub struct StatusView {
 }
 
 /// Automatic updates of one kind of peer.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdateKindView)]
 pub struct KindView {
-    /// The newest stable release the server holds.
+    /// The newest stable release the server holds; `null` when it holds
+    /// none.
     pub latest: Option<String>,
-    /// What peers move to: `latest`, unless the server is older.
+    /// What peers move to: the newest stable release not newer than the
+    /// server; `null` when there is none.
     pub target: Option<String>,
     /// The rollout of `target`, once its first update was queued.
     pub rollout: Option<Rollout>,
+    /// The sum of `sites`.
     pub totals: Totals,
+    /// Every site, by customer and site name.
     pub sites: Vec<SiteView>,
-    /// The newest rollouts, `rollout` included.
+    /// The 10 newest rollouts, `rollout` included.
     pub history: Vec<Rollout>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+/// Servers (or relays) by where they stand towards `target`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdateTotals)]
 pub struct Totals {
     /// On the target or newer.
     pub up_to_date: usize,
@@ -67,7 +76,9 @@ pub struct Totals {
     /// Of `waiting`, agents whose relay runs an older version or is being
     /// updated.
     pub waiting_for_relay: usize,
+    /// Updates queued and not finished.
     pub pending: usize,
+    /// Updates of the target that succeeded.
     pub succeeded: usize,
     /// Since the rollout started or was resumed.
     pub failed: usize,
@@ -87,7 +98,8 @@ impl Totals {
 }
 
 /// One site.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdateSite)]
 pub struct SiteView {
     pub id: Uuid,
     pub name: String,
@@ -96,6 +108,8 @@ pub struct SiteView {
     pub auto_update: Option<bool>,
     /// Whether automatic updates apply to it.
     pub enabled: bool,
+    /// `null` when automatic updates do not apply to it or it has
+    /// nothing to update.
     pub phase: Option<SitePhase>,
     pub totals: Totals,
 }
@@ -218,11 +232,16 @@ async fn kind_view(
 }
 
 /// Body of `PUT /api/settings/auto-update`: the fields to change.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdateSettingsRequest)]
 #[serde(deny_unknown_fields)]
 pub struct SettingsRequest {
+    /// The default of sites that inherit it; refused while the
+    /// configuration sets it. Absent keeps it.
     pub enabled: Option<bool>,
+    /// Nothing automatic is queued while paused. Absent keeps it.
     pub paused: Option<bool>,
+    /// 1 to 1000. Absent keeps it.
     pub failure_threshold: Option<u32>,
 }
 

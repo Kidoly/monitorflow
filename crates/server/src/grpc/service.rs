@@ -493,6 +493,7 @@ impl AgentService for AgentStreamService {
             log_limit: ingest::journal::LogLimit::default(),
             invalid_logs_logged: None,
             pending_logs: ingest::journal::Pending::default(),
+            last_discovery: None,
         };
         tokio::spawn(connection.run(
             inbound,
@@ -557,7 +558,13 @@ struct Connection {
     invalid_logs_logged: Option<Instant>,
     /// This stream's batches of log lines being redacted.
     pending_logs: ingest::journal::Pending,
+    /// When this stream's last discovery report was taken (ADR-0134).
+    last_discovery: Option<Instant>,
 }
+
+/// Fewest seconds between two discovery reports stored for one stream;
+/// agents send one every 5 minutes at most.
+const DISCOVERY_EVERY: Duration = Duration::from_secs(60);
 
 /// Fields of the stream events recorded in VictoriaLogs. Identifiers only.
 struct StreamEvent {
@@ -842,6 +849,26 @@ impl Connection {
                     let (commands, id) = (commands.clone(), id.clone());
                     tokio::spawn(async move { commands.report(&id, report).await });
                 }
+            }
+            Some(Payload::Discovery(report)) => {
+                tracing::debug!(agent_id = %id, sequence, services = report.services.len(), "discovery report");
+                // Only an agent speaks for its machine, at most once a
+                // minute per stream (ADR-0134).
+                let due = self
+                    .last_discovery
+                    .is_none_or(|at| at.elapsed() >= DISCOVERY_EVERY);
+                if self.role != PeerRole::Agent || !due {
+                    tracing::debug!(agent_id = %id, sequence, "ignoring the discovery report");
+                    return;
+                }
+                self.last_discovery = Some(Instant::now());
+                let (inventory, id) = (self.inventory.clone(), id.clone());
+                let received_at = Utc::now();
+                tokio::spawn(async move {
+                    if let Err(error) = inventory.discovery(&id, received_at, report).await {
+                        tracing::warn!(agent_id = %id, %error, "could not record the discovery report");
+                    }
+                });
             }
             Some(Payload::RelayMirrors(report)) => {
                 tracing::debug!(agent_id = %id, sequence, mirrors = report.mirrors.len(), "relay mirror report");

@@ -21,19 +21,22 @@ use crate::commands::sources::{self, ArchiveKey, KeyLookupError, CURRENT, MAX_MI
 use crate::mirror::{relays, Mirrors};
 
 /// Body of `POST /api/servers/{id}/sources`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = ConfigureSourcesRequest)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigureRequest {
-    /// Mirrors of the server's family, at least one.
+    /// 1 to 32 mirrors of the server's package family.
     pub mirrors: Vec<MirrorChoice>,
     pub mode: ModeChoice,
-    /// As for other commands; see [`super::commands::DEFAULT_TTL_S`].
+    /// Seconds the command waits for the server, 60 to 604800; 3600 by
+    /// default.
     pub ttl_s: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MirrorChoice {
+    /// A mirror's `name`.
     pub name: String,
     /// A published snapshot, or `current` (the default).
     #[serde(default = "current")]
@@ -46,10 +49,13 @@ fn current() -> String {
 
 /// `replace` sets the host's other sources aside, `add` keeps them
 /// (ADR-0032).
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, utoipa::ToSchema)]
+#[schema(as = SourcesMode)]
 #[serde(rename_all = "lowercase")]
 pub enum ModeChoice {
+    /// Sets the server's other sources aside.
     Replace,
+    /// Keeps them, with the mirrors added.
     Add,
 }
 

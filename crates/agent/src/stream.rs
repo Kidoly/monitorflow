@@ -22,7 +22,7 @@
 //! of lines the forwarder dropped (ADR-0091).
 //!
 //! Package reports go up when published, or on the next connection
-//! (ADR-0031). Commands go to the command dispatcher, which checks and runs them, and
+//! (ADR-0031), and discovery reports the same way (ADR-0134). Commands go to the command dispatcher, which checks and runs them, and
 //! its results go up on the current stream (ADR-0031). Results produced
 //! while disconnected wait in its queue.
 //!
@@ -37,8 +37,8 @@ use monitorflow_common::config::AgentConfig;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
-    CommandKindState, CommandResult, Envelope, Heartbeat, Hello, LogBatch, LogEntry, PackageReport,
-    SampleBatch, SensorConfigAck,
+    CommandKindState, CommandResult, DiscoveryReport, Envelope, Heartbeat, Hello, LogBatch,
+    LogEntry, PackageReport, SampleBatch, SensorConfigAck,
 };
 use monitorflow_common::tls::{self, error_chain, TlsError};
 use monitorflow_common::PROTOCOL_VERSION;
@@ -112,6 +112,7 @@ pub struct Agent {
     /// Set when the connection closed to report again.
     reporting_again: bool,
     reports: Option<watch::Receiver<Option<PackageReport>>>,
+    discovery: Option<watch::Receiver<Option<DiscoveryReport>>>,
     on_open: Option<Arc<dyn Fn() + Send + Sync>>,
     // TODO(phase2-buffer): persist with the sample buffer so sequences stay
     // monotonic across restarts; the server only needs them per stream.
@@ -133,6 +134,7 @@ impl Agent {
             reporting: None,
             reporting_again: false,
             reports: None,
+            discovery: None,
             on_open: None,
             sequence: 0,
         }
@@ -189,6 +191,13 @@ impl Agent {
     /// once when connected, else on the next connection.
     pub fn with_reports(mut self, reports: watch::Receiver<Option<PackageReport>>) -> Self {
         self.reports = Some(reports);
+        self
+    }
+
+    /// Sends each discovery report published on `reports` (ADR-0134): at
+    /// once when connected, else on the next connection.
+    pub fn with_discovery(mut self, reports: watch::Receiver<Option<DiscoveryReport>>) -> Self {
+        self.discovery = Some(reports);
         self
     }
 
@@ -381,6 +390,11 @@ impl Agent {
                     let _ = tx.send(envelope).await;
                     None
                 }
+                Some(report) = next_report(&mut self.discovery) => {
+                    let envelope = self.envelope(Payload::Discovery(report));
+                    let _ = tx.send(envelope).await;
+                    None
+                }
                 message = inbound.message() => match message {
                     Ok(Some(envelope)) => {
                         self.receive(envelope);
@@ -496,6 +510,7 @@ fn kind(payload: &Payload) -> &'static str {
         Payload::PackageReport(_) => "package_report",
         Payload::RelayMirrors(_) => "relay_mirrors",
         Payload::Logs(_) => "logs",
+        Payload::Discovery(_) => "discovery",
     }
 }
 
@@ -523,10 +538,8 @@ async fn next_result(commands: &mut Option<commands::StreamEnd>) -> Option<Comma
     }
 }
 
-/// The next package report not sent yet; never without a publisher.
-async fn next_report(
-    reports: &mut Option<watch::Receiver<Option<PackageReport>>>,
-) -> Option<PackageReport> {
+/// The next report not sent yet; never without a publisher.
+async fn next_report<T: Clone>(reports: &mut Option<watch::Receiver<Option<T>>>) -> Option<T> {
     let Some(reports) = reports else {
         return std::future::pending().await;
     };

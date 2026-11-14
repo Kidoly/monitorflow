@@ -68,12 +68,13 @@ impl ServerUpdateSettings {
 }
 
 /// Body of `GET /api/server-update`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UpdateView {
     /// The version of this server process.
     pub running_version: &'static str,
     /// Whether `server_update_dir` is set.
     pub enabled: bool,
+    /// Base URL releases are fetched from.
     pub source: String,
     /// What the updater last reported; `None` when it never did.
     pub updater: Option<UpdaterView>,
@@ -85,34 +86,43 @@ pub struct UpdateView {
     pub available: Option<release_check::Available>,
 }
 
-#[derive(Debug, Serialize)]
+/// The updater service, as it last reported.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UpdaterView {
+    /// The updater's own version.
     pub version: String,
+    /// When it last wrote its status, every 30 seconds while it runs.
     pub heartbeat_at: DateTime<Utc>,
     /// The heartbeat is recent.
     pub alive: bool,
+    /// What runs now; `null` before the updater first looked.
     pub running: Option<Running>,
 }
 
 /// Body of `POST /api/server-update/check`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CheckResult {
+    /// Base URL releases are fetched from.
     pub source: String,
     pub running_version: &'static str,
     /// Whether the source answered; `false` on an offline server.
     pub reachable: bool,
     /// Why there is no `latest`.
     pub error: Option<String>,
+    /// `null` when the release could not be fetched or verified.
     pub latest: Option<Latest>,
 }
 
 /// A verified release and what installing it changes.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = LatestRelease)]
 pub struct Latest {
     pub version: String,
     /// Newer than the running server: it can be installed.
     pub newer: bool,
+    /// `null` when the source has none.
     pub release_notes_url: Option<String>,
+    /// The images, pinned by digest, that installing it runs.
     pub images: Images,
     /// The images differ from the running ones, as the updater reported
     /// them; a local build always differs.
@@ -123,15 +133,19 @@ pub struct Latest {
 }
 
 /// Body of `POST /api/server-update`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = ServerUpdateRequest)]
 #[serde(deny_unknown_fields)]
 pub struct StartRequest {
+    /// A release version like `0.2.0`, newer than the running one.
     pub version: String,
 }
 
 /// Body of the 202 answer.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = ServerUpdateStarted)]
 pub struct Started {
+    /// The `update.id` of the update once the updater takes it.
     pub id: String,
 }
 

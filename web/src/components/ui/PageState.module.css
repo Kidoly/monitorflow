@@ -84,6 +84,29 @@
   gap: 12px 16px;
 }
 
+/* A status tint: the label's background, a bar of its text colour at the left. */
+.tinted {
+  padding: 14px 16px;
+  border-left: 4px solid var(--tint-fg);
+  border-radius: var(--radius-panel);
+  background: var(--tint);
+}
+
+.tint-bad { --tint: var(--bad-bg); --tint-fg: var(--bad); }
+.tint-warn { --tint: var(--warn-bg); --tint-fg: var(--warn); }
+.tint-ok { --tint: var(--ok-bg); --tint-fg: var(--ok); }
+.tint-neutral { --tint: var(--neutral-bg); --tint-fg: var(--neutral); }
+.tint-info { --tint: var(--info-bg); --tint-fg: var(--info); }
+
+/* Why, in one sentence: its own line under the title. */
+.reason {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tint-fg, var(--text));
+}
+
 .title {
   font-size: 22px;
   font-weight: 700;

@@ -139,7 +139,8 @@ pub(crate) async fn peers(
 }
 
 /// What a rollout updates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type, utoipa::ToSchema)]
+#[schema(as = AutoUpdateKind)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum Kind {
@@ -168,23 +169,33 @@ impl std::str::FromStr for Kind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type, utoipa::ToSchema)]
+#[schema(as = AutoUpdateRolloutState)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum RolloutState {
+    /// Updates are queued.
     Rolling,
+    /// Too many failed: nothing more is queued until a global
+    /// administrator resumes it.
     Halted,
 }
 
 /// The automatic rollout of one version to one kind of peer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = AutoUpdateRollout)]
 pub struct Rollout {
     pub kind: Kind,
+    /// The release, like `0.3.1`.
     pub version: String,
     pub state: RolloutState,
+    /// When its first update was queued.
     pub started_at: DateTime<Utc>,
+    /// When it halted; `null` while rolling.
     pub halted_at: Option<DateTime<Utc>>,
+    /// Why it halted; `null` while rolling.
     pub reason: Option<String>,
+    /// Failures count from then: its start, or when it was last resumed.
     pub counted_from: DateTime<Utc>,
 }
 

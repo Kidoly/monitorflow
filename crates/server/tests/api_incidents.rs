@@ -245,6 +245,7 @@ db_tests! {
         assert_eq!(incident["site_name"], "paris");
         assert_eq!(incident["hostname"], "agent-paris");
         assert_eq!(incident["threshold"]["critical"], 0.95);
+        assert_eq!(incident["reason"], "90% used is above the warning limit of 85%");
         for uri in [
             format!("/api/incidents?site_id={}", f.lyon),
             format!("/api/incidents?server_id={}", f.lyon_server),
@@ -371,6 +372,7 @@ db_tests! {
         assert_eq!(body["state"], "resolved");
         assert_eq!(body["severity"], "warning");
         assert_eq!(body["peak_value"], 0.97);
+        assert_eq!(body["reason"], "Peaked at 97% used, above the warning limit of 85%");
         assert_eq!(body["opened_at"], rfc3339(T0));
         assert_eq!(body["resolved_at"], rfc3339(T0 + 180 * S));
         let events: Vec<_> = body["events"].as_array().unwrap().iter()

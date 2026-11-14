@@ -1,4 +1,4 @@
-import type { EffectiveSensor, Incident, MetricSeries } from "./api";
+import type { EffectiveSensor, Incident, SensorSeries, SensorValueList } from "./api";
 import { formatSeconds, formatValue, unitOf } from "./format";
 import { METRIC_PREFIX, metricTitle, shortMetric } from "./metrics";
 
@@ -106,7 +106,11 @@ export interface SensorRow {
   instance: string;
   title: string;
   value: number | null;
-  /** Why there is no value: the backend failed, or no sample yet. */
+  /** The last hour of the shown metric; empty when unknown. */
+  points: SensorSeries["points"];
+  /** Why the sensor is not OK, in the server's words: an incident's reason or late data. */
+  reason: string | null;
+  /** Why there is no value: the metrics backend failed. */
   error: string | null;
   /** No sample yet, as for a check just added: not a failure. */
   waiting: boolean;
@@ -115,8 +119,18 @@ export interface SensorRow {
   status: SensorStatus;
 }
 
-/** The latest values of a sensor's primary metric, or why there are none. */
-export type SensorValues = { series: MetricSeries[] } | { error: string };
+/** The recent values of a sensor's primary metric, or why they could not be read. */
+export type SensorValues = { series: SensorSeries[]; reason: string | null } | { error: string };
+
+/** Each sensor's entry of `list`, by name and configured instance. */
+export function valuesBySensor(sensors: EffectiveSensor[], list: SensorValueList): Map<EffectiveSensor, SensorValues> {
+  return new Map(
+    sensors.map((sensor) => {
+      const found = list.sensors.find((v) => v.name === sensor.name && v.instance === sensor.instance);
+      return [sensor, found ? { series: found.series, reason: found.reason } : { series: [], reason: null }];
+    }),
+  );
+}
 
 const RANK: Record<SensorStatus, number> = { critical: 0, warning: 1, unknown: 2, ok: 3 };
 const byTitle = new Intl.Collator("en", { numeric: true });
@@ -144,15 +158,15 @@ export function sensorRows(
     const result = values.get(sensor);
     const series = result && "series" in result ? result.series : [];
     const incidents = openIncidents.filter((i) => sensorOf(sensors, i.metric) === sensor);
-    const instances = series.length > 0 ? series.map((s) => s.labels.instance ?? "") : [queried ?? ""];
+    const instances = series.length > 0 ? series.map((s) => s.instance) : [queried ?? ""];
     for (const instance of instances) {
-      const points = series.find((s) => (s.labels.instance ?? "") === instance)?.points ?? [];
-      const value = points[points.length - 1]?.[1] ?? null;
+      const shown = series.find((s) => s.instance === instance);
+      const value = shown?.last_value ?? null;
       // A sensor with one row owns all its incidents (load average under CPU usage).
       const own = instances.length === 1 ? incidents : incidents.filter((i) => i.instance === instance);
       const incident = own.reduce<Incident | undefined>(worse, undefined);
-      const error =
-        result && "error" in result ? result.error : value === null ? "No data yet. The agent sends samples every interval." : null;
+      const error = result && "error" in result ? result.error : null;
+      const late = shown ? shown.reason : result && "reason" in result ? result.reason : null;
       rows.push({
         key: `${sensor.name}/${sensor.instance}/${instance}`,
         sensor,
@@ -160,10 +174,13 @@ export function sensorRows(
         instance: incident?.instance ?? instance,
         title: seriesTitle(sensor, metric, instance),
         value: incident ? incident.last_value : value,
+        points: shown?.points ?? [],
+        reason: incident ? (incident.reason ?? null) : late,
         error: incident ? null : error,
-        waiting: !incident && value === null && !(result && "error" in result),
+        // Never reported: no series at all, as for a check just added.
+        waiting: !incident && !error && value === null && !shown,
         incident,
-        status: incident ? incident.severity : error ? "unknown" : "ok",
+        status: incident ? incident.severity : error || late || value === null ? "unknown" : "ok",
       });
     }
   }

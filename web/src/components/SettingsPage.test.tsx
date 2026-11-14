@@ -77,7 +77,7 @@ function sent(fetchMock: ReturnType<typeof stub>, method: string, path: string) 
 }
 
 describe("SettingsPage", () => {
-  beforeEach(() => setUrl("/admin/settings/"));
+  beforeEach(() => setUrl("/settings/general/"));
   afterEach(() => vi.unstubAllGlobals());
 
   it("is for global administrators", () => {
@@ -89,7 +89,7 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Settings need a global administrator")).toBeInTheDocument();
   });
 
-  it("gathers the other settings pages and shows the defaults", async () => {
+  it("shows the defaults", async () => {
     stub(settings());
     open();
     expect(await screen.findByLabelText(/Sign out after/)).toHaveValue(12);
@@ -97,9 +97,7 @@ describe("SettingsPage", () => {
     expect(screen.getByLabelText(/Sign out when idle/)).toHaveValue(30);
     expect(screen.getByLabelText(/Keep metrics/)).toHaveValue(90);
     expect(screen.getByLabelText(/Agents reach this server at/)).toBeInTheDocument();
-    for (const label of ["AI", "Notifications", "Automatic updates", "Backups", "Server update", "Users and roles"]) {
-      expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
-    }
+    expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
   });
 
   it("saves sign-in settings in seconds, keeping the others", async () => {

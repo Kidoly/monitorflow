@@ -11,6 +11,7 @@ import {
   describeError,
 } from "@/lib/api";
 import { checkTitle, saveThreshold, shapeFor, shapeOf } from "@/lib/alerts";
+import { unitOf } from "@/lib/format";
 import { modifiesSite, useMe } from "@/lib/me";
 import { metricTitle } from "@/lib/metrics";
 import { sensorHref } from "@/lib/routes";
@@ -21,10 +22,13 @@ import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { Button } from "@/components/ui/Button";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Banner, EmptyState } from "@/components/ui/PageState";
+import { Reason } from "@/components/ui/Reason";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { type RowMenuItem, RowMenu } from "@/components/ui/RowMenu";
+import { Sparkline } from "@/components/ui/Sparkline";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatDuration, formatSince } from "@/components/ui/time";
+import type { Tone } from "@/components/ui/tone";
 
 import { AddCheck, BuiltinInterval, type Target, TurnBackOn, stopChecking, stringParams } from "./MonitoringSettings";
 import styles from "./ServerPage.module.css";
@@ -49,6 +53,7 @@ export function ServerSensorsTab({
   sensors,
   rows,
   rules,
+  window,
   incidentsFailed,
   now,
   onChanged,
@@ -57,6 +62,8 @@ export function ServerSensorsTab({
   sensors: EffectiveSensors | { error: string };
   rows: SensorRow[];
   rules: SensorRules;
+  /** What the sparklines cover; null when the values could not be read. */
+  window?: { start: number; end: number } | null;
   incidentsFailed: boolean;
   now: Date;
   onChanged: () => void;
@@ -113,6 +120,22 @@ export function ServerSensorsTab({
       header: "Status",
       cell: (row) =>
         row.waiting ? <Label tone="neutral">Waiting for first value</Label> : <StatusLabel kind="sensor" value={row.status} />,
+    },
+    { key: "message", header: "Message", cell: (row) => <Reason short text={row.reason ?? row.error} /> },
+    {
+      key: "trend",
+      header: "Last hour",
+      cell: (row) =>
+        window ? (
+          <Sparkline
+            points={row.points}
+            start={window.start}
+            end={window.end}
+            ratio={unitOf(row.metric) === "ratio"}
+            tone={TONES[row.status]}
+            label={`${row.title}, last hour`}
+          />
+        ) : null,
     },
     { key: "value", header: "Last value", cell: (row) => <LastValue row={row} now={now} /> },
     {
@@ -195,7 +218,8 @@ export function ServerSensorsTab({
         </section>
       )}
       <p className={styles.note}>
-        Sorted by status, then name. Open a sensor for its chart and history; change its rule from its ⋯ menu.
+        Problems first, then by name. The line shows the last hour. Open a sensor for its chart and history; change
+        its rule from its ⋯ menu.
       </p>
     </div>
   );
@@ -284,9 +308,10 @@ function TurnOff({
   );
 }
 
+const TONES: Record<SensorRow["status"], Tone> = { critical: "bad", warning: "warn", unknown: "neutral", ok: "ok" };
+
 function LastValue({ row, now }: { row: SensorRow; now: Date }) {
-  if (row.waiting) return <span className={styles.muted}>–</span>;
-  if (row.error) return <span className={styles.muted}>{row.error}</span>;
+  if (row.waiting || row.error) return <span className={styles.muted}>–</span>;
   const { incident } = row;
   const other = incident && incident.metric !== primaryMetric(row.sensor).metric;
   return (

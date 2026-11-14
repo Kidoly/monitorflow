@@ -32,6 +32,9 @@ message Envelope {
     RelayMirrors relay_mirrors = 16;
     // Agent to server: system log lines (ADR-0091).
     LogBatch logs = 17;
+    // Agent to server: what runs on the machine, for check
+    // recommendations (ADR-0134).
+    DiscoveryReport discovery = 18;
     Command command = 20;
     CommandResult command_result = 21;
   }
@@ -106,6 +109,39 @@ message LogEntry {
   uint32 pid = 7;
   // Where the line comes from: "journal".
   string source = 8;
+}
+
+// What an agent sees running on its machine, for the server to recommend
+// checks (ADR-0134). Sent when it changes and at least every hour; each
+// report replaces the previous one. Untrusted: the server bounds and
+// checks every field. Older relays drop it, as they drop any payload they
+// do not know.
+message DiscoveryReport {
+  int64 collected_at_unix_ms = 1;
+  // Running systemd services, like "nginx.service" or
+  // "postgresql@16-main.service". At most 256.
+  repeated string services = 2;
+  // Listening TCP ports. At most 128.
+  repeated DiscoveredPort ports = 3;
+  // Mounted file systems that hold data. At most 64.
+  repeated DiscoveredMount mounts = 4;
+}
+
+message DiscoveredPort {
+  uint32 port = 1;
+  // Every socket on it listens on a loopback address only.
+  bool loopback_only = 2;
+  // A socket listens on a loopback or wildcard address, so a check on
+  // 127.0.0.1 reaches it.
+  bool local = 3;
+}
+
+message DiscoveredMount {
+  string path = 1;
+  // Like "ext4", "nfs4" or "cifs".
+  string fs_type = 2;
+  // The file server of a network share, like "nas.lan"; empty otherwise.
+  string source_host = 3;
 }
 
 // Sensors an agent must run, sent by the server after a valid Hello and

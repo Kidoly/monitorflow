@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Me } from "@/lib/api";
 
-import { visibleNavigation } from "./navigation";
+import { SETTINGS_ITEM, visibleNavigation } from "./navigation";
 
 const as = (customer_id: string | null): Me => ({
   id: "u1",
@@ -20,15 +20,12 @@ describe("visibleNavigation", () => {
     expect(labels(as(null))).toContain("Automatic updates");
     expect(customerAdmin).not.toContain("Automatic updates");
     expect(customerAdmin).toContain("Campaigns");
-    expect(labels(as(null))).toContain("Notifications");
-    expect(customerAdmin).toContain("Notifications");
-    expect(labels(as(null))).toContain("AI");
-    expect(customerAdmin).not.toContain("AI");
-    expect(labels(as(null))).toContain("Settings");
-    expect(customerAdmin).not.toContain("Settings");
-    expect(labels(as(null))).toContain("Backups");
-    expect(customerAdmin).not.toContain("Backups");
-    expect(labels(as(null))).toContain("Certificate authority");
-    expect(customerAdmin).not.toContain("Certificate authority");
+  });
+
+  it("holds daily work only: administration is under Settings", () => {
+    expect(labels(as(null))).not.toContain("Relays");
+    expect(labels(as(null))).not.toContain("Backups");
+    expect(SETTINGS_ITEM.visible?.(as("c1"))).toBe(true);
+    expect(SETTINGS_ITEM.visible?.({ ...as(null), roles: [{ role: "viewer", customer_id: null, site_id: null }] })).toBe(false);
   });
 });

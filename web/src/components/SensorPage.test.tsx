@@ -38,7 +38,7 @@ const thresholds = {
     { origin: "site", threshold_id: "t1", metric: "monitorflow_disk_used_ratio", instance: null, enabled: true, comparison: ">", warning: 0.8, critical: 0.9, duration_s: 300, hysteresis: 0.02 },
   ],
 };
-const open = incident({ server_id: ID, opened_at: new Date(2026, 9, 22, 11, 40).toISOString(), peak_value: 0.946 });
+const open = incident({ server_id: ID, opened_at: new Date(2026, 9, 22, 11, 40).toISOString(), peak_value: 0.946, reason: "94.2% used is above the critical limit of 90%" });
 const old = incident({
   id: "2d6a9a3e-5b7c-4d8e-9f01-23456789abcd",
   server_id: ID,
@@ -87,8 +87,9 @@ describe("SensorPage", () => {
     const fetchMock = stub();
     render(<SensorPage id={ID} sensor="disk_used_ratio" instance="/var" />);
     expect(await screen.findByRole("heading", { level: 1, name: "Disk used /var" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Fleet/web-1/Disk used /var");
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Fleet/web-1▾/Disk used /var▾");
     expect(screen.getByText(/on web-1 · disk sensor · every 30 s/)).toBeInTheDocument();
+    expect(screen.getByText("94.2% used is above the critical limit of 90%")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open incident" })).toHaveAttribute("href", expect.stringContaining(open.id));
 
     expect(screen.getByRole("group", { name: "Summary" })).toHaveTextContent(
@@ -171,6 +172,32 @@ describe("SensorPage", () => {
       ),
     );
     expect(rangeCalls(fetchMock).every((c) => c.instance === "sda")).toBe(true);
+  });
+
+  it("says in the header when the sensor's data is late", async () => {
+    stub({
+      [`GET /api/incidents?server_id=${ID}&limit=500`]: { status: 200, body: { incidents: [], next_cursor: null } },
+      [`GET /api/servers/${ID}/sensor-values`]: {
+        status: 200,
+        body: {
+          start: 0,
+          end: 3600,
+          step: 120,
+          sensors: [
+            {
+              name: config.sensors[0]!.name,
+              instance: config.sensors[0]!.instance,
+              metric: "monitorflow_disk_used_ratio",
+              series: [{ instance: "/var", points: [], last_value: 0.94, last_at: null, reason: "No data for 15 minutes" }],
+              reason: null,
+            },
+          ],
+        },
+      },
+    });
+    render(<SensorPage id={ID} sensor="disk_used_ratio" instance="/var" />);
+    expect(await screen.findByText("No data for 15 minutes")).toBeInTheDocument();
+    expect(screen.getAllByText("Unknown").length).toBeGreaterThan(0);
   });
 
   describe("editing the configuration", () => {

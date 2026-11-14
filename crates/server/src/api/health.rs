@@ -13,8 +13,11 @@ use super::ApiState;
 /// Readiness fails if PostgreSQL does not answer within this delay.
 const READY_TIMEOUT: Duration = Duration::from_secs(2);
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+/// Up or down, nothing more.
+#[derive(Debug, Serialize, PartialEq, Eq, utoipa::ToSchema)]
+#[schema(as = HealthStatus)]
 pub struct Status {
+    /// `ok` (live), `ready` or `unavailable` (ready).
     pub status: &'static str,
 }
 
