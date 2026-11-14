@@ -82,7 +82,7 @@ pub enum Rollup {
 }
 
 impl Rollup {
-    fn function(self) -> &'static str {
+    pub(super) fn function(self) -> &'static str {
         match self {
             Self::Avg => "avg_over_time",
             Self::Max => "max_over_time",
@@ -97,14 +97,18 @@ impl Rollup {
 #[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct InstantParams {
+    /// The server whose metric to read.
     pub server_id: Uuid,
     /// Full name, `monitorflow_<sensor metric>`.
     pub metric: String,
+    /// What the sensor watches, like `/var` or `total`; every instance when
+    /// absent.
     pub instance: Option<String>,
     /// Defaults to now.
     pub time: Option<DateTime<Utc>>,
+    /// Combines the series into one: `avg`, `min`, `max`, `sum` or `count`.
     pub agg: Option<Aggregation>,
-    /// Seconds: the last value within this window rather than within
+    /// 1 to 172800 seconds: the last value within this window rather than within
     /// VictoriaMetrics' default, for checks that run less often (ADR-0097).
     pub lookback: Option<i64>,
 }
@@ -114,8 +118,12 @@ pub struct InstantParams {
 #[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct RangeParams {
+    /// The server whose metric to read.
     pub server_id: Uuid,
+    /// Full name, `monitorflow_<sensor metric>`.
     pub metric: String,
+    /// What the sensor watches, like `/var` or `total`; every instance when
+    /// absent.
     pub instance: Option<String>,
     /// Defaults to `end` minus one hour.
     pub start: Option<DateTime<Utc>>,
@@ -123,6 +131,7 @@ pub struct RangeParams {
     pub end: Option<DateTime<Utc>>,
     /// Seconds; defaults to the range over 720, at least one second.
     pub step: Option<i64>,
+    /// Combines the series into one: `avg`, `min`, `max`, `sum` or `count`.
     pub agg: Option<Aggregation>,
     /// Applied per series over a window of one step, before `agg`.
     pub rollup: Option<Rollup>,
@@ -132,7 +141,10 @@ pub struct RangeParams {
 /// that is not finite is `null`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SeriesView {
+    /// `__name__`, `instance`, `peer` (the server's name) and `site`, or
+    /// none once aggregated.
     pub labels: BTreeMap<String, String>,
+    /// `[unix seconds, value]`, oldest first.
     pub points: Vec<(f64, Option<f64>)>,
 }
 
@@ -141,19 +153,24 @@ pub struct SeriesView {
 pub struct QueryResult {
     /// The PromQL the API ran, filters included.
     pub query: String,
+    /// At most 500.
     pub series: Vec<SeriesView>,
 }
 
 /// One metric of a server and the instances seen for it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MetricInfo {
+    /// Full name, `monitorflow_<sensor metric>`, for `metric` of the
+    /// query routes.
     pub name: String,
+    /// What the sensor watches, sorted; `""` for a metric without one.
     pub instances: Vec<String>,
 }
 
 /// Body of `GET /api/servers/{id}/metrics`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MetricList {
+    /// By name.
     pub metrics: Vec<MetricInfo>,
     /// The server had more series than discovery reads.
     pub truncated: bool,
@@ -169,7 +186,7 @@ pub struct Target {
 impl Target {
     /// `extra_label` parameters, which VictoriaMetrics adds to every
     /// selector of the query.
-    fn extra_labels(&self) -> [(&'static str, String); 2] {
+    pub(super) fn extra_labels(&self) -> [(&'static str, String); 2] {
         [
             ("extra_label", format!("peer={}", self.peer)),
             ("extra_label", format!("site={}", self.site)),
@@ -310,7 +327,7 @@ async fn target(
     Ok((vm, Target { peer, site }))
 }
 
-fn backend_error(error: QueryError) -> ApiError {
+pub(super) fn backend_error(error: QueryError) -> ApiError {
     match error {
         QueryError::Timeout => ApiError::MetricsTimeout,
         QueryError::Rejected(message) => {

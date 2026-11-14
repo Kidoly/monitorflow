@@ -57,8 +57,10 @@ pub struct CreateRequest {
     /// Packages to upgrade; empty or absent for all.
     #[serde(default)]
     pub packages: Vec<String>,
+    /// `apply_updates`: security updates only.
     #[serde(default)]
     pub security_only: bool,
+    /// `apply_updates`: reboot when an update needs it.
     #[serde(default)]
     pub allow_reboot: bool,
     /// Seconds the agent may still start it; [`MIN_TTL_S`] to
@@ -71,18 +73,39 @@ pub struct CreateRequest {
 pub struct CommandView {
     pub id: Uuid,
     pub server_id: Uuid,
+    /// `apply_updates`, `self_update`, `configure_sources`,
+    /// `revert_sources`, `shell` (AI remediation), `ai_commands`, or
+    /// `take_snapshot` and `delete_snapshot` (local snapshots before AI
+    /// changes).
     pub kind: String,
-    /// The payload as JSON, for kinds the API knows.
+    /// What it asks, as JSON, by kind: `{"packages", "security_only",
+    /// "allow_reboot"}` for `apply_updates`, `{"version", "base_urls",
+    /// "allow_downgrade", "health_timeout_seconds"}` for `self_update`,
+    /// `{"mirror_base_url", "family", "mode", "repositories",
+    /// "key_fingerprints"}` for `configure_sources`, `{}` for
+    /// `revert_sources`, `{"command", "timeout_seconds"}` for `shell`,
+    /// `{"on"}` for `ai_commands`; `null` for a kind this version does not
+    /// know.
     pub parameters: Value,
     pub state: CommandState,
+    /// When it was queued.
     pub issued_at: DateTime<Utc>,
+    /// The agent does not start it after this; it is then `expired`.
     pub expires_at: DateTime<Utc>,
+    /// `null` until sent to the agent.
     pub sent_at: Option<DateTime<Utc>>,
+    /// `null` until the agent starts it.
     pub started_at: Option<DateTime<Utc>>,
+    /// `null` until it ends.
     pub finished_at: Option<DateTime<Utc>>,
+    /// The process's exit code; `null` until it ends, or when it never ran.
     pub exit_code: Option<i32>,
+    /// Why it failed or expired, in plain words; `null` otherwise.
     pub error: Option<String>,
+    /// The user who queued it, a key's maker included; `null` for
+    /// MonitorFlow itself (AI remediation, campaigns, automatic updates).
     pub requested_by: Option<Uuid>,
+    /// The update campaign it belongs to, if any.
     pub campaign_id: Option<Uuid>,
 }
 
@@ -92,7 +115,9 @@ pub struct CommandView {
 pub struct CommandDetail {
     #[serde(flatten)]
     pub command: CommandView,
+    /// The last 64 KiB of its output; `null` until the agent sends it.
     pub stdout: Option<String>,
+    /// The last 64 KiB of its errors; `null` until the agent sends them.
     pub stderr: Option<String>,
 }
 
@@ -100,6 +125,7 @@ pub struct CommandDetail {
 pub struct CommandList {
     /// Newest first.
     pub commands: Vec<CommandView>,
+    /// Pass as `cursor` for the next page; `null` on the last one.
     pub next_cursor: Option<String>,
 }
 
@@ -107,7 +133,9 @@ pub struct CommandList {
 #[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
+    /// 1 to 500, default 100.
     pub limit: Option<u32>,
+    /// `next_cursor` of the previous page.
     pub cursor: Option<String>,
 }
 
@@ -317,7 +345,7 @@ pub const MIN_HEALTH_TIMEOUT_S: u32 = 30;
 pub const MAX_HEALTH_TIMEOUT_S: u32 = 3600;
 
 /// `GET /api/agent-releases`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AgentReleases {
     /// Cached versions, newest first.
     pub versions: Vec<String>,

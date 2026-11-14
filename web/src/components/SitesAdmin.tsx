@@ -23,7 +23,7 @@ const SITE_NAME = /^[a-z0-9-]+$/;
 const MAX_NAME = 64;
 
 /**
- * `/admin/sites/`: sites grouped by customer, with a create form per
+ * `/settings/sites/`: sites grouped by customer, with a create form per
  * administered customer. Administrators of everything also create and
  * rename customers. Without customers to show (ADR-0104) it lists the
  * sites alone, and adding a first other customer is a quiet section at

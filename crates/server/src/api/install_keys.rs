@@ -31,7 +31,8 @@ use crate::grpc::CloseReason;
 const LIST_LIMIT: i64 = 100;
 
 /// Body of `POST /api/install-keys`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = InstallKeyRequest)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRequest {
     /// `agent` by default. A `relay` key enrolls one relay, whose names an
@@ -39,18 +40,25 @@ pub struct CreateRequest {
     /// approval.
     #[serde(default)]
     pub role: KeyRole,
+    /// The site the hosts join.
     pub site_id: Uuid,
-    /// Validity in seconds, one hour to one year; 30 days by default, one
-    /// day for a relay.
+    /// Validity in seconds, 3600 (one hour) to 31536000 (one year);
+    /// 2592000 (30 days) by default, 86400 (one day) for a relay.
+    #[schema(minimum = 3600, maximum = 31536000)]
     pub ttl_s: Option<u64>,
-    /// Hosts the key may enroll; no limit when absent.
+    /// Hosts the key may enroll, 1 to 100000; no limit when absent or
+    /// `null`. Ignored for a relay key, which enrolls one host.
+    #[schema(minimum = 1, maximum = 100000)]
     pub max_hosts: Option<u32>,
-    /// New hosts wait for an administrator before they appear.
+    /// New hosts wait for an administrator before they appear (see
+    /// `pending_hosts`). `false` by default; ignored for a relay key.
     #[serde(default)]
     pub require_approval: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+/// What the key enrolls.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
+#[schema(as = InstallKeyRole)]
 #[serde(rename_all = "snake_case")]
 pub enum KeyRole {
     #[default]
@@ -58,7 +66,10 @@ pub enum KeyRole {
     Relay,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// `revoked` first, then `expired`, then `used_up` once `host_count`
+/// reaches `max_hosts`; `active` otherwise. Only `active` keys enroll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = InstallKeyState)]
 #[serde(rename_all = "snake_case")]
 pub enum KeyState {
     Active,
@@ -82,7 +93,8 @@ impl TryFrom<String> for KeyState {
 }
 
 /// One key, never with its secret.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = InstallKey)]
 pub struct KeyView {
     pub id: Uuid,
     /// `agent` or `relay`.
@@ -91,48 +103,69 @@ pub struct KeyView {
     pub site_name: String,
     pub customer_id: Uuid,
     pub customer_name: String,
+    /// `null` for keys made with the server CLI, or when that user was
+    /// deleted.
     pub created_by_username: Option<String>,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    /// Hosts it may enroll; `null` for no limit. 1 for a relay key.
     pub max_hosts: Option<i32>,
+    /// Hosts it enrolled so far.
     pub host_count: i32,
     pub require_approval: bool,
+    /// `null` unless revoked.
     pub revoked_at: Option<DateTime<Utc>>,
     #[sqlx(try_from = "String")]
     pub state: KeyState,
 }
 
 /// A host enrolled by a key that asks for approval.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct PendingHost {
+    /// The ID it was given, which approving or rejecting it takes.
     pub peer_id: String,
+    /// The host name it reported.
     pub hostname: String,
     pub site_id: Uuid,
     pub site_name: String,
     pub customer_name: String,
+    /// The key it enrolled with.
     pub install_key_id: Uuid,
+    /// The IP address it enrolled from; `null` when unknown.
     pub source: Option<String>,
+    /// When it enrolled.
     pub created_at: DateTime<Utc>,
 }
 
 /// Body of `GET /api/install-keys`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = InstallKeyList)]
 pub struct KeyList {
+    /// The 100 newest keys, revoked and expired ones included, newest
+    /// first.
     pub keys: Vec<KeyView>,
+    /// Every host waiting for approval, oldest first.
     pub pending_hosts: Vec<PendingHost>,
 }
 
 /// Body of `POST /api/install-keys`: the stored key, its secret string,
 /// named `token` as installers take it, and what the commands need. Shown
 /// once; no `Debug`, so the secret cannot end up in a log line.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = CreatedInstallKey)]
 pub struct CreatedKey {
     #[serde(flatten)]
     pub view: KeyView,
+    /// The secret, in the same `mfe1.…` form as an enrollment token. Shown
+    /// in this answer only; MonitorFlow keeps only its hash.
     pub token: String,
+    /// Where enrolled hosts connect, `https://host:port`.
     pub upstream_url: String,
+    /// Where installers enroll, `https://host:port`.
     pub enroll_url: String,
+    /// The install sources and the default one.
     pub install: super::settings::AgentInstall,
+    /// The address in `upstream_url` and `enroll_url`.
     pub address: super::public_address::PublicAddress,
 }
 

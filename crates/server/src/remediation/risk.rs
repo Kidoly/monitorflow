@@ -109,7 +109,8 @@ impl fmt::Display for Tier {
 }
 
 /// The rule that decided.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = ClassifierRule)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum Rule {
     /// A built-in rule, by its stable ID such as `readonly.df`.
@@ -119,9 +120,12 @@ pub enum Rule {
 }
 
 /// What [`classify`] answers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = Classification)]
 pub struct Decision {
     pub tier: Tier,
+    /// The rule that decided: `{"source": "builtin", "id": "readonly.df"}`
+    /// or `{"source": "configured", "id": "<rule UUID>"}`.
     pub rule: Rule,
     /// One sentence for the approval queue and the audit log.
     pub reason: String,

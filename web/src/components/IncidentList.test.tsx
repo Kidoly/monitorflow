@@ -148,6 +148,7 @@ describe("IncidentList", () => {
       hostname: "web-3",
       acknowledged_by: "bob",
       acknowledged_at: new Date(2026, 9, 19, 13, 50).toISOString(),
+      acknowledged_note: "swapping the disk",
     });
     const fetchMock = stubFetch({
       ...options,
@@ -158,13 +159,23 @@ describe("IncidentList", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<IncidentList filters={{ ...NO_FILTERS, groupId: GROUP }} />);
     await vi.waitFor(async () => expect(within(await table()).getAllByRole("row")).toHaveLength(4));
-    expect(screen.getByText(/Acknowledged by bob 13:50/)).toBeInTheDocument();
+    expect(screen.getByText(/Acknowledged by bob 13:50: swapping the disk/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Acknowledge web-2" }));
+    await user.type(screen.getByRole("textbox", { name: "What are you doing about it?" }), "on it");
+    await user.click(screen.getByRole("button", { name: "Acknowledge" }));
     await user.click(screen.getByRole("button", { name: "Acknowledge all 2" }));
+    // Escape closes the note without acknowledging; the button gets focus back.
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "Acknowledge all 2" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Acknowledge all 2" }));
+    await user.type(screen.getByRole("textbox", { name: "What are you doing about it?" }), "restarting{Enter}");
     const bodies = fetchMock.mock.calls
       .filter(([url]) => url === "/api/incidents/acknowledge")
       .map(([, init]) => JSON.parse(String(init?.body)));
-    expect(bodies).toEqual([{ incident_ids: [other.id] }, { incident_ids: [mine.id, other.id] }]);
+    expect(bodies).toEqual([
+      { incident_ids: [other.id], note: "on it" },
+      { incident_ids: [mine.id, other.id], note: "restarting" },
+    ]);
   });
 
   it("keeps the scope's customer only", async () => {

@@ -82,7 +82,8 @@ impl Cache {
 
 /// The servers a dashboard can show at most: everything the viewer reads,
 /// or one site or customer of it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
+#[schema(as = DashboardWithin)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Within {
     #[default]
@@ -106,7 +107,8 @@ impl Within {
 }
 
 /// Body of `POST /api/dashboard-data`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = DashboardDataRequest)]
 #[serde(deny_unknown_fields)]
 pub struct DataRequest {
     pub range: TimeRange,
@@ -114,41 +116,53 @@ pub struct DataRequest {
     /// only its servers.
     #[serde(default)]
     pub within: Within,
+    /// At most 24, checked as when saving.
     pub panels: Vec<Panel>,
 }
 
 /// One line of a chart.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ChartSeries {
+    /// The server, and the instance when there are several, or how the
+    /// servers combine.
     pub label: String,
     /// The server of a line per server; absent when combined.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_id: Option<Uuid>,
+    /// `[unix seconds, value]` every `step`; the value is `null` where
+    /// nothing was reported.
+    #[schema(value_type = Vec<Vec<Option<f64>>>)]
     pub points: Vec<(f64, Option<f64>)>,
 }
 
 /// One row of a top list.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TopRow {
     pub server_id: Uuid,
     pub hostname: String,
+    /// The disk, core or interface; `null` for a metric without one.
     pub instance: Option<String>,
+    /// In the metric's unit: a ratio from 0 to 1 for `_ratio` metrics.
     pub value: Option<f64>,
 }
 
 /// One open alert.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = DashboardAlert)]
 pub struct AlertRow {
+    /// The incident's ID.
     pub id: Uuid,
     pub server_id: Uuid,
     pub hostname: String,
     pub metric: String,
     pub instance: String,
+    /// `warning` or `critical`.
     pub severity: String,
     pub opened_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+/// What a panel shows, by its `kind`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum PanelResult {
     Chart {
@@ -169,8 +183,10 @@ pub enum PanelResult {
     },
 }
 
-#[derive(Debug, Serialize)]
+/// One panel's data.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PanelData {
+    /// The panel's `id`.
     pub id: String,
     /// Servers the panel covers for this viewer.
     pub servers: usize,
@@ -182,11 +198,14 @@ pub struct PanelData {
 }
 
 /// Body of `POST /api/dashboard-data`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = DashboardData)]
 pub struct DataResponse {
     /// The charts' range and step, unix seconds.
     pub start: i64,
+    /// Unix seconds.
     pub end: i64,
+    /// Seconds between points.
     pub step: i64,
     /// When figures and top lists were read.
     pub at: i64,
@@ -715,17 +734,21 @@ pub(super) async fn compute(
 }
 
 /// Query string of `GET /api/dashboard-metrics`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogParams {
+    /// Only the servers of this site.
     pub site_id: Option<Uuid>,
+    /// Only the servers of this customer.
     pub customer_id: Option<Uuid>,
     /// Also list what this metric watches.
     pub metric: Option<String>,
 }
 
 /// Body of `GET /api/dashboard-metrics`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = MetricCatalog)]
 pub struct Catalog {
     /// `monitorflow_*` metrics reported in the last day, sorted.
     pub metrics: Vec<String>,

@@ -44,8 +44,11 @@ pub fn approver_role(tier: Tier) -> Role {
 #[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
+    /// Commands for this customer's servers.
     pub customer_id: Option<Uuid>,
+    /// Commands for this site's servers.
     pub site_id: Option<Uuid>,
+    /// Commands for this server.
     pub server_id: Option<Uuid>,
 }
 
@@ -90,6 +93,7 @@ struct Row {
 pub struct PendingView {
     /// The pending command; decisions go to `/approvals/{id}/...`.
     pub id: Uuid,
+    /// The AI remediation incident it belongs to.
     pub incident_id: Uuid,
     pub customer_id: Uuid,
     pub customer_name: String,
@@ -97,23 +101,30 @@ pub struct PendingView {
     pub site_name: String,
     pub server_id: Uuid,
     pub hostname: String,
+    /// The alert that started the remediation, if it still exists.
     pub alert_incident_id: Option<Uuid>,
+    /// The alert's metric and instance (`""` for none).
     pub metric: String,
     pub instance: String,
     /// The proposed command, exactly as it would run.
     pub command: String,
     /// The AI's text: untrusted, shown as data.
     pub diagnosis: String,
+    /// Why the AI proposes this command; untrusted, shown as data.
     pub reasoning: String,
     /// `low_impact` or `high_impact`, from the rules, never from the AI.
     pub tier: Tier,
-    /// `{"source": "builtin" | "configured", "id"}`.
+    /// The rule that gave the tier: `{"source": "builtin" | "configured",
+    /// "id"}`.
     pub rule: serde_json::Value,
+    /// Why the rule gave this tier, in plain words.
     pub reason: String,
     /// Commands the incident ran so far, and its limit.
     pub commands_run: i64,
     pub max_commands: i32,
+    /// When the remediation incident opened.
     pub opened_at: DateTime<Utc>,
+    /// When the AI proposed this command.
     pub proposed_at: DateTime<Utc>,
     /// `opened_at + max_duration_s`: the incident escalates then, and a
     /// decision after it is 409.
@@ -145,7 +156,8 @@ pub struct PendingList {
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ApproveRequest {
-    /// Runs this instead of the proposal, recorded as an `edit`.
+    /// Runs this instead of the proposal, recorded as an `edit`: at most
+    /// 4096 bytes. Absent, or the same as the proposal, runs the proposal.
     pub command: Option<String>,
 }
 
@@ -153,19 +165,23 @@ pub struct ApproveRequest {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RejectRequest {
-    /// Sent back to the AI with the rejection, and recorded.
+    /// Sent back to the AI with the rejection, and recorded: 1 to 1000
+    /// characters.
     pub reason: String,
 }
 
 /// Answer of both decision routes.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DecisionView {
+    /// The pending command decided.
     pub id: Uuid,
+    /// Its AI remediation incident.
     pub incident_id: Uuid,
     /// `approved` or `rejected`.
     pub state: &'static str,
     /// What will run, or what was rejected.
     pub command: String,
+    /// Whether an edited command runs instead of the proposal.
     pub edited: bool,
 }
 

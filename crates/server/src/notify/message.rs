@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 /// The page of notification settings, under the web interface's URL.
-pub const SETTINGS_PATH: &str = "/admin/notifications/";
+pub const SETTINGS_PATH: &str = "/settings/notifications/";
 
 /// The page a personal message's link opens to acknowledge (ADR-0082); the
 /// secret follows in the fragment.
@@ -237,14 +237,14 @@ fn path(event: &Event) -> String {
         }
         "approval.waiting" => "/remediation/approvals/".into(),
         "ai_commands.changed" => format!("/servers/view/?id={}", id(&["server", "id"])),
-        "backup.failed" => "/admin/backups/".into(),
-        "update.available" => "/admin/server-update/".into(),
+        "backup.failed" => "/settings/backups/".into(),
+        "update.available" => "/settings/server-update/".into(),
         "integration.disabled" => crate::integrations::PAGE.into(),
         "update.failed" => match str_at(d, &["update", "kind"]) {
             Some("campaign") => format!("/campaigns/view/?id={}", id(&["update", "campaign_id"])),
             Some("automatic_rollout") => "/admin/updates/".into(),
             _ if str_at(d, &["relay", "id"]).is_some() => {
-                format!("/admin/relays/view/?id={}", id(&["relay", "id"]))
+                format!("/settings/relays/view/?id={}", id(&["relay", "id"]))
             }
             _ => format!("/servers/view/?id={}&tab=updates", id(&["server", "id"])),
         },
@@ -545,7 +545,7 @@ mod tests {
             failed.text,
             "Backup of the server failed: pg_dump: no space left"
         );
-        assert_eq!(failed.url, "https://mf.example/admin/backups/");
+        assert_eq!(failed.url, "https://mf.example/settings/backups/");
     }
 
     #[test]
@@ -561,7 +561,7 @@ mod tests {
             available.text,
             "MonitorFlow 0.3.0 is available; this server runs 0.2.0"
         );
-        assert_eq!(available.url, "https://mf.example/admin/server-update/");
+        assert_eq!(available.url, "https://mf.example/settings/server-update/");
         assert_eq!(available.payload["release"]["version"], "0.3.0");
     }
 
@@ -579,7 +579,7 @@ mod tests {
             disabled.text,
             "Integration HaloPSA was turned off: nothing reached psa.example for a day. Last error: psa.example answered 500 Internal Server Error."
         );
-        assert_eq!(disabled.url, "https://mf.example/admin/integrations/");
+        assert_eq!(disabled.url, "https://mf.example/settings/integrations/");
     }
 
     #[test]
@@ -647,7 +647,7 @@ mod tests {
             WEB,
         );
         assert_eq!(relay.text, "Update of relay gw to 1.2.0 failed");
-        assert_eq!(relay.url, "https://mf.example/admin/relays/view/?id=r1");
+        assert_eq!(relay.url, "https://mf.example/settings/relays/view/?id=r1");
 
         let campaign = render(
             &event(
@@ -694,7 +694,7 @@ mod tests {
         assert!(message.body.contains("Server: web-1\n"));
         assert!(message
             .body
-            .contains("https://mf.example/admin/notifications/"));
+            .contains("https://mf.example/settings/notifications/"));
     }
 
     #[test]
@@ -702,7 +702,7 @@ mod tests {
         let message = render(&Event::test(), WEB);
         assert!(message.text.contains("this channel works"));
         assert_eq!(message.payload["event"], "test");
-        assert_eq!(message.url, "https://mf.example/admin/notifications/");
+        assert_eq!(message.url, "https://mf.example/settings/notifications/");
     }
 
     #[test]

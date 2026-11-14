@@ -29,32 +29,43 @@ use super::{ApiError, ApiState};
 use crate::plugins::{self, Place, OFFICIAL_PUBLISHER};
 
 /// A plugin as Administration › Plugins shows it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PluginView {
     pub id: Uuid,
+    /// Its unique name, kept across versions.
     pub name: String,
+    /// `check`, `channel` or `integration`.
     pub kind: String,
     pub version: String,
+    /// Its name to show.
     pub title: String,
     pub description: String,
+    /// Signed by a key built into MonitorFlow.
     pub official: bool,
     /// MonitorFlow, the publisher's name, or `null` for a key no longer
     /// trusted.
     pub publisher: Option<String>,
+    /// The signing key's: the first 8 bytes of its SHA-256, hex.
     pub fingerprint: String,
     /// What it does and asks for, in words.
     pub capabilities: Vec<String>,
+    /// The fields of its settings form.
     pub settings: Vec<Setting>,
+    /// Off: no channel sends and no check runs with it.
     pub enabled: bool,
+    /// Where it may be used; empty: nowhere.
     pub places: Vec<PlaceView>,
+    /// Notification channels using it.
     pub channels: i64,
+    /// Checks using it.
     pub checks: i64,
     pub installed_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 /// Where a plugin may be used: everything when both IDs are null.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = PluginPlace)]
 pub struct PlaceView {
     pub customer_id: Option<Uuid>,
     pub customer_name: Option<String>,
@@ -62,13 +73,15 @@ pub struct PlaceView {
     pub site_name: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+/// Body of `GET /api/plugins`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PluginList {
     pub plugins: Vec<PluginView>,
 }
 
 /// What an uploaded file is, before it is installed.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = PluginInspection)]
 pub struct Inspection {
     pub name: String,
     pub kind: String,
@@ -76,8 +89,11 @@ pub struct Inspection {
     pub title: String,
     pub description: String,
     pub official: bool,
+    /// MonitorFlow, or the trusted publisher's name; empty for a key not
+    /// trusted yet.
     pub publisher: String,
     pub fingerprint: String,
+    /// What it does and asks for, in words.
     pub capabilities: Vec<String>,
     pub settings: Vec<Setting>,
     /// Hex; `POST /api/plugins` takes it back so what is installed is what
@@ -87,8 +103,11 @@ pub struct Inspection {
     pub update: Option<UpdateView>,
 }
 
-#[derive(Debug, Serialize)]
+/// What installing the file over the installed version changes.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = PluginUpdate)]
 pub struct UpdateView {
+    /// The installed version.
     pub from_version: String,
     /// Capabilities the new version asks for and the old one did not.
     pub adds: Vec<String>,
@@ -96,19 +115,27 @@ pub struct UpdateView {
     pub drops: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+/// Query string of `POST /api/plugins`.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct InstallQuery {
+    /// The `sha256` inspection answered for this file, hex.
     pub sha256: String,
 }
 
-#[derive(Debug, Deserialize)]
+/// Body of `PUT /api/plugins/{id}/places`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = PluginPlacesRequest)]
 #[serde(deny_unknown_fields)]
 pub struct PlacesRequest {
+    /// At most 200; both IDs absent is everything, empty is nowhere.
     pub places: Vec<Place>,
 }
 
-#[derive(Debug, Deserialize)]
+/// Body of `PUT /api/plugins/{id}/enabled`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = PluginEnabledRequest)]
 #[serde(deny_unknown_fields)]
 pub struct EnabledRequest {
     pub enabled: bool,
@@ -570,9 +597,11 @@ pub async fn remove(
 
 /// A plugin as those who use it see it: what it is and the places they
 /// can see where it may be used.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = UsablePlugin)]
 pub struct UsableView {
     pub name: String,
+    /// `check`, `channel` or `integration`.
     pub kind: String,
     pub version: String,
     pub title: String,
@@ -581,11 +610,15 @@ pub struct UsableView {
     pub settings: Vec<Setting>,
     /// May be used for everything.
     pub everywhere: bool,
+    /// Customers, among those the caller sees, where it may be used.
     pub customer_ids: Vec<Uuid>,
+    /// Sites, among those the caller reads, where it may be used.
     pub site_ids: Vec<Uuid>,
 }
 
-#[derive(Debug, Serialize)]
+/// Body of `GET /api/plugins/usable`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = UsablePluginList)]
 pub struct UsableList {
     pub plugins: Vec<UsableView>,
 }
@@ -650,18 +683,23 @@ pub async fn usable(
 }
 
 /// A trusted publisher key.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = PluginPublisher)]
 pub struct PublisherView {
     pub id: Uuid,
     pub name: String,
+    /// The Ed25519 public key, base64.
     pub public_key: String,
+    /// The first 8 bytes of the key's SHA-256, hex.
     pub fingerprint: String,
     /// Installed plugins it signed.
     pub plugins: Vec<String>,
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+/// Body of `GET /api/plugins/publishers`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = PluginPublisherList)]
 pub struct PublisherList {
     pub publishers: Vec<PublisherView>,
     /// Fingerprints of the catalogue keys built in; none until the
@@ -669,9 +707,12 @@ pub struct PublisherList {
     pub official: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+/// Body of `POST /api/plugins/publishers`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = PluginPublisherRequest)]
 #[serde(deny_unknown_fields)]
 pub struct PublisherRequest {
+    /// 1 to 80 characters, shown as the publisher of its plugins.
     pub name: String,
     /// The key `monitorflow-plugin keygen` printed: base64 or PEM.
     pub public_key: String,

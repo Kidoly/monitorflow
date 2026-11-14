@@ -25,7 +25,7 @@ import { formatOs } from "@/lib/format";
 import { administersCustomer, administersSite, modifiesSite, multiCustomer, useMe } from "@/lib/me";
 import { serverHref, siteHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
-import { type SensorValues, primaryMetric, sensorRows } from "@/lib/sensors";
+import { type SensorValues, sensorRows, valuesBySensor } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
 import { UUID } from "@/lib/uuid";
@@ -41,6 +41,7 @@ import { TabPanel, Tabs } from "@/components/ui/Tabs";
 import { formatExact } from "@/components/ui/time";
 
 import { AllowCommandsLine } from "./AllowCommands";
+import { serverSiblings } from "./breadcrumbSiblings";
 import { MonitoringSettings } from "./MonitoringSettings";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
@@ -71,8 +72,10 @@ export interface ServerData {
   server: ServerDetail;
   /** The effective sensor configuration, or why it is missing. */
   sensors: EffectiveSensors | { error: string };
-  /** The latest value of each sensor's primary metric. */
+  /** The recent values of each sensor's primary metric. */
   values: Map<EffectiveSensor, SensorValues>;
+  /** What the sparklines cover, in Unix seconds; null when unreadable. */
+  window: { start: number; end: number } | null;
   /** Null when the incidents could not be read. */
   incidents: Incident[] | null;
   commands: { commands: Command[]; nextCursor: string | null } | { error: string };
@@ -88,28 +91,21 @@ function settle<T, F>(promise: Promise<T>, fallback: (error: unknown) => F): Pro
   });
 }
 
-/** For a check slower than every minute, the last value within two of its intervals (ADR-0097). */
-const lookback = (sensor: EffectiveSensor) =>
-  sensor.interval_ms > 60_000 ? { lookbackS: Math.ceil((2 * sensor.interval_ms) / 1000) } : {};
-
 async function loadServer(id: string, commandLimit: number, signal: AbortSignal): Promise<ServerData> {
   const sensors = settle(api.serverSensors(id, signal), (e) => ({ error: describeError(e) }));
-  const values = sensors.then(async (config) => {
-    const list = "sensors" in config ? config.sensors : [];
-    const results = await Promise.all(
-      list.map((sensor) =>
-        settle(
-          api.queryInstant({ serverId: id, ...primaryMetric(sensor), ...lookback(sensor) }, signal).then(({ series }) => ({ series })),
-          (e) => ({ error: metricsError(e) }),
-        ),
-      ),
-    );
-    return new Map(list.map((sensor, i) => [sensor, results[i]!]));
+  // Every sensor's recent values in one request (sparklines, last value, late data).
+  const recent = settle(api.sensorValues(id, signal), (e) => ({ error: metricsError(e) }));
+  const values = Promise.all([sensors, recent]).then(([config, list]) => {
+    const all = "sensors" in config ? config.sensors : [];
+    if ("error" in list) return new Map<EffectiveSensor, SensorValues>(all.map((s) => [s, { error: list.error }]));
+    return valuesBySensor(all, list);
   });
-  const [server, config, latest, incidents, commands, releases] = await Promise.all([
+  const window = recent.then((list) => ("error" in list ? null : { start: list.start, end: list.end }));
+  const [server, config, latest, sparkWindow, incidents, commands, releases] = await Promise.all([
     api.server(id, signal),
     sensors,
     values,
+    window,
     settle(
       api.incidents({ state: "open", server_id: id, limit: MAX_LIMIT }, signal).then((p) => p.incidents),
       () => null,
@@ -122,7 +118,7 @@ async function loadServer(id: string, commandLimit: number, signal: AbortSignal)
     ),
     settle(api.agentReleases(signal), () => null),
   ]);
-  return { server, sensors: config, values: latest, incidents, commands, latestAgent: releases?.latest ?? null };
+  return { server, sensors: config, values: latest, window: sparkWindow, incidents, commands, latestAgent: releases?.latest ?? null };
 }
 
 export function ServerPage({ id }: { id: string | null }) {
@@ -210,7 +206,7 @@ export function ServerPage({ id }: { id: string | null }) {
       />
       <TabPanel idBase="server" id={tab}>
         {tab === "sensors" && (
-          <ServerSensorsTab server={server} sensors={sensors} rows={rows} incidentsFailed={incidents === null} now={updatedAt} />
+          <ServerSensorsTab server={server} sensors={sensors} rows={rows} window={data.window} incidentsFailed={incidents === null} now={updatedAt} />
         )}
         {tab === "alerts" && <ServerAlertsTab server={server} />}
         {tab === "logs" && <ServerLogsTab server={server} />}
@@ -240,7 +236,13 @@ function ServerAlertsTab({ server }: { server: ServerDetail }) {
 
 function ServerHeading({ server }: { server: ServerDetail }) {
   const scope = useScope();
-  return <Breadcrumb parents={[{ label: "Fleet", href: scopedHref("/", scope) }]} current={server.hostname} />;
+  return (
+    <Breadcrumb
+      parents={[{ label: "Fleet", href: scopedHref("/", scope) }]}
+      current={server.hostname}
+      siblings={serverSiblings(server, scope)}
+    />
+  );
 }
 
 /**

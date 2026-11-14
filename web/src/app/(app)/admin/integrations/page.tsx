@@ -1,9 +1,6 @@
-import type { Metadata } from "next";
+import { MovedPage } from "@/components/MovedPage";
 
-import { IntegrationsPage } from "@/components/IntegrationsAdmin";
-
-export const metadata: Metadata = { title: "Integrations · MonitorFlow" };
-
-export default function Integrations() {
-  return <IntegrationsPage />;
+// Moved under /settings/; old links still work.
+export default function Moved() {
+  return <MovedPage from="/admin/integrations/" />;
 }

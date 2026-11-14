@@ -29,25 +29,30 @@ use crate::ca::{RevocationReason, Serial};
 use crate::grpc::CloseReason;
 
 /// A certificate of another peer revoked with a relay.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct IssuedThrough {
+    /// Lowercase hexadecimal.
     pub serial: String,
+    /// `agent` or `relay`.
     pub peer_role: String,
+    /// Its name.
     pub peer_id: String,
 }
 
 /// Body of both revoke routes.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RevokeRequest {
-    /// `unspecified` when absent.
+    /// `unspecified` when absent; recorded in the revocation list.
     pub reason: Option<RevocationReason>,
 }
 
 /// Answer of both revoke routes.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct Revoked {
+    /// When it was removed.
     pub revoked_at: DateTime<Utc>,
+    /// Recorded in the revocation list.
     pub reason: RevocationReason,
     /// Certificates put in the CRL, lowercase hexadecimal.
     pub serials: Vec<String>,
@@ -56,6 +61,7 @@ pub struct Revoked {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub issued_through: Vec<IssuedThrough>,
     /// Live streams closed: the peer's and, for a relay, those it forwards.
+    #[schema(value_type = u64)]
     pub closed_streams: usize,
 }
 

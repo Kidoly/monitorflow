@@ -55,7 +55,7 @@ function renderPage(user = globalAdmin) {
 }
 
 describe("BackupsPage", () => {
-  beforeEach(() => setUrl("/admin/backups/"));
+  beforeEach(() => setUrl("/settings/backups/"));
 
   it("is for global administrators only", () => {
     stubFetch({});

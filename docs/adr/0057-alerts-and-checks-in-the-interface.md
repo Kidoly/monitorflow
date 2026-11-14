@@ -1,7 +1,7 @@
 # ADR-0057: Alerts and checks in the web interface
 
 Date: 2026-10-28
-Status: accepted
+Status: accepted; adding a check opens a catalogue since 2026-11-14 (amendment below)
 
 ## Context
 
@@ -26,3 +26,7 @@ Both resources are layered: built-in defaults, then the site's rows, then the se
 - Thresholds and checks need neither the API nor the CLI. Every change still goes through the audited endpoints of ADR-0016 and ADR-0019.
 - Comparison, hysteresis, interval, timeout and instance-specific rows are not editable in the interface. These are options the defaults cover; the API keeps them.
 - There is no HTTP check: no such sensor exists. The list grows with the registry.
+
+## Amendment 2026-11-14: a check catalogue
+
+Large fleets watch many kinds of software, and a list of six kinds made everyone translate "PostgreSQL" into "a port answers, 5432". Add a check now opens a catalogue: every kind, plus ready entries built on them (a service, a port, a log pattern or a script people already install, like `check_apt`), the check plugins turned on at the site (ADR-0103), and the checks every server runs already, which say so instead of opening a form. A live search over titles, descriptions and keywords, and filters for what it monitors, the system and how it works, narrow it; "Most used" ranks entries by the servers running the check each one makes, from `GET /api/checks/usage` over the sites the user reads, and shows a fixed "Common checks" row until anything is used. Choosing an entry opens the form above with its values filled in; nothing in the catalogue is a new kind, so the API and the agents are unchanged. The catalogue lives in the web interface (`web/src/lib/catalogue.ts`): it is wording and defaults, which change with the interface.

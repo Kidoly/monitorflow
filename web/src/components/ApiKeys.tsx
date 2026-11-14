@@ -67,7 +67,7 @@ export function accessWords(key: ApiKey): string {
 }
 
 /**
- * `/admin/api-keys/` (ADR-0101): the keys an administrator could have made,
+ * `/settings/api-keys/` (ADR-0101): the keys an administrator could have made,
  * "Turn off", and a form for a new one whose secret is shown once.
  */
 export function ApiKeysPage() {

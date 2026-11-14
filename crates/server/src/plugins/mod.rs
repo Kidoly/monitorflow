@@ -42,11 +42,14 @@ pub async fn publisher_name(
 }
 
 /// Where a plugin may be used: everything when both are `None`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = PluginPlaceRequest)]
 #[serde(deny_unknown_fields)]
 pub struct Place {
+    /// A customer and all its sites.
     #[serde(default)]
     pub customer_id: Option<Uuid>,
+    /// One site; never with `customer_id`.
     #[serde(default)]
     pub site_id: Option<Uuid>,
 }
