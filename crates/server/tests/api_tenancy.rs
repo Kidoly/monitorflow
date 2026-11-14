@@ -707,6 +707,12 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 Ctx::mentions(&body, a.server) && !Ctx::mentions(&body, b.server),
                 "{body}"
             );
+            // Asking for B's site lists nothing rather than B's servers.
+            let (status, body) = ctx
+                .call(method, &format!("{path}?site_id={}", b.site), None)
+                .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["servers"], json!([]), "{body}");
         }
         ("GET", "/api/sites") => {
             let (status, body) = ctx.call(method, path, None).await;

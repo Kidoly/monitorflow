@@ -37,6 +37,8 @@ pub struct ListParams {
     pub limit: Option<u32>,
     /// `next_cursor` of the previous page.
     pub cursor: Option<String>,
+    /// Only the servers of this site; none outside the user's sites.
+    pub site_id: Option<Uuid>,
 }
 
 /// Body of `GET /api/servers`.
@@ -250,6 +252,7 @@ pub async fn list(
         "{SELECT_SERVERS}
          WHERE ($1 OR s.site_id = ANY($2)) AND s.revoked_at IS NULL
            AND ($3::text IS NULL OR (si.name, s.hostname, s.peer_id) > ($3, $4, $5))
+           AND ($7::uuid IS NULL OR s.site_id = $7)
          ORDER BY si.name, s.hostname, s.peer_id
          LIMIT $6"
     )))
@@ -259,6 +262,7 @@ pub async fn list(
     .bind(after_host)
     .bind(after_peer)
     .bind(i64::from(limit) + 1)
+    .bind(params.site_id)
     .fetch_all(&state.pool)
     .await?;
     let next_cursor = if rows.len() > limit as usize {
