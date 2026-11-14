@@ -213,6 +213,7 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/campaigns",
     "/api/thresholds",
     "/api/sensor_configs",
+    "/api/checks",
     "/api/dashboards",
     "/api/dashboard-data",
     "/api/dashboard-metrics",
