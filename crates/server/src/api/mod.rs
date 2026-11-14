@@ -29,6 +29,7 @@
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
 //! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
+//! | GET | `/api/checks/usage` | read | [`checks::UsageList`]: servers running each check, over the sites read, for the catalogue's "Most used" |
 //! | GET | `/api/sites/{id}/sensors` | read | [`sensors::SiteEffective`]: built-in defaults overlaid with the site's rows |
 //! | PUT | `/api/sites/{id}/check-interval` | modify | body and answer [`check_interval::CheckInterval`] `{"interval_ms"}`, 10 s to 24 h or `null` for the built-in one: how often the site's built-in checks run; audited (ADR-0097) |
 //! | GET | `/api/sites/{id}/sensor_configs` | read | [`sensors::EntryList`] of the site's rows |
@@ -630,6 +631,7 @@ pub mod backups;
 pub mod campaigns;
 pub mod certificate_authority;
 pub mod check_interval;
+pub mod checks;
 pub mod client_addr;
 pub mod commands;
 pub mod customers;
@@ -1073,6 +1075,7 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/remediation/events", get(remediation_events::list))
         .route("/api/servers/{id}/sensors", get(sensors::effective))
+        .route("/api/checks/usage", get(checks::usage))
         .route("/api/sites/{id}/sensors", get(sensors::effective_site))
         .route("/api/servers/{id}/metrics", get(metrics::discover))
         .route(

@@ -1163,6 +1163,18 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             };
             assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
+        // Servers running each check: A's site and server rows, not B's.
+        ("GET", "/api/checks/usage") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            let cpu = body["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["name"] == "cpu")
+                .unwrap_or_else(|| panic!("{body}"));
+            assert_eq!(cpu["servers"], 2, "{body}");
+        }
         // Where plugins may be used: only the places A sees.
         ("GET", "/api/plugins/usable") => {
             let (status, body) = ctx.call(method, path, None).await;
