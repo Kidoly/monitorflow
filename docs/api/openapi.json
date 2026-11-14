@@ -1039,6 +1039,1088 @@
         }
       }
     },
+    "/api/v1/dashboard-data": {
+      "post": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "Read the data of panels",
+        "description": "What the panels given show now, over `range`, for the caller: the\nservers of each panel are those it names that the caller reads, within\n`within`. Pass a dashboard's `spec.panels` and `spec.range`, and its\nsharing as `within`, to show it as its page does; panels need not be\nsaved. Points are aligned to the step and answers are cached 15\nseconds. A panel whose query fails answers `kind: error` while the\nothers still show. Changes nothing.\n\nErrors: 400 `invalid` for a bad panel; 502 `metrics_unavailable` or 504\n`metrics_timeout` when the metrics store fails as a whole.",
+        "operationId": "data",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DashboardDataRequest"
+              },
+              "example": {
+                "panels": [
+                  {
+                    "combine": "each",
+                    "id": "cpu",
+                    "kind": "chart",
+                    "metric": "monitorflow_cpu_usage_ratio",
+                    "servers": {
+                      "kind": "all"
+                    },
+                    "title": "CPU, busiest servers",
+                    "width": 2
+                  },
+                  {
+                    "count": 5,
+                    "id": "disks",
+                    "kind": "top",
+                    "metric": "monitorflow_disk_used_ratio",
+                    "order": "highest",
+                    "servers": {
+                      "ids": [
+                        "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e"
+                      ],
+                      "kind": "list"
+                    },
+                    "title": "Fullest disks",
+                    "width": 1
+                  },
+                  {
+                    "count": 10,
+                    "id": "alerts",
+                    "kind": "alerts",
+                    "servers": {
+                      "kind": "all"
+                    },
+                    "title": "Open alerts",
+                    "width": 3
+                  }
+                ],
+                "range": "24h",
+                "within": {
+                  "id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b",
+                  "kind": "site"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Every panel's data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardData"
+                },
+                "example": {
+                  "at": 1763136120,
+                  "end": 1763136000,
+                  "now": 1763136127,
+                  "panels": [
+                    {
+                      "id": "cpu",
+                      "kind": "chart",
+                      "series": [
+                        {
+                          "label": "web-1",
+                          "points": [
+                            [
+                              1763049600,
+                              0.125
+                            ],
+                            [
+                              1763049900,
+                              0.141
+                            ],
+                            [
+                              1763050200,
+                              null
+                            ]
+                          ],
+                          "server_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e"
+                        }
+                      ],
+                      "servers": 4,
+                      "unavailable": 0
+                    },
+                    {
+                      "id": "disks",
+                      "kind": "top",
+                      "rows": [
+                        {
+                          "hostname": "web-1",
+                          "instance": "/var",
+                          "server_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e",
+                          "value": 0.812
+                        }
+                      ],
+                      "servers": 1,
+                      "unavailable": 0
+                    },
+                    {
+                      "alerts": [
+                        {
+                          "hostname": "web-1",
+                          "id": "2b3c4d5e-6f70-4a1b-9c2d-3e4f5a6b7c8d",
+                          "instance": "/var",
+                          "metric": "monitorflow_disk_used_ratio",
+                          "opened_at": "2026-11-14T15:02:00Z",
+                          "server_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e",
+                          "severity": "warning"
+                        }
+                      ],
+                      "id": "alerts",
+                      "kind": "alerts",
+                      "servers": 4,
+                      "unavailable": 1
+                    }
+                  ],
+                  "start": 1763049600,
+                  "step": 300
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The metrics store fails: `metrics_unavailable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The metrics store is too slow: `metrics_timeout`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboard-metrics": {
+      "get": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "List metrics for panels",
+        "description": "The `monitorflow_*` metrics reported in the last day by the servers\nthe caller reads, optionally of one site or customer, and the\ninstances (disks, cores, interfaces) of `metric` when given. At most\n1000 of each. Changes nothing.\n\nErrors: 400 `invalid` for a metric name that is not a MonitorFlow\nmetric; 404 `not_found` for a site the caller does not read; 502\n`metrics_unavailable` when the metrics store fails.",
+        "operationId": "catalog",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "Only the servers of this site.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only the servers of this customer.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "description": "Also list what this metric watches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Metrics and instances",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricCatalog"
+                },
+                "example": {
+                  "instances": [
+                    "/",
+                    "/var"
+                  ],
+                  "metrics": [
+                    "monitorflow_cpu_usage_ratio",
+                    "monitorflow_disk_used_ratio",
+                    "monitorflow_memory_available_ratio"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The metrics store fails: `metrics_unavailable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboards": {
+      "get": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "List dashboards",
+        "description": "The dashboards the caller sees, by name: their own, those of the sites\nthey read, and those of customers they see as a whole. Without the\npanels; read one for them. Not paged: the list stays small.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "The dashboards the caller sees",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardList"
+                },
+                "example": {
+                  "dashboards": [
+                    {
+                      "can_edit": true,
+                      "can_link": false,
+                      "id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+                      "name": "Paris overview",
+                      "panels": 3,
+                      "shared_with": {
+                        "id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b",
+                        "kind": "site",
+                        "name": "paris"
+                      },
+                      "updated_at": "2026-11-13T16:20:00Z",
+                      "updated_by_username": "alice"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "Create a dashboard",
+        "description": "`shared_with` personal needs only read access; a site or customer\nneeds a role above viewer on it. Every site, customer\nand server a panel names must be readable by the caller and within the\nsharing. Audited as `dashboard.create`. Not safe to repeat: send\n`Idempotency-Key` to retry.\n\nErrors: 400 `invalid` for a bad name or spec, or a panel naming\nsomething unknown, unreadable or outside the sharing, in one message\nthat does not say which; 403 `forbidden` for a site or customer the\ncaller only reads; 404 `not_found` for one they do not see.",
+        "operationId": "create",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DashboardRequest"
+              },
+              "example": {
+                "name": "Paris overview",
+                "shared_with": {
+                  "id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b",
+                  "kind": "site"
+                },
+                "spec": {
+                  "panels": [
+                    {
+                      "combine": "each",
+                      "id": "cpu",
+                      "kind": "chart",
+                      "metric": "monitorflow_cpu_usage_ratio",
+                      "servers": {
+                        "kind": "all"
+                      },
+                      "title": "CPU, busiest servers",
+                      "width": 2
+                    },
+                    {
+                      "count": 5,
+                      "id": "disks",
+                      "kind": "top",
+                      "metric": "monitorflow_disk_used_ratio",
+                      "order": "highest",
+                      "servers": {
+                        "ids": [
+                          "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e"
+                        ],
+                        "kind": "list"
+                      },
+                      "title": "Fullest disks",
+                      "width": 1
+                    },
+                    {
+                      "count": 10,
+                      "id": "alerts",
+                      "kind": "alerts",
+                      "servers": {
+                        "kind": "all"
+                      },
+                      "title": "Open alerts",
+                      "width": 3
+                    }
+                  ],
+                  "range": "24h",
+                  "version": 1
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardView"
+                },
+                "example": {
+                  "can_edit": true,
+                  "can_link": false,
+                  "id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+                  "name": "Paris overview",
+                  "panels": 3,
+                  "revision": 4,
+                  "shared_with": {
+                    "id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b",
+                    "kind": "site",
+                    "name": "paris"
+                  },
+                  "spec": {
+                    "panels": [
+                      {
+                        "combine": "each",
+                        "id": "cpu",
+                        "kind": "chart",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "title": "CPU, busiest servers",
+                        "width": 2
+                      },
+                      {
+                        "count": 5,
+                        "id": "disks",
+                        "kind": "top",
+                        "metric": "monitorflow_disk_used_ratio",
+                        "order": "highest",
+                        "servers": {
+                          "ids": [
+                            "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e"
+                          ],
+                          "kind": "list"
+                        },
+                        "title": "Fullest disks",
+                        "width": 1
+                      },
+                      {
+                        "count": 10,
+                        "id": "alerts",
+                        "kind": "alerts",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "title": "Open alerts",
+                        "width": 3
+                      }
+                    ],
+                    "range": "24h",
+                    "version": 1
+                  },
+                  "updated_at": "2026-11-13T16:20:00Z",
+                  "updated_by_username": "alice"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboards/{id}": {
+      "get": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "Read a dashboard",
+        "description": "With its panels and its `revision`, to send back when changing it. 404\n`not_found` for one the caller does not see.",
+        "operationId": "detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The dashboard's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The dashboard",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardView"
+                },
+                "example": {
+                  "can_edit": true,
+                  "can_link": false,
+                  "id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+                  "name": "Paris overview",
+                  "panels": 3,
+                  "revision": 4,
+                  "shared_with": {
+                    "id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b",
+                    "kind": "site",
+                    "name": "paris"
+                  },
+                  "spec": {
+                    "panels": [
+                      {
+                        "combine": "each",
+                        "id": "cpu",
+                        "kind": "chart",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "title": "CPU, busiest servers",
+                        "width": 2
+                      },
+                      {
+                        "count": 5,
+                        "id": "disks",
+                        "kind": "top",
+                        "metric": "monitorflow_disk_used_ratio",
+                        "order": "highest",
+                        "servers": {
+                          "ids": [
+                            "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e"
+                          ],
+                          "kind": "list"
+                        },
+                        "title": "Fullest disks",
+                        "width": 1
+                      },
+                      {
+                        "count": 10,
+                        "id": "alerts",
+                        "kind": "alerts",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "title": "Open alerts",
+                        "width": 3
+                      }
+                    ],
+                    "range": "24h",
+                    "version": 1
+                  },
+                  "updated_at": "2026-11-13T16:20:00Z",
+                  "updated_by_username": "alice"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "Change a dashboard",
+        "description": "Replaces its name, sharing and panels, given the `revision` the edit\nstarted from. Needs the right to change it as it is shared now and, if\nthe sharing changes, as it will be. Audited as `dashboard.update`.\n\nErrors: as for creating it, and 400 `invalid` without `revision`; 409\n`conflict` when someone saved it since that revision: read it again.",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The dashboard's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DashboardRequest"
+              },
+              "example": {
+                "name": "Paris overview",
+                "revision": 4,
+                "shared_with": {
+                  "id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b",
+                  "kind": "site"
+                },
+                "spec": {
+                  "panels": [
+                    {
+                      "combine": "each",
+                      "id": "cpu",
+                      "kind": "chart",
+                      "metric": "monitorflow_cpu_usage_ratio",
+                      "servers": {
+                        "kind": "all"
+                      },
+                      "title": "CPU, busiest servers",
+                      "width": 2
+                    },
+                    {
+                      "count": 5,
+                      "id": "disks",
+                      "kind": "top",
+                      "metric": "monitorflow_disk_used_ratio",
+                      "order": "highest",
+                      "servers": {
+                        "ids": [
+                          "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e"
+                        ],
+                        "kind": "list"
+                      },
+                      "title": "Fullest disks",
+                      "width": 1
+                    },
+                    {
+                      "count": 10,
+                      "id": "alerts",
+                      "kind": "alerts",
+                      "servers": {
+                        "kind": "all"
+                      },
+                      "title": "Open alerts",
+                      "width": 3
+                    }
+                  ],
+                  "range": "24h",
+                  "version": 1
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The dashboard as it now stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardView"
+                },
+                "example": {
+                  "can_edit": true,
+                  "can_link": false,
+                  "id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+                  "name": "Paris overview",
+                  "panels": 3,
+                  "revision": 4,
+                  "shared_with": {
+                    "id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b",
+                    "kind": "site",
+                    "name": "paris"
+                  },
+                  "spec": {
+                    "panels": [
+                      {
+                        "combine": "each",
+                        "id": "cpu",
+                        "kind": "chart",
+                        "metric": "monitorflow_cpu_usage_ratio",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "title": "CPU, busiest servers",
+                        "width": 2
+                      },
+                      {
+                        "count": 5,
+                        "id": "disks",
+                        "kind": "top",
+                        "metric": "monitorflow_disk_used_ratio",
+                        "order": "highest",
+                        "servers": {
+                          "ids": [
+                            "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e"
+                          ],
+                          "kind": "list"
+                        },
+                        "title": "Fullest disks",
+                        "width": 1
+                      },
+                      {
+                        "count": 10,
+                        "id": "alerts",
+                        "kind": "alerts",
+                        "servers": {
+                          "kind": "all"
+                        },
+                        "title": "Open alerts",
+                        "width": 3
+                      }
+                    ],
+                    "range": "24h",
+                    "version": 1
+                  },
+                  "updated_at": "2026-11-13T16:20:00Z",
+                  "updated_by_username": "alice"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Changed since `revision`: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "dashboards"
+        ],
+        "summary": "Delete a dashboard",
+        "description": "Also takes it off the display links that showed it. Audited as\n`dashboard.delete`. 404 `not_found` for one the caller does not see,\n403 `forbidden` for one they may only read.",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The dashboard's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/health": {
       "get": {
         "tags": [
@@ -6540,6 +7622,42 @@
           }
         }
       },
+      "ChartSeries": {
+        "type": "object",
+        "description": "One line of a chart.",
+        "required": [
+          "label",
+          "points"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "The server, and the instance when there are several, or how the\nservers combine."
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              }
+            },
+            "description": "`[unix seconds, value]` every `step`; the value is `null` where\nnothing was reported."
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The server of a line per server; absent when combined."
+          }
+        }
+      },
       "CheckResult": {
         "type": "object",
         "description": "Body of `POST /api/server-update/check`.",
@@ -6819,6 +7937,411 @@
             "description": "Sites of the customer the user reads, not all of them."
           }
         }
+      },
+      "DashboardAlert": {
+        "type": "object",
+        "description": "One open alert.",
+        "required": [
+          "id",
+          "server_id",
+          "hostname",
+          "metric",
+          "instance",
+          "severity",
+          "opened_at"
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The incident's ID."
+          },
+          "instance": {
+            "type": "string"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "severity": {
+            "type": "string",
+            "description": "`warning` or `critical`."
+          }
+        }
+      },
+      "DashboardData": {
+        "type": "object",
+        "description": "Body of `POST /api/dashboard-data`.",
+        "required": [
+          "start",
+          "end",
+          "step",
+          "at",
+          "now",
+          "panels"
+        ],
+        "properties": {
+          "at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When figures and top lists were read."
+          },
+          "end": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix seconds."
+          },
+          "now": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The server's clock when it answered, so a screen with a wrong\nclock still shows the right time (ADR-0099)."
+          },
+          "panels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PanelData"
+            }
+          },
+          "start": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The charts' range and step, unix seconds."
+          },
+          "step": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds between points."
+          }
+        }
+      },
+      "DashboardDataRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/dashboard-data`.",
+        "required": [
+          "range",
+          "panels"
+        ],
+        "properties": {
+          "panels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Panel"
+            },
+            "description": "At most 24, checked as when saving."
+          },
+          "range": {
+            "$ref": "#/components/schemas/DashboardRange"
+          },
+          "within": {
+            "$ref": "#/components/schemas/DashboardWithin",
+            "description": "The dashboard's sharing: a site's or customer's dashboard shows\nonly its servers."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DashboardList": {
+        "type": "object",
+        "description": "Body of `GET /api/dashboards`, by name.",
+        "required": [
+          "dashboards"
+        ],
+        "properties": {
+          "dashboards": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardSummary"
+            }
+          }
+        }
+      },
+      "DashboardRange": {
+        "type": "string",
+        "description": "Time ranges, as on the sensor pages (ADR-0020).",
+        "enum": [
+          "1h",
+          "6h",
+          "24h",
+          "7d",
+          "30d"
+        ]
+      },
+      "DashboardRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/dashboards` and `PUT /api/dashboards/{id}`.",
+        "required": [
+          "name",
+          "shared_with",
+          "spec"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "1 to 80 characters."
+          },
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The revision the edit started from; `PUT` only."
+          },
+          "shared_with": {
+            "$ref": "#/components/schemas/DashboardSharing"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/DashboardSpec"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DashboardSharing": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Only me: its owner.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "personal"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "site"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "customer"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Who a dashboard is for."
+      },
+      "DashboardSharingView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DashboardSharing"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The site's or customer's name; absent for `personal`."
+              }
+            }
+          }
+        ],
+        "description": "[`Sharing`] with the name of the site or customer, for display."
+      },
+      "DashboardSpec": {
+        "type": "object",
+        "description": "The stored content of a dashboard.",
+        "required": [
+          "version",
+          "range",
+          "panels"
+        ],
+        "properties": {
+          "panels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Panel"
+            },
+            "description": "At most 24, in the order shown."
+          },
+          "range": {
+            "$ref": "#/components/schemas/DashboardRange",
+            "description": "What the dashboard opens with."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Format of the spec: 1.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "DashboardSummary": {
+        "type": "object",
+        "description": "One row of `GET /api/dashboards`.",
+        "required": [
+          "id",
+          "name",
+          "shared_with",
+          "panels",
+          "updated_at",
+          "can_edit",
+          "can_link"
+        ],
+        "properties": {
+          "can_edit": {
+            "type": "boolean",
+            "description": "Whether the caller may change and delete it."
+          },
+          "can_link": {
+            "type": "boolean",
+            "description": "Whether the user may make display links for it (ADR-0099)."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "panels": {
+            "type": "integer",
+            "description": "How many panels it has.",
+            "minimum": 0
+          },
+          "shared_with": {
+            "$ref": "#/components/schemas/DashboardSharingView"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by_username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` once the user is deleted."
+          }
+        }
+      },
+      "DashboardView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DashboardSummary"
+          },
+          {
+            "type": "object",
+            "required": [
+              "spec",
+              "revision"
+            ],
+            "properties": {
+              "revision": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Pass back on `PUT`."
+              },
+              "spec": {
+                "$ref": "#/components/schemas/DashboardSpec"
+              }
+            }
+          }
+        ],
+        "description": "`GET /api/dashboards/{id}` and the answer to writes."
+      },
+      "DashboardWithin": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "all"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "site"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "customer"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "The servers a dashboard can show at most: everything the viewer reads,\nor one site or customer of it."
       },
       "DecisionView": {
         "type": "object",
@@ -7421,6 +8944,30 @@
           }
         }
       },
+      "MetricCatalog": {
+        "type": "object",
+        "description": "Body of `GET /api/dashboard-metrics`.",
+        "required": [
+          "metrics",
+          "instances"
+        ],
+        "properties": {
+          "instances": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The instances of `metric`, sorted; empty without it."
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`monitorflow_*` metrics reported in the last day, sorted."
+          }
+        }
+      },
       "NameRequest": {
         "type": "object",
         "description": "Body of `POST /api/customers` and `POST /api/customers/{id}/sites`.",
@@ -7433,6 +8980,335 @@
           }
         },
         "additionalProperties": false
+      },
+      "Panel": {
+        "type": "object",
+        "description": "One panel. Fields that do not apply to its kind must be absent.",
+        "required": [
+          "id",
+          "title",
+          "kind"
+        ],
+        "properties": {
+          "combine": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PanelCombine",
+                "description": "Charts and figures."
+              }
+            ]
+          },
+          "count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Rows of a top list or alerts panel, 1 to 20.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "Unique within the dashboard, chosen by the client: 1 to 36\nletters, digits, `-` and `_`."
+          },
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only this instance (a disk, a core); every one when absent."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PanelKind"
+          },
+          "metric": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Full name, `monitorflow_…`; not for alerts."
+          },
+          "order": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PanelOrder",
+                "description": "Top lists."
+              }
+            ]
+          },
+          "servers": {
+            "$ref": "#/components/schemas/PanelServers",
+            "description": "Every server of the dashboard when absent."
+          },
+          "title": {
+            "type": "string",
+            "description": "1 to 80 characters."
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Columns of the three-column grid, 1 to 3; 1 when absent.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "PanelCombine": {
+        "type": "string",
+        "description": "How the servers' series become what a chart or figure shows: `each`\n(one line per series, the 8 worst; charts only), `avg`, `max`, `min`,\n`sum`, or `count` of servers reporting it (figures only).",
+        "enum": [
+          "each",
+          "avg",
+          "max",
+          "min",
+          "sum",
+          "count"
+        ]
+      },
+      "PanelData": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PanelResult"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "servers",
+              "unavailable"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The panel's `id`."
+              },
+              "servers": {
+                "type": "integer",
+                "description": "Servers the panel covers for this viewer.",
+                "minimum": 0
+              },
+              "unavailable": {
+                "type": "integer",
+                "description": "Servers the panel names that are removed or not visible to the\nviewer, without saying which.",
+                "minimum": 0
+              }
+            }
+          }
+        ],
+        "description": "One panel's data."
+      },
+      "PanelKind": {
+        "type": "string",
+        "description": "`chart`: lines over the range. `figure`: one number now. `top`: the\nhighest or lowest servers now. `alerts`: open incidents.",
+        "enum": [
+          "chart",
+          "figure",
+          "top",
+          "alerts"
+        ]
+      },
+      "PanelOrder": {
+        "type": "string",
+        "description": "The order of a top list.",
+        "enum": [
+          "highest",
+          "lowest"
+        ]
+      },
+      "PanelResult": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "series",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "chart"
+                ]
+              },
+              "series": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ChartSeries"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "figure"
+                ]
+              },
+              "value": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "rows",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "top"
+                ]
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TopRow"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "alerts",
+              "kind"
+            ],
+            "properties": {
+              "alerts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/DashboardAlert"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "alerts"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A sentence for the panel; other panels still show.",
+            "required": [
+              "error",
+              "kind"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "error"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "What a panel shows, by its `kind`."
+      },
+      "PanelServers": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Every server of the dashboard.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "all"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "site"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "customer"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Chosen servers.",
+            "required": [
+              "ids",
+              "kind"
+            ],
+            "properties": {
+              "ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "list"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Which servers a panel shows, within the dashboard's sharing."
       },
       "PendingList": {
         "type": "object",
@@ -8623,6 +10499,38 @@
           "forbidden"
         ]
       },
+      "TopRow": {
+        "type": "object",
+        "description": "One row of a top list.",
+        "required": [
+          "server_id",
+          "hostname"
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The disk, core or interface; `null` for a metric without one."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "In the metric's unit: a ratio from 0 to 1 for `_ratio` metrics."
+          }
+        }
+      },
       "UpdateRun": {
         "type": "object",
         "description": "One update of the server, running or finished.",
@@ -8959,6 +10867,10 @@
     {
       "name": "license",
       "description": "The Enterprise license key, which allows additional central servers on one database. A single central server needs none. A global administrator's; with a key, access \"Administer\", reach \"Everything\" and the \"administration\" area."
+    },
+    {
+      "name": "dashboards",
+      "description": "Pages of panels (charts, figures, top lists and open alerts) kept for one person (\"Only me\") or shared with a site or a customer. Viewers of a site or customer see its dashboards; any role above viewer makes, changes and deletes them; anyone who can read makes their own. With a key, the \"dashboards\" area; a key sees, changes and deletes its maker's \"Only me\" dashboards whatever its reach, but the data of any panel is only ever read within the key's reach. A panel never shows more than the person asking may read: its servers are resolved again on every read, and servers they cannot see are counted, not named.\n\nDisplay links, which show dashboards on a wall screen without signing in, are made, listed and turned off only in the web interface, by an administrator of the dashboards' site or customer (or of anything for their own). A link's secret is in the URL fragment, shown once; a screen trades it for a session of one hour. Whoever holds the URL sees the link's dashboards, up to 12, and nothing else: no other page, no settings, no change. Each screen request reads as the link's maker with their roles of the moment, so a maker who is disabled or loses the role stops their links. A link may expire or never; deleting a dashboard removes it from its links. Because a link reads with all its maker's roles and outlives a key, `/api/v1/display-links`, `/api/v1/dashboards/{id}/display-links` and `/api/v1/display` answer 404."
     }
   ]
 }

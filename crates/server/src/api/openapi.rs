@@ -43,6 +43,7 @@ pub fn build() -> Document {
     doc.merge(super::openapi_system::SystemDoc::openapi());
     doc.merge(super::openapi_settings::SettingsDoc::openapi());
     doc.merge(super::openapi_users::UsersDoc::openapi());
+    doc.merge(super::openapi_dashboards::DashboardsDoc::openapi());
     doc
 }
 
@@ -213,9 +214,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/campaigns",
     "/api/thresholds",
     "/api/sensor_configs",
-    "/api/dashboards",
-    "/api/dashboard-data",
-    "/api/dashboard-metrics",
     "/api/relays",
     "/api/agent-releases",
     "/api/plugins",
