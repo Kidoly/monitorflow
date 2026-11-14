@@ -1293,6 +1293,229 @@
         }
       }
     },
+    "/api/v1/sensor_configs/{id}": {
+      "put": {
+        "tags": [
+          "sensor configs"
+        ],
+        "summary": "Replace a sensor config",
+        "description": "Replaces every field of a site's or a server's row; it stays with its\nsite or server. Absent optional fields take their defaults, as when\ncreating. The agents concerned get it at their next configuration\npoll.\n\nNeeds an operator role or above on the row's site and the key area\n\"alerts\". Audited as `sensor_config.update` with the row before and\nafter, parameter names only. Safe to repeat.",
+        "operationId": "update_sensor_config",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The row",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensorConfigRequest"
+              },
+              "example": {
+                "interval_ms": 30000,
+                "kind": "systemd",
+                "name": "web-services",
+                "params": {
+                  "units": "nginx.service,php-fpm.service"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorConfig"
+                },
+                "example": {
+                  "created_at": "2026-11-03T10:05:00Z",
+                  "enabled": true,
+                  "id": "a0b1c2d3-e4f5-4a6b-8c7d-9e0f1a2b3c4d",
+                  "instance": "",
+                  "interval_ms": 30000,
+                  "kind": "systemd",
+                  "name": "web-services",
+                  "params": {
+                    "units": "nginx.service,php-fpm.service"
+                  },
+                  "server_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                  "site_id": null,
+                  "timeout_ms": null,
+                  "updated_at": "2026-11-03T10:05:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`, with `error` saying why: not the expected JSON, a bad `kind`, `name` or `instance`, `interval_ms` outside 10 s to 24 h, a timeout longer than the interval, more than 32 parameters, a parameter that is not a string, number or boolean or is too long, a parameter the kind does not take or a missing required one, or a check plugin not turned on for the site",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller reads the site without an operator role. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such row, or one of a site the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: another row of the same site or server has this name and instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "sensor configs"
+        ],
+        "summary": "Delete a sensor config",
+        "description": "Removes a site's or a server's row: the layer below applies again (the\nsite's row, then the built-in check, if any). The agents concerned stop\nor change the check at their next configuration poll.\n\nNeeds an operator role or above on the row's site and the key area\n\"alerts\". Audited as `sensor_config.delete`. Deleting again is 404.",
+        "operationId": "delete_sensor_config",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The row",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller reads the site without an operator role. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such row, or one of a site the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers": {
       "get": {
         "tags": [
@@ -1675,6 +1898,246 @@
         }
       }
     },
+    "/api/v1/servers/{id}/sensor_configs": {
+      "get": {
+        "tags": [
+          "sensor configs"
+        ],
+        "summary": "List a server's sensor configs",
+        "description": "The server's own rows, by name and instance, parameters included.\nRows of its site and the built-in checks are not included.\n\nNeeds any role on the server's site and the key area \"alerts\".",
+        "operationId": "list_server_sensor_configs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorConfigList"
+                },
+                "example": {
+                  "entries": [
+                    {
+                      "created_at": "2026-11-03T10:05:00Z",
+                      "enabled": true,
+                      "id": "a0b1c2d3-e4f5-4a6b-8c7d-9e0f1a2b3c4d",
+                      "instance": "",
+                      "interval_ms": 30000,
+                      "kind": "systemd",
+                      "name": "web-services",
+                      "params": {
+                        "units": "nginx.service,php-fpm.service"
+                      },
+                      "server_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                      "site_id": null,
+                      "timeout_ms": null,
+                      "updated_at": "2026-11-03T10:05:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such server, or one on a site the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "sensor configs"
+        ],
+        "summary": "Add a sensor config to a server",
+        "description": "Adds a check for one server, or with `enabled` false removes a check\nof the same name and instance that its site or the built-in defaults\ngive it. The server's agent gets it at its next configuration poll,\nas configuration, not as a command: nothing waits for approval. The\nagent still refuses a check its own administrator did not allow.\n\n`kind` is one the agent knows (`cpu`, `memory`, `disk`, `diskio`,\n`systemd`, `port`, `log`, `script`, `eventlog`, `windows_service`) or\n`check` for a check plugin turned on for the site, named by the\n`plugin` parameter.\n\nNeeds an operator role or above on the server's site and the key area\n\"alerts\". Audited as `sensor_config.create`, with parameter names only.\nThe same name and instance twice is 409.",
+        "operationId": "create_server_sensor_config",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensorConfigRequest"
+              },
+              "example": {
+                "interval_ms": 30000,
+                "kind": "systemd",
+                "name": "web-services",
+                "params": {
+                  "units": "nginx.service,php-fpm.service"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorConfig"
+                },
+                "example": {
+                  "created_at": "2026-11-03T10:05:00Z",
+                  "enabled": true,
+                  "id": "a0b1c2d3-e4f5-4a6b-8c7d-9e0f1a2b3c4d",
+                  "instance": "",
+                  "interval_ms": 30000,
+                  "kind": "systemd",
+                  "name": "web-services",
+                  "params": {
+                    "units": "nginx.service,php-fpm.service"
+                  },
+                  "server_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                  "site_id": null,
+                  "timeout_ms": null,
+                  "updated_at": "2026-11-03T10:05:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`, with `error` saying why: not the expected JSON, a bad `kind`, `name` or `instance`, `interval_ms` outside 10 s to 24 h, a timeout longer than the interval, more than 32 parameters, a parameter that is not a string, number or boolean or is too long, a parameter the kind does not take or a missing required one, or a check plugin not turned on for the site",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller reads the site without an operator role. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such server, or one on a site the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: this name and instance are already configured for the server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/silences": {
       "get": {
         "tags": [
@@ -1998,6 +2461,246 @@
           },
           "404": {
             "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sites/{id}/sensor_configs": {
+      "get": {
+        "tags": [
+          "sensor configs"
+        ],
+        "summary": "List a site's sensor configs",
+        "description": "The site's own rows, by name and instance, parameters included.\n\nNeeds any role on the site and the key area \"alerts\".",
+        "operationId": "list_site_sensor_configs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorConfigList"
+                },
+                "example": {
+                  "entries": [
+                    {
+                      "created_at": "2026-11-03T10:05:00Z",
+                      "enabled": true,
+                      "id": "b1c2d3e4-f5a6-4b7c-9d8e-0f1a2b3c4d5e",
+                      "instance": "",
+                      "interval_ms": 30000,
+                      "kind": "systemd",
+                      "name": "web-services",
+                      "params": {
+                        "units": "nginx.service,php-fpm.service"
+                      },
+                      "server_id": null,
+                      "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "timeout_ms": null,
+                      "updated_at": "2026-11-03T10:05:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such site, or one the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "sensor configs"
+        ],
+        "summary": "Add a sensor config to a site",
+        "description": "Adds a check for every server of the site, or with `enabled` false\nremoves a built-in check of the same name and instance. A server's own\nrow wins over it. The agents of the site get it at their next\nconfiguration poll, as configuration: nothing waits for approval.\n`kind` is as for a server's row.\n\nNeeds an operator role or above on the site and the key area \"alerts\".\nAudited as `sensor_config.create`, with parameter names only. The same\nname and instance twice is 409.",
+        "operationId": "create_site_sensor_config",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensorConfigRequest"
+              },
+              "example": {
+                "interval_ms": 30000,
+                "kind": "systemd",
+                "name": "web-services",
+                "params": {
+                  "units": "nginx.service,php-fpm.service"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorConfig"
+                },
+                "example": {
+                  "created_at": "2026-11-03T10:05:00Z",
+                  "enabled": true,
+                  "id": "b1c2d3e4-f5a6-4b7c-9d8e-0f1a2b3c4d5e",
+                  "instance": "",
+                  "interval_ms": 30000,
+                  "kind": "systemd",
+                  "name": "web-services",
+                  "params": {
+                    "units": "nginx.service,php-fpm.service"
+                  },
+                  "server_id": null,
+                  "site_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "timeout_ms": null,
+                  "updated_at": "2026-11-03T10:05:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`, with `error` saying why: not the expected JSON, a bad `kind`, `name` or `instance`, `interval_ms` outside 10 s to 24 h, a timeout longer than the interval, more than 32 parameters, a parameter that is not a string, number or boolean or is too long, a parameter the kind does not take or a missing required one, or a check plugin not turned on for the site",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: the caller reads the site without an operator role. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such site, or one the caller does not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: this name and instance are already configured for the site",
             "content": {
               "application/json": {
                 "schema": {
@@ -3038,6 +3741,146 @@
           "last"
         ]
       },
+      "SensorConfig": {
+        "type": "object",
+        "description": "One row of `sensor_configs`. Exactly one of `site_id` and `server_id`\nis set.",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "instance",
+          "interval_ms",
+          "params",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`false`: removes the check of the same name and instance from the\nlayers below."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "instance": {
+            "type": "string",
+            "description": "Empty when the check watches one thing."
+          },
+          "interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Milliseconds between runs."
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "description": "As given, values not turned into strings."
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The server it applies to; `null` for a site's row."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site it applies to, for all its servers; `null` for a server's\nrow."
+          },
+          "timeout_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Milliseconds; `null`: the agent's default."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SensorConfigList": {
+        "type": "object",
+        "description": "Body of the list endpoints, sorted by name and instance.",
+        "required": [
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SensorConfig"
+            }
+          }
+        }
+      },
+      "SensorConfigRequest": {
+        "type": "object",
+        "description": "Body of a create or an update. An update replaces every field.",
+        "required": [
+          "kind",
+          "interval_ms"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "`false` removes the sensor of the same name and instance from the\nlayers below."
+          },
+          "instance": {
+            "type": "string",
+            "description": "What it watches, when one name covers several; empty by default."
+          },
+          "interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How often it runs, in milliseconds: 10000 (10 s) to 86400000\n(24 h).",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "What the agent measures: `cpu`, `memory`, `disk`, `diskio`,\n`systemd`, `port`, `log`, `script`, `eventlog`, `windows_service`,\nor `check` for a check plugin."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Tells two checks of one kind apart; defaults to `kind`."
+          },
+          "params": {
+            "type": "object",
+            "description": "The kind's settings: a flat object of strings, numbers and\nbooleans, up to 32, each at most 1024 bytes once turned into a\nstring. A check plugin names itself with `plugin`."
+          },
+          "timeout_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Milliseconds before a run is abandoned, at most `interval_ms`;\n`null` or absent: the agent's default.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "SeriesView": {
         "type": "object",
         "description": "One series: its labels and its `[unix seconds, value]` points. A value\nthat is not finite is `null`.",
@@ -3628,6 +4471,10 @@
     {
       "name": "metrics",
       "description": "Metric queries built by MonitorFlow, never raw PromQL"
+    },
+    {
+      "name": "sensor configs",
+      "description": "What the agents measure and how often, beyond the built-in checks. Rows belong to a site (all its servers) or one server, which wins for the same name and instance; a row with `enabled` false removes that check from the layers below. A change reaches the agents of the servers concerned at their next configuration poll, as configuration, not as a command: no approval and no risk rules apply, and an agent still refuses what its own administrator did not allow (log folders, port targets, scripts). Rows are checked with the agent's own rules, so a row the API accepts is one the agent runs. Every role reads the rows of the sites it reads; operators and above change them. Needs the key area \"alerts\"."
     }
   ]
 }

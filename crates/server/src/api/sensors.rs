@@ -39,19 +39,30 @@ pub(super) const FOREIGN_KEY_VIOLATION: &str = "23503";
 pub(super) const CHECK_VIOLATION: &str = "23514";
 
 /// Body of a create or an update. An update replaces every field.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
+#[schema(as = SensorConfigRequest)]
 #[serde(deny_unknown_fields)]
 pub struct EntryRequest {
+    /// What the agent measures: `cpu`, `memory`, `disk`, `diskio`,
+    /// `systemd`, `port`, `log`, `script`, `eventlog`, `windows_service`,
+    /// or `check` for a check plugin.
     pub kind: String,
-    /// Defaults to `kind`.
+    /// Tells two checks of one kind apart; defaults to `kind`.
     pub name: Option<String>,
+    /// What it watches, when one name covers several; empty by default.
     #[serde(default)]
     pub instance: String,
+    /// How often it runs, in milliseconds: 10000 (10 s) to 86400000
+    /// (24 h).
     pub interval_ms: u64,
+    /// Milliseconds before a run is abandoned, at most `interval_ms`;
     /// `null` or absent: the agent's default.
     pub timeout_ms: Option<u64>,
-    /// A flat object of strings, numbers and booleans.
+    /// The kind's settings: a flat object of strings, numbers and
+    /// booleans, up to 32, each at most 1024 bytes once turned into a
+    /// string. A check plugin names itself with `plugin`.
     #[serde(default)]
+    #[schema(value_type = Object)]
     pub params: Map<String, Value>,
     /// `false` removes the sensor of the same name and instance from the
     /// layers below.
@@ -154,30 +165,43 @@ pub fn check_interval(interval_ms: u64) -> Result<(), String> {
 
 /// One row of `sensor_configs`. Exactly one of `site_id` and `server_id`
 /// is set.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = SensorConfig)]
 pub struct Entry {
     pub id: Uuid,
+    /// The site it applies to, for all its servers; `null` for a server's
+    /// row.
     pub site_id: Option<Uuid>,
+    /// The server it applies to; `null` for a site's row.
     pub server_id: Option<Uuid>,
     pub kind: String,
     pub name: String,
+    /// Empty when the check watches one thing.
     pub instance: String,
+    /// Milliseconds between runs.
     pub interval_ms: i64,
+    /// Milliseconds; `null`: the agent's default.
     pub timeout_ms: Option<i64>,
+    /// As given, values not turned into strings.
+    #[schema(value_type = Object)]
     pub params: Value,
+    /// `false`: removes the check of the same name and instance from the
+    /// layers below.
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 /// Body of the list endpoints, sorted by name and instance.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = SensorConfigList)]
 pub struct EntryList {
     pub entries: Vec<Entry>,
 }
 
-/// Which layer an effective sensor comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// Which layer an effective setting comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = SettingOrigin)]
 #[serde(rename_all = "lowercase")]
 pub enum Origin {
     /// The built-in defaults in server code.

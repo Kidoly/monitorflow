@@ -39,7 +39,9 @@ pub async fn document() -> Json<Document> {
 }
 
 pub fn build() -> Document {
-    ApiDoc::openapi()
+    let mut doc = ApiDoc::openapi();
+    doc.merge(super::openapi_sensor_configs::Doc::openapi());
+    doc
 }
 
 #[derive(OpenApi)]
@@ -79,7 +81,7 @@ struct ApiDoc;
 
 /// What every operation shares: the key, the error codes, the common
 /// error answers, rate limits and `Idempotency-Key` on writes.
-struct Common;
+pub(super) struct Common;
 
 impl Modify for Common {
     fn modify(&self, doc: &mut Document) {
@@ -212,7 +214,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/certificate-authority",
     "/api/campaigns",
     "/api/thresholds",
-    "/api/sensor_configs",
     "/api/dashboards",
     "/api/dashboard-data",
     "/api/dashboard-metrics",
@@ -232,7 +233,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
 // Sub-routes of servers and sites not documented yet.
 pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[
     "/sensors",
-    "/sensor_configs",
     "/thresholds",
     "/metrics",
     "/logs",
