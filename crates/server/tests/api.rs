@@ -535,12 +535,16 @@ db_tests! {
     #[sqlx::test]
     async fn servers_are_paginated_with_cursors(pool: PgPool) {
         let mut expected = Vec::new();
+        let mut paris = Uuid::nil();
         for (site, hosts) in [("lyon", ["db-1", "web-1"]), ("paris", ["app-1", "web-2"])] {
             let site_id: Uuid = sqlx::query_scalar("INSERT INTO sites (name) VALUES ($1) RETURNING id")
                 .bind(site)
                 .fetch_one(&pool)
                 .await
                 .unwrap();
+            if site == "paris" {
+                paris = site_id;
+            }
             for host in hosts {
                 let peer = format!("agent-{site}-{host}");
                 sqlx::query(
@@ -590,7 +594,13 @@ db_tests! {
         assert_eq!(pages, 2);
         assert_eq!(seen, expected);
 
-        for bad in ["limit=0", "limit=1001", "limit=x", "cursor=not!base64"] {
+        // One site's servers, for jumping between them.
+        let (status, body) = page(format!("/api/servers?site_id={paris}")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let hosts: Vec<_> = body["servers"].as_array().unwrap().iter().map(|s| s["hostname"].as_str().unwrap()).collect();
+        assert_eq!(hosts, ["app-1", "web-2"]);
+
+        for bad in ["limit=0", "limit=1001", "limit=x", "cursor=not!base64", "site_id=paris"] {
             let (status, body) = page(format!("/api/servers?{bad}")).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
         }

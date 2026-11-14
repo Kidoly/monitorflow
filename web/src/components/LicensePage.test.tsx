@@ -40,7 +40,7 @@ function renderPage(user = globalAdmin) {
 }
 
 describe("LicensePage", () => {
-  beforeEach(() => setUrl("/admin/license/"));
+  beforeEach(() => setUrl("/settings/license/"));
 
   it("is for global administrators only", () => {
     stubFetch({});

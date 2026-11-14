@@ -24,15 +24,17 @@ pub const MAX_LIMIT: u32 = 500;
 
 /// Query string of `GET /api/remediation/incidents`. Every filter is
 /// optional.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
     pub state: Option<IncidentState>,
     pub customer_id: Option<Uuid>,
     pub site_id: Option<Uuid>,
     pub server_id: Option<Uuid>,
+    /// The threshold incident that opened it.
     pub alert_incident_id: Option<Uuid>,
-    /// 1 to [`MAX_LIMIT`], default [`DEFAULT_LIMIT`].
+    /// 1 to 500, default 100.
     pub limit: Option<u32>,
     /// `next_cursor` of the previous page.
     pub cursor: Option<String>,
@@ -40,7 +42,8 @@ pub struct ListParams {
 
 /// One remediation incident. Field names and types are part of the API
 /// contract: add fields, never rename or remove them.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = RemediationIncident)]
 pub struct IncidentView {
     pub id: Uuid,
     pub customer_id: Uuid,
@@ -57,7 +60,8 @@ pub struct IncidentView {
     pub state: IncidentState,
     pub opened_at: DateTime<Utc>,
     pub closed_at: Option<DateTime<Utc>>,
-    /// Limits as they were when it opened.
+    /// Limits as they were when it opened: commands it may run, and
+    /// seconds from `opened_at` before it escalates.
     pub max_commands: i32,
     pub max_duration_s: i32,
     /// Number of events.
@@ -70,15 +74,18 @@ pub struct IncidentView {
 }
 
 /// Body of `GET /api/remediation/incidents`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = RemediationIncidentList)]
 pub struct IncidentList {
+    /// Newest `opened_at` first.
     pub incidents: Vec<IncidentView>,
     /// Pass as `cursor` for the next page; `null` on the last one.
     pub next_cursor: Option<String>,
 }
 
 /// Body of `GET /api/remediation/incidents/{id}`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = RemediationIncidentDetail)]
 pub struct IncidentDetail {
     #[serde(flatten)]
     pub incident: IncidentView,

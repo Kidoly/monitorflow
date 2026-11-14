@@ -277,13 +277,20 @@ describe("IncidentPage acknowledgement", () => {
     expect(await screen.findByText(/^bob and Slack #ops will be told at .* if nobody acknowledges\.$/)).toBeInTheDocument();
     expect(screen.getByText("Says you are on it: nobody else is told next.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Acknowledge" }));
+    // A note first, in place: the button waits for it.
+    const field = () => screen.getByRole("textbox", { name: "What are you doing about it?" });
+    expect(field()).toHaveFocus();
+    const confirm = within(screen.getByRole("form", { name: "Acknowledge" })).getByRole("button", { name: "Acknowledge" });
+    expect(confirm).toBeDisabled();
+    await user.type(field(), "  Replacing the disk ");
+    await user.click(confirm);
     expect(await screen.findByText(/from the notification link/)).toBeInTheDocument();
     expect(screen.getByText("alice")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Acknowledge" })).not.toBeInTheDocument();
     expect(screen.getByText("Acknowledged by alice")).toBeInTheDocument();
     expect(screen.getByText("Not acknowledged after 15 minutes: told bob and Slack #ops")).toBeInTheDocument();
     const call = fetchMock.mock.calls.find(([url]) => url === "/api/incidents/acknowledge");
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ incident_ids: [ID] });
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ incident_ids: [ID], note: "Replacing the disk" });
   });
 
   it("says when warnings are not followed up and when everyone was told", async () => {

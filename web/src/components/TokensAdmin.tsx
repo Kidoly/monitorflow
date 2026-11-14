@@ -55,7 +55,7 @@ const TTLS: [number, string][] = [
 const ROLE_WORDS: Record<TokenRole, string> = { agent: "Agent", relay: "Relay" };
 
 /**
- * `/admin/tokens/`: the site's reusable install command first, with hosts
+ * `/settings/add-servers/`: the site's reusable install command first, with hosts
  * waiting for approval (ADR-0073); single-use tokens under Advanced
  * (ADR-0029).
  */

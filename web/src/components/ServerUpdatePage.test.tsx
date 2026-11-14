@@ -77,7 +77,7 @@ function renderPage(user = globalAdmin) {
 }
 
 describe("ServerUpdatePage", () => {
-  beforeEach(() => setUrl("/admin/server-update/"));
+  beforeEach(() => setUrl("/settings/server-update/"));
 
   it("is for global administrators only", () => {
     stubFetch({});
@@ -260,7 +260,7 @@ describe("ServerUpdatePage", () => {
     expect(await screen.findByText("Rolled back")).toBeInTheDocument();
     expect(screen.getByText(/migrations are forward-only/)).toBeInTheDocument();
     expect(screen.getByText("deploy/restore.sh monitorflow-backup-20261027T100100Z-update.tar.gz")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Backups" })).toHaveAttribute("href", "/admin/backups");
+    expect(screen.getByRole("link", { name: "Backups" })).toHaveAttribute("href", "/settings/backups");
   });
 
   it("reports a rollback without migrations as complete", async () => {

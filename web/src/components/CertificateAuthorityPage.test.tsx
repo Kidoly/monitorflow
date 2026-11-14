@@ -26,7 +26,7 @@ const posted = (fetchMock: ReturnType<typeof stubFetch>, url: string) =>
   fetchMock.mock.calls.filter(([u, init]) => u === url && init?.method === "POST").map(([, init]) => init?.body);
 
 describe("CertificateAuthorityPage", () => {
-  beforeEach(() => setUrl("/admin/certificate-authority/"));
+  beforeEach(() => setUrl("/settings/certificate-authority/"));
 
   it("is for global administrators only", () => {
     stubFetch({});
@@ -130,6 +130,6 @@ describe("CertificateAuthorityPage", () => {
     const cutOff = screen.getByRole("table", { name: "Needs a new install" });
     expect(within(cutOff).getByText("old-1.example")).toBeInTheDocument();
     expect(screen.getByText(/single-use token for its name/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Add servers" })).toHaveAttribute("href", "/admin/tokens");
+    expect(screen.getByRole("link", { name: "Add servers" })).toHaveAttribute("href", "/settings/add-servers");
   });
 });

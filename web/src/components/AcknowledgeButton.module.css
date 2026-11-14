@@ -1,0 +1,28 @@
+/* In place of the button: the note, Cancel and Acknowledge on one line, wrapping when narrow. */
+.form {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  white-space: normal;
+  text-align: left;
+}
+
+.label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.field {
+  width: 260px;
+  max-width: 100%;
+}
+
+.error {
+  flex-basis: 100%;
+  color: var(--bad);
+  font-size: 13px;
+}

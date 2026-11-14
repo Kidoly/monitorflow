@@ -25,7 +25,7 @@ import { Label } from "./ui/StatusLabel";
 
 const GUIDE = "https://github.com/Kidoly/monitorflow/blob/main/docs/plugins.md";
 
-/** `/admin/plugins/`: global administrators only, like the API (ADR-0103). */
+/** `/settings/plugins/`: global administrators only, like the API (ADR-0103). */
 export function PluginsPage() {
   const me = useMe();
   if (!administersEverything(me)) {

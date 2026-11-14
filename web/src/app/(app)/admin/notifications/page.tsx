@@ -1,9 +1,6 @@
-import type { Metadata } from "next";
+import { MovedPage } from "@/components/MovedPage";
 
-import { NotificationsPage } from "@/components/NotificationsAdmin";
-
-export const metadata: Metadata = { title: "Notifications · MonitorFlow" };
-
-export default function Notifications() {
-  return <NotificationsPage />;
+// Moved under /settings/; old links still work.
+export default function Moved() {
+  return <MovedPage from="/admin/notifications/" />;
 }

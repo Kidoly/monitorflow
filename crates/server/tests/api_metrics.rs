@@ -565,3 +565,70 @@ async fn real_victoriametrics_answers_scoped_queries(pool: PgPool) {
     let points = series[0]["points"].as_array().unwrap();
     assert!(points.iter().any(|p| p[1] == 0.5), "{body}");
 }
+
+db_tests! {
+    #[sqlx::test]
+    async fn sensor_values_batch_every_sensor_in_three_queries(pool: PgPool) {
+        let vm = FakeVm::start().await;
+        let [(paris, paris_server), (_, lyon_server)] = fleet(&pool).await;
+        let viewer = session(&pool, &vm, "paris-viewer", Some(paris)).await;
+        let now = chrono::Utc::now().timestamp();
+        let series = |name: &str, instance: &str, key: &str, value: Value| {
+            json!({ "metric": { "__name__": name, "instance": instance, "peer": "agent-paris", "site": "paris" }, key: value })
+        };
+        let (cpu, disk) = ("monitorflow_cpu_usage_ratio", "monitorflow_disk_used_ratio");
+        vm.success(json!({ "resultType": "matrix", "result": [
+            series(cpu, "total", "values", json!([[now - 240, "0.2"], [now - 120, "0.4"]])),
+            series(disk, "/", "values", json!([[now - 120, "0.7"]])),
+        ]}));
+        vm.success(json!({ "resultType": "vector", "result": [
+            series(cpu, "total", "value", json!([now, "0.4"])),
+            series(disk, "/", "value", json!([now, "0.7"])),
+            series(disk, "/old", "value", json!([now, "0.1"])),
+        ]}));
+        vm.success(json!({ "resultType": "vector", "result": [
+            series(cpu, "total", "value", json!([now, (now - 10).to_string()])),
+            series(disk, "/", "value", json!([now, (now - 10).to_string()])),
+            series(disk, "/old", "value", json!([now, (now - 900).to_string()])),
+        ]}));
+
+        let (status, body) = get(&pool, &vm, &viewer, &format!("/api/servers/{paris_server}/sensor-values")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["step"], 120);
+        assert_eq!(body["end"].as_i64().unwrap() - body["start"].as_i64().unwrap(), 3_600);
+        let sensors = body["sensors"].as_array().unwrap();
+        let of = |name: &str| sensors.iter().find(|s| s["name"] == name).unwrap();
+        assert_eq!(of("cpu")["metric"], cpu);
+        assert_eq!(of("cpu")["series"][0]["instance"], "total");
+        assert_eq!(of("cpu")["series"][0]["points"], json!([[(now - 240) as f64, 0.2], [(now - 120) as f64, 0.4]]));
+        assert_eq!(of("cpu")["series"][0]["last_value"], 0.4);
+        assert_eq!(of("cpu")["series"][0]["reason"], Value::Null);
+        assert_eq!(of("cpu")["reason"], Value::Null);
+        // A mount that stopped reporting says since when; no sparkline.
+        let disks = of("disk")["series"].as_array().unwrap();
+        assert_eq!(disks.iter().map(|s| s["instance"].as_str().unwrap()).collect::<Vec<_>>(), ["/", "/old"]);
+        assert_eq!(disks[1]["reason"], "No data for 15 minutes");
+        assert_eq!(disks[1]["points"], json!([]));
+        assert_eq!(disks[1]["last_value"], 0.1);
+        // A new server's sensor without any sample.
+        assert_eq!(of("memory")["series"], json!([]));
+        assert_eq!(of("memory")["reason"], "No data yet");
+
+        let seen = vm.seen();
+        assert_eq!(seen.iter().map(|s| s.path.as_str()).collect::<Vec<_>>(), ["/api/v1/query_range", "/api/v1/query", "/api/v1/query"]);
+        for sent in &seen {
+            assert_eq!(sent.param("extra_label"), ["peer=agent-paris", "site=paris"]);
+        }
+        assert_eq!(seen[0].param("step"), ["120"]);
+        let range = seen[0].param("query")[0];
+        assert!(range.contains(r#"max_over_time({__name__=~"monitorflow_cpu_usage_ratio",peer="agent-paris",site="paris",instance="total"}[120s]) keep_metric_names"#), "{range}");
+        assert!(range.contains(r#"min_over_time({__name__=~"monitorflow_memory_available_ratio",peer="agent-paris",site="paris"}[120s])"#), "{range}");
+        assert!(seen[1].param("query")[0].starts_with("last_over_time("));
+        assert!(seen[2].param("query")[0].starts_with("tlast_over_time("));
+
+        // Another site's server does not exist for this viewer; nothing is sent.
+        let (status, _) = get(&pool, &vm, &viewer, &format!("/api/servers/{lyon_server}/sensor-values")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(vm.seen().len(), 3);
+    }
+}

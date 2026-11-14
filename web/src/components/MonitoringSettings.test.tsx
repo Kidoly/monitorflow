@@ -158,9 +158,13 @@ describe("MonitoringSettings", () => {
     render(<MonitoringSettings target={SITE} canEdit />);
 
     await user.click(await screen.findByRole("button", { name: "Add a check" }));
+    // A site can mix systems, so the catalogue filters by system.
+    const catalogue = screen.getByRole("group", { name: "Check catalogue" });
+    expect(within(catalogue).getByRole("group", { name: "System" })).toBeInTheDocument();
+    await user.type(within(catalogue).getByLabelText("Find a check"), "reachable");
+    expect(within(catalogue).getByText("1 matching")).toBeInTheDocument();
+    await user.click(within(catalogue).getByRole("button", { name: /^A port answers/ }));
     const form = screen.getByRole("form", { name: "Add a check" });
-    // A site can mix systems, so every kind is offered.
-    expect(within(within(form).getByLabelText("Check that")).getAllByRole("option")).toHaveLength(6);
     // It starts at the site's interval; "Other" takes any value.
     const often = within(form).getByRole("combobox", { name: "How often to check" });
     expect(often).toHaveDisplayValue("every 5 min");

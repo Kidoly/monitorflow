@@ -16,11 +16,18 @@ use super::{builtin, resolve, AllowRule, CacheDir, DenyRule, RuleSet, Tier};
 /// Longest description of a rule, in characters.
 pub const MAX_DESCRIPTION_LEN: usize = 256;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// What a rule does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = RemediationRuleKind)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
+    /// Commands no built-in rule knows that match the pattern as a whole
+    /// get the rule's tier.
     Allow,
+    /// Commands containing a match anywhere are forbidden.
     Deny,
+    /// A directory whose contents `find <dir> -mindepth 1 -delete` may
+    /// clear as a low-impact change.
     CacheDir,
 }
 
@@ -35,17 +42,21 @@ impl Kind {
 }
 
 /// A row of `remediation_rules`.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = RemediationRule)]
 pub struct StoredRule {
     pub id: Uuid,
     pub customer_id: Uuid,
+    /// The site it is narrowed to; `null` for every site of the customer.
     pub site_id: Option<Uuid>,
     /// `allow`, `deny` or `cache_dir`.
     pub kind: String,
+    /// Normalized: single spaces between words, no trailing `/`.
     pub pattern: String,
     /// `read_only` or `low_impact` for allow rules, else `null`.
     pub tier: Option<String>,
     pub description: String,
+    /// The user who made it; `null` once that user is deleted.
     pub created_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
 }
@@ -292,11 +303,16 @@ pub async fn rule_set_for_server(
 }
 
 /// A row of `remediation_policies`.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = RemediationPolicy)]
 pub struct Policy {
     pub customer_id: Uuid,
+    /// The site the row is for; `null` for the customer's row, which
+    /// applies to its sites without a row of their own.
     pub site_id: Option<Uuid>,
+    /// `true`: low-impact commands run without a person's approval.
     pub low_impact_auto: bool,
+    /// The user who last set it; `null` once that user is deleted.
     pub updated_by: Option<Uuid>,
     pub updated_at: DateTime<Utc>,
 }
