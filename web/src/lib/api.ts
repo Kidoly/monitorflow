@@ -456,6 +456,28 @@ export interface SiteThresholds {
 }
 
 /** Where a sensor or threshold row applies: every server of a site, or one server. */
+/** A check a recommendation proposes (ADR-0134): a kind and its parameters. */
+export interface ProposedCheck {
+  kind: string;
+  params: Record<string, string>;
+}
+
+/** What the agent saw that nothing checks yet (`GET /api/servers/{id}/recommendations`). */
+export interface CheckRecommendation {
+  key: string;
+  title: string;
+  evidence: string[];
+  checks: ProposedCheck[];
+  dismissed_by: string | null;
+  dismissed_at: string | null;
+}
+
+export interface RecommendationList {
+  /** When the agent last reported what runs; null before it has. */
+  reported_at: string | null;
+  recommendations: CheckRecommendation[];
+}
+
 export type ConfigOwner = { kind: "sites" | "servers"; id: string };
 
 /** Body of a sensor row create or update (ADR-0016); an update replaces every field. */
@@ -3173,6 +3195,15 @@ export const api = {
       method: "PUT",
       body: { interval_ms },
     }),
+
+  recommendations: (serverId: string, signal?: AbortSignal) =>
+    request<RecommendationList>(`/api/servers/${encodeURIComponent(serverId)}/recommendations`, { signal }),
+
+  dismissRecommendation: (serverId: string, key: string) =>
+    request<void>(`/api/servers/${encodeURIComponent(serverId)}/recommendations/dismiss`, { method: "POST", body: { key } }),
+
+  restoreRecommendation: (serverId: string, key: string) =>
+    request<void>(`/api/servers/${encodeURIComponent(serverId)}/recommendations/restore`, { method: "POST", body: { key } }),
 
   deleteSensor: (id: string) =>
     request<void>(`/api/sensor_configs/${encodeURIComponent(id)}`, {
