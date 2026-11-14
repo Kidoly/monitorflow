@@ -42,6 +42,7 @@ import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, StaleBanner } from "@/components/ui/PageState";
 import { Label } from "@/components/ui/StatusLabel";
 
+import { CheckRecommendations } from "./CheckRecommendations";
 import { type Inherit, IntervalControl, IntervalSelect } from "./IntervalSelect";
 
 import admin from "./AdminPages.module.css";
@@ -461,6 +462,15 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
             onChanged();
           }}
           onCancel={() => setAdding(false)}
+        />
+      )}
+      {target.kind === "server" && (
+        <CheckRecommendations
+          serverId={target.id}
+          osFamily={target.osFamily}
+          intervalMs={data.interval.check_interval_ms}
+          canEdit={canEdit}
+          onAdded={onChanged}
         />
       )}
       {data.sensors.length === 0 && off.length === 0 ? (

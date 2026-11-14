@@ -3,7 +3,7 @@
 //! a revoked row refuses the stream even with a valid certificate.
 
 use chrono::{DateTime, Utc};
-use monitorflow_common::proto::v1::{Hello, RelayMirrors};
+use monitorflow_common::proto::v1::{DiscoveryReport, Hello, RelayMirrors};
 use monitorflow_common::tls::{PeerIdentity, PeerRole};
 use sqlx::{PgPool, Postgres, Transaction};
 use tonic::async_trait;
@@ -62,6 +62,16 @@ pub trait Inventory: Send + Sync + 'static {
         _id: &str,
         _received_at: DateTime<Utc>,
         _report: RelayMirrors,
+    ) -> Result<(), InventoryError> {
+        Ok(())
+    }
+    /// Records what the agent `id` saw running on its machine, received
+    /// at `received_at` (ADR-0134), once bounded.
+    async fn discovery(
+        &self,
+        _id: &str,
+        _received_at: DateTime<Utc>,
+        _report: DiscoveryReport,
     ) -> Result<(), InventoryError> {
         Ok(())
     }
@@ -142,6 +152,24 @@ impl Inventory for DbInventory {
             stored,
             "relay mirror report"
         );
+        Ok(())
+    }
+
+    async fn discovery(
+        &self,
+        id: &str,
+        received_at: DateTime<Utc>,
+        report: DiscoveryReport,
+    ) -> Result<(), InventoryError> {
+        let (discovered, dropped) = crate::discovery::bound(&report);
+        if dropped > 0 {
+            tracing::debug!(
+                agent_id = id,
+                dropped,
+                "dropped malformed or excess discovery entries"
+            );
+        }
+        crate::discovery::record(&self.pool, id, received_at, &discovered, dropped).await?;
         Ok(())
     }
 }
