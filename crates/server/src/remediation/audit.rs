@@ -41,15 +41,26 @@ pub enum AuditError {
     Database(#[from] sqlx::Error),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+/// Where a remediation incident is.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
+)]
+#[schema(as = RemediationIncidentState)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum IncidentState {
+    /// Opened, not driven yet.
     Open,
+    /// The loop is working on it.
     Running,
+    /// A command waits for a person in the approval queue.
     AwaitingApproval,
+    /// The alert resolved.
     Resolved,
+    /// Handed over to a person: the AI gave up, a command was forbidden or
+    /// did not complete, or a limit was reached.
     Escalated,
+    /// The loop could not work (context, AI provider, a vanished row).
     Failed,
 }
 
@@ -70,7 +81,11 @@ impl IncidentState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+/// What an event of a remediation incident records.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
+)]
+#[schema(as = RemediationEventKind)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum EventKind {
@@ -309,17 +324,27 @@ pub async fn open(db: impl PgExecutor<'_>, incident: &NewIncident) -> Result<Uui
 }
 
 /// One stored event.
-#[derive(Debug, Clone, PartialEq, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = RemediationIncidentEvent)]
 pub struct StoredEvent {
+    /// Position in the incident's chain, from 1.
     pub seq: i64,
     pub kind: EventKind,
+    /// `user`, `system`, `ai` or `peer`.
     pub actor_kind: String,
+    /// A user ID, `server`, the AI's provider and model, or a peer ID.
     pub actor_id: String,
+    /// The kind's fields, as recorded. Secrets were redacted before the
+    /// event was written; texts from the AI are untrusted.
     pub payload: Value,
     pub created_at: DateTime<Utc>,
+    /// SHA-256 of the previous event, hex; zeros for the first one.
     #[serde(serialize_with = "hex_bytes")]
+    #[schema(value_type = String)]
     pub prev_hash: Vec<u8>,
+    /// SHA-256 of `prev_hash` and this event, hex.
     #[serde(serialize_with = "hex_bytes")]
+    #[schema(value_type = String)]
     pub hash: Vec<u8>,
 }
 
@@ -394,8 +419,10 @@ pub async fn events(
 }
 
 /// Result of [`verify`]. Field names are part of the API contract.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = RemediationChain)]
 pub struct ChainReport {
+    /// `false` when an event was changed, removed or inserted.
     pub valid: bool,
     /// Events checked.
     pub events: u64,
