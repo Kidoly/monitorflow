@@ -32,7 +32,7 @@ export function useMultiCustomer(): boolean {
 
 /**
  * Whether `me` has an administrator grant of any kind, which shows the
- * Administration section. UX only: the API decides (ADR-0029).
+ * Settings item (ADR-0133). UX only: the API decides (ADR-0029).
  */
 export function isAdministrator(me: Me | null): boolean {
   return me?.roles.some((grant) => grant.role === "administrator") ?? false;

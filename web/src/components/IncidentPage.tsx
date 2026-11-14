@@ -270,7 +270,7 @@ export function IncidentPage({ id }: { id: string | null }) {
             facts={[
               { label: "Opens", value: `after ${formatSeconds(OFFLINE_AFTER_S)} without contact` },
               { label: "Resolves when", value: "it connects again, its offline alerts are turned off, or it is removed" },
-              { label: "Turn off", value: <>Offline alerts on {host}, or for its site in Administration › Sites</> },
+              { label: "Turn off", value: <>Offline alerts on {host}, or for its site in Settings › Sites</> },
             ]}
           />
         ) : (
