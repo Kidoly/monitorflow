@@ -12,8 +12,9 @@ use monitorflow_common::config::TlsPaths;
 use monitorflow_common::proto::v1::agent_service_client::AgentServiceClient;
 use monitorflow_common::proto::v1::envelope::Payload;
 use monitorflow_common::proto::v1::{
-    Command, CommandAcceptance, CommandKindState, Envelope, Heartbeat, Hello, LogBatch, LogEntry,
-    RelayMirrors, Sample, SampleBatch, SensorConfigAck, ServedMirror,
+    Command, CommandAcceptance, CommandKindState, DiscoveredPort, DiscoveryReport, Envelope,
+    Heartbeat, Hello, LogBatch, LogEntry, RelayMirrors, Sample, SampleBatch, SensorConfigAck,
+    ServedMirror,
 };
 use monitorflow_common::tls::{self, Identity, PeerIdentity, PeerRole};
 use monitorflow_common::via::Via;
@@ -1363,6 +1364,69 @@ db_tests! {
         // An invalid report clears the relay's mirrors.
         relay.send(3, Payload::RelayMirrors(report("http://relay.example:7480", "rpm"))).await;
         wait("invalid report", None, 0).await;
+    }
+
+    #[sqlx::test]
+    async fn agents_report_what_runs_once_a_minute_and_relays_cannot(pool: PgPool) {
+        let paris = site(&pool, "paris").await;
+        sqlx::query("INSERT INTO relays (peer_id, site_id, name) VALUES ('relay-1', $1, 'relay-1')")
+            .bind(paris)
+            .execute(&pool)
+            .await
+            .unwrap();
+        enrolled(&pool, "agent-1", paris).await;
+        let h = db_harness(&pool, settings()).await;
+        let report = |services: &[&str]| DiscoveryReport {
+            collected_at_unix_ms: 1,
+            services: services.iter().map(|s| (*s).to_owned()).collect(),
+            ports: vec![DiscoveredPort { port: 5432, loopback_only: false, local: true }],
+            mounts: Vec::new(),
+        };
+        let stored = || async {
+            sqlx::query_as::<_, (serde_json::Value, i32)>(
+                "SELECT d.report, d.dropped FROM server_discovery d
+                 JOIN servers s ON s.id = d.server_id WHERE s.peer_id = $1",
+            )
+            .bind("agent-1")
+            .fetch_optional(&pool)
+            .await
+            .unwrap()
+        };
+
+        // A relay's report about itself is ignored.
+        let relay = h.open(&h.ca.relay("relay-1", 10), hello("relay-1")).await.unwrap();
+        relay.send(2, Payload::Discovery(report(&["nginx.service"]))).await;
+        relay.send(3, heartbeat()).await;
+        h.wait_until("relay heartbeat", |r| r.get(PeerRole::Relay, "relay-1").is_some_and(|i| i.last_sequence == 3)).await;
+        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM server_discovery").fetch_one(&pool).await.unwrap();
+        assert_eq!(rows, 0);
+
+        let agent = h.open(&h.ca.client("agent-1", 10), hello("agent-1")).await.unwrap();
+        agent.send(2, Payload::Discovery(report(&["postgresql@16-main.service", "bad name.service"]))).await;
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        let (report_json, dropped) = loop {
+            if let Some(row) = stored().await {
+                break row;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "timed out: report stored");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        assert_eq!(
+            report_json,
+            serde_json::json!({
+                "services": ["postgresql@16-main.service"],
+                "ports": [{ "port": 5432, "loopback_only": false, "local": true }],
+                "mounts": [],
+            })
+        );
+        assert_eq!(dropped, 1);
+
+        // Another within the minute is not stored.
+        agent.send(3, Payload::Discovery(report(&["redis-server.service"]))).await;
+        agent.send(4, heartbeat()).await;
+        h.wait_until("agent heartbeat", |r| r.get(PeerRole::Agent, "agent-1").is_some_and(|i| i.last_sequence == 4)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(stored().await.unwrap().0["services"], serde_json::json!(["postgresql@16-main.service"]));
     }
 
     #[sqlx::test]

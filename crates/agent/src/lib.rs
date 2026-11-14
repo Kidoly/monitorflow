@@ -10,6 +10,8 @@ pub mod ai_commands;
 pub mod commands;
 #[cfg(windows)]
 pub mod data_folder;
+#[cfg(unix)]
+pub mod discovery;
 pub mod enroll;
 #[cfg(windows)]
 pub mod eventlog;

@@ -293,7 +293,8 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &["/api/checks"];
 
 // Sub-routes of servers, sites and relays not documented yet; those of
 // relays are under `/api/relays` above.
-pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &["/sensor-values", "/offline-alerts"];
+pub const NOT_YET_DOCUMENTED_UNDER: &[&str] =
+    &["/sensor-values", "/offline-alerts", "/recommendations"];
 
 #[utoipa::path(get, path = "/api/v1/servers", tag = "servers",
     summary = "List servers",

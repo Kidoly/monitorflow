@@ -474,6 +474,10 @@ async fn run(config: AgentConfig, stop: Shutdown) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         agent = agent.with_logs(logs);
+        // What runs here, for check recommendations (ADR-0134).
+        let (discovery, reports) = monitorflow_agent::discovery::Discovery::new();
+        tokio::spawn(discovery.run(stop.clone()));
+        agent = agent.with_discovery(reports);
     }
     let result = agent.run(stop).await.context("cannot connect upstream");
     if result.is_ok() {

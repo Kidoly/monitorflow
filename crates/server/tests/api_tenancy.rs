@@ -774,6 +774,23 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             assert_eq!(status, StatusCode::OK, "{uri}");
             assert!(!Ctx::mentions(&body, b.command), "{body}");
         }
+        // Recommendations: B's server does not exist for A.
+        ("GET", "/api/servers/{id}/recommendations") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            assert_eq!(ctx.status(method, &uri, None).await, not_found, "{uri}");
+            let uri = path.replace("{id}", &a.server.to_string());
+            assert_eq!(
+                ctx.status(method, &uri, None).await,
+                StatusCode::OK,
+                "{uri}"
+            );
+        }
+        ("POST", "/api/servers/{id}/recommendations/dismiss")
+        | ("POST", "/api/servers/{id}/recommendations/restore") => {
+            let uri = path.replace("{id}", &b.server.to_string());
+            let body = Some(json!({ "key": "postgresql" }));
+            assert_eq!(ctx.status(method, &uri, body).await, not_found, "{uri}");
+        }
         ("POST", "/api/servers/{id}/commands") => {
             let uri = path.replace("{id}", &b.server.to_string());
             let body = json!({ "kind": "apply_updates" });

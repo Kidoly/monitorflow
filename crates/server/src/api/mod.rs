@@ -29,6 +29,9 @@
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
 //! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
 //! | POST | `/api/servers/{id}/sensor_configs` | modify | body [`sensors::EntryRequest`]; 201 [`sensors::Entry`] |
+//! | GET | `/api/servers/{id}/recommendations` | read | [`recommendations::RecommendationList`]: checks recommended from what the agent saw (ADR-0134) |
+//! | POST | `/api/servers/{id}/recommendations/dismiss` | modify | body [`recommendations::KeyRequest`], a current recommendation; 204 |
+//! | POST | `/api/servers/{id}/recommendations/restore` | modify | body [`recommendations::KeyRequest`], a dismissed one; 204 |
 //! | GET | `/api/checks/usage` | read | [`checks::UsageList`]: servers running each check, over the sites read, for the catalogue's "Most used" |
 //! | GET | `/api/sites/{id}/sensors` | read | [`sensors::SiteEffective`]: built-in defaults overlaid with the site's rows |
 //! | PUT | `/api/sites/{id}/check-interval` | modify | body and answer [`check_interval::CheckInterval`] `{"interval_ms"}`, 10 s to 24 h or `null` for the built-in one: how often the site's built-in checks run; audited (ADR-0097) |
@@ -670,6 +673,7 @@ pub mod password;
 pub mod plugins;
 pub mod proxmox;
 pub mod public_address;
+pub mod recommendations;
 pub mod relays;
 pub mod release_import;
 pub mod remediation;
@@ -1084,6 +1088,18 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/api/remediation/events", get(remediation_events::list))
         .route("/api/servers/{id}/sensors", get(sensors::effective))
+        .route(
+            "/api/servers/{id}/recommendations",
+            get(recommendations::list),
+        )
+        .route(
+            "/api/servers/{id}/recommendations/dismiss",
+            post(recommendations::dismiss),
+        )
+        .route(
+            "/api/servers/{id}/recommendations/restore",
+            post(recommendations::restore),
+        )
         .route("/api/checks/usage", get(checks::usage))
         .route("/api/sites/{id}/sensors", get(sensors::effective_site))
         .route("/api/servers/{id}/metrics", get(metrics::discover))

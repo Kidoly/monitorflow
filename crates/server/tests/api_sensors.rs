@@ -500,6 +500,98 @@ db_tests! {
     }
 
     #[sqlx::test]
+    async fn recommendations_follow_the_report_and_the_checks(pool: PgPool) {
+        let f = fleet(&pool).await;
+        let uri = format!("/api/servers/{}/recommendations", f.paris_server);
+        let viewer = session(&pool, "paris-viewer", Role::Viewer, Some(f.paris)).await;
+        let operator = session(&pool, "paris-op", Role::Operator, Some(f.paris)).await;
+
+        // No report yet.
+        let (status, body) = call(&pool, &viewer, "GET", &uri, None).await;
+        assert_eq!((status, body), (StatusCode::OK, json!({ "reported_at": null, "recommendations": [] })));
+
+        sqlx::query(
+            "INSERT INTO server_discovery (server_id, report, reported_at)
+             VALUES ($1, $2, now())",
+        )
+        .bind(f.paris_server)
+        .bind(json!({
+            "services": ["postgresql@16-main.service"],
+            "ports": [{ "port": 5432, "loopback_only": false, "local": true }],
+            "mounts": [],
+        }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, body) = call(&pool, &viewer, "GET", &uri, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["reported_at"].is_string());
+        assert_eq!(
+            body["recommendations"],
+            json!([{
+                "key": "postgresql",
+                "title": "PostgreSQL is running",
+                "evidence": ["postgresql@16-main.service is running", "port 5432 is listening"],
+                "checks": [
+                    { "kind": "systemd", "params": { "units": "postgresql@16-main.service" } },
+                    { "kind": "port", "params": { "port": "5432", "host": "127.0.0.1" } },
+                ],
+                "dismissed_by": null,
+                "dismissed_at": null,
+            }])
+        );
+
+        // Lyon's people do not see it; viewers cannot dismiss.
+        let lyon = session(&pool, "lyon-op", Role::Operator, Some(f.lyon)).await;
+        let (status, _) = call(&pool, &lyon, "GET", &uri, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let key = json!({ "key": "postgresql" });
+        let (status, _) = call(&pool, &viewer, "POST", &format!("{uri}/dismiss"), Some(key.clone())).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        // Only a current recommendation is dismissed.
+        let (status, _) = call(&pool, &operator, "POST", &format!("{uri}/dismiss"), Some(json!({ "key": "redis" }))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = call(&pool, &operator, "POST", &format!("{uri}/dismiss"), Some(key.clone())).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (_, body) = call(&pool, &viewer, "GET", &uri, None).await;
+        assert_eq!(body["recommendations"][0]["dismissed_by"], "paris-op");
+        let (status, _) = call(&pool, &operator, "POST", &format!("{uri}/restore"), Some(key.clone())).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, _) = call(&pool, &operator, "POST", &format!("{uri}/restore"), Some(key)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let actions: Vec<(String, Option<String>, Value)> = sqlx::query_as(
+            "SELECT action, target_id, details FROM audit_log
+             WHERE action LIKE 'check_recommendation.%' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let server = Some(f.paris_server.to_string());
+        assert_eq!(
+            actions,
+            [
+                ("check_recommendation.dismiss".to_owned(), server.clone(), json!({ "key": "postgresql" })),
+                ("check_recommendation.restore".to_owned(), server, json!({ "key": "postgresql" })),
+            ]
+        );
+
+        // The site checks the port and the server the service: nothing left.
+        for (owner, row) in [
+            (format!("/api/sites/{}/sensor_configs", f.paris), json!({ "kind": "port", "name": "port_5432", "interval_ms": 60_000, "params": { "port": 5432 } })),
+            (
+                format!("/api/servers/{}/sensor_configs", f.paris_server),
+                json!({ "kind": "systemd", "name": "service_pg", "interval_ms": 60_000, "params": { "units": "postgresql@16-main.service" } }),
+            ),
+        ] {
+            let (status, body) = call(&pool, &operator, "POST", &owner, Some(row)).await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+        }
+        let (_, body) = call(&pool, &viewer, "GET", &uri, None).await;
+        assert_eq!(body["recommendations"], json!([]));
+    }
+
+    #[sqlx::test]
     async fn usage_counts_servers_over_the_sites_read(pool: PgPool) {
         let f = fleet(&pool).await;
         // A second Paris server, and a removed one that counts for nothing.
