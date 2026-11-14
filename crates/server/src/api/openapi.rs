@@ -245,6 +245,7 @@ pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[
     "/check-interval",
     "/agent-auto-update",
     "/ai-commands",
+    "/recommendations",
 ];
 
 #[utoipa::path(get, path = "/api/v1/servers", tag = "servers", params(servers::ListParams),
