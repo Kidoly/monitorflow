@@ -1,43 +1,74 @@
-import Link from "next/link";
+"use client";
 
-import type { EffectiveSensor, EffectiveSensors, EffectiveThreshold, ServerDetail } from "@/lib/api";
-import { shapeFor, shapeOf } from "@/lib/alerts";
+import { useMemo, useState } from "react";
+
+import {
+  type EffectiveSensor,
+  type EffectiveSensors,
+  type EffectiveThreshold,
+  type SensorConfigEntry,
+  type ServerDetail,
+  describeError,
+} from "@/lib/api";
+import { checkTitle, saveThreshold, shapeFor, shapeOf } from "@/lib/alerts";
+import { modifiesSite, useMe } from "@/lib/me";
 import { metricTitle } from "@/lib/metrics";
-import { sensorHref, serverHref } from "@/lib/routes";
+import { sensorHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { LEVEL_LABELS, perInstance, ruleLevel, ruleSummary, rowRule } from "@/lib/sensorRules";
 import { type SensorRow, formatSensorValue, primaryMetric, sensorKind } from "@/lib/sensors";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
-import { ButtonLink } from "@/components/ui/Button";
+import { Button } from "@/components/ui/Button";
+import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { Banner, EmptyState } from "@/components/ui/PageState";
 import { RelativeTime } from "@/components/ui/RelativeTime";
+import { type RowMenuItem, RowMenu } from "@/components/ui/RowMenu";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatDuration, formatSince } from "@/components/ui/time";
 
+import { AddCheck, BuiltinInterval, type Target, TurnBackOn, stopChecking, stringParams } from "./MonitoringSettings";
 import styles from "./ServerPage.module.css";
+
+/** What the Sensors tab reads besides the rows; null where it could not be read. */
+export interface SensorRules {
+  thresholds: EffectiveThreshold[] | null;
+  /** The server's own sensor rows, turned-off ones included. */
+  ownRows: SensorConfigEntry[] | null;
+  /** What its site runs: the checks it inherits. */
+  siteSensors: EffectiveSensor[] | null;
+}
 
 /**
  * The Sensors tab: whether the agent runs the current configuration, then
- * one row per sensor with its result and its rule, and where the rule
- * comes from.
+ * one row per sensor with its result and its rule, where the rule comes
+ * from, and a menu to edit it, open its chart or turn it off. Operators of
+ * the site add checks under the list (ADR-0057).
  */
 export function ServerSensorsTab({
   server,
   sensors,
   rows,
-  thresholds,
+  rules,
   incidentsFailed,
   now,
+  onChanged,
 }: {
   server: ServerDetail;
   sensors: EffectiveSensors | { error: string };
   rows: SensorRow[];
-  /** The thresholds in effect; null when they could not be read. */
-  thresholds: EffectiveThreshold[] | null;
+  rules: SensorRules;
   incidentsFailed: boolean;
   now: Date;
+  onChanged: () => void;
 }) {
   const scope = useScope();
+  const me = useMe();
+  const [adding, setAdding] = useState(false);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const { id, site_id: siteId, site_name: siteName, os_family: osFamily } = server;
+  const target = useMemo<Target>(() => ({ kind: "server", id, siteId, siteName, osFamily }), [id, siteId, siteName, osFamily]);
+  const canEdit = !server.revoked_at && modifiesSite(me, server.customer_id, siteId);
+
   if ("error" in sensors) {
     return (
       <Banner tone="bad">
@@ -45,6 +76,26 @@ export function ServerSensorsTab({
       </Banner>
     );
   }
+
+  const ruleOfRow = (row: SensorRow) =>
+    rules.thresholds ? rowRule(sensors.sensors, rules.thresholds, row.sensor, row.metric, row.instance) : undefined;
+
+  function menuItems(row: SensorRow): RowMenuItem[] {
+    const rule = ruleOfRow(row);
+    // A sensor's rule is edited on the page of the metric it alerts on (disk activity: its wait).
+    const ruleMetric = rule?.metric ?? row.metric;
+    const items: RowMenuItem[] = [];
+    if (canEdit) items.push({ label: "Edit", href: scopedHref(sensorHref(server.id, ruleMetric, row.instance, true), scope) });
+    items.push({ label: "Open chart", href: scopedHref(sensorHref(server.id, row.metric, row.instance), scope) });
+    // One disk of several mutes its alert, which needs one to mute.
+    const muting = perInstance(row.sensor, row.instance);
+    if (canEdit && (!muting || rule?.enabled)) {
+      const label = !muting && own(row.sensor, rules.siteSensors) ? "Remove…" : "Turn off…";
+      items.push({ label, onSelect: () => setConfirming(row.key), danger: true });
+    }
+    return items;
+  }
+
   const columns: Column<SensorRow>[] = [
     {
       key: "sensor",
@@ -67,18 +118,17 @@ export function ServerSensorsTab({
     {
       key: "rule",
       header: "Rule",
-      cell: (row) =>
-        thresholds ? (
-          <RuleCell
-            sensors={sensors.sensors}
-            row={row}
-            rule={rowRule(sensors.sensors, thresholds, row.sensor, row.metric, row.instance)}
-          />
-        ) : (
-          "—"
-        ),
+      cell: (row) => (rules.thresholds ? <RuleCell sensors={sensors.sensors} row={row} rule={ruleOfRow(row)} /> : "—"),
     },
   ];
+
+  const addButton = canEdit && !adding && (
+    <Button variant="k" onClick={() => setAdding(true)}>
+      Add a check
+    </Button>
+  );
+  const off = rules.ownRows?.filter((r) => !r.enabled) ?? [];
+
   return (
     <div className={styles.tab}>
       <Drift config={sensors} now={now} />
@@ -86,18 +136,75 @@ export function ServerSensorsTab({
         <Banner tone="warn">Open incidents could not be read: statuses show OK or Unknown until they load.</Banner>
       )}
       {rows.length === 0 ? (
-        <EmptyState actions={<ButtonLink href={scopedHref(serverHref(server.id, "alerts"), scope)}>Add a check</ButtonLink>}>
-          No sensors: every default is turned off for this server.
-        </EmptyState>
+        <EmptyState actions={addButton || undefined}>No sensors: every default is turned off for this server.</EmptyState>
       ) : (
-        <DataTable label="Sensors" columns={columns} rows={rows} rowKey={(row) => row.key} />
+        <DataTable
+          label="Sensors"
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => row.key}
+          rowActions={(row) => <RowMenu label={`Actions for ${row.title}`} items={menuItems(row)} />}
+          rowDetail={(row) =>
+            confirming === row.key && (
+              <TurnOff
+                row={row}
+                rule={ruleOfRow(row)}
+                target={target}
+                hostname={server.hostname}
+                siteSensors={rules.siteSensors}
+                onClose={() => setConfirming(null)}
+                onChanged={onChanged}
+              />
+            )
+          }
+        />
+      )}
+      <div className={styles.addLine}>
+        {rows.length > 0 && addButton}
+        <BuiltinInterval
+          target={target}
+          interval={{ check_interval_ms: sensors.check_interval_ms, check_interval_origin: sensors.check_interval_origin }}
+          canEdit={canEdit}
+          onChanged={onChanged}
+        />
+      </div>
+      {adding && (
+        <div className={styles.addBox}>
+          <AddCheck
+            target={target}
+            intervalMs={sensors.check_interval_ms}
+            onDone={() => {
+              setAdding(false);
+              onChanged();
+            }}
+            onCancel={() => setAdding(false)}
+          />
+        </div>
+      )}
+      {off.length > 0 && (
+        <section className={styles.offList} aria-label="Turned off on this server">
+          <h3 className={styles.offTitle}>Turned off on this server</h3>
+          <ul>
+            {off.map((row) => (
+              <li key={row.id}>
+                <span>{checkTitle({ ...row, origin: "server", entry_id: row.id, params: stringParams(row.params) })}</span>
+                {canEdit && <TurnBackOn id={row.id} onChanged={onChanged} />}
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
       <p className={styles.note}>
-        Sorted by status, then name. Open a sensor for its chart and history, or{" "}
-        <Link href={scopedHref(serverHref(server.id, "alerts"), scope)}>add a check or change when to alert</Link>.
+        Sorted by status, then name. Open a sensor for its chart and history; change its rule from its ⋯ menu.
       </p>
     </div>
   );
+}
+
+/** A check added on this server, not a copy of one it inherits. */
+function own(sensor: EffectiveSensor, siteSensors: EffectiveSensor[] | null): boolean {
+  if (sensor.origin !== "server" || !sensor.entry_id) return false;
+  return !siteSensors?.some((s) => s.name === sensor.name && s.instance === sensor.instance);
 }
 
 /** "every 1 min · warn > 85% · crit > 95% · for 5 min" and where it comes from. */
@@ -111,6 +218,69 @@ function RuleCell({ sensors, row, rule }: { sensors: EffectiveSensor[]; row: Sen
         {LEVEL_LABELS[level]}
       </Label>
     </span>
+  );
+}
+
+/**
+ * Turn off, confirmed under the row as before: one disk of several mutes
+ * its alert and stays measured; another sensor stops being checked here;
+ * a check added on this server is removed with its alert.
+ */
+function TurnOff({
+  row,
+  rule,
+  target,
+  hostname,
+  siteSensors,
+  onClose,
+  onChanged,
+}: {
+  row: SensorRow;
+  rule: EffectiveThreshold | undefined;
+  target: Target;
+  hostname: string;
+  siteSensors: EffectiveSensor[] | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const common = {
+    layout: "row" as const,
+    trigger: "Turn off…",
+    pendingLabel: "Saving…",
+    describeError: (e: unknown) => `It was not changed. ${describeError(e)}`,
+    onClose,
+  };
+  if (perInstance(row.sensor, row.instance) && rule) {
+    return (
+      <InlineConfirm
+        {...common}
+        title={`Turn off alerts for ${row.title} on ${hostname}?`}
+        consequence="Its values are still recorded. Turn it back on from its page."
+        confirmLabel="Turn off"
+        onConfirm={async () => {
+          const { metric, comparison, warning, critical, duration_s, hysteresis } = rule;
+          await saveThreshold(
+            { kind: "servers", id: target.id },
+            { metric, instance: row.instance, comparison, warning, critical, duration_s, hysteresis, enabled: false },
+          );
+          onChanged();
+        }}
+      />
+    );
+  }
+  const removing = own(row.sensor, siteSensors);
+  const title = checkTitle(row.sensor);
+  return (
+    <InlineConfirm
+      {...common}
+      title={removing ? `Remove ${title} and its alert?` : `Stop checking ${title} on this server?`}
+      consequence={removing ? "" : "You can turn it back on here."}
+      confirmLabel={removing ? "Remove" : "Turn off"}
+      onConfirm={async () => {
+        await stopChecking(target, row.sensor, removing);
+        onChanged();
+      }}
+    />
   );
 }
 

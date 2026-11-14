@@ -117,6 +117,8 @@ function routes(overrides: Record<string, unknown> = {}) {
     [`GET /api/servers/${ID}/commands?limit=${COMMANDS_PAGE}`]: ok({ commands: [command({}), failed], next_cursor: null }),
     "GET /api/agent-releases": ok({ versions: ["0.2.0"], latest: "0.2.0" }),
     [`GET /api/servers/${ID}/thresholds/effective`]: ok({ server_id: ID, site_id: "site-1", revision: 1, thresholds: THRESHOLDS }),
+    [`GET /api/servers/${ID}/sensor_configs`]: ok({ entries: [] }),
+    "GET /api/sites/site-1/sensors": ok({ site_id: "site-1", check_interval_ms: 60_000, check_interval_origin: "default", sensors: [] }),
     [`GET /api/servers/${ID}/sources`]: ok({
       using: "own",
       mirrors: [],
@@ -180,10 +182,11 @@ describe("ServerPage", () => {
     const rows = within(screen.getByRole("table", { name: "Sensors" })).getAllByRole("row").slice(1);
     // Each row: the sensor, its status and value, then its rule and where the rule comes from.
     expect(rows.map((r) => r.textContent)).toEqual([
-      "Disk used /vardisk · /varCritical94.2% · since 11:40, 2 h 52 minevery 30 s · warn > 85% · crit > 95% · for 5 minThis server",
-      "CPU usagecpuOK38.4%every 15 s · warn > 90% · for 10 minBuilt-in",
-      "Disk used /disk · /OK61%every 30 s · warn > 85% · crit > 95% · for 5 minThis server",
+      "Disk used /vardisk · /varCritical94.2% · since 11:40, 2 h 52 minevery 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
+      "CPU usagecpuOK38.4%every 15 s · warn > 90% · for 10 minBuilt-in⋯",
+      "Disk used /disk · /OK61%every 30 s · warn > 85% · crit > 95% · for 5 minThis server⋯",
     ]);
+    expect(screen.queryByRole("tab", { name: "Alerts and checks" })).not.toBeInTheDocument();
     expect(within(rows[0]!).getByRole("link", { name: "Disk used /var" })).toHaveAttribute(
       "href",
       expect.stringMatching(new RegExp(`^/servers/sensor/?\\?id=${ID}&sensor=disk_used_ratio&instance=%2Fvar$`)),
@@ -221,7 +224,7 @@ describe("ServerPage", () => {
     render(<ServerPage id={ID} />);
     await heading();
     const rows = within(await screen.findByRole("table", { name: "Sensors" })).getAllByRole("row").slice(1);
-    expect(rows.map((r) => r.textContent)).toContain("CPU usagecpuOK38.4%every 15 s · warn > 90% · for 10 minBuilt-in");
+    expect(rows.map((r) => r.textContent)).toContain("CPU usagecpuOK38.4%every 15 s · warn > 90% · for 10 minBuilt-in⋯");
     const instant = fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => url.startsWith("/api/metrics/query?"));
     expect(instant).toContain(`/api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio&lookback=7200`);
     expect(instant).not.toContain(`/api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio`);
@@ -496,23 +499,133 @@ describe("ServerPage", () => {
     expect(window.location.search).toBe(`?id=${ID}`);
   });
 
-  it("shows the alerts and checks tab, editable by operators of the site", async () => {
-    setUrl(`/servers/view/?id=${ID}&tab=alerts`);
-    stubFetch(
-      routes({
-        [`GET /api/servers/${ID}/thresholds/effective`]: ok({ server_id: ID, site_id: "site-1", revision: 1, thresholds: [] }),
-        [`GET /api/servers/${ID}/sensor_configs`]: ok({ entries: [] }),
-        "GET /api/sites/site-1/sensors": ok({ site_id: "site-1", check_interval_ms: 60_000, check_interval_origin: "default", sensors: [] }),
-      }),
-    );
-    render(
-      <As user={me({ role: "operator", site_id: "site-1" })}>
-        <ServerPage id={ID} />
-      </As>,
-    );
-    expect(await screen.findByRole("region", { name: "What is checked" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "paris" })).toHaveAttribute("href", expect.stringMatching(/^\/sites\/view\/?\?id=site-1$/));
-    expect(screen.getByRole("button", { name: "Add a check" })).toBeInTheDocument();
+  describe("sensor rules", () => {
+    const operator = me({ role: "operator", site_id: "site-1" });
+    const sent = (fetchMock: ReturnType<typeof stubFetch>, method: string, path: string) => {
+      const call = fetchMock.mock.calls.find(([input, init]) => init?.method === method && String(input) === path);
+      return call && JSON.parse(String(call[1]?.body));
+    };
+    function open(user: typeof operator, overrides: Record<string, unknown> = {}) {
+      const fetchMock = stubFetch(routes(overrides));
+      render(
+        <As user={user}>
+          <ServerPage id={ID} />
+        </As>,
+      );
+      return fetchMock;
+    }
+
+    it("lands old Alerts and checks links on Sensors", async () => {
+      setUrl(`/servers/view/?id=${ID}&tab=alerts`);
+      open(operator);
+      await heading();
+      expect(screen.getByRole("tab", { name: "Sensors · 3" })).toHaveAttribute("aria-selected", "true");
+      await vi.waitFor(() => expect(window.location.search).toBe(`?id=${ID}`));
+      expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Sensors · 3", "Logs", "Updates", "Commands · 1 running"]);
+      expect(screen.getByRole("button", { name: "Add a check" })).toBeInTheDocument();
+      expect(screen.getByText(/Built-in checks run/)).toBeInTheDocument();
+    });
+
+    it("opens a row's menu from the keyboard, Escape giving focus back", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      open(operator);
+      const button = await screen.findByRole("button", { name: "Actions for CPU usage" });
+      button.focus();
+      await user.keyboard("{Enter}");
+      const menu = screen.getByRole("menu", { name: "Actions for CPU usage" });
+      const items = within(menu).getAllByRole("menuitem");
+      expect(items.map((i) => i.textContent)).toEqual(["Edit", "Open chart", "Turn off…"]);
+      expect(items[0]).toHaveFocus();
+      expect(items[0]).toHaveAttribute("href", expect.stringMatching(/sensor=cpu_usage_ratio&instance=total&edit=1$/));
+      await user.keyboard("{ArrowDown}");
+      expect(items[1]).toHaveFocus();
+      await user.keyboard("{ArrowUp}{ArrowUp}");
+      expect(items[2]).toHaveFocus();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(button).toHaveFocus();
+    });
+
+    it("offers readers the chart only", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      open(me({ role: "viewer", site_id: "site-1" }));
+      await user.click(await screen.findByRole("button", { name: "Actions for CPU usage" }));
+      expect(within(screen.getByRole("menu")).getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Open chart"]);
+      expect(screen.queryByRole("button", { name: "Add a check" })).not.toBeInTheDocument();
+    });
+
+    it("turns off one disk's alert after confirming, and stops checking a whole sensor", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      const fetchMock = open(operator, {
+        [`GET /api/servers/${ID}/thresholds`]: ok({ entries: [] }),
+        [`POST /api/servers/${ID}/thresholds`]: { status: 201, body: {} },
+        [`POST /api/servers/${ID}/sensor_configs`]: { status: 201, body: {} },
+      });
+      await user.click(await screen.findByRole("button", { name: "Actions for Disk used /var" }));
+      await user.click(screen.getByRole("menuitem", { name: "Turn off…" }));
+      const confirm = screen.getByRole("form", { name: "Turn off alerts for Disk used /var on web-1?" });
+      expect(confirm).toHaveTextContent("Its values are still recorded.");
+      expect(within(confirm).getByRole("button", { name: "Turn off" })).toHaveFocus();
+      await user.click(within(confirm).getByRole("button", { name: "Turn off" }));
+      await vi.waitFor(() =>
+        expect(sent(fetchMock, "POST", `/api/servers/${ID}/thresholds`)).toMatchObject({
+          metric: "monitorflow_disk_used_ratio",
+          instance: "/var",
+          enabled: false,
+        }),
+      );
+      await vi.waitFor(() => expect(screen.queryByRole("form", { name: /Turn off alerts/ })).not.toBeInTheDocument());
+
+      await user.click(screen.getByRole("button", { name: "Actions for CPU usage" }));
+      await user.click(screen.getByRole("menuitem", { name: "Turn off…" }));
+      const stop = screen.getByRole("form", { name: "Stop checking CPU usage on this server?" });
+      // Cancel leaves everything as it was.
+      await user.click(within(stop).getByRole("button", { name: "Cancel" }));
+      expect(sent(fetchMock, "POST", `/api/servers/${ID}/sensor_configs`)).toBeUndefined();
+      await user.click(screen.getByRole("button", { name: "Actions for CPU usage" }));
+      await user.click(screen.getByRole("menuitem", { name: "Turn off…" }));
+      await user.click(within(screen.getByRole("form", { name: /Stop checking CPU usage/ })).getByRole("button", { name: "Turn off" }));
+      await vi.waitFor(() =>
+        expect(sent(fetchMock, "POST", `/api/servers/${ID}/sensor_configs`)).toMatchObject({ kind: "cpu", name: "cpu", enabled: false }),
+      );
+    });
+
+    it("adds a check, which waits for its first value", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      const port = { origin: "server" as const, entry_id: "p1", kind: "port", name: "port_443", instance: "", interval_ms: 60_000, timeout_ms: null, params: { port: "443", host: "127.0.0.1" } };
+      const fetchMock = open(operator, {
+        [`GET /api/servers/${ID}/sensors`]: [ok(config()), ok(config({ sensors: [...config().sensors, port] }))],
+        [`GET /api/metrics/query?server_id=${ID}&metric=monitorflow_port_443_up`]: ok({ query: "", series: [] }),
+        "GET /api/plugins/usable": ok({ plugins: [] }),
+        "GET /api/sites": ok({ sites: [] }),
+        [`POST /api/servers/${ID}/sensor_configs`]: { status: 201, body: {} },
+        [`GET /api/servers/${ID}/thresholds`]: ok({ entries: [] }),
+        [`POST /api/servers/${ID}/thresholds`]: { status: 201, body: {} },
+      });
+      await user.click(await screen.findByRole("button", { name: "Add a check" }));
+      const form = screen.getByRole("form", { name: "Add a check" });
+      await user.type(within(form).getByLabelText("Port"), "443");
+      await user.click(within(form).getByRole("button", { name: "Add check" }));
+      await vi.waitFor(() => expect(sent(fetchMock, "POST", `/api/servers/${ID}/sensor_configs`)).toMatchObject({ kind: "port", name: "port_443" }));
+      const row = await screen.findByRole("row", { name: /Port port_443/ });
+      expect(row).toHaveTextContent(/Waiting for first value/);
+      expect(row).toHaveTextContent(/This server/);
+    });
+
+    it("lists the checks turned off on this server, to turn back on", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      const offRow = { id: "o1", site_id: null, server_id: ID, kind: "memory", name: "memory", instance: "", interval_ms: 60_000, timeout_ms: null, params: {}, enabled: false };
+      const fetchMock = open(operator, {
+        [`GET /api/servers/${ID}/sensor_configs`]: ok({ entries: [offRow] }),
+        "DELETE /api/sensor_configs/o1": { status: 204 },
+      });
+      const list = await screen.findByRole("region", { name: "Turned off on this server" });
+      expect(list).toHaveTextContent("Memory");
+      await user.click(within(list).getByRole("button", { name: "Turn back on" }));
+      await vi.waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith("/api/sensor_configs/o1", expect.objectContaining({ method: "DELETE" })),
+      );
+    });
   });
 
   it("lets administrators of the customer remove the server, then shows how to uninstall it", async () => {
