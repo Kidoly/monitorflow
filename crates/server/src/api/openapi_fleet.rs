@@ -1,14 +1,15 @@
 //! The fleet part of the OpenAPI document (ADR-0101): enrolling servers
 //! and relays with enrollment tokens and install keys, and the hosts that
 //! wait for approval; relays; the agent releases this server serves;
-//! package mirrors. Merged into [`super::build`]; like `openapi.rs`, the
+//! package mirrors and the package sources of servers. Merged into [`super::build`]; like `openapi.rs`, the
 //! functions only carry each route's description.
 
 use serde_json::json;
 use utoipa::OpenApi;
 
 use super::super::{
-    commands, install_keys, mirrors, relays, release_import, revoke, servers, tokens,
+    commands, install_keys, mirrors, package_sources, relays, release_import, revoke, servers,
+    sources, tokens,
 };
 use super::{Common, ErrorBody};
 use crate::relay_commands;
@@ -21,7 +22,8 @@ use crate::relay_commands;
         list_relays, relay_detail, revoke_relay, update_relay, confirm_relay_names,
         list_agent_releases, import_release, import_release_from_url,
         list_mirrors, mirror_catalog, add_mirrors, mirror_detail, delete_mirror, sync_mirror,
-        snapshot_mirror,
+        snapshot_mirror, server_sources, configure_server_sources, revert_server_sources,
+        server_use_mirror, site_sources, site_use_mirror, site_revert_sources,
     ),
     modifiers(&Common),
     tags(
@@ -49,6 +51,12 @@ the Internet and every server of a campaign installs the same packages. A mirror
 a snapshot freezes what a sync copied under a name and never changes, and `current` is the newest one. \
 Mirrors are shared by every customer, so every route is for global administrators: through an API key, \
 access \"Administer\", reach everything and the \"updates\" area."),
+        (name = "package sources", description = "Where a server's apt or dnf takes its packages \
+from: its own sources or the mirrors of this install. Changing them sends the server a signed \
+`configure_sources` or `revert_sources` command, which the agent applies and can undo. Reading them \
+needs any role on the server's site; changing them needs the administrator role on its customer. \
+Through an API key, these routes are in the \"updates\" area. Windows servers have no mirror: their \
+status says where Windows Update takes their updates from instead."),
     )
 )]
 pub(super) struct FleetDoc;
@@ -739,6 +747,58 @@ fn mirror() -> serde_json::Value {
     })
 }
 
+fn command(kind: &str) -> serde_json::Value {
+    let parameters = if kind == "configure_sources" {
+        json!({
+            "mirror_base_url": "http://10.1.0.5:8090/mirrors",
+            "family": "APT",
+            "mode": "REPLACE",
+            "repositories": [
+                { "mirror": "debian-12", "snapshot": "current" },
+                { "mirror": "debian-12-security", "snapshot": "current" }
+            ],
+            "key_fingerprints": ["0123456789ABCDEF0123456789ABCDEF01234567"]
+        })
+    } else {
+        json!({})
+    };
+    json!({
+        "id": "b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e",
+        "server_id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d",
+        "kind": kind,
+        "parameters": parameters,
+        "state": "queued",
+        "issued_at": "2026-11-14T10:00:00Z",
+        "expires_at": "2026-11-15T10:00:00Z",
+        "sent_at": null,
+        "started_at": null,
+        "finished_at": null,
+        "exit_code": null,
+        "error": null,
+        "requested_by": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+        "campaign_id": null,
+        "stdout": null,
+        "stderr": null
+    })
+}
+
+fn sources_status() -> serde_json::Value {
+    json!({
+        "using": "mirror",
+        "mirrors": [
+            { "name": "debian-12", "snapshot": "current" },
+            { "name": "debian-12-security", "snapshot": "current" }
+        ],
+        "changing_to": null,
+        "failed": null,
+        "campaign": false,
+        "distribution": "Debian 12",
+        "problem": null,
+        "add_mirror": false,
+        "windows_update_source": null
+    })
+}
+
 /// List mirrors
 ///
 /// Every package mirror of this install, by name, with its newest
@@ -949,3 +1009,188 @@ key outside the \"updates\" area: `api_key_scope`"),
 yet, or is being deleted: `conflict`"),
     ))]
 fn snapshot_mirror() {}
+
+/// Read a server's package sources
+///
+/// Where the server's packages come from: its own sources or mirrors of
+/// this install, whether a change is on its way or failed, whether a
+/// campaign holds them, and why the server cannot use a mirror if it
+/// cannot. For a Windows server, where Windows Update takes its updates
+/// from instead.
+///
+/// Any role on the server's site. Through an API key, the "updates" area.
+#[utoipa::path(get, path = "/api/v1/servers/{id}/sources", tag = "package sources",
+    params(("id" = uuid::Uuid, Path, description = "The server's `id`")),
+    responses(
+        (status = 200, body = package_sources::SourcesStatus, example = json!(sources_status())),
+        (status = 403, body = ErrorBody, description = "The caller has no role: `forbidden`; a key \
+outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such server, removed, or of a site the \
+caller cannot read: `not_found`"),
+    ))]
+fn server_sources() {}
+
+/// Point a server at chosen mirrors
+///
+/// Queues a `configure_sources` command that points the server's apt or
+/// dnf at the mirrors and snapshots named, through the server's relay when
+/// it has one that carries them. `replace` sets the server's other sources
+/// aside, `add` keeps them. The command is signed, sent to the agent and
+/// audited as `command.create`; follow it in the server's commands.
+///
+/// Needs the administrator role on the server's customer. Through an API
+/// key, the "updates" area. Not safe to repeat: send `Idempotency-Key` to
+/// retry.
+#[utoipa::path(post, path = "/api/v1/servers/{id}/sources", tag = "package sources",
+    params(("id" = uuid::Uuid, Path, description = "The server's `id`")),
+    request_body(content = sources::ConfigureRequest, example = json!({
+        "mirrors": [
+            { "name": "debian-12" },
+            { "name": "debian-12-security", "snapshot": "20261114T031240Z" }
+        ],
+        "mode": "replace"
+    })),
+    responses(
+        (status = 201, body = commands::CommandDetail, example = json!(command("configure_sources"))),
+        (status = 400, body = ErrorBody, description = "No mirror or more than 32, an unknown \
+mirror or snapshot, a mirror of another family, `ttl_s` out of range, or a Windows server: `invalid`"),
+        (status = 403, body = ErrorBody, description = "The caller does not administer the server's \
+customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such server, or of a site the caller \
+cannot read: `not_found`"),
+        (status = 409, body = ErrorBody, description = "The server is removed or has no package \
+manager, mirrors are not enabled, their address is not set, or the signing key is unusable: \
+`conflict`"),
+    ))]
+fn configure_server_sources() {}
+
+/// Put a server back on its own sources
+///
+/// Queues a `revert_sources` command that restores the sources the server
+/// had before MonitorFlow changed them. Audited as `command.create`.
+///
+/// Needs the administrator role on the server's customer. Through an API
+/// key, the "updates" area. Not safe to repeat: send `Idempotency-Key` to
+/// retry.
+#[utoipa::path(delete, path = "/api/v1/servers/{id}/sources", tag = "package sources",
+    params(("id" = uuid::Uuid, Path, description = "The server's `id`")),
+    responses(
+        (status = 202, body = commands::CommandDetail, example = json!(command("revert_sources"))),
+        (status = 400, body = ErrorBody, description = "A Windows server: `invalid`"),
+        (status = 403, body = ErrorBody, description = "The caller does not administer the server's \
+customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such server, or of a site the caller \
+cannot read: `not_found`"),
+        (status = 409, body = ErrorBody, description = "The server is removed or has no package \
+manager: `conflict`"),
+    ))]
+fn revert_server_sources() {}
+
+/// Point a server at the mirrors of its distribution
+///
+/// Without naming a mirror: queues a `configure_sources` command that
+/// replaces the server's sources with the `current` snapshots of the
+/// mirrors of the distribution it runs, as `GET …/sources` describes them.
+/// The command waits up to 24 hours for an offline server. Audited as
+/// `command.create`.
+///
+/// Needs the administrator role on the server's customer. Through an API
+/// key, the "updates" area. Safe to repeat: once the change is on its way
+/// or done, another call is 409.
+#[utoipa::path(post, path = "/api/v1/servers/{id}/sources/use-mirror", tag = "package sources",
+    params(("id" = uuid::Uuid, Path, description = "The server's `id`")),
+    responses(
+        (status = 201, body = commands::CommandDetail, example = json!(command("configure_sources"))),
+        (status = 403, body = ErrorBody, description = "The caller does not administer the server's \
+customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such server, or of a site the caller \
+cannot read: `not_found`"),
+        (status = 409, body = ErrorBody, description = "Why the server cannot use a mirror now, in a \
+sentence: it already does, a change or campaign is under way, no mirror carries its distribution yet, \
+or the server is removed: `conflict`"),
+    ))]
+fn server_use_mirror() {}
+
+/// Read the package sources of a site's servers
+///
+/// The package sources of every enrolled server of the site, by host name,
+/// as `GET /api/v1/servers/{id}/sources` gives them for one.
+///
+/// Any role on the site. Through an API key, the "updates" area.
+#[utoipa::path(get, path = "/api/v1/sites/{id}/sources", tag = "package sources",
+    params(("id" = uuid::Uuid, Path, description = "The site's `id`")),
+    responses(
+        (status = 200, body = package_sources::SiteSources, example = json!({
+            "servers": [{
+                "id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d",
+                "hostname": "web-1",
+                "os_family": "debian",
+                "using": "mirror",
+                "mirrors": [{ "name": "debian-12", "snapshot": "current" }],
+                "changing_to": null,
+                "failed": null,
+                "campaign": false,
+                "distribution": "Debian 12",
+                "problem": null,
+                "add_mirror": false,
+                "windows_update_source": null
+            }]
+        })),
+        (status = 403, body = ErrorBody, description = "The caller has no role: `forbidden`; a key \
+outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such site, or not readable by the \
+caller: `not_found`"),
+    ))]
+fn site_sources() {}
+
+/// Point a site's servers at the mirrors of their distribution
+///
+/// For every server of the site not on a mirror yet, as `POST
+/// /api/v1/servers/{id}/sources/use-mirror` does for one. Each server is
+/// queued or skipped on its own: servers already on a mirror are left out,
+/// and those that cannot use one now are listed in `skipped` with the
+/// reason. Each command queued is audited as `command.create`.
+///
+/// Needs the administrator role on the site's customer. Through an API
+/// key, the "updates" area. Safe to repeat: servers already changing are
+/// skipped.
+#[utoipa::path(post, path = "/api/v1/sites/{id}/sources/use-mirror", tag = "package sources",
+    params(("id" = uuid::Uuid, Path, description = "The site's `id`")),
+    responses(
+        (status = 200, body = package_sources::SiteChange, example = json!({
+            "queued": ["5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d"],
+            "skipped": [{
+                "id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+                "hostname": "win-1",
+                "reason": "Mirrors carry Linux packages only. It keeps its own package sources."
+            }]
+        })),
+        (status = 403, body = ErrorBody, description = "The caller does not administer the site's \
+customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such site, or not readable by the \
+caller: `not_found`"),
+    ))]
+fn site_use_mirror() {}
+
+/// Put a site's servers back on their own sources
+///
+/// Queues a `revert_sources` command for every server of the site that
+/// uses a mirror; servers with a change or a campaign under way are listed
+/// in `skipped`. Each command is audited as `command.create`.
+///
+/// Needs the administrator role on the site's customer. Through an API
+/// key, the "updates" area. Safe to repeat: servers already changing are
+/// skipped.
+#[utoipa::path(delete, path = "/api/v1/sites/{id}/sources", tag = "package sources",
+    params(("id" = uuid::Uuid, Path, description = "The site's `id`")),
+    responses(
+        (status = 200, body = package_sources::SiteChange, example = json!({
+            "queued": ["5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d"],
+            "skipped": []
+        })),
+        (status = 403, body = ErrorBody, description = "The caller does not administer the site's \
+customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such site, or not readable by the \
+caller: `not_found`"),
+    ))]
+fn site_revert_sources() {}
