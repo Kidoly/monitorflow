@@ -1576,6 +1576,7 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
+ "utoipa",
  "windows-sys 0.61.2",
  "x509-parser",
 ]

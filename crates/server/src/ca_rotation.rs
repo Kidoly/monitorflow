@@ -58,13 +58,16 @@ pub enum RotationError {
 }
 
 /// Where an enrolled peer stands, from its newest certificate.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, utoipa::ToSchema)]
+#[schema(as = CaPeer)]
 pub struct PeerState {
     /// `agent` or `relay`.
     pub role: String,
+    /// The ID in its certificate.
     pub peer_id: String,
     /// The host name of a server, the name of a relay.
     pub name: String,
+    /// `null` when never seen.
     pub last_seen_at: Option<DateTime<Utc>>,
     /// When its certificate expires: it stops counting then.
     pub not_after: DateTime<Utc>,

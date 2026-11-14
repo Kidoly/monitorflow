@@ -9,6 +9,674 @@
     "version": "1"
   },
   "paths": {
+    "/api/v1/backups": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "List backups",
+        "description": "The last backup, running or finished, when the next automatic one is\ndue, and the files kept, newest first. `downloads` says whether the\nfiles can be downloaded through the API; when `host_dir` is true they\nsit in a host directory only root can read, and are copied from there.\nChanges nothing.",
+        "operationId": "list_backups",
+        "responses": {
+          "200": {
+            "description": "Backups and their state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupsView"
+                },
+                "example": {
+                  "downloads": true,
+                  "enabled": true,
+                  "files": [
+                    {
+                      "created_at": "2026-11-14T03:00:00Z",
+                      "kind": "daily",
+                      "name": "monitorflow-backup-20261114T030000Z-daily.tar.gz",
+                      "size": 48213771
+                    }
+                  ],
+                  "host_dir": false,
+                  "keep": 7,
+                  "last": {
+                    "error": null,
+                    "file": "monitorflow-backup-20261114T030000Z-daily.tar.gz",
+                    "finished_at": "2026-11-14T03:02:41Z",
+                    "id": "daily-20261114",
+                    "kind": "daily",
+                    "requested_by": "",
+                    "started_at": "2026-11-14T03:00:00Z",
+                    "state": "succeeded",
+                    "warning": null
+                  },
+                  "last_success_at": "2026-11-14T03:02:41Z",
+                  "next_at": "2026-11-15T03:00:00Z",
+                  "requested": false,
+                  "updater_alive": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Back up now",
+        "description": "Asks the updater for a backup of the database and the server's data\ndirectory. Answers at once; the backup shows as `last` in\n`GET /api/v1/backups` once the updater takes it, and the oldest file\nbeyond 7 is removed when it ends. Audited as `server.backup`.\n\nErrors: 409 `conflict` when the deployment has no updater, the updater\nis not running, or a backup is already running or asked for. A second\nrequest while one runs is refused, so a retry never takes two.",
+        "operationId": "start_backup",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Asked of the updater",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupStarted"
+                },
+                "example": {
+                  "id": "c7a1e2f3-9d84-4b6a-8e1f-2a3b4c5d6e7f"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No updater, updater not running, or a backup under way: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/backups/{name}": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Download a backup",
+        "description": "The file itself, `application/gzip`, served as an attachment with\n`Cache-Control: no-store`; `Range` requests are honoured. It is a tar\narchive of `manifest.json` (format, time, server version, latest\nmigration), `database.dump` (`pg_dump` custom format of the whole\ndatabase: every customer's servers, sites, incidents, commands, users\nwith their password hashes, API key hashes and the audit log) and\n`serverdata/`, the server's data directory: the certificate\nauthority's private key, the key that signs commands to agents, the\nkey that opens the stored SMTP passwords, webhook secrets and AI key,\nand the mirror signing key. Whoever holds the file can read all of\nthat and act as the central server towards every agent and relay;\nkeep it as you would those keys.\n\nOnly a global administrator, or a key with access \"Administer\", reach\n\"Everything\" and the \"administration\" area, may download one. Each\ndownload is audited as `server.backup.download` with the file name.\n\nErrors: 404 `not_found` for a name the updater did not write or a file\nalready rotated away; 409 `conflict` when the backups volume is not\nmounted in the server or only root can read it on the host.",
+        "operationId": "download_backup",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "A `name` from `files`, like `monitorflow-backup-20261114T030000Z-daily.tar.gz`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The backup archive",
+            "content": {
+              "application/gzip": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupArchive"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Backups cannot be read by the server: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/certificate-authority": {
+      "get": {
+        "tags": [
+          "certificate-authority"
+        ],
+        "summary": "Read the certificate authority",
+        "description": "Its fingerprint, when it expires and when a planned change starts by\nitself (180 days before), the change under way with how many servers\nand relays moved, and those cut off by an emergency change. Shows no\nkey and no certificate. 409 `conflict` when this server has no\ncertificate authority of its own.",
+        "operationId": "ca",
+        "responses": {
+          "200": {
+            "description": "The certificate authority",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaView"
+                },
+                "example": {
+                  "auto_change_at": "2034-09-02T10:00:00Z",
+                  "created_at": "2025-03-01T10:00:00Z",
+                  "cut_off": [],
+                  "expires_at": "2035-03-01T10:00:00Z",
+                  "expires_soon": false,
+                  "fingerprint": "3b1f6c0e9a7d2f4b8c5e1a0d9f7b3c6e2a4d8f0b1c3e5a7d9f2b4c6e8a0d1f3b",
+                  "restored_retired_at": null,
+                  "rotation": {
+                    "distrust_at": null,
+                    "done": 11,
+                    "emergency": false,
+                    "other_fingerprint": "a9c4e2b7d1f0836e5c2a9b4d7f1e0c3a8b6d2f5e9c1a4b7d0e3f6a9c2b5d8e1f",
+                    "stage": "introduced",
+                    "started_at": "2026-11-14T09:00:00Z",
+                    "switched_at": null,
+                    "total": 12,
+                    "waiting": [
+                      {
+                        "cut_off": false,
+                        "last_seen_at": "2026-11-14T08:55:10Z",
+                        "moved": false,
+                        "name": "web-1",
+                        "not_after": "2027-02-10T00:00:00Z",
+                        "peer_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e",
+                        "role": "agent",
+                        "too_old": false,
+                        "trusts_all": false
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No certificate authority on this server: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/certificate-authority/rotation": {
+      "post": {
+        "tags": [
+          "certificate-authority"
+        ],
+        "summary": "Change the certificate authority",
+        "description": "Makes a new certificate authority. Planned (`emergency` false), the\nnew one is first only trusted: servers and relays learn to trust it\nover their next connections, then it issues once all have moved, then the old one is retired\nand its key destroyed, each step taken by the server by itself. In an\nemergency the new one issues at once and the old one stops being\ntrusted 24 hours later: servers and relays that have not connected by\nthen must be installed again. An emergency request during a planned\nchange switches it at once. Audited as `ca.rotation.start`; agents and\nrelays receive the new trust over their next connections, no command\nis sent.\n\nErrors: 409 `conflict` when a change is already under way, when more\nthan one central server instance is running, or when this server has\nno certificate authority.",
+        "operationId": "start_ca_change",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaRotationRequest"
+              },
+              "example": {
+                "emergency": false
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Started; the certificate authority as it now stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaView"
+                },
+                "example": {
+                  "auto_change_at": "2034-09-02T10:00:00Z",
+                  "created_at": "2025-03-01T10:00:00Z",
+                  "cut_off": [],
+                  "expires_at": "2035-03-01T10:00:00Z",
+                  "expires_soon": false,
+                  "fingerprint": "3b1f6c0e9a7d2f4b8c5e1a0d9f7b3c6e2a4d8f0b1c3e5a7d9f2b4c6e8a0d1f3b",
+                  "restored_retired_at": null,
+                  "rotation": {
+                    "distrust_at": null,
+                    "done": 11,
+                    "emergency": false,
+                    "other_fingerprint": "a9c4e2b7d1f0836e5c2a9b4d7f1e0c3a8b6d2f5e9c1a4b7d0e3f6a9c2b5d8e1f",
+                    "stage": "introduced",
+                    "started_at": "2026-11-14T09:00:00Z",
+                    "switched_at": null,
+                    "total": 12,
+                    "waiting": [
+                      {
+                        "cut_off": false,
+                        "last_seen_at": "2026-11-14T08:55:10Z",
+                        "moved": false,
+                        "name": "web-1",
+                        "not_after": "2027-02-10T00:00:00Z",
+                        "peer_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e",
+                        "role": "agent",
+                        "too_old": false,
+                        "trusts_all": false
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A change under way, several instances, or no CA: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/certificate-authority/rotation/next": {
+      "post": {
+        "tags": [
+          "certificate-authority"
+        ],
+        "summary": "Take the next step of the change now",
+        "description": "Takes the next step without waiting for the servers and relays that\nhave not moved: makes the new certificate authority the one that\nissues, or retires the old one and destroys its key. Those not moved\nwhen the old one is retired must be installed again; `waiting` lists\nthem first. Audited as `ca.rotation.switch` or `ca.rotation.retire`\nwith how many had not moved. Not safe to repeat: a second call takes\nthe step after.\n\nErrors: 409 `conflict` when no change is under way, more than one\ncentral server instance runs, or this server has no certificate\nauthority.",
+        "operationId": "next_ca_step",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Step taken; the certificate authority as it now stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaView"
+                },
+                "example": {
+                  "auto_change_at": "2034-09-02T10:00:00Z",
+                  "created_at": "2025-03-01T10:00:00Z",
+                  "cut_off": [],
+                  "expires_at": "2035-03-01T10:00:00Z",
+                  "expires_soon": false,
+                  "fingerprint": "3b1f6c0e9a7d2f4b8c5e1a0d9f7b3c6e2a4d8f0b1c3e5a7d9f2b4c6e8a0d1f3b",
+                  "restored_retired_at": null,
+                  "rotation": {
+                    "distrust_at": null,
+                    "done": 11,
+                    "emergency": false,
+                    "other_fingerprint": "a9c4e2b7d1f0836e5c2a9b4d7f1e0c3a8b6d2f5e9c1a4b7d0e3f6a9c2b5d8e1f",
+                    "stage": "introduced",
+                    "started_at": "2026-11-14T09:00:00Z",
+                    "switched_at": null,
+                    "total": 12,
+                    "waiting": [
+                      {
+                        "cut_off": false,
+                        "last_seen_at": "2026-11-14T08:55:10Z",
+                        "moved": false,
+                        "name": "web-1",
+                        "not_after": "2027-02-10T00:00:00Z",
+                        "peer_id": "6f2d1c4b-8a3e-4d7f-9b0c-1e2a3b4c5d6e",
+                        "role": "agent",
+                        "too_old": false,
+                        "trusts_all": false
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No change under way, several instances, or no CA: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/commands/{id}": {
       "get": {
         "tags": [
@@ -369,6 +1037,75 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Check the server is up",
+        "description": "Answers 200 while the central server's process serves requests. Needs\nno key and counts against no rate limit; also served at `/api/health`.",
+        "operationId": "live",
+        "responses": {
+          "200": {
+            "description": "The process serves requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                },
+                "example": {
+                  "status": "ok"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Check the server is ready",
+        "description": "Answers 200 when PostgreSQL answers a trivial query within 2 seconds,\n503 otherwise. Needs no key and counts against no rate limit; also\nserved at `/api/health/ready`.",
+        "operationId": "ready",
+        "responses": {
+          "200": {
+            "description": "The database answers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                },
+                "example": {
+                  "status": "ready"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database does not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                },
+                "example": {
+                  "status": "unavailable"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v1/incidents": {
@@ -1293,6 +2030,334 @@
         }
       }
     },
+    "/api/v1/server-update": {
+      "get": {
+        "tags": [
+          "server-update"
+        ],
+        "summary": "Read the server's update status",
+        "description": "The running version, what the updater service last reported, the last\nupdate with its steps, and a newer release the daily check saw.\n`enabled` is false when the deployment has no updater (a package\ninstall, for one): updates are then done by hand. Changes nothing.",
+        "operationId": "update_status",
+        "responses": {
+          "200": {
+            "description": "The update status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateView"
+                },
+                "example": {
+                  "available": null,
+                  "enabled": true,
+                  "requested": false,
+                  "running_version": "0.4.0",
+                  "source": "https://releases.example.com/monitorflow",
+                  "update": {
+                    "backup": "monitorflow-backup-20261112T200005Z-update.tar.gz",
+                    "error": null,
+                    "finished_at": "2026-11-12T20:03:05Z",
+                    "from": "0.3.2",
+                    "id": "3f1c2a9e-8b7d-4c6e-9a51-2d0e7f4b6c18",
+                    "migrated": true,
+                    "requested_by": "admin",
+                    "started_at": "2026-11-12T20:00:01Z",
+                    "state": "succeeded",
+                    "steps": [
+                      {
+                        "at": "2026-11-12T20:00:03Z",
+                        "message": "Release 0.4.0 verified"
+                      },
+                      {
+                        "at": "2026-11-12T20:01:40Z",
+                        "message": "Backup taken"
+                      },
+                      {
+                        "at": "2026-11-12T20:03:05Z",
+                        "message": "0.4.0 is running"
+                      }
+                    ],
+                    "to": "0.4.0"
+                  },
+                  "updater": {
+                    "alive": true,
+                    "heartbeat_at": "2026-11-14T09:30:12Z",
+                    "running": {
+                      "server_image": "registry.example.com/monitorflow-server@sha256:5d41402abc4b2a76b9719d911017c592ae2fb4fa6bdd6a8e3f9d22c2f2e6e3a1",
+                      "updater_image": "registry.example.com/monitorflow-updater@sha256:e4da3b7fbbce2345d7772b0674a318d5c0a2b3f0e4b8a7d6c5e4f3a2b1c0d9e8",
+                      "version": "0.4.0",
+                      "web_image": "registry.example.com/monitorflow-web@sha256:7b52009b64fd0a2a49e6d8a939753077792b0554aa1b6c4d13e2c9ab0f5c1e8d"
+                    },
+                    "version": "0.4.0"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "server-update"
+        ],
+        "summary": "Update the server",
+        "description": "Asks the updater to install `version`: it verifies the release, takes a\nbackup, replaces the images and checks the new server answers, rolling\nback to the previous images if it does not. The central server restarts\nmeanwhile, so requests may fail for a short while; follow the update with\n`GET /api/v1/server-update`, whose `update.id` is the `id` answered here.\nAudited as `server.update` with the versions from and to.\n\nErrors: 400 `invalid` when `version` is not a release version or not\nnewer than the running one; 409 `conflict` when the deployment has no\nupdater, the updater is not running, or an update is already under\nway. A second request while the first runs is refused with 409, so a\nretry never installs twice.",
+        "operationId": "start_update",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerUpdateRequest"
+              },
+              "example": {
+                "version": "0.4.1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Asked of the updater",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerUpdateStarted"
+                },
+                "example": {
+                  "id": "8c2f6d1e-4b3a-4f9e-a7c5-0d1b2e3f4a5b"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No updater, updater not running, or an update under way: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/server-update/check": {
+      "post": {
+        "tags": [
+          "server-update"
+        ],
+        "summary": "Check for a newer release",
+        "description": "Fetches the latest release from `source` and verifies its signature, as\nthe updater will before installing it, and records what it saw as the\ndaily check does. Installs nothing; safe to repeat. Answers 200 even\nwhen the source cannot be reached: `reachable` and `error` say so.",
+        "operationId": "check_update",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What the source offers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckResult"
+                },
+                "example": {
+                  "error": null,
+                  "latest": {
+                    "agent_release_cached": false,
+                    "images": {
+                      "mirror": null,
+                      "server": "registry.example.com/monitorflow-server@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                      "updater": "registry.example.com/monitorflow-updater@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13",
+                      "web": "registry.example.com/monitorflow-web@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752"
+                    },
+                    "newer": true,
+                    "release_notes_url": "https://releases.example.com/monitorflow/0.4.1/notes",
+                    "updater_changes": false,
+                    "version": "0.4.1",
+                    "web_changes": true
+                  },
+                  "reachable": true,
+                  "running_version": "0.4.0",
+                  "source": "https://releases.example.com/monitorflow"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers": {
       "get": {
         "tags": [
@@ -2127,6 +3192,446 @@
         },
         "additionalProperties": false
       },
+      "AvailableRelease": {
+        "type": "object",
+        "description": "A release newer than the running server, as `GET /api/server-update`\nshows it.",
+        "required": [
+          "version",
+          "first_seen_at"
+        ],
+        "properties": {
+          "first_seen_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When a check first saw it."
+          },
+          "release_notes_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "BackupArchive": {
+        "type": "string",
+        "format": "binary",
+        "description": "A backup file: a gzip-compressed tar archive."
+      },
+      "BackupFile": {
+        "type": "object",
+        "description": "A backup file kept.",
+        "required": [
+          "name",
+          "size",
+          "created_at",
+          "kind"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BackupKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "`monitorflow-backup-<UTC time>-<kind>.tar.gz`, the name to download."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes.",
+            "minimum": 0
+          }
+        }
+      },
+      "BackupKind": {
+        "type": "string",
+        "description": "Why a backup was taken; part of its file name.",
+        "enum": [
+          "daily",
+          "manual",
+          "update"
+        ]
+      },
+      "BackupRun": {
+        "type": "object",
+        "description": "One backup, running or finished.",
+        "required": [
+          "id",
+          "kind",
+          "requested_by",
+          "state",
+          "started_at"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed, in plain words; `null` unless `failed`."
+          },
+          "file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file it wrote."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` while running."
+          },
+          "id": {
+            "type": "string",
+            "description": "The request's ID for one asked for, else the updater's own."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BackupKind"
+          },
+          "requested_by": {
+            "type": "string",
+            "description": "Empty for automatic ones."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/BackupState"
+          },
+          "warning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What a backup that succeeded left out or noticed."
+          }
+        }
+      },
+      "BackupStarted": {
+        "type": "object",
+        "description": "Body of the 202 answer.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The request's ID: the `last.id` of the backup once the updater takes it."
+          }
+        }
+      },
+      "BackupState": {
+        "type": "string",
+        "description": "Where a backup stands.",
+        "enum": [
+          "running",
+          "succeeded",
+          "failed"
+        ]
+      },
+      "Backups": {
+        "type": "object",
+        "description": "The backups part of `status.json`. Missing in the status of an updater\nolder than backups.",
+        "required": [
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupFile"
+            },
+            "description": "The files kept, newest first."
+          },
+          "last": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BackupRun",
+                "description": "The last backup, running or finished, of any kind."
+              }
+            ]
+          },
+          "last_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the last one that succeeded finished."
+          },
+          "next_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the next automatic one is due."
+          }
+        }
+      },
+      "BackupsView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Backups"
+          },
+          {
+            "type": "object",
+            "required": [
+              "enabled",
+              "downloads",
+              "host_dir",
+              "updater_alive",
+              "requested",
+              "keep"
+            ],
+            "properties": {
+              "downloads": {
+                "type": "boolean",
+                "description": "The backups volume is mounted: files can be downloaded."
+              },
+              "enabled": {
+                "type": "boolean",
+                "description": "The server shares a volume with the updater, which takes backups."
+              },
+              "host_dir": {
+                "type": "boolean",
+                "description": "Backups are mounted but only root can read them: they are in a\nhost directory, `BACKUP_DIR`, and are copied from there."
+              },
+              "keep": {
+                "type": "integer",
+                "description": "How many backups are kept.",
+                "minimum": 0
+              },
+              "requested": {
+                "type": "boolean",
+                "description": "\"Back up now\" waits for the updater to take it."
+              },
+              "updater_alive": {
+                "type": "boolean",
+                "description": "The updater reported within the last two minutes."
+              }
+            }
+          }
+        ],
+        "description": "Body of `GET /api/backups`."
+      },
+      "CaPeer": {
+        "type": "object",
+        "description": "Where an enrolled peer stands, from its newest certificate.",
+        "required": [
+          "role",
+          "peer_id",
+          "name",
+          "not_after",
+          "moved",
+          "trusts_all",
+          "too_old",
+          "cut_off"
+        ],
+        "properties": {
+          "cut_off": {
+            "type": "boolean",
+            "description": "Its certificate comes from a CA the server no longer trusts: it\nmissed an emergency change and must be installed again."
+          },
+          "last_seen_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` when never seen."
+          },
+          "moved": {
+            "type": "boolean",
+            "description": "Its certificate comes from the CA that issues now."
+          },
+          "name": {
+            "type": "string",
+            "description": "The host name of a server, the name of a relay."
+          },
+          "not_after": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When its certificate expires: it stops counting then."
+          },
+          "peer_id": {
+            "type": "string",
+            "description": "The ID in its certificate."
+          },
+          "role": {
+            "type": "string",
+            "description": "`agent` or `relay`."
+          },
+          "too_old": {
+            "type": "boolean",
+            "description": "Its version takes no CA bundle: it must update first."
+          },
+          "trusts_all": {
+            "type": "boolean",
+            "description": "It trusts every CA the server trusts."
+          }
+        }
+      },
+      "CaRotation": {
+        "type": "object",
+        "description": "A change of certificate authority under way.",
+        "required": [
+          "stage",
+          "emergency",
+          "started_at",
+          "total",
+          "done",
+          "waiting"
+        ],
+        "properties": {
+          "distrust_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Emergency: when the old CA stops being trusted."
+          },
+          "done": {
+            "type": "integer",
+            "description": "Those done with the current step.",
+            "minimum": 0
+          },
+          "emergency": {
+            "type": "boolean",
+            "description": "Started after a suspected compromise: the old CA is distrusted 24\nhours after the switch."
+          },
+          "other_fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The new CA while introduced, the old one once switched."
+          },
+          "stage": {
+            "$ref": "#/components/schemas/CaStage",
+            "description": "`introduced`: servers and relays learn to trust the new CA, the old\none still issues. `switched`: the new one issues, the old one is\nstill trusted until it is retired."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "switched_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` until `switched`."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Servers and relays with a valid certificate.",
+            "minimum": 0
+          },
+          "waiting": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaPeer"
+            },
+            "description": "Those not done, by name, up to 50, last seen first."
+          }
+        }
+      },
+      "CaRotationRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/certificate-authority/rotation`.",
+        "properties": {
+          "emergency": {
+            "type": "boolean",
+            "description": "`true` after a suspected compromise of the CA's key: the new CA\nissues at once and the old one is distrusted 24 hours later.\nDefault `false`: a planned change, one step at a time."
+          }
+        }
+      },
+      "CaStage": {
+        "type": "string",
+        "description": "The step a change of certificate authority is at.",
+        "enum": [
+          "introduced",
+          "switched"
+        ]
+      },
+      "CaView": {
+        "type": "object",
+        "description": "The certificate authority that issues now, and any change under way.",
+        "required": [
+          "fingerprint",
+          "created_at",
+          "expires_at",
+          "expires_soon",
+          "auto_change_at",
+          "cut_off"
+        ],
+        "properties": {
+          "auto_change_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When a planned change starts by itself if nobody starts one."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cut_off": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaPeer"
+            },
+            "description": "Servers and relays whose certificate comes from a CA no longer\ntrusted: they missed an emergency change and must be installed\nagain. Up to 50."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_soon": {
+            "type": "boolean",
+            "description": "Less than a year left: time to change it."
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "SHA-256 of the CA certificate, lower-case hex."
+          },
+          "restored_retired_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Set when a restore brought back a CA this server had retired."
+          },
+          "rotation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CaRotation",
+                "description": "The change under way; `null` when none is."
+              }
+            ]
+          }
+        }
+      },
       "CertificateView": {
         "type": "object",
         "description": "A certificate from the `certificates` table.",
@@ -2170,6 +3675,46 @@
           "serial": {
             "type": "string",
             "description": "Lowercase hexadecimal without leading zeros."
+          }
+        }
+      },
+      "CheckResult": {
+        "type": "object",
+        "description": "Body of `POST /api/server-update/check`.",
+        "required": [
+          "source",
+          "running_version",
+          "reachable"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why there is no `latest`."
+          },
+          "latest": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LatestRelease",
+                "description": "`null` when the release could not be fetched or verified."
+              }
+            ]
+          },
+          "reachable": {
+            "type": "boolean",
+            "description": "Whether the source answered; `false` on an offline server."
+          },
+          "running_version": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Base URL releases are fetched from."
           }
         }
       },
@@ -2620,6 +4165,23 @@
           "lxc"
         ]
       },
+      "HealthStatus": {
+        "type": "object",
+        "description": "Up or down, nothing more.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "`ok` (live), `ready` or `unavailable` (ready)."
+          }
+        }
+      },
+      "ImageRef": {
+        "type": "string",
+        "description": "An image reference by digest: `name@sha256:<64 lower-case hex>`, where\n`name` is a registry path like `ghcr.io/kidoly/monitorflow-server` or\n`localhost:5000/monitorflow-web`. Tags are refused: a registry can move\nthem, a digest names the content."
+      },
       "IncidentDetail": {
         "allOf": [
           {
@@ -2821,6 +4383,49 @@
           },
           "threshold": {
             "description": "The threshold as it was when the incident opened."
+          }
+        }
+      },
+      "LatestRelease": {
+        "type": "object",
+        "description": "A verified release and what installing it changes.",
+        "required": [
+          "version",
+          "newer",
+          "images",
+          "web_changes",
+          "updater_changes",
+          "agent_release_cached"
+        ],
+        "properties": {
+          "agent_release_cached": {
+            "type": "boolean",
+            "description": "The release's agents are already cached for agents."
+          },
+          "images": {
+            "$ref": "#/components/schemas/ReleaseImages",
+            "description": "The images, pinned by digest, that installing it runs."
+          },
+          "newer": {
+            "type": "boolean",
+            "description": "Newer than the running server: it can be installed."
+          },
+          "release_notes_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` when the source has none."
+          },
+          "updater_changes": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          },
+          "web_changes": {
+            "type": "boolean",
+            "description": "The images differ from the running ones, as the updater reported\nthem; a local build always differs."
           }
         }
       },
@@ -3028,6 +4633,37 @@
         },
         "additionalProperties": false
       },
+      "ReleaseImages": {
+        "type": "object",
+        "description": "The images of a release.",
+        "required": [
+          "server",
+          "web",
+          "updater"
+        ],
+        "properties": {
+          "mirror": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImageRef",
+                "description": "The mirror tools (ADR-0067); not in older releases."
+              }
+            ]
+          },
+          "server": {
+            "$ref": "#/components/schemas/ImageRef"
+          },
+          "updater": {
+            "$ref": "#/components/schemas/ImageRef"
+          },
+          "web": {
+            "$ref": "#/components/schemas/ImageRef"
+          }
+        }
+      },
       "Rollup": {
         "type": "string",
         "description": "How each point of a range summarizes the samples since the previous\npoint. Without it, a point is the last sample before it, so a spike\nbetween two points of a long range is not drawn.",
@@ -3037,6 +4673,36 @@
           "min",
           "last"
         ]
+      },
+      "RunningServer": {
+        "type": "object",
+        "description": "The running server: its version, and the images pinned in `.env`\n(`None`: a local build).",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "server_image": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updater_image": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "string"
+          },
+          "web_image": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       },
       "SeriesView": {
         "type": "object",
@@ -3140,6 +4806,33 @@
           "online",
           "offline"
         ]
+      },
+      "ServerUpdateRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/server-update`.",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "A release version like `0.2.0`, newer than the running one."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ServerUpdateStarted": {
+        "type": "object",
+        "description": "Body of the 202 answer.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The `update.id` of the update once the updater takes it."
+          }
+        }
       },
       "ServerView": {
         "type": "object",
@@ -3594,6 +5287,209 @@
           "high_impact",
           "forbidden"
         ]
+      },
+      "UpdateRun": {
+        "type": "object",
+        "description": "One update of the server, running or finished.",
+        "required": [
+          "id",
+          "to",
+          "requested_by",
+          "state",
+          "steps",
+          "migrated",
+          "started_at"
+        ],
+        "properties": {
+          "backup": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "File name of the backup taken first, in the backups volume."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed or rolled back, in plain words."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` while running."
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version updated from; `null` when the updater did not know it."
+          },
+          "id": {
+            "type": "string",
+            "description": "The ID `POST /api/server-update` answered."
+          },
+          "migrated": {
+            "type": "boolean",
+            "description": "Whether the new server applied migrations: a rollback then needs the\nbackup restored."
+          },
+          "requested_by": {
+            "type": "string",
+            "description": "The user name of who asked."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/UpdateState"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpdateStep"
+            },
+            "description": "What happened so far, oldest first."
+          },
+          "to": {
+            "type": "string",
+            "description": "The version installed."
+          }
+        }
+      },
+      "UpdateState": {
+        "type": "string",
+        "description": "Where an update stands; the last three are final.",
+        "enum": [
+          "verifying",
+          "downloading",
+          "backing_up",
+          "updating",
+          "checking",
+          "caching_agents",
+          "rolling_back",
+          "succeeded",
+          "failed",
+          "rolled_back"
+        ]
+      },
+      "UpdateStep": {
+        "type": "object",
+        "description": "A step of an update, in plain words.",
+        "required": [
+          "at",
+          "message"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateView": {
+        "type": "object",
+        "description": "Body of `GET /api/server-update`.",
+        "required": [
+          "running_version",
+          "enabled",
+          "source",
+          "requested"
+        ],
+        "properties": {
+          "available": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AvailableRelease",
+                "description": "A newer release the last check saw."
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether `server_update_dir` is set."
+          },
+          "requested": {
+            "type": "boolean",
+            "description": "A request waits for the updater to take it."
+          },
+          "running_version": {
+            "type": "string",
+            "description": "The version of this server process."
+          },
+          "source": {
+            "type": "string",
+            "description": "Base URL releases are fetched from."
+          },
+          "update": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpdateRun",
+                "description": "The last update, running or finished."
+              }
+            ]
+          },
+          "updater": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpdaterView",
+                "description": "What the updater last reported; `None` when it never did."
+              }
+            ]
+          }
+        }
+      },
+      "UpdaterView": {
+        "type": "object",
+        "description": "The updater service, as it last reported.",
+        "required": [
+          "version",
+          "heartbeat_at",
+          "alive"
+        ],
+        "properties": {
+          "alive": {
+            "type": "boolean",
+            "description": "The heartbeat is recent."
+          },
+          "heartbeat_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it last wrote its status, every 30 seconds while it runs."
+          },
+          "running": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunningServer",
+                "description": "What runs now; `null` before the updater first looked."
+              }
+            ]
+          },
+          "version": {
+            "type": "string",
+            "description": "The updater's own version."
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -3628,6 +5524,22 @@
     {
       "name": "metrics",
       "description": "Metric queries built by MonitorFlow, never raw PromQL"
+    },
+    {
+      "name": "health",
+      "description": "Probes for load balancers and monitoring: whether the central server's process serves requests and whether its database answers. They need no key and say nothing beyond up or down."
+    },
+    {
+      "name": "server-update",
+      "description": "Updates of the central server itself, carried out by the updater service of the compose deployment: what runs, whether a newer signed release exists, and the request that installs one. The updater takes a backup first and rolls back by itself when the new version does not start. A global administrator's; with a key, access \"Administer\", reach \"Everything\" and the \"updates\" area."
+    },
+    {
+      "name": "backups",
+      "description": "Backups of the whole central server, taken by the updater: once a day, before each update and on request; the 7 latest are kept. A backup holds the database of every customer and the server's keys, including the certificate authority's, so only a global administrator lists, takes or downloads them; with a key, access \"Administer\", reach \"Everything\" and the \"administration\" area. Every download is in the audit log."
+    },
+    {
+      "name": "certificate-authority",
+      "description": "The certificate authority that signs the certificates of the central server, relays and agents for mTLS. These operations show when it expires and change it, planned or after a suspected compromise; they never hand out a key or a certificate. A global administrator's; with a key, access \"Administer\", reach \"Everything\" and the \"administration\" area."
     }
   ]
 }

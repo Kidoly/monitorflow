@@ -54,6 +54,7 @@ pub enum UpdateError {
 /// `localhost:5000/monitorflow-web`. Tags are refused: a registry can move
 /// them, a digest names the content.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(transparent)]
 pub struct ImageRef(String);
 
@@ -95,6 +96,7 @@ impl std::fmt::Display for ImageRef {
 
 /// The images of a release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema), schema(as = ReleaseImages))]
 pub struct Images {
     pub server: ImageRef,
     pub web: ImageRef,
@@ -339,6 +341,7 @@ pub const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(30);
 /// The running server: its version, and the images pinned in `.env`
 /// (`None`: a local build).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema), schema(as = RunningServer))]
 pub struct Running {
     pub version: String,
     pub server_image: Option<String>,
@@ -346,15 +349,22 @@ pub struct Running {
     pub updater_image: Option<String>,
 }
 
+/// One update of the server, running or finished.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UpdateRun {
+    /// The ID `POST /api/server-update` answered.
     pub id: String,
+    /// The version updated from; `null` when the updater did not know it.
     pub from: Option<String>,
+    /// The version installed.
     pub to: String,
+    /// The user name of who asked.
     pub requested_by: String,
     pub state: UpdateState,
     /// What happened so far, oldest first.
     pub steps: Vec<Step>,
+    /// Why it failed or rolled back, in plain words.
     pub error: Option<String>,
     /// File name of the backup taken first, in the backups volume.
     pub backup: Option<String>,
@@ -362,10 +372,13 @@ pub struct UpdateRun {
     /// backup restored.
     pub migrated: bool,
     pub started_at: DateTime<Utc>,
+    /// `null` while running.
     pub finished_at: Option<DateTime<Utc>>,
 }
 
+/// Where an update stands; the last three are final.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum UpdateState {
     Verifying,
@@ -390,7 +403,9 @@ impl UpdateState {
     }
 }
 
+/// A step of an update, in plain words.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema), schema(as = UpdateStep))]
 pub struct Step {
     pub at: DateTime<Utc>,
     pub message: String,
