@@ -39,7 +39,9 @@ pub async fn document() -> Json<Document> {
 }
 
 pub fn build() -> Document {
-    ApiDoc::openapi()
+    let mut doc = ApiDoc::openapi();
+    doc.merge(super::openapi_auto_update::Doc::openapi());
+    doc
 }
 
 #[derive(OpenApi)]
@@ -79,7 +81,7 @@ struct ApiDoc;
 
 /// What every operation shares: the key, the error codes, the common
 /// error answers, rate limits and `Idempotency-Key` on writes.
-struct Common;
+pub(super) struct Common;
 
 impl Modify for Common {
     fn modify(&self, doc: &mut Document) {
@@ -222,7 +224,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/server-update",
     "/api/license",
     "/api/plugins",
-    "/api/auto-update",
     "/api/health",
     "/api/customers/{id}",
     "/api/metrics/",
