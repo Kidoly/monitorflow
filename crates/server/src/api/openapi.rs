@@ -42,6 +42,7 @@ pub fn build() -> Document {
     let mut doc = ApiDoc::openapi();
     doc.merge(super::openapi_system::SystemDoc::openapi());
     doc.merge(super::openapi_settings::SettingsDoc::openapi());
+    doc.merge(super::openapi_users::UsersDoc::openapi());
     doc
 }
 
@@ -209,7 +210,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/remediation/classify",
     "/api/remediation/incidents",
     "/api/remediation/events",
-    "/api/users",
     "/api/campaigns",
     "/api/thresholds",
     "/api/sensor_configs",
@@ -218,7 +218,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/dashboard-metrics",
     "/api/relays",
     "/api/agent-releases",
-    "/api/license",
     "/api/plugins",
     "/api/auto-update",
     "/api/customers/{id}",

@@ -654,6 +654,7 @@ pub(crate) mod one_time;
 pub mod openapi;
 mod openapi_settings;
 mod openapi_system;
+mod openapi_users;
 pub mod package_sources;
 pub mod packages;
 pub mod password;

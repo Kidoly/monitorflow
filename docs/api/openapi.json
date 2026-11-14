@@ -1439,6 +1439,390 @@
         }
       }
     },
+    "/api/v1/license": {
+      "get": {
+        "tags": [
+          "license"
+        ],
+        "summary": "Read the license",
+        "description": "Whether this build includes the Enterprise edition, the installed\nlicense key's state and terms, and the central servers added under it.\nWithout the Enterprise edition only `available: false` is answered.",
+        "operationId": "get_license",
+        "responses": {
+          "200": {
+            "description": "The license",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseView"
+                },
+                "example": {
+                  "added": [
+                    {
+                      "admitted_at": "2026-10-02T08:20:01Z",
+                      "name": "central-2",
+                      "running": true
+                    }
+                  ],
+                  "available": true,
+                  "installed_at": "2026-10-02T08:12:44Z",
+                  "installed_by": "admin",
+                  "license": {
+                    "customer": "Acme",
+                    "edition": "enterprise",
+                    "expires": "2027-09-30",
+                    "format": 1,
+                    "id": "0b6e4c1a-7f3d-4e2b-9a8c-5d1f0e2b3c4a",
+                    "issued": "2026-10-01",
+                    "server_instances": 3
+                  },
+                  "problem": null,
+                  "state": "valid"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "license"
+        ],
+        "summary": "Install a license key",
+        "description": "Installs the key in place of any other and answers the new state. A key\nthat does not verify with this build's public keys, or has expired, is\nrefused. Audited as `license.install` with the licensee, the number of\ncentral servers and the expiry. Safe to repeat with the same key.\n\nErrors: 400 `invalid` for a key that does not verify or has expired;\n409 `conflict` when the build has no Enterprise edition.",
+        "operationId": "install_license",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LicenseRequest"
+              },
+              "example": {
+                "text": "-----BEGIN MONITORFLOW LICENSE-----\neyJmb3JtYXQiOjEsImN1c3RvbWVyIjoiQWNtZSJ9\n-----END MONITORFLOW LICENSE-----\n-----BEGIN MONITORFLOW LICENSE SIGNATURE-----\nMEUCIQDx2b4kZ0n8vJ1yQ3pT6w9sR2fH5aL7cE0dG4iK8mN1oA==\n-----END MONITORFLOW LICENSE SIGNATURE-----"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Installed; the license as it now stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseView"
+                },
+                "example": {
+                  "added": [
+                    {
+                      "admitted_at": "2026-10-02T08:20:01Z",
+                      "name": "central-2",
+                      "running": true
+                    }
+                  ],
+                  "available": true,
+                  "installed_at": "2026-10-02T08:12:44Z",
+                  "installed_by": "admin",
+                  "license": {
+                    "customer": "Acme",
+                    "edition": "enterprise",
+                    "expires": "2027-09-30",
+                    "format": 1,
+                    "id": "0b6e4c1a-7f3d-4e2b-9a8c-5d1f0e2b3c4a",
+                    "issued": "2026-10-01",
+                    "server_instances": 3
+                  },
+                  "problem": null,
+                  "state": "valid"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No Enterprise edition in this build: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "license"
+        ],
+        "summary": "Remove the license key",
+        "description": "Central servers already added keep running; no new one can be added.\nAudited as `license.remove`. 404 `not_found` when no key is installed\nor the build has no Enterprise edition.",
+        "operationId": "remove_license",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/license/servers/{name}": {
+      "delete": {
+        "tags": [
+          "license"
+        ],
+        "summary": "Free an added central server's place",
+        "description": "Forgets the additional central server `name`, freeing its place under\nthe license. Stop it first: it is added again at its next start if a\nplace is free, and refused otherwise.\nAudited as `server_instance.remove`. 404 `not_found` for a name never\nadded, or without the Enterprise edition.",
+        "operationId": "remove_license_server",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "An `added[].name`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/metrics/query": {
       "get": {
         "tags": [
@@ -4578,6 +4962,591 @@
           }
         }
       }
+    },
+    "/api/v1/users": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "List users",
+        "description": "Every account, sorted by user name, with its state, its roles and the\nexpiry of an unused password link. Password hashes and links are\nnever shown. Not paged: the list stays small.",
+        "operationId": "list_users",
+        "responses": {
+          "200": {
+            "description": "Every account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserList"
+                },
+                "example": {
+                  "users": [
+                    {
+                      "created_at": "2026-09-01T08:00:00Z",
+                      "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a",
+                      "link_expires_at": null,
+                      "roles": [
+                        {
+                          "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
+                          "role": "operator",
+                          "site_id": null
+                        },
+                        {
+                          "customer_id": null,
+                          "role": "administrator",
+                          "site_id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b"
+                        }
+                      ],
+                      "state": "active",
+                      "username": "alice"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{id}": {
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Remove a user",
+        "description": "Deletes the account with its roles, sessions and password link; API\nkeys it made stop working. What it did stays in the audit log and the\nhistory it left. Audited as `user.remove` with the user name.\n\nErrors: 404 `not_found` for an unknown ID; 409 `conflict` for the\ncaller's own account (the key's maker) or the last active\nadministrator of everything.",
+        "operationId": "remove_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The user's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Own account or last administrator: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{id}/disabled": {
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Disable or enable a user",
+        "description": "Disabling ends the user's sessions at once, voids their password link\nand stops the API keys they made; enabling lets them sign in again\nand their unexpired keys work again. Audited as `user.disable` or\n`user.enable` when the state changes; sending the current state\nchanges nothing, so it is safe to repeat.\n\nErrors: 404 `not_found` for an unknown ID; 409 `conflict` for\ndisabling the caller's own account or the last active administrator\nof everything.",
+        "operationId": "set_disabled",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The user's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserDisabledRequest"
+              },
+              "example": {
+                "disabled": true
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The user as they now stand",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserView"
+                },
+                "example": {
+                  "created_at": "2026-09-01T08:00:00Z",
+                  "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a",
+                  "link_expires_at": null,
+                  "roles": [
+                    {
+                      "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
+                      "role": "operator",
+                      "site_id": null
+                    },
+                    {
+                      "customer_id": null,
+                      "role": "administrator",
+                      "site_id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b"
+                    }
+                  ],
+                  "state": "disabled",
+                  "username": "alice"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Own account or last administrator: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{id}/roles": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Grant a role",
+        "description": "Gives the user a role on everything (both IDs absent), on one customer\nand all its sites, or on one site. Takes effect at the user's next\nrequest, for their sessions and API keys alike. Granting a role the\nuser already holds changes nothing, so it is safe to repeat. Audited\nas `user.grant`.\n\nErrors: 400 `invalid` for both a customer and a site, or one that does\nnot exist; 404 `not_found` for an unknown user.",
+        "operationId": "grant_role",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The user's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleGrantRequest"
+              },
+              "example": {
+                "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
+                "role": "operator"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The user with their roles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserView"
+                },
+                "example": {
+                  "created_at": "2026-09-01T08:00:00Z",
+                  "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a",
+                  "link_expires_at": null,
+                  "roles": [
+                    {
+                      "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
+                      "role": "operator",
+                      "site_id": null
+                    },
+                    {
+                      "customer_id": null,
+                      "role": "administrator",
+                      "site_id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b"
+                    }
+                  ],
+                  "state": "active",
+                  "username": "alice"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Revoke a role",
+        "description": "Removes one grant, given in the body exactly as listed. Takes effect at\nthe user's next request. Revoking a grant the user does not hold\nchanges nothing. Audited as `user.revoke`.\n\nErrors: 400 `invalid` for both a customer and a site; 404 `not_found`\nfor an unknown user; 409 `conflict` when it would leave no active\nadministrator of everything.",
+        "operationId": "revoke_role",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The user's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleGrantRequest"
+              },
+              "example": {
+                "role": "administrator",
+                "site_id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The user with their roles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserView"
+                },
+                "example": {
+                  "created_at": "2026-09-01T08:00:00Z",
+                  "id": "5b0e3c2a-1d4f-4e6b-8a9c-7f1e2d3c4b5a",
+                  "link_expires_at": null,
+                  "roles": [
+                    {
+                      "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
+                      "role": "operator",
+                      "site_id": null
+                    }
+                  ],
+                  "state": "active",
+                  "username": "alice"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Last administrator: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4613,6 +5582,29 @@
               "type": "string",
               "format": "uuid"
             }
+          }
+        }
+      },
+      "AddedServer": {
+        "type": "object",
+        "description": "A central server added under a license.",
+        "required": [
+          "name",
+          "admitted_at",
+          "running"
+        ],
+        "properties": {
+          "admitted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string",
+            "description": "The name it was started with."
+          },
+          "running": {
+            "type": "boolean",
+            "description": "Whether an instance of that name has a recent heartbeat."
           }
         }
       },
@@ -6299,6 +7291,136 @@
           }
         }
       },
+      "LicenseRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/license`.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The license key's text, both blocks."
+          }
+        }
+      },
+      "LicenseState": {
+        "type": "string",
+        "description": "Where the license stands.",
+        "enum": [
+          "none",
+          "valid",
+          "expires_soon",
+          "expired",
+          "invalid"
+        ]
+      },
+      "LicenseTerms": {
+        "type": "object",
+        "description": "What a license key says, once its signature verified.",
+        "required": [
+          "format",
+          "id",
+          "customer",
+          "edition",
+          "server_instances",
+          "issued",
+          "expires"
+        ],
+        "properties": {
+          "customer": {
+            "type": "string",
+            "description": "The licensee's name."
+          },
+          "edition": {
+            "type": "string",
+            "description": "`enterprise`."
+          },
+          "expires": {
+            "type": "string",
+            "format": "date",
+            "description": "Valid through this whole day, UTC."
+          },
+          "format": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Format of the key, 1.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "issued": {
+            "type": "string",
+            "format": "date"
+          },
+          "server_instances": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Central servers allowed on the database, the first one included.",
+            "minimum": 0
+          }
+        }
+      },
+      "LicenseView": {
+        "type": "object",
+        "description": "Body of `GET /api/license`. Without the Enterprise edition in the build\nonly `available` is present.",
+        "required": [
+          "available",
+          "state",
+          "added"
+        ],
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddedServer"
+            },
+            "description": "Central servers added under a license, oldest first."
+          },
+          "available": {
+            "type": "boolean",
+            "description": "Whether this build includes the Enterprise edition at all."
+          },
+          "installed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` without a key."
+          },
+          "installed_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "User name of who installed it."
+          },
+          "license": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LicenseTerms",
+                "description": "What the installed key says; `null` without a key or when it no\nlonger verifies."
+              }
+            ]
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why an installed key is `invalid`, in plain words."
+          },
+          "state": {
+            "$ref": "#/components/schemas/LicenseState"
+          }
+        }
+      },
       "NameRequest": {
         "type": "object",
         "description": "Body of `POST /api/customers` and `POST /api/customers/{id}/sites`.",
@@ -6662,6 +7784,73 @@
             "format": "int32",
             "description": "Days metrics are kept, 1 to `max_days`.",
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Role": {
+        "type": "string",
+        "description": "From least to most: `viewer` reads, `operator` also changes, `approver` also approves commands, `administrator` also manages.",
+        "enum": [
+          "viewer",
+          "operator",
+          "approver",
+          "administrator"
+        ]
+      },
+      "RoleGrant": {
+        "type": "object",
+        "description": "A role granted globally (both IDs null), on one customer and all its\nsites (`customer_id`), or on one site (`site_id`). Which sites that\nmeans is resolved by [`super::access::Access`].",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` unless granted on a customer."
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` unless granted on a site."
+          }
+        }
+      },
+      "RoleGrantRequest": {
+        "type": "object",
+        "description": "A role and where it applies; both IDs null is everything.",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer, with all its sites; absent or `null` with `site_id`\nfor everything."
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "One site; never with `customer_id`."
           }
         },
         "additionalProperties": false
@@ -7636,6 +8825,78 @@
             "description": "The updater's own version."
           }
         }
+      },
+      "UserDisabledRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/users/{id}/disabled`.",
+        "required": [
+          "disabled"
+        ],
+        "properties": {
+          "disabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UserList": {
+        "type": "object",
+        "description": "Body of `GET /api/users`, sorted by username.",
+        "required": [
+          "users"
+        ],
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserView"
+            }
+          }
+        }
+      },
+      "UserView": {
+        "type": "object",
+        "description": "One user of `GET /api/users`.",
+        "required": [
+          "id",
+          "username",
+          "state",
+          "created_at",
+          "roles"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "link_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Expiry of the user's unused password link, if any."
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoleGrant"
+            },
+            "description": "Every grant, highest role first."
+          },
+          "state": {
+            "type": "string",
+            "description": "`active`, `invited` (no password yet) or `disabled`."
+          },
+          "username": {
+            "type": "string",
+            "description": "The name they sign in with."
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -7690,6 +8951,14 @@
     {
       "name": "settings",
       "description": "Settings of the whole central server: where install commands download the agent, the address hosts reach the server at, AI, session lifetimes, the package mirror's address, how long metrics and logs are kept, and automatic agent updates. Values the server's configuration file sets win: they are shown as locked and a request to change them is refused with 409. Every change is in the audit log with the old and new values. Changes are a global administrator's; with a key, access \"Administer\" and reach \"Everything\", in the \"administration\" area, except automatic updates, in the \"updates\" area."
+    },
+    {
+      "name": "users",
+      "description": "The accounts of people who sign in to the web interface, and the roles they hold: viewer, operator, approver or administrator, on everything, one customer or one site. Only a global administrator manages them; with a key, access \"Administer\", reach \"Everything\" and the \"administration\" area. A key can grant any role, administrator of everything included, to an existing account, as its maker can. Inviting a user and issuing a password link hand out a credential for a person, so they are left out of the public API and done in the web interface. No change may leave the server without an active administrator of everything, and nobody may disable or remove their own account. Every change is in the audit log."
+    },
+    {
+      "name": "license",
+      "description": "The Enterprise license key, which allows additional central servers on one database. A single central server needs none. A global administrator's; with a key, access \"Administer\", reach \"Everything\" and the \"administration\" area."
     }
   ]
 }
