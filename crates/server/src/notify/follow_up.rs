@@ -38,15 +38,20 @@ pub const LINK_LIFETIME: TimeDelta = TimeDelta::hours(12);
 
 /// One step: after `after_minutes` without acknowledgement, counted from
 /// the step before or from the first message, tell these.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = FollowUpStepRequest)]
 #[serde(deny_unknown_fields)]
 pub struct Step {
+    /// Minutes without acknowledgement before telling, 1 to 1440,
+    /// counted from the step before or from the first message.
     pub after_minutes: u32,
     /// Schedules whose person on call is told, or who covers their gap.
     #[serde(default)]
     pub on_call: Vec<Uuid>,
+    /// Users told in person.
     #[serde(default)]
     pub users: Vec<Uuid>,
+    /// Notification channels told.
     #[serde(default)]
     pub channels: Vec<Uuid>,
     /// The nearest administrators of the incident's place who can be told:
