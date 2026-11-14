@@ -843,6 +843,18 @@ impl Connection {
                     tokio::spawn(async move { commands.report(&id, report).await });
                 }
             }
+            Some(Payload::Discovery(report)) => {
+                // Stored for check recommendations once the server keeps
+                // them (ADR-0134); until then only counted in the log.
+                tracing::debug!(
+                    agent_id = %id,
+                    sequence,
+                    services = report.services.len(),
+                    ports = report.ports.len(),
+                    mounts = report.mounts.len(),
+                    "discovery report"
+                );
+            }
             Some(Payload::RelayMirrors(report)) => {
                 tracing::debug!(agent_id = %id, sequence, mirrors = report.mirrors.len(), "relay mirror report");
                 // Only a relay speaks for its own mirrors.
