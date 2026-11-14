@@ -90,8 +90,25 @@
   color: var(--muted);
 }
 
+.rowStatus {
+  margin-top: 2px;
+  color: var(--muted);
+}
+
 .chevron {
   flex: 0 0 auto;
   color: var(--muted);
   font-size: 18px;
+}
+
+.ok {
+  color: var(--ok);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.bad {
+  color: var(--bad);
 }

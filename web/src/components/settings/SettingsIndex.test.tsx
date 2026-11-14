@@ -3,21 +3,27 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Me } from "@/lib/api";
-import { As, customerAdmin, me, viewer } from "@/test/admin";
+import { As, customerAdmin, me, relay, viewer } from "@/test/admin";
+import { stubFetch } from "@/test/fetch";
 import { setUrl } from "@/test/navigation";
 
 import { SettingsIndex } from "./SettingsIndex";
+import { SettingsStatusProvider } from "./SettingsStatus";
 
 vi.mock("next/navigation", () => import("@/test/navigation"));
 
 const global = me({ role: "administrator", customer_id: null, site_id: null });
 
-function open(user: Me) {
+function open(user: Me, routes: Parameters<typeof stubFetch>[0] = {}) {
+  const fetchMock = stubFetch(routes);
   render(
     <As user={user}>
-      <SettingsIndex />
+      <SettingsStatusProvider me={user}>
+        <SettingsIndex />
+      </SettingsStatusProvider>
     </As>,
   );
+  return fetchMock;
 }
 
 const rowNames = () => screen.queryAllByRole("link").map((link) => link.querySelector("span span")?.textContent);
@@ -60,6 +66,19 @@ describe("SettingsIndex", () => {
     const search = screen.getByRole("searchbox", { name: "Search settings" });
     await user.type(search, "relay{Escape}");
     expect(search).toHaveValue("");
+  });
+
+  it("shows where each page stands, in words, tinted when it needs someone", async () => {
+    open(global, {
+      "GET /api/relays": { status: 200, body: { relays: [relay(), relay({ status: "offline" })], next_cursor: null } },
+      "GET /api/settings/ai": { status: 200, body: { enabled: true, model: "model-x" } },
+    });
+    const relays = screen.getByRole("link", { name: /Relays/ });
+    await vi.waitFor(() => expect(relays).toHaveTextContent(/connected/));
+    expect(relays).toHaveTextContent("Warning 1 of 2 relays connected");
+    expect(await screen.findByRole("link", { name: /^AI/ })).toHaveTextContent("On · model-x");
+    // Pages whose data could not be read show no line.
+    expect(screen.getByRole("link", { name: /Backups/ })).not.toHaveTextContent(/Last backup|No backup/);
   });
 
   it("shows customer administrators their pages only, and others a note", () => {
