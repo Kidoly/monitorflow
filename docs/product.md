@@ -76,4 +76,4 @@ Support subscriptions are counted per managed server (or per relay site for MSPs
 
 - [ ] Prices and support response times for each tier, and the price of the Enterprise edition per central server.
 - [ ] Which features join the Enterprise edition after high availability. Each needs an ADR; a feature already in the core stays there.
-- [ ] Final product name (MonitorFlow is the working name).
+- [x] Product name: MonitorFlow, final.
