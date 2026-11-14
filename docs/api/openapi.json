@@ -387,6 +387,337 @@
         }
       }
     },
+    "/api/v1/auto-update": {
+      "get": {
+        "tags": [
+          "automatic updates"
+        ],
+        "summary": "Read the progress of automatic updates",
+        "description": "The settings as they apply, the central server's version (agents and\nrelays never move past it), and for agents and for relays: the newest\nstable release held, the `target` they move to, its rollout, totals,\neach site's phase and totals, and the last 10 rollouts. Relays are\nupdated before the agents behind them.\n\nMonitorFlow sends each server or relay that needs it a signed\n`self_update` command, with no person's approval: one per site first\n(`canary`), then a quarter of the site at a time (`rolling`). A site\nwhose first update failed is `blocked` for that version. Each server is\ntried once per version. Only the agent or relay restarts, never the\nhost, and its watchdog rolls back a version that does not connect.\n\nNeeds a global administrator role and the key area \"updates\".",
+        "operationId": "auto_update_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoUpdateStatus"
+                },
+                "example": {
+                  "agents": {
+                    "history": [
+                      {
+                        "counted_from": "2026-11-10T08:00:00Z",
+                        "halted_at": null,
+                        "kind": "agent",
+                        "reason": null,
+                        "started_at": "2026-11-10T08:00:00Z",
+                        "state": "rolling",
+                        "version": "0.3.1"
+                      }
+                    ],
+                    "latest": "0.3.1",
+                    "rollout": {
+                      "counted_from": "2026-11-10T08:00:00Z",
+                      "halted_at": null,
+                      "kind": "agent",
+                      "reason": null,
+                      "started_at": "2026-11-10T08:00:00Z",
+                      "state": "rolling",
+                      "version": "0.3.1"
+                    },
+                    "sites": [
+                      {
+                        "auto_update": null,
+                        "customer_name": "acme",
+                        "enabled": true,
+                        "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                        "name": "paris",
+                        "phase": "rolling",
+                        "totals": {
+                          "failed": 0,
+                          "pending": 1,
+                          "succeeded": 3,
+                          "up_to_date": 3,
+                          "waiting": 4,
+                          "waiting_for_relay": 0
+                        }
+                      }
+                    ],
+                    "target": "0.3.1",
+                    "totals": {
+                      "failed": 0,
+                      "pending": 1,
+                      "succeeded": 3,
+                      "up_to_date": 3,
+                      "waiting": 4,
+                      "waiting_for_relay": 0
+                    }
+                  },
+                  "relays": {
+                    "history": [],
+                    "latest": "0.3.1",
+                    "rollout": null,
+                    "sites": [
+                      {
+                        "auto_update": null,
+                        "customer_name": "acme",
+                        "enabled": true,
+                        "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                        "name": "paris",
+                        "phase": null,
+                        "totals": {
+                          "failed": 0,
+                          "pending": 0,
+                          "succeeded": 0,
+                          "up_to_date": 1,
+                          "waiting": 0,
+                          "waiting_for_relay": 0
+                        }
+                      }
+                    ],
+                    "target": "0.3.1",
+                    "totals": {
+                      "failed": 0,
+                      "pending": 0,
+                      "succeeded": 0,
+                      "up_to_date": 1,
+                      "waiting": 0,
+                      "waiting_for_relay": 0
+                    }
+                  },
+                  "server_version": "0.3.1",
+                  "settings": {
+                    "enabled": true,
+                    "enabled_locked": false,
+                    "failure_threshold": 2,
+                    "paused": false
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: not a global administrator. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auto-update/rollouts/{kind}/{version}/resume": {
+      "post": {
+        "tags": [
+          "automatic updates"
+        ],
+        "summary": "Resume a halted rollout",
+        "description": "A rollout halts everywhere once `failure_threshold` of its updates\nfailed. Resuming it, once the cause is fixed, counts failures again\nfrom now, and each blocked site gets a new first server among those\nnot tried yet; `self_update` commands are sent again at the next pass\n(every 5 minutes by default), unless automatic updates are paused.\n\nNeeds a global administrator role and the key area \"updates\". Audited\nas `auto_update.resume`. Resuming again is 409.",
+        "operationId": "resume_rollout",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "`agent` or `relay`; anything else is 404",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AutoUpdateKind"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "description": "The rollout's version, like `0.3.1`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rollout, rolling again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoUpdateRollout"
+                },
+                "example": {
+                  "counted_from": "2026-11-12T09:41:17Z",
+                  "halted_at": null,
+                  "kind": "agent",
+                  "reason": null,
+                  "started_at": "2026-11-10T08:00:00Z",
+                  "state": "rolling",
+                  "version": "0.3.1"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: not a global administrator. `api_key_scope`: the key lacks the area",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: `kind` is not `agent` or `relay`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: `this rollout is not halted`, also for a version that has no rollout; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/backups": {
       "get": {
         "tags": [
@@ -27509,6 +27840,68 @@
         },
         "additionalProperties": false
       },
+      "AutoUpdateKind": {
+        "type": "string",
+        "description": "What a rollout updates.",
+        "enum": [
+          "agent",
+          "relay"
+        ]
+      },
+      "AutoUpdateKindView": {
+        "type": "object",
+        "description": "Automatic updates of one kind of peer.",
+        "required": [
+          "totals",
+          "sites",
+          "history"
+        ],
+        "properties": {
+          "history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutoUpdateRollout"
+            },
+            "description": "The 10 newest rollouts, `rollout` included."
+          },
+          "latest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The newest stable release the server holds; `null` when it holds\nnone."
+          },
+          "rollout": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AutoUpdateRollout",
+                "description": "The rollout of `target`, once its first update was queued."
+              }
+            ]
+          },
+          "sites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutoUpdateSite"
+            },
+            "description": "Every site, by customer and site name."
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What peers move to: the newest stable release not newer than the\nserver; `null` when there is none."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/AutoUpdateTotals",
+            "description": "The sum of `sites`."
+          }
+        }
+      },
       "AutoUpdateRequest": {
         "type": "object",
         "description": "Body of `PUT /api/sites/{id}/agent-auto-update`: `true` or `false`\noverrides the server-wide setting, `null` inherits it.",
@@ -27522,6 +27915,61 @@
           }
         },
         "additionalProperties": false
+      },
+      "AutoUpdateRollout": {
+        "type": "object",
+        "description": "The automatic rollout of one version to one kind of peer.",
+        "required": [
+          "kind",
+          "version",
+          "state",
+          "started_at",
+          "counted_from"
+        ],
+        "properties": {
+          "counted_from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Failures count from then: its start, or when it was last resumed."
+          },
+          "halted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it halted; `null` while rolling."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AutoUpdateKind"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it halted; `null` while rolling."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When its first update was queued."
+          },
+          "state": {
+            "$ref": "#/components/schemas/AutoUpdateRolloutState"
+          },
+          "version": {
+            "type": "string",
+            "description": "The release, like `0.3.1`."
+          }
+        }
+      },
+      "AutoUpdateRolloutState": {
+        "type": "string",
+        "enum": [
+          "rolling",
+          "halted"
+        ]
       },
       "AutoUpdateSettings": {
         "type": "object",
@@ -27582,6 +28030,133 @@
           }
         },
         "additionalProperties": false
+      },
+      "AutoUpdateSite": {
+        "type": "object",
+        "description": "One site.",
+        "required": [
+          "id",
+          "name",
+          "customer_name",
+          "enabled",
+          "totals"
+        ],
+        "properties": {
+          "auto_update": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The site's override: `null` inherits."
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether automatic updates apply to it."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "phase": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AutoUpdateSitePhase",
+                "description": "`null` when automatic updates do not apply to it or it has\nnothing to update."
+              }
+            ]
+          },
+          "totals": {
+            "$ref": "#/components/schemas/AutoUpdateTotals"
+          }
+        }
+      },
+      "AutoUpdateSitePhase": {
+        "type": "string",
+        "description": "Where a site stands in a rollout.",
+        "enum": [
+          "canary",
+          "rolling",
+          "blocked"
+        ]
+      },
+      "AutoUpdateStatus": {
+        "type": "object",
+        "description": "Body of `GET /api/auto-update`.",
+        "required": [
+          "settings",
+          "server_version",
+          "agents",
+          "relays"
+        ],
+        "properties": {
+          "agents": {
+            "$ref": "#/components/schemas/AutoUpdateKindView"
+          },
+          "relays": {
+            "$ref": "#/components/schemas/AutoUpdateKindView",
+            "description": "Updated before the agents behind them."
+          },
+          "server_version": {
+            "type": "string",
+            "description": "The central server's version; agents and relays never move past\nit."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/AutoUpdateSettings"
+          }
+        }
+      },
+      "AutoUpdateTotals": {
+        "type": "object",
+        "description": "Servers (or relays) by where they stand towards `target`.",
+        "required": [
+          "up_to_date",
+          "waiting",
+          "waiting_for_relay",
+          "pending",
+          "succeeded",
+          "failed"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "description": "Since the rollout started or was resumed.",
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "description": "Updates queued and not finished.",
+            "minimum": 0
+          },
+          "succeeded": {
+            "type": "integer",
+            "description": "Updates of the target that succeeded.",
+            "minimum": 0
+          },
+          "up_to_date": {
+            "type": "integer",
+            "description": "On the target or newer.",
+            "minimum": 0
+          },
+          "waiting": {
+            "type": "integer",
+            "description": "Older and not tried yet.",
+            "minimum": 0
+          },
+          "waiting_for_relay": {
+            "type": "integer",
+            "description": "Of `waiting`, agents whose relay runs an older version or is being\nupdated.",
+            "minimum": 0
+          }
+        }
       },
       "AvailableRelease": {
         "type": "object",
@@ -38018,6 +38593,10 @@
     {
       "name": "campaigns",
       "description": "Package or agent updates sent to many servers of one customer, in batches (`waves`), inside maintenance windows, stopping when a batch fails more than its failure threshold. Targets are frozen when the campaign is made; nothing is sent before it is started. Every server gets a signed command of its own, `apply_updates` (or `self_update` for an agent update campaign), queued behind any other command of that server and checked by its agent, which runs package updates only when its administrator allowed them. Campaign commands are made by an administrator, not the AI: the risk rules and the approval queue do not apply to them. Reading needs a role on the customer as a whole (everything or the customer); creating and acting need an administrator role on it. Needs the key area \"updates\"."
+    },
+    {
+      "name": "automatic updates",
+      "description": "Agents and relays update themselves to the newest stable release the central server holds, never newer than the server: per site, one server first, then a quarter of the site at a time, never the host's packages and never a restart of the host. A rollout halts everywhere after too many failures until a global administrator resumes it. These routes need a global administrator and the key area \"updates\"; the settings themselves are under `/settings/auto-update`."
     }
   ]
 }

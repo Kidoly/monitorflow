@@ -65,6 +65,7 @@ pub fn build() -> Document {
     doc.merge(fleet::FleetDoc::openapi());
     doc.merge(super::openapi_remediation::Doc::openapi());
     doc.merge(super::openapi_campaigns::Doc::openapi());
+    doc.merge(super::openapi_auto_update::Doc::openapi());
     doc
 }
 
@@ -288,7 +289,7 @@ fn errors(operation: &mut Operation) {
 
 // Routes reachable through v1 that the document does not describe yet,
 // in the order ADR-0101 gives. Moving one into the document is additive.
-pub const NOT_YET_DOCUMENTED: &[&str] = &["/api/checks", "/api/auto-update"];
+pub const NOT_YET_DOCUMENTED: &[&str] = &["/api/checks"];
 
 // Sub-routes of servers, sites and relays not documented yet; those of
 // relays are under `/api/relays` above.

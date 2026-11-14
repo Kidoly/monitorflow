@@ -74,7 +74,8 @@ pub fn needs_update(running: &str, target: &Version) -> bool {
 }
 
 /// Where a site stands in a rollout.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdateSitePhase)]
 #[serde(rename_all = "snake_case")]
 pub enum SitePhase {
     /// No update succeeded yet: one peer at a time.
