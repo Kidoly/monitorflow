@@ -2740,6 +2740,1501 @@
         }
       }
     },
+    "/api/v1/settings/agent-install": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the agent install source",
+        "description": "Where the install commands of new enrollment tokens and install keys\ndownload the agent from by default: the project's public releases,\nthis server's release cache (`central`, with the release it holds) or\nan https directory of the operator's. Any administrator may read it,\nof a site, a customer or everything, since they make install commands.",
+        "operationId": "get_agent_install",
+        "responses": {
+          "200": {
+            "description": "The install source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentInstall"
+                },
+                "example": {
+                  "central": {
+                    "installer_sha256": "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9",
+                    "msi_sha256": null,
+                    "path": "/agent/0.4.0",
+                    "sums_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                    "version": "0.4.0"
+                  },
+                  "custom_url": null,
+                  "custom_url_from_config": false,
+                  "github_url": "https://github.com/Kidoly/monitorflow/releases/latest/download",
+                  "source": "central",
+                  "source_from_config": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Set the agent install source",
+        "description": "Replaces both values; install commands made afterwards use them, those\nalready shown do not change. A value the configuration sets may only be\nsent again unchanged. Audited as `settings.agent_install`. Safe to\nrepeat.\n\nErrors: 400 `invalid` for a `custom_url` that is not https or has a\nuser, query or fragment, or `custom` without one; 409 `conflict` when\nit would change what the configuration sets.",
+        "operationId": "set_agent_install",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentInstallRequest"
+              },
+              "example": {
+                "custom_url": null,
+                "source": "central"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The install source as it now stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentInstall"
+                },
+                "example": {
+                  "central": {
+                    "installer_sha256": "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9",
+                    "msi_sha256": null,
+                    "path": "/agent/0.4.0",
+                    "sums_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                    "version": "0.4.0"
+                  },
+                  "custom_url": null,
+                  "custom_url_from_config": false,
+                  "github_url": "https://github.com/Kidoly/monitorflow/releases/latest/download",
+                  "source": "central",
+                  "source_from_config": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Set by the configuration: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/ai": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the AI settings",
+        "description": "Whether AI is on, with which provider and model, and whether a key is\nstored. The key is never shown. Every signed-in user may read this,\nwhatever their role, since approvals say when AI is off; `base_url` is\n`null` for all but global administrators.",
+        "operationId": "get_ai",
+        "responses": {
+          "200": {
+            "description": "The AI settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiView"
+                },
+                "example": {
+                  "base_url": "http://llm.example.com:8080/v1",
+                  "enabled": true,
+                  "from_config": false,
+                  "has_key": false,
+                  "model": "local-model",
+                  "models": [
+                    {
+                      "id": "model-large",
+                      "name": "Model Large",
+                      "note": "Recommended: the best diagnoses"
+                    }
+                  ],
+                  "provider": "openai_compatible"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Set the AI settings",
+        "description": "Replaces everything but the key, which absent or empty keeps the\nstored one. The stored key belongs to its provider, and for\n`openai_compatible` to its `base_url`: changing either forgets it, and\nsending the old key to a new address requires typing it again. Turning\nAI on, or changing what it uses while on, first sends a test request\nto the provider with these settings. The key is stored encrypted.\nAudited as `settings.ai`, with `key_changed` but never the key.\n\nErrors: 400 `invalid` for an unknown model, a bad address, a missing\nkey or a test that failed, in plain words; 409 `conflict` when the\nconfiguration sets AI.",
+        "operationId": "set_ai",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiSettingsRequest"
+              },
+              "example": {
+                "base_url": "http://llm.example.com:8080/v1",
+                "enabled": true,
+                "model": "local-model",
+                "provider": "openai_compatible"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The AI settings as they now stand",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiView"
+                },
+                "example": {
+                  "base_url": "http://llm.example.com:8080/v1",
+                  "enabled": true,
+                  "from_config": false,
+                  "has_key": false,
+                  "model": "local-model",
+                  "models": [
+                    {
+                      "id": "model-large",
+                      "name": "Model Large",
+                      "note": "Recommended: the best diagnoses"
+                    }
+                  ],
+                  "provider": "openai_compatible"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Set by the configuration: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Remove the AI key",
+        "description": "Forgets the stored key, which turns AI off. Audited as `settings.ai`.\nSafe to repeat. 409 `conflict` when the configuration sets AI.",
+        "operationId": "remove_ai_key",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The AI settings as they now stand",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiView"
+                },
+                "example": {
+                  "base_url": null,
+                  "enabled": false,
+                  "from_config": false,
+                  "has_key": false,
+                  "model": "model-large",
+                  "models": [
+                    {
+                      "id": "model-large",
+                      "name": "Model Large",
+                      "note": "Recommended: the best diagnoses"
+                    }
+                  ],
+                  "provider": "anthropic"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Set by the configuration: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/ai/models": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "List a provider's models",
+        "description": "Asks the provider of the settings given, completed as for a test, for\nthe models it offers. Saves nothing. `models` is empty and `error`\nsays why when the provider could not say.",
+        "operationId": "list_ai_models",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiTestRequest"
+              },
+              "example": {
+                "base_url": "http://llm.example.com:8080/v1",
+                "provider": "openai_compatible"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The models offered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiModelList"
+                },
+                "example": {
+                  "error": null,
+                  "models": [
+                    "local-model",
+                    "local-model-large"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/ai/test": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Test AI settings",
+        "description": "Sends one small request to the provider with the settings given, the\nstored ones filling what is left out (the key only for the same\nprovider and address), and answers whether it worked. Saves nothing.\nThe central server connects to `base_url` as given, so only a global\nadministrator may call it; the stored key is never sent to an address\nother than the one it was entered for.",
+        "operationId": "test_ai",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiTestRequest"
+              },
+              "example": {
+                "base_url": "http://llm.example.com:8080/v1",
+                "model": "local-model",
+                "provider": "openai_compatible"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Whether it worked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiTestResult"
+                },
+                "example": {
+                  "error": "The server at llm.example.com did not answer within 30 seconds.",
+                  "ok": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/auto-update": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the automatic update settings",
+        "description": "Whether agents and relays update by themselves to the newest stable\nrelease the server holds, by default for sites that do not choose,\nwhether that is paused, and how many failures halt a rollout. A global\nadministrator's; with a key, the \"updates\" area.",
+        "operationId": "get_auto_update",
+        "responses": {
+          "200": {
+            "description": "The settings as they apply",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoUpdateSettings"
+                },
+                "example": {
+                  "enabled": true,
+                  "enabled_locked": false,
+                  "failure_threshold": 2,
+                  "paused": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Change the automatic update settings",
+        "description": "Changes the fields sent and keeps the others. Pausing stops new\nautomatic update commands from being queued; those already sent run.\nAudited as `settings.auto_update`. Safe to repeat. With a key, the\n\"updates\" area.\n\nErrors: 400 `invalid` for a threshold outside 1 to 1000; 409\n`conflict` for `enabled` while the configuration sets it.",
+        "operationId": "set_auto_update",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutoUpdateSettingsRequest"
+              },
+              "example": {
+                "paused": true
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The settings as they now apply",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoUpdateSettings"
+                },
+                "example": {
+                  "enabled": true,
+                  "enabled_locked": false,
+                  "failure_threshold": 2,
+                  "paused": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Set by the configuration: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/public-address": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the public address",
+        "description": "The address hosts reach this server at in install commands, the names\nits certificate covers, and whether the address is one of them: agents\nrefuse to connect otherwise. Any administrator may read it.",
+        "operationId": "get_public_address",
+        "responses": {
+          "200": {
+            "description": "The public address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicAddress"
+                },
+                "example": {
+                  "address": "monitor.example.com",
+                  "certified": true,
+                  "default": "monitor.example.com",
+                  "enroll_url": "https://monitor.example.com:7445",
+                  "names": [
+                    "monitor.example.com",
+                    "10.0.0.5"
+                  ],
+                  "upstream_url": "https://monitor.example.com:7443"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Set the public address",
+        "description": "A DNS name or IP address, without a port: the commands use the\nserver's published ports. `null` or empty goes back to the first name\nof the certificate. An address the certificate does not cover is\naccepted and `certified` says so. Affects install commands made\nafterwards only. Audited as `settings.public_address`. Safe to repeat.\n\nErrors: 400 `invalid` for a port or a malformed name.",
+        "operationId": "set_public_address",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicAddressRequest"
+              },
+              "example": {
+                "address": "monitor.example.com"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The public address as it now stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicAddress"
+                },
+                "example": {
+                  "address": "monitor.example.com",
+                  "certified": true,
+                  "default": "monitor.example.com",
+                  "enroll_url": "https://monitor.example.com:7445",
+                  "names": [
+                    "monitor.example.com",
+                    "10.0.0.5"
+                  ],
+                  "upstream_url": "https://monitor.example.com:7443"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/retention": {
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Change how long metrics and logs are kept",
+        "description": "Asks the updater to restart the stores with the new retention; `null`\nleaves a store alone. Data older than a shorter retention is deleted\nby the store and cannot be recovered. Answers at once with\n`retention.applying` true; follow it with `GET\n/api/v1/settings/server`. Audited as `settings.retention`.\n\nErrors: 400 `invalid` outside 1 to 3650 days; 409 `conflict` without\nan updater, while it is not running or another change is applied, or\nfor a store the deployment's `.env` sets.",
+        "operationId": "set_retention",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetentionRequest"
+              },
+              "example": {
+                "logs_days": null,
+                "metrics_days": 180
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Asked of the updater",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerSettings"
+                },
+                "example": {
+                  "mirror_public_url": {
+                    "default": null,
+                    "locked": false,
+                    "value": "http://mirror.example.com:7480"
+                  },
+                  "retention": {
+                    "applying": false,
+                    "default_logs": "30d",
+                    "default_metrics": "90d",
+                    "error": null,
+                    "logs": {
+                      "locked": false,
+                      "value": "30d"
+                    },
+                    "max_days": 3650,
+                    "metrics": {
+                      "locked": false,
+                      "value": "90d"
+                    },
+                    "updater_alive": true
+                  },
+                  "session_idle_timeout": {
+                    "default": 1800,
+                    "locked": false,
+                    "value": 1800
+                  },
+                  "session_lifetime": {
+                    "default": 43200,
+                    "locked": false,
+                    "value": 43200
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No updater, a change under way, or set by `.env`: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/server": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the server settings",
+        "description": "Session lifetimes of the web interface, the package mirror's address,\nand how long the stores keep metrics and logs. `retention` is `null`\noutside the compose deployment, where the updater does not manage the\nstores.",
+        "operationId": "get_server_settings",
+        "responses": {
+          "200": {
+            "description": "The server settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerSettings"
+                },
+                "example": {
+                  "mirror_public_url": {
+                    "default": null,
+                    "locked": false,
+                    "value": "http://mirror.example.com:7480"
+                  },
+                  "retention": {
+                    "applying": false,
+                    "default_logs": "30d",
+                    "default_metrics": "90d",
+                    "error": null,
+                    "logs": {
+                      "locked": false,
+                      "value": "30d"
+                    },
+                    "max_days": 3650,
+                    "metrics": {
+                      "locked": false,
+                      "value": "90d"
+                    },
+                    "updater_alive": true
+                  },
+                  "session_idle_timeout": {
+                    "default": 1800,
+                    "locked": false,
+                    "value": 1800
+                  },
+                  "session_lifetime": {
+                    "default": 43200,
+                    "locked": false,
+                    "value": 43200
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Set the server settings",
+        "description": "Replaces all three values; `null` is the default. Open sessions follow\na shorter lifetime at once, and a longer one applies from the next\nsign-in. Audited as `settings.server`. Safe to repeat.\n\nErrors: 400 `invalid` for a value out of range, an idle timeout longer\nthan the lifetime or a bad URL; 409 `conflict` when it would change\nwhat the configuration sets.",
+        "operationId": "set_server_settings",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerSettingsRequest"
+              },
+              "example": {
+                "mirror_public_url": "http://mirror.example.com:7480",
+                "session_idle_timeout": 1800,
+                "session_lifetime": 43200
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The server settings as they now stand",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerSettings"
+                },
+                "example": {
+                  "mirror_public_url": {
+                    "default": null,
+                    "locked": false,
+                    "value": "http://mirror.example.com:7480"
+                  },
+                  "retention": {
+                    "applying": false,
+                    "default_logs": "30d",
+                    "default_metrics": "90d",
+                    "error": null,
+                    "logs": {
+                      "locked": false,
+                      "value": "30d"
+                    },
+                    "max_days": 3650,
+                    "metrics": {
+                      "locked": false,
+                      "value": "90d"
+                    },
+                    "updater_alive": true
+                  },
+                  "session_idle_timeout": {
+                    "default": 1800,
+                    "locked": false,
+                    "value": 1800
+                  },
+                  "session_lifetime": {
+                    "default": 43200,
+                    "locked": false,
+                    "value": 43200
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Set by the configuration: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/silences": {
       "get": {
         "tags": [
@@ -3121,6 +4616,81 @@
           }
         }
       },
+      "AgentInstall": {
+        "type": "object",
+        "description": "Body of `GET` and `PUT /api/settings/agent-install`, and the `install`\nobject of a new token.",
+        "required": [
+          "source",
+          "source_from_config",
+          "custom_url_from_config",
+          "github_url"
+        ],
+        "properties": {
+          "central": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CentralRelease",
+                "description": "The release `central` commands install; `null` with nothing cached."
+              }
+            ]
+          },
+          "custom_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base URL of the `custom` source, if any."
+          },
+          "custom_url_from_config": {
+            "type": "boolean",
+            "description": "Whether the configuration sets `custom_url`."
+          },
+          "github_url": {
+            "type": "string",
+            "description": "Base URL of the `github` source."
+          },
+          "source": {
+            "$ref": "#/components/schemas/AgentInstallSource",
+            "description": "The default source of the install commands."
+          },
+          "source_from_config": {
+            "type": "boolean",
+            "description": "Whether the configuration sets `source` or `custom_url`, which the\nweb interface then cannot change."
+          }
+        }
+      },
+      "AgentInstallRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/settings/agent-install`: replaces both values.",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "custom_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An https URL without user, query or fragment; required for `custom`\nunless the configuration names one. `null` or empty forgets it."
+          },
+          "source": {
+            "$ref": "#/components/schemas/AgentInstallSource"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AgentInstallSource": {
+        "type": "string",
+        "description": "`github`: the project's latest public release. `central`: the central server's release cache, behind the web interface. `custom`: an https directory the operator gives.",
+        "enum": [
+          "github",
+          "central",
+          "custom"
+        ]
+      },
       "Aggregation": {
         "type": "string",
         "description": "A simple aggregation across the selected series.",
@@ -3178,6 +4748,210 @@
           }
         }
       },
+      "AiModel": {
+        "type": "object",
+        "description": "A model of the short list.",
+        "required": [
+          "id",
+          "name",
+          "note"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The id to send as `model`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name to show."
+          },
+          "note": {
+            "type": "string",
+            "description": "When to pick it, in a few words."
+          }
+        }
+      },
+      "AiModelList": {
+        "type": "object",
+        "description": "Body of `POST /api/settings/ai/models`.",
+        "required": [
+          "models"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why there is no list, in plain words."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Sorted; empty when the server could not say."
+          }
+        }
+      },
+      "AiProviderKind": {
+        "type": "string",
+        "description": "Who answers: `anthropic` or `openai`, hosted services with their own address, or `openai_compatible`, any server speaking the same chat completions protocol at `base_url`, local models included.",
+        "enum": [
+          "anthropic",
+          "openai",
+          "openai_compatible"
+        ]
+      },
+      "AiSettingsRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/settings/ai`: replaces everything but the key, which\nis absent, `null` or empty to keep the stored one. The stored key\nbelongs to the stored provider: another provider forgets it. For an\n`openai_compatible` server it also belongs to the stored address: another\naddress needs the key again, 400 otherwise.",
+        "required": [
+          "model",
+          "enabled"
+        ],
+        "properties": {
+          "api_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The provider's API key, stored sealed and never shown again. Absent,\n`null` or empty keeps the stored one."
+          },
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required for `openai_compatible`, ignored otherwise."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string",
+            "description": "A model id; for `anthropic`, one of `models`."
+          },
+          "provider": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiProviderKind",
+                "description": "Absent keeps the stored provider."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "AiTestRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/settings/ai/test` and `/models`, what the form\nholds. What it leaves out is taken from the stored settings, the key\nand address only for the same provider, and the key of an\n`openai_compatible` server only for the stored address.",
+        "properties": {
+          "api_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent or empty uses the stored key."
+          },
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For `openai_compatible`; absent uses the stored address."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent tests the stored model."
+          },
+          "provider": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiProviderKind",
+                "description": "Absent uses the stored provider."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "AiTestResult": {
+        "type": "object",
+        "description": "Body of `POST /api/settings/ai/test`.",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed, in plain words; `null` when `ok`."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "The provider answered with this key and model."
+          }
+        }
+      },
+      "AiView": {
+        "type": "object",
+        "description": "Body of `GET`, `PUT` and `DELETE /api/settings/ai`. Readable by every\nuser, since approvals say when AI is off; holds no key, and the address\nonly for global administrators.",
+        "required": [
+          "enabled",
+          "from_config",
+          "provider",
+          "has_key",
+          "model",
+          "models"
+        ],
+        "properties": {
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address of an `openai_compatible` server, often inside the\noperator's network: null for all but global administrators."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether AI diagnoses incidents and proposes commands."
+          },
+          "from_config": {
+            "type": "boolean",
+            "description": "`[ai] enabled = true` in the configuration, which takes precedence\nand locks this page."
+          },
+          "has_key": {
+            "type": "boolean",
+            "description": "Whether an API key is stored, or configured."
+          },
+          "model": {
+            "type": "string",
+            "description": "The model it uses."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiModel"
+            },
+            "description": "The short list of `anthropic` models, the default first."
+          },
+          "provider": {
+            "$ref": "#/components/schemas/AiProviderKind"
+          }
+        }
+      },
       "ApproveRequest": {
         "type": "object",
         "description": "Body of `POST .../approve`.",
@@ -3188,6 +4962,66 @@
               "null"
             ],
             "description": "Runs this instead of the proposal, recorded as an `edit`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AutoUpdateSettings": {
+        "type": "object",
+        "description": "The server-wide settings, as they apply.",
+        "required": [
+          "enabled",
+          "enabled_locked",
+          "paused",
+          "failure_threshold"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The default of sites that inherit it."
+          },
+          "enabled_locked": {
+            "type": "boolean",
+            "description": "Whether the configuration file sets `enabled`, which the web\ninterface then cannot change."
+          },
+          "failure_threshold": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Failed updates, since a rollout started or was resumed, that halt\nit; 1 to 1000, 2 by default.",
+            "minimum": 0
+          },
+          "paused": {
+            "type": "boolean",
+            "description": "Nothing automatic is queued while paused."
+          }
+        }
+      },
+      "AutoUpdateSettingsRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/settings/auto-update`: the fields to change.",
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The default of sites that inherit it; refused while the\nconfiguration sets it. Absent keeps it."
+          },
+          "failure_threshold": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "1 to 1000. Absent keeps it.",
+            "minimum": 0
+          },
+          "paused": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Nothing automatic is queued while paused. Absent keeps it."
           }
         },
         "additionalProperties": false
@@ -3629,6 +5463,42 @@
                 "description": "The change under way; `null` when none is."
               }
             ]
+          }
+        }
+      },
+      "CentralRelease": {
+        "type": "object",
+        "description": "The newest cached release as `central` install commands pin it\n(ADR-0054): its version and the SHA-256 of `SHA256SUMS`, of the\ninstaller and of the MSI, as hex. A file is only named when the cache\nholds it.",
+        "required": [
+          "version",
+          "path",
+          "sums_sha256"
+        ],
+        "properties": {
+          "installer_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "SHA-256 of the installer script, hex; `null` when not cached."
+          },
+          "msi_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "SHA-256 of the Windows installer, hex; `null` when not cached."
+          },
+          "path": {
+            "type": "string",
+            "description": "URL path of its files behind the web interface, without a\ntrailing slash: `/agent/<version>`."
+          },
+          "sums_sha256": {
+            "type": "string",
+            "description": "SHA-256 of its `SHA256SUMS`, hex."
+          },
+          "version": {
+            "type": "string"
           }
         }
       },
@@ -4599,6 +6469,61 @@
           }
         }
       },
+      "PublicAddress": {
+        "type": "object",
+        "description": "Body of `GET` and `PUT /api/settings/public-address`, and the\n`address` object of a new token.",
+        "required": [
+          "address",
+          "default",
+          "names",
+          "certified",
+          "upstream_url",
+          "enroll_url"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The address in the install commands."
+          },
+          "certified": {
+            "type": "boolean",
+            "description": "Whether the certificate is issued for `address`; agents refuse to\nconnect otherwise."
+          },
+          "default": {
+            "type": "string",
+            "description": "The first server name, used when none is chosen."
+          },
+          "enroll_url": {
+            "type": "string",
+            "description": "Where hosts enroll, at `address`."
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names the server's certificate is issued for."
+          },
+          "upstream_url": {
+            "type": "string",
+            "description": "`upstream_url` and `enroll_url` at `address`, with the published\nports."
+          }
+        }
+      },
+      "PublicAddressRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/settings/public-address`.",
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A DNS name or IP address; `null` or empty goes back to the default."
+          }
+        },
+        "additionalProperties": false
+      },
       "QueryResult": {
         "type": "object",
         "description": "Body of both query endpoints.",
@@ -4663,6 +6588,83 @@
             "$ref": "#/components/schemas/ImageRef"
           }
         }
+      },
+      "Retention": {
+        "type": "object",
+        "description": "How long one store keeps data.",
+        "required": [
+          "metrics",
+          "logs",
+          "default_metrics",
+          "default_logs",
+          "max_days",
+          "updater_alive",
+          "applying"
+        ],
+        "properties": {
+          "applying": {
+            "type": "boolean",
+            "description": "A change waits for the updater or is being applied."
+          },
+          "default_logs": {
+            "type": "string",
+            "description": "Retention of logs when nothing sets it, like `30d`."
+          },
+          "default_metrics": {
+            "type": "string",
+            "description": "Retention of metrics when nothing sets it, like `90d`."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last change failed."
+          },
+          "logs": {
+            "$ref": "#/components/schemas/StoreRetention",
+            "description": "The logs store."
+          },
+          "max_days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Longest retention accepted, in days.",
+            "minimum": 0
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/StoreRetention",
+            "description": "The metrics store."
+          },
+          "updater_alive": {
+            "type": "boolean",
+            "description": "A change can be made: the updater runs."
+          }
+        }
+      },
+      "RetentionRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/settings/retention`, in days; `null` leaves a store\nalone.",
+        "properties": {
+          "logs_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Days logs are kept, 1 to `max_days`.",
+            "minimum": 0
+          },
+          "metrics_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Days metrics are kept, 1 to `max_days`.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "Rollup": {
         "type": "string",
@@ -4799,6 +6801,72 @@
             }
           }
         }
+      },
+      "ServerSettings": {
+        "type": "object",
+        "description": "Body of `GET` and `PUT /api/settings/server`.",
+        "required": [
+          "session_lifetime",
+          "session_idle_timeout",
+          "mirror_public_url"
+        ],
+        "properties": {
+          "mirror_public_url": {
+            "$ref": "#/components/schemas/Setting_Option_String",
+            "description": "Base URL agents reach the package mirror at, written into the\npackage sources sent to them; a `null` value refuses source\nconfiguration commands."
+          },
+          "retention": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Retention",
+                "description": "`null` without an updater that reports it, as outside the compose\ndeployment: the stores' flags are then not this server's to set."
+              }
+            ]
+          },
+          "session_idle_timeout": {
+            "$ref": "#/components/schemas/Setting_u64",
+            "description": "A session unused this long ends, in seconds."
+          },
+          "session_lifetime": {
+            "$ref": "#/components/schemas/Setting_u64",
+            "description": "Longest session in the web interface, in seconds."
+          }
+        }
+      },
+      "ServerSettingsRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/settings/server`: replaces all three; `null` is the\ndefault.",
+        "properties": {
+          "mirror_public_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An http or https URL without user, query or fragment."
+          },
+          "session_idle_timeout": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Seconds, 300 to 86400, and no longer than the lifetime.",
+            "minimum": 0
+          },
+          "session_lifetime": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Seconds, 3600 to 2592000 (30 days).",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "ServerStatus": {
         "type": "string",
@@ -4985,6 +7053,66 @@
               "null"
             ],
             "description": "Peer ID of the relay carrying the live stream, if any."
+          }
+        }
+      },
+      "Setting_Option_String": {
+        "type": "object",
+        "description": "A setting of the page.",
+        "required": [
+          "value",
+          "default",
+          "locked"
+        ],
+        "properties": {
+          "default": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "The configuration sets it; the page cannot change it."
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      "Setting_u64": {
+        "type": "object",
+        "description": "A setting of the page.",
+        "required": [
+          "value",
+          "default",
+          "locked"
+        ],
+        "properties": {
+          "default": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "The configuration sets it; the page cannot change it."
+          },
+          "value": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -5278,6 +7406,24 @@
           "resolved"
         ]
       },
+      "StoreRetention": {
+        "type": "object",
+        "description": "One store's retention.",
+        "required": [
+          "value",
+          "locked"
+        ],
+        "properties": {
+          "locked": {
+            "type": "boolean",
+            "description": "`.env` sets it by hand, which wins over the web interface."
+          },
+          "value": {
+            "type": "string",
+            "description": "The value of its `-retentionPeriod` flag, like `90d`."
+          }
+        }
+      },
       "Tier": {
         "type": "string",
         "description": "Risk tiers of architecture §8, from least to most dangerous.",
@@ -5540,6 +7686,10 @@
     {
       "name": "certificate-authority",
       "description": "The certificate authority that signs the certificates of the central server, relays and agents for mTLS. These operations show when it expires and change it, planned or after a suspected compromise; they never hand out a key or a certificate. A global administrator's; with a key, access \"Administer\", reach \"Everything\" and the \"administration\" area."
+    },
+    {
+      "name": "settings",
+      "description": "Settings of the whole central server: where install commands download the agent, the address hosts reach the server at, AI, session lifetimes, the package mirror's address, how long metrics and logs are kept, and automatic agent updates. Values the server's configuration file sets win: they are shown as locked and a request to change them is refused with 409. Every change is in the audit log with the old and new values. Changes are a global administrator's; with a key, access \"Administer\" and reach \"Everything\", in the \"administration\" area, except automatic updates, in the \"updates\" area."
     }
   ]
 }

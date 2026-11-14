@@ -218,11 +218,16 @@ async fn kind_view(
 }
 
 /// Body of `PUT /api/settings/auto-update`: the fields to change.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdateSettingsRequest)]
 #[serde(deny_unknown_fields)]
 pub struct SettingsRequest {
+    /// The default of sites that inherit it; refused while the
+    /// configuration sets it. Absent keeps it.
     pub enabled: Option<bool>,
+    /// Nothing automatic is queued while paused. Absent keeps it.
     pub paused: Option<bool>,
+    /// 1 to 1000. Absent keeps it.
     pub failure_threshold: Option<u32>,
 }
 

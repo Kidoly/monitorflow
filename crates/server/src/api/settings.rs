@@ -47,7 +47,7 @@ pub struct Stored {
 
 /// Body of `GET` and `PUT /api/settings/agent-install`, and the `install`
 /// object of a new token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct AgentInstall {
     /// The default source of the install commands.
     pub source: AgentInstallSource,
@@ -56,6 +56,7 @@ pub struct AgentInstall {
     /// Whether the configuration sets `source` or `custom_url`, which the
     /// web interface then cannot change.
     pub source_from_config: bool,
+    /// Whether the configuration sets `custom_url`.
     pub custom_url_from_config: bool,
     /// Base URL of the `github` source.
     pub github_url: &'static str,
@@ -147,10 +148,12 @@ pub async fn get_agent_install(
 }
 
 /// Body of `PUT /api/settings/agent-install`: replaces both values.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentInstallRequest {
     pub source: AgentInstallSource,
+    /// An https URL without user, query or fragment; required for `custom`
+    /// unless the configuration names one. `null` or empty forgets it.
     #[serde(default)]
     pub custom_url: Option<String>,
 }

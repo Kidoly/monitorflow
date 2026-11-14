@@ -41,6 +41,7 @@ pub async fn document() -> Json<Document> {
 pub fn build() -> Document {
     let mut doc = ApiDoc::openapi();
     doc.merge(super::openapi_system::SystemDoc::openapi());
+    doc.merge(super::openapi_settings::SettingsDoc::openapi());
     doc
 }
 
@@ -208,7 +209,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/remediation/classify",
     "/api/remediation/incidents",
     "/api/remediation/events",
-    "/api/settings/",
     "/api/users",
     "/api/campaigns",
     "/api/thresholds",
