@@ -52,8 +52,11 @@ pub enum RetentionError {
     Left(String),
 }
 
-/// Why a snapshot stays, the strongest reason when there are several.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// Why a snapshot stays, the strongest reason when there are several:
+/// it is `current`, a campaign, a server or a relay uses it, or it is among
+/// the newest kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = SnapshotKept)]
 #[serde(rename_all = "lowercase")]
 pub enum Kept {
     Current,
