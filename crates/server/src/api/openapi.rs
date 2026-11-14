@@ -22,6 +22,9 @@ use utoipa::{Modify, OpenApi, ToSchema};
 use super::ERROR_CODES;
 use super::{approvals, commands, customers, incidents, metrics, servers, silences, sites};
 
+#[path = "openapi_fleet.rs"]
+mod fleet;
+
 /// Every error: a sentence to show and a stable code to branch on.
 #[derive(Serialize, ToSchema)]
 #[schema(as = Error)]
@@ -39,7 +42,9 @@ pub async fn document() -> Json<Document> {
 }
 
 pub fn build() -> Document {
-    ApiDoc::openapi()
+    let mut doc = ApiDoc::openapi();
+    doc.merge(fleet::FleetDoc::openapi());
+    doc
 }
 
 #[derive(OpenApi)]
@@ -196,9 +201,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/integrations",
     "/api/on-call/",
     "/api/follow-up/",
-    "/api/tokens",
-    "/api/install-keys",
-    "/api/pending-hosts/",
     "/api/sources",
     "/api/mirrors",
     "/api/remediation/rules",

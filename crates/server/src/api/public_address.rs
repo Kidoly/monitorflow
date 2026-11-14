@@ -22,7 +22,7 @@ use super::{ApiError, ApiState};
 
 /// Body of `GET` and `PUT /api/settings/public-address`, and the
 /// `address` object of a new token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct PublicAddress {
     /// The address in the install commands.
     pub address: String,
@@ -36,6 +36,7 @@ pub struct PublicAddress {
     /// `upstream_url` and `enroll_url` at `address`, with the published
     /// ports.
     pub upstream_url: String,
+    /// See `upstream_url`.
     pub enroll_url: String,
 }
 

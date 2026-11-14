@@ -702,6 +702,372 @@
         }
       }
     },
+    "/api/v1/install-keys": {
+      "get": {
+        "tags": [
+          "enrollment"
+        ],
+        "summary": "List install keys and pending hosts",
+        "description": "The 100 newest install keys of the sites whose customer the caller\nadministers, in every state, without their secret; and every host\nwaiting for approval on those sites, oldest first. Not paged; older\nkeys stay in the audit log.\n\nNeeds the administrator role on a customer, or global: 403 `forbidden`\notherwise, also for a site's administrator.",
+        "operationId": "list_install_keys",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallKeyList"
+                },
+                "example": {
+                  "keys": [
+                    {
+                      "created_at": "2026-11-14T09:00:00Z",
+                      "created_by_username": "alice",
+                      "customer_id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+                      "customer_name": "acme",
+                      "expires_at": "2026-12-14T09:00:00Z",
+                      "host_count": 0,
+                      "id": "4c5d6e7f-8a9b-4c0d-9e1f-2a3b4c5d6e7f",
+                      "max_hosts": 50,
+                      "require_approval": true,
+                      "revoked_at": null,
+                      "role": "agent",
+                      "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b",
+                      "site_name": "paris",
+                      "state": "active"
+                    }
+                  ],
+                  "pending_hosts": [
+                    {
+                      "created_at": "2026-11-14T09:12:40Z",
+                      "customer_name": "acme",
+                      "hostname": "web-2",
+                      "install_key_id": "4c5d6e7f-8a9b-4c0d-9e1f-2a3b4c5d6e7f",
+                      "peer_id": "web-2",
+                      "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b",
+                      "site_name": "paris",
+                      "source": "192.0.2.10"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller administers no customer: `forbidden`; a key outside the \"administration\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "enrollment"
+        ],
+        "summary": "Create an install key",
+        "description": "Makes a reusable key for the install commands of a site. An `agent` key\nenrolls up to `max_hosts` servers (no limit by default) until it expires\n(30 days by default), each named after its host name; with\n`require_approval`, each new host waits in `pending_hosts` until an\nadministrator approves it. A `relay` key enrolls one relay within a day\nby default; `max_hosts` and `require_approval` are ignored for it, and\nthe relay waits for an administrator to confirm its names.\n\nThe answer is the only time the secret `token` is shown: MonitorFlow\nstores its hash and no route returns it again. It comes with what the\ninstall commands need, as for an enrollment token.\n\nNeeds the administrator role on the site's customer. A site the caller\ncannot read is 404. Audited as `install_key.create`, without the secret.\n\nNot safe to repeat: each call makes another key. With\n`Idempotency-Key`, a repeat answers 409 `conflict` with\n`Idempotent-Replayed: true` instead of making a second key or showing\nthe secret again.",
+        "operationId": "create_install_key",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallKeyRequest"
+              },
+              "examples": {
+                "agent": {
+                  "summary": "Servers, with approval",
+                  "value": {
+                    "max_hosts": 50,
+                    "require_approval": true,
+                    "role": "agent",
+                    "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b",
+                    "ttl_s": 2592000
+                  }
+                },
+                "relay": {
+                  "summary": "One relay",
+                  "value": {
+                    "role": "relay",
+                    "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedInstallKey"
+                },
+                "example": {
+                  "address": {
+                    "address": "mf.example.com",
+                    "certified": true,
+                    "default": "mf.example.com",
+                    "enroll_url": "https://mf.example.com:7445",
+                    "names": [
+                      "mf.example.com",
+                      "10.0.0.2"
+                    ],
+                    "upstream_url": "https://mf.example.com:7443"
+                  },
+                  "created_at": "2026-11-14T09:00:00Z",
+                  "created_by_username": "alice",
+                  "customer_id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+                  "customer_name": "acme",
+                  "enroll_url": "https://mf.example.com:7445",
+                  "expires_at": "2026-12-14T09:00:00Z",
+                  "host_count": 0,
+                  "id": "4c5d6e7f-8a9b-4c0d-9e1f-2a3b4c5d6e7f",
+                  "install": {
+                    "central": {
+                      "installer_sha256": "a1c3e5f7092b4d6f8a0c2e4f6b8d0a2c4e6f8b0d2a4c6e8f0b2d4a6c8e0f2b4d",
+                      "msi_sha256": null,
+                      "path": "/agent/0.9.2",
+                      "sums_sha256": "5f2b8c0e7d1a9f3e6b4c2d8a0e7f1b3c5d9a2e4f6b8c0d1e3f5a7b9c2d4e6f80",
+                      "version": "0.9.2"
+                    },
+                    "custom_url": null,
+                    "custom_url_from_config": false,
+                    "github_url": "https://downloads.example.com/monitorflow/latest",
+                    "source": "central",
+                    "source_from_config": false
+                  },
+                  "max_hosts": 50,
+                  "require_approval": true,
+                  "revoked_at": null,
+                  "role": "agent",
+                  "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b",
+                  "site_name": "paris",
+                  "state": "active",
+                  "token": "mfe1.q4Rr0xYlq5bS3d9n4oN2c1VZ6sPzT0kQvG8yW7uHjLm.3xHq9kQ2v0bR6nWcY1tS8pZ4mJ7fL5dA9gE2uK0iO3w",
+                  "upstream_url": "https://mf.example.com:7443"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing, unknown or out of range: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the site's customer: `forbidden`; a key outside the \"administration\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or not readable by the caller: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An `Idempotency-Key` replay: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/install-keys/{id}": {
+      "delete": {
+        "tags": [
+          "enrollment"
+        ],
+        "summary": "Revoke an install key",
+        "description": "The key enrolls no more hosts. Hosts it enrolled keep working, and hosts\nwaiting for approval still wait. The key stays listed as `revoked`.\nAudited as `install_key.revoke`.\n\nNeeds the administrator role on the key's customer.",
+        "operationId": "revoke_install_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The key's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the key's customer: `forbidden`; a key outside the \"administration\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such key, or of a site the caller cannot read: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already revoked: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/metrics/query": {
       "get": {
         "tags": [
@@ -951,6 +1317,198 @@
           },
           "404": {
             "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pending-hosts/{peer_id}/approve": {
+      "post": {
+        "tags": [
+          "enrollment"
+        ],
+        "summary": "Approve a pending host",
+        "description": "A host enrolled by a key that requires approval is accepted: its next\nconnection goes through and it appears in the server list. A server\nthat was removed and enrolled again under the same ID is back. Audited\nas `pending_host.approve`.\n\nNeeds the administrator role on the host's customer.",
+        "operationId": "approve_pending_host",
+        "parameters": [
+          {
+            "name": "peer_id",
+            "in": "path",
+            "description": "The `peer_id` of an entry of `pending_hosts`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Approved"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the host's customer: `forbidden`; a key outside the \"administration\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pending host, or of a site the caller cannot read: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already approved or rejected: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pending-hosts/{peer_id}/reject": {
+      "post": {
+        "tags": [
+          "enrollment"
+        ],
+        "summary": "Reject a pending host",
+        "description": "Revokes the host's certificates and closes its connection, so it can\nnever connect under this ID.\nAudited as `pending_host.reject` with the revoked serials.\n\nNeeds the administrator role on the host's customer.",
+        "operationId": "reject_pending_host",
+        "parameters": [
+          {
+            "name": "peer_id",
+            "in": "path",
+            "description": "The `peer_id` of an entry of `pending_hosts`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Rejected"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the host's customer: `forbidden`; a key outside the \"administration\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pending host, or of a site the caller cannot read: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already approved or rejected: `conflict`",
             "content": {
               "application/json": {
                 "schema": {
@@ -2018,6 +2576,396 @@
           }
         }
       }
+    },
+    "/api/v1/tokens": {
+      "get": {
+        "tags": [
+          "enrollment"
+        ],
+        "summary": "List enrollment tokens",
+        "description": "The single-use tokens of the sites whose customer the caller\nadministers, newest first, in every state, without their secret. Records\nthat install keys leave when they enroll a host are not listed.\n\nPaged: `limit` (1 to 500, default 100) and `cursor`, the `next_cursor`\nof the previous page. `state` keeps only `pending`, `used` or `expired`\ntokens. Unknown query parameters are refused.\n\nNeeds the administrator role on a customer, or global: 403 `forbidden`\notherwise, also for a site's administrator.",
+        "operationId": "list_tokens",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Only tokens in this state.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/EnrollmentTokenState"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to 500, default 100.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentTokenList"
+                },
+                "example": {
+                  "next_cursor": null,
+                  "tokens": [
+                    {
+                      "created_at": "2026-11-14T09:00:00Z",
+                      "created_by": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                      "created_by_username": "alice",
+                      "customer_id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+                      "customer_name": "acme",
+                      "expires_at": "2026-11-14T10:00:00Z",
+                      "id": "0b7f3c5e-2d4a-4e61-9f8b-1a2c3d4e5f60",
+                      "peer_id": "web-1",
+                      "role": "agent",
+                      "server_names": [],
+                      "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b",
+                      "site_name": "paris",
+                      "state": "used",
+                      "used_at": "2026-11-14T09:04:12Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad `state`, `limit` or `cursor`, or an unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller administers no customer: `forbidden`; a key outside the \"administration\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "enrollment"
+        ],
+        "summary": "Create an enrollment token",
+        "description": "Makes a single-use token that enrolls one server (`agent`) or relay\n(`relay`) under the ID `peer_id` on the site `site_id`. The answer is\nthe only time the secret `token` is shown: MonitorFlow stores its hash,\nno route returns it again, and a token that is lost is revoked and made\nagain. It comes with what the install commands need: the addresses to\nenroll at and connect to, and where installers download the agent from.\n\nFor a relay, `server_names` are the names and addresses its agents reach\nit at; they go on its certificate. A relay token without them leaves\nthe relay waiting for an administrator to confirm its names (`POST\n/api/v1/relays/{id}/names`).\n\nNeeds the administrator role on the site's customer. A site the caller\ncannot read is 404. Audited as `enrollment_token.create`, without the\nsecret.\n\nNot safe to repeat: each call makes another token. With\n`Idempotency-Key`, a repeat does not make a second one but answers 409\n`conflict` with `Idempotent-Replayed: true`, saying the secret is shown\nonly once: the first answer is not stored.",
+        "operationId": "create_token",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollmentTokenRequest"
+              },
+              "examples": {
+                "agent": {
+                  "summary": "A server",
+                  "value": {
+                    "peer_id": "web-1",
+                    "role": "agent",
+                    "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b",
+                    "ttl_s": 3600
+                  }
+                },
+                "relay": {
+                  "summary": "A relay with its names",
+                  "value": {
+                    "peer_id": "relay-paris",
+                    "role": "relay",
+                    "server_names": [
+                      "relay.paris.example.com",
+                      "10.1.0.5"
+                    ],
+                    "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedEnrollmentToken"
+                },
+                "example": {
+                  "address": {
+                    "address": "mf.example.com",
+                    "certified": true,
+                    "default": "mf.example.com",
+                    "enroll_url": "https://mf.example.com:7445",
+                    "names": [
+                      "mf.example.com",
+                      "10.0.0.2"
+                    ],
+                    "upstream_url": "https://mf.example.com:7443"
+                  },
+                  "created_at": "2026-11-14T09:00:00Z",
+                  "created_by": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                  "created_by_username": "alice",
+                  "customer_id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+                  "customer_name": "acme",
+                  "enroll_url": "https://mf.example.com:7445",
+                  "expires_at": "2026-11-14T10:00:00Z",
+                  "id": "0b7f3c5e-2d4a-4e61-9f8b-1a2c3d4e5f60",
+                  "install": {
+                    "central": {
+                      "installer_sha256": "a1c3e5f7092b4d6f8a0c2e4f6b8d0a2c4e6f8b0d2a4c6e8f0b2d4a6c8e0f2b4d",
+                      "msi_sha256": null,
+                      "path": "/agent/0.9.2",
+                      "sums_sha256": "5f2b8c0e7d1a9f3e6b4c2d8a0e7f1b3c5d9a2e4f6b8c0d1e3f5a7b9c2d4e6f80",
+                      "version": "0.9.2"
+                    },
+                    "custom_url": null,
+                    "custom_url_from_config": false,
+                    "github_url": "https://downloads.example.com/monitorflow/latest",
+                    "source": "central",
+                    "source_from_config": false
+                  },
+                  "peer_id": "web-1",
+                  "role": "agent",
+                  "server_names": [],
+                  "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b",
+                  "site_name": "paris",
+                  "state": "pending",
+                  "token": "mfe1.q4Rr0xYlq5bS3d9n4oN2c1VZ6sPzT0kQvG8yW7uHjLm.3xHq9kQ2v0bR6nWcY1tS8pZ4mJ7fL5dA9gE2uK0iO3w",
+                  "upstream_url": "https://mf.example.com:7443",
+                  "used_at": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing, unknown or out of range, `peer_id` is not a valid ID, `server_names` on an agent token or a name that is not a DNS name or IP address: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the site's customer: `forbidden`; a key outside the \"administration\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or not readable by the caller: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`peer_id` is taken by another server or relay, belongs to a peer removed from another site, or a relay name is the central server's or another site's relay's; or an `Idempotency-Key` replay: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/{id}": {
+      "delete": {
+        "tags": [
+          "enrollment"
+        ],
+        "summary": "Revoke an enrollment token",
+        "description": "Deletes a token that was not used, expired or not, so it can enroll\nnothing. The audit log keeps its record (`enrollment_token.revoke`). A\nused token cannot be revoked: remove the server or relay it enrolled\ninstead.\n\nNeeds the administrator role on the token's customer. Safe to repeat in\neffect: once deleted, the token is 404.",
+        "operationId": "delete_token",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The token's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the token's customer: `forbidden`; a key outside the \"administration\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such token, already revoked, or of a site the caller cannot read: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The token was already used: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2053,6 +3001,53 @@
               "type": "string",
               "format": "uuid"
             }
+          }
+        }
+      },
+      "AgentInstall": {
+        "type": "object",
+        "description": "Body of `GET` and `PUT /api/settings/agent-install`, and the `install`\nobject of a new token.",
+        "required": [
+          "source",
+          "source_from_config",
+          "custom_url_from_config",
+          "github_url"
+        ],
+        "properties": {
+          "central": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CentralRelease",
+                "description": "The release `central` commands install; `null` with nothing cached."
+              }
+            ]
+          },
+          "custom_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base URL of the `custom` source, if any."
+          },
+          "custom_url_from_config": {
+            "type": "boolean",
+            "description": "Whether the configuration sets `custom_url`."
+          },
+          "github_url": {
+            "type": "string",
+            "description": "Base URL of the `github` source."
+          },
+          "source": {
+            "type": "string",
+            "description": "The default source of the install commands: `github` (the latest\npublic release), `central` (this server's release cache) or\n`custom` (an https directory the operator gives).",
+            "example": "central"
+          },
+          "source_from_config": {
+            "type": "boolean",
+            "description": "Whether the configuration sets `source` or `custom_url`, which the\nweb interface then cannot change."
           }
         }
       },
@@ -2126,6 +3121,43 @@
           }
         },
         "additionalProperties": false
+      },
+      "CentralRelease": {
+        "type": "object",
+        "description": "The newest cached release as `central` install commands pin it\n(ADR-0054): its version and the SHA-256 of `SHA256SUMS`, of the\ninstaller and of the MSI, as hex. A file is only named when the cache\nholds it.",
+        "required": [
+          "version",
+          "path",
+          "sums_sha256"
+        ],
+        "properties": {
+          "installer_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "SHA-256 of `install.sh`; `null` when the cache lacks it."
+          },
+          "msi_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "SHA-256 of the Windows MSI; `null` when the cache lacks it."
+          },
+          "path": {
+            "type": "string",
+            "description": "URL path of its files behind the web interface, without a\ntrailing slash: `/agent/<version>`."
+          },
+          "sums_sha256": {
+            "type": "string",
+            "description": "SHA-256 of `SHA256SUMS`, lowercase hexadecimal."
+          },
+          "version": {
+            "type": "string",
+            "description": "Such as `0.9.2`."
+          }
+        }
       },
       "CertificateView": {
         "type": "object",
@@ -2375,6 +3407,86 @@
           }
         }
       },
+      "CreatedEnrollmentToken": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EnrollmentToken"
+          },
+          {
+            "type": "object",
+            "required": [
+              "token",
+              "upstream_url",
+              "enroll_url",
+              "install",
+              "address"
+            ],
+            "properties": {
+              "address": {
+                "$ref": "#/components/schemas/PublicAddress",
+                "description": "The address in `upstream_url` and `enroll_url`, which the tokens\npage lets administrators change."
+              },
+              "enroll_url": {
+                "type": "string",
+                "description": "Where the installer enrolls, `https://host:port`."
+              },
+              "install": {
+                "$ref": "#/components/schemas/AgentInstall",
+                "description": "The install sources and the default one (ADR-0054)."
+              },
+              "token": {
+                "type": "string",
+                "description": "The secret: `mfe1.`, 43 characters of base64url, `.`, and the\npinned SHA-256 of the certificate authority in 43 more. Shown in\nthis answer only; MonitorFlow keeps only its hash."
+              },
+              "upstream_url": {
+                "type": "string",
+                "description": "Where the enrolled peer connects, `https://host:port`."
+              }
+            }
+          }
+        ],
+        "description": "Body of `POST /api/tokens`: the stored token, its secret string and the\npeer configuration it needs. Shown once; nothing returns it again. No\n`Debug`, so the secret cannot end up in a log line."
+      },
+      "CreatedInstallKey": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/InstallKey"
+          },
+          {
+            "type": "object",
+            "required": [
+              "token",
+              "upstream_url",
+              "enroll_url",
+              "install",
+              "address"
+            ],
+            "properties": {
+              "address": {
+                "$ref": "#/components/schemas/PublicAddress",
+                "description": "The address in `upstream_url` and `enroll_url`."
+              },
+              "enroll_url": {
+                "type": "string",
+                "description": "Where installers enroll, `https://host:port`."
+              },
+              "install": {
+                "$ref": "#/components/schemas/AgentInstall",
+                "description": "The install sources and the default one."
+              },
+              "token": {
+                "type": "string",
+                "description": "The secret, in the same `mfe1.…` form as an enrollment token. Shown\nin this answer only; MonitorFlow keeps only its hash."
+              },
+              "upstream_url": {
+                "type": "string",
+                "description": "Where enrolled hosts connect, `https://host:port`."
+              }
+            }
+          }
+        ],
+        "description": "Body of `POST /api/install-keys`: the stored key, its secret string,\nnamed `token` as installers take it, and what the commands need. Shown\nonce; no `Debug`, so the secret cannot end up in a log line."
+      },
       "CustomerList": {
         "type": "object",
         "description": "Body of `GET /api/customers`, sorted by name.",
@@ -2444,6 +3556,164 @@
             "description": "`approved` or `rejected`."
           }
         }
+      },
+      "EnrollmentToken": {
+        "type": "object",
+        "description": "One token, never with its secret.",
+        "required": [
+          "id",
+          "role",
+          "peer_id",
+          "site_id",
+          "site_name",
+          "customer_id",
+          "customer_name",
+          "server_names",
+          "created_at",
+          "expires_at",
+          "state"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` for tokens made with the server CLI."
+          },
+          "created_by_username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` for tokens made with the server CLI, or when that user was\ndeleted."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "peer_id": {
+            "type": "string",
+            "description": "The ID the enrolled server or relay gets."
+          },
+          "role": {
+            "type": "string",
+            "description": "`agent` or `relay`."
+          },
+          "server_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Relay tokens: the names its certificate will carry. Empty for\nagents."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/EnrollmentTokenState"
+          },
+          "used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When a host enrolled with it; `null` while unused."
+          }
+        }
+      },
+      "EnrollmentTokenList": {
+        "type": "object",
+        "description": "Body of `GET /api/tokens`, newest first.",
+        "required": [
+          "tokens"
+        ],
+        "properties": {
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last one."
+          },
+          "tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnrollmentToken"
+            }
+          }
+        }
+      },
+      "EnrollmentTokenRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/tokens`.",
+        "required": [
+          "role",
+          "peer_id",
+          "site_id"
+        ],
+        "properties": {
+          "peer_id": {
+            "type": "string",
+            "description": "The ID the server or relay will have: its certificate name, 1 to 64\nASCII letters, digits, `.`, `_` and `-`. An ID another server or\nrelay holds is refused."
+          },
+          "role": {
+            "$ref": "#/components/schemas/TokenRole"
+          },
+          "server_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Relays only, at most 16: the DNS names and IP addresses its agents\nconnect to, which its certificate will carry. The central server's\nown names and names another site's relay holds are refused. Empty\nfor agents."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The site it joins."
+          },
+          "ttl_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Validity in seconds, 60 to 604800 (7 days); 3600 (one hour) when\nabsent or `null`.",
+            "maximum": 604800,
+            "minimum": 60
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentTokenState": {
+        "type": "string",
+        "description": "`pending` until used or expired; a used token stays `used`.",
+        "enum": [
+          "pending",
+          "used",
+          "expired"
+        ]
       },
       "Error": {
         "type": "object",
@@ -2824,6 +4094,174 @@
           }
         }
       },
+      "InstallKey": {
+        "type": "object",
+        "description": "One key, never with its secret.",
+        "required": [
+          "id",
+          "role",
+          "site_id",
+          "site_name",
+          "customer_id",
+          "customer_name",
+          "created_at",
+          "expires_at",
+          "host_count",
+          "require_approval",
+          "state"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by_username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` for keys made with the server CLI, or when that user was\ndeleted."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "host_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Hosts it enrolled so far."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "max_hosts": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Hosts it may enroll; `null` for no limit. 1 for a relay key."
+          },
+          "require_approval": {
+            "type": "boolean"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` unless revoked."
+          },
+          "role": {
+            "type": "string",
+            "description": "`agent` or `relay`."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/InstallKeyState"
+          }
+        }
+      },
+      "InstallKeyList": {
+        "type": "object",
+        "description": "Body of `GET /api/install-keys`.",
+        "required": [
+          "keys",
+          "pending_hosts"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstallKey"
+            },
+            "description": "The 100 newest keys, revoked and expired ones included, newest\nfirst."
+          },
+          "pending_hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingHost"
+            },
+            "description": "Every host waiting for approval, oldest first."
+          }
+        }
+      },
+      "InstallKeyRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/install-keys`.",
+        "required": [
+          "site_id"
+        ],
+        "properties": {
+          "max_hosts": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Hosts the key may enroll, 1 to 100000; no limit when absent or\n`null`. Ignored for a relay key, which enrolls one host.",
+            "maximum": 100000,
+            "minimum": 1
+          },
+          "require_approval": {
+            "type": "boolean",
+            "description": "New hosts wait for an administrator before they appear (see\n`pending_hosts`). `false` by default; ignored for a relay key."
+          },
+          "role": {
+            "$ref": "#/components/schemas/InstallKeyRole",
+            "description": "`agent` by default. A `relay` key enrolls one relay, whose names an\nadministrator confirms (ADR-0066), so it takes no host limit or\napproval."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The site the hosts join."
+          },
+          "ttl_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Validity in seconds, 3600 (one hour) to 31536000 (one year);\n2592000 (30 days) by default, 86400 (one day) for a relay.",
+            "maximum": 31536000,
+            "minimum": 3600
+          }
+        },
+        "additionalProperties": false
+      },
+      "InstallKeyRole": {
+        "type": "string",
+        "description": "What the key enrolls.",
+        "enum": [
+          "agent",
+          "relay"
+        ]
+      },
+      "InstallKeyState": {
+        "type": "string",
+        "description": "`revoked` first, then `expired`, then `used_up` once `host_count`\nreaches `max_hosts`; `active` otherwise. Only `active` keys enroll.",
+        "enum": [
+          "active",
+          "expired",
+          "used_up",
+          "revoked"
+        ]
+      },
       "NameRequest": {
         "type": "object",
         "description": "Body of `POST /api/customers` and `POST /api/customers/{id}/sites`.",
@@ -2836,6 +4274,56 @@
           }
         },
         "additionalProperties": false
+      },
+      "PendingHost": {
+        "type": "object",
+        "description": "A host enrolled by a key that asks for approval.",
+        "required": [
+          "peer_id",
+          "hostname",
+          "site_id",
+          "site_name",
+          "customer_name",
+          "install_key_id",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it enrolled."
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string",
+            "description": "The host name it reported."
+          },
+          "install_key_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The key it enrolled with."
+          },
+          "peer_id": {
+            "type": "string",
+            "description": "The ID it was given, which approving or rejecting it takes."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The IP address it enrolled from; `null` when unknown."
+          }
+        }
       },
       "PendingList": {
         "type": "object",
@@ -2991,6 +4479,47 @@
           "tier": {
             "$ref": "#/components/schemas/Tier",
             "description": "`low_impact` or `high_impact`, from the rules, never from the AI."
+          }
+        }
+      },
+      "PublicAddress": {
+        "type": "object",
+        "description": "Body of `GET` and `PUT /api/settings/public-address`, and the\n`address` object of a new token.",
+        "required": [
+          "address",
+          "default",
+          "names",
+          "certified",
+          "upstream_url",
+          "enroll_url"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The address in the install commands."
+          },
+          "certified": {
+            "type": "boolean",
+            "description": "Whether the certificate is issued for `address`; agents refuse to\nconnect otherwise."
+          },
+          "default": {
+            "type": "string",
+            "description": "The first server name, used when none is chosen."
+          },
+          "enroll_url": {
+            "type": "string",
+            "description": "See `upstream_url`."
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names the server's certificate is issued for."
+          },
+          "upstream_url": {
+            "type": "string",
+            "description": "`upstream_url` and `enroll_url` at `address`, with the published\nports."
           }
         }
       },
@@ -3594,6 +5123,14 @@
           "high_impact",
           "forbidden"
         ]
+      },
+      "TokenRole": {
+        "type": "string",
+        "description": "What the token enrolls: `agent` for a server, `relay` for a relay.",
+        "enum": [
+          "agent",
+          "relay"
+        ]
       }
     },
     "securitySchemes": {
@@ -3628,6 +5165,10 @@
     {
       "name": "metrics",
       "description": "Metric queries built by MonitorFlow, never raw PromQL"
+    },
+    {
+      "name": "enrollment",
+      "description": "Bringing servers and relays into MonitorFlow. An enrollment token is single-use: it enrolls one named server or relay on one site within its validity (one hour by default). An install key is reusable: it enrolls any number of servers (or one relay) on one site for up to a year, names each after its host, and can make new hosts wait for an administrator's approval. Both are secrets shown once, in the answer that creates them; no route returns them again and an `Idempotency-Key` replay does not either. Every route needs the administrator role on the site's customer, given globally or for that customer: a site's administrator cannot enroll. Through an API key, that means access \"Administer\", the \"administration\" area, and a reach of everything or of the customer."
     }
   ]
 }

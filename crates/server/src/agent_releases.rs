@@ -179,14 +179,18 @@ impl ReleaseCache {
 /// (ADR-0054): its version and the SHA-256 of `SHA256SUMS`, of the
 /// installer and of the MSI, as hex. A file is only named when the cache
 /// holds it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 pub struct CentralRelease {
+    /// Such as `0.9.2`.
     pub version: String,
     /// URL path of its files behind the web interface, without a
     /// trailing slash: `/agent/<version>`.
     pub path: String,
+    /// SHA-256 of `SHA256SUMS`, lowercase hexadecimal.
     pub sums_sha256: String,
+    /// SHA-256 of `install.sh`; `null` when the cache lacks it.
     pub installer_sha256: Option<String>,
+    /// SHA-256 of the Windows MSI; `null` when the cache lacks it.
     pub msi_sha256: Option<String>,
 }
 
