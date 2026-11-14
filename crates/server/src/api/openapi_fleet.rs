@@ -1,12 +1,15 @@
 //! The fleet part of the OpenAPI document (ADR-0101): enrolling servers
 //! and relays with enrollment tokens and install keys, and the hosts that
-//! wait for approval; relays; the agent releases this server serves. Merged into [`super::build`]; like `openapi.rs`, the
+//! wait for approval; relays; the agent releases this server serves;
+//! package mirrors. Merged into [`super::build`]; like `openapi.rs`, the
 //! functions only carry each route's description.
 
 use serde_json::json;
 use utoipa::OpenApi;
 
-use super::super::{commands, install_keys, relays, release_import, revoke, servers, tokens};
+use super::super::{
+    commands, install_keys, mirrors, relays, release_import, revoke, servers, tokens,
+};
 use super::{Common, ErrorBody};
 use crate::relay_commands;
 
@@ -17,6 +20,8 @@ use crate::relay_commands;
         revoke_install_key, approve_pending_host, reject_pending_host,
         list_relays, relay_detail, revoke_relay, update_relay, confirm_relay_names,
         list_agent_releases, import_release, import_release_from_url,
+        list_mirrors, mirror_catalog, add_mirrors, mirror_detail, delete_mirror, sync_mirror,
+        snapshot_mirror,
     ),
     modifiers(&Common),
     tags(
@@ -38,6 +43,12 @@ updates in \"updates\"; listing them is open to any key within its reach."),
 serves to install commands and to agent and relay updates, so that servers without Internet access can \
 install and update. Every release is checked against the release keys built into the server before it \
 is kept. Importing one is for global administrators, since every customer uses the same releases."),
+        (name = "mirrors", description = "Package mirrors: copies of the apt and dnf repositories of \
+the distributions servers run, kept on this server and on relays, so servers update without reaching \
+the Internet and every server of a campaign installs the same packages. A mirror syncs on a schedule; \
+a snapshot freezes what a sync copied under a name and never changes, and `current` is the newest one. \
+Mirrors are shared by every customer, so every route is for global administrators: through an API key, \
+access \"Administer\", reach everything and the \"updates\" area."),
     )
 )]
 pub(super) struct FleetDoc;
@@ -693,3 +704,248 @@ key outside the \"updates\" area: `api_key_scope`"),
         (status = 409, body = ErrorBody, description = "Another import is running: `conflict`"),
     ))]
 fn import_release_from_url() {}
+
+fn run_summary(kind: &str, state: &str) -> serde_json::Value {
+    let running = state == "running";
+    json!({
+        "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+        "kind": kind,
+        "trigger": "manual",
+        "requested_by": "user:9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+        "state": state,
+        "snapshot_id": null,
+        "error": null,
+        "started_at": "2026-11-14T03:00:00Z",
+        "finished_at": if running { json!(null) } else { json!("2026-11-14T03:12:40Z") }
+    })
+}
+
+fn mirror() -> serde_json::Value {
+    json!({
+        "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+        "name": "debian-12",
+        "family": "apt",
+        "upstream_url": "https://deb.debian.org/debian",
+        "distribution": "bookworm",
+        "components": ["main", "non-free-firmware"],
+        "architectures": ["amd64"],
+        "sync_interval_s": 86400,
+        "auto_snapshot": true,
+        "created_at": "2026-10-01T12:00:00Z",
+        "deleting_at": null,
+        "delete_error": null,
+        "current_snapshot": "20261114T031240Z",
+        "last_run": run_summary("sync", "succeeded")
+    })
+}
+
+/// List mirrors
+///
+/// Every package mirror of this install, by name, with its newest
+/// published snapshot and its last run. Mirrors are shared by every
+/// customer.
+///
+/// Global administrators only. Through an API key: access "Administer",
+/// reach everything, the "updates" area.
+#[utoipa::path(get, path = "/api/v1/mirrors", tag = "mirrors",
+    responses(
+        (status = 200, body = mirrors::MirrorList, example = json!({
+            "mirrors": [mirror()],
+            "keep_snapshots": 3
+        })),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+    ))]
+fn list_mirrors() {}
+
+/// List the distributions mirrors can carry
+///
+/// The catalog of distributions a mirror can be added for, whether each is
+/// added already and whether there is room for it, with the state of the
+/// mirror tools and of the disk the mirrors live on.
+///
+/// Global administrators only, as for the list.
+#[utoipa::path(get, path = "/api/v1/mirrors/catalog", tag = "mirrors",
+    responses(
+        (status = 200, body = mirrors::Catalog, example = json!({
+            "tools": { "available": true, "problem": null },
+            "disk": { "free_bytes": 412316860416u64, "total_bytes": 1000204886016u64 },
+            "distributions": [
+                { "id": "debian-12", "name": "Debian 12", "family": "apt",
+                  "size_bytes": 128849018880u64, "added": true, "problem": null },
+                { "id": "rocky-9", "name": "Rocky Linux 9", "family": "dnf",
+                  "size_bytes": 85899345920u64, "added": false, "problem": null }
+            ]
+        })),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+    ))]
+fn mirror_catalog() {}
+
+/// Add a distribution to the mirrors
+///
+/// Creates the mirrors a distribution of the catalog needs (its main and
+/// security repositories, for instance) that do not exist yet. The
+/// scheduler starts syncing them within a minute; servers can use them
+/// after the first sync. Creates the mirrors' signing key on first use.
+/// Each mirror created is audited as `mirror.create`.
+///
+/// Global administrators only, as for the list. Safe to repeat: a second
+/// call is 409 once every mirror exists.
+#[utoipa::path(post, path = "/api/v1/mirrors", tag = "mirrors",
+    request_body(content = mirrors::AddRequest, example = json!({ "distribution": "debian-12" })),
+    responses(
+        (status = 201, description = "The mirrors created", body = mirrors::MirrorList,
+            example = json!({
+                "mirrors": [{
+                    "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                    "name": "debian-12",
+                    "family": "apt",
+                    "upstream_url": "https://deb.debian.org/debian",
+                    "distribution": "bookworm",
+                    "components": ["main", "non-free-firmware"],
+                    "architectures": ["amd64"],
+                    "sync_interval_s": 86400,
+                    "auto_snapshot": true,
+                    "created_at": "2026-11-14T10:00:00Z",
+                    "deleting_at": null,
+                    "delete_error": null,
+                    "current_snapshot": null,
+                    "last_run": null
+                }],
+                "keep_snapshots": 3
+            })),
+        (status = 400, body = ErrorBody, description = "Not a distribution of the catalog: \
+`invalid`"),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 409, body = ErrorBody, description = "Already added, the mirror tools are not \
+available, too little free space, or the signing key could not be made: `conflict`"),
+    ))]
+fn add_mirrors() {}
+
+/// Read a mirror
+///
+/// One mirror with its 100 newest snapshots and why each is kept, its 10
+/// latest runs with their output, and what keeps it from being deleted.
+///
+/// Global administrators only, as for the list.
+#[utoipa::path(get, path = "/api/v1/mirrors/{id}", tag = "mirrors",
+    params(("id" = uuid::Uuid, Path, description = "The mirror's `id`")),
+    responses(
+        (status = 200, body = mirrors::MirrorDetail, example = json!({
+            "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+            "name": "debian-12",
+            "family": "apt",
+            "upstream_url": "https://deb.debian.org/debian",
+            "distribution": "bookworm",
+            "components": ["main", "non-free-firmware"],
+            "architectures": ["amd64"],
+            "sync_interval_s": 86400,
+            "auto_snapshot": true,
+            "created_at": "2026-10-01T12:00:00Z",
+            "deleting_at": null,
+            "delete_error": null,
+            "current_snapshot": "20261114T031240Z",
+            "last_run": run_summary("sync", "succeeded"),
+            "snapshots": [{
+                "id": "e5f6a7b8-c9d0-4e1f-8a2b-3c4d5e6f7a8b",
+                "mirror_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                "name": "20261114T031240Z",
+                "state": "published",
+                "size_bytes": 121332826112u64,
+                "error": null,
+                "created_at": "2026-11-14T03:12:40Z",
+                "published_at": "2026-11-14T03:13:02Z",
+                "kept": "current"
+            }],
+            "keep_snapshots": 3,
+            "runs": [{
+                "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                "mirror_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                "kind": "sync",
+                "trigger": "schedule",
+                "requested_by": null,
+                "state": "succeeded",
+                "snapshot_id": "e5f6a7b8-c9d0-4e1f-8a2b-3c4d5e6f7a8b",
+                "output": "Mirror `debian-12` has been updated successfully.\n",
+                "error": null,
+                "started_at": "2026-11-14T03:00:00Z",
+                "finished_at": "2026-11-14T03:12:40Z"
+            }],
+            "used_by": {
+                "campaigns": [],
+                "servers": [{ "id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d", "hostname": "web-1" }]
+            }
+        })),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such mirror: `not_found`"),
+    ))]
+fn mirror_detail() {}
+
+/// Delete a mirror
+///
+/// Starts deleting a mirror no server or unfinished campaign uses, with its
+/// snapshots and the copies relays hold. The answer comes at once, with
+/// `deleting_at` set; the deletion is over when the mirror's detail
+/// answers 404, and `delete_error` says why while it is not. Calling again
+/// after a failure tries again at once. Audited as `mirror.delete`, then
+/// `mirror.deleted`.
+///
+/// Global administrators only, as for the list.
+#[utoipa::path(delete, path = "/api/v1/mirrors/{id}", tag = "mirrors",
+    params(("id" = uuid::Uuid, Path, description = "The mirror's `id`")),
+    responses(
+        (status = 202, description = "Being deleted", body = mirrors::MirrorView),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such mirror: `not_found`"),
+        (status = 409, body = ErrorBody, description = "Servers or campaigns still use it (the \
+sentence names them), or what uses it could not be checked: `conflict`"),
+    ))]
+fn delete_mirror() {}
+
+/// Sync a mirror now
+///
+/// Starts copying the upstream repository now rather than at the next
+/// scheduled time. The answer comes at once with the run, which goes on in
+/// the background; follow it in the mirror's detail. Audited as
+/// `mirror.sync`.
+///
+/// Global administrators only, as for the list. Not safe to repeat while
+/// it runs: a second call is 409.
+#[utoipa::path(post, path = "/api/v1/mirrors/{id}/sync", tag = "mirrors",
+    params(("id" = uuid::Uuid, Path, description = "The mirror's `id`")),
+    responses(
+        (status = 202, body = mirrors::RunSummary, example = json!(run_summary("sync", "running"))),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such mirror: `not_found`"),
+        (status = 409, body = ErrorBody, description = "The mirror is busy with another run or \
+retention, or is being deleted: `conflict`"),
+    ))]
+fn sync_mirror() {}
+
+/// Publish a snapshot of a mirror
+///
+/// Publishes what the last successful sync copied as a snapshot named
+/// `name`, which servers can then be pointed at and which never changes.
+/// The answer comes at once with the run; follow it in the mirror's
+/// detail. Audited as `mirror.snapshot`.
+///
+/// Global administrators only, as for the list.
+#[utoipa::path(post, path = "/api/v1/mirrors/{id}/snapshots", tag = "mirrors",
+    params(("id" = uuid::Uuid, Path, description = "The mirror's `id`")),
+    request_body(content = mirrors::SnapshotRequest, example = json!({ "name": "before-upgrade" })),
+    responses(
+        (status = 202, body = mirrors::RunSummary, example = json!(run_summary("snapshot", "running"))),
+        (status = 400, body = ErrorBody, description = "An invalid `name`, or an unknown field: \
+`invalid`. A name another snapshot of the mirror has makes the run fail instead."),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such mirror: `not_found`"),
+        (status = 409, body = ErrorBody, description = "The mirror is busy, has no successful sync \
+yet, or is being deleted: `conflict`"),
+    ))]
+fn snapshot_mirror() {}

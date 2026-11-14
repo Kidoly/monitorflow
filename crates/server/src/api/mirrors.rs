@@ -29,7 +29,8 @@ const DETAIL_SNAPSHOTS: i64 = 100;
 const DETAIL_RUNS: i64 = 10;
 
 /// A run without its output, as listings show it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = MirrorRunSummary)]
 pub struct RunSummary {
     pub id: Uuid,
     pub kind: RunKind,
@@ -59,30 +60,38 @@ impl From<Run> for RunSummary {
 }
 
 /// One mirror with the name of its `current` snapshot and its last run.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MirrorView {
     #[serde(flatten)]
     pub mirror: Mirror,
+    /// The newest published snapshot, which `current` serves; `null`
+    /// before the first.
     pub current_snapshot: Option<String>,
+    /// `null` before the first run.
     pub last_run: Option<RunSummary>,
 }
 
 /// Body of `GET /api/mirrors`, by name.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MirrorList {
     pub mirrors: Vec<MirrorView>,
     /// Published snapshots each mirror keeps, on top of those in use.
+    #[schema(value_type = u64)]
     pub keep_snapshots: usize,
 }
 
 /// Body of `GET /api/mirrors/{id}`: the newest snapshots and runs first,
 /// runs with their output.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MirrorDetail {
     #[serde(flatten)]
     pub mirror: MirrorView,
+    /// Its 100 newest snapshots, pruned ones included.
     pub snapshots: Vec<SnapshotView>,
+    /// Published snapshots each mirror keeps, on top of those in use.
+    #[schema(value_type = u64)]
     pub keep_snapshots: usize,
+    /// Its 10 latest runs, with their output.
     pub runs: Vec<Run>,
     /// What keeps it from being deleted.
     pub used_by: Users,
@@ -90,33 +99,43 @@ pub struct MirrorDetail {
 
 /// A snapshot and why it stays; `null` when the next pass of retention
 /// removes it, or while it is created.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SnapshotView {
     #[serde(flatten)]
     pub snapshot: Snapshot,
+    /// Why it stays.
     pub kept: Option<Kept>,
 }
 
 /// Body of `POST /api/mirrors/{id}/snapshots`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotRequest {
+    /// 1 to 64 of A-Z, a-z, 0-9, `.`, `_` and `-`, not starting with a dot
+    /// and not `current`; the UTC time such as `20261023T090000Z` when
+    /// absent or `null`.
     pub name: Option<String>,
 }
 
 /// Whether mirrors can run on this install, and why not.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = MirrorTools)]
 pub struct ToolsStatus {
     pub available: bool,
+    /// Why not; `null` when available.
     pub problem: Option<String>,
 }
 
 /// One distribution of `GET /api/mirrors/catalog`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = CatalogDistribution)]
 pub struct CatalogEntry {
+    /// What `POST /api/v1/mirrors` takes, such as `debian-12`.
     pub id: &'static str,
+    /// Its name on screen, such as `Debian 12`.
     pub name: &'static str,
     pub family: Family,
+    /// About what its mirrors take on disk, in bytes.
     pub size_bytes: u64,
     /// Every mirror of the distribution exists.
     pub added: bool,
@@ -125,7 +144,8 @@ pub struct CatalogEntry {
 }
 
 /// Body of `GET /api/mirrors/catalog`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = MirrorCatalog)]
 pub struct Catalog {
     pub tools: ToolsStatus,
     /// The disk of `mirror_dir`; `null` when unknown.
@@ -134,7 +154,8 @@ pub struct Catalog {
 }
 
 /// Body of `POST /api/mirrors`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = AddMirrorRequest)]
 #[serde(deny_unknown_fields)]
 pub struct AddRequest {
     /// An `id` of the catalog.

@@ -202,7 +202,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/on-call/",
     "/api/follow-up/",
     "/api/sources",
-    "/api/mirrors",
     "/api/remediation/rules",
     "/api/remediation/policies",
     "/api/remediation/classify",

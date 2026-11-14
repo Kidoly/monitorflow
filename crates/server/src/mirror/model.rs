@@ -19,7 +19,8 @@ pub const MIN_SYNC_INTERVAL_S: i32 = 900;
 pub const CURRENT: &str = "current";
 
 /// Package family of a mirror, which decides the tools and the URL prefix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type, utoipa::ToSchema)]
+#[schema(as = MirrorFamily)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum Family {
@@ -199,16 +200,22 @@ fn has_duplicates(values: &[String]) -> bool {
 }
 
 /// A `mirrors` row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Mirror {
     pub id: Uuid,
+    /// Unique, such as `debian-12-security`; servers' sources name it.
     pub name: String,
     pub family: Family,
+    /// The repository it copies.
     pub upstream_url: String,
+    /// The suite (apt) or release (dnf) copied, such as `bookworm`.
     pub distribution: String,
     pub components: Vec<String>,
     pub architectures: Vec<String>,
+    /// Seconds between automatic syncs, at least 900; `null` for manual
+    /// syncs only.
     pub sync_interval_s: Option<i32>,
+    /// Whether each successful sync publishes a snapshot.
     pub auto_snapshot: bool,
     pub created_at: DateTime<Utc>,
     /// Being deleted since then (ADR-0075).
@@ -218,7 +225,7 @@ pub struct Mirror {
 }
 
 /// State of a snapshot; only `published` ones are served under their name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum SnapshotState {
@@ -232,19 +239,26 @@ pub enum SnapshotState {
 }
 
 /// A `mirror_snapshots` row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Snapshot {
     pub id: Uuid,
     pub mirror_id: Uuid,
+    /// Such as `20261023T090000Z`; servers' sources name it.
     pub name: String,
     pub state: SnapshotState,
+    /// Size on disk; `null` until published.
     pub size_bytes: Option<i64>,
+    /// Why it failed; `null` otherwise.
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
+    /// `null` until published.
     pub published_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type)]
+/// `sync` copies the upstream repository; `snapshot` publishes what the
+/// last sync copied under a name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type, utoipa::ToSchema)]
+#[schema(as = MirrorRunKind)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum RunKind {
@@ -252,7 +266,9 @@ pub enum RunKind {
     Snapshot,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type)]
+/// Who started a run: the schedule or a person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type, utoipa::ToSchema)]
+#[schema(as = MirrorRunTrigger)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum Trigger {
@@ -260,7 +276,8 @@ pub enum Trigger {
     Manual,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sqlx::Type, utoipa::ToSchema)]
+#[schema(as = MirrorRunState)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum RunState {
@@ -270,18 +287,24 @@ pub enum RunState {
 }
 
 /// A `mirror_runs` row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = MirrorRun)]
 pub struct Run {
     pub id: Uuid,
     pub mirror_id: Uuid,
     pub kind: RunKind,
     pub trigger: Trigger,
+    /// `user:<id>` for a manual run; `null` for a scheduled one.
     pub requested_by: Option<String>,
     pub state: RunState,
+    /// The snapshot a `snapshot` run made, or a sync's automatic one.
     pub snapshot_id: Option<Uuid>,
+    /// What the mirror tools printed.
     pub output: String,
+    /// Why it failed; `null` otherwise.
     pub error: Option<String>,
     pub started_at: DateTime<Utc>,
+    /// `null` while running.
     pub finished_at: Option<DateTime<Utc>>,
 }
 
