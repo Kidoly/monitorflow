@@ -34,7 +34,7 @@ use crate::enroll::relay_names::{self, NameError};
 use crate::relay_commands::{self, RelayCommand};
 
 /// Body of `GET /api/relays`, sorted by site name and peer ID.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RelayList {
     pub relays: Vec<RelayView>,
     /// Pass as `cursor` for the next page; `null` on the last one.
@@ -42,17 +42,22 @@ pub struct RelayList {
 }
 
 /// One relay. Add fields, never rename or remove them.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = Relay)]
 pub struct RelayView {
     pub id: Uuid,
     /// The relay certificate ID.
     pub peer_id: String,
+    /// Its display name.
     pub name: String,
     pub site_id: Uuid,
     pub site_name: String,
     pub customer_id: Uuid,
     pub customer_name: String,
+    /// When it enrolled.
     pub created_at: DateTime<Utc>,
+    /// When it was removed; `null` while enrolled. Lists show only
+    /// enrolled relays.
     pub revoked_at: Option<DateTime<Utc>>,
     /// `online` while the relay's own stream is open.
     pub status: Status,
@@ -75,6 +80,7 @@ pub struct RelayView {
     /// Servers whose latest connection came through this relay.
     pub server_count: i64,
     /// Agent streams the relay forwards right now.
+    #[schema(value_type = u64)]
     pub connected_agents: usize,
     /// Base URL of the relay's mirror listener as it last reported it;
     /// `null` when it serves no mirrors (ADR-0037).
@@ -84,18 +90,19 @@ pub struct RelayView {
     /// The version of its last Hello; `null` before it connected with a
     /// server that records it (ADR-0055).
     pub relay_version: Option<String>,
-    /// Its latest self-update.
+    /// Its latest self-update; `null` if it never had one.
     pub last_update: Option<RelayCommand>,
     /// Whether it opens an incident when offline (ADR-0072); muted when
     /// this or `site_offline_alerts` is `false`.
     pub offline_alerts: bool,
+    /// The same setting of its site.
     pub site_offline_alerts: bool,
     /// While a silence covers it, when the last one ends (ADR-0079).
     pub silenced_until: Option<DateTime<Utc>>,
 }
 
 /// Body of `GET /api/relays/{id}`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RelayDetail {
     #[serde(flatten)]
     pub relay: RelayView,
@@ -108,9 +115,11 @@ pub struct RelayDetail {
 }
 
 /// A server whose latest connection came through the relay.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = RelayServer)]
 pub struct AttachedServer {
     pub id: Uuid,
+    /// The server's certificate ID.
     pub peer_id: String,
     pub hostname: String,
     /// `online` while its stream goes through this relay.
@@ -334,14 +343,20 @@ const UPDATES: i64 = 10;
 const UPDATE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Body of `POST /api/relays/{id}/update`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = RelayUpdateRequest)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateRequest {
-    /// A version the server holds.
+    /// The release to install, such as `0.9.2`: one this server holds (see
+    /// `GET /api/v1/agent-releases`), else the relay downloads it from
+    /// where releases are published.
     pub version: String,
+    /// Install it even when older than the running version. `false` by
+    /// default: the relay then refuses a downgrade.
     #[serde(default)]
     pub allow_downgrade: bool,
-    /// Seconds the new relay has to connect; 0 or absent for 300.
+    /// Seconds the new relay has to connect back before it rolls back, 30
+    /// to 3600; 0 or absent for 300.
     #[serde(default)]
     pub health_timeout_s: u32,
 }
@@ -422,11 +437,16 @@ pub async fn update(
 }
 
 /// Body of `POST /api/relays/{id}/names`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = RelayNamesRequest)]
 #[serde(deny_unknown_fields)]
 pub struct ConfirmNames {
     /// The names for its certificate, in order of preference: those it
-    /// reported that the administrator kept, and any added.
+    /// reported that the administrator kept, and any added. 1 to 16 DNS
+    /// names or IP addresses; no wildcard, `localhost` or loopback
+    /// address, none of the central server's names, and none another
+    /// site's relay holds (private addresses excepted). Stored in lower
+    /// case, without duplicates.
     pub names: Vec<String>,
 }
 

@@ -47,15 +47,19 @@ pub struct Stored {
 
 /// Body of `GET` and `PUT /api/settings/agent-install`, and the `install`
 /// object of a new token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct AgentInstall {
-    /// The default source of the install commands.
+    /// The default source of the install commands: `github` (the latest
+    /// public release), `central` (this server's release cache) or
+    /// `custom` (an https directory the operator gives).
+    #[schema(value_type = String, example = "central")]
     pub source: AgentInstallSource,
     /// Base URL of the `custom` source, if any.
     pub custom_url: Option<String>,
     /// Whether the configuration sets `source` or `custom_url`, which the
     /// web interface then cannot change.
     pub source_from_config: bool,
+    /// Whether the configuration sets `custom_url`.
     pub custom_url_from_config: bool,
     /// Base URL of the `github` source.
     pub github_url: &'static str,

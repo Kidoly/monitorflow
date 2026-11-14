@@ -41,14 +41,14 @@ pub enum RemovalError {
 }
 
 /// A campaign not finished, pinned to the mirror.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct UsingCampaign {
     pub id: Uuid,
     pub name: String,
 }
 
 /// A server pointed at the mirror, or that a campaign would put back on it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct UsingServer {
     pub id: Uuid,
     pub hostname: String,
@@ -56,7 +56,8 @@ pub struct UsingServer {
 
 /// What keeps a mirror from being deleted. Relays are not here: they hold
 /// copies, which go with it, and the servers behind them count as servers.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = MirrorUsers)]
 pub struct Users {
     pub campaigns: Vec<UsingCampaign>,
     pub servers: Vec<UsingServer>,

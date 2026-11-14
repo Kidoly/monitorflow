@@ -13,7 +13,7 @@ use tracing::info;
 use super::{now, store, CaError, CertificateAuthority, Serial, REVOCATIONS_FILE};
 
 /// Why a certificate was revoked (RFC 5280 §5.3.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RevocationReason {
     Unspecified,
