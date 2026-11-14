@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
 import {
   type EffectiveSensor,
@@ -11,30 +10,43 @@ import {
   type ServerDetail,
   describeError,
 } from "@/lib/api";
-import { type Shape, saveCheckInterval, shapeFor, shapeOf } from "@/lib/alerts";
+import {
+  type FormErrors,
+  type Shape,
+  type ThresholdForm,
+  formOf,
+  shapeFor,
+  shapeOf,
+  thresholdRequest,
+} from "@/lib/alerts";
 import { formatSeconds } from "@/lib/format";
 import { defaultTimeoutMs, every } from "@/lib/intervals";
-import { serverHref } from "@/lib/routes";
-import { scopedHref, useScope } from "@/lib/scope";
 import {
+  type ApplyTo,
+  type RuleChange,
   type RulePlace,
   LEVEL_LABELS,
+  applyToChoices,
+  applyToFor,
   instanceNoun,
   ownOverrides,
   perInstance,
   resetRule,
   ruleLevel,
   ruleOf,
+  saveRule,
   thresholdLevel,
   timingLevel,
 } from "@/lib/sensorRules";
-import { Button } from "@/components/ui/Button";
+import { Button, fieldClass } from "@/components/ui/Button";
+import { cx } from "@/components/ui/cx";
 import { type Fact, FactsBox } from "@/components/ui/FactsBox";
 import { Label } from "@/components/ui/StatusLabel";
 
 import admin from "./AdminPages.module.css";
-import { IntervalControl } from "./IntervalSelect";
-import { SlowNote } from "./MonitoringSettings";
+import styles from "./SensorConfiguration.module.css";
+import { Field, SlowNote } from "./MonitoringSettings";
+import { IntervalSelect } from "./IntervalSelect";
 
 /** What the sensor page read, for its Configuration card; null where it could not be read. */
 export interface ConfigurationData {
@@ -47,9 +59,10 @@ export interface ConfigurationData {
 
 /**
  * The Configuration card of a sensor page: how often it runs, its timeout
- * and when it alerts, with the level each comes from (ADR-0016,
- * ADR-0017). Operators of the site change how often it runs for this
- * server, and "Reset to inherited" removes this server's own rule.
+ * and when it alerts, with the level each comes from. Operators of the
+ * site edit it in place and choose where the change applies: this sensor
+ * only, every instance on this server, or every server of the site
+ * (ADR-0016, ADR-0017); "Reset to inherited" removes this server's own.
  */
 export function SensorConfiguration({
   data,
@@ -59,6 +72,8 @@ export function SensorConfiguration({
   format,
   canEdit,
   onChanged,
+  startEditing = false,
+  onEditEnd,
 }: {
   data: ConfigurationData;
   sensor: EffectiveSensor | undefined;
@@ -67,8 +82,20 @@ export function SensorConfiguration({
   format: (v: number) => string;
   canEdit: boolean;
   onChanged: () => void;
+  /** Opens the form at once, as the Edit of a server's sensor list does. */
+  startEditing?: boolean;
+  onEditEnd?: () => void;
 }) {
-  const scope = useScope();
+  const [editing, setEditingState] = useState(startEditing);
+  const box = useRef<HTMLDivElement>(null);
+  const setEditing = (on: boolean) => {
+    setEditingState(on);
+    if (!on) onEditEnd?.();
+  };
+  useEffect(() => {
+    // Coming from the list's Edit, the form is below the charts: bring it into view.
+    if (startEditing) box.current?.scrollIntoView?.({ block: "center" });
+  }, [startEditing]);
   const { server, config, thresholds } = data;
   const rule = thresholds ? ruleOf(thresholds, metric, instance) : undefined;
   const sensors = config?.sensors ?? [];
@@ -76,42 +103,45 @@ export function SensorConfiguration({
   const place: RulePlace | null = sensor ? { serverId: server.id, siteId: server.site_id, sensor, instance } : null;
   const editable = canEdit && place !== null && data.rows !== null && data.siteSensors !== null && thresholds !== null;
   const overrides = editable ? ownOverrides(place, rule, data.rows!, data.siteSensors!) : null;
-  const shown = facts(data, sensor, instance, rule, shape, format).map((fact) =>
-    fact.label === "How often" && editable && sensor
-      ? { ...fact, value: <IntervalFact data={data} sensor={sensor} onChanged={onChanged} /> }
-      : fact,
+
+  const actions = editable && !editing && (
+    <>
+      {overrides?.level && <ResetButton place={place} overrides={overrides} onChanged={onChanged} />}
+      <Button size="small" onClick={() => setEditing(true)}>
+        Edit
+      </Button>
+    </>
   );
 
   return (
-    <FactsBox
-      title="Configuration"
-      actions={overrides?.level && <ResetButton place={place!} overrides={overrides} onChanged={onChanged} />}
-      facts={[
-        ...shown,
-        { label: "Alerts", value: <Link href={scopedHref(serverHref(server.id, "alerts"), scope)}>Change when to alert</Link> },
-      ]}
-      details={[
-        ...(rule ? [marginFact(rule, format)] : []),
-        ...(sensor ? [setByFact(sensor, rule, perInstance(sensor, instance))] : []),
-      ]}
-    />
-  );
-}
-
-/** How often the check runs, changed for this server: its own row, or going back to the site's (ADR-0097). */
-function IntervalFact({ data, sensor, onChanged }: { data: ConfigurationData; sensor: EffectiveSensor; onChanged: () => void }) {
-  const row = data.rows!.find((r) => r.enabled && r.name === sensor.name && r.instance === sensor.instance);
-  const inherited = data.siteSensors!.find((s) => s.name === sensor.name && s.instance === sensor.instance)?.interval_ms;
-  return (
-    <IntervalControl
-      label="How often to check"
-      value={row || inherited === undefined ? sensor.interval_ms : null}
-      inherit={inherited === undefined ? undefined : { ms: inherited, label: "site default" }}
-      save={async (ms) => {
-        await saveCheckInterval({ kind: "servers", id: data.server.id }, sensor, row, ms);
-        onChanged();
-      }}
-    />
+    <div ref={box} id="configuration">
+      <FactsBox
+        title="Configuration"
+        actions={actions}
+        facts={facts(data, sensor, instance, rule, shape, format)}
+        details={[
+          ...(rule ? [marginFact(rule, format)] : []),
+          ...(sensor ? [setByFact(sensor, rule, perInstance(sensor, instance))] : []),
+        ]}
+      >
+        {editing && place && (
+          <RuleEditor
+            place={place}
+            hostname={server.hostname}
+            siteName={server.site_name}
+            rule={rule}
+            shape={shape}
+            metric={metric}
+            hasOwn={overrides?.level !== null && overrides?.level !== undefined}
+            onDone={() => {
+              setEditing(false);
+              onChanged();
+            }}
+            onCancel={() => setEditing(false)}
+          />
+        )}
+      </FactsBox>
+    </div>
   );
 }
 
@@ -241,5 +271,216 @@ function ResetButton({
         {busy ? "Resetting…" : "Reset to inherited"}
       </Button>
     </>
+  );
+}
+
+/** A threshold to start from when the metric has none: nothing set, compared the way its kind reads. */
+function blankRule(metric: string, shape: Shape): EffectiveThreshold {
+  const below = shape.type === "event" ? shape.comparison === "<" : /available_ratio$/.test(metric);
+  return {
+    origin: "default",
+    threshold_id: null,
+    metric,
+    instance: null,
+    enabled: true,
+    comparison: shape.type === "event" ? shape.comparison : below ? "<" : ">",
+    warning: null,
+    critical: null,
+    duration_s: 300,
+    hysteresis: 0,
+  };
+}
+
+/** The interval and timeout typed, or what is wrong with them. */
+function timingOf(intervalMs: number, timeout: string): { interval_ms: number; timeout_ms: number | null } | { error: string } {
+  const text = timeout.trim();
+  if (text === "") return { interval_ms: intervalMs, timeout_ms: null };
+  const seconds = Number(text.replace(",", "."));
+  if (!Number.isFinite(seconds) || seconds <= 0 || seconds * 1000 > intervalMs) {
+    return { error: `Enter a number of seconds up to ${formatSeconds(intervalMs / 1000)}, or leave it empty.` };
+  }
+  return { interval_ms: intervalMs, timeout_ms: Math.round(seconds * 1000) };
+}
+
+function RuleEditor({
+  place,
+  hostname,
+  siteName,
+  rule,
+  shape,
+  metric,
+  hasOwn,
+  onDone,
+  onCancel,
+}: {
+  place: RulePlace;
+  hostname: string;
+  siteName: string;
+  rule: EffectiveThreshold | undefined;
+  shape: Shape;
+  metric: string;
+  /** This server has its own rule, which a site default does not replace. */
+  hasOwn: boolean;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const { sensor } = place;
+  const several = perInstance(sensor, place.instance);
+  const base = rule ?? blankRule(metric, shape);
+  const initialForm = formOf(shape, base);
+  const initialApplyTo = applyToFor(ruleLevel(sensor, rule, several), several);
+  const [intervalMs, setIntervalMs] = useState(sensor.interval_ms);
+  const [timeout, setTimeoutText] = useState(sensor.timeout_ms === null ? "" : String(sensor.timeout_ms / 1000));
+  const [form, setForm] = useState<ThresholdForm>(initialForm);
+  const [applyTo, setApplyTo] = useState<ApplyTo>(initialApplyTo);
+  const [errors, setErrors] = useState<FormErrors & { timeout?: string }>({});
+  const [failure, setFailure] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const id = useId();
+
+  async function write(change: RuleChange) {
+    setBusy(true);
+    setFailure(null);
+    try {
+      await saveRule(place, applyTo, change);
+      onDone();
+    } catch (e) {
+      setFailure(`It was not saved. ${describeError(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const found: FormErrors & { timeout?: string } = {};
+    const change: RuleChange = {};
+    const timing = timingOf(intervalMs, timeout);
+    if ("error" in timing) found.timeout = timing.error;
+    else if (timing.interval_ms !== sensor.interval_ms || timing.timeout_ms !== sensor.timeout_ms) {
+      change.timing = timing;
+    }
+    // Only what changed is written where it applies, so the rest keeps following what it inherits.
+    const formChanged = JSON.stringify(form) !== JSON.stringify(initialForm);
+    if (formChanged || (rule && !rule.enabled)) {
+      const result = thresholdRequest(shape, base, form);
+      if ("errors" in result) Object.assign(found, result.errors);
+      else change.threshold = result.request;
+    }
+    setErrors(found);
+    if (Object.keys(found).length > 0) return;
+    if (!change.timing && !change.threshold) {
+      onCancel();
+      return;
+    }
+    void write(change);
+  }
+
+  const set = (key: keyof ThresholdForm) => (value: string) => setForm((f) => ({ ...f, [key]: value }));
+  const unit = shape.type === "percent" ? "%" : shape.type === "number" ? shape.unit : undefined;
+  const choices = applyToChoices(sensor, place.instance, hostname, siteName);
+  const timingChanged = intervalMs !== sensor.interval_ms || timeout !== (sensor.timeout_ms === null ? "" : String(sensor.timeout_ms / 1000));
+
+  return (
+    <form className={styles.form} onSubmit={submit} noValidate aria-label="Edit the configuration">
+      <div className={styles.fields}>
+        <div className={admin.field}>
+          <span>How often</span>
+          <IntervalSelect label="How often to check" value={intervalMs} onChange={(ms) => setIntervalMs(ms ?? sensor.interval_ms)} />
+        </div>
+        <Field
+          label="Timeout"
+          unit="s"
+          value={timeout}
+          onChange={setTimeoutText}
+          error={errors.timeout}
+          hint={`Empty: automatic, ${formatSeconds(defaultTimeoutMs(intervalMs) / 1000)}.`}
+        />
+      </div>
+      <div className={styles.fields}>
+        {shape.type === "event" ? (
+          <label className={admin.field}>
+            Alert
+            <select className={fieldClass} value={form.severity} onChange={(e) => set("severity")(e.target.value)}>
+              <option value="critical">Critical {shape.brief}</option>
+              <option value="warning">Warning {shape.brief}</option>
+            </select>
+          </label>
+        ) : (
+          <>
+            <Field label="Warning at" unit={unit} value={form.warning} onChange={set("warning")} error={errors.warning} hint="Empty: no warning." />
+            <Field label="Critical at" unit={unit} value={form.critical} onChange={set("critical")} error={errors.critical} hint="Empty: no critical." />
+          </>
+        )}
+        <Field
+          label="For at least"
+          unit="min"
+          value={form.minutes}
+          onChange={set("minutes")}
+          error={errors.minutes}
+          hint="0 alerts on the first bad value."
+        />
+      </div>
+      {rule && !rule.enabled && <p className={admin.fieldNote}>This alert is turned off. Save turns it back on with these values.</p>}
+      <SlowNote durationS={Math.max(0, Number(form.minutes) || 0) * 60} intervalS={intervalMs / 1000} />
+      <fieldset className={styles.applyTo}>
+        <legend>Apply to</legend>
+        {choices.map((choice) => (
+          <label key={choice.value}>
+            <input
+              type="radio"
+              name={`${id}-apply`}
+              value={choice.value}
+              checked={applyTo === choice.value}
+              onChange={() => setApplyTo(choice.value)}
+            />{" "}
+            {choice.label}
+          </label>
+        ))}
+        {applyTo === "site" && hasOwn && (
+          <span className={admin.fieldNote}>This server keeps its own rule until you reset it to the inherited one.</span>
+        )}
+        {applyTo === "sensor" && timingChanged && (
+          <span className={admin.fieldNote}>
+            How often and the timeout apply to every {instanceNoun(sensor)} on {hostname}: one sensor measures them all.
+          </span>
+        )}
+      </fieldset>
+      <div className={styles.buttons}>
+        <Button variant="k" type="submit" disabled={busy}>
+          {busy ? "Saving…" : "Save"}
+        </Button>
+        <Button onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+        {rule?.enabled && (
+          <Button
+            variant="danger"
+            disabled={busy}
+            onClick={() =>
+              void write({
+                threshold: {
+                  metric: rule.metric,
+                  instance: rule.instance,
+                  comparison: rule.comparison,
+                  warning: rule.warning,
+                  critical: rule.critical,
+                  duration_s: rule.duration_s,
+                  hysteresis: rule.hysteresis,
+                  enabled: false,
+                },
+              })
+            }
+          >
+            Turn this alert off
+          </Button>
+        )}
+        {failure && (
+          <span role="alert" className={cx(admin.hintError, styles.failure)}>
+            {failure}
+          </span>
+        )}
+      </div>
+    </form>
   );
 }
