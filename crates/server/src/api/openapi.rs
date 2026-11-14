@@ -52,6 +52,11 @@ pub async fn document() -> Json<Document> {
 
 pub fn build() -> Document {
     let mut doc = ApiDoc::openapi();
+    doc.merge(super::openapi_system::SystemDoc::openapi());
+    doc.merge(super::openapi_settings::SettingsDoc::openapi());
+    doc.merge(super::openapi_users::UsersDoc::openapi());
+    doc.merge(super::openapi_dashboards::DashboardsDoc::openapi());
+    doc.merge(super::openapi_plugins::PluginsDoc::openapi());
     doc.merge(openapi_core::Doc::openapi());
     Common.modify(&mut doc);
     doc.merge(notifications::Doc::openapi());
@@ -282,23 +287,7 @@ fn errors(operation: &mut Operation) {
 
 // Routes reachable through v1 that the document does not describe yet,
 // in the order ADR-0101 gives. Moving one into the document is additive.
-pub const NOT_YET_DOCUMENTED: &[&str] = &[
-    "/api/checks",
-    "/api/settings/",
-    "/api/users",
-    "/api/backups",
-    "/api/certificate-authority",
-    "/api/campaigns",
-    "/api/dashboards",
-    "/api/dashboard-data",
-    "/api/dashboard-metrics",
-    "/api/display-links",
-    "/api/server-update",
-    "/api/license",
-    "/api/plugins",
-    "/api/auto-update",
-    "/api/health",
-];
+pub const NOT_YET_DOCUMENTED: &[&str] = &["/api/checks", "/api/campaigns", "/api/auto-update"];
 
 // Sub-routes of servers, sites and relays not documented yet; those of
 // relays are under `/api/relays` above.

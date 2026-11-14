@@ -48,6 +48,7 @@ pub fn valid_days(days: u32) -> bool {
 
 /// One store's retention.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema), schema(as = StoreRetention))]
 pub struct Kept {
     /// The value of its `-retentionPeriod` flag, like `90d`.
     pub value: String,

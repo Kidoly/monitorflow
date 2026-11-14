@@ -53,7 +53,10 @@ impl Kind {
     }
 }
 
+/// The kind of a setting's field: `secret` values are never shown again
+/// once saved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema), schema(as = PluginSettingType))]
 #[serde(rename_all = "snake_case")]
 pub enum SettingType {
     Text,
@@ -66,16 +69,21 @@ pub enum SettingType {
 
 /// One field of the plugin's settings form.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema), schema(as = PluginSetting))]
 #[serde(deny_unknown_fields)]
 pub struct Setting {
+    /// The key a channel or check stores the value under.
     pub key: String,
+    /// The field's label.
     pub label: String,
     #[serde(rename = "type")]
     pub kind: SettingType,
     #[serde(default)]
     pub required: bool,
+    /// The value proposed; absent without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
+    /// A sentence under the field; absent without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub help: Option<String>,
 }

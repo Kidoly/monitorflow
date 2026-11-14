@@ -36,7 +36,7 @@ pub struct PublicAddress {
     /// `upstream_url` and `enroll_url` at `address`, with the published
     /// ports.
     pub upstream_url: String,
-    /// See `upstream_url`.
+    /// Where hosts enroll, at `address`.
     pub enroll_url: String,
 }
 
@@ -147,7 +147,8 @@ pub async fn get(
 }
 
 /// Body of `PUT /api/settings/public-address`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = PublicAddressRequest)]
 #[serde(deny_unknown_fields)]
 pub struct SetRequest {
     /// A DNS name or IP address; `null` or empty goes back to the default.

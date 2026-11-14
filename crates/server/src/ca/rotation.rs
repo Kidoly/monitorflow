@@ -36,7 +36,9 @@ pub const RETIRED_DIR: &str = "retired";
 /// How long an emergency change trusts the old CA, for peers to move.
 pub const EMERGENCY_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The step a change of certificate authority is at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = CaStage)]
 #[serde(rename_all = "snake_case")]
 pub enum Stage {
     /// Peers learn to trust the new CA; the old one still issues.

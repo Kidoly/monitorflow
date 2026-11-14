@@ -26,7 +26,8 @@ pub const DEFAULT_FAILURE_THRESHOLD: u32 = 2;
 pub const MAX_FAILURE_THRESHOLD: u32 = 1000;
 
 /// The server-wide settings, as they apply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = AutoUpdateSettings)]
 pub struct Settings {
     /// The default of sites that inherit it.
     pub enabled: bool,
@@ -35,6 +36,8 @@ pub struct Settings {
     pub enabled_locked: bool,
     /// Nothing automatic is queued while paused.
     pub paused: bool,
+    /// Failed updates, since a rollout started or was resumed, that halt
+    /// it; 1 to 1000, 2 by default.
     pub failure_threshold: u32,
 }
 

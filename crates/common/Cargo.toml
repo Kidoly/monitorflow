@@ -36,6 +36,8 @@ serde_json = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 rustix = { workspace = true, optional = true }
+# Schemas of the public API's document (feature `openapi`), for the server.
+utoipa = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # The private-file ACLs that replace Unix modes (ADR-0047).
@@ -46,6 +48,8 @@ windows-sys = { workspace = true }
 mirror = ["dep:axum", "dep:tower-http", "dep:percent-encoding", "dep:mime_guess", "dep:serde_json"]
 # Server updates (ADR-0056): release images, sources, the updater's files.
 server-update = ["dep:reqwest", "dep:chrono", "dep:rustix", "dep:serde_json"]
+# OpenAPI schemas of the types the server's API answers with (ADR-0101).
+openapi = ["dep:utoipa"]
 
 [dev-dependencies]
 # The test upstream of `tests/renew_bundle.rs` signs CSRs.

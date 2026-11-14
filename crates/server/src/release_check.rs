@@ -27,10 +27,12 @@ const RETRY: Duration = Duration::from_secs(60 * 60);
 
 /// A release newer than the running server, as `GET /api/server-update`
 /// shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = AvailableRelease)]
 pub struct Available {
     pub version: String,
     pub release_notes_url: Option<String>,
+    /// When a check first saw it.
     pub first_seen_at: DateTime<Utc>,
 }
 

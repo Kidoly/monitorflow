@@ -151,10 +151,12 @@ pub async fn get_agent_install(
 }
 
 /// Body of `PUT /api/settings/agent-install`: replaces both values.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentInstallRequest {
     pub source: AgentInstallSource,
+    /// An https URL without user, query or fragment; required for `custom`
+    /// unless the configuration names one. `null` or empty forgets it.
     #[serde(default)]
     pub custom_url: Option<String>,
 }
