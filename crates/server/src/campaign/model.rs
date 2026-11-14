@@ -23,7 +23,10 @@ pub const MAX_WINDOWS: usize = 32;
 /// Longest package list, as for a single command.
 pub const MAX_PACKAGES: usize = 1000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+/// Where a campaign is. `stopped`, `completed` and `failed` are final.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum CampaignState {
@@ -105,7 +108,11 @@ impl Action {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+/// How a failure threshold counts: servers, or percent of the batch.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
+)]
+#[schema(as = CampaignFailureUnit)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum FailureUnit {
@@ -113,10 +120,15 @@ pub enum FailureUnit {
     Percent,
 }
 
-/// A wave fails when more of its servers failed than this.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A wave fails when more of its servers failed than this. A failed
+/// server is a command `failed`, `expired` or `cancelled`, or a server
+/// skipped with an error. The default, `{"value": 0, "unit": "count"}`,
+/// stops at the first failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = CampaignFailureThreshold)]
 #[serde(deny_unknown_fields)]
 pub struct FailureThreshold {
+    /// Servers (up to 10000), or percent (up to 100).
     pub value: u32,
     pub unit: FailureUnit,
 }
@@ -198,8 +210,10 @@ impl<'de> Deserialize<'de> for LocalTime {
     }
 }
 
-/// When a campaign may queue commands.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// When a campaign may queue commands. With no window, at any time; with
+/// several, whenever one is open. At most 32.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = CampaignWindow)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Window {
     /// Every week on `weekdays` (ISO: 1 is Monday, 7 Sunday), from `start`
@@ -207,8 +221,13 @@ pub enum Window {
     /// `start` closes the next day.
     Weekly {
         weekdays: Vec<u8>,
+        /// `HH:MM`, local time.
+        #[schema(value_type = String, example = "22:00")]
         start: LocalTime,
+        /// `HH:MM`, local time; `00:00` and `24:00` are the end of the day.
+        #[schema(value_type = String, example = "04:00")]
         end: LocalTime,
+        /// An IANA time zone, like `Europe/Paris`.
         timezone: String,
     },
     /// Once, from `starts_at` to `ends_at`.
@@ -260,12 +279,16 @@ impl Window {
 }
 
 /// The `ApplyUpdates` of every command of a campaign.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = CampaignUpdateSpec)]
 pub struct UpdateSpec {
+    /// Packages to upgrade; empty upgrades everything.
     #[serde(default)]
     pub packages: Vec<String>,
+    /// Only security updates.
     #[serde(default)]
     pub security_only: bool,
+    /// Whether the agent may reboot the server when an update needs it.
     #[serde(default)]
     pub allow_reboot: bool,
 }
@@ -292,11 +315,17 @@ impl UpdateSpec {
 }
 
 /// How pinned sources treat a host's other sources (ADR-0032).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
+)]
+#[schema(as = CampaignSourcesMode)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum SourcesMode {
+    /// The pinned mirrors are the server's only package sources during
+    /// its update.
     Replace,
+    /// They are added to the server's own sources.
     Add,
 }
 
@@ -310,19 +339,24 @@ impl From<SourcesMode> for Mode {
 }
 
 /// A mirror and the published snapshot a campaign pins it to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = CampaignPinnedMirror)]
 #[serde(deny_unknown_fields)]
 pub struct PinnedMirror {
+    /// The mirror's name.
     pub name: String,
+    /// One of its published snapshots, not `current`.
     pub snapshot: String,
 }
 
 /// The snapshots every server of a campaign installs from (ADR-0038):
 /// each server uses the mirrors of its OS family.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = CampaignSources)]
 #[serde(deny_unknown_fields)]
 pub struct SourcesPin {
     pub mode: SourcesMode,
+    /// One or more mirrors, each once. Windows servers take no sources.
     pub mirrors: Vec<PinnedMirror>,
 }
 
@@ -349,11 +383,16 @@ impl SourcesPin {
 /// One wave as requested: explicit servers, a number of servers, or a
 /// percentage of all targets (rounded up), taken in target order from
 /// those no explicit wave names.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = CampaignWaveSpec)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum WaveSpec {
+    /// These servers of the campaign, `{"servers": [...]}`.
     Servers(Vec<Uuid>),
+    /// The next `n` servers by host name, `{"size": n}`.
     Size(u32),
+    /// The next servers, `p` percent of all of them rounded up (1 to 100),
+    /// `{"percent": p}`.
     Percent(u32),
 }
 
