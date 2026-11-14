@@ -25,6 +25,7 @@ pub const MAX_NAME_LEN: usize = 64;
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct CustomerView {
     pub id: Uuid,
+    /// Unique.
     pub name: String,
     /// Sites of the customer the user reads, not all of them.
     pub site_count: i64,
@@ -33,6 +34,7 @@ pub struct CustomerView {
 /// Body of `GET /api/customers`, sorted by name.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CustomerList {
+    /// By name.
     pub customers: Vec<CustomerView>,
 }
 
@@ -40,6 +42,8 @@ pub struct CustomerList {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NameRequest {
+    /// 1 to 64 characters, without control characters or spaces at either
+    /// end.
     pub name: String,
 }
 

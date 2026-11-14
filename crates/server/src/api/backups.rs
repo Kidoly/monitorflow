@@ -23,7 +23,7 @@ use super::server_update::{alive, read_state, require_global_admin, INBOX};
 use super::{is_missing_file, ApiError, ApiState};
 
 /// Body of `GET /api/backups`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct BackupsView {
     /// The server shares a volume with the updater, which takes backups.
     pub enabled: bool,
@@ -32,6 +32,7 @@ pub struct BackupsView {
     /// Backups are mounted but only root can read them: they are in a
     /// host directory, `BACKUP_DIR`, and are copied from there.
     pub host_dir: bool,
+    /// The updater reported within the last two minutes.
     pub updater_alive: bool,
     /// "Back up now" waits for the updater to take it.
     pub requested: bool,
@@ -42,8 +43,10 @@ pub struct BackupsView {
 }
 
 /// Body of the 202 answer.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = BackupStarted)]
 pub struct Started {
+    /// The request's ID: the `last.id` of the backup once the updater takes it.
     pub id: String,
 }
 

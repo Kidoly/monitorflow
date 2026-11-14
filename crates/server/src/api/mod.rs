@@ -24,6 +24,7 @@
 //! | POST | `/api/setup` | setup link | body `{"token", "username", "password"}`; 200 [`Me`] and the session cookie; 400 for a bad username or password, 410 for a used, replaced or expired link, 409 once a user exists |
 //! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}], "multi_customer"}`; `multi_customer` is whether the user sees more than one customer (ADR-0104) |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
+//! | GET | `/api/servers/summary` | any role | [`servers::ServerSummary`]: how many servers are critical, warning, acknowledged, silenced, offline and ok, out of `total`; `?site_id` or `?customer_id` narrows it (ADR-0130) |
 //! | GET | `/api/servers/{id}` | read | [`ServerDetail`]: one listing row plus `certificate`, see below |
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
 //! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
@@ -31,6 +32,7 @@
 //! | GET | `/api/servers/{id}/recommendations` | read | [`recommendations::RecommendationList`]: checks recommended from what the agent saw (ADR-0134) |
 //! | POST | `/api/servers/{id}/recommendations/dismiss` | modify | body [`recommendations::KeyRequest`], a current recommendation; 204 |
 //! | POST | `/api/servers/{id}/recommendations/restore` | modify | body [`recommendations::KeyRequest`], a dismissed one; 204 |
+//! | GET | `/api/checks/usage` | read | [`checks::UsageList`]: servers running each check, over the sites read, for the catalogue's "Most used" |
 //! | GET | `/api/sites/{id}/sensors` | read | [`sensors::SiteEffective`]: built-in defaults overlaid with the site's rows |
 //! | PUT | `/api/sites/{id}/check-interval` | modify | body and answer [`check_interval::CheckInterval`] `{"interval_ms"}`, 10 s to 24 h or `null` for the built-in one: how often the site's built-in checks run; audited (ADR-0097) |
 //! | GET | `/api/sites/{id}/sensor_configs` | read | [`sensors::EntryList`] of the site's rows |
@@ -632,6 +634,7 @@ pub mod backups;
 pub mod campaigns;
 pub mod certificate_authority;
 pub mod check_interval;
+pub mod checks;
 pub mod client_addr;
 pub mod commands;
 pub mod customers;
@@ -655,6 +658,15 @@ pub mod offline_alerts;
 pub mod on_call;
 pub(crate) mod one_time;
 pub mod openapi;
+pub mod openapi_auto_update;
+pub mod openapi_campaigns;
+pub mod openapi_core;
+mod openapi_dashboards;
+mod openapi_plugins;
+pub mod openapi_remediation;
+mod openapi_settings;
+mod openapi_system;
+mod openapi_users;
 pub mod package_sources;
 pub mod packages;
 pub mod password;
@@ -670,6 +682,7 @@ pub mod remediation_incidents;
 pub mod revoke;
 pub mod roles;
 pub mod rollback;
+pub mod sensor_values;
 pub mod sensors;
 pub mod server_settings;
 pub mod server_update;
@@ -948,6 +961,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/me", get(auth::me))
         .route("/api/setup", get(setup::status).post(setup::complete))
         .route("/api/servers", get(servers::list))
+        .route("/api/servers/summary", get(servers::summary))
         .route("/api/servers/{id}", get(servers::detail))
         .route("/api/sites", get(sites::list))
         .route(
@@ -1086,8 +1100,13 @@ pub fn router(state: ApiState) -> Router {
             "/api/servers/{id}/recommendations/restore",
             post(recommendations::restore),
         )
+        .route("/api/checks/usage", get(checks::usage))
         .route("/api/sites/{id}/sensors", get(sensors::effective_site))
         .route("/api/servers/{id}/metrics", get(metrics::discover))
+        .route(
+            "/api/servers/{id}/sensor-values",
+            get(sensor_values::sensor_values),
+        )
         .route("/api/servers/{id}/logs", get(logs::list))
         .route("/api/metrics/query", get(metrics::query))
         .route("/api/metrics/query_range", get(metrics::query_range))

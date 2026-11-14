@@ -590,4 +590,65 @@ db_tests! {
         let (_, body) = call(&pool, &viewer, "GET", &uri, None).await;
         assert_eq!(body["recommendations"], json!([]));
     }
+
+    #[sqlx::test]
+    async fn usage_counts_servers_over_the_sites_read(pool: PgPool) {
+        let f = fleet(&pool).await;
+        // A second Paris server, and a removed one that counts for nothing.
+        for (peer, revoked) in [("agent-paris-2", false), ("agent-paris-old", true)] {
+            sqlx::query(
+                "INSERT INTO servers (peer_id, site_id, hostname, os_family, revoked_at)
+                 VALUES ($1, $2, $1, 'debian', CASE WHEN $3 THEN now() END)",
+            )
+            .bind(peer)
+            .bind(f.paris)
+            .bind(revoked)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let insert = |site: Option<Uuid>, server: Option<Uuid>, name: &str, enabled: bool| {
+            let pool = pool.clone();
+            let name = name.to_owned();
+            async move {
+                sqlx::query(
+                    "INSERT INTO sensor_configs (site_id, server_id, kind, name, interval_ms, params, enabled)
+                     VALUES ($1, $2, 'port', $3, 60000, '{\"port\": 22}', $4)",
+                )
+                .bind(site)
+                .bind(server)
+                .bind(name)
+                .bind(enabled)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        insert(Some(f.paris), None, "port_22", true).await;
+        insert(None, Some(f.paris_server), "port_5432", true).await;
+        insert(None, Some(f.paris_server), "port_8080", false).await;
+        insert(None, Some(f.lyon_server), "port_5432", true).await;
+        insert(Some(f.lyon), None, "port_443", true).await;
+
+        let usage = |cookie: String| {
+            let pool = pool.clone();
+            async move {
+                let (status, body) = call(&pool, &cookie, "GET", "/api/checks/usage", None).await;
+                assert_eq!(status, StatusCode::OK);
+                body["checks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|c| (c["name"].as_str().unwrap().to_owned(), c["servers"].as_i64().unwrap()))
+                    .collect::<Vec<_>>()
+            }
+        };
+        let paris = session(&pool, "paris-viewer", Role::Viewer, Some(f.paris)).await;
+        assert_eq!(usage(paris).await, [("port_22".to_owned(), 2), ("port_5432".to_owned(), 1)]);
+        let admin = session(&pool, "admin", Role::Administrator, None).await;
+        assert_eq!(
+            usage(admin).await,
+            [("port_22".to_owned(), 2), ("port_5432".to_owned(), 2), ("port_443".to_owned(), 1)]
+        );
+    }
 }

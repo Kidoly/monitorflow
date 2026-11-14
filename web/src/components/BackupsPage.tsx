@@ -29,7 +29,7 @@ const KIND_WORDS: Record<BackupKind, string> = {
   update: "Before an update",
 };
 
-/** `/admin/backups/`: global administrators only, like the API (ADR-0058). */
+/** `/settings/backups/`: global administrators only, like the API (ADR-0058). */
 export function BackupsPage() {
   const me = useMe();
   if (!administersEverything(me)) {

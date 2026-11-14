@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useCallback, useId, useState } from "react";
+import { type FormEvent, useCallback, useId, useMemo, useState } from "react";
 
 import {
   ApiError,
@@ -22,15 +22,14 @@ import {
   checkErrors,
   checkRequests,
   checkTitle,
-  checkTypesFor,
   describeThreshold,
   formOf,
-  pluginCheckTypes,
   saveCheckInterval,
   saveThreshold,
   shapeFor,
   thresholdRequest,
 } from "@/lib/alerts";
+import { type CatalogueEntry, CATALOGUE, entriesFor, mostUsed, pluginEntries } from "@/lib/catalogue";
 import { every, slowAlertNote } from "@/lib/intervals";
 import { METRIC_PREFIX, sensorInterval } from "@/lib/metrics";
 import { siteHref } from "@/lib/routes";
@@ -43,6 +42,7 @@ import { Banner, ErrorState, LoadingBlock, StaleBanner } from "@/components/ui/P
 import { Label } from "@/components/ui/StatusLabel";
 
 import { CheckRecommendations } from "./CheckRecommendations";
+import { CheckCatalogue } from "./CheckCatalogue";
 import { type Inherit, IntervalControl, IntervalSelect } from "./IntervalSelect";
 
 import admin from "./AdminPages.module.css";
@@ -634,10 +634,13 @@ function TurnBackOn({ id, onChanged }: { id: string; onChanged: () => void }) {
   );
 }
 
-/** The Add a check form: a kind, its few fields prefilled where possible, and where it applies. */
-function AddCheck({
+/**
+ * Add a check: the catalogue, then the form of the chosen check with its
+ * few fields prefilled, how often, its alert and where it applies.
+ */
+export function AddCheck({
   target,
-  intervalMs: initialInterval,
+  intervalMs,
   onDone,
   onCancel,
 }: {
@@ -649,27 +652,60 @@ function AddCheck({
 }) {
   const usable = usePolledData(api.usablePlugins, { intervalMs: 300_000 });
   const sites = usePolledData(api.sites, { intervalMs: 300_000 });
+  const usage = usePolledData(api.checkUsage, { intervalMs: 300_000 });
+  const [chosen, setChosen] = useState<CatalogueEntry | null>(null);
   const siteId = target.kind === "server" ? target.siteId : target.id;
   const customerId = sites.data?.sites.find((s) => s.id === siteId)?.customer_id ?? null;
-  const types = [
-    ...checkTypesFor(target.kind === "server" ? target.osFamily : null),
-    ...pluginCheckTypes(usable.data?.plugins ?? [], siteId, customerId),
-  ];
-  const [type, setType] = useState<CheckType>(types[0]!);
+  const osFamily = target.kind === "server" ? target.osFamily : null;
+  const entries = useMemo(
+    () => entriesFor([...CATALOGUE, ...pluginEntries(usable.data?.plugins ?? [], siteId, customerId)], osFamily),
+    [usable.data, siteId, customerId, osFamily],
+  );
+  const top = useMemo(() => mostUsed(entries, usage.data?.checks ?? []), [entries, usage.data]);
+  const systems = [...new Set(entries.flatMap((e) => e.systems))];
+
+  return (
+    <div className={cx(styles.editor, styles.add)}>
+      {chosen?.type ? (
+        <CheckForm
+          key={chosen.id}
+          target={target}
+          type={chosen.type}
+          intervalMs={intervalMs}
+          onDone={onDone}
+          onBack={() => setChosen(null)}
+          onCancel={onCancel}
+        />
+      ) : (
+        <CheckCatalogue entries={entries} mostUsed={top} systems={systems} onChoose={setChosen} onCancel={onCancel} />
+      )}
+    </div>
+  );
+}
+
+/** The form of one catalogue entry. */
+function CheckForm({
+  target,
+  type,
+  intervalMs: initialInterval,
+  onDone,
+  onBack,
+  onCancel,
+}: {
+  target: Target;
+  type: CheckType;
+  intervalMs: number;
+  onDone: () => void;
+  onBack: () => void;
+  onCancel: () => void;
+}) {
   const [intervalMs, setIntervalMs] = useState(initialInterval);
-  const [values, setValues] = useState<Record<string, string>>(() => initialValues(types[0]!));
+  const [values, setValues] = useState<Record<string, string>>(() => initialValues(type));
   const [scope, setScope] = useState<"own" | "site">("own");
   const [alert, setAlert] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  function choose(label: string) {
-    const next = types.find((t) => t.label === label)!;
-    setType(next);
-    setValues(initialValues(next));
-    setErrors({});
-  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -697,18 +733,14 @@ function AddCheck({
 
   const severity = type.severity === "critical" ? "a critical alert" : "a warning";
   return (
-    <form className={cx(styles.editor, styles.add)} onSubmit={(e) => void submit(e)} noValidate aria-label="Add a check">
+    <form className={styles.form} onSubmit={(e) => void submit(e)} noValidate aria-label="Add a check">
+      <div className={styles.formHead}>
+        <h3 className={styles.formTitle}>{type.label}</h3>
+        <Button size="small" onClick={onBack} disabled={busy}>
+          Back to the catalogue
+        </Button>
+      </div>
       <div className={styles.fields}>
-        <label className={admin.field}>
-          Check that
-          <select className={fieldClass} value={type.label} onChange={(e) => choose(e.target.value)}>
-            {types.map((t) => (
-              <option key={t.label} value={t.label}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-        </label>
         {type.fields.map((field) => (
           <TextField
             key={`${type.label}/${field.key}`}

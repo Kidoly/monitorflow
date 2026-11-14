@@ -25,7 +25,7 @@ use crate::notify::Coverage;
 pub use deliver::Deliverer;
 
 /// The page of integrations, under the web interface's URL.
-pub const PAGE: &str = "/admin/integrations/";
+pub const PAGE: &str = "/settings/integrations/";
 /// Version of the payload; fields are only ever added.
 pub const PAYLOAD_VERSION: u32 = 1;
 /// Says a delivery is a replay of an event already sent.
@@ -218,7 +218,7 @@ fn path(event: &str, details: &Value) -> String {
         "campaign" => format!("/campaigns/view/?id={}", id("campaign")),
         "approval" => "/remediation/approvals/".into(),
         "update" if details["relay"].is_object() => {
-            format!("/admin/relays/view/?id={}", id("relay"))
+            format!("/settings/relays/view/?id={}", id("relay"))
         }
         "update" => format!("/servers/view/?id={}&tab=updates", id("server")),
         _ => PAGE.into(),
@@ -504,7 +504,7 @@ mod tests {
         );
         assert_eq!(
             link("update.failed", json!({"relay": {"id": "r"}})),
-            "/admin/relays/view/?id=r"
+            "/settings/relays/view/?id=r"
         );
         assert_eq!(
             link(

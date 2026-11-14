@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import type { EffectiveSensors, ServerDetail } from "@/lib/api";
+import { unitOf } from "@/lib/format";
 import { metricTitle } from "@/lib/metrics";
 import { sensorHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -8,9 +9,12 @@ import { type SensorRow, formatSensorValue, primaryMetric, sensorFacts } from "@
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { ButtonLink } from "@/components/ui/Button";
 import { Banner, EmptyState } from "@/components/ui/PageState";
+import { Reason } from "@/components/ui/Reason";
 import { RelativeTime } from "@/components/ui/RelativeTime";
+import { Sparkline } from "@/components/ui/Sparkline";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatDuration, formatSince } from "@/components/ui/time";
+import type { Tone } from "@/components/ui/tone";
 
 import styles from "./ServerPage.module.css";
 
@@ -19,12 +23,15 @@ export function ServerSensorsTab({
   server,
   sensors,
   rows,
+  window,
   incidentsFailed,
   now,
 }: {
   server: ServerDetail;
   sensors: EffectiveSensors | { error: string };
   rows: SensorRow[];
+  /** What the sparklines cover; null when the values could not be read. */
+  window?: { start: number; end: number } | null;
   incidentsFailed: boolean;
   now: Date;
 }) {
@@ -49,6 +56,22 @@ export function ServerSensorsTab({
       ),
     },
     { key: "status", header: "Status", cell: (row) => <StatusLabel kind="sensor" value={row.status} /> },
+    { key: "message", header: "Message", cell: (row) => <Reason short text={row.reason ?? row.error} /> },
+    {
+      key: "trend",
+      header: "Last hour",
+      cell: (row) =>
+        window ? (
+          <Sparkline
+            points={row.points}
+            start={window.start}
+            end={window.end}
+            ratio={unitOf(row.metric) === "ratio"}
+            tone={TONES[row.status]}
+            label={`${row.title}, last hour`}
+          />
+        ) : null,
+    },
     { key: "value", header: "Last value", cell: (row) => <LastValue row={row} now={now} /> },
   ];
   return (
@@ -65,15 +88,17 @@ export function ServerSensorsTab({
         <DataTable label="Sensors" columns={columns} rows={rows} rowKey={(row) => row.key} dense />
       )}
       <p className={styles.note}>
-        Sorted by status, then name. Open a sensor for its chart and history, or{" "}
+        Problems first, then by name. The line shows the last hour. Open a sensor for its chart and history, or{" "}
         <Link href={scopedHref(serverHref(server.id, "alerts"), scope)}>add a check or change when to alert</Link>.
       </p>
     </div>
   );
 }
 
+const TONES: Record<SensorRow["status"], Tone> = { critical: "bad", warning: "warn", unknown: "neutral", ok: "ok" };
+
 function LastValue({ row, now }: { row: SensorRow; now: Date }) {
-  if (row.error) return <span className={styles.muted}>{row.error}</span>;
+  if (row.error) return <span className={styles.muted}>–</span>;
   const { incident } = row;
   const other = incident && incident.metric !== primaryMetric(row.sensor).metric;
   return (

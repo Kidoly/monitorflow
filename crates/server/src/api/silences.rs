@@ -47,8 +47,11 @@ pub enum Target {
 #[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
+    /// Silences covering this server.
     pub server_id: Option<Uuid>,
+    /// Silences covering this relay.
     pub relay_id: Option<Uuid>,
+    /// Silences covering this site.
     pub site_id: Option<Uuid>,
 }
 
@@ -57,6 +60,7 @@ pub struct ListParams {
 #[schema(as = SilenceRequest)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRequest {
+    /// What it covers.
     pub scope: Target,
     /// The server, relay, site or customer; absent for `all`.
     #[serde(default)]
@@ -64,7 +68,9 @@ pub struct CreateRequest {
     /// Now when absent or past.
     #[serde(default)]
     pub starts_at: Option<DateTime<Utc>>,
+    /// After the start, at most 30 days later.
     pub ends_at: DateTime<Utc>,
+    /// Why, for others: 1 to 200 characters, trimmed.
     pub reason: String,
 }
 
@@ -76,15 +82,19 @@ pub struct SilenceView {
     pub scope: String,
     /// `null` for `all`.
     pub target_id: Option<Uuid>,
+    /// The server's hostname, or the relay's, site's or customer's name;
+    /// `null` for `all`.
     pub target_name: Option<String>,
     /// The target's site; `null` for `customer` and `all`.
     pub site_id: Option<Uuid>,
     /// The target's customer; `null` for `all`.
     pub customer_id: Option<Uuid>,
     pub starts_at: DateTime<Utc>,
+    /// When it ends on its own.
     pub ends_at: DateTime<Utc>,
     /// Started, as opposed to upcoming.
     pub active: bool,
+    /// Why, as its maker wrote it.
     pub reason: String,
     /// `null` once the user is deleted.
     pub created_by_username: Option<String>,
@@ -97,6 +107,7 @@ pub struct SilenceView {
 /// Body of `GET /api/silences`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SilenceList {
+    /// The first to start first.
     pub silences: Vec<SilenceView>,
 }
 

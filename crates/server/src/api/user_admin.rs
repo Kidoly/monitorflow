@@ -38,20 +38,22 @@ pub const LINK_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const LINK_GONE: &str = "this link is no longer valid; ask an administrator for a new one";
 
 /// One user of `GET /api/users`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserView {
     pub id: Uuid,
+    /// The name they sign in with.
     pub username: String,
     /// `active`, `invited` (no password yet) or `disabled`.
     pub state: &'static str,
     pub created_at: DateTime<Utc>,
+    /// Every grant, highest role first.
     pub roles: Vec<RoleGrant>,
     /// Expiry of the user's unused password link, if any.
     pub link_expires_at: Option<DateTime<Utc>>,
 }
 
 /// Body of `GET /api/users`, sorted by username.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserList {
     pub users: Vec<UserView>,
 }
@@ -72,12 +74,16 @@ pub struct Invited {
 }
 
 /// A role and where it applies; both IDs null is everything.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = RoleGrantRequest)]
 #[serde(deny_unknown_fields)]
 pub struct GrantRequest {
     pub role: Role,
+    /// The customer, with all its sites; absent or `null` with `site_id`
+    /// for everything.
     #[serde(default)]
     pub customer_id: Option<Uuid>,
+    /// One site; never with `customer_id`.
     #[serde(default)]
     pub site_id: Option<Uuid>,
 }
@@ -92,7 +98,8 @@ pub struct InviteRequest {
 }
 
 /// Body of `PUT /api/users/{id}/disabled`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = UserDisabledRequest)]
 #[serde(deny_unknown_fields)]
 pub struct DisabledRequest {
     pub disabled: bool,

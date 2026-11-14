@@ -1,0 +1,114 @@
+/* The Settings page: a search, then groups of one-line rows. One column at
+   any width, so it reads the same with 3 servers or 2,000. */
+
+.search {
+  max-width: 560px;
+}
+
+.searchField {
+  width: 100%;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 760px;
+}
+
+.groupTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.rows > li + li {
+  border-top: 1px solid var(--border);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  color: var(--text);
+}
+
+.rows > li:first-child .row {
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+}
+
+.rows > li:last-child .row {
+  border-radius: 0 0 var(--radius-panel) var(--radius-panel);
+}
+
+.rows > li:only-child .row {
+  border-radius: var(--radius-panel);
+}
+
+.row:hover {
+  background: var(--hl);
+  text-decoration: none;
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
+}
+
+.rowIcon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.rowText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rowName {
+  font-weight: 600;
+}
+
+.rowDescription {
+  color: var(--muted);
+}
+
+.rowStatus {
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 18px;
+}
+
+.ok {
+  color: var(--ok);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.bad {
+  color: var(--bad);
+}

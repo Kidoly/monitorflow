@@ -56,7 +56,7 @@ const REASONS: { value: RevocationReason; label: string }[] = [
 /** Open incidents fetched to fill the Problem column; the API has no per-relay filter. */
 const INCIDENT_LIMIT = 500;
 
-/** `/admin/relays/view/?id=…` (ADR-0020 routing). */
+/** `/settings/relays/view/?id=…` (ADR-0020 routing). */
 export function RelayView() {
   const id = useSearchParams().get("id");
   return <AdminLayout>{(me) => <RelayPage key={id} id={id} me={me} />}</AdminLayout>;

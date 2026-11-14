@@ -266,10 +266,11 @@ impl Distribution {
 }
 
 /// Space of the file system holding `path`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct Disk {
-    /// What an unprivileged process can still use.
+    /// What an unprivileged process can still use, in bytes.
     pub free_bytes: u64,
+    /// In bytes.
     pub total_bytes: u64,
 }
 

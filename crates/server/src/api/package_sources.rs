@@ -42,7 +42,8 @@ const NOT_ENABLED: &str = "Mirrors are not enabled on this server.";
 const NO_ADDRESS: &str = "The address of the mirrors isn't set. Set it on the Settings page.";
 
 /// Where a server's packages come from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = SourcesUsing)]
 #[serde(rename_all = "lowercase")]
 pub enum Using {
     /// A mirror of this install.
@@ -51,28 +52,32 @@ pub enum Using {
     Own,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct UsedMirror {
+    /// The mirror's `name`.
     pub name: String,
     /// A snapshot name, or `current` for the newest.
     pub snapshot: String,
 }
 
 /// Body of `GET /api/servers/{id}/sources`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct SourcesStatus {
+    /// What the last change that succeeded left; `own` when none did.
     pub using: Using,
-    /// With [`Using::Mirror`].
+    /// With `mirror`: the mirrors and snapshots used. Empty otherwise.
     pub mirrors: Vec<UsedMirror>,
-    /// A change on its way to the server.
+    /// A change on its way to the server; `null` when none.
     pub changing_to: Option<Using>,
     /// Why the last change failed, when none succeeded or started since.
     pub failed: Option<String>,
     /// A campaign has the sources for now.
     pub campaign: bool,
-    /// The catalog's name for what the server runs.
+    /// The catalog's name for what the server runs, such as `Debian 12`;
+    /// `null` when no mirror matches it.
     pub distribution: Option<&'static str>,
-    /// Why the server cannot use a mirror, in a sentence for the page.
+    /// Why the server cannot use a mirror, in a sentence for the page;
+    /// `null` when it can.
     pub problem: Option<String>,
     /// The fix is adding [`Self::distribution`] on the Mirrors page.
     pub add_mirror: bool,
@@ -105,8 +110,10 @@ impl SourcesStatus {
 }
 
 /// One server of `GET /api/sites/{id}/sources`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = SiteSourcesServer)]
 pub struct SiteServer {
+    /// The server.
     pub id: Uuid,
     pub hostname: String,
     /// As in the server listing, so Windows rows read differently.
@@ -116,22 +123,31 @@ pub struct SiteServer {
 }
 
 /// Body of `GET /api/sites/{id}/sources`, by host name.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SiteSources {
+    /// Every enrolled server of the site.
     pub servers: Vec<SiteServer>,
 }
 
-#[derive(Debug, Serialize)]
+/// A server a site's change left out, and why.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = SkippedServer)]
 pub struct Skipped {
+    /// The server.
     pub id: Uuid,
     pub hostname: String,
+    /// A sentence for the page.
     pub reason: String,
 }
 
 /// Answer of the site's changes: each server is queued or skipped alone.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = SiteSourcesChange)]
 pub struct SiteChange {
+    /// Servers a command was queued for.
     pub queued: Vec<Uuid>,
+    /// Servers that needed the change but could not take it now. Servers
+    /// already as asked are in neither list.
     pub skipped: Vec<Skipped>,
 }
 

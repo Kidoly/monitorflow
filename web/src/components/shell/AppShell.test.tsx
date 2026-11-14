@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,6 +8,8 @@ import { stubFetch } from "@/test/fetch";
 import { authority, rotation } from "@/test/certificateAuthority";
 import { setUrl } from "@/test/navigation";
 import { ACME, COMPANY_ROUTES, LYON, SHELL_ROUTES, sites } from "@/test/shell";
+
+import { SettingsStatusProvider } from "../settings/SettingsStatus";
 
 import { AppShell } from "./AppShell";
 
@@ -42,20 +44,20 @@ describe("AppShell", () => {
       stubFetch({ ...SHELL_ROUTES, ...status(release) });
       render(<AppShell me={admin}>page</AppShell>);
       expect(await screen.findByText("MonitorFlow 0.2.0 is available.")).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "Review and update" })).toHaveAttribute("href", "/admin/server-update");
+      expect(screen.getByRole("link", { name: "Review and update" })).toHaveAttribute("href", "/settings/server-update");
     });
 
     it("stays away without a newer release, on the update page and during an update", async () => {
       for (const [routes, url] of [
         [status(null), "/"],
-        [status(release), "/admin/server-update/"],
+        [status(release), "/settings/server-update/"],
         [status(release, true), "/"],
       ] as const) {
         setUrl(url);
         const fetchMock = stubFetch({ ...SHELL_ROUTES, ...routes });
         const { unmount } = render(<AppShell me={admin}>page</AppShell>);
         await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/server-update", expect.anything()));
-        await screen.findByLabelText("3 open incidents");
+        await screen.findByText("3 open");
         expect(screen.queryByText(/is available/)).not.toBeInTheDocument();
         unmount();
       }
@@ -79,7 +81,7 @@ describe("AppShell", () => {
       expect(await screen.findByText("An emergency change of the certificate authority is under way.")).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "See the certificate authority" })).toHaveAttribute(
         "href",
-        "/admin/certificate-authority",
+        "/settings/certificate-authority",
       );
     });
 
@@ -87,13 +89,13 @@ describe("AppShell", () => {
       for (const [body, url] of [
         [authority(), "/"],
         [authority({ rotation: rotation() }), "/"],
-        [authority({ expires_soon: true }), "/admin/certificate-authority/"],
+        [authority({ expires_soon: true }), "/settings/certificate-authority/"],
       ] as const) {
         setUrl(url);
         const fetchMock = stubFetch(routes(body));
         const { unmount } = render(<AppShell me={admin}>page</AppShell>);
         await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/certificate-authority", expect.anything()));
-        await screen.findByLabelText("3 open incidents");
+        await screen.findByText("3 open");
         expect(screen.queryByText(/certificate authority/)).not.toBeInTheDocument();
         unmount();
       }
@@ -124,7 +126,7 @@ describe("AppShell", () => {
           "The Enterprise license expired on 30 November 2026. The central server already added keeps running, but no other can be added.",
         ),
       ).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "See the license" })).toHaveAttribute("href", expect.stringContaining("/admin/license"));
+      expect(screen.getByRole("link", { name: "See the license" })).toHaveAttribute("href", expect.stringContaining("/settings/license"));
     });
 
     it("says nothing to a single central server", async () => {
@@ -174,20 +176,8 @@ describe("AppShell", () => {
       "Approvals",
       "Audit log",
       "Settings",
-      "Relays",
-      "Sites",
-      "Add servers",
-      "Users and roles",
-      "API keys",
-      "Notifications",
-      "Integrations",
-      "AI",
-      "Server update",
-      "Backups",
-      "Plugins",
-      "Certificate authority",
-      "License",
     ]);
+    expect(within(nav()).queryByText("Administration")).not.toBeInTheDocument();
     expect(within(nav()).getByText("Remediation")).toBeInTheDocument();
     expect(within(nav()).getByText("Updates")).toBeInTheDocument();
   });
@@ -221,10 +211,10 @@ describe("AppShell", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Scope: Acme Hosting" })).toHaveFocus();
     expect(within(nav()).getByRole("link", { name: "Fleet" })).toHaveAttribute("href", `/?customer=${ACME}`);
-    expect(within(nav()).getByRole("link", { name: "Relays" })).toHaveAttribute(
+    expect(within(nav()).getByRole("link", { name: "Settings" })).toHaveAttribute(
       "href",
       // Next's Link drops the trailing slash outside a build with `trailingSlash`.
-      expect.stringMatching(new RegExp(`^/admin/relays/?\\?customer=${ACME}$`)),
+      expect.stringMatching(new RegExp(`^/settings/?\\?customer=${ACME}$`)),
     );
   });
 
@@ -322,5 +312,65 @@ describe("AppShell", () => {
     expect(menu).toHaveAttribute("aria-expanded", "true");
     await user.click(menu);
     expect(menu).toHaveAttribute("aria-expanded", "false");
+  });
+
+  describe("settings", () => {
+    const failedBackup = {
+      "GET /api/backups": {
+        status: 200,
+        body: { enabled: true, last: { state: "failed" }, last_success_at: null, files: [] },
+      },
+    };
+
+    function renderWithStatuses(routes = {}) {
+      const fetchMock = stubFetch({ ...SHELL_ROUTES, ...routes });
+      render(
+        <SettingsStatusProvider me={admin}>
+          <AppShell me={admin}>page</AppShell>
+        </SettingsStatusProvider>,
+      );
+      return fetchMock;
+    }
+
+    it("pins Settings last, badged when a settings page needs someone", async () => {
+      renderWithStatuses(failedBackup);
+      const settings = within(nav()).getByRole("link", { name: /^Settings/ });
+      expect(await within(settings).findByLabelText("1 setting needs attention")).toHaveTextContent("1");
+    });
+
+    it("shows no badge when every page is fine", async () => {
+      const fetchMock = renderWithStatuses();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/backups", expect.anything()));
+      expect(within(nav()).queryByLabelText(/need.? attention/)).not.toBeInTheDocument();
+    });
+
+    it("swaps the sidebar for the settings list inside a settings page, Back leading to the last app page", async () => {
+      const user = userEvent.setup();
+      setUrl("/incidents/?state=open");
+      renderWithStatuses(failedBackup);
+      act(() => setUrl("/settings/relays/view/?id=r1"));
+      expect(within(nav()).queryByRole("link", { name: "Fleet" })).not.toBeInTheDocument();
+      expect(within(nav()).getByRole("link", { name: "Back" })).toHaveAttribute(
+        "href",
+        expect.stringMatching(/^\/incidents\/?\?state=open$/),
+      );
+      expect(within(nav()).getByRole("link", { name: "Relays" })).toHaveAttribute("aria-current", "page");
+      expect(await within(nav()).findByRole("link", { name: /^Backups\s*Critical$/ })).toBeInTheDocument();
+      // The list filters like the Settings page, and Escape clears it.
+      const search = within(nav()).getByRole("searchbox", { name: "Search settings" });
+      await user.type(search, "key");
+      const names = () => within(nav()).getAllByRole("link").map((a) => a.textContent);
+      expect(names()).toEqual(["MonitorFlowMF", "Back", "Settings", "API keys", "AI", "License"]);
+      await user.keyboard("{Escape}");
+      expect(search).toHaveValue("");
+      expect(names()).toContain("General");
+    });
+
+    it("keeps the app sidebar on the Settings page itself", () => {
+      setUrl("/settings/");
+      renderShell();
+      expect(within(nav()).getByRole("link", { name: "Fleet" })).toBeInTheDocument();
+      expect(within(nav()).getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
+    });
   });
 });

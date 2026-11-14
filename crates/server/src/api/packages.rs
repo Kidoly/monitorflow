@@ -18,40 +18,52 @@ pub const DEFAULT_LIMIT: u32 = 500;
 /// Largest accepted `limit`.
 pub const MAX_LIMIT: u32 = 5000;
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
-    /// Only packages with an upgrade available.
+    /// `true`: only packages with an upgrade available.
     pub upgradable: Option<bool>,
+    /// 1 to 5000, default 500.
     pub limit: Option<u32>,
+    /// `next_cursor` of the previous page.
     pub cursor: Option<String>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct PackageView {
+    /// The package name, or a Windows update's KB number or ID.
     pub name: String,
+    /// Like `amd64` or `x86_64`; `""` when the system has none.
     pub arch: String,
+    /// The installed version.
     pub version: String,
     /// `null` when no upgrade is available.
     pub upgradable_version: Option<String>,
     /// Windows updates only (ADR-0049), `null` for Linux packages.
     pub title: Option<String>,
+    /// Like `Security Updates`; Windows updates only.
     pub classification: Option<String>,
+    /// Like `Critical`; Windows updates only, `null` when Microsoft gives
+    /// none.
     pub severity: Option<String>,
+    /// Download size in bytes; Windows updates only.
     pub size_bytes: Option<i64>,
     /// A Windows update that may need a restart (pending) or waits for one
     /// (installed); always false for Linux packages.
     pub reboot_required: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PackageList {
-    /// `null` until the agent sent a report.
+    /// Whether the system waits for a restart; `null` until the agent sent
+    /// a report.
     pub reboot_required: Option<bool>,
     /// When the agent collected the report, by its clock.
     pub reported_at: Option<DateTime<Utc>>,
     /// Packages by name and architecture.
     pub packages: Vec<PackageView>,
+    /// Pass as `cursor` for the next page; `null` on the last one.
     pub next_cursor: Option<String>,
 }
 

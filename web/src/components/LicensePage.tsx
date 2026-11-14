@@ -16,7 +16,7 @@ import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
 import { Label } from "./ui/StatusLabel";
 
-/** `/admin/license/`: global administrators only, like the API (ADR-0100). */
+/** `/settings/license/`: global administrators only, like the API (ADR-0100). */
 export function LicensePage() {
   const me = useMe();
   if (!administersEverything(me)) {

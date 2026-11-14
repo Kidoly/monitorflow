@@ -32,24 +32,36 @@ use crate::campaign::{
 };
 use crate::commands::sources::{self, KeyLookupError};
 
-/// Body of `POST /api/campaigns`.
-#[derive(Debug, Deserialize)]
+/// Body of `POST /api/campaigns`. Only `customer_id`, `name` and a target
+/// (`site_id` and/or `server_ids`) are required.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = CampaignRequest)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRequest {
     pub customer_id: Uuid,
     pub name: String,
+    /// Every unrevoked server of this site of the customer.
     pub site_id: Option<Uuid>,
+    /// These servers of the customer, besides those of `site_id`.
     #[serde(default)]
     pub server_ids: Vec<Uuid>,
+    /// The batches, in order, up to 100; the servers left over make one
+    /// last batch. Empty: one batch of every server.
     #[serde(default)]
     pub waves: Vec<WaveSpec>,
+    /// Packages to upgrade, up to 1000; empty upgrades everything. Names
+    /// are letters, digits and `.+_:-` not starting with `-`, or KB
+    /// numbers and update IDs for Windows servers.
     #[serde(default)]
     pub packages: Vec<String>,
+    /// Only security updates.
     #[serde(default)]
     pub security_only: bool,
+    /// Whether the agent may reboot the server when an update needs it.
     #[serde(default)]
     pub allow_reboot: bool,
-    /// [`MIN_TTL_S`] to [`MAX_TTL_S`], default [`DEFAULT_TTL_S`].
+    /// Seconds a command may wait for its agent before it expires, 60 to
+    /// 604800, default 3600; never past the end of the open window.
     pub command_ttl_s: Option<u64>,
     #[serde(default)]
     pub failure_threshold: FailureThreshold,
@@ -57,15 +69,18 @@ pub struct CreateRequest {
     pub windows: Vec<Window>,
     /// Snapshots to pin every server to during its update (ADR-0038).
     pub sources: Option<SourcesPin>,
-    /// Update the agents to this version instead of packages (ADR-0053).
+    /// Update the agents to this version, like `0.3.1`, instead of
+    /// packages (ADR-0053); takes no package options nor `sources`.
     pub agent_version: Option<String>,
 }
 
 /// Servers by status; `failed` includes expired commands and skipped
 /// servers, `in_progress` queued, sent and running commands.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = CampaignProgress)]
 pub struct Progress {
     pub total: i64,
+    /// Servers without a command yet.
     pub pending: i64,
     pub in_progress: i64,
     pub succeeded: i64,
@@ -85,16 +100,21 @@ impl Progress {
 }
 
 /// One campaign, as listed.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = Campaign)]
 pub struct CampaignView {
     pub id: Uuid,
     pub customer_id: Uuid,
     pub customer_name: String,
     pub name: String,
+    /// The site named at creation; `null` when only `server_ids` were.
     pub site_id: Option<Uuid>,
     pub state: CampaignState,
+    /// Why it stopped or failed; `null` otherwise.
     pub error: Option<String>,
+    /// What every package update installs (unused by an agent update).
     pub spec: UpdateSpec,
+    /// Seconds a command may wait for its agent.
     pub command_ttl_s: i32,
     pub failure_threshold: FailureThreshold,
     pub windows: Vec<Window>,
@@ -102,30 +122,47 @@ pub struct CampaignView {
     pub sources: Option<SourcesPin>,
     /// Set for an agent update campaign (ADR-0053).
     pub agent_version: Option<String>,
+    /// Number of batches.
     pub wave_count: usize,
+    /// Index of the batch in progress, from 0; `null` before the first is
+    /// queued.
     pub current_wave: Option<i32>,
     pub progress: Progress,
+    /// The user who made it; `null` once that user is deleted.
     pub created_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Serialize)]
+/// Body of `GET /api/campaigns`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = CampaignList)]
 pub struct CampaignList {
     /// Newest first.
     pub campaigns: Vec<CampaignView>,
+    /// Pass as `cursor` for the next page; `null` on the last one.
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+/// One server of a batch.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = CampaignServer)]
 pub struct TargetView {
     pub server_id: Uuid,
+    /// The agent's name.
     pub peer_id: String,
     pub hostname: String,
     pub site_id: Uuid,
+    /// `pending` (no command yet), `skipped` (no command, `error` says
+    /// why), or the command's state: `queued`, `sent`, `running`,
+    /// `succeeded`, `failed`, `expired`, `cancelled`. A failed restore of
+    /// pinned sources makes it `failed`.
     pub status: &'static str,
+    /// The update command, see `/commands/{id}`; `null` before it is
+    /// queued.
     pub command_id: Option<Uuid>,
+    /// The update's exit code once it ran, else `null`.
     pub exit_code: Option<i32>,
     pub error: Option<String>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -137,8 +174,11 @@ pub struct TargetView {
     pub snapshot_command_id: Option<Uuid>,
 }
 
-#[derive(Debug, Serialize)]
+/// One batch.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = CampaignWave)]
 pub struct WaveView {
+    /// From 0.
     pub index: i32,
     /// `pending`, `running` or `done`.
     pub state: &'static str,
@@ -149,19 +189,25 @@ pub struct WaveView {
 }
 
 /// `GET /api/campaigns/{id}` and the answer of every write.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = CampaignDetail)]
 pub struct CampaignDetail {
     #[serde(flatten)]
     pub campaign: CampaignView,
+    /// The batches, in order.
     pub waves: Vec<WaveView>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+/// Query string of `GET /api/campaigns`. Every filter is optional.
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
     pub customer_id: Option<Uuid>,
     pub state: Option<CampaignState>,
+    /// 1 to 500, default 100.
     pub limit: Option<u32>,
+    /// `next_cursor` of the previous page.
     pub cursor: Option<String>,
 }
 
