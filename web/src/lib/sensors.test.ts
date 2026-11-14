@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { EffectiveSensor } from "./api";
-import { type SensorValues, formatSensorValue, primaryMetric, sensorFacts, sensorOf, sensorRows, seriesTitle } from "./sensors";
+import { type SensorValues, formatSensorValue, primaryMetric, sensorFacts, sensorOf, sensorRows, seriesTitle, valuesBySensor } from "./sensors";
 import { incident } from "@/test/incidents";
 
 const sensor = (kind: string, name = kind, instance = "", interval_ms = 30_000): EffectiveSensor => ({
@@ -27,7 +27,16 @@ const values = (entries: [EffectiveSensor, Record<string, number | null> | strin
       s,
       typeof v === "string"
         ? { error: v }
-        : { series: Object.entries(v).map(([instance, value]) => ({ labels: instance ? { instance } : ({} as Record<string, string>), points: [[at, value]] as [number, number | null][] })) },
+        : {
+            reason: Object.keys(v).length === 0 ? "No data yet" : null,
+            series: Object.entries(v).map(([instance, value]) => ({
+              instance,
+              points: [[at, value]] as [number, number | null][],
+              last_value: value,
+              last_at: null,
+              reason: value === null ? "No data for 15 minutes" : null,
+            })),
+          },
     ]),
   );
 
@@ -88,7 +97,7 @@ describe("sensorRows", () => {
       ]),
       [
         incident({ metric: "monitorflow_disk_used_ratio", instance: "/var", severity: "warning" }),
-        incident({ id: "b", metric: "monitorflow_disk_used_ratio", instance: "/var", severity: "critical", last_value: 0.95 }),
+        incident({ id: "b", metric: "monitorflow_disk_used_ratio", instance: "/var", severity: "critical", last_value: 0.95, reason: "95% used is above the critical limit of 95%" }),
         // Load average belongs to the CPU sensor's single row.
         incident({ id: "c", metric: "monitorflow_cpu_load5", instance: "", severity: "warning", last_value: 6.8 }),
       ],
@@ -99,13 +108,26 @@ describe("sensorRows", () => {
       ["nginx.service", "unknown"],
       ["Disk used /", "ok"],
     ]);
-    expect(rows[0]).toMatchObject({ value: 0.95, error: null, metric: "monitorflow_disk_used_ratio" });
+    expect(rows[0]).toMatchObject({ value: 0.95, error: null, metric: "monitorflow_disk_used_ratio", reason: "95% used is above the critical limit of 95%" });
+    expect(rows[3]).toMatchObject({ reason: null, points: [[at, 0.61]] });
     expect(rows[1]).toMatchObject({ value: 6.8, metric: "monitorflow_cpu_load5" });
     expect(rows[2]).toMatchObject({ value: null, error: "The metrics backend is unavailable." });
   });
 
   it("marks a sensor without samples unknown", () => {
     const [row] = sensorRows([disk], values([[disk, {}]]), []);
-    expect(row).toMatchObject({ title: "Disk used", status: "unknown", error: expect.stringMatching(/No data yet/) });
+    expect(row).toMatchObject({ title: "Disk used", status: "unknown", reason: "No data yet", error: null });
+  });
+
+  it("marks a late series unknown with the server's reason", () => {
+    const [row] = sensorRows([disk], values([[disk, { "/": null }]]), []);
+    expect(row).toMatchObject({ title: "Disk used /", status: "unknown", reason: "No data for 15 minutes" });
+  });
+
+  it("matches the batched values to sensors by name and instance", () => {
+    const list = { start: 0, end: 3600, step: 120, sensors: [{ name: "disk_data", instance: "data", metric: "m", series: [], reason: "No data yet" }] };
+    const map = valuesBySensor([disk, diskData], list);
+    expect(map.get(diskData)).toEqual({ series: [], reason: "No data yet" });
+    expect(map.get(disk)).toEqual({ series: [], reason: null });
   });
 });

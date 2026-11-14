@@ -232,6 +232,7 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
 // Sub-routes of servers and sites not documented yet.
 pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[
     "/sensors",
+    "/sensor-values",
     "/sensor_configs",
     "/thresholds",
     "/metrics",

@@ -64,10 +64,30 @@ pub fn incident(metric: &str, severity: &str, open: bool, value: f64, threshold:
 pub fn no_data(age_s: Option<i64>) -> String {
     match age_s {
         None => "No data yet".into(),
-        Some(s) if s < 120 => format!("No data for {}", plural(s.max(1) as u64, "second")),
-        Some(s) if s < 2 * 3_600 => format!("No data for {}", plural(s as u64 / 60, "minute")),
-        Some(s) if s < 2 * 86_400 => format!("No data for {}", plural(s as u64 / 3_600, "hour")),
-        Some(s) => format!("No data for {}", plural(s as u64 / 86_400, "day")),
+        Some(s) => format!("No data for {}", span(s)),
+    }
+}
+
+/// The sentence for a sensor that sent nothing in the last `window_s`
+/// seconds.
+pub fn no_data_within(window_s: i64) -> String {
+    let s = window_s.max(1) as u64;
+    let window = match s {
+        s if s % 86_400 == 0 => plural(s / 86_400, "day"),
+        s if s % 3_600 == 0 => plural(s / 3_600, "hour"),
+        s => span(s as i64),
+    };
+    format!("No data for over {window}")
+}
+
+/// "95 seconds", "5 minutes", "3 hours", "3 days": rounded down.
+fn span(s: i64) -> String {
+    let s = s.max(1) as u64;
+    match s {
+        s if s < 120 => plural(s, "second"),
+        s if s < 2 * 3_600 => plural(s / 60, "minute"),
+        s if s < 2 * 86_400 => plural(s / 3_600, "hour"),
+        s => plural(s / 86_400, "day"),
     }
 }
 
@@ -329,6 +349,8 @@ mod tests {
         assert_eq!(no_data(Some(300)), "No data for 5 minutes");
         assert_eq!(no_data(Some(3 * 3_600 + 5)), "No data for 3 hours");
         assert_eq!(no_data(Some(3 * 86_400)), "No data for 3 days");
+        assert_eq!(no_data_within(3_600), "No data for over 1 hour");
+        assert_eq!(no_data_within(2 * 86_400), "No data for over 2 days");
     }
 
     #[test]

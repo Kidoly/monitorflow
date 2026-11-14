@@ -87,7 +87,7 @@ describe("SensorPage", () => {
     const fetchMock = stub();
     render(<SensorPage id={ID} sensor="disk_used_ratio" instance="/var" />);
     expect(await screen.findByRole("heading", { level: 1, name: "Disk used /var" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Fleet/web-1/Disk used /var");
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Fleet/web-1▾/Disk used /var▾");
     expect(screen.getByText(/on web-1 · disk sensor · every 30 s/)).toBeInTheDocument();
     expect(screen.getByText("94.2% used is above the critical limit of 90%")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open incident" })).toHaveAttribute("href", expect.stringContaining(open.id));
@@ -169,6 +169,32 @@ describe("SensorPage", () => {
       ),
     );
     expect(rangeCalls(fetchMock).every((c) => c.instance === "sda")).toBe(true);
+  });
+
+  it("says in the header when the sensor's data is late", async () => {
+    stub({
+      [`GET /api/incidents?server_id=${ID}&limit=500`]: { status: 200, body: { incidents: [], next_cursor: null } },
+      [`GET /api/servers/${ID}/sensor-values`]: {
+        status: 200,
+        body: {
+          start: 0,
+          end: 3600,
+          step: 120,
+          sensors: [
+            {
+              name: config.sensors[0]!.name,
+              instance: config.sensors[0]!.instance,
+              metric: "monitorflow_disk_used_ratio",
+              series: [{ instance: "/var", points: [], last_value: 0.94, last_at: null, reason: "No data for 15 minutes" }],
+              reason: null,
+            },
+          ],
+        },
+      },
+    });
+    render(<SensorPage id={ID} sensor="disk_used_ratio" instance="/var" />);
+    expect(await screen.findByText("No data for 15 minutes")).toBeInTheDocument();
+    expect(screen.getAllByText("Unknown").length).toBeGreaterThan(0);
   });
 
   it("lets operators change how often an hourly check runs, and says what it does to the alert", async () => {
