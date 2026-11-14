@@ -29,15 +29,18 @@ use crate::ca::{RevocationReason, Serial};
 use crate::grpc::CloseReason;
 
 /// A certificate of another peer revoked with a relay.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct IssuedThrough {
+    /// Lowercase hexadecimal.
     pub serial: String,
+    /// `agent` or `relay`.
     pub peer_role: String,
+    /// Its name.
     pub peer_id: String,
 }
 
 /// Body of both revoke routes.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RevokeRequest {
     /// `unspecified` when absent.
@@ -45,9 +48,11 @@ pub struct RevokeRequest {
 }
 
 /// Answer of both revoke routes.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct Revoked {
+    /// When it was removed.
     pub revoked_at: DateTime<Utc>,
+    /// Recorded in the revocation list.
     pub reason: RevocationReason,
     /// Certificates put in the CRL, lowercase hexadecimal.
     pub serials: Vec<String>,

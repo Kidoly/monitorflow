@@ -11,7 +11,9 @@ use serde_json::json;
 use utoipa::OpenApi;
 
 use super::openapi::ErrorBody;
-use super::{check_interval, customers, offline_alerts, sensors, thresholds};
+use super::{
+    check_interval, customers, logs, metrics, offline_alerts, proxmox, revoke, sensors, thresholds,
+};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -24,7 +26,10 @@ use super::{check_interval, customers, offline_alerts, sensors, thresholds};
         server_thresholds_effective, server_thresholds, create_server_threshold,
         site_thresholds_effective, site_thresholds, create_site_threshold,
         update_threshold, delete_threshold,
+        server_metrics, server_logs, revoke_server,
+        server_proxmox, set_server_proxmox, clear_server_proxmox, server_proxmox_guests,
     ),
+    components(schemas(logs::Level)),
     tags(
         (name = "sensors", description = "What each server checks and how often. A server runs the built-in \
 checks (cpu, memory, disk and disk activity, every minute or at its site's interval), overlaid with its site's \
@@ -642,3 +647,203 @@ outside the key's areas: `api_key_scope`", body = ErrorBody),
             body = ErrorBody),
     ))]
 fn delete_threshold() {}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/metrics", tag = "metrics",
+    summary = "List a server's metrics",
+    description = "The metrics the server reported in the last day, with the instances seen for each: the \
+names to pass as `metric` and `instance` to the query routes. `truncated` is `true` when the server had more \
+than 10,000 series, and the list is then partial.\n\n\
+**Who**: any role on the server's site. **Area**: `servers`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 200, description = "Its metrics", body = metrics::MetricList,
+            example = json!({"metrics": [
+                {"name": "monitorflow_cpu_usage_ratio", "instances": ["total"]},
+                {"name": "monitorflow_disk_used_ratio", "instances": ["/", "/var"]},
+                {"name": "monitorflow_memory_available_ratio", "instances": [""]}
+            ], "truncated": false})),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 502, description = "The metrics database is unreachable or not configured: \
+`metrics_unavailable`", body = ErrorBody),
+        (status = 504, description = "The metrics database did not answer in time: `metrics_timeout`",
+            body = ErrorBody),
+    ))]
+fn server_metrics() {}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/logs", tag = "servers",
+    summary = "Read a server's system logs",
+    description = "The warnings and errors of the server's journal that its agent forwarded, newest first, \
+from `start` to `end` (the last hour by default, at most 31 days). `level=error` keeps errors and worse. `unit` \
+keeps one systemd unit, `q` lines containing a text, whatever the case. `units` lists the units of the range \
+whatever the other filters, to choose from. `more` is `true` when more lines matched than `limit`: narrow the \
+range to see them. MonitorFlow builds the query itself; it never accepts a raw query.\n\n\
+**Who**: any role on the server's site. **Area**: `servers`. Unknown parameters are 400.",
+    params(("id" = uuid::Uuid, Path, description = "The server"), logs::LogParams),
+    responses(
+        (status = 200, description = "The lines", body = logs::LogList,
+            example = json!({
+                "lines": [
+                    {"time": "2026-11-14T09:28:41.120Z", "message": "upstream timed out (110: Connection timed out)",
+                     "priority": 3, "unit": "nginx.service", "identifier": "nginx", "pid": 1412},
+                    {"time": "2026-11-14T09:12:03.004Z", "message": "Disk quota warning on /var",
+                     "priority": 4, "unit": null, "identifier": "kernel", "pid": null}
+                ],
+                "more": false,
+                "units": ["nginx.service", "postgresql.service"]
+            })),
+        (status = 400, description = "`start` not before `end`, a range over 31 days, `limit` out of \
+range, a `unit` or `q` over 256 bytes or with control characters, or an unknown parameter: `invalid`",
+            body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 502, description = "The logs database is unreachable or not configured: \
+`logs_unavailable`", body = ErrorBody),
+        (status = 504, description = "The logs database did not answer in time: `logs_timeout`",
+            body = ErrorBody),
+    ))]
+fn server_logs() {}
+
+#[utoipa::path(post, path = "/api/v1/servers/{id}/revoke", tag = "servers",
+    summary = "Remove a server",
+    description = "Removes a server from the fleet: its certificates are revoked and published in the \
+revocation list, its connections are closed, its open incidents resolve, and its unused single-use tokens are \
+deleted. It leaves the lists and counts; `GET /api/v1/servers/{id}` still answers, with `revoked_at` set, and \
+its metrics and incidents stay for their retention. Installing it again in the same site brings it back with \
+its history.\n\n\
+`reason` is recorded in the revocation list: `unspecified` (the default), `key_compromise`, \
+`affiliation_changed`, `superseded` or `cessation_of_operation`. Send `{}` for none. Audited as \
+`server.revoke`. A second request is 409.\n\n\
+**Who**: an administrator of the server's customer as a whole: a global administrator or one of that \
+customer. A site administrator may not, and neither may a key that reaches one site. **Area**: `servers`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    request_body(content = revoke::RevokeRequest, examples(
+        ("default" = (summary = "No reason", value = json!({}))),
+        ("decommissioned" = (summary = "The machine is gone",
+            value = json!({"reason": "cessation_of_operation"}))),
+    )),
+    responses(
+        (status = 200, description = "Removed", body = revoke::Revoked,
+            example = json!({
+                "revoked_at": "2026-11-14T09:45:00Z", "reason": "cessation_of_operation",
+                "serials": ["3f2a9c41d07e"], "closed_streams": 1
+            })),
+        (status = 400, description = "An unknown `reason`, or no JSON body: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key may not administer the server's customer: \
+`forbidden`; or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "The server is removed already: `conflict`", body = ErrorBody),
+    ))]
+fn revoke_server() {}
+
+/// A server's Proxmox view, mapped automatically.
+fn proxmox_view() -> serde_json::Value {
+    json!({
+        "server_id": ex::SERVER,
+        "mapping": {
+            "cluster": "lab", "node": "pve1", "vmid": 104, "kind": "qemu",
+            "updated_by": null, "updated_at": "2026-11-10T03:00:00Z",
+            "checked_at": "2026-11-14T03:00:00Z", "cannot_snapshot": null, "left_out": null,
+            "matched_by": "uuid", "name": "web-1"
+        },
+        "snapshots": {"available": true, "reason": null, "kind": "qemu", "detail": null,
+                      "left_out": null, "method": "proxmox"},
+        "clusters": ["lab"],
+        "candidates": []
+    })
+}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/proxmox", tag = "servers",
+    summary = "Get a server's Proxmox VM or container",
+    description = concat!("The Proxmox VM or container the server runs in, which is snapshotted before \
+an AI change, and whether that works now. MonitorFlow matches most servers by itself (`matched_by` is then \
+`uuid`, `mac` or `hostname`); when several guests match equally, `candidates` lists them. `clusters` are the \
+configured clusters that serve the server's customer and site.\n\n\
+`snapshots.available` is `false` with a `reason`: `disabled` (Proxmox is not configured), `not_mapped`, \
+`unknown_cluster`, or `cannot_snapshot` with `detail` saying why.\n\n",
+        "**Who**: an administrator of the server's customer as a whole: a global administrator or one of \
+that customer. **Area**: `servers`."),
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 200, description = "The mapping and what it allows", body = proxmox::ProxmoxView,
+            example = json!(proxmox_view())),
+        (status = 403, description = "The key may not administer the server's customer: \
+`forbidden`; or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn server_proxmox() {}
+
+#[utoipa::path(put, path = "/api/v1/servers/{id}/proxmox", tag = "servers",
+    summary = "Map a server to its Proxmox VM or container",
+    description = concat!("Sets or replaces, by hand, the VM or container the server runs in. Automatic \
+matching never changes a mapping made by hand, and a guest refused earlier with `DELETE` may be mapped again \
+this way. Whether Proxmox can snapshot the new guest is checked again at the next pass. Audited as \
+`server.proxmox.set` with the previous mapping. Safe to repeat.\n\n\
+On a cluster that serves several customers, only a global administrator may name any guest; others choose \
+one of the server's `candidates`.\n\n",
+        "**Who**: an administrator of the server's customer as a whole: a global administrator or one of \
+that customer. **Area**: `servers`."),
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    request_body(content = proxmox::MappingRequest,
+        example = json!({"cluster": "lab", "node": "pve1", "vmid": 104, "kind": "qemu"})),
+    responses(
+        (status = 200, description = "The mapping and what it allows", body = proxmox::ProxmoxView,
+            example = json!(ex::merge(proxmox_view(), json!({"mapping": {
+                "cluster": "lab", "node": "pve1", "vmid": 104, "kind": "qemu",
+                "updated_by": ex::USER, "updated_at": "2026-11-14T09:50:00Z",
+                "checked_at": null, "cannot_snapshot": null, "left_out": null,
+                "matched_by": null, "name": "web-1"
+            }})))),
+        (status = 400, description = "A bad cluster, node, `vmid` or `kind`, a cluster that does not \
+serve the server, or a guest that is not a candidate on a cluster of several customers: `invalid`",
+            body = ErrorBody),
+        (status = 403, description = "The key may not administer the server's customer: \
+`forbidden`; or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "The guest is mapped to another server: `conflict`",
+            body = ErrorBody),
+    ))]
+fn set_server_proxmox() {}
+
+#[utoipa::path(delete, path = "/api/v1/servers/{id}/proxmox", tag = "servers",
+    summary = "Unmap a server from its Proxmox VM or container",
+    description = concat!("Removes the mapping: AI changes on the server are no longer snapshotted on \
+Proxmox. Snapshots already taken stay on the guest. Automatic matching will never map the server to this \
+guest again, unless it is mapped by hand. Audited as `server.proxmox.clear`. A second request is 404.\n\n",
+        "**Who**: an administrator of the server's customer as a whole: a global administrator or one of \
+that customer. **Area**: `servers`."),
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 204, description = "Unmapped"),
+        (status = 403, description = "The key may not administer the server's customer: \
+`forbidden`; or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, outside the key's reach, or not mapped: \
+`not_found`", body = ErrorBody),
+    ))]
+fn clear_server_proxmox() {}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/proxmox/guests", tag = "servers",
+    summary = "List the Proxmox guests a server may be mapped to",
+    description = concat!("The VMs and containers of the clusters that serve the server, as MonitorFlow \
+last saw them, by cluster and ID, up to 2000. `taken` marks those mapped to another server. A cluster that \
+serves every customer is listed to global administrators only.\n\n",
+        "**Who**: an administrator of the server's customer as a whole: a global administrator or one of \
+that customer. **Area**: `servers`."),
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 200, description = "The guests", body = proxmox::GuestList,
+            example = json!({"guests": [
+                {"cluster": "lab", "node": "pve1", "vmid": 104, "kind": "qemu", "name": "web-1",
+                 "matched_by": null, "taken": false},
+                {"cluster": "lab", "node": "pve2", "vmid": 211, "kind": "lxc", "name": "db-1",
+                 "matched_by": null, "taken": true}
+            ]})),
+        (status = 403, description = "The key may not administer the server's customer: \
+`forbidden`; or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn server_proxmox_guests() {}

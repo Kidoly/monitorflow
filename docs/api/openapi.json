@@ -3045,6 +3045,356 @@
         }
       }
     },
+    "/api/v1/servers/{id}/logs": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Read a server's system logs",
+        "description": "The warnings and errors of the server's journal that its agent forwarded, newest first, from `start` to `end` (the last hour by default, at most 31 days). `level=error` keeps errors and worse. `unit` keeps one systemd unit, `q` lines containing a text, whatever the case. `units` lists the units of the range whatever the other filters, to choose from. `more` is `true` when more lines matched than `limit`: narrow the range to see them. MonitorFlow builds the query itself; it never accepts a raw query.\n\n**Who**: any role on the server's site. **Area**: `servers`. Unknown parameters are 400.",
+        "operationId": "server_logs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "description": "Defaults to `end` minus one hour.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "description": "Defaults to now.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "description": "`warning` (the default: everything forwarded) or `error`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/LogLevel"
+            }
+          },
+          {
+            "name": "unit",
+            "in": "query",
+            "description": "Exact systemd unit, like `nginx.service`; at most 256 bytes.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Text anywhere in the message, without regard to case; at most 256\nbytes.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Lines to return, 1 to 1000, 200 by default.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The lines",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogList"
+                },
+                "example": {
+                  "lines": [
+                    {
+                      "identifier": "nginx",
+                      "message": "upstream timed out (110: Connection timed out)",
+                      "pid": 1412,
+                      "priority": 3,
+                      "time": "2026-11-14T09:28:41.120Z",
+                      "unit": "nginx.service"
+                    },
+                    {
+                      "identifier": "kernel",
+                      "message": "Disk quota warning on /var",
+                      "pid": null,
+                      "priority": 4,
+                      "time": "2026-11-14T09:12:03.004Z",
+                      "unit": null
+                    }
+                  ],
+                  "more": false,
+                  "units": [
+                    "nginx.service",
+                    "postgresql.service"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`start` not before `end`, a range over 31 days, `limit` out of range, a `unit` or `q` over 256 bytes or with control characters, or an unknown parameter: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The logs database is unreachable or not configured: `logs_unavailable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The logs database did not answer in time: `logs_timeout`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/metrics": {
+      "get": {
+        "tags": [
+          "metrics"
+        ],
+        "summary": "List a server's metrics",
+        "description": "The metrics the server reported in the last day, with the instances seen for each: the names to pass as `metric` and `instance` to the query routes. `truncated` is `true` when the server had more than 10,000 series, and the list is then partial.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
+        "operationId": "server_metrics",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Its metrics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricList"
+                },
+                "example": {
+                  "metrics": [
+                    {
+                      "instances": [
+                        "total"
+                      ],
+                      "name": "monitorflow_cpu_usage_ratio"
+                    },
+                    {
+                      "instances": [
+                        "/",
+                        "/var"
+                      ],
+                      "name": "monitorflow_disk_used_ratio"
+                    },
+                    {
+                      "instances": [
+                        ""
+                      ],
+                      "name": "monitorflow_memory_available_ratio"
+                    }
+                  ],
+                  "truncated": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The metrics database is unreachable or not configured: `metrics_unavailable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The metrics database did not answer in time: `metrics_timeout`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}/offline-alerts": {
       "put": {
         "tags": [
@@ -3145,6 +3495,722 @@
           },
           "409": {
             "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/proxmox": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Get a server's Proxmox VM or container",
+        "description": "The Proxmox VM or container the server runs in, which is snapshotted before an AI change, and whether that works now. MonitorFlow matches most servers by itself (`matched_by` is then `uuid`, `mac` or `hostname`); when several guests match equally, `candidates` lists them. `clusters` are the configured clusters that serve the server's customer and site.\n\n`snapshots.available` is `false` with a `reason`: `disabled` (Proxmox is not configured), `not_mapped`, `unknown_cluster`, or `cannot_snapshot` with `detail` saying why.\n\n**Who**: an administrator of the server's customer as a whole: a global administrator or one of that customer. **Area**: `servers`.",
+        "operationId": "server_proxmox",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The mapping and what it allows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProxmoxView"
+                },
+                "example": {
+                  "candidates": [],
+                  "clusters": [
+                    "lab"
+                  ],
+                  "mapping": {
+                    "cannot_snapshot": null,
+                    "checked_at": "2026-11-14T03:00:00Z",
+                    "cluster": "lab",
+                    "kind": "qemu",
+                    "left_out": null,
+                    "matched_by": "uuid",
+                    "name": "web-1",
+                    "node": "pve1",
+                    "updated_at": "2026-11-10T03:00:00Z",
+                    "updated_by": null,
+                    "vmid": 104
+                  },
+                  "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "snapshots": {
+                    "available": true,
+                    "detail": null,
+                    "kind": "qemu",
+                    "left_out": null,
+                    "method": "proxmox",
+                    "reason": null
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may not administer the server's customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Map a server to its Proxmox VM or container",
+        "description": "Sets or replaces, by hand, the VM or container the server runs in. Automatic matching never changes a mapping made by hand, and a guest refused earlier with `DELETE` may be mapped again this way. Whether Proxmox can snapshot the new guest is checked again at the next pass. Audited as `server.proxmox.set` with the previous mapping. Safe to repeat.\n\nOn a cluster that serves several customers, only a global administrator may name any guest; others choose one of the server's `candidates`.\n\n**Who**: an administrator of the server's customer as a whole: a global administrator or one of that customer. **Area**: `servers`.",
+        "operationId": "set_server_proxmox",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProxmoxMappingRequest"
+              },
+              "example": {
+                "cluster": "lab",
+                "kind": "qemu",
+                "node": "pve1",
+                "vmid": 104
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The mapping and what it allows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProxmoxView"
+                },
+                "example": {
+                  "candidates": [],
+                  "clusters": [
+                    "lab"
+                  ],
+                  "mapping": {
+                    "cannot_snapshot": null,
+                    "checked_at": null,
+                    "cluster": "lab",
+                    "kind": "qemu",
+                    "left_out": null,
+                    "matched_by": null,
+                    "name": "web-1",
+                    "node": "pve1",
+                    "updated_at": "2026-11-14T09:50:00Z",
+                    "updated_by": "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+                    "vmid": 104
+                  },
+                  "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "snapshots": {
+                    "available": true,
+                    "detail": null,
+                    "kind": "qemu",
+                    "left_out": null,
+                    "method": "proxmox",
+                    "reason": null
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A bad cluster, node, `vmid` or `kind`, a cluster that does not serve the server, or a guest that is not a candidate on a cluster of several customers: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may not administer the server's customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The guest is mapped to another server: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Unmap a server from its Proxmox VM or container",
+        "description": "Removes the mapping: AI changes on the server are no longer snapshotted on Proxmox. Snapshots already taken stay on the guest. Automatic matching will never map the server to this guest again, unless it is mapped by hand. Audited as `server.proxmox.clear`. A second request is 404.\n\n**Who**: an administrator of the server's customer as a whole: a global administrator or one of that customer. **Area**: `servers`.",
+        "operationId": "clear_server_proxmox",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unmapped"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may not administer the server's customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, outside the key's reach, or not mapped: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/proxmox/guests": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "List the Proxmox guests a server may be mapped to",
+        "description": "The VMs and containers of the clusters that serve the server, as MonitorFlow last saw them, by cluster and ID, up to 2000. `taken` marks those mapped to another server. A cluster that serves every customer is listed to global administrators only.\n\n**Who**: an administrator of the server's customer as a whole: a global administrator or one of that customer. **Area**: `servers`.",
+        "operationId": "server_proxmox_guests",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The guests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProxmoxGuestList"
+                },
+                "example": {
+                  "guests": [
+                    {
+                      "cluster": "lab",
+                      "kind": "qemu",
+                      "matched_by": null,
+                      "name": "web-1",
+                      "node": "pve1",
+                      "taken": false,
+                      "vmid": 104
+                    },
+                    {
+                      "cluster": "lab",
+                      "kind": "lxc",
+                      "matched_by": null,
+                      "name": "db-1",
+                      "node": "pve2",
+                      "taken": true,
+                      "vmid": 211
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may not administer the server's customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/revoke": {
+      "post": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Remove a server",
+        "description": "Removes a server from the fleet: its certificates are revoked and published in the revocation list, its connections are closed, its open incidents resolve, and its unused single-use tokens are deleted. It leaves the lists and counts; `GET /api/v1/servers/{id}` still answers, with `revoked_at` set, and its metrics and incidents stay for their retention. Installing it again in the same site brings it back with its history.\n\n`reason` is recorded in the revocation list: `unspecified` (the default), `key_compromise`, `affiliation_changed`, `superseded` or `cessation_of_operation`. Send `{}` for none. Audited as `server.revoke`. A second request is 409.\n\n**Who**: an administrator of the server's customer as a whole: a global administrator or one of that customer. A site administrator may not, and neither may a key that reaches one site. **Area**: `servers`.",
+        "operationId": "revoke_server",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeRequest"
+              },
+              "examples": {
+                "decommissioned": {
+                  "summary": "The machine is gone",
+                  "value": {
+                    "reason": "cessation_of_operation"
+                  }
+                },
+                "default": {
+                  "summary": "No reason",
+                  "value": {}
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Revoked"
+                },
+                "example": {
+                  "closed_streams": 1,
+                  "reason": "cessation_of_operation",
+                  "revoked_at": "2026-11-14T09:45:00Z",
+                  "serials": [
+                    "3f2a9c41d07e"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown `reason`, or no JSON body: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may not administer the server's customer: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The server is removed already: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
             "content": {
               "application/json": {
                 "schema": {
@@ -7233,6 +8299,29 @@
           "site"
         ]
       },
+      "IssuedThrough": {
+        "type": "object",
+        "description": "A certificate of another peer revoked with a relay.",
+        "required": [
+          "serial",
+          "peer_role",
+          "peer_id"
+        ],
+        "properties": {
+          "peer_id": {
+            "type": "string",
+            "description": "Its name."
+          },
+          "peer_role": {
+            "type": "string",
+            "description": "`agent` or `relay`."
+          },
+          "serial": {
+            "type": "string",
+            "description": "Lowercase hexadecimal."
+          }
+        }
+      },
       "LayerOrigin": {
         "type": "string",
         "description": "Which layer an effective sensor or threshold comes from.",
@@ -7241,6 +8330,135 @@
           "site",
           "server"
         ]
+      },
+      "LogLevel": {
+        "type": "string",
+        "description": "Which priorities to show.",
+        "enum": [
+          "error",
+          "warning"
+        ]
+      },
+      "LogLine": {
+        "type": "object",
+        "description": "One line.",
+        "required": [
+          "time",
+          "message"
+        ],
+        "properties": {
+          "identifier": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The program's syslog identifier; `null` for none."
+          },
+          "message": {
+            "type": "string"
+          },
+          "pid": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The process ID; `null` for none.",
+            "minimum": 0
+          },
+          "priority": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Syslog priority: 0 (emergency) to 3 (error) and 4 (warning);\n`null` when the journal had none.",
+            "minimum": 0
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the machine logged it."
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The systemd unit, like `nginx.service`; `null` for none."
+          }
+        }
+      },
+      "LogList": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/{id}/logs`.",
+        "required": [
+          "lines",
+          "more",
+          "units"
+        ],
+        "properties": {
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogLine"
+            },
+            "description": "Newest first."
+          },
+          "more": {
+            "type": "boolean",
+            "description": "More lines matched than `limit`."
+          },
+          "units": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Units of the range whatever the other filters, sorted."
+          }
+        }
+      },
+      "MetricInfo": {
+        "type": "object",
+        "description": "One metric of a server and the instances seen for it.",
+        "required": [
+          "name",
+          "instances"
+        ],
+        "properties": {
+          "instances": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the sensor watches, sorted; `\"\"` for a metric without one."
+          },
+          "name": {
+            "type": "string",
+            "description": "Full name, `monitorflow_<sensor metric>`, for `metric` of the\nquery routes."
+          }
+        }
+      },
+      "MetricList": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/{id}/metrics`.",
+        "required": [
+          "metrics",
+          "truncated"
+        ],
+        "properties": {
+          "metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MetricInfo"
+            },
+            "description": "By name."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The server had more series than discovery reads."
+          }
+        }
       },
       "NameRequest": {
         "type": "object",
@@ -7434,6 +8652,222 @@
           }
         }
       },
+      "ProxmoxGuest": {
+        "type": "object",
+        "description": "A guest of a cluster, as the last discovery pass saw it.",
+        "required": [
+          "cluster",
+          "node",
+          "vmid",
+          "kind",
+          "name",
+          "taken"
+        ],
+        "properties": {
+          "cluster": {
+            "type": "string",
+            "description": "The cluster's name in the central server's configuration."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/GuestKind",
+            "description": "`qemu` for a VM, `lxc` for a container."
+          },
+          "matched_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Among candidates, what matched; elsewhere null."
+          },
+          "name": {
+            "type": "string",
+            "description": "The VM's name or the container's host name."
+          },
+          "node": {
+            "type": "string",
+            "description": "The node's host name."
+          },
+          "taken": {
+            "type": "boolean",
+            "description": "Mapped to another server already."
+          },
+          "vmid": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The VM or container ID.",
+            "minimum": 0
+          }
+        }
+      },
+      "ProxmoxGuestList": {
+        "type": "object",
+        "description": "`GET /api/servers/{id}/proxmox/guests`.",
+        "required": [
+          "guests"
+        ],
+        "properties": {
+          "guests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProxmoxGuest"
+            },
+            "description": "By cluster and ID, at most 2000."
+          }
+        }
+      },
+      "ProxmoxMapping": {
+        "type": "object",
+        "required": [
+          "cluster",
+          "node",
+          "vmid",
+          "kind",
+          "updated_at"
+        ],
+        "properties": {
+          "cannot_snapshot": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why Proxmox refuses snapshots of the guest, if it does."
+          },
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When Proxmox last answered whether it can snapshot the guest;\nnull until it did."
+          },
+          "cluster": {
+            "type": "string",
+            "description": "The cluster's name in the central server's configuration."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/GuestKind",
+            "description": "`qemu` for a VM, `lxc` for a container."
+          },
+          "left_out": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What a snapshot of the guest does not hold, like a bind mount."
+          },
+          "matched_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null when mapped by hand, else what discovery matched: `uuid`,\n`mac` or `hostname`."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The guest's name, once discovery saw it."
+          },
+          "node": {
+            "type": "string",
+            "description": "The node's host name."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Who mapped it by hand; `null` when discovery did, or the account is\ngone."
+          },
+          "vmid": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The VM or container ID.",
+            "minimum": 0
+          }
+        }
+      },
+      "ProxmoxMappingRequest": {
+        "type": "object",
+        "description": "Body of `PUT`.",
+        "required": [
+          "cluster",
+          "node",
+          "vmid"
+        ],
+        "properties": {
+          "cluster": {
+            "type": "string",
+            "description": "A configured cluster that serves the server's customer and site."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/GuestKind",
+            "description": "`qemu` (the default) or `lxc`."
+          },
+          "node": {
+            "type": "string",
+            "description": "The node's host name: letters, digits and inner `-`."
+          },
+          "vmid": {
+            "type": "integer",
+            "format": "int32",
+            "description": "100 to 999999999.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProxmoxView": {
+        "type": "object",
+        "description": "Answer of the GET and PUT routes.",
+        "required": [
+          "server_id",
+          "snapshots",
+          "clusters",
+          "candidates"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProxmoxGuest"
+            },
+            "description": "Guests that match the server equally, when discovery could not\nchoose: the page asks which one."
+          },
+          "clusters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The configured clusters that serve the server, to map it to."
+          },
+          "mapping": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProxmoxMapping",
+                "description": "The VM or container the server runs in; `null` when not mapped."
+              }
+            ]
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "snapshots": {
+            "$ref": "#/components/schemas/SnapshotSupport",
+            "description": "Whether a change on the server is snapshotted first."
+          }
+        }
+      },
       "QueryResult": {
         "type": "object",
         "description": "Body of both query endpoints.",
@@ -7468,6 +8902,75 @@
           }
         },
         "additionalProperties": false
+      },
+      "RevocationReason": {
+        "type": "string",
+        "description": "Why a certificate was revoked (RFC 5280 §5.3.1).",
+        "enum": [
+          "unspecified",
+          "key_compromise",
+          "affiliation_changed",
+          "superseded",
+          "cessation_of_operation"
+        ]
+      },
+      "RevokeRequest": {
+        "type": "object",
+        "description": "Body of both revoke routes.",
+        "properties": {
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RevocationReason",
+                "description": "`unspecified` when absent."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "Revoked": {
+        "type": "object",
+        "description": "Answer of both revoke routes.",
+        "required": [
+          "revoked_at",
+          "reason",
+          "serials",
+          "closed_streams"
+        ],
+        "properties": {
+          "closed_streams": {
+            "type": "integer",
+            "description": "Live streams closed: the peer's and, for a relay, those it forwards.",
+            "minimum": 0
+          },
+          "issued_through": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssuedThrough"
+            },
+            "description": "For a relay, the certificates of other peers among `serials`: those\nobtained through it (ADR-0028)."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/RevocationReason",
+            "description": "Recorded in the revocation list."
+          },
+          "revoked_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was removed."
+          },
+          "serials": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Certificates put in the CRL, lowercase hexadecimal."
+          }
+        }
       },
       "Rollup": {
         "type": "string",

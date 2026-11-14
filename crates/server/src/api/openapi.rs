@@ -294,13 +294,9 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
 
 // Sub-routes of servers and sites not documented yet.
 pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[
-    "/metrics",
-    "/logs",
     "/packages",
     "/rollback",
     "/sources",
-    "/revoke",
-    "/proxmox",
     "/agent-auto-update",
     "/ai-commands",
 ];
