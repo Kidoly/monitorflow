@@ -387,6 +387,8 @@ db_tests! {
         let alerts_id: Uuid = sqlx::query_scalar("SELECT id FROM api_keys WHERE name = 'PSA'")
             .fetch_one(&pool).await.unwrap();
         assert_eq!(details["api_key"], json!(alerts_id));
+        // A script needs no note (ADR-0130).
+        assert!(details.get("note").is_none());
 
         // Use is recorded; an expired key is refused.
         let used: bool = sqlx::query_scalar("SELECT last_used_at IS NOT NULL FROM api_keys WHERE id = $1")

@@ -1,17 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 
 import { type Incident, type Server, type ServerState, api, describeError, isUnauthorized, isAbortError } from "@/lib/api";
 import { certificateProblem, certificateState } from "@/lib/certificates";
 import { formatOs } from "@/lib/format";
 import { incidentTitle, isOffline } from "@/lib/incidents";
-import { administersCustomer, useMe } from "@/lib/me";
+import { administersCustomer, multiCustomer, useMe } from "@/lib/me";
 import { incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue } from "@/lib/sensors";
-import { isServerState, SERVER_STATES, STATE_WORDS, serverState } from "@/lib/serverState";
+import { isServerState, SERVER_STATES, STATE_WORDS, serverState, stateHref } from "@/lib/serverState";
 import { REFRESH_MS, usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
 import { Button, ButtonLink } from "@/components/ui/Button";
@@ -21,18 +21,16 @@ import { Page } from "@/components/ui/Page";
 import { EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
-import { formatDuration, formatExact, formatSince } from "@/components/ui/time";
+import { formatDay, formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
 import styles from "./FleetOverview.module.css";
+import { FleetTree, type TreeRow } from "./FleetTree";
 
 // Other pages import the interval from here.
 export { REFRESH_MS };
 
-/** Healthy servers shown under the problems before "Show N more healthy servers". */
-export const HEALTHY_SHOWN = 5;
-
 /** A server and what the fleet table says about it. */
-interface Row {
+interface Row extends TreeRow {
   server: Server;
   /** Its worst open incident, when the incidents list loaded. */
   incident: Incident | undefined;
@@ -82,26 +80,40 @@ function toRows(fleet: Fleet, now: Date): Row[] {
     const state = serverState(server);
     const certificateWarning = server.cert_not_after !== null && certificateState(server.cert_not_after, now) !== "valid";
     const rank = state === "ok" && certificateWarning ? CERTIFICATE_RANK : RANK[state];
-    return { server, incident, critical, warning, state, rank };
+    const what = incident
+      ? `${incidentTitle(incident)}${isOffline(incident) ? "" : ` ${formatSensorValue(incident.metric, incident.last_value)}`}`
+      : STATE_WORDS[state][0];
+    return {
+      key: server.id,
+      customer: { id: server.customer_id, name: server.customer_name },
+      site: { id: server.site_id, name: server.site_name },
+      healthy: rank === HEALTHY,
+      problem: `${server.hostname} · ${what}`,
+      href: serverHref(server.id),
+      server,
+      incident,
+      critical,
+      warning,
+      state,
+      rank,
+    };
   });
 }
 
 const byName = new Intl.Collator("en", { numeric: true });
 const problemsFirst = (a: Row, b: Row) => a.rank - b.rank || byName.compare(a.server.hostname, b.server.hostname);
 
-/** The fleet: counters, filters and every server, problems first. Refreshes every 15 s. */
+/** The fleet: filters, then every server by site, problems first. Refreshes every 15 s. */
 export function FleetOverview() {
   const scope = useScope();
   const me = useMe();
   const [params] = useUrlParams();
   const [sort, setSort] = useUrlSort();
-  const [expanded, setExpanded] = useState(false);
   const fetcher = useCallback((signal: AbortSignal) => loadFleet(signal), []);
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher);
 
   const now = updatedAt ?? new Date();
   const all = data ? toRows({ ...data, servers: data.servers.filter((s) => inScope(s, scope)) }, now) : [];
-  // Servers' and relays' incidents: a relay offline counts too (ADR-0072).
   const online = all.filter((r) => r.server.status === "online").length;
 
   // `status` (online, offline) is kept for older links.
@@ -118,12 +130,6 @@ export function FleetOverview() {
       (!query || `${r.server.hostname} ${r.server.peer_id}`.toLowerCase().includes(query)),
   );
   const anyFilter = ["state", "status", "site", "os", "incidents", "q"].some((k) => params.get(k));
-  // Healthy rows fold away only in the default view: problems first, unfiltered.
-  const collapsible = sort === null && !anyFilter;
-  const ordered = [...filtered].sort(problemsFirst);
-  const problems = ordered.filter((r) => r.rank < HEALTHY);
-  const shown = collapsible && !expanded ? ordered.slice(0, problems.length + HEALTHY_SHOWN) : ordered;
-  const hidden = ordered.length - shown.length;
 
   const sites = [...new Map(all.map((r) => [r.server.site_id, r.server.site_name])).entries()].sort((a, b) =>
     byName.compare(a[1], b[1]),
@@ -218,33 +224,32 @@ export function FleetOverview() {
               </Button>
             }
           />
-          {data && filtered.length === 0 ? (
+          {!data ? (
+            <DataTable label="Servers" columns={columns} rows={[]} rowKey={(r) => r.key} loading />
+          ) : filtered.length === 0 ? (
             <NoMatches names={["q", "state", "status", "os", "incidents", ...(scope.siteId ? [] : ["site"])]}>
               No servers match these filters.
             </NoMatches>
           ) : (
-            <DataTable
-              label="Servers"
+            <FleetTree
+              rows={filtered}
               columns={columns}
-              rows={shown}
-              rowKey={(r) => r.server.id}
               sort={sort}
               onSortChange={setSort}
               defaultOrder={problemsFirst}
-              loading={!data}
+              multiCustomer={multiCustomer(me)}
+              filtered={anyFilter}
+              groupedOut={["site"]}
+              stateHref={(state, place) =>
+                "siteId" in place
+                  ? scopedHref(`${stateHref(state)}&site=${place.siteId}`, scope)
+                  : scopedHref(stateHref(state), { customerId: place.customerId, siteId: null })
+              }
             />
           )}
-          {data && filtered.length > 0 && (
+          {data && anyFilter && filtered.length > 0 && (
             <p className={styles.summary}>
-              {shown.length} of {all.length} shown
-              {collapsible && ordered.length > problems.length + HEALTHY_SHOWN && (
-                <>
-                  {" · "}
-                  <button type="button" className={styles.linkButton} onClick={() => setExpanded(!expanded)}>
-                    {expanded ? "Fold healthy servers" : `Show ${hidden} more healthy ${hidden === 1 ? "server" : "servers"}`}
-                  </button>
-                </>
-              )}
+              {filtered.length} of {all.length} shown
             </p>
           )}
         </>
@@ -253,14 +258,51 @@ export function FleetOverview() {
   );
 }
 
-/** "Critical  Disk used /var 96.8% · 4 h 20 min", or why else the server needs a look. */
+/**
+ * "Disk used /var 96.8% · 4 h 20 min", or why else the server needs a look;
+ * with its severity when the status does not say it (acknowledged, silenced).
+ */
 function Problem({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
+  const note = whoAndWhy(row, now);
+  if (!note) return <What row={row} now={now} scope={scope} />;
+  return (
+    <span className={styles.stack}>
+      {row.incident && <What row={row} now={now} scope={scope} />}
+      <span className={styles.note}>{note}</span>
+    </span>
+  );
+}
+
+/**
+ * "Silenced by alice until 18:00 today: migration", "Acknowledged by bob
+ * 14:02: replacing the disk": who took a silenced or acknowledged server
+ * out of the problems, and why (ADR-0130).
+ */
+function whoAndWhy(row: Pick<Row, "server" | "state">, now: Date): string | null {
+  const { silence, acknowledgement } = row.server;
+  if (row.state === "silenced" && silence) {
+    return `Silenced by ${silence.by ?? "someone"} until ${formatDay(new Date(silence.until), now)}: ${silence.reason}`;
+  }
+  if (row.state === "acknowledged" && acknowledgement) {
+    const said = acknowledgement.note ? `: ${acknowledgement.note}` : "";
+    return `Acknowledged by ${acknowledgement.by} ${formatSince(new Date(acknowledgement.at), now)}${said}`;
+  }
+  return null;
+}
+
+/** The problem itself: "Disk used /var 96.8% · 4 h 20 min". */
+function What({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
   const { server, incident } = row;
   if (incident) {
     return (
       <span className={styles.problem}>
-        <StatusLabel kind="severity" value={incident.severity} />
-        &nbsp; {incidentTitle(incident)}{" "}
+        {row.state !== incident.severity && !(row.state === "offline" && isOffline(incident)) && (
+          <>
+            <StatusLabel kind="severity" value={incident.severity} />
+            &nbsp;{" "}
+          </>
+        )}
+        {incidentTitle(incident)}{" "}
         <span>
           {!isOffline(incident) && `${formatSensorValue(incident.metric, incident.last_value)} · `}
           {formatDuration((now.getTime() - Date.parse(incident.opened_at)) / 1000)}

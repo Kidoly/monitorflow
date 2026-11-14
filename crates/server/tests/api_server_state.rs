@@ -143,8 +143,8 @@ async fn open(pool: &PgPool, server: Uuid, metric: &str, severity: &str) -> Uuid
 
 async fn acknowledge(pool: &PgPool, incident: Uuid) {
     sqlx::query(
-        "INSERT INTO incident_acknowledgements (incident_id, username, via)
-         VALUES ($1, 'alice', 'page')",
+        "INSERT INTO incident_acknowledgements (incident_id, username, via, note)
+         VALUES ($1, 'alice', 'page', 'swapping the disk')",
     )
     .bind(incident)
     .execute(pool)
@@ -211,6 +211,18 @@ db_tests! {
                 ("offline-1", "offline"),
             ]
         );
+        // Who silenced or acknowledged, and why, is on the row (ADR-0130).
+        let row = |name: &str| {
+            list["servers"].as_array().unwrap().iter().find(|s| s["hostname"] == name).unwrap().clone()
+        };
+        let silence = &row("silenced-1")["silence"];
+        assert_eq!((silence["reason"].as_str(), silence["by"].is_null()), (Some("migration"), true));
+        assert_eq!(silence["until"], row("silenced-1")["silenced_until"]);
+        let taken = &row("acknowledged-1")["acknowledgement"];
+        assert_eq!((taken["by"].as_str(), taken["note"].as_str()), (Some("alice"), Some("swapping the disk")));
+        assert!(taken["at"].is_string());
+        assert!(row("ok-1")["silence"].is_null() && row("ok-1")["acknowledgement"].is_null());
+
         let (_, detail) = call(&state, &format!("/api/servers/{critical}"), Some(&admin), None).await;
         assert_eq!(detail["state"], "critical");
         assert_eq!(detail["open_incidents"], 2);
