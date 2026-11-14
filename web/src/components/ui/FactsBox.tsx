@@ -33,22 +33,33 @@ export function FactsBox({
   details = [],
   columns = 1,
   title,
+  actions,
+  children,
 }: {
   facts: Fact[];
   details?: Fact[];
   columns?: 1 | 2;
   title?: string;
+  /** Buttons on the title line, like Edit. */
+  actions?: ReactNode;
+  /** Shown instead of the facts, like the form that edits them. */
+  children?: ReactNode;
 }) {
   const titleId = useId();
   return (
     <section className={styles.box} aria-labelledby={title ? titleId : undefined}>
-      {title && (
-        <h2 id={titleId} className={styles.title}>
-          {title}
-        </h2>
+      {(title || actions) && (
+        <div className={styles.head}>
+          {title && (
+            <h2 id={titleId} className={styles.title}>
+              {title}
+            </h2>
+          )}
+          {actions && <div className={styles.actions}>{actions}</div>}
+        </div>
       )}
-      <Facts facts={facts} columns={columns} />
-      {details.length > 0 && (
+      {children || <Facts facts={facts} columns={columns} />}
+      {!children && details.length > 0 && (
         <details className={styles.details}>
           <summary>Details</summary>
           <Facts facts={details} columns={columns} />

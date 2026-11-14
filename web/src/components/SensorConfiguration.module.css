@@ -1,0 +1,45 @@
+/* The Configuration card's form: the check's timing, its alert, then where it applies. */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-start;
+}
+
+.applyTo {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.applyTo legend {
+  font-weight: 500;
+  padding: 0 0 6px;
+}
+
+.applyTo label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.failure {
+  padding-bottom: 0;
+}

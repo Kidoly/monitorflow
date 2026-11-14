@@ -73,3 +73,54 @@
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* A sensor's rule in words, then where it comes from. */
+.rule {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+/* "Add a check" and how often the built-in checks run, under the list. */
+.addLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  color: var(--muted);
+}
+
+.addBox {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+}
+
+.offList ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+}
+
+.offList li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 16px;
+  color: var(--muted);
+}
+
+.offList li + li {
+  border-top: 1px solid var(--border);
+}
+
+.offTitle {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
