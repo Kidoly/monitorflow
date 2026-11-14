@@ -17,3 +17,9 @@
 
 # Core dumps from crashed test processes.
 /core.[0-9]*
+
+# AI assistant instructions and settings stay local.
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+AGENTS.md
