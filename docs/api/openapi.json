@@ -3175,6 +3175,1262 @@
         }
       }
     },
+    "/api/v1/plugins": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "List installed plugins",
+        "description": "Every installed plugin with its publisher, what it asks for, where it\nmay be used and how many channels and checks use it.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "Installed plugins",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginList"
+                },
+                "example": {
+                  "plugins": [
+                    {
+                      "capabilities": [
+                        "Sends notifications from the central server",
+                        "Connects to the address in its Webhook address setting"
+                      ],
+                      "channels": 2,
+                      "checks": 0,
+                      "description": "Posts alerts to a chat room through a webhook.",
+                      "enabled": true,
+                      "fingerprint": "3fa1c09e5b7d2e64",
+                      "id": "4d3c2b1a-0f9e-4d8c-b7a6-5e4d3c2b1a0f",
+                      "installed_at": "2026-10-20T10:00:00Z",
+                      "kind": "channel",
+                      "name": "chat-relay",
+                      "official": false,
+                      "places": [
+                        {
+                          "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
+                          "customer_name": "acme",
+                          "site_id": null,
+                          "site_name": null
+                        }
+                      ],
+                      "publisher": "Acme tools",
+                      "settings": [
+                        {
+                          "key": "url",
+                          "label": "Webhook address",
+                          "required": true,
+                          "type": "url"
+                        },
+                        {
+                          "help": "Given by the receiving service",
+                          "key": "token",
+                          "label": "Token",
+                          "required": true,
+                          "type": "secret"
+                        }
+                      ],
+                      "title": "Chat relay",
+                      "updated_at": "2026-11-05T09:30:00Z",
+                      "version": "1.2.0"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Install or update a plugin",
+        "description": "Installs the plugin of the body, which must be the file inspected:\n`sha256` is the one inspection answered. A new plugin is used nowhere\nuntil places are set (201); an update keeps its places and settings,\nand the new version replaces the old one wherever it is used (200).\nAudited as `plugin.install` or `plugin.update` with the version,\nfingerprint, SHA-256 and capabilities. Installing the same file again\nis refused as not newer.\n\nErrors: 400 `invalid` as for an inspection, or when the body is not\nthe file of `sha256`.",
+        "operationId": "install",
+        "parameters": [
+          {
+            "name": "sha256",
+            "in": "query",
+            "description": "The `sha256` inspection answered for this file, hex.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginFile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginView"
+                },
+                "example": {
+                  "capabilities": [
+                    "Sends notifications from the central server",
+                    "Connects to the address in its Webhook address setting"
+                  ],
+                  "channels": 2,
+                  "checks": 0,
+                  "description": "Posts alerts to a chat room through a webhook.",
+                  "enabled": true,
+                  "fingerprint": "3fa1c09e5b7d2e64",
+                  "id": "4d3c2b1a-0f9e-4d8c-b7a6-5e4d3c2b1a0f",
+                  "installed_at": "2026-10-20T10:00:00Z",
+                  "kind": "channel",
+                  "name": "chat-relay",
+                  "official": false,
+                  "places": [
+                    {
+                      "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
+                      "customer_name": "acme",
+                      "site_id": null,
+                      "site_name": null
+                    }
+                  ],
+                  "publisher": "Acme tools",
+                  "settings": [
+                    {
+                      "key": "url",
+                      "label": "Webhook address",
+                      "required": true,
+                      "type": "url"
+                    },
+                    {
+                      "help": "Given by the receiving service",
+                      "key": "token",
+                      "label": "Token",
+                      "required": true,
+                      "type": "secret"
+                    }
+                  ],
+                  "title": "Chat relay",
+                  "updated_at": "2026-11-05T09:30:00Z",
+                  "version": "1.2.0"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Installed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginView"
+                },
+                "example": {
+                  "capabilities": [
+                    "Sends notifications from the central server",
+                    "Connects to the address in its Webhook address setting"
+                  ],
+                  "channels": 2,
+                  "checks": 0,
+                  "description": "Posts alerts to a chat room through a webhook.",
+                  "enabled": true,
+                  "fingerprint": "3fa1c09e5b7d2e64",
+                  "id": "4d3c2b1a-0f9e-4d8c-b7a6-5e4d3c2b1a0f",
+                  "installed_at": "2026-10-20T10:00:00Z",
+                  "kind": "channel",
+                  "name": "chat-relay",
+                  "official": false,
+                  "places": [
+                    {
+                      "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
+                      "customer_name": "acme",
+                      "site_id": null,
+                      "site_name": null
+                    }
+                  ],
+                  "publisher": "Acme tools",
+                  "settings": [
+                    {
+                      "key": "url",
+                      "label": "Webhook address",
+                      "required": true,
+                      "type": "url"
+                    },
+                    {
+                      "help": "Given by the receiving service",
+                      "key": "token",
+                      "label": "Token",
+                      "required": true,
+                      "type": "secret"
+                    }
+                  ],
+                  "title": "Chat relay",
+                  "updated_at": "2026-11-05T09:30:00Z",
+                  "version": "1.2.0"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/inspect": {
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Inspect a plugin file",
+        "description": "Reads and verifies the file sent as the body, without storing\nanything: its manifest, its publisher, what it asks for, the SHA-256\nto install it with, and what an update would add or drop. Send the\nraw file as `application/octet-stream`.\n\nErrors: 400 `invalid` for a file that does not verify, is signed by a\nkey not trusted yet (the message gives its fingerprint), or cannot\nreplace the installed version (not newer, another publisher or\nkind).",
+        "operationId": "inspect",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginFile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the file is",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginInspection"
+                },
+                "example": {
+                  "capabilities": [
+                    "Sends notifications from the central server",
+                    "Connects to the address in its Webhook address setting"
+                  ],
+                  "description": "Posts alerts to a chat room through a webhook.",
+                  "fingerprint": "3fa1c09e5b7d2e64",
+                  "kind": "channel",
+                  "name": "chat-relay",
+                  "official": false,
+                  "publisher": "Acme tools",
+                  "settings": [
+                    {
+                      "key": "url",
+                      "label": "Webhook address",
+                      "required": true,
+                      "type": "url"
+                    },
+                    {
+                      "help": "Given by the receiving service",
+                      "key": "token",
+                      "label": "Token",
+                      "required": true,
+                      "type": "secret"
+                    }
+                  ],
+                  "sha256": "0f4e3d2c1b0a99887766554433221100ffeeddccbbaa99887766554433221100",
+                  "title": "Chat relay",
+                  "update": {
+                    "adds": [],
+                    "drops": [],
+                    "from_version": "1.2.0"
+                  },
+                  "version": "1.3.0"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/publishers": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "List trusted publishers",
+        "description": "The publisher keys trusted to sign plugins, with the installed plugins\neach signed, and the fingerprints of the official keys built in.",
+        "operationId": "publishers",
+        "responses": {
+          "200": {
+            "description": "Trusted publishers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPublisherList"
+                },
+                "example": {
+                  "official": [],
+                  "publishers": [
+                    {
+                      "created_at": "2026-10-20T09:55:00Z",
+                      "fingerprint": "3fa1c09e5b7d2e64",
+                      "id": "8e7d6c5b-4a39-4281-9f0e-1d2c3b4a5968",
+                      "name": "Acme tools",
+                      "plugins": [
+                        "chat-relay"
+                      ],
+                      "public_key": "q5Z0rJt4YQm2bVnE8cW1xLp9sKd3fHg6uA7iO0yT2eQ="
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Trust a publisher",
+        "description": "Trusts a public key to sign plugins, so they can be installed. Check\nits fingerprint with its publisher first: whatever it signs may run on\nthe central server or on agents. Audited as `plugin_publisher.add`.\n\nErrors: 400 `invalid` for a name not 1 to 80 characters or a key that\ndoes not parse; 409 `conflict` for a key trusted already or built in.",
+        "operationId": "add_publisher",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginPublisherRequest"
+              },
+              "example": {
+                "name": "Acme tools",
+                "public_key": "q5Z0rJt4YQm2bVnE8cW1xLp9sKd3fHg6uA7iO0yT2eQ="
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Trusted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPublisher"
+                },
+                "example": {
+                  "created_at": "2026-10-20T09:55:00Z",
+                  "fingerprint": "3fa1c09e5b7d2e64",
+                  "id": "8e7d6c5b-4a39-4281-9f0e-1d2c3b4a5968",
+                  "name": "Acme tools",
+                  "plugins": [
+                    "chat-relay"
+                  ],
+                  "public_key": "q5Z0rJt4YQm2bVnE8cW1xLp9sKd3fHg6uA7iO0yT2eQ="
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Trusted already or built in: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/publishers/{id}": {
+      "delete": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Stop trusting a publisher",
+        "description": "Audited as `plugin_publisher.remove`.\n\nErrors: 404 `not_found` for an unknown ID; 409 `conflict` while a\nplugin it signed is installed.",
+        "operationId": "remove_publisher",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The publisher's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A plugin it signed is installed: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/usable": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "List plugins usable here",
+        "description": "Plugins turned on, with the places the caller can see where they may\nbe used, for making channels and checks. A plugin with no place the\ncaller sees is left out. Any role may read it; with a key, the\n\"administration\" area.",
+        "operationId": "usable",
+        "responses": {
+          "200": {
+            "description": "Plugins the caller may use",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsablePluginList"
+                },
+                "example": {
+                  "plugins": [
+                    {
+                      "capabilities": [
+                        "Sends notifications from the central server",
+                        "Connects to the address in its Webhook address setting"
+                      ],
+                      "customer_ids": [
+                        "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b"
+                      ],
+                      "description": "Posts alerts to a chat room through a webhook.",
+                      "everywhere": false,
+                      "kind": "channel",
+                      "name": "chat-relay",
+                      "settings": [
+                        {
+                          "key": "url",
+                          "label": "Webhook address",
+                          "required": true,
+                          "type": "url"
+                        },
+                        {
+                          "help": "Given by the receiving service",
+                          "key": "token",
+                          "label": "Token",
+                          "required": true,
+                          "type": "secret"
+                        }
+                      ],
+                      "site_ids": [],
+                      "title": "Chat relay",
+                      "version": "1.2.0"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{id}": {
+      "delete": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Remove a plugin",
+        "description": "Deletes the plugin and its places. Audited as `plugin.remove`.\n\nErrors: 404 `not_found` for an unknown plugin; 409 `conflict` while a\nchannel or a check uses it: remove those first, or turn it off.",
+        "operationId": "remove",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The plugin's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Still used: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{id}/enabled": {
+      "put": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Turn a plugin on or off",
+        "description": "Turns every use of the plugin on or off at once: its channels send\nnothing and its checks do not run while it is off. Audited as\n`plugin.enable` or `plugin.disable`, also when it already was. 404\n`not_found` for an unknown plugin.",
+        "operationId": "set_enabled",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The plugin's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginEnabledRequest"
+              },
+              "example": {
+                "enabled": false
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The plugin as it now stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginView"
+                },
+                "example": {
+                  "capabilities": [
+                    "Sends notifications from the central server",
+                    "Connects to the address in its Webhook address setting"
+                  ],
+                  "channels": 2,
+                  "checks": 0,
+                  "description": "Posts alerts to a chat room through a webhook.",
+                  "enabled": true,
+                  "fingerprint": "3fa1c09e5b7d2e64",
+                  "id": "4d3c2b1a-0f9e-4d8c-b7a6-5e4d3c2b1a0f",
+                  "installed_at": "2026-10-20T10:00:00Z",
+                  "kind": "channel",
+                  "name": "chat-relay",
+                  "official": false,
+                  "places": [
+                    {
+                      "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
+                      "customer_name": "acme",
+                      "site_id": null,
+                      "site_name": null
+                    }
+                  ],
+                  "publisher": "Acme tools",
+                  "settings": [
+                    {
+                      "key": "url",
+                      "label": "Webhook address",
+                      "required": true,
+                      "type": "url"
+                    },
+                    {
+                      "help": "Given by the receiving service",
+                      "key": "token",
+                      "label": "Token",
+                      "required": true,
+                      "type": "secret"
+                    }
+                  ],
+                  "title": "Chat relay",
+                  "updated_at": "2026-11-05T09:30:00Z",
+                  "version": "1.2.0"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{id}/places": {
+      "put": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Set where a plugin may be used",
+        "description": "Replaces the places: everything (both IDs absent), customers or\nsites, at most 200; an empty list means nowhere. Channels and checks\nalready using it are not removed. Audited as `plugin.places`. Safe to\nrepeat.\n\nErrors: 400 `invalid` for a place with both IDs, more than 200, or a\ncustomer or site that does not exist; 404 `not_found` for an unknown\nplugin.",
+        "operationId": "set_places",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The plugin's ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginPlacesRequest"
+              },
+              "example": {
+                "places": [
+                  {
+                    "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b"
+                  },
+                  {
+                    "site_id": "e7f8a9b0-c1d2-4e3f-9a4b-5c6d7e8f9a0b"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The plugin as it now stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginView"
+                },
+                "example": {
+                  "capabilities": [
+                    "Sends notifications from the central server",
+                    "Connects to the address in its Webhook address setting"
+                  ],
+                  "channels": 2,
+                  "checks": 0,
+                  "description": "Posts alerts to a chat room through a webhook.",
+                  "enabled": true,
+                  "fingerprint": "3fa1c09e5b7d2e64",
+                  "id": "4d3c2b1a-0f9e-4d8c-b7a6-5e4d3c2b1a0f",
+                  "installed_at": "2026-10-20T10:00:00Z",
+                  "kind": "channel",
+                  "name": "chat-relay",
+                  "official": false,
+                  "places": [
+                    {
+                      "customer_id": "c1a2b3c4-d5e6-4f70-8a9b-0c1d2e3f4a5b",
+                      "customer_name": "acme",
+                      "site_id": null,
+                      "site_name": null
+                    }
+                  ],
+                  "publisher": "Acme tools",
+                  "settings": [
+                    {
+                      "key": "url",
+                      "label": "Webhook address",
+                      "required": true,
+                      "type": "url"
+                    },
+                    {
+                      "help": "Given by the receiving service",
+                      "key": "token",
+                      "label": "Token",
+                      "required": true,
+                      "type": "secret"
+                    }
+                  ],
+                  "title": "Chat relay",
+                  "updated_at": "2026-11-05T09:30:00Z",
+                  "version": "1.2.0"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/remediation/approvals": {
       "get": {
         "tags": [
@@ -9467,6 +10723,449 @@
           }
         }
       },
+      "PluginEnabledRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/plugins/{id}/enabled`.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PluginFile": {
+        "type": "string",
+        "format": "binary",
+        "description": "A plugin file as `monitorflow-plugin pack` writes it, at most 3 MiB."
+      },
+      "PluginInspection": {
+        "type": "object",
+        "description": "What an uploaded file is, before it is installed.",
+        "required": [
+          "name",
+          "kind",
+          "version",
+          "title",
+          "description",
+          "official",
+          "publisher",
+          "fingerprint",
+          "capabilities",
+          "settings",
+          "sha256"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What it does and asks for, in words."
+          },
+          "description": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "official": {
+            "type": "boolean"
+          },
+          "publisher": {
+            "type": "string",
+            "description": "MonitorFlow, or the trusted publisher's name; empty for a key not\ntrusted yet."
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginSetting"
+            }
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Hex; `POST /api/plugins` takes it back so what is installed is what\nwas shown."
+          },
+          "title": {
+            "type": "string"
+          },
+          "update": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginUpdate",
+                "description": "Set when it replaces an installed version."
+              }
+            ]
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "PluginList": {
+        "type": "object",
+        "description": "Body of `GET /api/plugins`.",
+        "required": [
+          "plugins"
+        ],
+        "properties": {
+          "plugins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginView"
+            }
+          }
+        }
+      },
+      "PluginPlace": {
+        "type": "object",
+        "description": "Where a plugin may be used: everything when both IDs are null.",
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PluginPlaceRequest": {
+        "type": "object",
+        "description": "Where a plugin may be used: everything when both are `None`.",
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A customer and all its sites."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "One site; never with `customer_id`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PluginPlacesRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/plugins/{id}/places`.",
+        "required": [
+          "places"
+        ],
+        "properties": {
+          "places": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginPlaceRequest"
+            },
+            "description": "At most 200; both IDs absent is everything, empty is nowhere."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PluginPublisher": {
+        "type": "object",
+        "description": "A trusted publisher key.",
+        "required": [
+          "id",
+          "name",
+          "public_key",
+          "fingerprint",
+          "plugins",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "The first 8 bytes of the key's SHA-256, hex."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "plugins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Installed plugins it signed."
+          },
+          "public_key": {
+            "type": "string",
+            "description": "The Ed25519 public key, base64."
+          }
+        }
+      },
+      "PluginPublisherList": {
+        "type": "object",
+        "description": "Body of `GET /api/plugins/publishers`.",
+        "required": [
+          "publishers",
+          "official"
+        ],
+        "properties": {
+          "official": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fingerprints of the catalogue keys built in; none until the\nproject publishes one."
+          },
+          "publishers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginPublisher"
+            }
+          }
+        }
+      },
+      "PluginPublisherRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/plugins/publishers`.",
+        "required": [
+          "name",
+          "public_key"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "1 to 80 characters, shown as the publisher of its plugins."
+          },
+          "public_key": {
+            "type": "string",
+            "description": "The key `monitorflow-plugin keygen` printed: base64 or PEM."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PluginSetting": {
+        "type": "object",
+        "description": "One field of the plugin's settings form.",
+        "required": [
+          "key",
+          "label",
+          "type"
+        ],
+        "properties": {
+          "default": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The value proposed; absent without one."
+          },
+          "help": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A sentence under the field; absent without one."
+          },
+          "key": {
+            "type": "string",
+            "description": "The key a channel or check stores the value under."
+          },
+          "label": {
+            "type": "string",
+            "description": "The field's label."
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "type": {
+            "$ref": "#/components/schemas/PluginSettingType"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PluginSettingType": {
+        "type": "string",
+        "description": "The kind of a setting's field: `secret` values are never shown again\nonce saved.",
+        "enum": [
+          "text",
+          "url",
+          "number",
+          "bool",
+          "secret"
+        ]
+      },
+      "PluginUpdate": {
+        "type": "object",
+        "description": "What installing the file over the installed version changes.",
+        "required": [
+          "from_version",
+          "adds",
+          "drops"
+        ],
+        "properties": {
+          "adds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Capabilities the new version asks for and the old one did not."
+          },
+          "drops": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Capabilities it no longer asks for."
+          },
+          "from_version": {
+            "type": "string",
+            "description": "The installed version."
+          }
+        }
+      },
+      "PluginView": {
+        "type": "object",
+        "description": "A plugin as Administration › Plugins shows it.",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "version",
+          "title",
+          "description",
+          "official",
+          "fingerprint",
+          "capabilities",
+          "settings",
+          "enabled",
+          "places",
+          "channels",
+          "checks",
+          "installed_at",
+          "updated_at"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What it does and asks for, in words."
+          },
+          "channels": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Notification channels using it."
+          },
+          "checks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Checks using it."
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Off: no channel sends and no check runs with it."
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "The signing key's: the first 8 bytes of its SHA-256, hex."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "installed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`check`, `channel` or `integration`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its unique name, kept across versions."
+          },
+          "official": {
+            "type": "boolean",
+            "description": "Signed by a key built into MonitorFlow."
+          },
+          "places": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginPlace"
+            },
+            "description": "Where it may be used; empty: nowhere."
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MonitorFlow, the publisher's name, or `null` for a key no longer\ntrusted."
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginSetting"
+            },
+            "description": "The fields of its settings form."
+          },
+          "title": {
+            "type": "string",
+            "description": "Its name to show."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "PublicAddress": {
         "type": "object",
         "description": "Body of `GET` and `PUT /api/settings/public-address`, and the\n`address` object of a new token.",
@@ -10734,6 +12433,87 @@
           }
         }
       },
+      "UsablePlugin": {
+        "type": "object",
+        "description": "A plugin as those who use it see it: what it is and the places they\ncan see where it may be used.",
+        "required": [
+          "name",
+          "kind",
+          "version",
+          "title",
+          "description",
+          "capabilities",
+          "settings",
+          "everywhere",
+          "customer_ids",
+          "site_ids"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "customer_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Customers, among those the caller sees, where it may be used."
+          },
+          "description": {
+            "type": "string"
+          },
+          "everywhere": {
+            "type": "boolean",
+            "description": "May be used for everything."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`check`, `channel` or `integration`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginSetting"
+            }
+          },
+          "site_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sites, among those the caller reads, where it may be used."
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "UsablePluginList": {
+        "type": "object",
+        "description": "Body of `GET /api/plugins/usable`.",
+        "required": [
+          "plugins"
+        ],
+        "properties": {
+          "plugins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsablePlugin"
+            }
+          }
+        }
+      },
       "UserDisabledRequest": {
         "type": "object",
         "description": "Body of `PUT /api/users/{id}/disabled`.",
@@ -10871,6 +12651,10 @@
     {
       "name": "dashboards",
       "description": "Pages of panels (charts, figures, top lists and open alerts) kept for one person (\"Only me\") or shared with a site or a customer. Viewers of a site or customer see its dashboards; any role above viewer makes, changes and deletes them; anyone who can read makes their own. With a key, the \"dashboards\" area; a key sees, changes and deletes its maker's \"Only me\" dashboards whatever its reach, but the data of any panel is only ever read within the key's reach. A panel never shows more than the person asking may read: its servers are resolved again on every read, and servers they cannot see are counted, not named.\n\nDisplay links, which show dashboards on a wall screen without signing in, are made, listed and turned off only in the web interface, by an administrator of the dashboards' site or customer (or of anything for their own). A link's secret is in the URL fragment, shown once; a screen trades it for a session of one hour. Whoever holds the URL sees the link's dashboards, up to 12, and nothing else: no other page, no settings, no change. Each screen request reads as the link's maker with their roles of the moment, so a maker who is disabled or loses the role stops their links. A link may expire or never; deleting a dashboard removes it from its links. Because a link reads with all its maker's roles and outlives a key, `/api/v1/display-links`, `/api/v1/dashboards/{id}/display-links` and `/api/v1/display` answer 404."
+    },
+    {
+      "name": "plugins",
+      "description": "Signed WebAssembly plugins that add checks, run by agents, and notification channels, run by the central server, in a sandbox that reaches only the hosts its manifest names. Installing, updating, placing, turning off and removing plugins, and trusting the publisher keys that sign them, are a global administrator's: a plugin runs on the central server or on the agents it is given to. With a key, access \"Administer\", reach \"Everything\" and the \"administration\" area. Which plugins may be used where is read by anyone who can read, limited to the places they see. Every change is in the audit log."
     }
   ]
 }
