@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { ErrorState, NoPermission } from "./PageState";
+import { ErrorState, NoPermission, PageHeader } from "./PageState";
 
 describe("page states", () => {
   it("retries from the empty box of a failed first load", async () => {
@@ -15,5 +15,22 @@ describe("page states", () => {
   it("leads back from a page the roles do not open", () => {
     render(<NoPermission title="Mirrors need a global administrator" />);
     expect(screen.getByRole("link", { name: "Back to the fleet" })).toHaveAttribute("href", "/");
+  });
+});
+
+describe("page header", () => {
+  it("tints by status and says why under the title", () => {
+    const { container } = render(<PageHeader detail title="Disk used /var" tone="bad" reason="97% used is above the critical limit of 95%" />);
+    const header = container.firstElementChild!;
+    expect(header.className).toMatch(/tinted/);
+    expect(header.className).toMatch(/tint-bad/);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Disk used /var");
+    expect(screen.getByText("97% used is above the critical limit of 95%").tagName).toBe("P");
+  });
+
+  it("stays plain without a tone", () => {
+    const { container } = render(<PageHeader title="Fleet" />);
+    expect(container.firstElementChild!.className).not.toMatch(/tinted/);
+    expect(container.querySelector("p")).toBeNull();
   });
 });
