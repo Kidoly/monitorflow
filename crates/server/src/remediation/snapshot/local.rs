@@ -46,30 +46,47 @@ const MAX_ITEMS: usize = 200;
 const MAX_TEXT: usize = 256;
 
 /// One system volume, as stored.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StoredVolume {
+    /// Like `/` or `/var`.
     pub mount_point: String,
+    /// Like `ext4` or `xfs`.
     pub fs_type: String,
     /// `plain`, `lvm`, `lvm_thin` or `zfs`.
     pub kind: String,
+    /// `vg/lv` for LVM, the dataset for ZFS, the device otherwise.
     pub source: String,
     pub size_bytes: u64,
+    /// What snapshots draw from: the volume group's free space for classic
+    /// LVM, the thin pool's for thin LVM, the dataset's available space
+    /// for ZFS.
     pub free_bytes: u64,
+    /// The size of that space: the volume group, the thin pool, or the
+    /// dataset's used plus available space.
     pub pool_bytes: u64,
+    /// Thin pools only: how full the pool's metadata is, in percent.
     pub metadata_percent: f64,
 }
 
 /// One volume's snapshot, as stored.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StoredSnapshot {
+    /// The set's name, shared by its volumes.
     pub name: String,
     pub mount_point: String,
+    /// `lvm`, `lvm_thin` or `zfs`.
     pub kind: String,
+    /// `vg/lv` of the snapshot for LVM, `dataset@name` for ZFS.
     pub source: String,
+    /// `vg/lv` or the dataset it is a snapshot of.
     pub origin: String,
     pub created_at: DateTime<Utc>,
+    /// Space it holds: the classic LVM snapshot's size, ZFS's `used`.
     pub size_bytes: u64,
+    /// Classic LVM only: how full the snapshot is, in percent; at 100 it
+    /// is invalid.
     pub used_percent: f64,
+    /// Overflowed, so it can no longer be rolled back to.
     pub invalid: bool,
 }
 
@@ -364,7 +381,7 @@ pub async fn support(
 }
 
 /// The snapshots of one name, taken together.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct SnapshotSet {
     pub name: String,
     /// `lvm`, `lvm_thin` or `zfs`, from the first volume.

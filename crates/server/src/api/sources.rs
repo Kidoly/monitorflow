@@ -53,7 +53,9 @@ fn current() -> String {
 #[schema(as = SourcesMode)]
 #[serde(rename_all = "lowercase")]
 pub enum ModeChoice {
+    /// Sets the server's other sources aside.
     Replace,
+    /// Keeps them, with the mirrors added.
     Add,
 }
 

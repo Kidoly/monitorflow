@@ -50,10 +50,13 @@ pub enum SeverityFilter {
 #[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
+    /// `open` or `resolved`.
     pub state: Option<StateFilter>,
     /// The incident's current severity.
     pub severity: Option<SeverityFilter>,
+    /// Incidents of this server.
     pub server_id: Option<Uuid>,
+    /// Incidents of the servers and relays of this site.
     pub site_id: Option<Uuid>,
     /// Incidents still open at or resolved after this time.
     pub from: Option<DateTime<Utc>>,
@@ -91,12 +94,17 @@ pub struct IncidentView {
     pub state: String,
     /// Sample times, not the server clock.
     pub opened_at: DateTime<Utc>,
+    /// `null` while open.
     pub resolved_at: Option<DateTime<Utc>>,
+    /// The latest value of the metric, in its unit (a ratio from 0 to 1
+    /// for `_ratio` metrics); 0 for `offline`.
     pub last_value: f64,
     pub last_value_at: DateTime<Utc>,
     /// The worst value seen while open.
     pub peak_value: f64,
-    /// The threshold as it was when the incident opened.
+    /// The threshold as it was when the incident opened: `{"metric",
+    /// "instance", "comparison", "warning", "critical", "duration_s",
+    /// "hysteresis"}`, or `{"metric": "offline", "after_s"}`.
     pub threshold: Value,
     /// While open and covered by a silence, when the last one ends
     /// (ADR-0079).
@@ -150,6 +158,7 @@ pub struct IncidentList {
 /// One change of an incident.
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct EventView {
+    /// Increasing in the order events happened.
     pub id: i64,
     /// `opened`, `escalated`, `deescalated`, `resolved`, what a silence
     /// did: `silenced` and `silence_ended` (ADR-0079), `acknowledged`, and
@@ -157,9 +166,11 @@ pub struct EventView {
     pub kind: String,
     /// Severity after the change; `null` once resolved.
     pub severity: Option<String>,
+    /// The metric's value then; `null` when the event has none.
     pub value: Option<f64>,
     /// Sample time of the change, or the server clock without a sample.
     pub occurred_at: DateTime<Utc>,
+    /// When MonitorFlow wrote it.
     pub recorded_at: DateTime<Utc>,
     /// For instance `{"reason": "threshold_removed"}`, `{"notified":
     /// true}` when a silence ended, `{"username", "via"}` when
@@ -176,6 +187,7 @@ pub struct GroupView {
     /// How many incidents it told that the user may read, this one
     /// included. Members on sites outside the user's scope are not counted.
     pub incidents: i32,
+    /// When the notification went out.
     pub created_at: DateTime<Utc>,
 }
 
@@ -188,7 +200,8 @@ pub struct IncidentDetail {
     pub events: Vec<EventView>,
     /// Oldest first.
     pub notification_groups: Vec<GroupView>,
-    /// `page` or `link`: where it was acknowledged.
+    /// `page` (the web interface or the API) or `link` (the link in a
+    /// notification): where it was acknowledged; `null` until then.
     pub acknowledged_via: Option<String>,
     /// Who is told next if nobody acknowledges (ADR-0082); `null` when no
     /// follow-up started: a warning, or not sent yet.

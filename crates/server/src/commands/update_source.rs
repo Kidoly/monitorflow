@@ -20,6 +20,7 @@ pub const MAX_DEFERRAL_DAYS: u32 = 365;
 pub enum Origin {
     /// Windows Update or Microsoft Update.
     Microsoft,
+    /// A WSUS server, at `wsus_url`.
     Wsus,
     /// Policy turns WSUS on without naming a server.
     WsusWithoutUrl,
@@ -30,6 +31,7 @@ pub enum Origin {
 #[schema(as = WindowsUpdateAutomatic)]
 #[serde(rename_all = "snake_case")]
 pub enum Automatic {
+    /// No automatic updates.
     Off,
     /// Tells about updates before downloading them.
     Notify,

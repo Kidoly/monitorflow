@@ -22,7 +22,7 @@ use super::{ApiError, ApiState};
 use crate::remediation::snapshot::local::{self, SnapshotSet, StoredVolume};
 use crate::remediation::snapshot::store;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RollbackView {
     pub server_id: Uuid,
     /// The same object as the approval queue's: `available`, `method`

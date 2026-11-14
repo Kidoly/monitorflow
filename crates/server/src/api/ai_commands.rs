@@ -38,22 +38,29 @@ pub const ON_TTL: Duration = Duration::from_secs(60 * 60);
 pub const OFF_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// Body of both routes.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = AiCommandsRequest)]
 #[serde(deny_unknown_fields)]
 pub struct SwitchRequest {
+    /// `true` turns AI commands on, `false` off.
     pub on: bool,
 }
 
 /// The last `ai_commands` command of a server, in `GET /api/servers/{id}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct AiCommandsChange {
+    /// The `ai_commands` command.
     pub command_id: Uuid,
+    /// Whether it turns AI commands on or off.
     pub on: bool,
     pub state: CommandState,
     /// The username, `null` when the account is gone.
     pub requested_by: Option<String>,
+    /// When it was queued.
     pub issued_at: DateTime<Utc>,
+    /// `null` until it ends.
     pub finished_at: Option<DateTime<Utc>>,
+    /// Why it failed, in plain words; `null` otherwise.
     pub error: Option<String>,
 }
 

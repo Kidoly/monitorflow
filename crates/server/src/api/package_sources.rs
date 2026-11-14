@@ -113,6 +113,7 @@ impl SourcesStatus {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[schema(as = SiteSourcesServer)]
 pub struct SiteServer {
+    /// The server.
     pub id: Uuid,
     pub hostname: String,
     /// As in the server listing, so Windows rows read differently.
@@ -132,6 +133,7 @@ pub struct SiteSources {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[schema(as = SkippedServer)]
 pub struct Skipped {
+    /// The server.
     pub id: Uuid,
     pub hostname: String,
     /// A sentence for the page.
