@@ -371,6 +371,373 @@
         }
       }
     },
+    "/api/v1/follow-up/policies": {
+      "get": {
+        "tags": [
+          "follow-up"
+        ],
+        "summary": "List follow-ups",
+        "description": "The follow-ups of what the key's maker administers, with the default\nsteps and the schedules and channels a step may name. Administrators\nonly.",
+        "operationId": "list_follow_ups",
+        "responses": {
+          "200": {
+            "description": "The follow-ups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowUpPolicyList"
+                },
+                "example": {
+                  "channels": [
+                    {
+                      "customer_id": null,
+                      "id": "6a1d9e3f-7b4c-4a2e-8f5d-3c1b2a4e6d8f",
+                      "name": "a webhook",
+                      "site_id": "9b2e6a41-3c7d-4e8f-a1b2-c3d4e5f60718"
+                    }
+                  ],
+                  "default_steps": [
+                    {
+                      "administrators": true,
+                      "after_minutes": 15,
+                      "channels": [],
+                      "on_call": [],
+                      "users": []
+                    }
+                  ],
+                  "policies": [
+                    {
+                      "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                      "customer_name": "acme",
+                      "id": "7f2a4c6e-8b1d-4f3a-9c5e-2d4f6a8b0c1e",
+                      "site_id": null,
+                      "site_name": null,
+                      "steps": [
+                        {
+                          "administrators": false,
+                          "after_minutes": 10,
+                          "channels": [],
+                          "on_call": [
+                            {
+                              "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
+                              "name": "acme night shift"
+                            }
+                          ],
+                          "users": []
+                        },
+                        {
+                          "administrators": true,
+                          "after_minutes": 20,
+                          "channels": [],
+                          "on_call": [],
+                          "users": [
+                            {
+                              "id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                              "name": "bob"
+                            }
+                          ]
+                        }
+                      ],
+                      "updated_at": "2026-11-10T16:20:00Z"
+                    }
+                  ],
+                  "schedules": [
+                    {
+                      "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                      "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
+                      "name": "acme night shift",
+                      "site_id": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "follow-up"
+        ],
+        "summary": "Set the follow-up of a place",
+        "description": "Creates the follow-up of everything, a customer or a site, or replaces\nits steps. Administrators of the place. Steps may name only schedules\nand channels the key's maker administers that cover all of the place,\nand people who could be on call for it; people already named may\nstay. Each list is kept once, in order. Running follow-ups take the\nnew steps at their next one. Audited as `follow_up.policy_create` or\n`follow_up.policy_update`. Safe to repeat.",
+        "operationId": "save_follow_up",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowUpPolicyRequest"
+              },
+              "example": {
+                "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                "site_id": null,
+                "steps": [
+                  {
+                    "after_minutes": 10,
+                    "on_call": [
+                      "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f"
+                    ]
+                  },
+                  {
+                    "administrators": true,
+                    "after_minutes": 20,
+                    "users": [
+                      "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowUpPolicy"
+                },
+                "example": {
+                  "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                  "customer_name": "acme",
+                  "id": "7f2a4c6e-8b1d-4f3a-9c5e-2d4f6a8b0c1e",
+                  "site_id": null,
+                  "site_name": null,
+                  "steps": [
+                    {
+                      "administrators": false,
+                      "after_minutes": 10,
+                      "channels": [],
+                      "on_call": [
+                        {
+                          "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
+                          "name": "acme night shift"
+                        }
+                      ],
+                      "users": []
+                    },
+                    {
+                      "administrators": true,
+                      "after_minutes": 20,
+                      "channels": [],
+                      "on_call": [],
+                      "users": [
+                        {
+                          "id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                          "name": "bob"
+                        }
+                      ]
+                    }
+                  ],
+                  "updated_at": "2026-11-10T16:20:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: over 10 steps, a wait outside 1 to 1440 minutes, a step that tells nobody, a schedule or channel that does not cover all of the place or is not the maker's to name, someone who does not see all of the place, a customer and a site together, an unknown customer or site",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: not an administrator of the place; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/follow-up/policies/{id}": {
+      "delete": {
+        "tags": [
+          "follow-up"
+        ],
+        "summary": "Remove a follow-up",
+        "description": "The next follow-up out applies again to its place: its customer's,\neverything's, or the default. Administrators of the place. Audited as\n`follow_up.policy_delete`.",
+        "operationId": "delete_follow_up",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The follow-up",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such follow-up, or not one the key's maker administers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/incidents": {
       "get": {
         "tags": [
@@ -2579,6 +2946,949 @@
         }
       }
     },
+    "/api/v1/on-call/overrides/{id}": {
+      "delete": {
+        "tags": [
+          "on-call"
+        ],
+        "summary": "Remove a cover",
+        "description": "The rotation applies again for its period. Administrators of the\nschedule's place. Audited as `on_call.override_delete`.",
+        "operationId": "remove_on_call_cover",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The cover, `id` of a schedule's `overrides`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such cover, or its schedule is not one the key's maker administers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/on-call/people": {
+      "get": {
+        "tags": [
+          "on-call"
+        ],
+        "summary": "List who can be on call",
+        "description": "The people who can be put on a schedule of a place, or named in a\nfollow-up step: enabled users with a role on the site or its customer,\nand, for a global administrator, those with a global role. Administrators\nof the place.",
+        "operationId": "list_on_call_people",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "A customer; with `site_id` also absent, everything.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "A site. Not together with `customer_id`.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The people",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnCallPeople"
+                },
+                "example": {
+                  "people": [
+                    {
+                      "has_contact": true,
+                      "id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    },
+                    {
+                      "has_contact": false,
+                      "id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_request`: an unknown parameter or a bad ID; `invalid`: a customer and a site together",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: not an administrator of the place; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/on-call/schedules": {
+      "get": {
+        "tags": [
+          "on-call"
+        ],
+        "summary": "List on-call schedules",
+        "description": "The schedules of what the key's maker administers, by name, each with\nwho is on call now, who is next and the turns of the next 28 days. In\nfull: there are few. Any role may call it; a key whose access is not\n\"Administer\" gets an empty list, as being on a schedule is a person's,\nnot a key's.",
+        "operationId": "list_on_call_schedules",
+        "responses": {
+          "200": {
+            "description": "The schedules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnCallScheduleList"
+                },
+                "example": {
+                  "schedules": [
+                    {
+                      "can_manage": true,
+                      "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                      "customer_name": "acme",
+                      "fallback": [
+                        "carol"
+                      ],
+                      "handoff_day": 1,
+                      "handoff_time": "09:00",
+                      "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
+                      "mail_host": "smtp.example.com",
+                      "members": [
+                        {
+                          "problem": null,
+                          "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                          "username": "alice"
+                        },
+                        {
+                          "problem": "no_contact",
+                          "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                          "username": "bob"
+                        }
+                      ],
+                      "name": "acme night shift",
+                      "next": {
+                        "ends_at": "2026-11-23T08:00:00Z",
+                        "override_id": null,
+                        "problem": "no_contact",
+                        "starts_at": "2026-11-16T08:00:00Z",
+                        "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                        "username": "bob"
+                      },
+                      "now": {
+                        "ends_at": "2026-11-16T08:00:00Z",
+                        "override_id": null,
+                        "problem": null,
+                        "starts_at": "2026-11-09T08:00:00Z",
+                        "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                        "username": "alice"
+                      },
+                      "overrides": [],
+                      "rotation": "weekly",
+                      "site_id": null,
+                      "site_name": null,
+                      "time_zone": "Europe/Paris",
+                      "turns": [
+                        {
+                          "ends_at": "2026-11-16T08:00:00Z",
+                          "override_id": null,
+                          "problem": null,
+                          "starts_at": "2026-11-09T08:00:00Z",
+                          "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                          "username": "alice"
+                        },
+                        {
+                          "ends_at": "2026-11-23T08:00:00Z",
+                          "override_id": null,
+                          "problem": "no_contact",
+                          "starts_at": "2026-11-16T08:00:00Z",
+                          "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                          "username": "bob"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No role at all within the key's reach: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "on-call"
+        ],
+        "summary": "Add an on-call schedule",
+        "description": "Administrators of its place. The first member is on call from the last\nhand-off, so someone is on call at once. Audited as\n`on_call.schedule_create`. Not safe to repeat: send `Idempotency-Key`\nto retry.",
+        "operationId": "create_on_call_schedule",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnCallScheduleRequest"
+              },
+              "example": {
+                "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                "handoff_day": 1,
+                "handoff_time": "09:00",
+                "members": [
+                  "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                  "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e"
+                ],
+                "name": "acme night shift",
+                "rotation": "weekly",
+                "site_id": null,
+                "time_zone": "Europe/Paris"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnCallSchedule"
+                },
+                "example": {
+                  "can_manage": true,
+                  "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                  "customer_name": "acme",
+                  "fallback": [
+                    "carol"
+                  ],
+                  "handoff_day": 1,
+                  "handoff_time": "09:00",
+                  "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
+                  "mail_host": "smtp.example.com",
+                  "members": [
+                    {
+                      "problem": null,
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    },
+                    {
+                      "problem": "no_contact",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ],
+                  "name": "acme night shift",
+                  "next": {
+                    "ends_at": "2026-11-23T08:00:00Z",
+                    "override_id": null,
+                    "problem": "no_contact",
+                    "starts_at": "2026-11-16T08:00:00Z",
+                    "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                    "username": "bob"
+                  },
+                  "now": {
+                    "ends_at": "2026-11-16T08:00:00Z",
+                    "override_id": null,
+                    "problem": null,
+                    "starts_at": "2026-11-09T08:00:00Z",
+                    "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                    "username": "alice"
+                  },
+                  "overrides": [],
+                  "rotation": "weekly",
+                  "site_id": null,
+                  "site_name": null,
+                  "time_zone": "Europe/Paris",
+                  "turns": [
+                    {
+                      "ends_at": "2026-11-16T08:00:00Z",
+                      "override_id": null,
+                      "problem": null,
+                      "starts_at": "2026-11-09T08:00:00Z",
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    },
+                    {
+                      "ends_at": "2026-11-23T08:00:00Z",
+                      "override_id": null,
+                      "problem": "no_contact",
+                      "starts_at": "2026-11-16T08:00:00Z",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: no name or one over 80 characters, an unknown time zone, a rotation other than `daily` or `weekly`, a time not `HH:MM`, no day for a weekly hand-off, no members, over 50, the same one twice, someone who does not see all of the place, a customer and a site together, an unknown customer or site",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: not an administrator of its place; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/on-call/schedules/{id}": {
+      "put": {
+        "tags": [
+          "on-call"
+        ],
+        "summary": "Change an on-call schedule",
+        "description": "Replaces its name, place, time zone, rotation, hand-off and members.\nAdministrators of its place now and of the one it will have. Whoever\nis on call by the rotation now stays on call until the next hand-off\nif still a member; if not, the next one in the new list takes over.\nMembers already on it may stay though they could not be added now.\nCovers stay. Audited as `on_call.schedule_update`. Safe to repeat.",
+        "operationId": "update_on_call_schedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The schedule",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnCallScheduleRequest"
+              },
+              "example": {
+                "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                "handoff_day": 1,
+                "handoff_time": "09:00",
+                "members": [
+                  "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                  "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e"
+                ],
+                "name": "acme night shift",
+                "rotation": "weekly",
+                "site_id": null,
+                "time_zone": "Europe/Paris"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnCallSchedule"
+                },
+                "example": {
+                  "can_manage": true,
+                  "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                  "customer_name": "acme",
+                  "fallback": [
+                    "carol"
+                  ],
+                  "handoff_day": 1,
+                  "handoff_time": "09:00",
+                  "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
+                  "mail_host": "smtp.example.com",
+                  "members": [
+                    {
+                      "problem": null,
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    },
+                    {
+                      "problem": "no_contact",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ],
+                  "name": "acme night shift",
+                  "next": {
+                    "ends_at": "2026-11-23T08:00:00Z",
+                    "override_id": null,
+                    "problem": "no_contact",
+                    "starts_at": "2026-11-16T08:00:00Z",
+                    "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                    "username": "bob"
+                  },
+                  "now": {
+                    "ends_at": "2026-11-16T08:00:00Z",
+                    "override_id": null,
+                    "problem": null,
+                    "starts_at": "2026-11-09T08:00:00Z",
+                    "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                    "username": "alice"
+                  },
+                  "overrides": [],
+                  "rotation": "weekly",
+                  "site_id": null,
+                  "site_name": null,
+                  "time_zone": "Europe/Paris",
+                  "turns": [
+                    {
+                      "ends_at": "2026-11-16T08:00:00Z",
+                      "override_id": null,
+                      "problem": null,
+                      "starts_at": "2026-11-09T08:00:00Z",
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    },
+                    {
+                      "ends_at": "2026-11-23T08:00:00Z",
+                      "override_id": null,
+                      "problem": "no_contact",
+                      "starts_at": "2026-11-16T08:00:00Z",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: as when adding one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: not an administrator of the place it would have; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such schedule, or not one the key's maker administers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "on-call"
+        ],
+        "summary": "Remove an on-call schedule",
+        "description": "Administrators of its place. Its covers go with it; follow-up steps\nthat name it show it as removed. Audited as `on_call.schedule_delete`.",
+        "operationId": "delete_on_call_schedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The schedule",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such schedule, or not one the key's maker administers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/on-call/schedules/{id}/overrides": {
+      "post": {
+        "tags": [
+          "on-call"
+        ],
+        "summary": "Add a cover",
+        "description": "Puts a member, or anyone who could be one, on call for a period,\nwhatever the rotation says: for a holiday or a swap. A start absent or\npast is now. Administrators of the schedule's place. Answers the\nschedule. Audited as `on_call.override_create`. Not safe to repeat:\nsend `Idempotency-Key` to retry.",
+        "operationId": "add_on_call_cover",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The schedule",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnCallCoverRequest"
+              },
+              "example": {
+                "ends_at": "2026-12-27T08:00:00Z",
+                "starts_at": "2026-12-24T18:00:00Z",
+                "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Added; the schedule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnCallSchedule"
+                },
+                "example": {
+                  "can_manage": true,
+                  "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                  "customer_name": "acme",
+                  "fallback": [
+                    "carol"
+                  ],
+                  "handoff_day": 1,
+                  "handoff_time": "09:00",
+                  "id": "3b6d9f1a-2c4e-4a7b-8d0f-5e7a9c1b3d6f",
+                  "mail_host": "smtp.example.com",
+                  "members": [
+                    {
+                      "problem": null,
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    },
+                    {
+                      "problem": "no_contact",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ],
+                  "name": "acme night shift",
+                  "next": {
+                    "ends_at": "2026-11-23T08:00:00Z",
+                    "override_id": null,
+                    "problem": "no_contact",
+                    "starts_at": "2026-11-16T08:00:00Z",
+                    "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                    "username": "bob"
+                  },
+                  "now": {
+                    "ends_at": "2026-11-16T08:00:00Z",
+                    "override_id": null,
+                    "problem": null,
+                    "starts_at": "2026-11-09T08:00:00Z",
+                    "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                    "username": "alice"
+                  },
+                  "overrides": [],
+                  "rotation": "weekly",
+                  "site_id": null,
+                  "site_name": null,
+                  "time_zone": "Europe/Paris",
+                  "turns": [
+                    {
+                      "ends_at": "2026-11-16T08:00:00Z",
+                      "override_id": null,
+                      "problem": null,
+                      "starts_at": "2026-11-09T08:00:00Z",
+                      "user_id": "5e8b2d4f-6a1c-4e3b-9d7f-0c2a4b6d8e1f",
+                      "username": "alice"
+                    },
+                    {
+                      "ends_at": "2026-11-23T08:00:00Z",
+                      "override_id": null,
+                      "problem": "no_contact",
+                      "starts_at": "2026-11-16T08:00:00Z",
+                      "user_id": "8c1e3a5b-7d9f-4b2c-a6e8-1f3d5b7a9c2e",
+                      "username": "bob"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: an end not after the start, over 90 days, a start over a year away, someone who does not see all of the place",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such schedule, or not one the key's maker administers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/remediation/approvals": {
       "get": {
         "tags": [
@@ -4134,6 +5444,281 @@
           }
         }
       },
+      "FollowUpChoice": {
+        "type": "object",
+        "description": "A schedule or channel a step may name.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it is for, set only for a whole customer; `null`\nfor a site or everything."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The schedule or channel."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name, or a channel's label."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site it is for; `null` for a customer or everything."
+          }
+        }
+      },
+      "FollowUpNamed": {
+        "type": "object",
+        "description": "Something a step names, with its name now.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The schedule, user or channel."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its name now: a schedule's name, a username, or a channel's label;\n`null` once removed."
+          }
+        }
+      },
+      "FollowUpPolicy": {
+        "type": "object",
+        "description": "A follow-up as the screen shows it.",
+        "required": [
+          "id",
+          "steps",
+          "updated_at"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it covers, or the customer of its site; `null` for\neverything."
+          },
+          "customer_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of `customer_id`; `null` with it."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The follow-up's ID."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site it is for; `null` for a whole customer or everything."
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of `site_id`; `null` with it."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FollowUpStep"
+            },
+            "description": "In order; empty tells nobody after the first message."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was last saved."
+          }
+        }
+      },
+      "FollowUpPolicyList": {
+        "type": "object",
+        "description": "Body of `GET /api/follow-up/policies`.",
+        "required": [
+          "policies",
+          "default_steps",
+          "schedules",
+          "channels"
+        ],
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FollowUpChoice"
+            },
+            "description": "Notification channels the user manages, for the form."
+          },
+          "default_steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FollowUpStep"
+            },
+            "description": "What applies where nobody set one."
+          },
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FollowUpPolicy"
+            },
+            "description": "Those the user manages."
+          },
+          "schedules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FollowUpChoice"
+            },
+            "description": "Schedules and channels the user manages, for the form."
+          }
+        }
+      },
+      "FollowUpPolicyRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/follow-up/policies`: the steps of one place, replacing\nany.",
+        "required": [
+          "steps"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it is for; with `site_id` also `null`, everything."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site it is for. Not together with `customer_id`."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FollowUpStepRequest"
+            },
+            "description": "At most 10, in order; empty tells nobody after the first message."
+          }
+        },
+        "additionalProperties": false
+      },
+      "FollowUpStep": {
+        "type": "object",
+        "description": "One step of a follow-up, with names.",
+        "required": [
+          "after_minutes",
+          "on_call",
+          "users",
+          "channels",
+          "administrators"
+        ],
+        "properties": {
+          "administrators": {
+            "type": "boolean",
+            "description": "Whether the nearest administrators of the incident's place are\ntold: of its site, else its customer, else everything."
+          },
+          "after_minutes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Minutes without acknowledgement before telling, counted from the\nstep before or from the first message.",
+            "minimum": 0
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FollowUpNamed"
+            },
+            "description": "Notification channels told."
+          },
+          "on_call": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FollowUpNamed"
+            },
+            "description": "Schedules whose person on call is told."
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FollowUpNamed"
+            },
+            "description": "Users told in person."
+          }
+        }
+      },
+      "FollowUpStepRequest": {
+        "type": "object",
+        "description": "One step: after `after_minutes` without acknowledgement, counted from\nthe step before or from the first message, tell these.",
+        "required": [
+          "after_minutes"
+        ],
+        "properties": {
+          "administrators": {
+            "type": "boolean",
+            "description": "The nearest administrators of the incident's place who can be told:\nof its site, else its customer, else everything."
+          },
+          "after_minutes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Minutes without acknowledgement before telling, 1 to 1440,\ncounted from the step before or from the first message.",
+            "minimum": 0
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Notification channels told."
+          },
+          "on_call": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Schedules whose person on call is told, or who covers their gap."
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Users told in person."
+          }
+        },
+        "additionalProperties": false
+      },
       "FollowUpView": {
         "type": "object",
         "description": "Where an incident is in its follow-up.",
@@ -5035,6 +6620,438 @@
           }
         }
       },
+      "OnCallCover": {
+        "type": "object",
+        "description": "A cover: someone on call for a period instead of the rotation.",
+        "required": [
+          "id",
+          "user_id",
+          "starts_at",
+          "ends_at"
+        ],
+        "properties": {
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "End of the cover."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The cover's ID, to remove it."
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Start of the cover."
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Who is on call during it."
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of `user_id`; `null` once the user is removed."
+          }
+        }
+      },
+      "OnCallCoverRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/on-call/schedules/{id}/overrides`.",
+        "required": [
+          "user_id",
+          "ends_at"
+        ],
+        "properties": {
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "After the start, at most 90 days after it; the start within a\nyear."
+          },
+          "starts_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Now when absent or past."
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Who covers: a member, or someone who could be one."
+          }
+        },
+        "additionalProperties": false
+      },
+      "OnCallGap": {
+        "type": "string",
+        "description": "Why the person on call cannot be told: a gap. `nobody`: a schedule\nwithout members; `removed`: a removed user's turn; `disabled`;\n`no_access`: no longer sees the schedule's place; `no_contact`: no\nemail address, chat or webhook; `no_mail_server`: only an email\naddress, and no email channel to send it through.",
+        "enum": [
+          "nobody",
+          "removed",
+          "disabled",
+          "no_access",
+          "no_contact",
+          "no_mail_server"
+        ]
+      },
+      "OnCallMember": {
+        "type": "object",
+        "description": "A member of a schedule, in the order of their turns.",
+        "properties": {
+          "problem": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OnCallGap",
+                "description": "Why they could not be told now; `null` when they can be."
+              }
+            ]
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` for a removed user."
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of `user_id`; `null` with it."
+          }
+        }
+      },
+      "OnCallPeople": {
+        "type": "object",
+        "description": "Body of `GET /api/on-call/people`.",
+        "required": [
+          "people"
+        ],
+        "properties": {
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnCallPerson"
+            },
+            "description": "By username; disabled users left out."
+          }
+        }
+      },
+      "OnCallPerson": {
+        "type": "object",
+        "description": "Someone who can be on call for a place.",
+        "required": [
+          "id",
+          "username",
+          "has_contact"
+        ],
+        "properties": {
+          "has_contact": {
+            "type": "boolean",
+            "description": "Whether they set an email address or a chat."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The user's ID."
+          },
+          "username": {
+            "type": "string",
+            "description": "Their username."
+          }
+        }
+      },
+      "OnCallRotation": {
+        "type": "string",
+        "description": "How often the rotation hands off.",
+        "enum": [
+          "daily",
+          "weekly"
+        ]
+      },
+      "OnCallSchedule": {
+        "type": "object",
+        "description": "A schedule as the screen shows it.",
+        "required": [
+          "id",
+          "name",
+          "time_zone",
+          "rotation",
+          "handoff_time",
+          "members",
+          "overrides",
+          "turns",
+          "fallback",
+          "can_manage"
+        ],
+        "properties": {
+          "can_manage": {
+            "type": "boolean",
+            "description": "Whether the caller may change it; always true through an API key."
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it covers, or the customer of its site; `null` for\neverything."
+          },
+          "customer_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of `customer_id`; `null` with it."
+          },
+          "fallback": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Who is told during a gap; empty when nobody can be, and for members\nwho do not manage it."
+          },
+          "handoff_day": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "ISO weekday of a weekly hand-off, 1 for Monday; `null` when daily.",
+            "minimum": 0
+          },
+          "handoff_time": {
+            "type": "string",
+            "description": "Local time of the hand-off, `HH:MM`."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The schedule's ID."
+          },
+          "mail_host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The mail server personal email goes through; `null` when there is\nnone, and for members who do not manage it."
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnCallMember"
+            },
+            "description": "In the order of their turns."
+          },
+          "name": {
+            "type": "string",
+            "description": "1 to 80 characters."
+          },
+          "next": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OnCallTurn",
+                "description": "The next one who takes over; `null` when nobody else does within\nthe horizon."
+              }
+            ]
+          },
+          "now": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OnCallTurn",
+                "description": "Who is on call now; `null` only without members."
+              }
+            ]
+          },
+          "overrides": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnCallCover"
+            },
+            "description": "Covers not over yet, by start."
+          },
+          "rotation": {
+            "$ref": "#/components/schemas/OnCallRotation",
+            "description": "`daily` or `weekly`."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site it covers; `null` for a whole customer or everything."
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of `site_id`; `null` with it."
+          },
+          "time_zone": {
+            "type": "string",
+            "description": "IANA name of the time zone of hand-offs, like `Europe/Paris`."
+          },
+          "turns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnCallTurn"
+            },
+            "description": "The turns that start within the next 28 days, the one running\nnow first."
+          }
+        }
+      },
+      "OnCallScheduleList": {
+        "type": "object",
+        "description": "Body of `GET /api/on-call/schedules`.",
+        "required": [
+          "schedules"
+        ],
+        "properties": {
+          "schedules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnCallSchedule"
+            },
+            "description": "By name."
+          }
+        }
+      },
+      "OnCallScheduleRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/on-call/schedules` and of `PUT` on one.",
+        "required": [
+          "name",
+          "time_zone",
+          "rotation",
+          "handoff_time",
+          "members"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it is for; with `site_id` also `null`, everything."
+          },
+          "handoff_day": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "ISO weekday, 1 for Monday; needed when weekly.",
+            "minimum": 0
+          },
+          "handoff_time": {
+            "type": "string",
+            "description": "`HH:MM`, local."
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "User IDs in order of their turns: 1 to 50, each once, people who\nsee all of the place (see `GET /api/v1/on-call/people`); members\nalready on it may stay."
+          },
+          "name": {
+            "type": "string",
+            "description": "1 to 80 characters, trimmed."
+          },
+          "rotation": {
+            "type": "string",
+            "description": "`daily` or `weekly`."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site it is for. Not together with `customer_id`."
+          },
+          "time_zone": {
+            "type": "string",
+            "description": "An IANA name, like `Europe/Paris`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "OnCallTurn": {
+        "type": "object",
+        "description": "One period with one person on call.",
+        "required": [
+          "starts_at",
+          "ends_at"
+        ],
+        "properties": {
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "End of the period, at a hand-off or an end of a cover."
+          },
+          "override_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Set when a cover puts this person on."
+          },
+          "problem": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OnCallGap",
+                "description": "Why this person cannot be told: the period is a gap. `null` when\nthey can be."
+              }
+            ]
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Start of the period; in the past for the turn running now."
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` for a removed user's turn or a schedule without members."
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of `user_id`; `null` with it."
+          }
+        }
+      },
       "PendingList": {
         "type": "object",
         "description": "Body of `GET /api/remediation/approvals`.",
@@ -5834,6 +7851,14 @@
     {
       "name": "integrations",
       "description": "Integrations: another tool, like a PSA or an automation, that gets MonitorFlow's events as one signed JSON `POST` per event: incidents, servers, updates, campaigns and approvals, each integration choosing which. The body follows [`docs/events/v1.schema.json`](https://github.com/Kidoly/monitorflow/blob/main/docs/events/v1.schema.json); the receiver's rules and code to check signatures are in [`docs/integrations.md`](https://github.com/Kidoly/monitorflow/blob/main/docs/integrations.md). In short: each request carries `X-MonitorFlow-Event`, `X-MonitorFlow-Delivery` (the event's `id`), `X-MonitorFlow-Timestamp` and `X-MonitorFlow-Signature`, `sha256=` and the HMAC-SHA256 of `{timestamp}.{raw body}` under the integration's signing secret, plus `X-MonitorFlow-Replay: 1` when sent again. Delivery is at least once: de-duplicate on the `id`. Anything but a 2xx within 15 seconds is retried after 30 seconds, then twice as long each time up to an hour, for 24 hours; an integration that accepts nothing for 24 hours is turned off and administrators are told. Events are kept 30 days and can be sent again with the same IDs. An integration notifies about everything, one customer or one site, and is managed by the administrators of that place, like a notification channel; others get 404. The URL and the signing secret are write-only: answers show the URL's origin, as its path and query often hold a token, and the secret only once, when it is made. Private and local addresses need a global administrator (a key with every reach). Every change is in the audit log, with the key's ID. API keys need the `administration` area."
+    },
+    {
+      "name": "on-call",
+      "description": "On call: who is told of each alert of a place in person, besides the channels, in turns. A schedule is for everything, one customer or one site; its members take turns, handing off every day or every week at a local time in its time zone, and a cover puts someone else on call for a period. A gap is a period when the person on call cannot be told (no contact, disabled, removed, no longer sees the place); the nearest administrators are told instead. Schedules are managed by the administrators of their place, like notification channels: everything takes a global administrator (a key with every reach), a customer an administrator of it, a site an administrator of it or of its customer; others get 404. Only people who see all of the place can be put on a schedule. How each person is reached is theirs to set and not in the public API. Every change is in the audit log, with the key's ID. API keys need the `alerts` area."
+    },
+    {
+      "name": "follow-up",
+      "description": "Follow-up: who is told next when nobody acknowledges a critical incident, step after step, for everything, one customer or one site. A step waits a number of minutes without acknowledgement, then tells the person on call of schedules, named people, notification channels or the nearest administrators. Where no follow-up is set, the default applies: the nearest administrators, after 15 minutes, once. The most precise follow-up of an incident's place applies: its site's, else its customer's, else everything's. An incident shows where it is in its follow-up (`GET /api/v1/incidents/{id}`), and acknowledging it stops the follow-up. Follow-ups are managed by the administrators of their place, like notification channels; others get 404, or 403 when saving. Every change is in the audit log, with the key's ID. API keys need the `alerts` area."
     }
   ]
 }
