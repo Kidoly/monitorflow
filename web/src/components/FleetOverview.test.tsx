@@ -91,12 +91,29 @@ describe("FleetOverview", () => {
   });
 
   it("shows silenced and acknowledged servers after the problems, and filters by status", async () => {
-    const quiet = server({ id: "s6", hostname: "app-1", open_incidents: 1, state: "silenced", silenced_until: "2026-10-22T18:00:00Z" });
-    const taken = server({ id: "s7", hostname: "app-2", open_incidents: 1, state: "acknowledged" });
+    const until = new Date(2026, 9, 22, 18, 0).toISOString();
+    const quiet = server({
+      id: "s6",
+      hostname: "app-1",
+      open_incidents: 1,
+      state: "silenced",
+      silenced_until: until,
+      silence: { by: "alice", until, reason: "migration" },
+    });
+    const taken = server({
+      id: "s7",
+      hostname: "app-2",
+      open_incidents: 1,
+      state: "acknowledged",
+      acknowledgement: { by: "bob", at: new Date(2026, 9, 22, 14, 2).toISOString(), note: "replacing the disk" },
+    });
     stubFetch(reply([quiet, taken, web1, db1, mail], []));
     render(<FleetOverview />);
     const order = (await rows()).map((r) => within(r).getAllByRole("cell")[1]!.textContent);
     expect(order).toEqual(["Critical", "Offline", "OK", "Acknowledged", "Silenced"]);
+    // Who took them out of the problems, until when, and why (ADR-0130).
+    expect(screen.getByText("Silenced by alice until 18:00 today: migration")).toBeInTheDocument();
+    expect(screen.getByText("Acknowledged by bob 14:02: replacing the disk")).toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Status" }), "silenced");
     expect(window.location.search).toBe("?state=silenced");

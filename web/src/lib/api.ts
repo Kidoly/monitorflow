@@ -78,6 +78,10 @@ export interface Server {
   site_offline_alerts?: boolean;
   /** While a silence covers it, when the last one ends (ADR-0079). */
   silenced_until?: string | null;
+  /** That silence: who made it, until when and why (ADR-0130). */
+  silence?: { by: string | null; until: string; reason: string } | null;
+  /** The latest acknowledgement of its open incidents (ADR-0130). */
+  acknowledgement?: { by: string; at: string; note: string | null } | null;
 }
 
 /** The certificate the CA issued last to an agent, revoked or not. */
@@ -760,6 +764,8 @@ export interface Incident {
   /** Who said they are on it, and when (ADR-0082); null until someone does. */
   acknowledged_by?: string | null;
   acknowledged_at?: string | null;
+  /** What they said they are doing; null when acknowledged from a link or by a script without one. */
+  acknowledged_note?: string | null;
   /** Open, not acknowledged, and the reader an operator or above of its site. */
   can_acknowledge?: boolean;
 }
@@ -3086,10 +3092,10 @@ export const api = {
     }),
 
   /** Says the user is on these incidents, so nobody else is told next (ADR-0082). */
-  acknowledgeIncidents: (ids: string[]) =>
+  acknowledgeIncidents: (ids: string[], note: string) =>
     request<{ acknowledged: string[] }>("/api/incidents/acknowledge", {
       method: "POST",
-      body: { incident_ids: ids },
+      body: { incident_ids: ids, note },
     }),
 
   /** Follow-ups of what the user administers, the default, and what steps may name. */

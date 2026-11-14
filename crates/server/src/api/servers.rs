@@ -162,6 +162,11 @@ pub struct ServerView {
     pub site_offline_alerts: bool,
     /// While a silence covers it, when the last one ends (ADR-0079).
     pub silenced_until: Option<DateTime<Utc>>,
+    /// That silence: who made it and why (ADR-0130); `null` without one.
+    pub silence: Option<SilenceNote>,
+    /// The latest acknowledgement of its open incidents (ADR-0130);
+    /// `null` when none is acknowledged.
+    pub acknowledgement: Option<AcknowledgementNote>,
     /// Latest expiry among the agent's unrevoked certificates; `null` when
     /// it has none. Past dates mean every certificate has expired.
     pub cert_not_after: Option<DateTime<Utc>>,
@@ -244,6 +249,8 @@ const SELECT_SERVERS: &str = concat!(
             s.revoked_at, s.offline_alerts, si.offline_alerts AS site_offline_alerts,
             silenced_until(s.id, NULL, s.site_id, si.customer_id) AS silenced_until,
             o.open_incidents, o.unacknowledged, o.unacknowledged_critical,
+            sl.reason AS silence_reason, sl.username AS silence_by,
+            ak.username AS acknowledged_by, ak.acknowledged_at, ak.note AS acknowledged_note,
             -- One probe of the partial index on active certificates.
             (SELECT max(c.not_after) FROM certificates c
              WHERE c.peer_role = 'agent' AND c.peer_id = s.peer_id
@@ -252,8 +259,43 @@ const SELECT_SERVERS: &str = concat!(
      JOIN sites si ON si.id = s.site_id
      JOIN customers c ON c.id = si.customer_id
      ",
-    open_counts!()
+    open_counts!(),
+    "
+     -- The silence covering it that ends last, as silenced_until picks.
+     LEFT JOIN LATERAL (
+         SELECT x.reason, u.username FROM silences x
+         LEFT JOIN users u ON u.id = x.created_by
+         WHERE x.starts_at <= now() AND coalesce(x.ended_at, x.ends_at) > now()
+           AND (num_nonnulls(x.server_id, x.relay_id, x.site_id, x.customer_id) = 0
+                OR x.server_id = s.id OR x.site_id = s.site_id
+                OR x.customer_id = si.customer_id)
+         ORDER BY x.ends_at DESC LIMIT 1) sl ON true
+     -- The latest acknowledgement of its open incidents.
+     LEFT JOIN LATERAL (
+         SELECT a.username, a.acknowledged_at, a.note FROM incidents i
+         JOIN incident_acknowledgements a ON a.incident_id = i.id
+         WHERE i.server_id = s.id AND i.state = 'open'
+         ORDER BY a.acknowledged_at DESC LIMIT 1) ak ON true"
 );
+
+/// Who silenced a server, until when and why (ADR-0130).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SilenceNote {
+    /// Who made the silence; `null` once the account is removed.
+    pub by: Option<String>,
+    pub until: DateTime<Utc>,
+    pub reason: String,
+}
+
+/// Who acknowledged a server's latest acknowledged open incident, when,
+/// and what they said they are doing (ADR-0130).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct AcknowledgementNote {
+    pub by: String,
+    pub at: DateTime<Utc>,
+    /// `null` from a notification link or a script that sent none.
+    pub note: Option<String>,
+}
 
 /// Query string of `GET /api/servers/summary`.
 #[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
@@ -372,6 +414,11 @@ struct Row {
     open_incidents: i64,
     unacknowledged: i64,
     unacknowledged_critical: i64,
+    silence_reason: Option<String>,
+    silence_by: Option<String>,
+    acknowledged_by: Option<String>,
+    acknowledged_at: Option<DateTime<Utc>>,
+    acknowledged_note: Option<String>,
     cert_not_after: Option<DateTime<Utc>>,
 }
 
@@ -534,6 +581,22 @@ impl ServerView {
             open_incidents: row.open_incidents,
             offline_alerts: row.offline_alerts,
             site_offline_alerts: row.site_offline_alerts,
+            silence: row
+                .silenced_until
+                .zip(row.silence_reason)
+                .map(|(until, reason)| SilenceNote {
+                    by: row.silence_by,
+                    until,
+                    reason,
+                }),
+            acknowledgement: row
+                .acknowledged_by
+                .zip(row.acknowledged_at)
+                .map(|(by, at)| AcknowledgementNote {
+                    by,
+                    at,
+                    note: row.acknowledged_note,
+                }),
             silenced_until: row.silenced_until,
             cert_not_after: row.cert_not_after,
         }
