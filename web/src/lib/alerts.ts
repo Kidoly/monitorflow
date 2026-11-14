@@ -22,16 +22,19 @@ import { SEVERITY_LABELS, type Severity } from "./thresholds";
  */
 export type Shape =
   | { type: "percent" | "number"; noun: string; suffix: string; unit?: string }
-  | { type: "event"; noun: string; text: string; comparison: Comparison; value: number };
+  | { type: "event"; noun: string; text: string; brief: string; comparison: Comparison; value: number };
 
-/** The fixed trigger of an event, by sensor kind and metric suffix. */
-const EVENTS: Record<string, { suffix: string; text: string; comparison: Comparison; value: number }> = {
-  port: { suffix: "up", text: "is closed", comparison: "<", value: 1 },
-  systemd: { suffix: "active", text: "is not running", comparison: "<", value: 1 },
-  windows_service: { suffix: "active", text: "is not running", comparison: "<", value: 1 },
-  log: { suffix: "matches", text: "gets a matching line", comparison: ">", value: 0 },
-  eventlog: { suffix: "matches", text: "gets an error", comparison: ">", value: 0 },
-  script: { suffix: "status", text: "reports a problem", comparison: ">=", value: 1 },
+/**
+ * The fixed trigger of an event, by sensor kind and metric suffix; `brief`
+ * follows the severity in a rule summary: "critical when it fails".
+ */
+const EVENTS: Record<string, { suffix: string; text: string; brief: string; comparison: Comparison; value: number }> = {
+  port: { suffix: "up", text: "is closed", brief: "when it fails", comparison: "<", value: 1 },
+  systemd: { suffix: "active", text: "is not running", brief: "when it stops", comparison: "<", value: 1 },
+  windows_service: { suffix: "active", text: "is not running", brief: "when it stops", comparison: "<", value: 1 },
+  log: { suffix: "matches", text: "gets a matching line", brief: "on a matching line", comparison: ">", value: 0 },
+  eventlog: { suffix: "matches", text: "gets an error", brief: "on an error", comparison: ">", value: 0 },
+  script: { suffix: "status", text: "reports a problem", brief: "when it fails", comparison: ">=", value: 1 },
 };
 
 /** "port 443", "service nginx", "/var/log/syslog": what a check watches, in words. */
@@ -67,8 +70,8 @@ export function shapeOf(sensors: EffectiveSensor[], metric: string, instance: st
   const sensor = sensorOf(sensors, metric);
   const event = sensor && EVENTS[sensor.kind];
   if (sensor && event && short === `${sensor.name}_${event.suffix}`) {
-    const { text, comparison, value } = event;
-    return { type: "event", noun: checkNoun(sensor), text, comparison, value };
+    const { text, brief, comparison, value } = event;
+    return { type: "event", noun: checkNoun(sensor), text, brief, comparison, value };
   }
   const noun = `${metricTitle(metric)}${instance ? ` ${instance}` : ""}`;
   if (short.endsWith("_ratio")) return { type: "percent", noun, suffix: "" };
