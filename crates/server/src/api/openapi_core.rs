@@ -11,7 +11,7 @@ use serde_json::json;
 use utoipa::OpenApi;
 
 use super::openapi::ErrorBody;
-use super::{check_interval, customers, offline_alerts, sensors};
+use super::{check_interval, customers, offline_alerts, sensors, thresholds};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -21,6 +21,9 @@ use super::{check_interval, customers, offline_alerts, sensors};
         site_sensors, site_sensor_configs, create_site_sensor_config,
         update_sensor_config, delete_sensor_config,
         site_check_interval, server_offline_alerts, site_offline_alerts,
+        server_thresholds_effective, server_thresholds, create_server_threshold,
+        site_thresholds_effective, site_thresholds, create_site_threshold,
+        update_threshold, delete_threshold,
     ),
     tags(
         (name = "sensors", description = "What each server checks and how often. A server runs the built-in \
@@ -28,6 +31,11 @@ checks (cpu, memory, disk and disk activity, every minute or at its site's inter
 rows, then its own: a row replaces the sensor of the same name and instance below it, and a disabled row removes \
 it. Agents pick up a change within seconds; the effective view says whether the agent runs the current \
 configuration. Offline alerts and the site's check interval are here too. Area `alerts`."),
+        (name = "thresholds", description = "When a metric opens an incident. Every server is checked \
+against the built-in thresholds (CPU, memory, disk space, disk wait), overlaid with its site's rows, then its \
+own: a row replaces the threshold of the same metric and instance below it, and a disabled row turns it off. \
+A threshold opens a warning or critical incident once the value has stayed past it for `duration_s`, and \
+resolves it once the value is back by more than the recovery margin (`hysteresis`). Area `alerts`."),
     )
 )]
 pub struct Doc;
@@ -104,6 +112,42 @@ pub mod ex {
             {"origin": "site", "entry_id": SENSOR_CONFIG, "kind": "systemd", "name": "services",
              "instance": "", "interval_ms": 30000, "timeout_ms": null,
              "params": {"units": "nginx.service,postgresql.service"}}
+        ])
+    }
+
+    pub const THRESHOLD: &str = "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6";
+
+    /// A site's row on available memory.
+    pub fn threshold() -> Value {
+        json!({
+            "id": THRESHOLD, "site_id": SITE, "server_id": null,
+            "metric": "monitorflow_memory_available_ratio", "instance": null,
+            "comparison": "<", "warning": 0.15, "critical": 0.05,
+            "duration_s": 600, "hysteresis": 0.02, "enabled": true,
+            "created_at": "2026-11-02T10:20:00Z", "updated_at": "2026-11-02T10:20:00Z"
+        })
+    }
+
+    /// Effective thresholds: the built-in ones, the memory one replaced by
+    /// the site's row.
+    pub fn effective_thresholds() -> Value {
+        let builtin = |metric: &str,
+                       instance: Value,
+                       warning: f64,
+                       critical: Value,
+                       duration_s: u32| {
+            json!({"origin": "default", "threshold_id": null, "metric": metric, "instance": instance,
+                   "enabled": true, "comparison": ">", "warning": warning, "critical": critical,
+                   "duration_s": duration_s, "hysteresis": 0.02})
+        };
+        json!([
+            builtin("monitorflow_cpu_usage_ratio", json!("total"), 0.9, Value::Null, 600),
+            builtin("monitorflow_disk_used_ratio", Value::Null, 0.85, json!(0.95), 300),
+            builtin("monitorflow_diskio_wait_seconds", Value::Null, 0.2, Value::Null, 600),
+            {"origin": "site", "threshold_id": THRESHOLD,
+             "metric": "monitorflow_memory_available_ratio", "instance": null, "enabled": true,
+             "comparison": "<", "warning": 0.15, "critical": 0.05, "duration_s": 600,
+             "hysteresis": 0.02}
         ])
     }
 
@@ -421,3 +465,180 @@ key's areas: `api_key_scope`", body = ErrorBody),
             body = ErrorBody),
     ))]
 fn site_offline_alerts() {}
+
+/// What creating or replacing a threshold row checks and records, for
+/// `concat!` in the descriptions.
+macro_rules! threshold_rules {
+    () => {
+        "`metric` is `monitorflow_` followed by a sensor's metric name. An enabled row needs `warning` or \
+`critical`, and `critical` must be on the alarm side of `warning` (above it for `>` and `>=`, below it for `<` \
+and `<=`); `duration_s` is 0 to 86400 and `hysteresis` 0 or more. A bad row is 400 `invalid`, saying what is \
+wrong; a second row with the same `metric` and `instance` for the same site or server is 409.\n\n\
+Audited as `threshold.create`, `threshold.update` or `threshold.delete`. MonitorFlow applies the change \
+within seconds; an open incident's `threshold` still shows the values it opened with."
+    };
+}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/thresholds/effective", tag = "thresholds",
+    summary = "Get a server's effective thresholds",
+    description = "The thresholds MonitorFlow checks the server's metrics against: the built-in ones \
+overlaid with its site's rows, then its own, each with where it comes from. Muted ones are listed with \
+`enabled: false`.\n\n\
+**Who**: any role on the server's site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 200, description = "The effective thresholds", body = thresholds::Effective,
+            example = json!({
+                "server_id": ex::SERVER, "site_id": ex::SITE, "revision": 4,
+                "thresholds": ex::effective_thresholds()
+            })),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn server_thresholds_effective() {}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/thresholds", tag = "thresholds",
+    summary = "List a server's own threshold rows",
+    description = "The rows set on this server alone, by metric and instance (the row for every instance \
+first), in full.\n\n\
+**Who**: any role on the server's site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 200, description = "The server's rows", body = thresholds::EntryList,
+            example = json!({"entries": [ex::merge(ex::threshold(), json!({
+                "site_id": null, "server_id": ex::SERVER, "instance": "/var",
+                "warning": 0.9, "critical": 0.98
+            }))]})),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn server_thresholds() {}
+
+#[utoipa::path(post, path = "/api/v1/servers/{id}/thresholds", tag = "thresholds",
+    summary = "Add a threshold row to a server",
+    description = concat!("Sets a threshold for one server, replacing for it the one of the same metric and \
+instance that its site or the built-in thresholds give; with `enabled: false`, turns that threshold off for \
+it.\n\n\
+**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.\n\n",
+        threshold_rules!()),
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    request_body(content = thresholds::EntryRequest, examples(
+        ("disk" = (summary = "Warn later on a big volume",
+            value = json!({"metric": "monitorflow_disk_used_ratio", "instance": "/var", "comparison": ">",
+                           "warning": 0.9, "critical": 0.98, "duration_s": 300, "hysteresis": 0.02}))),
+        ("off" = (summary = "Turn the CPU threshold off for this server",
+            value = json!({"metric": "monitorflow_cpu_usage_ratio", "instance": "total",
+                           "comparison": ">", "enabled": false}))),
+    )),
+    responses(
+        (status = 201, description = "The new row", body = thresholds::Entry,
+            example = json!(ex::merge(ex::threshold(), json!({
+                "site_id": null, "server_id": ex::SERVER, "instance": "/var",
+                "warning": 0.9, "critical": 0.98
+            })))),
+        (status = 400, description = "The row is not valid, and `error` says why: `invalid`",
+            body = ErrorBody),
+        (status = 403, description = "The key may only read the server's site: `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "The server has a row for this metric and instance already: \
+`conflict`", body = ErrorBody),
+    ))]
+fn create_server_threshold() {}
+
+#[utoipa::path(get, path = "/api/v1/sites/{id}/thresholds/effective", tag = "thresholds",
+    summary = "Get a site's effective thresholds",
+    description = "What a server of this site is checked against when it has no rows of its own: the \
+built-in thresholds overlaid with the site's rows, muted ones included.\n\n\
+**Who**: any role on the site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    responses(
+        (status = 200, description = "The site's effective thresholds", body = thresholds::SiteEffective,
+            example = json!({"site_id": ex::SITE, "thresholds": ex::effective_thresholds()})),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn site_thresholds_effective() {}
+
+#[utoipa::path(get, path = "/api/v1/sites/{id}/thresholds", tag = "thresholds",
+    summary = "List a site's threshold rows",
+    description = "The rows set on the site, which every server of the site inherits, by metric and \
+instance (the row for every instance first), in full.\n\n\
+**Who**: any role on the site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    responses(
+        (status = 200, description = "The site's rows", body = thresholds::EntryList,
+            example = json!({"entries": [ex::threshold()]})),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn site_thresholds() {}
+
+#[utoipa::path(post, path = "/api/v1/sites/{id}/thresholds", tag = "thresholds",
+    summary = "Add a threshold row to a site",
+    description = concat!("Sets a threshold for every server of the site, replacing the built-in one of the \
+same metric and instance; with `enabled: false`, turns it off. A server's own row still wins over the \
+site's.\n\n\
+**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.\n\n",
+        threshold_rules!()),
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    request_body(content = thresholds::EntryRequest, example = json!({
+        "metric": "monitorflow_memory_available_ratio", "comparison": "<",
+        "warning": 0.15, "critical": 0.05, "duration_s": 600, "hysteresis": 0.02
+    })),
+    responses(
+        (status = 201, description = "The new row", body = thresholds::Entry,
+            example = json!(ex::threshold())),
+        (status = 400, description = "The row is not valid, and `error` says why: `invalid`",
+            body = ErrorBody),
+        (status = 403, description = "The key may only read the site: `forbidden`; or outside the \
+key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "The site has a row for this metric and instance already: \
+`conflict`", body = ErrorBody),
+    ))]
+fn create_site_threshold() {}
+
+#[utoipa::path(put, path = "/api/v1/thresholds/{id}", tag = "thresholds",
+    summary = "Replace a threshold row",
+    description = concat!("Replaces every field of a site's or a server's row; fields left out take their \
+defaults. The row stays on its site or server. Safe to repeat.\n\n\
+**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.\n\n",
+        threshold_rules!()),
+    params(("id" = uuid::Uuid, Path, description = "The row")),
+    request_body(content = thresholds::EntryRequest, example = json!({
+        "metric": "monitorflow_memory_available_ratio", "comparison": "<",
+        "warning": 0.2, "critical": 0.05, "duration_s": 600, "hysteresis": 0.02
+    })),
+    responses(
+        (status = 200, description = "The row as it is now", body = thresholds::Entry,
+            example = json!(ex::merge(ex::threshold(), json!({
+                "warning": 0.2, "updated_at": "2026-11-14T09:40:00Z"
+            })))),
+        (status = 400, description = "The row is not valid, and `error` says why: `invalid`",
+            body = ErrorBody),
+        (status = 403, description = "The key may only read the row's site: `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such row, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "Another row of the same site or server has this metric and \
+instance: `conflict`", body = ErrorBody),
+    ))]
+fn update_threshold() {}
+
+#[utoipa::path(delete, path = "/api/v1/thresholds/{id}", tag = "thresholds",
+    summary = "Delete a threshold row",
+    description = "Deletes a site's or a server's row: what it replaced or turned off below comes back. \
+Audited as `threshold.delete`. A second request is 404.\n\n\
+**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The row")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 403, description = "The key may only read the row's site: `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such row, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn delete_threshold() {}

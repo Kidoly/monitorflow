@@ -279,7 +279,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/backups",
     "/api/certificate-authority",
     "/api/campaigns",
-    "/api/thresholds",
     "/api/dashboards",
     "/api/dashboard-data",
     "/api/dashboard-metrics",
@@ -295,7 +294,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
 
 // Sub-routes of servers and sites not documented yet.
 pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[
-    "/thresholds",
     "/metrics",
     "/logs",
     "/packages",

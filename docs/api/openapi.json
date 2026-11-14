@@ -3663,6 +3663,463 @@
         }
       }
     },
+    "/api/v1/servers/{id}/thresholds": {
+      "get": {
+        "tags": [
+          "thresholds"
+        ],
+        "summary": "List a server's own threshold rows",
+        "description": "The rows set on this server alone, by metric and instance (the row for every instance first), in full.\n\n**Who**: any role on the server's site. **Area**: `alerts`.",
+        "operationId": "server_thresholds",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server's rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThresholdList"
+                },
+                "example": {
+                  "entries": [
+                    {
+                      "comparison": "<",
+                      "created_at": "2026-11-02T10:20:00Z",
+                      "critical": 0.98,
+                      "duration_s": 600,
+                      "enabled": true,
+                      "hysteresis": 0.02,
+                      "id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
+                      "instance": "/var",
+                      "metric": "monitorflow_memory_available_ratio",
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "site_id": null,
+                      "updated_at": "2026-11-02T10:20:00Z",
+                      "warning": 0.9
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "thresholds"
+        ],
+        "summary": "Add a threshold row to a server",
+        "description": "Sets a threshold for one server, replacing for it the one of the same metric and instance that its site or the built-in thresholds give; with `enabled: false`, turns that threshold off for it.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.\n\n`metric` is `monitorflow_` followed by a sensor's metric name. An enabled row needs `warning` or `critical`, and `critical` must be on the alarm side of `warning` (above it for `>` and `>=`, below it for `<` and `<=`); `duration_s` is 0 to 86400 and `hysteresis` 0 or more. A bad row is 400 `invalid`, saying what is wrong; a second row with the same `metric` and `instance` for the same site or server is 409.\n\nAudited as `threshold.create`, `threshold.update` or `threshold.delete`. MonitorFlow applies the change within seconds; an open incident's `threshold` still shows the values it opened with.",
+        "operationId": "create_server_threshold",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThresholdRequest"
+              },
+              "examples": {
+                "disk": {
+                  "summary": "Warn later on a big volume",
+                  "value": {
+                    "comparison": ">",
+                    "critical": 0.98,
+                    "duration_s": 300,
+                    "hysteresis": 0.02,
+                    "instance": "/var",
+                    "metric": "monitorflow_disk_used_ratio",
+                    "warning": 0.9
+                  }
+                },
+                "off": {
+                  "summary": "Turn the CPU threshold off for this server",
+                  "value": {
+                    "comparison": ">",
+                    "enabled": false,
+                    "instance": "total",
+                    "metric": "monitorflow_cpu_usage_ratio"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new row",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Threshold"
+                },
+                "example": {
+                  "comparison": "<",
+                  "created_at": "2026-11-02T10:20:00Z",
+                  "critical": 0.98,
+                  "duration_s": 600,
+                  "enabled": true,
+                  "hysteresis": 0.02,
+                  "id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
+                  "instance": "/var",
+                  "metric": "monitorflow_memory_available_ratio",
+                  "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "site_id": null,
+                  "updated_at": "2026-11-02T10:20:00Z",
+                  "warning": 0.9
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The row is not valid, and `error` says why: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the server's site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The server has a row for this metric and instance already: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/thresholds/effective": {
+      "get": {
+        "tags": [
+          "thresholds"
+        ],
+        "summary": "Get a server's effective thresholds",
+        "description": "The thresholds MonitorFlow checks the server's metrics against: the built-in ones overlaid with its site's rows, then its own, each with where it comes from. Muted ones are listed with `enabled: false`.\n\n**Who**: any role on the server's site. **Area**: `alerts`.",
+        "operationId": "server_thresholds_effective",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The effective thresholds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveThresholds"
+                },
+                "example": {
+                  "revision": 4,
+                  "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "thresholds": [
+                    {
+                      "comparison": ">",
+                      "critical": null,
+                      "duration_s": 600,
+                      "enabled": true,
+                      "hysteresis": 0.02,
+                      "instance": "total",
+                      "metric": "monitorflow_cpu_usage_ratio",
+                      "origin": "default",
+                      "threshold_id": null,
+                      "warning": 0.9
+                    },
+                    {
+                      "comparison": ">",
+                      "critical": 0.95,
+                      "duration_s": 300,
+                      "enabled": true,
+                      "hysteresis": 0.02,
+                      "instance": null,
+                      "metric": "monitorflow_disk_used_ratio",
+                      "origin": "default",
+                      "threshold_id": null,
+                      "warning": 0.85
+                    },
+                    {
+                      "comparison": ">",
+                      "critical": null,
+                      "duration_s": 600,
+                      "enabled": true,
+                      "hysteresis": 0.02,
+                      "instance": null,
+                      "metric": "monitorflow_diskio_wait_seconds",
+                      "origin": "default",
+                      "threshold_id": null,
+                      "warning": 0.2
+                    },
+                    {
+                      "comparison": "<",
+                      "critical": 0.05,
+                      "duration_s": 600,
+                      "enabled": true,
+                      "hysteresis": 0.02,
+                      "instance": null,
+                      "metric": "monitorflow_memory_available_ratio",
+                      "origin": "site",
+                      "threshold_id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
+                      "warning": 0.15
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/silences": {
       "get": {
         "tags": [
@@ -4955,6 +5412,736 @@
           }
         }
       }
+    },
+    "/api/v1/sites/{id}/thresholds": {
+      "get": {
+        "tags": [
+          "thresholds"
+        ],
+        "summary": "List a site's threshold rows",
+        "description": "The rows set on the site, which every server of the site inherits, by metric and instance (the row for every instance first), in full.\n\n**Who**: any role on the site. **Area**: `alerts`.",
+        "operationId": "site_thresholds",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The site's rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThresholdList"
+                },
+                "example": {
+                  "entries": [
+                    {
+                      "comparison": "<",
+                      "created_at": "2026-11-02T10:20:00Z",
+                      "critical": 0.05,
+                      "duration_s": 600,
+                      "enabled": true,
+                      "hysteresis": 0.02,
+                      "id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
+                      "instance": null,
+                      "metric": "monitorflow_memory_available_ratio",
+                      "server_id": null,
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "updated_at": "2026-11-02T10:20:00Z",
+                      "warning": 0.15
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "thresholds"
+        ],
+        "summary": "Add a threshold row to a site",
+        "description": "Sets a threshold for every server of the site, replacing the built-in one of the same metric and instance; with `enabled: false`, turns it off. A server's own row still wins over the site's.\n\n**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.\n\n`metric` is `monitorflow_` followed by a sensor's metric name. An enabled row needs `warning` or `critical`, and `critical` must be on the alarm side of `warning` (above it for `>` and `>=`, below it for `<` and `<=`); `duration_s` is 0 to 86400 and `hysteresis` 0 or more. A bad row is 400 `invalid`, saying what is wrong; a second row with the same `metric` and `instance` for the same site or server is 409.\n\nAudited as `threshold.create`, `threshold.update` or `threshold.delete`. MonitorFlow applies the change within seconds; an open incident's `threshold` still shows the values it opened with.",
+        "operationId": "create_site_threshold",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThresholdRequest"
+              },
+              "example": {
+                "comparison": "<",
+                "critical": 0.05,
+                "duration_s": 600,
+                "hysteresis": 0.02,
+                "metric": "monitorflow_memory_available_ratio",
+                "warning": 0.15
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new row",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Threshold"
+                },
+                "example": {
+                  "comparison": "<",
+                  "created_at": "2026-11-02T10:20:00Z",
+                  "critical": 0.05,
+                  "duration_s": 600,
+                  "enabled": true,
+                  "hysteresis": 0.02,
+                  "id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
+                  "instance": null,
+                  "metric": "monitorflow_memory_available_ratio",
+                  "server_id": null,
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "updated_at": "2026-11-02T10:20:00Z",
+                  "warning": 0.15
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The row is not valid, and `error` says why: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The site has a row for this metric and instance already: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sites/{id}/thresholds/effective": {
+      "get": {
+        "tags": [
+          "thresholds"
+        ],
+        "summary": "Get a site's effective thresholds",
+        "description": "What a server of this site is checked against when it has no rows of its own: the built-in thresholds overlaid with the site's rows, muted ones included.\n\n**Who**: any role on the site. **Area**: `alerts`.",
+        "operationId": "site_thresholds_effective",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The site's effective thresholds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteThresholds"
+                },
+                "example": {
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "thresholds": [
+                    {
+                      "comparison": ">",
+                      "critical": null,
+                      "duration_s": 600,
+                      "enabled": true,
+                      "hysteresis": 0.02,
+                      "instance": "total",
+                      "metric": "monitorflow_cpu_usage_ratio",
+                      "origin": "default",
+                      "threshold_id": null,
+                      "warning": 0.9
+                    },
+                    {
+                      "comparison": ">",
+                      "critical": 0.95,
+                      "duration_s": 300,
+                      "enabled": true,
+                      "hysteresis": 0.02,
+                      "instance": null,
+                      "metric": "monitorflow_disk_used_ratio",
+                      "origin": "default",
+                      "threshold_id": null,
+                      "warning": 0.85
+                    },
+                    {
+                      "comparison": ">",
+                      "critical": null,
+                      "duration_s": 600,
+                      "enabled": true,
+                      "hysteresis": 0.02,
+                      "instance": null,
+                      "metric": "monitorflow_diskio_wait_seconds",
+                      "origin": "default",
+                      "threshold_id": null,
+                      "warning": 0.2
+                    },
+                    {
+                      "comparison": "<",
+                      "critical": 0.05,
+                      "duration_s": 600,
+                      "enabled": true,
+                      "hysteresis": 0.02,
+                      "instance": null,
+                      "metric": "monitorflow_memory_available_ratio",
+                      "origin": "site",
+                      "threshold_id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
+                      "warning": 0.15
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/thresholds/{id}": {
+      "put": {
+        "tags": [
+          "thresholds"
+        ],
+        "summary": "Replace a threshold row",
+        "description": "Replaces every field of a site's or a server's row; fields left out take their defaults. The row stays on its site or server. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.\n\n`metric` is `monitorflow_` followed by a sensor's metric name. An enabled row needs `warning` or `critical`, and `critical` must be on the alarm side of `warning` (above it for `>` and `>=`, below it for `<` and `<=`); `duration_s` is 0 to 86400 and `hysteresis` 0 or more. A bad row is 400 `invalid`, saying what is wrong; a second row with the same `metric` and `instance` for the same site or server is 409.\n\nAudited as `threshold.create`, `threshold.update` or `threshold.delete`. MonitorFlow applies the change within seconds; an open incident's `threshold` still shows the values it opened with.",
+        "operationId": "update_threshold",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The row",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThresholdRequest"
+              },
+              "example": {
+                "comparison": "<",
+                "critical": 0.05,
+                "duration_s": 600,
+                "hysteresis": 0.02,
+                "metric": "monitorflow_memory_available_ratio",
+                "warning": 0.2
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The row as it is now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Threshold"
+                },
+                "example": {
+                  "comparison": "<",
+                  "created_at": "2026-11-02T10:20:00Z",
+                  "critical": 0.05,
+                  "duration_s": 600,
+                  "enabled": true,
+                  "hysteresis": 0.02,
+                  "id": "d4e5f6a7-b8c9-4dae-8fb0-c1d2e3f4a5b6",
+                  "instance": null,
+                  "metric": "monitorflow_memory_available_ratio",
+                  "server_id": null,
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "updated_at": "2026-11-14T09:40:00Z",
+                  "warning": 0.2
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The row is not valid, and `error` says why: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the row's site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such row, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another row of the same site or server has this metric and instance: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "thresholds"
+        ],
+        "summary": "Delete a threshold row",
+        "description": "Deletes a site's or a server's row: what it replaced or turned off below comes back. Audited as `threshold.delete`. A second request is 404.\n\n**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.",
+        "operationId": "delete_threshold",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The row",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the row's site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such row, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5541,6 +6728,106 @@
           "site_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "EffectiveThreshold": {
+        "type": "object",
+        "description": "One effective threshold, or a muted one, with the layer it comes from.",
+        "required": [
+          "origin",
+          "metric",
+          "enabled",
+          "comparison",
+          "duration_s",
+          "hysteresis"
+        ],
+        "properties": {
+          "comparison": {
+            "type": "string",
+            "description": "`>`, `>=`, `<` or `<=`."
+          },
+          "critical": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "duration_s": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Seconds.",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`false`: muted by a disabled row, which the engine skips."
+          },
+          "hysteresis": {
+            "type": "number",
+            "format": "double",
+            "description": "The recovery margin, in the metric's unit."
+          },
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null`: every instance."
+          },
+          "metric": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/LayerOrigin"
+          },
+          "threshold_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The row it comes from; `null` for a built-in default."
+          },
+          "warning": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "EffectiveThresholds": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/{id}/thresholds/effective`.",
+        "required": [
+          "server_id",
+          "site_id",
+          "revision",
+          "thresholds"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Revision the engine compares to reload the server's thresholds."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "thresholds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EffectiveThreshold"
+            },
+            "description": "By metric and instance, muted ones included."
           }
         }
       },
@@ -6815,6 +8102,27 @@
           }
         }
       },
+      "SiteThresholds": {
+        "type": "object",
+        "description": "Body of `GET /api/sites/{id}/thresholds/effective`: what the site's\nservers get unless they override it.",
+        "required": [
+          "site_id",
+          "thresholds"
+        ],
+        "properties": {
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "thresholds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EffectiveThreshold"
+            },
+            "description": "By metric and instance, muted ones included."
+          }
+        }
+      },
       "SiteView": {
         "type": "object",
         "description": "One site.",
@@ -6929,6 +8237,166 @@
           "resolved"
         ]
       },
+      "Threshold": {
+        "type": "object",
+        "description": "One row of `thresholds`. Exactly one of `site_id` and `server_id` is\nset.",
+        "required": [
+          "id",
+          "metric",
+          "comparison",
+          "duration_s",
+          "hysteresis",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "comparison": {
+            "type": "string",
+            "description": "`>`, `>=`, `<` or `<=`."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "critical": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`null`: no critical level."
+          },
+          "duration_s": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Seconds."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`false`: mutes the same metric and instance of the layers below."
+          },
+          "hysteresis": {
+            "type": "number",
+            "format": "double",
+            "description": "The recovery margin, in the metric's unit."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null`: every instance."
+          },
+          "metric": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Set for one server's row."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Set for a site's row, which its servers inherit."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "warning": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`null`: no warning level."
+          }
+        }
+      },
+      "ThresholdList": {
+        "type": "object",
+        "description": "Body of the list endpoints, sorted by metric and instance, the row for\nevery instance first.",
+        "required": [
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Threshold"
+            }
+          }
+        }
+      },
+      "ThresholdRequest": {
+        "type": "object",
+        "description": "Body of a create or an update. An update replaces every field.",
+        "required": [
+          "metric",
+          "comparison"
+        ],
+        "properties": {
+          "comparison": {
+            "type": "string",
+            "description": "`>`, `>=`, `<` or `<=`: the alarm side of the values."
+          },
+          "critical": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The value that opens a critical incident, on the alarm side of\n`warning`; `null` for none. An enabled row needs one of the two."
+          },
+          "duration_s": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Seconds the value must stay past the threshold before an incident\nopens: 0 to 86400, 0 by default.",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`false` mutes the threshold of the same metric and instance from\nthe layers below, built-in defaults included."
+          },
+          "hysteresis": {
+            "type": "number",
+            "format": "double",
+            "description": "The recovery margin: how far back past the threshold the value\nmust go before the incident resolves, in the metric's unit; 0 or\nmore, 0 by default."
+          },
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` or absent: every instance of the metric."
+          },
+          "metric": {
+            "type": "string",
+            "description": "Full metric name, `monitorflow_<sensor metric>`."
+          },
+          "warning": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The value that opens a warning incident, in the metric's unit (a\nratio from 0 to 1 for `_ratio` metrics); `null` for none."
+          }
+        },
+        "additionalProperties": false
+      },
       "Tier": {
         "type": "string",
         "description": "Risk tiers of architecture §8, from least to most dangerous.",
@@ -6982,6 +8450,10 @@
     {
       "name": "sensors",
       "description": "What each server checks and how often. A server runs the built-in checks (cpu, memory, disk and disk activity, every minute or at its site's interval), overlaid with its site's rows, then its own: a row replaces the sensor of the same name and instance below it, and a disabled row removes it. Agents pick up a change within seconds; the effective view says whether the agent runs the current configuration. Offline alerts and the site's check interval are here too. Area `alerts`."
+    },
+    {
+      "name": "thresholds",
+      "description": "When a metric opens an incident. Every server is checked against the built-in thresholds (CPU, memory, disk space, disk wait), overlaid with its site's rows, then its own: a row replaces the threshold of the same metric and instance below it, and a disabled row turns it off. A threshold opens a warning or critical incident once the value has stayed past it for `duration_s`, and resolves it once the value is back by more than the recovery margin (`hysteresis`). Area `alerts`."
     }
   ]
 }
