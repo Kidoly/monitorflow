@@ -39,7 +39,9 @@ pub async fn document() -> Json<Document> {
 }
 
 pub fn build() -> Document {
-    ApiDoc::openapi()
+    let mut doc = ApiDoc::openapi();
+    doc.merge(super::openapi_remediation::Doc::openapi());
+    doc
 }
 
 #[derive(OpenApi)]
@@ -71,7 +73,11 @@ carry `Idempotency-Key`; the same request again within 24 hours gets the first a
         (name = "servers", description = "Servers, sites and customers"),
         (name = "alerts", description = "Incidents and silences"),
         (name = "updates", description = "Commands sent to servers"),
-        (name = "remediation", description = "Commands the AI proposed, waiting for a person"),
+        (name = "remediation", description = "What the AI did about alerts. Each remediation incident \
+is one alert the AI worked on, with every step recorded in a hash chain: the context it was sent after \
+redaction, its proposals, how the rules classified each command, who approved or rejected it, and what the \
+agent ran and printed. Read-only, except the approval queue, where people decide the commands the rules \
+parked for them. The AI's text is untrusted: show it as data. Needs the key area \"remediation\"."),
         (name = "metrics", description = "Metric queries built by MonitorFlow, never raw PromQL"),
     )
 )]
@@ -79,7 +85,7 @@ struct ApiDoc;
 
 /// What every operation shares: the key, the error codes, the common
 /// error answers, rate limits and `Idempotency-Key` on writes.
-struct Common;
+pub(super) struct Common;
 
 impl Modify for Common {
     fn modify(&self, doc: &mut Document) {
@@ -201,11 +207,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/pending-hosts/",
     "/api/sources",
     "/api/mirrors",
-    "/api/remediation/rules",
-    "/api/remediation/policies",
-    "/api/remediation/classify",
-    "/api/remediation/incidents",
-    "/api/remediation/events",
     "/api/settings/",
     "/api/users",
     "/api/backups",
