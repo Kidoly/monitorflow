@@ -28,7 +28,7 @@ monitorflow-sensors.workspace = true
 # AI remediation loop (ADR-0039, ADR-0043).
 monitorflow-ai.workspace = true
 # Plugins: signed packages and their runtime (ADR-0103).
-monitorflow-plugin.workspace = true
+monitorflow-plugin = { workspace = true, features = ["openapi"] }
 base64.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
