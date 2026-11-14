@@ -1395,6 +1395,99 @@
         }
       }
     },
+    "/api/v1/servers/summary": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "How many servers are in each state: the counts of the status strip.",
+        "operationId": "server_summary",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "Only the servers of this site.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only the servers of this customer's sites.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}": {
       "get": {
         "tags": [
@@ -2046,6 +2139,13 @@
               "format": "uuid"
             },
             "description": "1 to [`MAX_LIMIT`] incidents, like a group of a notification."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the user is doing about them, up to 500 characters, shown with\nthe acknowledgement (ADR-0130). Required when signed in; optional\nfor API keys, so older scripts keep working."
           }
         },
         "additionalProperties": false
@@ -2063,6 +2163,30 @@
               "type": "string",
               "format": "uuid"
             }
+          }
+        }
+      },
+      "AcknowledgementNote": {
+        "type": "object",
+        "description": "Who acknowledged a server's latest acknowledged open incident, when,\nand what they said they are doing (ADR-0130).",
+        "required": [
+          "by",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "by": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` from a notification link or a script that sent none."
           }
         }
       },
@@ -2738,6 +2862,13 @@
             ],
             "description": "Who said they are on it, and when (ADR-0082); `null` until someone\ndoes. The name stays when the account is removed."
           },
+          "acknowledged_note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What they said they are doing (ADR-0130); `null` from a\nnotification link, or from an API key that sent none."
+          },
           "can_acknowledge": {
             "type": "boolean",
             "description": "Whether the reader may acknowledge it: open, not acknowledged, and\nthe reader an operator or above of its site."
@@ -3149,12 +3280,74 @@
           }
         }
       },
+      "ServerState": {
+        "type": "string",
+        "description": "The one status of a server on the fleet's pages, worst first\n(ADR-0130): a silence wins, then being offline, then the worst open\nincident nobody acknowledged; a server whose open incidents are all\nacknowledged is `acknowledged`, the rest `ok`.",
+        "enum": [
+          "critical",
+          "warning",
+          "acknowledged",
+          "silenced",
+          "offline",
+          "ok"
+        ]
+      },
       "ServerStatus": {
         "type": "string",
         "enum": [
           "online",
           "offline"
         ]
+      },
+      "ServerSummary": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/summary`: how many servers are in each\n[`ServerState`], out of `total`.",
+        "required": [
+          "critical",
+          "warning",
+          "acknowledged",
+          "silenced",
+          "offline",
+          "ok",
+          "total"
+        ],
+        "properties": {
+          "acknowledged": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "critical": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "offline": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "ok": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "silenced": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "warning": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       },
       "ServerView": {
         "type": "object",
@@ -3172,10 +3365,22 @@
           "created_at",
           "status",
           "open_incidents",
+          "state",
           "offline_alerts",
           "site_offline_alerts"
         ],
         "properties": {
+          "acknowledgement": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AcknowledgementNote",
+                "description": "The latest acknowledgement of its open incidents (ADR-0130);\n`null` when none is acknowledged."
+              }
+            ]
+          },
           "agent_version": {
             "type": [
               "string",
@@ -3280,6 +3485,17 @@
             ],
             "format": "date-time"
           },
+          "silence": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SilenceNote",
+                "description": "That silence: who made it and why (ADR-0130); `null` without one."
+              }
+            ]
+          },
           "silenced_until": {
             "type": [
               "string",
@@ -3297,6 +3513,10 @@
           },
           "site_offline_alerts": {
             "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ServerState",
+            "description": "Its one status on the fleet's pages (ADR-0130)."
           },
           "status": {
             "$ref": "#/components/schemas/ServerStatus"
@@ -3337,6 +3557,30 @@
             "items": {
               "$ref": "#/components/schemas/SilenceView"
             }
+          }
+        }
+      },
+      "SilenceNote": {
+        "type": "object",
+        "description": "Who silenced a server, until when and why (ADR-0130).",
+        "required": [
+          "until",
+          "reason"
+        ],
+        "properties": {
+          "by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who made the silence; `null` once the account is removed."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

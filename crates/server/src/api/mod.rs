@@ -24,6 +24,7 @@
 //! | POST | `/api/setup` | setup link | body `{"token", "username", "password"}`; 200 [`Me`] and the session cookie; 400 for a bad username or password, 410 for a used, replaced or expired link, 409 once a user exists |
 //! | GET | `/api/auth/me` | session | [`Me`]: `{"id", "username", "roles": [{"role", "customer_id", "site_id"}], "multi_customer"}`; `multi_customer` is whether the user sees more than one customer (ADR-0104) |
 //! | GET | `/api/servers` | any role | [`ServerList`], see below |
+//! | GET | `/api/servers/summary` | any role | [`servers::ServerSummary`]: how many servers are critical, warning, acknowledged, silenced, offline and ok, out of `total`; `?site_id` or `?customer_id` narrows it (ADR-0130) |
 //! | GET | `/api/servers/{id}` | read | [`ServerDetail`]: one listing row plus `certificate`, see below |
 //! | GET | `/api/servers/{id}/sensors` | read | [`sensors::Effective`]: effective sensors, origins and drift |
 //! | GET | `/api/servers/{id}/sensor_configs` | read | [`sensors::EntryList`] of the server's own rows |
@@ -945,6 +946,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/me", get(auth::me))
         .route("/api/setup", get(setup::status).post(setup::complete))
         .route("/api/servers", get(servers::list))
+        .route("/api/servers/summary", get(servers::summary))
         .route("/api/servers/{id}", get(servers::detail))
         .route("/api/sites", get(sites::list))
         .route(

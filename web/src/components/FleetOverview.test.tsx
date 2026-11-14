@@ -3,12 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Server } from "@/lib/api";
-import { As, customerAdmin, viewer } from "@/test/admin";
+import { As, customerAdmin, single as oneCustomer, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
 import { incident } from "@/test/incidents";
 import { setUrl } from "@/test/navigation";
 
-import { FleetOverview, HEALTHY_SHOWN, REFRESH_MS } from "./FleetOverview";
+import { FleetOverview, REFRESH_MS } from "./FleetOverview";
+import { GROUP_PAGE } from "./FleetTree";
 
 vi.mock("next/navigation", () => import("@/test/navigation"));
 
@@ -39,7 +40,7 @@ function server(overrides: Partial<Server>): Server {
   };
 }
 
-const web1 = server({ open_incidents: 1, via_relay: "relay-paris-1" });
+const web1 = server({ open_incidents: 1, state: "critical", via_relay: "relay-paris-1" });
 const db1 = server({
   id: "s2",
   hostname: "db-1",
@@ -47,6 +48,7 @@ const db1 = server({
   os_version: "9",
   agent_version: null,
   status: "offline",
+  state: "offline",
   connected_at: null,
   last_heartbeat: new Date(2026, 9, 22, 13, 51).toISOString(),
 });
@@ -60,7 +62,11 @@ const reply = (servers: Server[], incidents = [disk]) => ({
   [OPEN]: { status: 200, body: { incidents, next_cursor: null } },
 });
 
-const rows = async () => within(await screen.findByRole("table", { name: "Servers" })).getAllByRole("row").slice(1);
+const table = () => screen.findByRole("table", { name: "Servers", busy: false });
+/** Server rows, without group lines. */
+const rows = async () => [...(await table()).querySelectorAll<HTMLElement>("tbody tr[data-row]")];
+/** Group lines: "paris  3 servers  1 critical …". */
+const groups = async () => [...(await table()).querySelectorAll<HTMLElement>("tbody th[scope=rowgroup]")];
 
 describe("FleetOverview", () => {
   beforeEach(() => {
@@ -70,40 +76,54 @@ describe("FleetOverview", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("lists servers problems first, with counters and a problem per row", async () => {
+  it("lists servers problems first, with one status and a problem per row", async () => {
     stubFetch(reply([mail, db1, web1]));
     render(<FleetOverview />);
     const [first, second, third] = await rows();
-    expect(first).toHaveTextContent(/web-1Debian 12 · agent 0\.1\.0 · via relay-paris-1\s*Online\s*Critical\s+Disk used \/var 96\.8% · 4 h 20 min\s*paris\s*12 s ago/);
+    expect(first).toHaveTextContent(/web-1Debian 12 · agent 0\.1\.0 · via relay-paris-1\s*Critical\s*Disk used \/var 96\.8% · 4 h 20 min\s*12 s ago/);
     expect(second).toHaveTextContent(/db-1RHEL 9 · agent unknown\s*Offline\s*Last contact 13:51/);
-    expect(third).toHaveTextContent(/mail-1.*Online\s*Warning\s+Certificate: Renewal late, expires in 1 day/);
+    expect(third).toHaveTextContent(/mail-1.*OK\s*Warning\s+Certificate: Renewal late, expires in 1 day/);
     expect(within(first!).getByRole("link", { name: "web-1" })).toHaveAttribute("href", expect.stringMatching(/^\/servers\/view\/?\?id=s1$/));
     expect(screen.getByText(/3 servers, 2 online · Updated 14:32:05, refreshes every 15 seconds/)).toBeInTheDocument();
-
-    const tiles = screen.getByRole("group", { name: "Summary, click to filter" });
-    expect(within(tiles).getByRole("link", { name: /Online\s*2\s*\/ 3/ })).toHaveAttribute("href", "/?status=online");
-    expect(within(tiles).getByRole("link", { name: /Critical incidents\s*1/ })).toHaveAttribute(
-      "href",
-      expect.stringMatching(/^\/incidents\/?\?state=open&severity=critical$/),
-    );
-    expect(within(tiles).getByRole("link", { name: /Warnings\s*0/ })).toBeInTheDocument();
+    // The status strip of the shell replaced the counters.
+    expect(screen.queryByRole("group", { name: "Summary, click to filter" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Problems first" })).toBeInTheDocument();
   });
 
-  it("counts offline servers and relays in the critical tile", async () => {
-    const opened = new Date(NOW.getTime() - 12 * 60_000).toISOString();
-    const down = incident({ id: "i2", server_id: "s2", metric: "offline", instance: "", opened_at: opened });
-    const relay = incident({ id: "i3", server_id: null, relay_id: "r1", hostname: "relay-1", customer_id: "c1", metric: "offline", instance: "" });
-    stubFetch(reply([web1, db1], [down, relay]));
+  it("shows silenced and acknowledged servers after the problems, and filters by status", async () => {
+    const until = new Date(2026, 9, 22, 18, 0).toISOString();
+    const quiet = server({
+      id: "s6",
+      hostname: "app-1",
+      open_incidents: 1,
+      state: "silenced",
+      silenced_until: until,
+      silence: { by: "alice", until, reason: "migration" },
+    });
+    const taken = server({
+      id: "s7",
+      hostname: "app-2",
+      open_incidents: 1,
+      state: "acknowledged",
+      acknowledgement: { by: "bob", at: new Date(2026, 9, 22, 14, 2).toISOString(), note: "replacing the disk" },
+    });
+    stubFetch(reply([quiet, taken, web1, db1, mail], []));
     render(<FleetOverview />);
-    const [first] = await rows();
-    expect(first).toHaveTextContent(/db-1.*Offline\s*Critical\s+Offline 12 min/);
-    const tiles = screen.getByRole("group", { name: "Summary, click to filter" });
-    expect(within(tiles).getByRole("link", { name: /Critical incidents\s*2/ })).toBeInTheDocument();
+    const order = (await rows()).map((r) => within(r).getAllByRole("cell")[1]!.textContent);
+    expect(order).toEqual(["Critical", "Offline", "OK", "Acknowledged", "Silenced"]);
+    // Who took them out of the problems, until when, and why (ADR-0130).
+    expect(screen.getByText("Silenced by alice until 18:00 today: migration")).toBeInTheDocument();
+    expect(screen.getByText("Acknowledged by bob 14:02: replacing the disk")).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Status" }), "silenced");
+    expect(window.location.search).toBe("?state=silenced");
+    const shown = await rows();
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toHaveTextContent("app-1");
   });
 
   it("filters from the URL and keeps the scope", async () => {
-    setUrl("/?customer=0b8f3c4e-1a2b-4c3d-8e9f-000000000001&status=offline");
+    setUrl("/?customer=0b8f3c4e-1a2b-4c3d-8e9f-000000000001&state=offline");
     stubFetch(reply([web1, db1, server({ id: "s9", hostname: "other", customer_id: "0b8f3c4e-1a2b-4c3d-8e9f-000000000002" }), { ...db1, id: "s5", hostname: "db-2", customer_id: "0b8f3c4e-1a2b-4c3d-8e9f-000000000001" }]));
     render(<FleetOverview />);
     const shown = await rows();
@@ -131,22 +151,90 @@ describe("FleetOverview", () => {
     expect(shown[0]).toHaveTextContent("db-1");
   });
 
-  it("folds healthy servers after the first few", async () => {
-    const healthy = Array.from({ length: HEALTHY_SHOWN + 2 }, (_, i) => server({ id: `h${i}`, hostname: `ok-${i + 1}` }));
-    stubFetch(reply([web1, ...healthy]));
-    render(<FleetOverview />);
-    expect(await rows()).toHaveLength(1 + HEALTHY_SHOWN);
-    expect(screen.getByText(/6 of 8 shown/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Show 2 more healthy servers" }));
-    expect(await rows()).toHaveLength(8);
-    expect(screen.getByRole("button", { name: "Fold healthy servers" })).toBeInTheDocument();
+  it("groups servers by site, folds healthy sites and names a lone problem", async () => {
+    const at = (site: string, n: number) => ({ site_id: site, site_name: site, id: `${site}-${n}`, hostname: `${site}-web-${n}` });
+    const fine = Array.from({ length: 3 }, (_, n) => server(at("lyon", n)));
+    const busy = [
+      { ...web1, site_id: "berlin", site_name: "berlin" },
+      server({ ...at("berlin", 2), state: "warning", open_incidents: 1 }),
+      server({ ...at("berlin", 3), state: "warning", open_incidents: 1 }),
+      server(at("berlin", 4)),
+    ];
+    stubFetch(reply([...fine, ...busy]));
+    render(
+      <As user={oneCustomer(viewer)}>
+        <FleetOverview />
+      </As>,
+    );
+    const [first, second] = await groups();
+    // Problems first; the healthy site is one line.
+    expect(first).toHaveTextContent(/^berlin4 servers\s*Critical: web-1 · Disk used \/var 96\.8%\s*2 warning\s*1 OK$/);
+    expect(second).toHaveTextContent(/^lyon3 servers\s*3 OK$/);
+    expect(within(first!).getByRole("link", { name: /web-1 · Disk/ })).toHaveAttribute("href", expect.stringMatching(/^\/servers\/view\/?\?id=s1$/));
+    expect(within(first!).getByRole("link", { name: "2 warning" })).toHaveAttribute("href", "/?state=warning&site=berlin");
+    // Its OK server waits behind a button.
+    expect(await rows()).toHaveLength(3);
+    await userEvent.click(screen.getByRole("button", { name: "Show 1 OK server of berlin" }));
+    expect(await rows()).toHaveLength(4);
 
-    // A sort shows every row, in the order asked.
+    const lyon = within(second!).getByRole("button", { name: /lyon/ });
+    expect(lyon).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(lyon);
+    expect(lyon).toHaveAttribute("aria-expanded", "true");
+    expect(await rows()).toHaveLength(7);
+    await userEvent.click(within(first!).getByRole("button", { name: /berlin/ }));
+    expect(await rows()).toHaveLength(3);
+
+    // A filter opens every group it leaves.
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search" }), "lyon-web-1");
+    expect((await rows()).map((r) => r.textContent)).toEqual([expect.stringContaining("lyon-web-1")]);
+
+    // A sort orders the servers within each site.
+    await userEvent.clear(screen.getByRole("searchbox", { name: "Search" }));
     await userEvent.click(screen.getByRole("button", { name: "Server" }));
     expect(window.location.search).toBe("?sort=host");
-    expect((await rows())[0]).toHaveTextContent("ok-1");
     await userEvent.click(screen.getByRole("button", { name: "Problems first" }));
     expect(window.location.search).toBe("");
+  });
+
+  it("shows customers above sites only to someone who sees two", async () => {
+    const other = server({ id: "s8", hostname: "shop-1", customer_id: "c2", customer_name: "globex", site_id: "site-9", site_name: "rome" });
+    stubFetch(reply([web1, other]));
+    render(<FleetOverview />);
+    const lines = (await groups()).map((g) => g.textContent);
+    expect(lines).toEqual([
+      expect.stringMatching(/^acme1 server/),
+      expect.stringMatching(/^paris1 server/),
+      expect.stringMatching(/^globex1 server\s*1 OK$/),
+    ]);
+    expect(screen.getByRole("link", { name: "1 OK" })).toHaveAttribute("href", "/?state=ok&customer=c2");
+  });
+
+  it("lists one site without a group line, its OK servers behind a button", async () => {
+    stubFetch(reply([web1, mail, server({ id: "s3", hostname: "ok-1" })]));
+    render(
+      <As user={oneCustomer(viewer)}>
+        <FleetOverview />
+      </As>,
+    );
+    expect(await rows()).toHaveLength(2);
+    expect(await groups()).toHaveLength(0);
+    expect(screen.getByRole("columnheader", { name: "Site" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Show 1 OK server" }));
+    expect(await rows()).toHaveLength(3);
+  });
+
+  it("shows a large site 50 servers at a time", async () => {
+    const many = Array.from({ length: GROUP_PAGE + 5 }, (_, i) => server({ id: `m${i}`, hostname: `node-${i}`, state: "warning", open_incidents: 1 }));
+    stubFetch(reply([...many, server({ id: "o1", site_id: "other", site_name: "other" })], []));
+    render(
+      <As user={oneCustomer(viewer)}>
+        <FleetOverview />
+      </As>,
+    );
+    expect(await rows()).toHaveLength(GROUP_PAGE);
+    await userEvent.click(screen.getByRole("button", { name: "Show 5 more of paris" }));
+    expect(await rows()).toHaveLength(GROUP_PAGE + 5);
   });
 
   it("falls back to the servers' counts when incidents cannot be read", async () => {

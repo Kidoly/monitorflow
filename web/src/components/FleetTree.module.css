@@ -1,0 +1,108 @@
+/* A site's or a customer's line: toggle, size, then its pills. */
+.tree .group th {
+  height: auto;
+  padding: 8px 14px;
+  background: var(--hl);
+  color: var(--text);
+  font-size: 14px;
+  white-space: normal;
+}
+
+.tree .group:hover th {
+  background: var(--hl);
+}
+
+.line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 6px 0 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+/* A line chevron, not a glyph: down when open, right when folded. */
+.chevron {
+  flex: none;
+  transition: transform 0.1s;
+}
+
+.folded {
+  transform: rotate(-90deg);
+}
+
+.size {
+  font-weight: 400;
+  color: var(--text);
+}
+
+.customer th {
+  font-size: 15px;
+}
+
+/* Sites under a customer, and servers under a site, sit one step in. */
+.nested th {
+  padding-left: 34px;
+}
+
+.tree td.indent {
+  padding-left: 36px;
+}
+
+.nested ~ tr td.indent {
+  padding-left: 56px;
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-label);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.pill:not(.tinted) {
+  background: var(--surface);
+}
+
+.tinted {
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.pill:hover {
+  text-decoration: none;
+  border-color: currentColor;
+}
