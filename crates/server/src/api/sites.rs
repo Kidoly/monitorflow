@@ -116,9 +116,11 @@ pub async fn list(
 
 /// Body of `PUT /api/sites/{id}/agent-auto-update`: `true` or `false`
 /// overrides the server-wide setting, `null` inherits it.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AutoUpdateRequest {
+    /// `true` or `false` for the site; `null` follows the server-wide
+    /// setting.
     pub enabled: Option<bool>,
 }
 

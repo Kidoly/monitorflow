@@ -158,15 +158,19 @@ pub struct QueryResult {
 }
 
 /// One metric of a server and the instances seen for it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MetricInfo {
+    /// Full name, `monitorflow_<sensor metric>`, for `metric` of the
+    /// query routes.
     pub name: String,
+    /// What the sensor watches, sorted; `""` for a metric without one.
     pub instances: Vec<String>,
 }
 
 /// Body of `GET /api/servers/{id}/metrics`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MetricList {
+    /// By name.
     pub metrics: Vec<MetricInfo>,
     /// The server had more series than discovery reads.
     pub truncated: bool,

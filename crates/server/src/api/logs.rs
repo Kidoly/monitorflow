@@ -37,7 +37,8 @@ pub const MAX_UNITS: usize = 200;
 pub const MAX_FILTER: usize = 256;
 
 /// Which priorities to show.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
+#[schema(as = LogLevel)]
 #[serde(rename_all = "lowercase")]
 pub enum Level {
     /// Error and worse: priority 3 or less.
@@ -47,35 +48,44 @@ pub enum Level {
 }
 
 /// Query string of `GET /api/servers/{id}/logs`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct LogParams {
     /// Defaults to `end` minus one hour.
     pub start: Option<DateTime<Utc>>,
     /// Defaults to now.
     pub end: Option<DateTime<Utc>>,
-    /// Defaults to warning.
+    /// `warning` (the default: everything forwarded) or `error`.
     pub level: Option<Level>,
-    /// Exact systemd unit, like `nginx.service`.
+    /// Exact systemd unit, like `nginx.service`; at most 256 bytes.
     pub unit: Option<String>,
-    /// Text anywhere in the message, without regard to case.
+    /// Text anywhere in the message, without regard to case; at most 256
+    /// bytes.
     pub q: Option<String>,
+    /// Lines to return, 1 to 1000, 200 by default.
     pub limit: Option<usize>,
 }
 
 /// One line.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct LogLine {
+    /// When the machine logged it.
     pub time: DateTime<Utc>,
     pub message: String,
+    /// Syslog priority: 0 (emergency) to 3 (error) and 4 (warning);
+    /// `null` when the journal had none.
     pub priority: Option<u8>,
+    /// The systemd unit, like `nginx.service`; `null` for none.
     pub unit: Option<String>,
+    /// The program's syslog identifier; `null` for none.
     pub identifier: Option<String>,
+    /// The process ID; `null` for none.
     pub pid: Option<u32>,
 }
 
 /// Body of `GET /api/servers/{id}/logs`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LogList {
     /// Newest first.
     pub lines: Vec<LogLine>,

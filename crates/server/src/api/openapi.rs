@@ -279,8 +279,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/backups",
     "/api/certificate-authority",
     "/api/campaigns",
-    "/api/thresholds",
-    "/api/sensor_configs",
     "/api/dashboards",
     "/api/dashboard-data",
     "/api/dashboard-metrics",
@@ -294,23 +292,9 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/health",
 ];
 
-// Sub-routes of servers and sites not documented yet.
-pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[
-    "/sensors",
-    "/sensor_configs",
-    "/thresholds",
-    "/metrics",
-    "/logs",
-    "/packages",
-    "/rollback",
-    "/sources",
-    "/revoke",
-    "/proxmox",
-    "/offline-alerts",
-    "/check-interval",
-    "/agent-auto-update",
-    "/ai-commands",
-];
+// Sub-routes of servers, sites and relays not documented yet; those of
+// relays are under `/api/relays` above.
+pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[];
 
 #[utoipa::path(get, path = "/api/v1/servers", tag = "servers",
     summary = "List servers",
