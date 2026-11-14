@@ -200,6 +200,7 @@ db_tests! {
                 "sealed_columns",
                 "seen_releases",
                 "sensor_configs",
+                "server_discovery",
                 "server_instance_admissions",
                 "server_instances",
                 "server_packages",
