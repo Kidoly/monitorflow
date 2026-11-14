@@ -375,6 +375,36 @@ export interface QueryResult {
   series: MetricSeries[];
 }
 
+/** One instance of a sensor's metric, as `GET /api/servers/{id}/sensor-values` gives it. */
+export interface SensorSeries {
+  /** "" for a metric without instances. */
+  instance: string;
+  /** The last hour, one worst value per step. */
+  points: [number, number | null][];
+  last_value: number | null;
+  last_at: string | null;
+  /** Set when the last sample is late: "No data for 5 minutes". */
+  reason: string | null;
+}
+
+/** A sensor's recent values, by its name and configured instance. */
+export interface SensorValue {
+  name: string;
+  instance: string;
+  metric: string;
+  series: SensorSeries[];
+  /** Why there is no series at all: "No data yet". */
+  reason: string | null;
+}
+
+/** Body of `GET /api/servers/{id}/sensor-values`: every sensor in one answer. */
+export interface SensorValueList {
+  start: number;
+  end: number;
+  step: number;
+  sensors: SensorValue[];
+}
+
 /** Which layer an effective sensor comes from (ADR-0016). */
 export type SensorOrigin = "default" | "site" | "server";
 
@@ -2627,6 +2657,9 @@ export const api = {
   /** One server with its certificate; 404 when missing or outside the user's sites. */
   server: (id: string, signal?: AbortSignal) =>
     request<ServerDetail>(`/api/servers/${encodeURIComponent(id)}`, { signal }),
+
+  sensorValues: (serverId: string, signal?: AbortSignal) =>
+    request<SensorValueList>(`/api/servers/${encodeURIComponent(serverId)}/sensor-values`, { signal }),
 
   serverSensors: (serverId: string, signal?: AbortSignal) =>
     request<EffectiveSensors>(
