@@ -1,19 +1,22 @@
 //! The fleet part of the OpenAPI document (ADR-0101): enrolling servers
 //! and relays with enrollment tokens and install keys, and the hosts that
-//! wait for approval. Merged into [`super::build`]; like `openapi.rs`, the
+//! wait for approval; relays; the agent releases this server serves. Merged into [`super::build`]; like `openapi.rs`, the
 //! functions only carry each route's description.
 
 use serde_json::json;
 use utoipa::OpenApi;
 
-use super::super::{install_keys, tokens};
+use super::super::{commands, install_keys, relays, release_import, revoke, servers, tokens};
 use super::{Common, ErrorBody};
+use crate::relay_commands;
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
         list_tokens, create_token, delete_token, list_install_keys, create_install_key,
         revoke_install_key, approve_pending_host, reject_pending_host,
+        list_relays, relay_detail, revoke_relay, update_relay, confirm_relay_names,
+        list_agent_releases, import_release, import_release_from_url,
     ),
     modifiers(&Common),
     tags(
@@ -25,6 +28,16 @@ approval. Both are secrets shown once, in the answer that creates them; no route
 an `Idempotency-Key` replay does not either. Every route needs the administrator role on the site's \
 customer, given globally or for that customer: a site's administrator cannot enroll. Through an API key, \
 that means access \"Administer\", the \"administration\" area, and a reach of everything or of the customer."),
+        (name = "relays", description = "Relays: one per site where servers cannot reach the central \
+server, or should not each open a connection to it. A relay forwards its site's agents to the central \
+server, can serve package mirrors and releases on its network, and is enrolled like a server. Reading \
+relays needs any role on their site; removing, updating and confirming the names of one needs the \
+administrator role on its customer. Through an API key, relays are in the \"servers\" area, their \
+updates in \"updates\"; listing them is open to any key within its reach."),
+        (name = "agent releases", description = "The MonitorFlow releases this server holds and \
+serves to install commands and to agent and relay updates, so that servers without Internet access can \
+install and update. Every release is checked against the release keys built into the server before it \
+is kept. Importing one is for global administrators, since every customer uses the same releases."),
     )
 )]
 pub(super) struct FleetDoc;
@@ -363,3 +376,320 @@ caller cannot read: `not_found`"),
         (status = 409, body = ErrorBody, description = "Already approved or rejected: `conflict`"),
     ))]
 fn reject_pending_host() {}
+
+fn relay_command(state: &str) -> serde_json::Value {
+    let finished = state == "succeeded";
+    json!({
+        "id": "8d9e0f1a-2b3c-4d4e-8f5a-6b7c8d9e0f1a",
+        "relay_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+        "version": "0.9.2",
+        "state": state,
+        "requested_by": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+        "issued_at": "2026-11-14T09:30:00Z",
+        "expires_at": "2026-11-15T09:30:00Z",
+        "finished_at": if finished { json!("2026-11-14T09:31:05Z") } else { json!(null) },
+        "stdout": null,
+        "error": null
+    })
+}
+
+fn relay() -> serde_json::Value {
+    json!({
+        "id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+        "peer_id": "relay-paris",
+        "name": "relay-paris",
+        "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b",
+        "site_name": "paris",
+        "customer_id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+        "customer_name": "acme",
+        "created_at": "2026-10-02T08:00:00Z",
+        "revoked_at": null,
+        "status": "online",
+        "connected_at": "2026-11-14T06:12:00Z",
+        "last_heartbeat": "2026-11-14T09:59:30Z",
+        "cert_not_after": "2027-01-12T08:00:00Z",
+        "server_names": ["relay.paris.example.com", "10.1.0.5"],
+        "pending_names": null,
+        "pending_source": null,
+        "server_count": 12,
+        "connected_agents": 11,
+        "mirror_url": "http://10.1.0.5:8090",
+        "mirror_reported_at": "2026-11-14T09:00:00Z",
+        "relay_version": "0.9.2",
+        "last_update": relay_command("succeeded"),
+        "offline_alerts": true,
+        "site_offline_alerts": true,
+        "silenced_until": null
+    })
+}
+
+/// List relays
+///
+/// One page of the enrolled relays of the sites the caller reads, sorted
+/// by site name then peer ID, with their live connection, version and
+/// latest self-update. Removed relays are not listed.
+///
+/// Paged: `limit` (1 to 1000, default 500) and `cursor`, the `next_cursor`
+/// of the previous page.
+///
+/// Any role reads it. Any API key may list relays within its reach,
+/// whatever its areas, to turn names into IDs.
+#[utoipa::path(get, path = "/api/v1/relays", tag = "relays", params(servers::ListParams),
+    responses(
+        (status = 200, body = relays::RelayList, example = json!({
+            "relays": [relay()],
+            "next_cursor": null
+        })),
+        (status = 400, body = ErrorBody, description = "Bad `limit` or `cursor`: `invalid`"),
+        (status = 403, body = ErrorBody, description = "The caller has no role: `forbidden`"),
+    ))]
+fn list_relays() {}
+
+/// Read a relay
+///
+/// One relay, removed or not, with the certificate issued to it last, the
+/// servers whose latest connection came through it and its 10 latest
+/// self-updates, newest first.
+///
+/// Any role on the relay's site. Through an API key, the "servers" area.
+#[utoipa::path(get, path = "/api/v1/relays/{id}", tag = "relays",
+    params(("id" = uuid::Uuid, Path, description = "The relay's `id`")),
+    responses(
+        (status = 200, body = relays::RelayDetail, example = json!({
+            "id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+            "peer_id": "relay-paris",
+            "name": "relay-paris",
+            "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b",
+            "site_name": "paris",
+            "customer_id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+            "customer_name": "acme",
+            "created_at": "2026-10-02T08:00:00Z",
+            "revoked_at": null,
+            "status": "online",
+            "connected_at": "2026-11-14T06:12:00Z",
+            "last_heartbeat": "2026-11-14T09:59:30Z",
+            "cert_not_after": "2027-01-12T08:00:00Z",
+            "server_names": ["relay.paris.example.com", "10.1.0.5"],
+            "pending_names": null,
+            "pending_source": null,
+            "server_count": 1,
+            "connected_agents": 1,
+            "mirror_url": null,
+            "mirror_reported_at": null,
+            "relay_version": "0.9.2",
+            "last_update": relay_command("succeeded"),
+            "offline_alerts": true,
+            "site_offline_alerts": true,
+            "silenced_until": null,
+            "certificate": {
+                "serial": "3f9a1c0b7e2d",
+                "not_before": "2026-11-13T08:00:00Z",
+                "not_after": "2027-01-12T08:00:00Z",
+                "issued_at": "2026-11-13T08:00:00Z",
+                "revoked": false,
+                "revoked_at": null,
+                "revocation_reason": null
+            },
+            "servers": [{
+                "id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d",
+                "peer_id": "web-1",
+                "hostname": "web-1",
+                "status": "online"
+            }],
+            "updates": [relay_command("succeeded")]
+        })),
+        (status = 403, body = ErrorBody, description = "The caller has no role: `forbidden`; a \
+key outside the \"servers\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such relay, or of a site the caller \
+cannot read: `not_found`"),
+    ))]
+fn relay_detail() {}
+
+/// Remove a relay
+///
+/// "Remove" in the web interface. Marks the relay revoked, revokes its
+/// certificates and those of every peer obtained through it or renewed
+/// from them, publishes them in the revocation list and closes the relay's
+/// stream and those it forwards. Its unused enrollment tokens are deleted,
+/// its open offline incidents resolved, and it leaves every list until it
+/// enrolls again. Servers behind it lose their connection until they reach
+/// the central server or another relay. Audited as `relay.revoke` with the
+/// serials.
+///
+/// The body is required: send `{}` to give no reason. Needs the
+/// administrator role on the relay's customer. Not undone by repeating: a
+/// second call is 409.
+#[utoipa::path(post, path = "/api/v1/relays/{id}/revoke", tag = "relays",
+    params(("id" = uuid::Uuid, Path, description = "The relay's `id`")),
+    request_body(content = revoke::RevokeRequest, example = json!({ "reason": "cessation_of_operation" })),
+    responses(
+        (status = 200, body = revoke::Revoked, example = json!({
+            "revoked_at": "2026-11-14T10:05:00Z",
+            "reason": "cessation_of_operation",
+            "serials": ["3f9a1c0b7e2d", "1b2c3d4e5f60"],
+            "issued_through": [{ "serial": "1b2c3d4e5f60", "peer_role": "agent", "peer_id": "web-1" }],
+            "closed_streams": 2
+        })),
+        (status = 400, body = ErrorBody, description = "An unknown `reason` or field: `invalid`"),
+        (status = 403, body = ErrorBody, description = "The caller does not administer the relay's \
+customer: `forbidden`; a key outside the \"servers\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such relay, or of a site the caller \
+cannot read: `not_found`"),
+        (status = 409, body = ErrorBody, description = "Already removed: `conflict`"),
+    ))]
+fn revoke_relay() {}
+
+/// Update a relay
+///
+/// Queues a self-update of the relay to `version`. The relay downloads the
+/// release from this server when it holds it, installs it, restarts and
+/// must connect back within `health_timeout_s`, or it rolls back. The
+/// command waits up to 24 hours for an offline relay; its progress shows in
+/// `last_update` and in the relay's `updates`. Audited as `relay.update`.
+///
+/// Needs the administrator role on the relay's customer. Through an API
+/// key, the "updates" area. One update at a time: while one is in flight,
+/// another is 409, so repeating is safe.
+#[utoipa::path(post, path = "/api/v1/relays/{id}/update", tag = "relays",
+    params(("id" = uuid::Uuid, Path, description = "The relay's `id`")),
+    request_body(content = relays::UpdateRequest, example = json!({
+        "version": "0.9.2",
+        "health_timeout_s": 300
+    })),
+    responses(
+        (status = 202, body = relay_commands::RelayCommand, example = json!(relay_command("queued"))),
+        (status = 400, body = ErrorBody, description = "`version` is not like `0.9.2`, \
+`health_timeout_s` is out of range, or a field is unknown: `invalid`"),
+        (status = 403, body = ErrorBody, description = "The caller does not administer the relay's \
+customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such relay, or of a site the caller \
+cannot read: `not_found`"),
+        (status = 409, body = ErrorBody, description = "The relay is removed, or has an update in \
+flight: `conflict`"),
+    ))]
+fn update_relay() {}
+
+/// Confirm a relay's names
+///
+/// A relay enrolled without names (by an install key, or a token without
+/// `server_names`) waits, speaking for no agent, with the names it
+/// reported in `pending_names`. This sets the names its certificate
+/// carries for agents; the relay collects that certificate within seconds
+/// and starts forwarding its site's agents. Audited as
+/// `relay.confirm_names`.
+///
+/// Needs the administrator role on the relay's customer. Through an API
+/// key, the "servers" area.
+#[utoipa::path(post, path = "/api/v1/relays/{id}/names", tag = "relays",
+    params(("id" = uuid::Uuid, Path, description = "The relay's `id`")),
+    request_body(content = relays::ConfirmNames, example = json!({
+        "names": ["relay.paris.example.com", "10.1.0.5"]
+    })),
+    responses(
+        (status = 204, description = "Confirmed"),
+        (status = 400, body = ErrorBody, description = "No name, more than 16, or one that is not \
+a usable DNS name or IP address: `invalid`"),
+        (status = 403, body = ErrorBody, description = "The caller does not administer the relay's \
+customer: `forbidden`; a key outside the \"servers\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such relay, or of a site the caller \
+cannot read: `not_found`"),
+        (status = 409, body = ErrorBody, description = "The relay is removed or not waiting for \
+names, or a name is the central server's or another site's relay's: `conflict`"),
+    ))]
+fn confirm_relay_names() {}
+
+/// List agent releases
+///
+/// The releases this server holds and can serve to agents and relays,
+/// for install commands and updates, newest first, and the newest one that
+/// is not a pre-release.
+///
+/// Any signed-in user, even without a role. Through an API key, the
+/// "updates" area.
+#[utoipa::path(get, path = "/api/v1/agent-releases", tag = "agent releases",
+    responses(
+        (status = 200, body = commands::AgentReleases, example = json!({
+            "versions": ["0.10.0-rc.1", "0.9.2", "0.9.1"],
+            "latest": "0.9.2"
+        })),
+        (status = 403, body = ErrorBody, description = "A key outside the \"updates\" area: \
+`api_key_scope`"),
+    ))]
+fn list_agent_releases() {}
+
+/// The files of a release, for `POST /api/agent-releases/import`.
+#[derive(utoipa::ToSchema)]
+#[schema(as = ReleaseUpload)]
+struct ReleaseUpload {
+    /// One part per file, each named by its file name in the release
+    /// (`filename` of the part): `SHA256SUMS`, `SHA256SUMS.sig` and
+    /// `VERSION` are required, with at least one agent binary; any of
+    /// `monitorflow-agent-linux-x86_64`, `monitorflow-agent-linux-aarch64`,
+    /// `monitorflow-agent-windows-x86_64.exe`,
+    /// `monitorflow-agent-windows-x86_64.msi`, `install.sh`,
+    /// `monitorflow-agent.service`, `monitorflow-agent-sudoers`,
+    /// `monitorflow-relay-linux-x86_64`, `monitorflow-relay-linux-aarch64`,
+    /// `monitorflow-relay.service` and `monitorflow-relay-sudoers` may
+    /// follow. Other files are ignored.
+    #[schema(value_type = Vec<String>, format = Binary)]
+    files: Vec<Vec<u8>>,
+}
+
+/// Import a release from files
+///
+/// For servers without Internet access: imports a release from its files,
+/// sent as `multipart/form-data` up to 2 GiB in all. The signature of
+/// `SHA256SUMS` is checked against the release keys built into the server
+/// and every file against its checksum, as `agent-release import` does on
+/// the command line. The release is then served to install commands and
+/// agent and relay updates. Audited as `agent_release.import`.
+///
+/// Global administrators only: the release cache serves every customer.
+/// Through an API key: access "Administer", reach everything, the
+/// "updates" area. One import at a time. `Idempotency-Key` is ignored on
+/// this route: importing the same release again replaces it with the same
+/// files.
+#[utoipa::path(post, path = "/api/v1/agent-releases/import", tag = "agent releases",
+    request_body(content = ReleaseUpload, content_type = "multipart/form-data"),
+    responses(
+        (status = 200, body = release_import::ImportResult, example = json!({
+            "version": "0.9.2",
+            "missing": ["monitorflow-agent-windows-x86_64.exe", "monitorflow-agent-windows-x86_64.msi"]
+        })),
+        (status = 400, body = ErrorBody, description = "Not a multipart form: `invalid_request`. \
+A required file is absent, the signature does not verify, a checksum does not match, no agent binary, \
+or the upload stopped: `invalid`"),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 409, body = ErrorBody, description = "Another import is running: `conflict`"),
+    ))]
+fn import_release() {}
+
+/// Import a release from a URL
+///
+/// Like the upload, but the server downloads the release's files from the
+/// directory `url`, over http or https: the signature protects the files,
+/// not the transport. Files the directory does not have (404) are skipped;
+/// the required ones are then reported missing. The download stops after
+/// 60 seconds without data, or beyond 2 GiB. Audited as
+/// `agent_release.import`, with only the URL's host.
+///
+/// Global administrators only. Through an API key: access "Administer",
+/// reach everything, the "updates" area. One import at a time; repeating
+/// imports the same release again.
+#[utoipa::path(post, path = "/api/v1/agent-releases/import-url", tag = "agent releases",
+    request_body(content = release_import::UrlRequest, example = json!({
+        "url": "https://downloads.example.com/monitorflow/v0.9.2/"
+    })),
+    responses(
+        (status = 200, body = release_import::ImportResult, example = json!({
+            "version": "0.9.2",
+            "missing": []
+        })),
+        (status = 400, body = ErrorBody, description = "`url` is not an http or https URL, a file \
+could not be downloaded, or the files are not a genuine release: `invalid`"),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 409, body = ErrorBody, description = "Another import is running: `conflict`"),
+    ))]
+fn import_release_from_url() {}

@@ -36,18 +36,29 @@ const MAX_OUTPUT: usize = 64 * 1024;
 const WAKE_QUEUE: usize = 256;
 const SEND_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// One relay command, as the API shows it.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+/// One relay command, as the API shows it: a self-update (ADR-0055).
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct RelayCommand {
     pub id: Uuid,
     pub relay_id: Uuid,
+    /// The release asked for.
     pub version: String,
+    /// `queued`, `sent` or `running` while in flight; then `succeeded`,
+    /// `failed`, `expired` (the relay did not take it within 24 hours) or
+    /// `cancelled`.
+    #[schema(example = "succeeded")]
     pub state: String,
+    /// The user who asked; `null` for automatic updates, or when that user
+    /// was deleted.
     pub requested_by: Option<Uuid>,
     pub issued_at: DateTime<Utc>,
+    /// When it expires if the relay has not taken it.
     pub expires_at: DateTime<Utc>,
+    /// `null` while in flight.
     pub finished_at: Option<DateTime<Utc>>,
+    /// What the updater printed, when it reported.
     pub stdout: Option<String>,
+    /// Why it failed; `null` otherwise.
     pub error: Option<String>,
 }
 
