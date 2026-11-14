@@ -16,6 +16,7 @@ import { Icon } from "./icons";
 import { isCurrent, visibleNavigation } from "./navigation";
 import styles from "./Shell.module.css";
 import { ScopeSwitcher } from "./ScopeSwitcher";
+import { StatusStrip } from "./StatusStrip";
 import { ThemeToggle } from "./ThemeToggle";
 import { CertificateAuthorityBanner } from "./CertificateAuthorityBanner";
 import { LicenseBanner } from "./LicenseBanner";
@@ -177,6 +178,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         <ThemeToggle />
       </nav>
       <main id="main" className={styles.main} tabIndex={-1}>
+        <StatusStrip />
         {administersEverything(me) && (
           <>
             <UpdateBanner />

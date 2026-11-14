@@ -1,0 +1,42 @@
+/* One line of counts above every page; it wraps on narrow screens. */
+.strip {
+  margin: 0 0 20px;
+}
+
+.list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-label);
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.tinted {
+  border-color: transparent;
+}
+
+/* Tinted counts carry their own colour; the border follows it. */
+.item:hover,
+.active {
+  text-decoration: none;
+  border-color: currentColor;
+}
+
+.count {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}

@@ -39,7 +39,7 @@ function server(overrides: Partial<Server>): Server {
   };
 }
 
-const web1 = server({ open_incidents: 1, via_relay: "relay-paris-1" });
+const web1 = server({ open_incidents: 1, state: "critical", via_relay: "relay-paris-1" });
 const db1 = server({
   id: "s2",
   hostname: "db-1",
@@ -47,6 +47,7 @@ const db1 = server({
   os_version: "9",
   agent_version: null,
   status: "offline",
+  state: "offline",
   connected_at: null,
   last_heartbeat: new Date(2026, 9, 22, 13, 51).toISOString(),
 });
@@ -70,40 +71,37 @@ describe("FleetOverview", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("lists servers problems first, with counters and a problem per row", async () => {
+  it("lists servers problems first, with one status and a problem per row", async () => {
     stubFetch(reply([mail, db1, web1]));
     render(<FleetOverview />);
     const [first, second, third] = await rows();
-    expect(first).toHaveTextContent(/web-1Debian 12 · agent 0\.1\.0 · via relay-paris-1\s*Online\s*Critical\s+Disk used \/var 96\.8% · 4 h 20 min\s*paris\s*12 s ago/);
+    expect(first).toHaveTextContent(/web-1Debian 12 · agent 0\.1\.0 · via relay-paris-1\s*Critical\s*Critical\s+Disk used \/var 96\.8% · 4 h 20 min\s*paris\s*12 s ago/);
     expect(second).toHaveTextContent(/db-1RHEL 9 · agent unknown\s*Offline\s*Last contact 13:51/);
-    expect(third).toHaveTextContent(/mail-1.*Online\s*Warning\s+Certificate: Renewal late, expires in 1 day/);
+    expect(third).toHaveTextContent(/mail-1.*OK\s*Warning\s+Certificate: Renewal late, expires in 1 day/);
     expect(within(first!).getByRole("link", { name: "web-1" })).toHaveAttribute("href", expect.stringMatching(/^\/servers\/view\/?\?id=s1$/));
     expect(screen.getByText(/3 servers, 2 online · Updated 14:32:05, refreshes every 15 seconds/)).toBeInTheDocument();
-
-    const tiles = screen.getByRole("group", { name: "Summary, click to filter" });
-    expect(within(tiles).getByRole("link", { name: /Online\s*2\s*\/ 3/ })).toHaveAttribute("href", "/?status=online");
-    expect(within(tiles).getByRole("link", { name: /Critical incidents\s*1/ })).toHaveAttribute(
-      "href",
-      expect.stringMatching(/^\/incidents\/?\?state=open&severity=critical$/),
-    );
-    expect(within(tiles).getByRole("link", { name: /Warnings\s*0/ })).toBeInTheDocument();
+    // The status strip of the shell replaced the counters.
+    expect(screen.queryByRole("group", { name: "Summary, click to filter" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Problems first" })).toBeInTheDocument();
   });
 
-  it("counts offline servers and relays in the critical tile", async () => {
-    const opened = new Date(NOW.getTime() - 12 * 60_000).toISOString();
-    const down = incident({ id: "i2", server_id: "s2", metric: "offline", instance: "", opened_at: opened });
-    const relay = incident({ id: "i3", server_id: null, relay_id: "r1", hostname: "relay-1", customer_id: "c1", metric: "offline", instance: "" });
-    stubFetch(reply([web1, db1], [down, relay]));
+  it("shows silenced and acknowledged servers after the problems, and filters by status", async () => {
+    const quiet = server({ id: "s6", hostname: "app-1", open_incidents: 1, state: "silenced", silenced_until: "2026-10-22T18:00:00Z" });
+    const taken = server({ id: "s7", hostname: "app-2", open_incidents: 1, state: "acknowledged" });
+    stubFetch(reply([quiet, taken, web1, db1, mail], []));
     render(<FleetOverview />);
-    const [first] = await rows();
-    expect(first).toHaveTextContent(/db-1.*Offline\s*Critical\s+Offline 12 min/);
-    const tiles = screen.getByRole("group", { name: "Summary, click to filter" });
-    expect(within(tiles).getByRole("link", { name: /Critical incidents\s*2/ })).toBeInTheDocument();
+    const order = (await rows()).map((r) => within(r).getAllByRole("cell")[1]!.textContent);
+    expect(order).toEqual(["Critical", "Offline", "OK", "Acknowledged", "Silenced"]);
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Status" }), "silenced");
+    expect(window.location.search).toBe("?state=silenced");
+    const shown = await rows();
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toHaveTextContent("app-1");
   });
 
   it("filters from the URL and keeps the scope", async () => {
-    setUrl("/?customer=0b8f3c4e-1a2b-4c3d-8e9f-000000000001&status=offline");
+    setUrl("/?customer=0b8f3c4e-1a2b-4c3d-8e9f-000000000001&state=offline");
     stubFetch(reply([web1, db1, server({ id: "s9", hostname: "other", customer_id: "0b8f3c4e-1a2b-4c3d-8e9f-000000000002" }), { ...db1, id: "s5", hostname: "db-2", customer_id: "0b8f3c4e-1a2b-4c3d-8e9f-000000000001" }]));
     render(<FleetOverview />);
     const shown = await rows();

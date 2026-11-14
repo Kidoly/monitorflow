@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useState } from "react";
 
-import { type Incident, type Server, api, describeError, isUnauthorized, isAbortError } from "@/lib/api";
+import { type Incident, type Server, type ServerState, api, describeError, isUnauthorized, isAbortError } from "@/lib/api";
 import { certificateProblem, certificateState } from "@/lib/certificates";
 import { formatOs } from "@/lib/format";
 import { incidentTitle, isOffline } from "@/lib/incidents";
@@ -11,6 +11,7 @@ import { administersCustomer, useMe } from "@/lib/me";
 import { incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue } from "@/lib/sensors";
+import { isServerState, SERVER_STATES, STATE_WORDS, serverState } from "@/lib/serverState";
 import { REFRESH_MS, usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
 import { Button, ButtonLink } from "@/components/ui/Button";
@@ -18,10 +19,8 @@ import { type Column, DataTable, PrimaryCell, useUrlSort } from "@/components/ui
 import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
 import { EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
-import { problemRank } from "@/components/ui/problemsFirst";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
-import { StatTiles } from "@/components/ui/StatTiles";
 import { formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
 import styles from "./FleetOverview.module.css";
@@ -39,9 +38,18 @@ interface Row {
   incident: Incident | undefined;
   critical: number;
   warning: number;
-  /** 0 open critical … 4 healthy: the "Problems first" order. */
+  state: ServerState;
+  /** The "Problems first" order, see `RANK`; `HEALTHY` and above fold away. */
   rank: number;
 }
+
+/**
+ * "Problems first": what needs a look, then a late certificate on a server
+ * otherwise fine, then what someone is on or silenced, then the rest.
+ */
+const RANK: Record<ServerState, number> = { critical: 0, warning: 1, offline: 2, acknowledged: 4, silenced: 5, ok: 6 };
+const CERTIFICATE_RANK = 3;
+const HEALTHY = RANK.ok;
 
 interface Fleet {
   servers: Server[];
@@ -71,14 +79,10 @@ function toRows(fleet: Fleet, now: Date): Row[] {
     const critical = incidents.filter((i) => i.severity === "critical").length;
     const warning = fleet.incidents ? incidents.length - critical : server.open_incidents;
     const incident = incidents.find((i) => i.severity === "critical") ?? incidents[0];
-    const rank = problemRank({
-      critical,
-      warning,
-      offline: server.status === "offline",
-      certificateWarning: server.cert_not_after !== null && certificateState(server.cert_not_after, now) !== "valid",
-      name: server.hostname,
-    });
-    return { server, incident, critical, warning, rank };
+    const state = serverState(server);
+    const certificateWarning = server.cert_not_after !== null && certificateState(server.cert_not_after, now) !== "valid";
+    const rank = state === "ok" && certificateWarning ? CERTIFICATE_RANK : RANK[state];
+    return { server, incident, critical, warning, state, rank };
   });
 }
 
@@ -98,25 +102,26 @@ export function FleetOverview() {
   const now = updatedAt ?? new Date();
   const all = data ? toRows({ ...data, servers: data.servers.filter((s) => inScope(s, scope)) }, now) : [];
   // Servers' and relays' incidents: a relay offline counts too (ADR-0072).
-  const ids = new Set(all.map((r) => r.server.id));
-  const incidents = data?.incidents?.filter((i) => (i.server_id ? ids.has(i.server_id) : inScope(i, scope))) ?? [];
   const online = all.filter((r) => r.server.status === "online").length;
 
+  // `status` (online, offline) is kept for older links.
   const status = params.get("status");
+  const state = params.get("state");
   const query = params.get("q")?.trim().toLowerCase() ?? "";
   const filtered = all.filter(
     (r) =>
       (!status || r.server.status === status) &&
+      (!isServerState(state) || r.state === state) &&
       (!scope.siteId && params.get("site") ? r.server.site_id === params.get("site") : true) &&
       (!params.get("os") || r.server.os_family === params.get("os")) &&
       (params.get("incidents") !== "1" || r.critical + r.warning > 0) &&
       (!query || `${r.server.hostname} ${r.server.peer_id}`.toLowerCase().includes(query)),
   );
-  const anyFilter = ["status", "site", "os", "incidents", "q"].some((k) => params.get(k));
+  const anyFilter = ["state", "status", "site", "os", "incidents", "q"].some((k) => params.get(k));
   // Healthy rows fold away only in the default view: problems first, unfiltered.
   const collapsible = sort === null && !anyFilter;
   const ordered = [...filtered].sort(problemsFirst);
-  const problems = ordered.filter((r) => r.rank < 4);
+  const problems = ordered.filter((r) => r.rank < HEALTHY);
   const shown = collapsible && !expanded ? ordered.slice(0, problems.length + HEALTHY_SHOWN) : ordered;
   const hidden = ordered.length - shown.length;
 
@@ -153,18 +158,8 @@ export function FleetOverview() {
     {
       key: "status",
       header: "Status",
-      cell: (r) => (
-        <>
-          <StatusLabel kind="server" value={r.server.status} />
-          {r.server.silenced_until && (
-            <>
-              {" "}
-              <Label tone="neutral">Silenced</Label>
-            </>
-          )}
-        </>
-      ),
-      sortValue: (r) => r.server.status,
+      cell: (r) => <Label tone={STATE_WORDS[r.state][1]}>{STATE_WORDS[r.state][0]}</Label>,
+      sortValue: (r) => SERVER_STATES.indexOf(r.state),
     },
     { key: "problem", header: "Problem", cell: (r) => <Problem row={r} now={now} scope={scope} /> },
     { key: "site", header: "Site", cell: (r) => r.server.site_name, sortValue: (r) => r.server.site_name },
@@ -205,40 +200,13 @@ export function FleetOverview() {
         </EmptyState>
       ) : (
         <>
-          <StatTiles
-            tiles={[
-              {
-                label: "Online",
-                value: online,
-                total: all.length,
-                tone: "ok",
-                href: scopedHref(status === "online" ? "/" : "/?status=online", scope),
-                active: status === "online",
-              },
-              {
-                label: "Critical incidents",
-                value: incidents.filter((i) => i.severity === "critical").length,
-                tone: "bad",
-                href: scopedHref(incidentsHref({ state: "open", severity: "critical" }), scope),
-              },
-              {
-                label: "Warnings",
-                value: incidents.filter((i) => i.severity === "warning").length,
-                tone: "warn",
-                href: scopedHref(incidentsHref({ state: "open", severity: "warning" }), scope),
-              },
-            ]}
-          />
           <FilterBar
             search={{ name: "q", label: "Search", placeholder: "Search servers…", width: 240 }}
             filters={[
               {
-                name: "status",
+                name: "state",
                 label: "Status",
-                options: [
-                  { value: "online", label: "Online" },
-                  { value: "offline", label: "Offline" },
-                ],
+                options: SERVER_STATES.map((value) => ({ value, label: STATE_WORDS[value][0] })),
               },
               ...(scope.siteId ? [] : [{ name: "site", label: "Site", options: sites.map(([value, label]) => ({ value, label })) }]),
               { name: "os", label: "OS", options: families.map((f) => ({ value: f, label: formatOs(f, null) })) },
@@ -251,7 +219,7 @@ export function FleetOverview() {
             }
           />
           {data && filtered.length === 0 ? (
-            <NoMatches names={["q", "status", "os", "incidents", ...(scope.siteId ? [] : ["site"])]}>
+            <NoMatches names={["q", "state", "status", "os", "incidents", ...(scope.siteId ? [] : ["site"])]}>
               No servers match these filters.
             </NoMatches>
           ) : (

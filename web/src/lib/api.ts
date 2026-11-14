@@ -33,6 +33,12 @@ export interface Me {
 
 export type ServerStatus = "online" | "offline";
 
+/** A server's one status on the fleet's pages, worst first (ADR-0130). */
+export type ServerState = "critical" | "warning" | "acknowledged" | "silenced" | "offline" | "ok";
+
+/** `GET /api/servers/summary`: servers per state, out of `total`. */
+export type ServerSummary = Record<ServerState | "total", number>;
+
 /** One entry of `GET /api/servers`. Timestamps are RFC 3339 in UTC. */
 export interface Server {
   id: string;
@@ -63,6 +69,8 @@ export interface Server {
   via_relay: string | null;
   /** Open incidents of the server (ADR-0019). */
   open_incidents: number;
+  /** Its one status (ADR-0130); absent from a central server older than it. */
+  state?: ServerState;
   /** Latest expiry among the agent's unrevoked certificates; null when it has none. */
   cert_not_after: string | null;
   /** Offline incidents of this one (ADR-0072); absent is on. Muted when this or `site_offline_alerts` is false. */
@@ -2620,6 +2628,16 @@ export const api = {
       cursor = page.next_cursor ?? undefined;
     } while (cursor !== undefined);
     return { servers, next_cursor: null };
+  },
+
+  /** Servers per state in `scope`, for the status strip (ADR-0130). */
+  serverSummary: (scope: { customerId: string | null; siteId: string | null }, signal?: AbortSignal) => {
+    const query = scope.siteId
+      ? `?site_id=${encodeURIComponent(scope.siteId)}`
+      : scope.customerId
+        ? `?customer_id=${encodeURIComponent(scope.customerId)}`
+        : "";
+    return request<ServerSummary>(`/api/servers/summary${query}`, { signal });
   },
 
   /** One server with its certificate; 404 when missing or outside the user's sites. */
