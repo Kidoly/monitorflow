@@ -1,4 +1,4 @@
-The public API of MonitorFlow, for scripts and integrations: a PSA reading alerts, a chat bot acknowledging them, an Ansible play silencing a server during a deployment. It is the same API the web interface uses, under `/api/v1`, with the same rules about who may see and change what.
+The public API of MonitorFlow, for scripts and integrations: a ticketing tool reading alerts, a chat bot acknowledging them, a deployment script silencing a server while it works. It is the same API the web interface uses, under `/api/v1`, with the same rules about who may see and change what.
 
 ## API keys
 
