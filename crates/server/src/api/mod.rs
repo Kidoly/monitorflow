@@ -652,6 +652,8 @@ pub mod offline_alerts;
 pub mod on_call;
 pub(crate) mod one_time;
 pub mod openapi;
+mod openapi_dashboards;
+mod openapi_plugins;
 mod openapi_settings;
 mod openapi_system;
 mod openapi_users;

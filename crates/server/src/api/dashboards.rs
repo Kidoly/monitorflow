@@ -41,7 +41,8 @@ pub const MAX_NAMED_SERVERS: usize = 50;
 pub const MAX_COUNT: u32 = 20;
 
 /// Time ranges, as on the sensor pages (ADR-0020).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = DashboardRange)]
 pub enum TimeRange {
     #[serde(rename = "1h")]
     Hour,
@@ -84,7 +85,8 @@ impl TimeRange {
 }
 
 /// Which servers a panel shows, within the dashboard's sharing.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = PanelServers)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Servers {
     /// Every server of the dashboard.
@@ -102,7 +104,9 @@ pub enum Servers {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// `chart`: lines over the range. `figure`: one number now. `top`: the
+/// highest or lowest servers now. `alerts`: open incidents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum PanelKind {
     Chart,
@@ -111,8 +115,11 @@ pub enum PanelKind {
     Alerts,
 }
 
-/// How the servers' series become what a chart or figure shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// How the servers' series become what a chart or figure shows: `each`
+/// (one line per series, the 8 worst; charts only), `avg`, `max`, `min`,
+/// `sum`, or `count` of servers reporting it (figures only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = PanelCombine)]
 #[serde(rename_all = "lowercase")]
 pub enum Combine {
     /// One line per series, the 8 worst (charts only).
@@ -125,7 +132,9 @@ pub enum Combine {
     Count,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The order of a top list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = PanelOrder)]
 #[serde(rename_all = "lowercase")]
 pub enum Order {
     Highest,
@@ -133,16 +142,19 @@ pub enum Order {
 }
 
 /// One panel. Fields that do not apply to its kind must be absent.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Panel {
-    /// Unique within the dashboard, chosen by the client.
+    /// Unique within the dashboard, chosen by the client: 1 to 36
+    /// letters, digits, `-` and `_`.
     pub id: String,
+    /// 1 to 80 characters.
     pub title: String,
     pub kind: PanelKind,
-    /// Columns of the three-column grid.
+    /// Columns of the three-column grid, 1 to 3; 1 when absent.
     #[serde(default = "one")]
     pub width: u8,
+    /// Every server of the dashboard when absent.
     #[serde(default)]
     pub servers: Servers,
     /// Full name, `monitorflow_…`; not for alerts.
@@ -157,7 +169,7 @@ pub struct Panel {
     /// Top lists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<Order>,
-    /// Rows of a top list or alerts panel.
+    /// Rows of a top list or alerts panel, 1 to 20.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
 }
@@ -167,12 +179,15 @@ fn one() -> u8 {
 }
 
 /// The stored content of a dashboard.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = DashboardSpec)]
 #[serde(deny_unknown_fields)]
 pub struct Spec {
+    /// Format of the spec: 1.
     pub version: u32,
     /// What the dashboard opens with.
     pub range: TimeRange,
+    /// At most 24, in the order shown.
     pub panels: Vec<Panel>,
 }
 
@@ -290,7 +305,8 @@ fn check_panel(panel: &Panel) -> Result<(), String> {
 }
 
 /// Who a dashboard is for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = DashboardSharing)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Sharing {
     /// Only me: its owner.
@@ -304,37 +320,41 @@ pub enum Sharing {
 }
 
 /// [`Sharing`] with the name of the site or customer, for display.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = DashboardSharingView)]
 pub struct SharingView {
     #[serde(flatten)]
     pub sharing: Sharing,
+    /// The site's or customer's name; absent for `personal`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
 
 /// One row of `GET /api/dashboards`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DashboardSummary {
     pub id: Uuid,
     pub name: String,
     pub shared_with: SharingView,
+    /// How many panels it has.
     pub panels: usize,
     pub updated_at: DateTime<Utc>,
     /// `null` once the user is deleted.
     pub updated_by_username: Option<String>,
+    /// Whether the caller may change and delete it.
     pub can_edit: bool,
     /// Whether the user may make display links for it (ADR-0099).
     pub can_link: bool,
 }
 
 /// Body of `GET /api/dashboards`, by name.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DashboardList {
     pub dashboards: Vec<DashboardSummary>,
 }
 
 /// `GET /api/dashboards/{id}` and the answer to writes.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DashboardView {
     #[serde(flatten)]
     pub summary: DashboardSummary,
@@ -344,11 +364,13 @@ pub struct DashboardView {
 }
 
 /// Body of `POST /api/dashboards` and `PUT /api/dashboards/{id}`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DashboardRequest {
+    /// 1 to 80 characters.
     pub name: String,
     pub shared_with: Sharing,
+    #[schema(value_type = Spec)]
     pub spec: Value,
     /// The revision the edit started from; `PUT` only.
     #[serde(default)]
