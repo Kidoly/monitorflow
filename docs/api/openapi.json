@@ -2129,6 +2129,297 @@
         }
       }
     },
+    "/api/v1/sensor_configs/{id}": {
+      "put": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Replace a sensor row",
+        "description": "Replaces every field of a site's or a server's row; fields left out take their defaults. The row stays on its site or server. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
+        "operationId": "update_sensor_config",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The row",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensorConfigRequest"
+              },
+              "example": {
+                "interval_ms": 60000,
+                "kind": "systemd",
+                "name": "services",
+                "params": {
+                  "units": "nginx.service,postgresql.service,redis-server.service"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The row as it is now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorConfig"
+                },
+                "example": {
+                  "created_at": "2026-11-02T10:15:00Z",
+                  "enabled": true,
+                  "id": "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d",
+                  "instance": "",
+                  "interval_ms": 60000,
+                  "kind": "systemd",
+                  "name": "services",
+                  "params": {
+                    "units": "nginx.service,postgresql.service,redis-server.service"
+                  },
+                  "server_id": null,
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "timeout_ms": null,
+                  "updated_at": "2026-11-14T09:40:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The row is not valid, and `error` says why: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the row's site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such row, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another row of the same site or server has this name and instance: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Delete a sensor row",
+        "description": "Deletes a site's or a server's row: what it replaced or removed below comes back. A second request is 404.\n\n**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.",
+        "operationId": "delete_sensor_config",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The row",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the row's site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such row, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers": {
       "get": {
         "tags": [
@@ -2754,6 +3045,624 @@
         }
       }
     },
+    "/api/v1/servers/{id}/offline-alerts": {
+      "put": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Turn a server's offline alerts on or off",
+        "description": "With `false`, the server opens no incident when it stops reporting, and its open offline incident resolves within a minute: for a machine that is often off on purpose. With `true`, they are back, unless its site has them off (`site_offline_alerts` of the server). For a few hours of maintenance, a silence is the better tool. Audited as `server.offline_alerts`. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.",
+        "operationId": "server_offline_alerts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OfflineAlerts"
+              },
+              "example": {
+                "enabled": false
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The setting as set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineAlerts"
+                },
+                "example": {
+                  "enabled": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the server's site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/sensor_configs": {
+      "get": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "List a server's own sensor rows",
+        "description": "The rows set on this server alone, by name and instance, in full. Its site's rows are under `GET /api/v1/sites/{id}/sensor_configs`; what it runs in the end is `GET /api/v1/servers/{id}/sensors`.\n\n**Who**: any role on the server's site. **Area**: `alerts`.",
+        "operationId": "server_sensor_configs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server's rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorConfigList"
+                },
+                "example": {
+                  "entries": [
+                    {
+                      "created_at": "2026-11-02T10:15:00Z",
+                      "enabled": true,
+                      "id": "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d",
+                      "instance": "",
+                      "interval_ms": 30000,
+                      "kind": "port",
+                      "name": "https",
+                      "params": {
+                        "host": "127.0.0.1",
+                        "port": 443
+                      },
+                      "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "site_id": null,
+                      "timeout_ms": null,
+                      "updated_at": "2026-11-02T10:15:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Add a sensor row to a server",
+        "description": "Adds a sensor to one server, or replaces for it the sensor of the same name and instance that its site or the built-in checks give; with `enabled: false`, removes that sensor from it.\n\n**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
+        "operationId": "create_server_sensor_config",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensorConfigRequest"
+              },
+              "examples": {
+                "port": {
+                  "summary": "Check that a port answers",
+                  "value": {
+                    "interval_ms": 30000,
+                    "kind": "port",
+                    "name": "https",
+                    "params": {
+                      "host": "127.0.0.1",
+                      "port": 443
+                    }
+                  }
+                },
+                "remove": {
+                  "summary": "Stop checking disk activity on this server",
+                  "value": {
+                    "enabled": false,
+                    "interval_ms": 60000,
+                    "kind": "diskio"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new row",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorConfig"
+                },
+                "example": {
+                  "created_at": "2026-11-02T10:15:00Z",
+                  "enabled": true,
+                  "id": "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d",
+                  "instance": "",
+                  "interval_ms": 30000,
+                  "kind": "port",
+                  "name": "https",
+                  "params": {
+                    "host": "127.0.0.1",
+                    "port": 443
+                  },
+                  "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "site_id": null,
+                  "timeout_ms": null,
+                  "updated_at": "2026-11-02T10:15:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The row is not valid, and `error` says why: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the server's site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The server has a row with this name and instance already: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/sensors": {
+      "get": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Get a server's effective sensors",
+        "description": "What the server's agent runs: the built-in checks overlaid with its site's rows, then its own, each with where it comes from (`origin`, and the row's `entry_id`). `revision` is the configuration's; `in_sync` says whether the agent has applied it.\n\n**Who**: any role on the server's site. **Area**: `alerts`.",
+        "operationId": "server_sensors",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The effective sensors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveSensors"
+                },
+                "example": {
+                  "applied_at": "2026-11-02T10:15:21Z",
+                  "applied_revision": 7,
+                  "check_interval_ms": 60000,
+                  "check_interval_origin": "default",
+                  "in_sync": true,
+                  "revision": 7,
+                  "sensors": [
+                    {
+                      "entry_id": null,
+                      "instance": "",
+                      "interval_ms": 60000,
+                      "kind": "cpu",
+                      "name": "cpu",
+                      "origin": "default",
+                      "params": {},
+                      "timeout_ms": null
+                    },
+                    {
+                      "entry_id": null,
+                      "instance": "",
+                      "interval_ms": 60000,
+                      "kind": "disk",
+                      "name": "disk",
+                      "origin": "default",
+                      "params": {},
+                      "timeout_ms": null
+                    },
+                    {
+                      "entry_id": null,
+                      "instance": "",
+                      "interval_ms": 60000,
+                      "kind": "diskio",
+                      "name": "diskio",
+                      "origin": "default",
+                      "params": {},
+                      "timeout_ms": null
+                    },
+                    {
+                      "entry_id": null,
+                      "instance": "",
+                      "interval_ms": 60000,
+                      "kind": "memory",
+                      "name": "memory",
+                      "origin": "default",
+                      "params": {},
+                      "timeout_ms": null
+                    },
+                    {
+                      "entry_id": "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d",
+                      "instance": "",
+                      "interval_ms": 30000,
+                      "kind": "systemd",
+                      "name": "services",
+                      "origin": "site",
+                      "params": {
+                        "units": "nginx.service,postgresql.service"
+                      },
+                      "timeout_ms": null
+                    }
+                  ],
+                  "server_id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/silences": {
       "get": {
         "tags": [
@@ -3289,6 +4198,763 @@
           }
         }
       }
+    },
+    "/api/v1/sites/{id}/check-interval": {
+      "put": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Set how often a site's built-in checks run",
+        "description": "Sets how often the built-in checks (cpu, memory, disk, disk activity) of the site's servers run, from 10 seconds to 24 hours, or with `null` back to every minute. Rows that set their own interval keep it. Agents pick it up within seconds. Audited as `site.check_interval` with the old and new values. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.",
+        "operationId": "site_check_interval",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckInterval"
+              },
+              "examples": {
+                "default": {
+                  "summary": "Back to every minute",
+                  "value": {
+                    "interval_ms": null
+                  }
+                },
+                "five_minutes": {
+                  "summary": "Every 5 minutes",
+                  "value": {
+                    "interval_ms": 300000
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The interval as set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckInterval"
+                },
+                "example": {
+                  "interval_ms": 300000
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Under 10 seconds or over 24 hours: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sites/{id}/offline-alerts": {
+      "put": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Turn a site's offline alerts on or off",
+        "description": "With `false`, no server or relay of the site opens an incident when it stops reporting, whatever its own setting, and their open offline incidents resolve within a minute. With `true`, each one's own setting applies again. Audited as `site.offline_alerts`. Safe to repeat.\n\n**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.",
+        "operationId": "site_offline_alerts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OfflineAlerts"
+              },
+              "example": {
+                "enabled": true
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The setting as set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineAlerts"
+                },
+                "example": {
+                  "enabled": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sites/{id}/sensor_configs": {
+      "get": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "List a site's sensor rows",
+        "description": "The rows set on the site, which every server of the site inherits, by name and instance, in full.\n\n**Who**: any role on the site. **Area**: `alerts`.",
+        "operationId": "site_sensor_configs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The site's rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorConfigList"
+                },
+                "example": {
+                  "entries": [
+                    {
+                      "created_at": "2026-11-02T10:15:00Z",
+                      "enabled": true,
+                      "id": "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d",
+                      "instance": "",
+                      "interval_ms": 30000,
+                      "kind": "systemd",
+                      "name": "services",
+                      "params": {
+                        "units": "nginx.service,postgresql.service"
+                      },
+                      "server_id": null,
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "timeout_ms": null,
+                      "updated_at": "2026-11-02T10:15:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Add a sensor row to a site",
+        "description": "Adds a sensor to every server of the site, or replaces the built-in sensor of the same name and instance; with `enabled: false`, removes it. A server's own row still wins over the site's.\n\n**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.\n\nRows are checked as the agent checks them: `kind` must be a sensor it knows, `params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\nAudited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the parameters but never their values. Connected agents get the change within seconds.",
+        "operationId": "create_site_sensor_config",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensorConfigRequest"
+              },
+              "example": {
+                "interval_ms": 30000,
+                "kind": "systemd",
+                "name": "services",
+                "params": {
+                  "units": "nginx.service,postgresql.service"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new row",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorConfig"
+                },
+                "example": {
+                  "created_at": "2026-11-02T10:15:00Z",
+                  "enabled": true,
+                  "id": "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d",
+                  "instance": "",
+                  "interval_ms": 30000,
+                  "kind": "systemd",
+                  "name": "services",
+                  "params": {
+                    "units": "nginx.service,postgresql.service"
+                  },
+                  "server_id": null,
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "timeout_ms": null,
+                  "updated_at": "2026-11-02T10:15:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The row is not valid, and `error` says why: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may only read the site: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The site has a row with this name and instance already: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sites/{id}/sensors": {
+      "get": {
+        "tags": [
+          "sensors"
+        ],
+        "summary": "Get a site's effective sensors",
+        "description": "What a server of this site runs when it has no rows of its own: the built-in checks at the site's interval, overlaid with the site's rows.\n\n**Who**: any role on the site. **Area**: `alerts`.",
+        "operationId": "site_sensors",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The site's effective sensors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteSensors"
+                },
+                "example": {
+                  "check_interval_ms": 60000,
+                  "check_interval_origin": "default",
+                  "sensors": [
+                    {
+                      "entry_id": null,
+                      "instance": "",
+                      "interval_ms": 60000,
+                      "kind": "cpu",
+                      "name": "cpu",
+                      "origin": "default",
+                      "params": {},
+                      "timeout_ms": null
+                    },
+                    {
+                      "entry_id": null,
+                      "instance": "",
+                      "interval_ms": 60000,
+                      "kind": "disk",
+                      "name": "disk",
+                      "origin": "default",
+                      "params": {},
+                      "timeout_ms": null
+                    },
+                    {
+                      "entry_id": null,
+                      "instance": "",
+                      "interval_ms": 60000,
+                      "kind": "diskio",
+                      "name": "diskio",
+                      "origin": "default",
+                      "params": {},
+                      "timeout_ms": null
+                    },
+                    {
+                      "entry_id": null,
+                      "instance": "",
+                      "interval_ms": 60000,
+                      "kind": "memory",
+                      "name": "memory",
+                      "origin": "default",
+                      "params": {},
+                      "timeout_ms": null
+                    },
+                    {
+                      "entry_id": "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d",
+                      "instance": "",
+                      "interval_ms": 30000,
+                      "kind": "systemd",
+                      "name": "services",
+                      "origin": "site",
+                      "params": {
+                        "units": "nginx.service,postgresql.service"
+                      },
+                      "timeout_ms": null
+                    }
+                  ],
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3446,6 +5112,22 @@
             "description": "Lowercase hexadecimal without leading zeros."
           }
         }
+      },
+      "CheckInterval": {
+        "type": "object",
+        "description": "Body of the request and of the answer.",
+        "properties": {
+          "interval_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Milliseconds, 10000 (10 s) to 86400000 (24 h); `null` or absent:\nthe built-in interval, every minute.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "CommandDetail": {
         "allOf": [
@@ -3736,6 +5418,129 @@
           "state": {
             "type": "string",
             "description": "`approved` or `rejected`."
+          }
+        }
+      },
+      "EffectiveSensor": {
+        "type": "object",
+        "description": "One sensor as the agent receives it.",
+        "required": [
+          "origin",
+          "kind",
+          "name",
+          "instance",
+          "interval_ms",
+          "params"
+        ],
+        "properties": {
+          "entry_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The row it comes from; `null` for a built-in default."
+          },
+          "instance": {
+            "type": "string"
+          },
+          "interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Milliseconds.",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/LayerOrigin"
+          },
+          "params": {
+            "type": "object",
+            "description": "As sent to the agent: every value is a string.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "timeout_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Milliseconds; `null`: one that grows with the interval.",
+            "minimum": 0
+          }
+        }
+      },
+      "EffectiveSensors": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/{id}/sensors`.",
+        "required": [
+          "server_id",
+          "site_id",
+          "check_interval_ms",
+          "check_interval_origin",
+          "revision",
+          "in_sync",
+          "sensors"
+        ],
+        "properties": {
+          "applied_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it acknowledged it; `null` if it never did."
+          },
+          "applied_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Revision the agent last acknowledged, `null` if it never did."
+          },
+          "check_interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Interval of the built-in checks, in milliseconds (ADR-0097).",
+            "minimum": 0
+          },
+          "check_interval_origin": {
+            "$ref": "#/components/schemas/IntervalOrigin"
+          },
+          "in_sync": {
+            "type": "boolean",
+            "description": "Whether the agent acknowledged the current revision."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Revision of the current configuration."
+          },
+          "sensors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EffectiveSensor"
+            },
+            "description": "By name and instance."
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -4133,6 +5938,23 @@
           }
         }
       },
+      "IntervalOrigin": {
+        "type": "string",
+        "description": "Whether the built-in checks run at the built-in interval or the site's.",
+        "enum": [
+          "default",
+          "site"
+        ]
+      },
+      "LayerOrigin": {
+        "type": "string",
+        "description": "Which layer an effective sensor or threshold comes from.",
+        "enum": [
+          "default",
+          "site",
+          "server"
+        ]
+      },
       "NameRequest": {
         "type": "object",
         "description": "Body of `POST /api/customers` and `POST /api/customers/{id}/sites`.",
@@ -4143,6 +5965,20 @@
           "name": {
             "type": "string",
             "description": "1 to 64 characters, without control characters or spaces at either\nend."
+          }
+        },
+        "additionalProperties": false
+      },
+      "OfflineAlerts": {
+        "type": "object",
+        "description": "Body of the request and of the answer.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "`false` turns offline incidents off."
           }
         },
         "additionalProperties": false
@@ -4355,6 +6191,145 @@
           "min",
           "last"
         ]
+      },
+      "SensorConfig": {
+        "type": "object",
+        "description": "One row of `sensor_configs`. Exactly one of `site_id` and `server_id`\nis set.",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "instance",
+          "interval_ms",
+          "params",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`false`: removes the sensor of the same name and instance from the\nlayers below."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "instance": {
+            "type": "string"
+          },
+          "interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Milliseconds."
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "description": "As sent, with its types."
+          },
+          "server_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Set for one server's row."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Set for a site's row, which its servers inherit."
+          },
+          "timeout_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Milliseconds; `null`: one that grows with the interval."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SensorConfigList": {
+        "type": "object",
+        "description": "Body of the list endpoints, sorted by name and instance.",
+        "required": [
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SensorConfig"
+            }
+          }
+        }
+      },
+      "SensorConfigRequest": {
+        "type": "object",
+        "description": "Body of a create or an update. An update replaces every field.",
+        "required": [
+          "kind",
+          "interval_ms"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "`false` removes the sensor of the same name and instance from the\nlayers below."
+          },
+          "instance": {
+            "type": "string",
+            "description": "What it watches, like a disk or a service: at most 256 bytes\nwithout control characters, `\"\"` by default."
+          },
+          "interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How often it runs, in milliseconds: 10000 (10 s) to 86400000 (24 h).",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "The sensor: `cpu`, `memory`, `disk`, `diskio`, `systemd`, `port`,\n`log`, `script`, `eventlog`, `windows_service`, or `plugin` for a\ncheck plugin."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lowercase letters, digits and `_`, starting with a letter, at most\n64; defaults to `kind`. With `instance`, what a row overrides in the layers\nbelow."
+          },
+          "params": {
+            "type": "object",
+            "description": "The kind's settings: a flat object of strings, numbers and\nbooleans, at most 32, each value at most 1024 bytes. Unknown\nsettings are refused."
+          },
+          "timeout_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Milliseconds it may take, at most `interval_ms`; `null` or absent:\none that grows with the interval.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "SeriesView": {
         "type": "object",
@@ -4808,6 +6783,38 @@
           }
         }
       },
+      "SiteSensors": {
+        "type": "object",
+        "description": "Body of `GET /api/sites/{id}/sensors`: what the site's servers run\nunless they override it.",
+        "required": [
+          "site_id",
+          "check_interval_ms",
+          "check_interval_origin",
+          "sensors"
+        ],
+        "properties": {
+          "check_interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Interval of the built-in checks, in milliseconds (ADR-0097).",
+            "minimum": 0
+          },
+          "check_interval_origin": {
+            "$ref": "#/components/schemas/IntervalOrigin"
+          },
+          "sensors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EffectiveSensor"
+            },
+            "description": "By name and instance."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "SiteView": {
         "type": "object",
         "description": "One site.",
@@ -4971,6 +6978,10 @@
     {
       "name": "metrics",
       "description": "Values a server's sensors reported, now or over a range. You name a server, a metric and optionally an instance; MonitorFlow builds the query itself and never accepts raw PromQL. Area `servers`."
+    },
+    {
+      "name": "sensors",
+      "description": "What each server checks and how often. A server runs the built-in checks (cpu, memory, disk and disk activity, every minute or at its site's interval), overlaid with its site's rows, then its own: a row replaces the sensor of the same name and instance below it, and a disabled row removes it. Agents pick up a change within seconds; the effective view says whether the agent runs the current configuration. Offline alerts and the site's check interval are here too. Area `alerts`."
     }
   ]
 }

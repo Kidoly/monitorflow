@@ -7,13 +7,29 @@
 
 #![allow(dead_code)] // The functions exist for their `#[utoipa::path]`.
 
+use serde_json::json;
 use utoipa::OpenApi;
 
-use super::customers;
 use super::openapi::ErrorBody;
+use super::{check_interval, customers, offline_alerts, sensors};
 
 #[derive(OpenApi)]
-#[openapi(paths(rename_customer))]
+#[openapi(
+    paths(
+        rename_customer,
+        server_sensors, server_sensor_configs, create_server_sensor_config,
+        site_sensors, site_sensor_configs, create_site_sensor_config,
+        update_sensor_config, delete_sensor_config,
+        site_check_interval, server_offline_alerts, site_offline_alerts,
+    ),
+    tags(
+        (name = "sensors", description = "What each server checks and how often. A server runs the built-in \
+checks (cpu, memory, disk and disk activity, every minute or at its site's interval), overlaid with its site's \
+rows, then its own: a row replaces the sensor of the same name and instance below it, and a disabled row removes \
+it. Agents pick up a change within seconds; the effective view says whether the agent runs the current \
+configuration. Offline alerts and the site's check interval are here too. Area `alerts`."),
+    )
+)]
 pub struct Doc;
 
 /// Example data: IDs, names and times reused across operations.
@@ -24,6 +40,7 @@ pub mod ex {
     pub const SERVER_2: &str = "0d8e7f6a-5b4c-4d3e-8f2a-1b0c9d8e7f6a";
     pub const SITE: &str = "2b7e1516-28ae-4d2a-a6f7-15880928cf4f";
     pub const SITE_2: &str = "5a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    pub const SENSOR_CONFIG: &str = "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d";
     pub const CUSTOMER: &str = "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f";
     pub const RELAY: &str = "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7";
     pub const INCIDENT: &str = "4d3c2b1a-0f9e-4d8c-b7a6-5f4e3d2c1b0a";
@@ -62,6 +79,32 @@ pub mod ex {
             "silenced_until": null,
             "cert_not_after": "2027-02-12T06:12:40Z"
         })
+    }
+
+    /// A site's row checking two services every 30 seconds.
+    pub fn sensor_config() -> Value {
+        json!({
+            "id": SENSOR_CONFIG, "site_id": SITE, "server_id": null,
+            "kind": "systemd", "name": "services", "instance": "",
+            "interval_ms": 30000, "timeout_ms": null,
+            "params": {"units": "nginx.service,postgresql.service"},
+            "enabled": true,
+            "created_at": "2026-11-02T10:15:00Z", "updated_at": "2026-11-02T10:15:00Z"
+        })
+    }
+
+    /// Effective sensors: the built-in ones and a site row.
+    pub fn effective_sensors() -> Value {
+        let builtin = |kind: &str| {
+            json!({"origin": "default", "entry_id": null, "kind": kind, "name": kind,
+                   "instance": "", "interval_ms": 60000, "timeout_ms": null, "params": {}})
+        };
+        json!([
+            builtin("cpu"), builtin("disk"), builtin("diskio"), builtin("memory"),
+            {"origin": "site", "entry_id": SENSOR_CONFIG, "kind": "systemd", "name": "services",
+             "instance": "", "interval_ms": 30000, "timeout_ms": null,
+             "params": {"units": "nginx.service,postgresql.service"}}
+        ])
     }
 
     /// A site as `GET /sites` lists it.
@@ -140,3 +183,241 @@ spaces at either end: `invalid`", body = ErrorBody),
         (status = 409, description = "Another customer has this name: `conflict`", body = ErrorBody),
     ))]
 fn rename_customer() {}
+
+/// What creating or replacing a sensor row checks and records, for
+/// `concat!` in the descriptions.
+macro_rules! sensor_config_rules {
+    () => {
+        "Rows are checked as the agent checks them: `kind` must be a sensor it knows, \
+`params` only the settings of that kind, with valid values, and `interval_ms` 10 s to 24 h. A `plugin` row names a \
+check plugin turned on for the site in `params.plugin`. The answer to a bad row is 400 `invalid`, saying what is \
+wrong. A second row with the same `name` and `instance` for the same site or server is 409.\n\n\
+Audited as `sensor_config.create`, `sensor_config.update` or `sensor_config.delete`, with the names of the \
+parameters but never their values. Connected agents get the change within seconds."
+    };
+}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/sensors", tag = "sensors",
+    summary = "Get a server's effective sensors",
+    description = "What the server's agent runs: the built-in checks overlaid with its site's rows, then its \
+own, each with where it comes from (`origin`, and the row's `entry_id`). `revision` is the configuration's; \
+`in_sync` says whether the agent has applied it.\n\n\
+**Who**: any role on the server's site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 200, description = "The effective sensors", body = sensors::Effective,
+            example = json!({
+                "server_id": ex::SERVER, "site_id": ex::SITE,
+                "check_interval_ms": 60000, "check_interval_origin": "default",
+                "revision": 7, "applied_revision": 7, "applied_at": "2026-11-02T10:15:21Z",
+                "in_sync": true, "sensors": ex::effective_sensors()
+            })),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn server_sensors() {}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/sensor_configs", tag = "sensors",
+    summary = "List a server's own sensor rows",
+    description = "The rows set on this server alone, by name and instance, in full. Its site's rows are under \
+`GET /api/v1/sites/{id}/sensor_configs`; what it runs in the end is `GET /api/v1/servers/{id}/sensors`.\n\n\
+**Who**: any role on the server's site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 200, description = "The server's rows", body = sensors::EntryList,
+            example = json!({"entries": [ex::merge(ex::sensor_config(), json!({
+                "site_id": null, "server_id": ex::SERVER, "kind": "port", "name": "https",
+                "params": {"host": "127.0.0.1", "port": 443}
+            }))]})),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn server_sensor_configs() {}
+
+#[utoipa::path(post, path = "/api/v1/servers/{id}/sensor_configs", tag = "sensors",
+    summary = "Add a sensor row to a server",
+    description = concat!("Adds a sensor to one server, or replaces for it the sensor of the same name and instance \
+that its site or the built-in checks give; with `enabled: false`, removes that sensor from it.\n\n\
+**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.\n\n", sensor_config_rules!()),
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    request_body(content = sensors::EntryRequest, examples(
+        ("port" = (summary = "Check that a port answers",
+            value = json!({"kind": "port", "name": "https", "interval_ms": 30000,
+                           "params": {"host": "127.0.0.1", "port": 443}}))),
+        ("remove" = (summary = "Stop checking disk activity on this server",
+            value = json!({"kind": "diskio", "interval_ms": 60000, "enabled": false}))),
+    )),
+    responses(
+        (status = 201, description = "The new row", body = sensors::Entry,
+            example = json!(ex::merge(ex::sensor_config(), json!({
+                "site_id": null, "server_id": ex::SERVER, "kind": "port", "name": "https",
+                "params": {"host": "127.0.0.1", "port": 443}
+            })))),
+        (status = 400, description = "The row is not valid, and `error` says why: `invalid`",
+            body = ErrorBody),
+        (status = 403, description = "The key may only read the server's site: `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "The server has a row with this name and instance already: \
+`conflict`", body = ErrorBody),
+    ))]
+fn create_server_sensor_config() {}
+
+#[utoipa::path(get, path = "/api/v1/sites/{id}/sensors", tag = "sensors",
+    summary = "Get a site's effective sensors",
+    description = "What a server of this site runs when it has no rows of its own: the built-in checks at the \
+site's interval, overlaid with the site's rows.\n\n\
+**Who**: any role on the site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    responses(
+        (status = 200, description = "The site's effective sensors", body = sensors::SiteEffective,
+            example = json!({
+                "site_id": ex::SITE, "check_interval_ms": 60000, "check_interval_origin": "default",
+                "sensors": ex::effective_sensors()
+            })),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn site_sensors() {}
+
+#[utoipa::path(get, path = "/api/v1/sites/{id}/sensor_configs", tag = "sensors",
+    summary = "List a site's sensor rows",
+    description = "The rows set on the site, which every server of the site inherits, by name and instance, \
+in full.\n\n\
+**Who**: any role on the site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    responses(
+        (status = 200, description = "The site's rows", body = sensors::EntryList,
+            example = json!({"entries": [ex::sensor_config()]})),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn site_sensor_configs() {}
+
+#[utoipa::path(post, path = "/api/v1/sites/{id}/sensor_configs", tag = "sensors",
+    summary = "Add a sensor row to a site",
+    description = concat!("Adds a sensor to every server of the site, or replaces the built-in sensor of the same name \
+and instance; with `enabled: false`, removes it. A server's own row still wins over the site's.\n\n\
+**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.\n\n", sensor_config_rules!()),
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    request_body(content = sensors::EntryRequest, example = json!({
+        "kind": "systemd", "name": "services", "interval_ms": 30000,
+        "params": {"units": "nginx.service,postgresql.service"}
+    })),
+    responses(
+        (status = 201, description = "The new row", body = sensors::Entry,
+            example = json!(ex::sensor_config())),
+        (status = 400, description = "The row is not valid, and `error` says why: `invalid`",
+            body = ErrorBody),
+        (status = 403, description = "The key may only read the site: `forbidden`; or outside the \
+key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "The site has a row with this name and instance already: \
+`conflict`", body = ErrorBody),
+    ))]
+fn create_site_sensor_config() {}
+
+#[utoipa::path(put, path = "/api/v1/sensor_configs/{id}", tag = "sensors",
+    summary = "Replace a sensor row",
+    description = concat!("Replaces every field of a site's or a server's row; fields left out take their defaults. \
+The row stays on its site or server. Safe to repeat.\n\n\
+**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.\n\n", sensor_config_rules!()),
+    params(("id" = uuid::Uuid, Path, description = "The row")),
+    request_body(content = sensors::EntryRequest, example = json!({
+        "kind": "systemd", "name": "services", "interval_ms": 60000,
+        "params": {"units": "nginx.service,postgresql.service,redis-server.service"}
+    })),
+    responses(
+        (status = 200, description = "The row as it is now", body = sensors::Entry,
+            example = json!(ex::merge(ex::sensor_config(), json!({
+                "interval_ms": 60000,
+                "params": {"units": "nginx.service,postgresql.service,redis-server.service"},
+                "updated_at": "2026-11-14T09:40:00Z"
+            })))),
+        (status = 400, description = "The row is not valid, and `error` says why: `invalid`",
+            body = ErrorBody),
+        (status = 403, description = "The key may only read the row's site: `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such row, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "Another row of the same site or server has this name and \
+instance: `conflict`", body = ErrorBody),
+    ))]
+fn update_sensor_config() {}
+
+#[utoipa::path(delete, path = "/api/v1/sensor_configs/{id}", tag = "sensors",
+    summary = "Delete a sensor row",
+    description = "Deletes a site's or a server's row: what it replaced or removed below comes back. A second \
+request is 404.\n\n\
+**Who**: operator or above (\"Read and change\") on the row's site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The row")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 403, description = "The key may only read the row's site: `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such row, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn delete_sensor_config() {}
+
+#[utoipa::path(put, path = "/api/v1/sites/{id}/check-interval", tag = "sensors",
+    summary = "Set how often a site's built-in checks run",
+    description = "Sets how often the built-in checks (cpu, memory, disk, disk activity) of the site's servers \
+run, from 10 seconds to 24 hours, or with `null` back to every minute. Rows that set their own interval keep \
+it. Agents pick it up within seconds. Audited as `site.check_interval` with the old and new values. Safe to \
+repeat.\n\n\
+**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    request_body(content = check_interval::CheckInterval, examples(
+        ("five_minutes" = (summary = "Every 5 minutes", value = json!({"interval_ms": 300000}))),
+        ("default" = (summary = "Back to every minute", value = json!({"interval_ms": null}))),
+    )),
+    responses(
+        (status = 200, description = "The interval as set", body = check_interval::CheckInterval,
+            example = json!({"interval_ms": 300000})),
+        (status = 400, description = "Under 10 seconds or over 24 hours: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key may only read the site: `forbidden`; or outside the \
+key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn site_check_interval() {}
+
+#[utoipa::path(put, path = "/api/v1/servers/{id}/offline-alerts", tag = "sensors",
+    summary = "Turn a server's offline alerts on or off",
+    description = "With `false`, the server opens no incident when it stops reporting, and its open offline \
+incident resolves within a minute: for a machine that is often off on purpose. With `true`, they are back, \
+unless its site has them off (`site_offline_alerts` of the server). For a few hours of maintenance, a silence \
+is the better tool. Audited as `server.offline_alerts`. Safe to repeat.\n\n\
+**Who**: operator or above (\"Read and change\") on the server's site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    request_body(content = offline_alerts::OfflineAlerts, example = json!({"enabled": false})),
+    responses(
+        (status = 200, description = "The setting as set", body = offline_alerts::OfflineAlerts,
+            example = json!({"enabled": false})),
+        (status = 403, description = "The key may only read the server's site: `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn server_offline_alerts() {}
+
+#[utoipa::path(put, path = "/api/v1/sites/{id}/offline-alerts", tag = "sensors",
+    summary = "Turn a site's offline alerts on or off",
+    description = "With `false`, no server or relay of the site opens an incident when it stops reporting, \
+whatever its own setting, and their open offline incidents resolve within a minute. With `true`, each one's own \
+setting applies again. Audited as `site.offline_alerts`. Safe to repeat.\n\n\
+**Who**: operator or above (\"Read and change\") on the site. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    request_body(content = offline_alerts::OfflineAlerts, example = json!({"enabled": true})),
+    responses(
+        (status = 200, description = "The setting as set", body = offline_alerts::OfflineAlerts,
+            example = json!({"enabled": true})),
+        (status = 403, description = "The key may only read the site: `forbidden`; or outside the \
+key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn site_offline_alerts() {}
