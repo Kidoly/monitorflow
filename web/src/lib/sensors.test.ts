@@ -101,11 +101,11 @@ describe("sensorRows", () => {
     ]);
     expect(rows[0]).toMatchObject({ value: 0.95, error: null, metric: "monitorflow_disk_used_ratio" });
     expect(rows[1]).toMatchObject({ value: 6.8, metric: "monitorflow_cpu_load5" });
-    expect(rows[2]).toMatchObject({ value: null, error: "The metrics backend is unavailable." });
+    expect(rows[2]).toMatchObject({ value: null, error: "The metrics backend is unavailable.", waiting: false });
   });
 
   it("marks a sensor without samples unknown", () => {
     const [row] = sensorRows([disk], values([[disk, {}]]), []);
-    expect(row).toMatchObject({ title: "Disk used", status: "unknown", error: expect.stringMatching(/No data yet/) });
+    expect(row).toMatchObject({ title: "Disk used", status: "unknown", waiting: true, error: expect.stringMatching(/No data yet/) });
   });
 });

@@ -9,6 +9,7 @@ import {
   type Command,
   type EffectiveSensor,
   type EffectiveSensors,
+  type EffectiveThreshold,
   type Incident,
   type ServerDetail,
   api,
@@ -78,6 +79,8 @@ export interface ServerData {
   commands: { commands: Command[]; nextCursor: string | null } | { error: string };
   /** The newest agent release the server holds (ADR-0053); null when none or unreadable. */
   latestAgent: string | null;
+  /** The thresholds the engine applies, for each sensor's rule; null when unreadable. */
+  thresholds: EffectiveThreshold[] | null;
 }
 
 /** `promise`, or `fallback(error)` when it fails for another reason than an abort. */
@@ -106,7 +109,7 @@ async function loadServer(id: string, commandLimit: number, signal: AbortSignal)
     );
     return new Map(list.map((sensor, i) => [sensor, results[i]!]));
   });
-  const [server, config, latest, incidents, commands, releases] = await Promise.all([
+  const [server, config, latest, incidents, commands, releases, thresholds] = await Promise.all([
     api.server(id, signal),
     sensors,
     values,
@@ -121,8 +124,17 @@ async function loadServer(id: string, commandLimit: number, signal: AbortSignal)
       (e) => ({ error: describeError(e) }),
     ),
     settle(api.agentReleases(signal), () => null),
+    settle(api.serverThresholds(id, signal).then((t) => t.thresholds), () => null),
   ]);
-  return { server, sensors: config, values: latest, incidents, commands, latestAgent: releases?.latest ?? null };
+  return {
+    server,
+    sensors: config,
+    values: latest,
+    incidents,
+    commands,
+    latestAgent: releases?.latest ?? null,
+    thresholds,
+  };
 }
 
 export function ServerPage({ id }: { id: string | null }) {
@@ -210,7 +222,14 @@ export function ServerPage({ id }: { id: string | null }) {
       />
       <TabPanel idBase="server" id={tab}>
         {tab === "sensors" && (
-          <ServerSensorsTab server={server} sensors={sensors} rows={rows} incidentsFailed={incidents === null} now={updatedAt} />
+          <ServerSensorsTab
+            server={server}
+            sensors={sensors}
+            rows={rows}
+            thresholds={data.thresholds}
+            incidentsFailed={incidents === null}
+            now={updatedAt}
+          />
         )}
         {tab === "alerts" && <ServerAlertsTab server={server} />}
         {tab === "logs" && <ServerLogsTab server={server} />}

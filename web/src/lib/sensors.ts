@@ -78,7 +78,12 @@ export function formatSensorValue(metric: string, value: number | null | undefin
   return formatValue(value, unitOf(metric));
 }
 
-/** "disk · /var · every 30 s · timeout 10 s": the sub-line of a sensor row. */
+/** "disk · /var": what a sensor row measures, under its title. */
+export function sensorKind(sensor: EffectiveSensor, instance: string): string {
+  return [sensor.kind, instance && instance !== "total" ? instance : sensor.instance].filter(Boolean).join(" · ");
+}
+
+/** "disk · /var · every 30 s · timeout 10 s": a sensor with its timing. */
 export function sensorFacts(sensor: EffectiveSensor, instance: string): string {
   return [
     sensor.kind,
@@ -103,6 +108,8 @@ export interface SensorRow {
   value: number | null;
   /** Why there is no value: the backend failed, or no sample yet. */
   error: string | null;
+  /** No sample yet, as for a check just added: not a failure. */
+  waiting: boolean;
   /** The worst open incident on the sensor's metrics for this instance. */
   incident: Incident | undefined;
   status: SensorStatus;
@@ -154,6 +161,7 @@ export function sensorRows(
         title: seriesTitle(sensor, metric, instance),
         value: incident ? incident.last_value : value,
         error: incident ? null : error,
+        waiting: !incident && value === null && !(result && "error" in result),
         incident,
         status: incident ? incident.severity : error ? "unknown" : "ok",
       });

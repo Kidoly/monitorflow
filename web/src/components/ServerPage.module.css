@@ -73,3 +73,12 @@
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* A sensor's rule in words, then where it comes from. */
+.rule {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+

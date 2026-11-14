@@ -95,6 +95,12 @@ const failed = command({
 });
 
 const ok = (body: unknown) => ({ status: 200, body });
+
+/** The built-in disk and CPU alerts (ADR-0017). */
+const THRESHOLDS = [
+  { origin: "default", threshold_id: null, metric: "monitorflow_disk_used_ratio", instance: null, enabled: true, comparison: ">", warning: 0.85, critical: 0.95, duration_s: 300, hysteresis: 0.02 },
+  { origin: "default", threshold_id: null, metric: "monitorflow_cpu_usage_ratio", instance: "total", enabled: true, comparison: ">", warning: 0.9, critical: null, duration_s: 600, hysteresis: 0.02 },
+];
 const value = (instance: string, v: number) => ({ labels: instance ? { instance } : {}, points: [[NOW.getTime() / 1000, v]] });
 
 /** The page's requests; `overrides` replaces some. */
@@ -110,6 +116,7 @@ function routes(overrides: Record<string, unknown> = {}) {
     }),
     [`GET /api/servers/${ID}/commands?limit=${COMMANDS_PAGE}`]: ok({ commands: [command({}), failed], next_cursor: null }),
     "GET /api/agent-releases": ok({ versions: ["0.2.0"], latest: "0.2.0" }),
+    [`GET /api/servers/${ID}/thresholds/effective`]: ok({ server_id: ID, site_id: "site-1", revision: 1, thresholds: THRESHOLDS }),
     [`GET /api/servers/${ID}/sources`]: ok({
       using: "own",
       mirrors: [],
@@ -171,10 +178,11 @@ describe("ServerPage", () => {
     expect(screen.getByRole("tab", { name: "Commands · 1 running" })).toBeInTheDocument();
     expect(screen.getByText("Configuration up to date").parentElement).toHaveTextContent(/applied 3 min ago/);
     const rows = within(screen.getByRole("table", { name: "Sensors" })).getAllByRole("row").slice(1);
+    // Each row: the sensor, its status and value, then its rule and where the rule comes from.
     expect(rows.map((r) => r.textContent)).toEqual([
-      "Disk used /vardisk · /var · every 30 s · timeout 10 sCritical94.2% · since 11:40, 2 h 52 min",
-      "CPU usagecpu · every 15 s · timeout 5 sOK38.4%",
-      "Disk used /disk · / · every 30 s · timeout 10 sOK61%",
+      "Disk used /vardisk · /varCritical94.2% · since 11:40, 2 h 52 minevery 30 s · warn > 85% · crit > 95% · for 5 minThis server",
+      "CPU usagecpuOK38.4%every 15 s · warn > 90% · for 10 minBuilt-in",
+      "Disk used /disk · /OK61%every 30 s · warn > 85% · crit > 95% · for 5 minThis server",
     ]);
     expect(within(rows[0]!).getByRole("link", { name: "Disk used /var" })).toHaveAttribute(
       "href",
@@ -213,7 +221,7 @@ describe("ServerPage", () => {
     render(<ServerPage id={ID} />);
     await heading();
     const rows = within(await screen.findByRole("table", { name: "Sensors" })).getAllByRole("row").slice(1);
-    expect(rows.map((r) => r.textContent)).toContain("CPU usagecpu · every 15 s · timeout 5 sOK38.4%");
+    expect(rows.map((r) => r.textContent)).toContain("CPU usagecpuOK38.4%every 15 s · warn > 90% · for 10 minBuilt-in");
     const instant = fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => url.startsWith("/api/metrics/query?"));
     expect(instant).toContain(`/api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio&lookback=7200`);
     expect(instant).not.toContain(`/api/metrics/query?server_id=${ID}&metric=monitorflow_disk_used_ratio`);

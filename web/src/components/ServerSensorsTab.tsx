@@ -1,10 +1,12 @@
 import Link from "next/link";
 
-import type { EffectiveSensors, ServerDetail } from "@/lib/api";
+import type { EffectiveSensor, EffectiveSensors, EffectiveThreshold, ServerDetail } from "@/lib/api";
+import { shapeFor, shapeOf } from "@/lib/alerts";
 import { metricTitle } from "@/lib/metrics";
 import { sensorHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
-import { type SensorRow, formatSensorValue, primaryMetric, sensorFacts } from "@/lib/sensors";
+import { LEVEL_LABELS, perInstance, ruleLevel, ruleSummary, rowRule } from "@/lib/sensorRules";
+import { type SensorRow, formatSensorValue, primaryMetric, sensorKind } from "@/lib/sensors";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { ButtonLink } from "@/components/ui/Button";
 import { Banner, EmptyState } from "@/components/ui/PageState";
@@ -14,17 +16,24 @@ import { formatDuration, formatSince } from "@/components/ui/time";
 
 import styles from "./ServerPage.module.css";
 
-/** The Sensors tab: whether the agent runs the current configuration, then one row per sensor. */
+/**
+ * The Sensors tab: whether the agent runs the current configuration, then
+ * one row per sensor with its result and its rule, and where the rule
+ * comes from.
+ */
 export function ServerSensorsTab({
   server,
   sensors,
   rows,
+  thresholds,
   incidentsFailed,
   now,
 }: {
   server: ServerDetail;
   sensors: EffectiveSensors | { error: string };
   rows: SensorRow[];
+  /** The thresholds in effect; null when they could not be read. */
+  thresholds: EffectiveThreshold[] | null;
   incidentsFailed: boolean;
   now: Date;
 }) {
@@ -44,12 +53,31 @@ export function ServerSensorsTab({
         <PrimaryCell
           title={row.title}
           href={scopedHref(sensorHref(server.id, row.metric, row.instance), scope)}
-          sub={sensorFacts(row.sensor, row.instance)}
+          sub={sensorKind(row.sensor, row.instance)}
         />
       ),
     },
-    { key: "status", header: "Status", cell: (row) => <StatusLabel kind="sensor" value={row.status} /> },
+    {
+      key: "status",
+      header: "Status",
+      cell: (row) =>
+        row.waiting ? <Label tone="neutral">Waiting for first value</Label> : <StatusLabel kind="sensor" value={row.status} />,
+    },
     { key: "value", header: "Last value", cell: (row) => <LastValue row={row} now={now} /> },
+    {
+      key: "rule",
+      header: "Rule",
+      cell: (row) =>
+        thresholds ? (
+          <RuleCell
+            sensors={sensors.sensors}
+            row={row}
+            rule={rowRule(sensors.sensors, thresholds, row.sensor, row.metric, row.instance)}
+          />
+        ) : (
+          "—"
+        ),
+    },
   ];
   return (
     <div className={styles.tab}>
@@ -62,7 +90,7 @@ export function ServerSensorsTab({
           No sensors: every default is turned off for this server.
         </EmptyState>
       ) : (
-        <DataTable label="Sensors" columns={columns} rows={rows} rowKey={(row) => row.key} dense />
+        <DataTable label="Sensors" columns={columns} rows={rows} rowKey={(row) => row.key} />
       )}
       <p className={styles.note}>
         Sorted by status, then name. Open a sensor for its chart and history, or{" "}
@@ -72,7 +100,22 @@ export function ServerSensorsTab({
   );
 }
 
+/** "every 1 min · warn > 85% · crit > 95% · for 5 min" and where it comes from. */
+function RuleCell({ sensors, row, rule }: { sensors: EffectiveSensor[]; row: SensorRow; rule: EffectiveThreshold | undefined }) {
+  const shape = rule ? shapeFor(sensors, rule) : shapeOf(sensors, row.metric, row.instance || null);
+  const level = ruleLevel(row.sensor, rule, perInstance(row.sensor, row.instance));
+  return (
+    <span className={styles.rule}>
+      <span>{ruleSummary(shape, rule, row.sensor.interval_ms)}</span>
+      <Label tone={level === "builtin" || level === "site" ? "neutral" : "info"} small>
+        {LEVEL_LABELS[level]}
+      </Label>
+    </span>
+  );
+}
+
 function LastValue({ row, now }: { row: SensorRow; now: Date }) {
+  if (row.waiting) return <span className={styles.muted}>–</span>;
   if (row.error) return <span className={styles.muted}>{row.error}</span>;
   const { incident } = row;
   const other = incident && incident.metric !== primaryMetric(row.sensor).metric;
