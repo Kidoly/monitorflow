@@ -34,7 +34,8 @@ use crate::sensor_config::Layer;
 pub const MAX_DURATION_S: u32 = 86_400;
 
 /// Body of a create or an update. An update replaces every field.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
+#[schema(as = ThresholdRequest)]
 #[serde(deny_unknown_fields)]
 pub struct EntryRequest {
     /// Full metric name, `monitorflow_<sensor metric>`.
@@ -42,14 +43,23 @@ pub struct EntryRequest {
     /// `null` or absent: every instance of the metric.
     #[serde(default)]
     pub instance: Option<String>,
-    /// `>`, `>=`, `<` or `<=`.
+    /// `>`, `>=`, `<` or `<=`: the alarm side of the values.
     pub comparison: String,
+    /// The value past which the incident is a warning, in the metric's
+    /// unit (a ratio from 0 to 1 for `_ratio` metrics, seconds for
+    /// `_seconds`); `null` for none.
     #[serde(default)]
     pub warning: Option<f64>,
+    /// The value past which it is critical, on the alarm side of
+    /// `warning`; `null` for none.
     #[serde(default)]
     pub critical: Option<f64>,
+    /// Seconds the value must stay past a threshold before an incident
+    /// opens, 0 to 86400; 0 by default.
     #[serde(default)]
     pub duration_s: u32,
+    /// How far back past the threshold the value must return before the
+    /// incident resolves, in the metric's unit, 0 or more; 0 by default.
     #[serde(default)]
     pub hysteresis: f64,
     /// `false` mutes the threshold of the same metric and instance from
@@ -127,11 +137,16 @@ pub fn validate_entry(request: EntryRequest) -> Result<ValidEntry, String> {
 
 /// One row of `thresholds`. Exactly one of `site_id` and `server_id` is
 /// set.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = Threshold)]
 pub struct Entry {
     pub id: Uuid,
+    /// The site it applies to, for all its servers; `null` for a server's
+    /// row.
     pub site_id: Option<Uuid>,
+    /// The server it applies to; `null` for a site's row.
     pub server_id: Option<Uuid>,
+    /// Full metric name, like `monitorflow_disk_used_ratio`.
     pub metric: String,
     /// `null`: every instance.
     pub instance: Option<String>,
@@ -147,18 +162,20 @@ pub struct Entry {
 
 /// Body of the list endpoints, sorted by metric and instance, the row for
 /// every instance first.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = ThresholdList)]
 pub struct EntryList {
     pub entries: Vec<Entry>,
 }
 
 /// One effective threshold, or a muted one, with the layer it comes from.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct EffectiveThreshold {
     pub origin: Origin,
     /// The row it comes from; `null` for a built-in default.
     pub threshold_id: Option<Uuid>,
     pub metric: String,
+    /// `null`: every instance.
     pub instance: Option<String>,
     /// `false`: muted by a disabled row, which the engine skips.
     pub enabled: bool,
@@ -170,7 +187,8 @@ pub struct EffectiveThreshold {
 }
 
 /// Body of `GET /api/servers/{id}/thresholds/effective`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = EffectiveThresholds)]
 pub struct Effective {
     pub server_id: Uuid,
     pub site_id: Uuid,
@@ -181,7 +199,8 @@ pub struct Effective {
 
 /// Body of `GET /api/sites/{id}/thresholds/effective`: what the site's
 /// servers get unless they override it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = SiteEffectiveThresholds)]
 pub struct SiteEffective {
     pub site_id: Uuid,
     pub thresholds: Vec<EffectiveThreshold>,

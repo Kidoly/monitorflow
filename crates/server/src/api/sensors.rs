@@ -176,8 +176,9 @@ pub struct EntryList {
     pub entries: Vec<Entry>,
 }
 
-/// Which layer an effective sensor comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// Which layer an effective setting comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = SettingOrigin)]
 #[serde(rename_all = "lowercase")]
 pub enum Origin {
     /// The built-in defaults in server code.
