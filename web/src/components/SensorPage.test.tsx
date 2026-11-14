@@ -313,6 +313,16 @@ describe("SensorPage", () => {
       expect(within(form).getByRole("radio", { name: "this sensor only (/var)" })).toBeChecked();
     });
 
+    it("opens the form from the list's Edit, and drops it from the address once closed", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+      setUrl(`/servers/sensor/?id=${ID}&sensor=disk_used_ratio&instance=%2Fvar&edit=1`);
+      edit();
+      const form = await screen.findByRole("form", { name: "Edit the configuration" });
+      await user.click(within(form).getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("form", { name: "Edit the configuration" })).not.toBeInTheDocument();
+      expect(window.location.search).not.toContain("edit=");
+    });
+
     it("words a pass or fail check as when it fails, without levels", async () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
       const port = { origin: "server", entry_id: "p1", kind: "port", name: "port_443", instance: "", interval_ms: 60_000, timeout_ms: null, params: { port: "443" } };

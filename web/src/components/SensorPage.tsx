@@ -315,6 +315,8 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
           format={format}
           canEdit={!server.revoked_at && modifiesSite(me, server.customer_id, server.site_id)}
           onChanged={refresh}
+          startEditing={params.get("edit") === "1"}
+          onEditEnd={() => setParams({ edit: null })}
         />
         <TableBox
           title="Incidents on this sensor"

@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
 import {
   type EffectiveSensor,
@@ -72,6 +72,8 @@ export function SensorConfiguration({
   format,
   canEdit,
   onChanged,
+  startEditing = false,
+  onEditEnd,
 }: {
   data: ConfigurationData;
   sensor: EffectiveSensor | undefined;
@@ -80,8 +82,20 @@ export function SensorConfiguration({
   format: (v: number) => string;
   canEdit: boolean;
   onChanged: () => void;
+  /** Opens the form at once, as the Edit of a server's sensor list does. */
+  startEditing?: boolean;
+  onEditEnd?: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditingState] = useState(startEditing);
+  const box = useRef<HTMLDivElement>(null);
+  const setEditing = (on: boolean) => {
+    setEditingState(on);
+    if (!on) onEditEnd?.();
+  };
+  useEffect(() => {
+    // Coming from the list's Edit, the form is below the charts: bring it into view.
+    if (startEditing) box.current?.scrollIntoView?.({ block: "center" });
+  }, [startEditing]);
   const { server, config, thresholds } = data;
   const rule = thresholds ? ruleOf(thresholds, metric, instance) : undefined;
   const sensors = config?.sensors ?? [];
@@ -100,32 +114,34 @@ export function SensorConfiguration({
   );
 
   return (
-    <FactsBox
-      title="Configuration"
-      actions={actions}
-      facts={facts(data, sensor, instance, rule, shape, format)}
-      details={[
-        ...(rule ? [marginFact(rule, format)] : []),
-        ...(sensor ? [setByFact(sensor, rule, perInstance(sensor, instance))] : []),
-      ]}
-    >
-      {editing && place && (
-        <RuleEditor
-          place={place}
-          hostname={server.hostname}
-          siteName={server.site_name}
-          rule={rule}
-          shape={shape}
-          metric={metric}
-          hasOwn={overrides?.level !== null && overrides?.level !== undefined}
-          onDone={() => {
-            setEditing(false);
-            onChanged();
-          }}
-          onCancel={() => setEditing(false)}
-        />
-      )}
-    </FactsBox>
+    <div ref={box} id="configuration">
+      <FactsBox
+        title="Configuration"
+        actions={actions}
+        facts={facts(data, sensor, instance, rule, shape, format)}
+        details={[
+          ...(rule ? [marginFact(rule, format)] : []),
+          ...(sensor ? [setByFact(sensor, rule, perInstance(sensor, instance))] : []),
+        ]}
+      >
+        {editing && place && (
+          <RuleEditor
+            place={place}
+            hostname={server.hostname}
+            siteName={server.site_name}
+            rule={rule}
+            shape={shape}
+            metric={metric}
+            hasOwn={overrides?.level !== null && overrides?.level !== undefined}
+            onDone={() => {
+              setEditing(false);
+              onChanged();
+            }}
+            onCancel={() => setEditing(false)}
+          />
+        )}
+      </FactsBox>
+    </div>
   );
 }
 
