@@ -41,7 +41,7 @@ This document is served by every central server at `/api/v1/openapi.json`, witho
 
 ## Pagination
 
-Lists that can grow without bound take `limit` and `cursor` and answer `next_cursor`: servers, relays, incidents, commands, campaigns, tokens, remediation incidents and events. Pass `next_cursor` as `cursor` to get the next page, with the same filters; it is `null` on the last page. Cursors are opaque: do not build or change them. A server or incident added between two pages neither repeats nor shifts the others. There are no page numbers or totals.
+Lists that can grow without bound take `limit` and `cursor` and answer `next_cursor`: servers, relays, incidents, a server's commands and packages, campaigns, tokens, remediation incidents and events. Pass `next_cursor` as `cursor` to get the next page, with the same filters; it is `null` on the last page. Cursors are opaque: do not build or change them. A server or incident added between two pages neither repeats nor shifts the others. There are no page numbers or totals.
 
 Lists that stay small (sites, customers, silences, approvals, dashboards) answer in full.
 
