@@ -33,10 +33,12 @@ const MAX_GUESTS: i64 = 2000;
 const NOT_MATCHED: &str = "this Proxmox cluster serves several customers: choose one of the     guests matched to this server, or ask a global administrator to map it";
 
 /// Answer of the GET and PUT routes.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ProxmoxView {
     pub server_id: Uuid,
+    /// The VM or container the server runs in; `null` when not mapped.
     pub mapping: Option<Mapping>,
+    /// Whether a change on the server is snapshotted first.
     pub snapshots: SnapshotSupport,
     /// The configured clusters that serve the server, to map it to.
     pub clusters: Vec<String>,
@@ -46,13 +48,19 @@ pub struct ProxmoxView {
 }
 
 /// A guest of a cluster, as the last discovery pass saw it.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = ProxmoxGuest)]
 pub struct Guest {
+    /// The cluster's name in the central server's configuration.
     pub cluster: String,
+    /// The node's host name.
     pub node: String,
+    /// The VM or container ID.
     #[sqlx(try_from = "i32")]
     pub vmid: u32,
+    /// `qemu` for a VM, `lxc` for a container.
     #[sqlx(try_from = "String")]
+    #[schema(value_type = GuestKind)]
     pub kind: KindColumn,
     /// The VM's name or the container's host name.
     pub name: String,
@@ -65,20 +73,29 @@ pub struct Guest {
 }
 
 /// `GET /api/servers/{id}/proxmox/guests`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = ProxmoxGuestList)]
 pub struct GuestList {
+    /// By cluster and ID, at most 2000.
     pub guests: Vec<Guest>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = ProxmoxMapping)]
 pub struct Mapping {
+    /// The cluster's name in the central server's configuration.
     pub cluster: String,
+    /// The node's host name.
     pub node: String,
+    /// The VM or container ID.
     #[sqlx(try_from = "i32")]
     pub vmid: u32,
     /// `qemu` for a VM, `lxc` for a container.
     #[sqlx(try_from = "String")]
+    #[schema(value_type = GuestKind)]
     pub kind: KindColumn,
+    /// Who mapped it by hand; `null` when discovery did, or the account is
+    /// gone.
     pub updated_by: Option<Uuid>,
     pub updated_at: DateTime<Utc>,
     /// When Proxmox last answered whether it can snapshot the guest;
@@ -175,11 +192,15 @@ impl SnapshotSupport {
 }
 
 /// Body of `PUT`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = ProxmoxMappingRequest)]
 #[serde(deny_unknown_fields)]
 pub struct MappingRequest {
+    /// A configured cluster that serves the server's customer and site.
     pub cluster: String,
+    /// The node's host name: letters, digits and inner `-`.
     pub node: String,
+    /// 100 to 999999999.
     pub vmid: u32,
     /// `qemu` (the default) or `lxc`.
     #[serde(default)]
