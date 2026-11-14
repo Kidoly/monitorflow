@@ -2328,6 +2328,14 @@ export interface PluginInspection {
 }
 
 /** A plugin turned on where the user can see, for the channel and check forms. */
+/** How many servers run one check (`GET /api/checks/usage`). */
+export interface CheckUsage {
+  kind: string;
+  name: string;
+  plugin: string | null;
+  servers: number;
+}
+
 export interface UsablePlugin {
   name: string;
   kind: PluginKind;
@@ -2942,6 +2950,8 @@ export const api = {
     request<void>(`/api/plugins/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /** Plugins turned on at places the user sees. */
+  checkUsage: (signal?: AbortSignal) => request<{ checks: CheckUsage[] }>("/api/checks/usage", { signal }),
+
   usablePlugins: (signal?: AbortSignal) =>
     request<{ plugins: UsablePlugin[] }>("/api/plugins/usable", { signal }),
 
