@@ -23,6 +23,7 @@ use super::auth::CurrentUser;
 use super::follow_up::{follow_up_view, FollowUpView};
 use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
+use crate::alerting::reason;
 use crate::notify::follow_up;
 
 /// Page size without `limit`.
@@ -110,6 +111,29 @@ pub struct IncidentView {
     /// the reader an operator or above of its site.
     #[sqlx(skip)]
     pub can_acknowledge: bool,
+    /// Why it opened, in one sentence: "9% available is below the
+    /// warning limit of 12%"; for a resolved incident, its peak.
+    #[sqlx(skip)]
+    pub reason: String,
+}
+
+impl IncidentView {
+    /// Fills the fields computed from the row.
+    fn complete(&mut self, modifiable: &Scope) {
+        self.can_acknowledge = acknowledgeable(self, modifiable);
+        let open = self.state == "open";
+        self.reason = reason::incident(
+            &self.metric,
+            &self.severity,
+            open,
+            if open {
+                self.last_value
+            } else {
+                self.peak_value
+            },
+            &self.threshold,
+        );
+    }
 }
 
 /// Body of `GET /api/incidents`.
@@ -267,7 +291,7 @@ pub async fn list(
     .await?;
     let modifiable = user.modifiable_sites();
     for row in &mut rows {
-        row.can_acknowledge = acknowledgeable(row, &modifiable);
+        row.complete(&modifiable);
     }
     let next_cursor = if rows.len() > limit as usize {
         rows.truncate(limit as usize);
@@ -297,7 +321,7 @@ pub async fn detail(
             .await?;
     authorize(&user, incident.as_ref().map(|i| i.site_id), false)?;
     let mut incident = incident.ok_or(ApiError::NotFound)?;
-    incident.can_acknowledge = acknowledgeable(&incident, &user.modifiable_sites());
+    incident.complete(&user.modifiable_sites());
     // Events are appended as they happen, so their ID is their order.
     let events = sqlx::query_as(
         "SELECT id, kind, severity, value, occurred_at, recorded_at, details

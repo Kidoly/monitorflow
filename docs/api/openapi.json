@@ -2710,7 +2710,8 @@
           "peak_value",
           "threshold",
           "silenced",
-          "can_acknowledge"
+          "can_acknowledge",
+          "reason"
         ],
         "properties": {
           "acknowledged_at": {
@@ -2768,6 +2769,10 @@
             "type": "number",
             "format": "double",
             "description": "The worst value seen while open."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it opened, in one sentence: \"9% available is below the\nwarning limit of 12%\"; for a resolved incident, its peak."
           },
           "relay_id": {
             "type": [

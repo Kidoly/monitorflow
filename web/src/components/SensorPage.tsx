@@ -235,6 +235,8 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
       <PageHeader
         detail
         title={title}
+        tone={TONES[status]}
+        reason={open?.reason}
         status={
           <>
             <StatusLabel kind="sensor" value={status} />

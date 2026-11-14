@@ -754,6 +754,8 @@ export interface Incident {
   acknowledged_at?: string | null;
   /** Open, not acknowledged, and the reader an operator or above of its site. */
   can_acknowledge?: boolean;
+  /** Why it opened, in one sentence: "9% available is below the warning limit of 12%"; once resolved, its peak. */
+  reason?: string;
 }
 
 /** What a silence covers (ADR-0079). */
