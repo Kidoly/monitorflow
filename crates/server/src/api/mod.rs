@@ -666,6 +666,7 @@ pub mod remediation_incidents;
 pub mod revoke;
 pub mod roles;
 pub mod rollback;
+pub mod sensor_values;
 pub mod sensors;
 pub mod server_settings;
 pub mod server_update;
@@ -1072,6 +1073,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/servers/{id}/sensors", get(sensors::effective))
         .route("/api/sites/{id}/sensors", get(sensors::effective_site))
         .route("/api/servers/{id}/metrics", get(metrics::discover))
+        .route(
+            "/api/servers/{id}/sensor-values",
+            get(sensor_values::sensor_values),
+        )
         .route("/api/servers/{id}/logs", get(logs::list))
         .route("/api/metrics/query", get(metrics::query))
         .route("/api/metrics/query_range", get(metrics::query_range))

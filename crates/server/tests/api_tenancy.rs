@@ -1525,6 +1525,21 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 "{last}"
             );
         }
+        // Batched sensor values: B is 404 and never queried; A only with
+        // A's matchers and filters.
+        ("GET", "/api/servers/{id}/sensor-values") => {
+            let before = ctx.vm.seen().len();
+            let uri = format!("/api/servers/{}/sensor-values", b.server);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            assert_eq!(ctx.vm.seen().len(), before);
+            let uri = format!("/api/servers/{}/sensor-values", a.server);
+            assert_eq!(ctx.status(method, &uri, None).await, StatusCode::OK);
+            let last = ctx.vm_seen_last();
+            assert!(
+                last.contains("site=\"site-a\"") && last.contains("extra_label=site=site-a"),
+                "{last}"
+            );
+        }
         // Log proxy (ADR-0091): B is 404 and never queried; A is queried
         // on A's stream only, in the query and as a stream filter.
         ("GET", "/api/servers/{id}/logs") => {
