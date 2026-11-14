@@ -9,6 +9,308 @@
     "version": "1"
   },
   "paths": {
+    "/api/v1/agent-releases": {
+      "get": {
+        "tags": [
+          "agent releases"
+        ],
+        "summary": "List agent releases",
+        "description": "The releases this server holds and can serve to agents and relays,\nfor install commands and updates, newest first, and the newest one that\nis not a pre-release.\n\nAny signed-in user, even without a role. Through an API key, the\n\"updates\" area.",
+        "operationId": "list_agent_releases",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentReleases"
+                },
+                "example": {
+                  "latest": "0.9.2",
+                  "versions": [
+                    "0.10.0-rc.1",
+                    "0.9.2",
+                    "0.9.1"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/agent-releases/import": {
+      "post": {
+        "tags": [
+          "agent releases"
+        ],
+        "summary": "Import a release from files",
+        "description": "For servers without Internet access: imports a release from its files,\nsent as `multipart/form-data` up to 2 GiB in all. The signature of\n`SHA256SUMS` is checked against the release keys built into the server\nand every file against its checksum, as `agent-release import` does on\nthe command line. The release is then served to install commands and\nagent and relay updates. Audited as `agent_release.import`.\n\nGlobal administrators only: the release cache serves every customer.\nThrough an API key: access \"Administer\", reach everything, the\n\"updates\" area. One import at a time. `Idempotency-Key` is ignored on\nthis route: importing the same release again replaces it with the same\nfiles.",
+        "operationId": "import_release",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseUpload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseImport"
+                },
+                "example": {
+                  "missing": [
+                    "monitorflow-agent-windows-x86_64.exe",
+                    "monitorflow-agent-windows-x86_64.msi"
+                  ],
+                  "version": "0.9.2"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a multipart form: `invalid_request`. A required file is absent, the signature does not verify, a checksum does not match, no agent binary, or the upload stopped: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another import is running: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/agent-releases/import-url": {
+      "post": {
+        "tags": [
+          "agent releases"
+        ],
+        "summary": "Import a release from a URL",
+        "description": "Like the upload, but the server downloads the release's files from the\ndirectory `url`, over http or https: the signature protects the files,\nnot the transport. Files the directory does not have (404) are skipped;\nthe required ones are then reported missing. The download stops after\n60 seconds without data, or beyond 2 GiB. Audited as\n`agent_release.import`, with only the URL's host.\n\nGlobal administrators only. Through an API key: access \"Administer\",\nreach everything, the \"updates\" area. One import at a time; repeating\nimports the same release again.",
+        "operationId": "import_release_from_url",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseImportUrlRequest"
+              },
+              "example": {
+                "url": "https://downloads.example.com/monitorflow/v0.9.2/"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseImport"
+                },
+                "example": {
+                  "missing": [],
+                  "version": "0.9.2"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`url` is not an http or https URL, a file could not be downloaded, or the files are not a genuine release: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another import is running: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/commands/{id}": {
       "get": {
         "tags": [
@@ -1338,6 +1640,843 @@
         }
       }
     },
+    "/api/v1/mirrors": {
+      "get": {
+        "tags": [
+          "mirrors"
+        ],
+        "summary": "List mirrors",
+        "description": "Every package mirror of this install, by name, with its newest\npublished snapshot and its last run. Mirrors are shared by every\ncustomer.\n\nGlobal administrators only. Through an API key: access \"Administer\",\nreach everything, the \"updates\" area.",
+        "operationId": "list_mirrors",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorList"
+                },
+                "example": {
+                  "keep_snapshots": 3,
+                  "mirrors": [
+                    {
+                      "architectures": [
+                        "amd64"
+                      ],
+                      "auto_snapshot": true,
+                      "components": [
+                        "main",
+                        "non-free-firmware"
+                      ],
+                      "created_at": "2026-10-01T12:00:00Z",
+                      "current_snapshot": "20261114T031240Z",
+                      "delete_error": null,
+                      "deleting_at": null,
+                      "distribution": "bookworm",
+                      "family": "apt",
+                      "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "last_run": {
+                        "error": null,
+                        "finished_at": "2026-11-14T03:12:40Z",
+                        "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                        "kind": "sync",
+                        "requested_by": "user:9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                        "snapshot_id": null,
+                        "started_at": "2026-11-14T03:00:00Z",
+                        "state": "succeeded",
+                        "trigger": "manual"
+                      },
+                      "name": "debian-12",
+                      "sync_interval_s": 86400,
+                      "upstream_url": "https://deb.debian.org/debian"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "mirrors"
+        ],
+        "summary": "Add a distribution to the mirrors",
+        "description": "Creates the mirrors a distribution of the catalog needs (its main and\nsecurity repositories, for instance) that do not exist yet. The\nscheduler starts syncing them within a minute; servers can use them\nafter the first sync. Creates the mirrors' signing key on first use.\nEach mirror created is audited as `mirror.create`.\n\nGlobal administrators only, as for the list. Safe to repeat: a second\ncall is 409 once every mirror exists.",
+        "operationId": "add_mirrors",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMirrorRequest"
+              },
+              "example": {
+                "distribution": "debian-12"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The mirrors created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorList"
+                },
+                "example": {
+                  "keep_snapshots": 3,
+                  "mirrors": [
+                    {
+                      "architectures": [
+                        "amd64"
+                      ],
+                      "auto_snapshot": true,
+                      "components": [
+                        "main",
+                        "non-free-firmware"
+                      ],
+                      "created_at": "2026-11-14T10:00:00Z",
+                      "current_snapshot": null,
+                      "delete_error": null,
+                      "deleting_at": null,
+                      "distribution": "bookworm",
+                      "family": "apt",
+                      "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "last_run": null,
+                      "name": "debian-12",
+                      "sync_interval_s": 86400,
+                      "upstream_url": "https://deb.debian.org/debian"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a distribution of the catalog: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already added, the mirror tools are not available, too little free space, or the signing key could not be made: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mirrors/catalog": {
+      "get": {
+        "tags": [
+          "mirrors"
+        ],
+        "summary": "List the distributions mirrors can carry",
+        "description": "The catalog of distributions a mirror can be added for, whether each is\nadded already and whether there is room for it, with the state of the\nmirror tools and of the disk the mirrors live on.\n\nGlobal administrators only, as for the list.",
+        "operationId": "mirror_catalog",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorCatalog"
+                },
+                "example": {
+                  "disk": {
+                    "free_bytes": 412316860416,
+                    "total_bytes": 1000204886016
+                  },
+                  "distributions": [
+                    {
+                      "added": true,
+                      "family": "apt",
+                      "id": "debian-12",
+                      "name": "Debian 12",
+                      "problem": null,
+                      "size_bytes": 128849018880
+                    },
+                    {
+                      "added": false,
+                      "family": "dnf",
+                      "id": "rocky-9",
+                      "name": "Rocky Linux 9",
+                      "problem": null,
+                      "size_bytes": 85899345920
+                    }
+                  ],
+                  "tools": {
+                    "available": true,
+                    "problem": null
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mirrors/{id}": {
+      "get": {
+        "tags": [
+          "mirrors"
+        ],
+        "summary": "Read a mirror",
+        "description": "One mirror with its 100 newest snapshots and why each is kept, its 10\nlatest runs with their output, and what keeps it from being deleted.\n\nGlobal administrators only, as for the list.",
+        "operationId": "mirror_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The mirror's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorDetail"
+                },
+                "example": {
+                  "architectures": [
+                    "amd64"
+                  ],
+                  "auto_snapshot": true,
+                  "components": [
+                    "main",
+                    "non-free-firmware"
+                  ],
+                  "created_at": "2026-10-01T12:00:00Z",
+                  "current_snapshot": "20261114T031240Z",
+                  "delete_error": null,
+                  "deleting_at": null,
+                  "distribution": "bookworm",
+                  "family": "apt",
+                  "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "keep_snapshots": 3,
+                  "last_run": {
+                    "error": null,
+                    "finished_at": "2026-11-14T03:12:40Z",
+                    "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                    "kind": "sync",
+                    "requested_by": "user:9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                    "snapshot_id": null,
+                    "started_at": "2026-11-14T03:00:00Z",
+                    "state": "succeeded",
+                    "trigger": "manual"
+                  },
+                  "name": "debian-12",
+                  "runs": [
+                    {
+                      "error": null,
+                      "finished_at": "2026-11-14T03:12:40Z",
+                      "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                      "kind": "sync",
+                      "mirror_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "output": "Mirror `debian-12` has been updated successfully.\n",
+                      "requested_by": null,
+                      "snapshot_id": "e5f6a7b8-c9d0-4e1f-8a2b-3c4d5e6f7a8b",
+                      "started_at": "2026-11-14T03:00:00Z",
+                      "state": "succeeded",
+                      "trigger": "schedule"
+                    }
+                  ],
+                  "snapshots": [
+                    {
+                      "created_at": "2026-11-14T03:12:40Z",
+                      "error": null,
+                      "id": "e5f6a7b8-c9d0-4e1f-8a2b-3c4d5e6f7a8b",
+                      "kept": "current",
+                      "mirror_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                      "name": "20261114T031240Z",
+                      "published_at": "2026-11-14T03:13:02Z",
+                      "size_bytes": 121332826112,
+                      "state": "published"
+                    }
+                  ],
+                  "sync_interval_s": 86400,
+                  "upstream_url": "https://deb.debian.org/debian",
+                  "used_by": {
+                    "campaigns": [],
+                    "servers": [
+                      {
+                        "hostname": "web-1",
+                        "id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such mirror: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "mirrors"
+        ],
+        "summary": "Delete a mirror",
+        "description": "Starts deleting a mirror no server or unfinished campaign uses, with its\nsnapshots and the copies relays hold. The answer comes at once, with\n`deleting_at` set; the deletion is over when the mirror's detail\nanswers 404, and `delete_error` says why while it is not. Calling again\nafter a failure tries again at once. Audited as `mirror.delete`, then\n`mirror.deleted`.\n\nGlobal administrators only, as for the list.",
+        "operationId": "delete_mirror",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The mirror's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Being deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such mirror: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Servers or campaigns still use it (the sentence names them), or what uses it could not be checked: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mirrors/{id}/snapshots": {
+      "post": {
+        "tags": [
+          "mirrors"
+        ],
+        "summary": "Publish a snapshot of a mirror",
+        "description": "Publishes what the last successful sync copied as a snapshot named\n`name`, which servers can then be pointed at and which never changes.\nThe answer comes at once with the run; follow it in the mirror's\ndetail. Audited as `mirror.snapshot`.\n\nGlobal administrators only, as for the list.",
+        "operationId": "snapshot_mirror",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The mirror's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotRequest"
+              },
+              "example": {
+                "name": "before-upgrade"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorRunSummary"
+                },
+                "example": {
+                  "error": null,
+                  "finished_at": null,
+                  "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                  "kind": "snapshot",
+                  "requested_by": "user:9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                  "snapshot_id": null,
+                  "started_at": "2026-11-14T03:00:00Z",
+                  "state": "running",
+                  "trigger": "manual"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An invalid `name`, or an unknown field: `invalid`. A name another snapshot of the mirror has makes the run fail instead.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such mirror: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The mirror is busy, has no successful sync yet, or is being deleted: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mirrors/{id}/sync": {
+      "post": {
+        "tags": [
+          "mirrors"
+        ],
+        "summary": "Sync a mirror now",
+        "description": "Starts copying the upstream repository now rather than at the next\nscheduled time. The answer comes at once with the run, which goes on in\nthe background; follow it in the mirror's detail. Audited as\n`mirror.sync`.\n\nGlobal administrators only, as for the list. Not safe to repeat while\nit runs: a second call is 409.",
+        "operationId": "sync_mirror",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The mirror's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorRunSummary"
+                },
+                "example": {
+                  "error": null,
+                  "finished_at": null,
+                  "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                  "kind": "sync",
+                  "requested_by": "user:9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                  "snapshot_id": null,
+                  "started_at": "2026-11-14T03:00:00Z",
+                  "state": "running",
+                  "trigger": "manual"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such mirror: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The mirror is busy with another run or retention, or is being deleted: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/pending-hosts/{peer_id}/approve": {
       "post": {
         "tags": [
@@ -1509,6 +2648,678 @@
           },
           "409": {
             "description": "Already approved or rejected: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays": {
+      "get": {
+        "tags": [
+          "relays"
+        ],
+        "summary": "List relays",
+        "description": "One page of the enrolled relays of the sites the caller reads, sorted\nby site name then peer ID, with their live connection, version and\nlatest self-update. Removed relays are not listed.\n\nPaged: `limit` (1 to 1000, default 500) and `cursor`, the `next_cursor`\nof the previous page.\n\nAny role reads it. Any API key may list relays within its reach,\nwhatever its areas, to turn names into IDs.",
+        "operationId": "list_relays",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1 to [`MAX_LIMIT`], default [`DEFAULT_LIMIT`].",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelayList"
+                },
+                "example": {
+                  "next_cursor": null,
+                  "relays": [
+                    {
+                      "cert_not_after": "2027-01-12T08:00:00Z",
+                      "connected_agents": 11,
+                      "connected_at": "2026-11-14T06:12:00Z",
+                      "created_at": "2026-10-02T08:00:00Z",
+                      "customer_id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+                      "customer_name": "acme",
+                      "id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                      "last_heartbeat": "2026-11-14T09:59:30Z",
+                      "last_update": {
+                        "error": null,
+                        "expires_at": "2026-11-15T09:30:00Z",
+                        "finished_at": "2026-11-14T09:31:05Z",
+                        "id": "8d9e0f1a-2b3c-4d4e-8f5a-6b7c8d9e0f1a",
+                        "issued_at": "2026-11-14T09:30:00Z",
+                        "relay_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                        "requested_by": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                        "state": "succeeded",
+                        "stdout": null,
+                        "version": "0.9.2"
+                      },
+                      "mirror_reported_at": "2026-11-14T09:00:00Z",
+                      "mirror_url": "http://10.1.0.5:8090",
+                      "name": "relay-paris",
+                      "offline_alerts": true,
+                      "peer_id": "relay-paris",
+                      "pending_names": null,
+                      "pending_source": null,
+                      "relay_version": "0.9.2",
+                      "revoked_at": null,
+                      "server_count": 12,
+                      "server_names": [
+                        "relay.paris.example.com",
+                        "10.1.0.5"
+                      ],
+                      "silenced_until": null,
+                      "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b",
+                      "site_name": "paris",
+                      "site_offline_alerts": true,
+                      "status": "online"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad `limit` or `cursor`: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller has no role: `forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays/{id}": {
+      "get": {
+        "tags": [
+          "relays"
+        ],
+        "summary": "Read a relay",
+        "description": "One relay, removed or not, with the certificate issued to it last, the\nservers whose latest connection came through it and its 10 latest\nself-updates, newest first.\n\nAny role on the relay's site. Through an API key, the \"servers\" area.",
+        "operationId": "relay_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The relay's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelayDetail"
+                },
+                "example": {
+                  "cert_not_after": "2027-01-12T08:00:00Z",
+                  "certificate": {
+                    "issued_at": "2026-11-13T08:00:00Z",
+                    "not_after": "2027-01-12T08:00:00Z",
+                    "not_before": "2026-11-13T08:00:00Z",
+                    "revocation_reason": null,
+                    "revoked": false,
+                    "revoked_at": null,
+                    "serial": "3f9a1c0b7e2d"
+                  },
+                  "connected_agents": 1,
+                  "connected_at": "2026-11-14T06:12:00Z",
+                  "created_at": "2026-10-02T08:00:00Z",
+                  "customer_id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+                  "customer_name": "acme",
+                  "id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                  "last_heartbeat": "2026-11-14T09:59:30Z",
+                  "last_update": {
+                    "error": null,
+                    "expires_at": "2026-11-15T09:30:00Z",
+                    "finished_at": "2026-11-14T09:31:05Z",
+                    "id": "8d9e0f1a-2b3c-4d4e-8f5a-6b7c8d9e0f1a",
+                    "issued_at": "2026-11-14T09:30:00Z",
+                    "relay_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                    "requested_by": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                    "state": "succeeded",
+                    "stdout": null,
+                    "version": "0.9.2"
+                  },
+                  "mirror_reported_at": null,
+                  "mirror_url": null,
+                  "name": "relay-paris",
+                  "offline_alerts": true,
+                  "peer_id": "relay-paris",
+                  "pending_names": null,
+                  "pending_source": null,
+                  "relay_version": "0.9.2",
+                  "revoked_at": null,
+                  "server_count": 1,
+                  "server_names": [
+                    "relay.paris.example.com",
+                    "10.1.0.5"
+                  ],
+                  "servers": [
+                    {
+                      "hostname": "web-1",
+                      "id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d",
+                      "peer_id": "web-1",
+                      "status": "online"
+                    }
+                  ],
+                  "silenced_until": null,
+                  "site_id": "6f1c2b3a-4d5e-4f60-8a9b-0c1d2e3f4a5b",
+                  "site_name": "paris",
+                  "site_offline_alerts": true,
+                  "status": "online",
+                  "updates": [
+                    {
+                      "error": null,
+                      "expires_at": "2026-11-15T09:30:00Z",
+                      "finished_at": "2026-11-14T09:31:05Z",
+                      "id": "8d9e0f1a-2b3c-4d4e-8f5a-6b7c8d9e0f1a",
+                      "issued_at": "2026-11-14T09:30:00Z",
+                      "relay_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                      "requested_by": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                      "state": "succeeded",
+                      "stdout": null,
+                      "version": "0.9.2"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller has no role: `forbidden`; a key outside the \"servers\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such relay, or of a site the caller cannot read: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays/{id}/names": {
+      "post": {
+        "tags": [
+          "relays"
+        ],
+        "summary": "Confirm a relay's names",
+        "description": "A relay enrolled without names (by an install key, or a token without\n`server_names`) waits, speaking for no agent, with the names it\nreported in `pending_names`. This sets the names its certificate\ncarries for agents; the relay collects that certificate within seconds\nand starts forwarding its site's agents. Audited as\n`relay.confirm_names`.\n\nNeeds the administrator role on the relay's customer. Through an API\nkey, the \"servers\" area.",
+        "operationId": "confirm_relay_names",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The relay's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelayNamesRequest"
+              },
+              "example": {
+                "names": [
+                  "relay.paris.example.com",
+                  "10.1.0.5"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Confirmed"
+          },
+          "400": {
+            "description": "No name, more than 16, or one that is not a usable DNS name or IP address: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the relay's customer: `forbidden`; a key outside the \"servers\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such relay, or of a site the caller cannot read: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The relay is removed or not waiting for names, or a name is the central server's or another site's relay's: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays/{id}/revoke": {
+      "post": {
+        "tags": [
+          "relays"
+        ],
+        "summary": "Remove a relay",
+        "description": "\"Remove\" in the web interface. Marks the relay revoked, revokes its\ncertificates and those of every peer obtained through it or renewed\nfrom them, publishes them in the revocation list and closes the relay's\nstream and those it forwards. Its unused enrollment tokens are deleted,\nits open offline incidents resolved, and it leaves every list until it\nenrolls again. Servers behind it lose their connection until they reach\nthe central server or another relay. Audited as `relay.revoke` with the\nserials.\n\nThe body is required: send `{}` to give no reason. Needs the\nadministrator role on the relay's customer. Not undone by repeating: a\nsecond call is 409.",
+        "operationId": "revoke_relay",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The relay's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeRequest"
+              },
+              "example": {
+                "reason": "cessation_of_operation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Revoked"
+                },
+                "example": {
+                  "closed_streams": 2,
+                  "issued_through": [
+                    {
+                      "peer_id": "web-1",
+                      "peer_role": "agent",
+                      "serial": "1b2c3d4e5f60"
+                    }
+                  ],
+                  "reason": "cessation_of_operation",
+                  "revoked_at": "2026-11-14T10:05:00Z",
+                  "serials": [
+                    "3f9a1c0b7e2d",
+                    "1b2c3d4e5f60"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown `reason` or field: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the relay's customer: `forbidden`; a key outside the \"servers\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such relay, or of a site the caller cannot read: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already removed: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays/{id}/update": {
+      "post": {
+        "tags": [
+          "relays"
+        ],
+        "summary": "Update a relay",
+        "description": "Queues a self-update of the relay to `version`. The relay downloads the\nrelease from this server when it holds it, installs it, restarts and\nmust connect back within `health_timeout_s`, or it rolls back. The\ncommand waits up to 24 hours for an offline relay; its progress shows in\n`last_update` and in the relay's `updates`. Audited as `relay.update`.\n\nNeeds the administrator role on the relay's customer. Through an API\nkey, the \"updates\" area. One update at a time: while one is in flight,\nanother is 409, so repeating is safe.",
+        "operationId": "update_relay",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The relay's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelayUpdateRequest"
+              },
+              "example": {
+                "health_timeout_s": 300,
+                "version": "0.9.2"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelayCommand"
+                },
+                "example": {
+                  "error": null,
+                  "expires_at": "2026-11-15T09:30:00Z",
+                  "finished_at": null,
+                  "id": "8d9e0f1a-2b3c-4d4e-8f5a-6b7c8d9e0f1a",
+                  "issued_at": "2026-11-14T09:30:00Z",
+                  "relay_id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                  "requested_by": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                  "state": "queued",
+                  "stdout": null,
+                  "version": "0.9.2"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`version` is not like `0.9.2`, `health_timeout_s` is out of range, or a field is unknown: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the relay's customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such relay, or of a site the caller cannot read: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The relay is removed, or has an update in flight: `conflict`",
             "content": {
               "application/json": {
                 "schema": {
@@ -2233,6 +4044,528 @@
         }
       }
     },
+    "/api/v1/servers/{id}/sources": {
+      "get": {
+        "tags": [
+          "package sources"
+        ],
+        "summary": "Read a server's package sources",
+        "description": "Where the server's packages come from: its own sources or mirrors of\nthis install, whether a change is on its way or failed, whether a\ncampaign holds them, and why the server cannot use a mirror if it\ncannot. For a Windows server, where Windows Update takes its updates\nfrom instead.\n\nAny role on the server's site. Through an API key, the \"updates\" area.",
+        "operationId": "server_sources",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesStatus"
+                },
+                "example": {
+                  "add_mirror": false,
+                  "campaign": false,
+                  "changing_to": null,
+                  "distribution": "Debian 12",
+                  "failed": null,
+                  "mirrors": [
+                    {
+                      "name": "debian-12",
+                      "snapshot": "current"
+                    },
+                    {
+                      "name": "debian-12-security",
+                      "snapshot": "current"
+                    }
+                  ],
+                  "problem": null,
+                  "using": "mirror",
+                  "windows_update_source": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller has no role: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, removed, or of a site the caller cannot read: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "package sources"
+        ],
+        "summary": "Point a server at chosen mirrors",
+        "description": "Queues a `configure_sources` command that points the server's apt or\ndnf at the mirrors and snapshots named, through the server's relay when\nit has one that carries them. `replace` sets the server's other sources\naside, `add` keeps them. The command is signed, sent to the agent and\naudited as `command.create`; follow it in the server's commands.\n\nNeeds the administrator role on the server's customer. Through an API\nkey, the \"updates\" area. Not safe to repeat: send `Idempotency-Key` to\nretry.",
+        "operationId": "configure_server_sources",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigureSourcesRequest"
+              },
+              "example": {
+                "mirrors": [
+                  {
+                    "name": "debian-12"
+                  },
+                  {
+                    "name": "debian-12-security",
+                    "snapshot": "20261114T031240Z"
+                  }
+                ],
+                "mode": "replace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandDetail"
+                },
+                "example": {
+                  "campaign_id": null,
+                  "error": null,
+                  "exit_code": null,
+                  "expires_at": "2026-11-15T10:00:00Z",
+                  "finished_at": null,
+                  "id": "b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e",
+                  "issued_at": "2026-11-14T10:00:00Z",
+                  "kind": "configure_sources",
+                  "parameters": {
+                    "family": "APT",
+                    "key_fingerprints": [
+                      "0123456789ABCDEF0123456789ABCDEF01234567"
+                    ],
+                    "mirror_base_url": "http://10.1.0.5:8090/mirrors",
+                    "mode": "REPLACE",
+                    "repositories": [
+                      {
+                        "mirror": "debian-12",
+                        "snapshot": "current"
+                      },
+                      {
+                        "mirror": "debian-12-security",
+                        "snapshot": "current"
+                      }
+                    ]
+                  },
+                  "requested_by": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                  "sent_at": null,
+                  "server_id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d",
+                  "started_at": null,
+                  "state": "queued",
+                  "stderr": null,
+                  "stdout": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No mirror or more than 32, an unknown mirror or snapshot, a mirror of another family, `ttl_s` out of range, or a Windows server: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the server's customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or of a site the caller cannot read: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The server is removed or has no package manager, mirrors are not enabled, their address is not set, or the signing key is unusable: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "package sources"
+        ],
+        "summary": "Put a server back on its own sources",
+        "description": "Queues a `revert_sources` command that restores the sources the server\nhad before MonitorFlow changed them. Audited as `command.create`.\n\nNeeds the administrator role on the server's customer. Through an API\nkey, the \"updates\" area. Not safe to repeat: send `Idempotency-Key` to\nretry.",
+        "operationId": "revert_server_sources",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandDetail"
+                },
+                "example": {
+                  "campaign_id": null,
+                  "error": null,
+                  "exit_code": null,
+                  "expires_at": "2026-11-15T10:00:00Z",
+                  "finished_at": null,
+                  "id": "b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e",
+                  "issued_at": "2026-11-14T10:00:00Z",
+                  "kind": "revert_sources",
+                  "parameters": {},
+                  "requested_by": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                  "sent_at": null,
+                  "server_id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d",
+                  "started_at": null,
+                  "state": "queued",
+                  "stderr": null,
+                  "stdout": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A Windows server: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the server's customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or of a site the caller cannot read: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The server is removed or has no package manager: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/sources/use-mirror": {
+      "post": {
+        "tags": [
+          "package sources"
+        ],
+        "summary": "Point a server at the mirrors of its distribution",
+        "description": "Without naming a mirror: queues a `configure_sources` command that\nreplaces the server's sources with the `current` snapshots of the\nmirrors of the distribution it runs, as `GET …/sources` describes them.\nThe command waits up to 24 hours for an offline server. Audited as\n`command.create`.\n\nNeeds the administrator role on the server's customer. Through an API\nkey, the \"updates\" area. Safe to repeat: once the change is on its way\nor done, another call is 409.",
+        "operationId": "server_use_mirror",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The server's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandDetail"
+                },
+                "example": {
+                  "campaign_id": null,
+                  "error": null,
+                  "exit_code": null,
+                  "expires_at": "2026-11-15T10:00:00Z",
+                  "finished_at": null,
+                  "id": "b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e",
+                  "issued_at": "2026-11-14T10:00:00Z",
+                  "kind": "configure_sources",
+                  "parameters": {
+                    "family": "APT",
+                    "key_fingerprints": [
+                      "0123456789ABCDEF0123456789ABCDEF01234567"
+                    ],
+                    "mirror_base_url": "http://10.1.0.5:8090/mirrors",
+                    "mode": "REPLACE",
+                    "repositories": [
+                      {
+                        "mirror": "debian-12",
+                        "snapshot": "current"
+                      },
+                      {
+                        "mirror": "debian-12-security",
+                        "snapshot": "current"
+                      }
+                    ]
+                  },
+                  "requested_by": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                  "sent_at": null,
+                  "server_id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d",
+                  "started_at": null,
+                  "state": "queued",
+                  "stderr": null,
+                  "stdout": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the server's customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or of a site the caller cannot read: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Why the server cannot use a mirror now, in a sentence: it already does, a change or campaign is under way, no mirror carries its distribution yet, or the server is removed: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/silences": {
       "get": {
         "tags": [
@@ -2556,6 +4889,317 @@
           },
           "404": {
             "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sites/{id}/sources": {
+      "get": {
+        "tags": [
+          "package sources"
+        ],
+        "summary": "Read the package sources of a site's servers",
+        "description": "The package sources of every enrolled server of the site, by host name,\nas `GET /api/v1/servers/{id}/sources` gives them for one.\n\nAny role on the site. Through an API key, the \"updates\" area.",
+        "operationId": "site_sources",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteSources"
+                },
+                "example": {
+                  "servers": [
+                    {
+                      "add_mirror": false,
+                      "campaign": false,
+                      "changing_to": null,
+                      "distribution": "Debian 12",
+                      "failed": null,
+                      "hostname": "web-1",
+                      "id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d",
+                      "mirrors": [
+                        {
+                          "name": "debian-12",
+                          "snapshot": "current"
+                        }
+                      ],
+                      "os_family": "debian",
+                      "problem": null,
+                      "using": "mirror",
+                      "windows_update_source": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller has no role: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or not readable by the caller: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "package sources"
+        ],
+        "summary": "Put a site's servers back on their own sources",
+        "description": "Queues a `revert_sources` command for every server of the site that\nuses a mirror; servers with a change or a campaign under way are listed\nin `skipped`. Each command is audited as `command.create`.\n\nNeeds the administrator role on the site's customer. Through an API\nkey, the \"updates\" area. Safe to repeat: servers already changing are\nskipped.",
+        "operationId": "site_revert_sources",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteSourcesChange"
+                },
+                "example": {
+                  "queued": [
+                    "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d"
+                  ],
+                  "skipped": []
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the site's customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or not readable by the caller: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sites/{id}/sources/use-mirror": {
+      "post": {
+        "tags": [
+          "package sources"
+        ],
+        "summary": "Point a site's servers at the mirrors of their distribution",
+        "description": "For every server of the site not on a mirror yet, as `POST\n/api/v1/servers/{id}/sources/use-mirror` does for one. Each server is\nqueued or skipped on its own: servers already on a mirror are left out,\nand those that cannot use one now are listed in `skipped` with the\nreason. Each command queued is audited as `command.create`.\n\nNeeds the administrator role on the site's customer. Through an API\nkey, the \"updates\" area. Safe to repeat: servers already changing are\nskipped.",
+        "operationId": "site_use_mirror",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The site's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteSourcesChange"
+                },
+                "example": {
+                  "queued": [
+                    "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d"
+                  ],
+                  "skipped": [
+                    {
+                      "hostname": "win-1",
+                      "id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+                      "reason": "Mirrors carry Linux packages only. It keeps its own package sources."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not administer the site's customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such site, or not readable by the caller: `not_found`",
             "content": {
               "application/json": {
                 "schema": {
@@ -3004,6 +5648,20 @@
           }
         }
       },
+      "AddMirrorRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/mirrors`.",
+        "required": [
+          "distribution"
+        ],
+        "properties": {
+          "distribution": {
+            "type": "string",
+            "description": "An `id` of the catalog."
+          }
+        },
+        "additionalProperties": false
+      },
       "AgentInstall": {
         "type": "object",
         "description": "Body of `GET` and `PUT /api/settings/agent-install`, and the `install`\nobject of a new token.",
@@ -3048,6 +5706,29 @@
           "source_from_config": {
             "type": "boolean",
             "description": "Whether the configuration sets `source` or `custom_url`, which the\nweb interface then cannot change."
+          }
+        }
+      },
+      "AgentReleases": {
+        "type": "object",
+        "description": "`GET /api/agent-releases`.",
+        "required": [
+          "versions"
+        ],
+        "properties": {
+          "latest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The newest version without a pre-release suffix, else the newest."
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Cached versions, newest first."
           }
         }
       },
@@ -3121,6 +5802,47 @@
           }
         },
         "additionalProperties": false
+      },
+      "CatalogDistribution": {
+        "type": "object",
+        "description": "One distribution of `GET /api/mirrors/catalog`.",
+        "required": [
+          "id",
+          "name",
+          "family",
+          "size_bytes",
+          "added"
+        ],
+        "properties": {
+          "added": {
+            "type": "boolean",
+            "description": "Every mirror of the distribution exists."
+          },
+          "family": {
+            "$ref": "#/components/schemas/MirrorFamily"
+          },
+          "id": {
+            "type": "string",
+            "description": "What `POST /api/v1/mirrors` takes, such as `debian-12`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name on screen, such as `Debian 12`."
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it cannot be added now: too little free space."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "About what its mirrors take on disk, in bytes.",
+            "minimum": 0
+          }
+        }
       },
       "CentralRelease": {
         "type": "object",
@@ -3407,6 +6129,36 @@
           }
         }
       },
+      "ConfigureSourcesRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/servers/{id}/sources`.",
+        "required": [
+          "mirrors",
+          "mode"
+        ],
+        "properties": {
+          "mirrors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MirrorChoice"
+            },
+            "description": "1 to 32 mirrors of the server's package family."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/SourcesMode"
+          },
+          "ttl_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Seconds the command waits for the server, 60 to 604800; 3600 by\ndefault.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "CreatedEnrollmentToken": {
         "allOf": [
           {
@@ -3554,6 +6306,28 @@
           "state": {
             "type": "string",
             "description": "`approved` or `rejected`."
+          }
+        }
+      },
+      "Disk": {
+        "type": "object",
+        "description": "Space of the file system holding `path`.",
+        "required": [
+          "free_bytes",
+          "total_bytes"
+        ],
+        "properties": {
+          "free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What an unprivileged process can still use, in bytes.",
+            "minimum": 0
+          },
+          "total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "In bytes.",
+            "minimum": 0
           }
         }
       },
@@ -4262,6 +7036,449 @@
           "revoked"
         ]
       },
+      "IssuedThrough": {
+        "type": "object",
+        "description": "A certificate of another peer revoked with a relay.",
+        "required": [
+          "serial",
+          "peer_role",
+          "peer_id"
+        ],
+        "properties": {
+          "peer_id": {
+            "type": "string"
+          },
+          "peer_role": {
+            "type": "string",
+            "description": "`agent` or `relay`."
+          },
+          "serial": {
+            "type": "string",
+            "description": "Lowercase hexadecimal."
+          }
+        }
+      },
+      "Mirror": {
+        "type": "object",
+        "description": "A `mirrors` row.",
+        "required": [
+          "id",
+          "name",
+          "family",
+          "upstream_url",
+          "distribution",
+          "components",
+          "architectures",
+          "auto_snapshot",
+          "created_at"
+        ],
+        "properties": {
+          "architectures": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "auto_snapshot": {
+            "type": "boolean",
+            "description": "Whether each successful sync publishes a snapshot."
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "delete_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why deleting it has not finished yet."
+          },
+          "deleting_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Being deleted since then (ADR-0075)."
+          },
+          "distribution": {
+            "type": "string",
+            "description": "The suite (apt) or release (dnf) copied, such as `bookworm`."
+          },
+          "family": {
+            "$ref": "#/components/schemas/MirrorFamily"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique, such as `debian-12-security`; servers' sources name it."
+          },
+          "sync_interval_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Seconds between automatic syncs, at least 900; `null` for manual\nsyncs only."
+          },
+          "upstream_url": {
+            "type": "string",
+            "description": "The repository it copies."
+          }
+        }
+      },
+      "MirrorCatalog": {
+        "type": "object",
+        "description": "Body of `GET /api/mirrors/catalog`.",
+        "required": [
+          "tools",
+          "distributions"
+        ],
+        "properties": {
+          "disk": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Disk",
+                "description": "The disk of `mirror_dir`; `null` when unknown."
+              }
+            ]
+          },
+          "distributions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogDistribution"
+            }
+          },
+          "tools": {
+            "$ref": "#/components/schemas/MirrorTools"
+          }
+        }
+      },
+      "MirrorChoice": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "A mirror's `name`."
+          },
+          "snapshot": {
+            "type": "string",
+            "description": "A published snapshot, or `current` (the default)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "MirrorDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MirrorView"
+          },
+          {
+            "type": "object",
+            "required": [
+              "snapshots",
+              "keep_snapshots",
+              "runs",
+              "used_by"
+            ],
+            "properties": {
+              "keep_snapshots": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Published snapshots each mirror keeps, on top of those in use.",
+                "minimum": 0
+              },
+              "runs": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MirrorRun"
+                },
+                "description": "Its 10 latest runs, with their output."
+              },
+              "snapshots": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SnapshotView"
+                },
+                "description": "Its 100 newest snapshots, pruned ones included."
+              },
+              "used_by": {
+                "$ref": "#/components/schemas/MirrorUsers",
+                "description": "What keeps it from being deleted."
+              }
+            }
+          }
+        ],
+        "description": "Body of `GET /api/mirrors/{id}`: the newest snapshots and runs first,\nruns with their output."
+      },
+      "MirrorFamily": {
+        "type": "string",
+        "description": "Package family of a mirror, which decides the tools and the URL prefix.",
+        "enum": [
+          "apt",
+          "dnf"
+        ]
+      },
+      "MirrorList": {
+        "type": "object",
+        "description": "Body of `GET /api/mirrors`, by name.",
+        "required": [
+          "mirrors",
+          "keep_snapshots"
+        ],
+        "properties": {
+          "keep_snapshots": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Published snapshots each mirror keeps, on top of those in use.",
+            "minimum": 0
+          },
+          "mirrors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MirrorView"
+            }
+          }
+        }
+      },
+      "MirrorRun": {
+        "type": "object",
+        "description": "A `mirror_runs` row.",
+        "required": [
+          "id",
+          "mirror_id",
+          "kind",
+          "trigger",
+          "state",
+          "output",
+          "started_at"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed; `null` otherwise."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` while running."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MirrorRunKind"
+          },
+          "mirror_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "output": {
+            "type": "string",
+            "description": "What the mirror tools printed."
+          },
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`user:<id>` for a manual run; `null` for a scheduled one."
+          },
+          "snapshot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The snapshot a `snapshot` run made, or a sync's automatic one."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/MirrorRunState"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/MirrorRunTrigger"
+          }
+        }
+      },
+      "MirrorRunKind": {
+        "type": "string",
+        "description": "`sync` copies the upstream repository; `snapshot` publishes what the\nlast sync copied under a name.",
+        "enum": [
+          "sync",
+          "snapshot"
+        ]
+      },
+      "MirrorRunState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "succeeded",
+          "failed"
+        ]
+      },
+      "MirrorRunSummary": {
+        "type": "object",
+        "description": "A run without its output, as listings show it.",
+        "required": [
+          "id",
+          "kind",
+          "trigger",
+          "state",
+          "started_at"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MirrorRunKind"
+          },
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snapshot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/MirrorRunState"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/MirrorRunTrigger"
+          }
+        }
+      },
+      "MirrorRunTrigger": {
+        "type": "string",
+        "description": "Who started a run: the schedule or a person.",
+        "enum": [
+          "schedule",
+          "manual"
+        ]
+      },
+      "MirrorTools": {
+        "type": "object",
+        "description": "Whether mirrors can run on this install, and why not.",
+        "required": [
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not; `null` when available."
+          }
+        }
+      },
+      "MirrorUsers": {
+        "type": "object",
+        "description": "What keeps a mirror from being deleted. Relays are not here: they hold\ncopies, which go with it, and the servers behind them count as servers.",
+        "required": [
+          "campaigns",
+          "servers"
+        ],
+        "properties": {
+          "campaigns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsingCampaign"
+            }
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsingServer"
+            }
+          }
+        }
+      },
+      "MirrorView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Mirror"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "current_snapshot": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The newest published snapshot, which `current` serves; `null`\nbefore the first."
+              },
+              "last_run": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MirrorRunSummary",
+                    "description": "`null` before the first run."
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "One mirror with the name of its `current` snapshot and its last run."
+      },
       "NameRequest": {
         "type": "object",
         "description": "Body of `POST /api/customers` and `POST /api/customers/{id}/sites`.",
@@ -4556,6 +7773,501 @@
           }
         },
         "additionalProperties": false
+      },
+      "Relay": {
+        "type": "object",
+        "description": "One relay. Add fields, never rename or remove them.",
+        "required": [
+          "id",
+          "peer_id",
+          "name",
+          "site_id",
+          "site_name",
+          "customer_id",
+          "customer_name",
+          "created_at",
+          "status",
+          "server_names",
+          "server_count",
+          "connected_agents",
+          "offline_alerts",
+          "site_offline_alerts"
+        ],
+        "properties": {
+          "cert_not_after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Latest expiry among the relay's unrevoked certificates."
+          },
+          "connected_agents": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Agent streams the relay forwards right now.",
+            "minimum": 0
+          },
+          "connected_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Start of the relay's own stream, when online."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it enrolled."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_heartbeat": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Last message on its own stream, live or as last stored."
+          },
+          "last_update": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RelayCommand",
+                "description": "Its latest self-update; `null` if it never had one."
+              }
+            ]
+          },
+          "mirror_reported_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the relay last reported its mirrors."
+          },
+          "mirror_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base URL of the relay's mirror listener as it last reported it;\n`null` when it serves no mirrors (ADR-0037)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its display name."
+          },
+          "offline_alerts": {
+            "type": "boolean",
+            "description": "Whether it opens an incident when offline (ADR-0072); muted when\nthis or `site_offline_alerts` is `false`."
+          },
+          "peer_id": {
+            "type": "string",
+            "description": "The relay certificate ID."
+          },
+          "pending_names": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "While the relay waits for an administrator: the names it reported,\nwhich are not on any certificate; `null` otherwise. It speaks for\nno agent until then (ADR-0066)."
+          },
+          "pending_source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address it enrolled from, while it waits."
+          },
+          "relay_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version of its last Hello; `null` before it connected with a\nserver that records it (ADR-0055)."
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was removed; `null` while enrolled. Lists show only\nenrolled relays."
+          },
+          "server_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Servers whose latest connection came through this relay."
+          },
+          "server_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names its certificate carries for agents, from its enrollment\ntoken (ADR-0025) or confirmed by an administrator (ADR-0066);\nrenewal keeps them."
+          },
+          "silenced_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "While a silence covers it, when the last one ends (ADR-0079)."
+          },
+          "site_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "site_name": {
+            "type": "string"
+          },
+          "site_offline_alerts": {
+            "type": "boolean",
+            "description": "The same setting of its site."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ServerStatus",
+            "description": "`online` while the relay's own stream is open."
+          }
+        }
+      },
+      "RelayCommand": {
+        "type": "object",
+        "description": "One relay command, as the API shows it: a self-update (ADR-0055).",
+        "required": [
+          "id",
+          "relay_id",
+          "version",
+          "state",
+          "issued_at",
+          "expires_at"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed; `null` otherwise."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it expires if the relay has not taken it."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` while in flight."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "relay_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The user who asked; `null` for automatic updates, or when that user\nwas deleted."
+          },
+          "state": {
+            "type": "string",
+            "description": "`queued`, `sent` or `running` while in flight; then `succeeded`,\n`failed`, `expired` (the relay did not take it within 24 hours) or\n`cancelled`.",
+            "example": "succeeded"
+          },
+          "stdout": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the updater printed, when it reported."
+          },
+          "version": {
+            "type": "string",
+            "description": "The release asked for."
+          }
+        }
+      },
+      "RelayDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Relay"
+          },
+          {
+            "type": "object",
+            "required": [
+              "servers",
+              "updates"
+            ],
+            "properties": {
+              "certificate": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CertificateView",
+                    "description": "The certificate issued last to the relay, revoked or not."
+                  }
+                ]
+              },
+              "servers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RelayServer"
+                },
+                "description": "Servers attached to the relay, by hostname."
+              },
+              "updates": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RelayCommand"
+                },
+                "description": "Its latest self-updates, newest first."
+              }
+            }
+          }
+        ],
+        "description": "Body of `GET /api/relays/{id}`."
+      },
+      "RelayList": {
+        "type": "object",
+        "description": "Body of `GET /api/relays`, sorted by site name and peer ID.",
+        "required": [
+          "relays"
+        ],
+        "properties": {
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last one."
+          },
+          "relays": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Relay"
+            }
+          }
+        }
+      },
+      "RelayNamesRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/relays/{id}/names`.",
+        "required": [
+          "names"
+        ],
+        "properties": {
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names for its certificate, in order of preference: those it\nreported that the administrator kept, and any added. 1 to 16 DNS\nnames or IP addresses; no wildcard, `localhost` or loopback\naddress, none of the central server's names, and none another\nsite's relay holds (private addresses excepted). Stored in lower\ncase, without duplicates."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RelayServer": {
+        "type": "object",
+        "description": "A server whose latest connection came through the relay.",
+        "required": [
+          "id",
+          "peer_id",
+          "hostname",
+          "status"
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "peer_id": {
+            "type": "string",
+            "description": "The server's certificate ID."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ServerStatus",
+            "description": "`online` while its stream goes through this relay."
+          }
+        }
+      },
+      "RelayUpdateRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/relays/{id}/update`.",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "allow_downgrade": {
+            "type": "boolean",
+            "description": "Install it even when older than the running version. `false` by\ndefault: the relay then refuses a downgrade."
+          },
+          "health_timeout_s": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Seconds the new relay has to connect back before it rolls back, 30\nto 3600; 0 or absent for 300.",
+            "minimum": 0
+          },
+          "version": {
+            "type": "string",
+            "description": "The release to install, such as `0.9.2`: one this server holds (see\n`GET /api/v1/agent-releases`), else the relay downloads it from\nwhere releases are published."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReleaseImport": {
+        "type": "object",
+        "description": "Body of a successful import.",
+        "required": [
+          "version",
+          "missing"
+        ],
+        "properties": {
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Files of a whole release that were not given: the platforms or\ninstallers it cannot serve."
+          },
+          "version": {
+            "type": "string",
+            "description": "The version imported, such as `0.9.2`."
+          }
+        }
+      },
+      "ReleaseImportUrlRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/agent-releases/import-url`.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The http or https directory holding the release files, such as a\nrelease's download directory; a trailing slash is added."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReleaseUpload": {
+        "type": "object",
+        "description": "The files of a release, for `POST /api/agent-releases/import`.",
+        "required": [
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "description": "One part per file, each named by its file name in the release\n(`filename` of the part): `SHA256SUMS`, `SHA256SUMS.sig` and\n`VERSION` are required, with at least one agent binary; any of\n`monitorflow-agent-linux-x86_64`, `monitorflow-agent-linux-aarch64`,\n`monitorflow-agent-windows-x86_64.exe`,\n`monitorflow-agent-windows-x86_64.msi`, `install.sh`,\n`monitorflow-agent.service`, `monitorflow-agent-sudoers`,\n`monitorflow-relay-linux-x86_64`, `monitorflow-relay-linux-aarch64`,\n`monitorflow-relay.service` and `monitorflow-relay-sudoers` may\nfollow. Other files are ignored."
+          }
+        }
+      },
+      "RevocationReason": {
+        "type": "string",
+        "description": "Why a certificate was revoked (RFC 5280 §5.3.1).",
+        "enum": [
+          "unspecified",
+          "key_compromise",
+          "affiliation_changed",
+          "superseded",
+          "cessation_of_operation"
+        ]
+      },
+      "RevokeRequest": {
+        "type": "object",
+        "description": "Body of both revoke routes.",
+        "properties": {
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RevocationReason",
+                "description": "`unspecified` when absent; recorded in the revocation list."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "Revoked": {
+        "type": "object",
+        "description": "Answer of both revoke routes.",
+        "required": [
+          "revoked_at",
+          "reason",
+          "serials",
+          "closed_streams"
+        ],
+        "properties": {
+          "closed_streams": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Live streams closed: the peer's and, for a relay, those it forwards.",
+            "minimum": 0
+          },
+          "issued_through": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssuedThrough"
+            },
+            "description": "For a relay, the certificates of other peers among `serials`: those\nobtained through it (ADR-0028)."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/RevocationReason"
+          },
+          "revoked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "serials": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Certificates put in the CRL, lowercase hexadecimal."
+          }
+        }
       },
       "Rollup": {
         "type": "string",
@@ -5002,6 +8714,76 @@
           }
         }
       },
+      "SiteSources": {
+        "type": "object",
+        "description": "Body of `GET /api/sites/{id}/sources`, by host name.",
+        "required": [
+          "servers"
+        ],
+        "properties": {
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SiteSourcesServer"
+            },
+            "description": "Every enrolled server of the site."
+          }
+        }
+      },
+      "SiteSourcesChange": {
+        "type": "object",
+        "description": "Answer of the site's changes: each server is queued or skipped alone.",
+        "required": [
+          "queued",
+          "skipped"
+        ],
+        "properties": {
+          "queued": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Servers a command was queued for."
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkippedServer"
+            },
+            "description": "Servers that needed the change but could not take it now. Servers\nalready as asked are in neither list."
+          }
+        }
+      },
+      "SiteSourcesServer": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SourcesStatus"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "hostname",
+              "os_family"
+            ],
+            "properties": {
+              "hostname": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "os_family": {
+                "type": "string",
+                "description": "As in the server listing, so Windows rows read differently."
+              }
+            }
+          }
+        ],
+        "description": "One server of `GET /api/sites/{id}/sources`."
+      },
       "SiteView": {
         "type": "object",
         "description": "One site.",
@@ -5056,6 +8838,119 @@
           }
         }
       },
+      "SkippedServer": {
+        "type": "object",
+        "description": "A server a site's change left out, and why.",
+        "required": [
+          "id",
+          "hostname",
+          "reason"
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string",
+            "description": "A sentence for the page."
+          }
+        }
+      },
+      "Snapshot": {
+        "type": "object",
+        "description": "A `mirror_snapshots` row.",
+        "required": [
+          "id",
+          "mirror_id",
+          "name",
+          "state",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed; `null` otherwise."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mirror_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "description": "Such as `20261023T090000Z`; servers' sources name it."
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "`null` until published."
+          },
+          "size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Size on disk; `null` until published."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SnapshotState"
+          }
+        }
+      },
+      "SnapshotKept": {
+        "type": "string",
+        "description": "Why a snapshot stays, the strongest reason when there are several:\nit is `current`, a campaign, a server or a relay uses it, or it is among\nthe newest kept.",
+        "enum": [
+          "current",
+          "campaign",
+          "server",
+          "relay",
+          "newest"
+        ]
+      },
+      "SnapshotRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/mirrors/{id}/snapshots`.",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "1 to 64 of A-Z, a-z, 0-9, `.`, `_` and `-`, not starting with a dot\nand not `current`; the UTC time such as `20261023T090000Z` when\nabsent or `null`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SnapshotState": {
+        "type": "string",
+        "description": "State of a snapshot; only `published` ones are served under their name.",
+        "enum": [
+          "creating",
+          "published",
+          "failed",
+          "pruning",
+          "pruned"
+        ]
+      },
       "SnapshotSupport": {
         "type": "object",
         "description": "Whether the server can be snapshotted; without it the interface shows\nthat rollback is limited.",
@@ -5107,6 +9002,120 @@
           }
         }
       },
+      "SnapshotView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Snapshot"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kept": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SnapshotKept",
+                    "description": "Why it stays."
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A snapshot and why it stays; `null` when the next pass of retention\nremoves it, or while it is created."
+      },
+      "SourcesMode": {
+        "type": "string",
+        "description": "`replace` sets the host's other sources aside, `add` keeps them\n(ADR-0032).",
+        "enum": [
+          "replace",
+          "add"
+        ]
+      },
+      "SourcesStatus": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/{id}/sources`.",
+        "required": [
+          "using",
+          "mirrors",
+          "campaign",
+          "add_mirror"
+        ],
+        "properties": {
+          "add_mirror": {
+            "type": "boolean",
+            "description": "The fix is adding [`Self::distribution`] on the Mirrors page."
+          },
+          "campaign": {
+            "type": "boolean",
+            "description": "A campaign has the sources for now."
+          },
+          "changing_to": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SourcesUsing",
+                "description": "A change on its way to the server; `null` when none."
+              }
+            ]
+          },
+          "distribution": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The catalog's name for what the server runs, such as `Debian 12`;\n`null` when no mirror matches it."
+          },
+          "failed": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last change failed, when none succeeded or started since."
+          },
+          "mirrors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsedMirror"
+            },
+            "description": "With `mirror`: the mirrors and snapshots used. Empty otherwise."
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the server cannot use a mirror, in a sentence for the page;\n`null` when it can."
+          },
+          "using": {
+            "$ref": "#/components/schemas/SourcesUsing",
+            "description": "What the last change that succeeded left; `own` when none did."
+          },
+          "windows_update_source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WindowsUpdateSource",
+                "description": "Windows servers: where Windows Update takes updates from, from the\nlatest package report. `null` on Linux and until an agent that\nreports it sends a report (ADR-0086)."
+              }
+            ]
+          }
+        }
+      },
+      "SourcesUsing": {
+        "type": "string",
+        "description": "Where a server's packages come from.",
+        "enum": [
+          "mirror",
+          "own"
+        ]
+      },
       "StateFilter": {
         "type": "string",
         "enum": [
@@ -5131,6 +9140,155 @@
           "agent",
           "relay"
         ]
+      },
+      "UsedMirror": {
+        "type": "object",
+        "required": [
+          "name",
+          "snapshot"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The mirror's `name`."
+          },
+          "snapshot": {
+            "type": "string",
+            "description": "A snapshot name, or `current` for the newest."
+          }
+        }
+      },
+      "UsingCampaign": {
+        "type": "object",
+        "description": "A campaign not finished, pinned to the mirror.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "UsingServer": {
+        "type": "object",
+        "description": "A server pointed at the mirror, or that a campaign would put back on it.",
+        "required": [
+          "id",
+          "hostname"
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "WindowsUpdateAutomatic": {
+        "type": "string",
+        "description": "What Windows Update does on its own, as policy sets it.",
+        "enum": [
+          "off",
+          "notify",
+          "download",
+          "install",
+          "local_choice"
+        ]
+      },
+      "WindowsUpdateOrigin": {
+        "type": "string",
+        "description": "Where Windows Update takes updates from.",
+        "enum": [
+          "microsoft",
+          "wsus",
+          "wsus_without_url"
+        ]
+      },
+      "WindowsUpdateSource": {
+        "type": "object",
+        "description": "The update source of a Windows server, as the API returns it.",
+        "required": [
+          "origin",
+          "managed",
+          "no_internet",
+          "quality_from_microsoft",
+          "feature_from_microsoft",
+          "quality_deferral_days",
+          "feature_deferral_days"
+        ],
+        "properties": {
+          "automatic": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WindowsUpdateAutomatic",
+                "description": "`null` when policy leaves it to Windows."
+              }
+            ]
+          },
+          "download_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where downloads come from, when not the WSUS server."
+          },
+          "feature_deferral_days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "As `quality_deferral_days`, for feature updates.",
+            "minimum": 0
+          },
+          "feature_from_microsoft": {
+            "type": "boolean",
+            "description": "With WSUS: feature updates come from Microsoft instead."
+          },
+          "managed": {
+            "type": "boolean",
+            "description": "Any Windows Update policy is set."
+          },
+          "no_internet": {
+            "type": "boolean",
+            "description": "With WSUS: Windows never reaches Windows Update online."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/WindowsUpdateOrigin"
+          },
+          "quality_deferral_days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Windows Update for Business deferrals, of updates from Microsoft,\nin days (0 to 365).",
+            "minimum": 0
+          },
+          "quality_from_microsoft": {
+            "type": "boolean",
+            "description": "With WSUS: these come from Microsoft instead."
+          },
+          "status_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the server reports to, when not the WSUS server."
+          },
+          "wsus_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `wsus`; with `microsoft`, a server policy names but does not\nturn on, so Windows ignores it."
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -5169,6 +9327,22 @@
     {
       "name": "enrollment",
       "description": "Bringing servers and relays into MonitorFlow. An enrollment token is single-use: it enrolls one named server or relay on one site within its validity (one hour by default). An install key is reusable: it enrolls any number of servers (or one relay) on one site for up to a year, names each after its host, and can make new hosts wait for an administrator's approval. Both are secrets shown once, in the answer that creates them; no route returns them again and an `Idempotency-Key` replay does not either. Every route needs the administrator role on the site's customer, given globally or for that customer: a site's administrator cannot enroll. Through an API key, that means access \"Administer\", the \"administration\" area, and a reach of everything or of the customer."
+    },
+    {
+      "name": "relays",
+      "description": "Relays: one per site where servers cannot reach the central server, or should not each open a connection to it. A relay forwards its site's agents to the central server, can serve package mirrors and releases on its network, and is enrolled like a server. Reading relays needs any role on their site; removing, updating and confirming the names of one needs the administrator role on its customer. Through an API key, relays are in the \"servers\" area, their updates in \"updates\"; listing them is open to any key within its reach."
+    },
+    {
+      "name": "agent releases",
+      "description": "The MonitorFlow releases this server holds and serves to install commands and to agent and relay updates, so that servers without Internet access can install and update. Every release is checked against the release keys built into the server before it is kept. Importing one is for global administrators, since every customer uses the same releases."
+    },
+    {
+      "name": "mirrors",
+      "description": "Package mirrors: copies of the apt and dnf repositories of the distributions servers run, kept on this server and on relays, so servers update without reaching the Internet and every server of a campaign installs the same packages. A mirror syncs on a schedule; a snapshot freezes what a sync copied under a name and never changes, and `current` is the newest one. Mirrors are shared by every customer, so every route is for global administrators: through an API key, access \"Administer\", reach everything and the \"updates\" area."
+    },
+    {
+      "name": "package sources",
+      "description": "Where a server's apt or dnf takes its packages from: its own sources or the mirrors of this install. Changing them sends the server a signed `configure_sources` or `revert_sources` command, which the agent applies and can undo. Reading them needs any role on the server's site; changing them needs the administrator role on its customer. Through an API key, these routes are in the \"updates\" area. Windows servers have no mirror: their status says where Windows Update takes their updates from instead."
     }
   ]
 }

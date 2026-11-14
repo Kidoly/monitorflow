@@ -41,18 +41,23 @@ const STALLED: Duration = Duration::from_secs(60);
 pub type ImportLock = Arc<Mutex<()>>;
 
 /// Body of `POST /api/agent-releases/import-url`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = ReleaseImportUrlRequest)]
 #[serde(deny_unknown_fields)]
 pub struct UrlRequest {
-    /// The directory holding the release files.
+    /// The http or https directory holding the release files, such as a
+    /// release's download directory; a trailing slash is added.
     pub url: String,
 }
 
 /// Body of a successful import.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = ReleaseImport)]
 pub struct ImportResult {
+    /// The version imported, such as `0.9.2`.
     pub version: String,
-    /// Files of a whole release that were not given.
+    /// Files of a whole release that were not given: the platforms or
+    /// installers it cannot serve.
     pub missing: Vec<&'static str>,
 }
 
