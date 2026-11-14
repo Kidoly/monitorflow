@@ -30,9 +30,13 @@ use crate::plugins;
 /// Longest accepted secret.
 const MAX_SECRET: usize = 1024;
 
-/// A channel as the web interface shows it.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+/// A channel as the web interface shows it. Never its secret: a
+/// webhook shows only its origin, and `has_secret` says whether a
+/// password, signing secret or chat webhook URL is stored.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = NotificationChannel)]
 pub struct ChannelView {
+    /// The channel's ID.
     pub id: Uuid,
     /// `email`, `webhook`, `slack`, `teams`, `discord` or `plugin`.
     pub kind: String,
@@ -40,20 +44,26 @@ pub struct ChannelView {
     /// `{"origin"}`, the URL's scheme, host and port (ADR-0123); chat:
     /// `{"name", "host"}`; plugin: `{"plugin", "name", "values"}`, its
     /// secret settings apart (ADR-0103).
+    #[schema(value_type = Object)]
     pub settings: Value,
     /// Whether a password, signing secret or chat webhook URL is stored.
     pub has_secret: bool,
     /// The customer it covers, or the customer of the site it covers;
     /// `null` for everything.
     pub customer_id: Option<Uuid>,
+    /// Name of `customer_id`; `null` with it.
     pub customer_name: Option<String>,
     /// The site it covers; `null` for a whole customer or everything.
     pub site_id: Option<Uuid>,
+    /// Name of `site_id`; `null` with it.
     pub site_name: Option<String>,
+    /// When it was added.
     pub created_at: DateTime<Utc>,
+    /// The last message that went through; `null` before the first.
     pub last_sent_at: Option<DateTime<Utc>>,
     /// The last delivery's or test's error, `null` once one works.
     pub last_error: Option<String>,
+    /// When `last_error` happened; `null` with it.
     pub last_error_at: Option<DateTime<Utc>>,
     /// Hears only follow-up steps that name it, and their resolution
     /// (ADR-0082).
@@ -61,20 +71,33 @@ pub struct ChannelView {
 }
 
 /// Body of `GET /api/notifications/channels`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = NotificationChannelList)]
 pub struct ChannelList {
+    /// Oldest first.
     pub channels: Vec<ChannelView>,
 }
 
 /// Body of `POST /api/notifications/channels` and of `PUT` on one.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = NotificationChannelRequest)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelRequest {
+    /// `email`, `webhook`, `slack`, `teams`, `discord` or `plugin`.
     pub kind: String,
+    /// email: `{"host", "port" (587 when absent), "username" (empty
+    /// without authentication), "from" (the username when empty), "to"
+    /// (1 to 20 addresses)}`; webhook: `{"url"}`, http or https without
+    /// a user or password, empty on `PUT` to keep the stored one; chat:
+    /// `{"name"}`, at most 80 characters, the URL going in `secret`;
+    /// plugin: `{"plugin", "name", "values"}`, without its secret
+    /// settings.
+    #[schema(value_type = Object)]
     pub settings: Value,
     /// The SMTP password, webhook signing secret or chat webhook URL, or
-    /// a plugin's secret settings as a JSON object of strings. On `PUT`,
-    /// absent, `null` or empty keeps the stored one.
+    /// a plugin's secret settings as a JSON object of strings; at most
+    /// 1024 bytes. Write-only: never returned. On `PUT`, absent, `null`
+    /// or empty keeps the stored one.
     #[serde(default)]
     pub secret: Option<String>,
     /// The customer to cover; with `site_id` also `null`, everything.
@@ -90,10 +113,12 @@ pub struct ChannelRequest {
 }
 
 /// Body of `POST /api/notifications/channels/{id}/test`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = NotificationChannelTest)]
 pub struct TestResult {
+    /// Whether the test message went through.
     pub ok: bool,
-    /// Why it failed, in plain words.
+    /// Why it failed, in plain words; `null` when it went through.
     pub error: Option<String>,
 }
 

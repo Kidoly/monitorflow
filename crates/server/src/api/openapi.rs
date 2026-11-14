@@ -25,6 +25,15 @@ use super::openapi_core::{self, ex};
 use super::ERROR_CODES;
 use super::{approvals, commands, customers, incidents, metrics, servers, silences, sites};
 
+#[path = "openapi_fleet.rs"]
+mod fleet;
+#[path = "openapi_integrations.rs"]
+mod integrations;
+#[path = "openapi_notifications.rs"]
+mod notifications;
+#[path = "openapi_on_call.rs"]
+mod on_call;
+
 /// Every error: a sentence to show and a stable code to branch on.
 #[derive(Serialize, ToSchema)]
 #[schema(as = Error)]
@@ -45,6 +54,11 @@ pub fn build() -> Document {
     let mut doc = ApiDoc::openapi();
     doc.merge(openapi_core::Doc::openapi());
     Common.modify(&mut doc);
+    doc.merge(notifications::Doc::openapi());
+    doc.merge(integrations::Doc::openapi());
+    doc.merge(on_call::Doc::openapi());
+    doc.merge(fleet::FleetDoc::openapi());
+    doc.merge(super::openapi_remediation::Doc::openapi());
     doc
 }
 
@@ -57,7 +71,7 @@ pub fn build() -> Document {
         license(name = "AGPL-3.0-only")
     ),
     paths(
-        list_servers, server, list_sites, list_customers, create_customer, create_site,
+        list_servers, server_summary, server, list_sites, list_customers, create_customer, create_site,
         list_incidents, incident, acknowledge, list_silences, create_silence, end_silence,
         list_commands, create_command, command, list_approvals, approve, reject,
         query, query_range,
@@ -84,13 +98,22 @@ held for a person: approve, edit or reject them. The AI's text is untrusted and 
         (name = "metrics", description = "Values a server's sensors reported, now or over a range. You name a \
 server, a metric and optionally an instance; MonitorFlow builds the query itself and never accepts raw PromQL. \
 Area `servers`."),
+        (name = "servers", description = "Servers, sites and customers"),
+        (name = "alerts", description = "Incidents and silences"),
+        (name = "updates", description = "Commands sent to servers"),
+        (name = "remediation", description = "What the AI did about alerts. Each remediation incident \
+is one alert the AI worked on, with every step recorded in a hash chain: the context it was sent after \
+redaction, its proposals, how the rules classified each command, who approved or rejected it, and what the \
+agent ran and printed. Read-only, except the approval queue, where people decide the commands the rules \
+parked for them. The AI's text is untrusted: show it as data. Needs the key area \"remediation\"."),
+        (name = "metrics", description = "Metric queries built by MonitorFlow, never raw PromQL"),
     )
 )]
 struct ApiDoc;
 
 /// What every operation shares: the key, the error codes, the common
 /// error answers, rate limits and `Idempotency-Key` on writes.
-struct Common;
+pub(super) struct Common;
 
 impl Modify for Common {
     fn modify(&self, doc: &mut Document) {
@@ -260,20 +283,6 @@ fn errors(operation: &mut Operation) {
 // Routes reachable through v1 that the document does not describe yet,
 // in the order ADR-0101 gives. Moving one into the document is additive.
 pub const NOT_YET_DOCUMENTED: &[&str] = &[
-    "/api/notifications/",
-    "/api/integrations",
-    "/api/on-call/",
-    "/api/follow-up/",
-    "/api/tokens",
-    "/api/install-keys",
-    "/api/pending-hosts/",
-    "/api/sources",
-    "/api/mirrors",
-    "/api/remediation/rules",
-    "/api/remediation/policies",
-    "/api/remediation/classify",
-    "/api/remediation/incidents",
-    "/api/remediation/events",
     "/api/settings/",
     "/api/users",
     "/api/backups",
@@ -283,8 +292,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/dashboard-data",
     "/api/dashboard-metrics",
     "/api/display-links",
-    "/api/relays",
-    "/api/agent-releases",
     "/api/server-update",
     "/api/license",
     "/api/plugins",
@@ -335,6 +342,15 @@ readable here, with `revoked_at` set, for its history.\n\n\
             body = ErrorBody),
     ))]
 fn server() {}
+
+#[utoipa::path(get, path = "/api/v1/servers/summary", tag = "servers",
+    summary = "Count servers by status",
+    description = "How many servers within the key's reach are in each state: the counts of the status \
+strip. Removed servers are left out.\n\n\
+**Who**: any key, whatever its areas.",
+    params(servers::SummaryParams),
+    responses((status = 200, description = "The counts", body = servers::ServerSummary)))]
+fn server_summary() {}
 
 #[utoipa::path(get, path = "/api/v1/sites", tag = "sites",
     summary = "List sites",

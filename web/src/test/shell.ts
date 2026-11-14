@@ -31,8 +31,12 @@ export const sites: Site[] = [
 /** An open incident on `siteId`; only the fields the shell reads matter. */
 export const openIncident = (id: string, siteId: string) => ({ id, site_id: siteId, state: "open" }) as Incident;
 
-/** What the shell fetches: scope lists and the open incidents count. */
+/** Servers per state, for the status strip. */
+export const summary = { critical: 2, warning: 0, acknowledged: 1, silenced: 1, offline: 3, ok: 1980, total: 1987 };
+
+/** What the shell fetches: scope lists, the open incidents count and the status strip. */
 export const SHELL_ROUTES = {
+  "GET /api/servers/summary": { status: 200, body: summary },
   "GET /api/customers": { status: 200, body: { customers } },
   "GET /api/sites": { status: 200, body: { sites } },
   "GET /api/incidents?state=open&limit=500": {

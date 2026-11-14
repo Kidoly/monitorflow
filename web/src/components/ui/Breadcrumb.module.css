@@ -13,3 +13,101 @@
 .current {
   color: var(--text);
 }
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.toggle {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-label);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.toggle:hover,
+.toggle[aria-expanded="true"] {
+  background: var(--hl);
+  color: var(--text);
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+/* Not a modal: only the list itself takes clicks. */
+.panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  max-width: 360px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  font-size: 14px;
+}
+
+.panel ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.panel a,
+.here {
+  display: block;
+  padding: 6px 8px;
+  border-radius: var(--radius-label);
+  color: var(--text);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel a:hover,
+.panel a:focus-visible {
+  background: var(--hl);
+  outline: none;
+}
+
+.here {
+  font-weight: 600;
+}
+
+.filter {
+  width: 100%;
+  height: 32px;
+  margin-bottom: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.note {
+  margin: 0;
+  padding: 6px 8px;
+  color: var(--muted);
+}

@@ -22,13 +22,13 @@ use crate::mirror::{relays, Mirrors};
 
 /// Body of `POST /api/servers/{id}/sources`.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-#[schema(as = SourcesRequest)]
+#[schema(as = ConfigureSourcesRequest)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigureRequest {
-    /// Mirrors of the server's family, at least one.
+    /// 1 to 32 mirrors of the server's package family.
     pub mirrors: Vec<MirrorChoice>,
     pub mode: ModeChoice,
-    /// Seconds the agent may still start it, 60 to 604800, one hour by
+    /// Seconds the command waits for the server, 60 to 604800; 3600 by
     /// default.
     pub ttl_s: Option<u64>,
 }
@@ -36,7 +36,7 @@ pub struct ConfigureRequest {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MirrorChoice {
-    /// The mirror's name, like `debian-12`.
+    /// A mirror's `name`.
     pub name: String,
     /// A published snapshot, or `current` (the default).
     #[serde(default = "current")]

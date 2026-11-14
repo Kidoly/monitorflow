@@ -704,6 +704,29 @@ pub async fn effective_site(
     }))
 }
 
+/// The sensors `server_id` of `site_id` runs, as
+/// `GET /api/servers/{id}/sensors` lists them, for a site whose built-in
+/// checks run every `site_interval` milliseconds when set.
+pub(super) async fn server_effective(
+    pool: &PgPool,
+    server_id: Uuid,
+    site_id: Uuid,
+    site_interval: Option<i32>,
+) -> Result<Vec<EffectiveSensor>, sqlx::Error> {
+    // SQL-safe: interpolates only the constant ENTRY_COLUMNS.
+    let entries: Vec<Entry> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {ENTRY_COLUMNS} FROM sensor_configs WHERE site_id = $1 OR server_id = $2"
+    )))
+    .bind(site_id)
+    .bind(server_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(effective_sensors(
+        &entries,
+        builtin_interval(site_interval).0,
+    ))
+}
+
 /// Resolves `entries` over the built-in checks every
 /// `builtin_interval_ms` with [`sensor_config::resolve`], the function the
 /// push uses, then names the row each sensor comes from: the server's

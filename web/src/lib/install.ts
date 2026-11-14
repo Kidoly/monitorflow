@@ -77,7 +77,7 @@ export function endpoints(target: InstallTarget, relay = ""): { server: string; 
 /** Why `central` offers nothing, or `null` when it can be used. */
 export function centralUnavailable(install: AgentInstall, origin: string): string | null {
   if (!install.central) {
-    return "This server holds no agent release yet. A global administrator imports one under Administration › Server update.";
+    return "This server holds no agent release yet. A global administrator imports one under Settings › Server update.";
   }
   if (!isHttpsOrigin(origin)) return `Installs from this server need the web interface on HTTPS; this page is on ${origin}.`;
   return null;

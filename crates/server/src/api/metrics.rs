@@ -82,7 +82,7 @@ pub enum Rollup {
 }
 
 impl Rollup {
-    fn function(self) -> &'static str {
+    pub(super) fn function(self) -> &'static str {
         match self {
             Self::Avg => "avg_over_time",
             Self::Max => "max_over_time",
@@ -186,7 +186,7 @@ pub struct Target {
 impl Target {
     /// `extra_label` parameters, which VictoriaMetrics adds to every
     /// selector of the query.
-    fn extra_labels(&self) -> [(&'static str, String); 2] {
+    pub(super) fn extra_labels(&self) -> [(&'static str, String); 2] {
         [
             ("extra_label", format!("peer={}", self.peer)),
             ("extra_label", format!("site={}", self.site)),
@@ -327,7 +327,7 @@ async fn target(
     Ok((vm, Target { peer, site }))
 }
 
-fn backend_error(error: QueryError) -> ApiError {
+pub(super) fn backend_error(error: QueryError) -> ApiError {
     match error {
         QueryError::Timeout => ApiError::MetricsTimeout,
         QueryError::Rejected(message) => {

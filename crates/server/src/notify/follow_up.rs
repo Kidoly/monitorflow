@@ -38,15 +38,20 @@ pub const LINK_LIFETIME: TimeDelta = TimeDelta::hours(12);
 
 /// One step: after `after_minutes` without acknowledgement, counted from
 /// the step before or from the first message, tell these.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = FollowUpStepRequest)]
 #[serde(deny_unknown_fields)]
 pub struct Step {
+    /// Minutes without acknowledgement before telling, 1 to 1440,
+    /// counted from the step before or from the first message.
     pub after_minutes: u32,
     /// Schedules whose person on call is told, or who covers their gap.
     #[serde(default)]
     pub on_call: Vec<Uuid>,
+    /// Users told in person.
     #[serde(default)]
     pub users: Vec<Uuid>,
+    /// Notification channels told.
     #[serde(default)]
     pub channels: Vec<Uuid>,
     /// The nearest administrators of the incident's place who can be told:
@@ -545,11 +550,12 @@ pub async fn acknowledge(
     incidents: &[Uuid],
     (user, username): (Uuid, &str),
     via: &str,
+    note: Option<&str>,
     now: DateTime<Utc>,
 ) -> Result<Vec<Uuid>, sqlx::Error> {
     let done: Vec<Uuid> = sqlx::query_scalar(
-        "INSERT INTO incident_acknowledgements (incident_id, user_id, username, acknowledged_at, via)
-         SELECT id, $2, $3, $4, $5 FROM incidents WHERE id = ANY($1) AND state = 'open'
+        "INSERT INTO incident_acknowledgements (incident_id, user_id, username, acknowledged_at, via, note)
+         SELECT id, $2, $3, $4, $5, $6 FROM incidents WHERE id = ANY($1) AND state = 'open'
          ORDER BY id
          ON CONFLICT (incident_id) DO NOTHING
          RETURNING incident_id",
@@ -559,12 +565,15 @@ pub async fn acknowledge(
     .bind(username)
     .bind(now)
     .bind(via)
+    .bind(note)
     .fetch_all(&mut *db)
     .await?;
+    // The note only when there is one, so older events and links read the same.
     sqlx::query(
         "INSERT INTO incident_events (incident_id, occurred_at, kind, severity, details)
          SELECT id, $2, 'acknowledged', severity,
-                jsonb_build_object('user_id', $3::uuid, 'username', $4::text, 'via', $5::text)
+                jsonb_strip_nulls(jsonb_build_object('user_id', $3::uuid, 'username', $4::text,
+                                                     'via', $5::text, 'note', $6::text))
          FROM incidents WHERE id = ANY($1) ORDER BY id",
     )
     .bind(&done)
@@ -572,6 +581,7 @@ pub async fn acknowledge(
     .bind(user)
     .bind(username)
     .bind(via)
+    .bind(note)
     .execute(&mut *db)
     .await?;
     stop(&mut *db, &done, "acknowledged", now).await?;

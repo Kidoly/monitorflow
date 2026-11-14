@@ -13,6 +13,7 @@ pub const MAX_URL: usize = 512;
 /// Longest deferral Windows accepts, in days.
 pub const MAX_DEFERRAL_DAYS: u32 = 365;
 
+/// Where Windows Update takes updates from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[schema(as = WindowsUpdateOrigin)]
 #[serde(rename_all = "snake_case")]
@@ -25,6 +26,7 @@ pub enum Origin {
     WsusWithoutUrl,
 }
 
+/// What Windows Update does on its own, as policy sets it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[schema(as = WindowsUpdateAutomatic)]
 #[serde(rename_all = "snake_case")]
@@ -63,9 +65,10 @@ pub struct UpdateSource {
     pub quality_from_microsoft: bool,
     /// With WSUS: feature updates come from Microsoft instead.
     pub feature_from_microsoft: bool,
-    /// Days monthly updates from Microsoft are held back, 0 to 365.
+    /// Windows Update for Business deferrals, of updates from Microsoft,
+    /// in days (0 to 365).
     pub quality_deferral_days: u32,
-    /// Days feature updates from Microsoft are held back, 0 to 365.
+    /// As `quality_deferral_days`, for feature updates.
     pub feature_deferral_days: u32,
 }
 

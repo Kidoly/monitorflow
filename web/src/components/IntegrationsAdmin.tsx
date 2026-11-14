@@ -59,7 +59,7 @@ import { RelativeTime } from "./ui/RelativeTime";
 import { SecretField } from "./ui/SecretField";
 import { Label } from "./ui/StatusLabel";
 
-/** `/admin/integrations/`: administrators, each of what they administer, like the API (ADR-0102). */
+/** `/settings/integrations/`: administrators, each of what they administer, like the API (ADR-0102). */
 export function IntegrationsPage() {
   const me = useMe();
   if (!isAdministrator(me)) {

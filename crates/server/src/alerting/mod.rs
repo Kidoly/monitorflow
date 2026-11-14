@@ -5,6 +5,7 @@
 
 pub mod engine;
 pub mod offline;
+pub mod reason;
 pub mod rules;
 pub mod state;
 pub mod store;

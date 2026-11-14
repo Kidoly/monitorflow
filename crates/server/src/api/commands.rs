@@ -345,7 +345,7 @@ pub const MIN_HEALTH_TIMEOUT_S: u32 = 30;
 pub const MAX_HEALTH_TIMEOUT_S: u32 = 3600;
 
 /// `GET /api/agent-releases`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AgentReleases {
     /// Cached versions, newest first.
     pub versions: Vec<String>,

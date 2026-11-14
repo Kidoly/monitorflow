@@ -707,6 +707,33 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 Ctx::mentions(&body, a.server) && !Ctx::mentions(&body, b.server),
                 "{body}"
             );
+            // Asking for B's site lists nothing rather than B's servers.
+            let (status, body) = ctx
+                .call(method, &format!("{path}?site_id={}", b.site), None)
+                .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["servers"], json!([]), "{body}");
+        }
+        ("GET", "/api/servers/summary") => {
+            // Counts A's servers only, whatever place it asks for.
+            let (status, mine) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            let (_, own) = ctx
+                .call(method, &format!("{path}?site_id={}", a.site), None)
+                .await;
+            assert_eq!(mine["total"], own["total"], "{mine} {own}");
+            assert!(mine["total"].as_u64() > Some(0), "{mine}");
+            for query in [
+                format!("site_id={}", b.site),
+                format!("customer_id={}", b.customer),
+            ] {
+                let (status, theirs) = ctx.call(method, &format!("{path}?{query}"), None).await;
+                assert_eq!(
+                    (status, theirs["total"].as_u64()),
+                    (StatusCode::OK, Some(0)),
+                    "{query}"
+                );
+            }
         }
         ("GET", "/api/sites") => {
             let (status, body) = ctx.call(method, path, None).await;
@@ -1136,6 +1163,18 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             };
             assert_eq!(ctx.status(method, &uri, body).await, StatusCode::FORBIDDEN);
         }
+        // Servers running each check: A's site and server rows, not B's.
+        ("GET", "/api/checks/usage") => {
+            let (status, body) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            let cpu = body["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["name"] == "cpu")
+                .unwrap_or_else(|| panic!("{body}"));
+            assert_eq!(cpu["servers"], 2, "{body}");
+        }
         // Where plugins may be used: only the places A sees.
         ("GET", "/api/plugins/usable") => {
             let (status, body) = ctx.call(method, path, None).await;
@@ -1518,6 +1557,21 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
             let uri = format!("/api/servers/{}/metrics", b.server);
             assert_eq!(ctx.status(method, &uri, None).await, not_found);
             let uri = format!("/api/servers/{}/metrics", a.server);
+            assert_eq!(ctx.status(method, &uri, None).await, StatusCode::OK);
+            let last = ctx.vm_seen_last();
+            assert!(
+                last.contains("site=\"site-a\"") && last.contains("extra_label=site=site-a"),
+                "{last}"
+            );
+        }
+        // Batched sensor values: B is 404 and never queried; A only with
+        // A's matchers and filters.
+        ("GET", "/api/servers/{id}/sensor-values") => {
+            let before = ctx.vm.seen().len();
+            let uri = format!("/api/servers/{}/sensor-values", b.server);
+            assert_eq!(ctx.status(method, &uri, None).await, not_found);
+            assert_eq!(ctx.vm.seen().len(), before);
+            let uri = format!("/api/servers/{}/sensor-values", a.server);
             assert_eq!(ctx.status(method, &uri, None).await, StatusCode::OK);
             let last = ctx.vm_seen_last();
             assert!(

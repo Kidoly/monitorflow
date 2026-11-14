@@ -105,7 +105,7 @@ describe("ApprovalQueue", () => {
       </As>,
     );
     expect(await screen.findByText("AI is off.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Turn on AI" })).toHaveAttribute("href", "/admin/ai");
+    expect(screen.getByRole("link", { name: "Turn on AI" })).toHaveAttribute("href", "/settings/ai");
     unmount();
 
     render(

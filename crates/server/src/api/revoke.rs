@@ -43,7 +43,7 @@ pub struct IssuedThrough {
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RevokeRequest {
-    /// `unspecified` when absent.
+    /// `unspecified` when absent; recorded in the revocation list.
     pub reason: Option<RevocationReason>,
 }
 
@@ -61,6 +61,7 @@ pub struct Revoked {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub issued_through: Vec<IssuedThrough>,
     /// Live streams closed: the peer's and, for a relay, those it forwards.
+    #[schema(value_type = u64)]
     pub closed_streams: usize,
 }
 

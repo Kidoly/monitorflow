@@ -155,7 +155,7 @@ describe("RelayListPage", () => {
     expect(rows[1]).toHaveTextContent(/relay-1\s*paris · acme\s*Online\s*1 connected \/ 2 total\s*relay1\.paris\.example/);
     expect(within(rows[1]!).getByRole("link", { name: "relay-1" })).toHaveAttribute(
       "href",
-      expect.stringMatching(/^\/admin\/relays\/view\/?\?id=6f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a02$/),
+      expect.stringMatching(/^\/settings\/relays\/view\/?\?id=6f1c2a52-3b5e-4c43-9a51-0e7f6d1f1a02$/),
     );
     expect(rows[2]).toHaveTextContent(/relay-2.*Offline.*Valid/);
     expect(rows[3]).toHaveTextContent(/relay-3.*Offline.*None/);
