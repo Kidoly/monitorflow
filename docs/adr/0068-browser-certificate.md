@@ -7,7 +7,7 @@ Status: accepted; amends ADR-0006 and ADR-0065
 
 A browser opening a fresh server on an IP address or internal name met a warning, and trusting Caddy's CA took a `docker compose exec` and a file to carry (simplicity audit, B3). A `.lan` name was worse: Caddy tried ACME for it and never got a certificate, so HTTPS did not work at all.
 
-The way to a trust store has to start before TLS is trusted, and it needs a certificate delivered somehow. That means plain HTTP, which `CLAUDE.md` forbids beyond the mirror exception of ADR-0030 and ADR-0034, hence this ADR.
+The way to a trust store has to start before TLS is trusted, and it needs a certificate delivered somehow. That means plain HTTP, which the project conventions forbid beyond the mirror exception of ADR-0030 and ADR-0034, hence this ADR.
 
 ## Decision
 

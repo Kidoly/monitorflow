@@ -56,7 +56,7 @@ One port per configured sensor, so the series is already unique per `(name, inst
 
 **UDP** is out of scope: there is no connection to establish. A UDP probe only learns "closed" from an ICMP port unreachable, which firewalls drop, and "open" only from a reply, which needs a payload specific to each protocol (DNS, NTP, SNMP). Without one, a silent port is ambiguous. `protocol = "udp"` is refused with a pointer here; protocol-aware checks can come as their own sensors.
 
-**Network code in `crates/sensors`.** Architecture §2 kept the crate free of network code so it stays portable and has no transport stack. That intent is about the upstream link (gRPC, TLS, HTTP clients), which stays out. A TCP connect through tokio is a measurement, portable to Windows, and adds no dependency, so it lives here; the architecture document and CLAUDE.md now say "no transport code". Plaintext listeners remain forbidden; the sensor only connects.
+**Network code in `crates/sensors`.** Architecture §2 kept the crate free of network code so it stays portable and has no transport stack. That intent is about the upstream link (gRPC, TLS, HTTP clients), which stays out. A TCP connect through tokio is a measurement, portable to Windows, and adds no dependency, so it lives here; the architecture document and the project conventions now say "no transport code". Plaintext listeners remain forbidden; the sensor only connects.
 
 **Example.** `kind = "port"`, `name = "port"`, `instance = "postgres"`, `params = {"host": "db1.internal", "port": 5432}`; threshold `monitorflow_port_up < 1` with a duration of 2 minutes. Locally: `monitorflow-agent sensors probe port --param port=22`.
 
