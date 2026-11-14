@@ -67,39 +67,77 @@ export const SILENCES_PATH = "/silences/";
 /** Who is on call, and one's own contact (ADR-0081). */
 export const ON_CALL_PATH = "/on-call/";
 
-/** Administration pages (ADR-0029). */
-export const RELAYS_PATH = "/admin/relays/";
-export const SITES_PATH = "/admin/sites/";
-export const TOKENS_PATH = "/admin/tokens/";
-export const USERS_PATH = "/admin/users/";
-/** API keys and the public API's documentation (ADR-0101). */
-export const API_KEYS_PATH = "/admin/api-keys/";
-export const API_DOCS_PATH = "/admin/api-keys/docs/";
+/**
+ * Settings: one page listing the others, which live under it. They were
+ * under `/admin/` before; `LEGACY_SETTINGS_PATHS` redirects those.
+ */
+export const SETTINGS_PATH = "/settings/";
+/** How this server runs: address, sign-in, packages, retention (ADR-0069). */
+export const GENERAL_SETTINGS_PATH = "/settings/general/";
 
+/** Settings pages (ADR-0029). */
+export const RELAYS_PATH = "/settings/relays/";
+export const SITES_PATH = "/settings/sites/";
+/** Install commands and single-use tokens. */
+export const TOKENS_PATH = "/settings/add-servers/";
+export const USERS_PATH = "/settings/users/";
+/** API keys and the public API's documentation (ADR-0101). */
+export const API_KEYS_PATH = "/settings/api-keys/";
+export const API_DOCS_PATH = "/settings/api-keys/docs/";
+
+/** Email, chat and webhook notifications (ADR-0060, ADR-0077). */
+export const NOTIFICATIONS_PATH = "/settings/notifications/";
+/** Signed events for other tools, like a PSA (ADR-0102). */
+export const INTEGRATIONS_PATH = "/settings/integrations/";
+/** AI setup, global administrators only (ADR-0064). */
+export const AI_SETTINGS_PATH = "/settings/ai/";
+
+/** Updating the central server (ADR-0056). */
+export const SERVER_UPDATE_PATH = "/settings/server-update/";
+/** Backups of the server (ADR-0058). */
+export const BACKUPS_PATH = "/settings/backups/";
+/** Plugins: installing them and trusting their publishers (ADR-0103). */
+export const PLUGINS_PATH = "/settings/plugins/";
+/** Changing the certificate authority of the server (ADR-0088). */
+export const CERTIFICATE_AUTHORITY_PATH = "/settings/certificate-authority/";
+/** The Enterprise license key (ADR-0100). */
+export const LICENSE_PATH = "/settings/license/";
+
+/** Package mirrors and automatic updates stay under `/admin/`: they belong to Updates, not Settings. */
 export const MIRRORS_PATH = "/admin/mirrors/";
 /** Automatic agent and relay updates (ADR-0055). */
 export const AUTO_UPDATE_PATH = "/admin/updates/";
 
-/** Settings of the server, and the way to the other settings pages (ADR-0069). */
-export const SETTINGS_PATH = "/admin/settings/";
+/**
+ * Where each settings page was before it moved under `/settings/`: links in
+ * old notifications, bookmarks and guides still lead there, and a static
+ * export has no server redirects, so each keeps a page that redirects.
+ */
+export const LEGACY_SETTINGS_PATHS: Record<string, string> = {
+  "/admin/settings/": GENERAL_SETTINGS_PATH,
+  "/admin/relays/": RELAYS_PATH,
+  "/admin/relays/view/": "/settings/relays/view/",
+  "/admin/sites/": SITES_PATH,
+  "/admin/tokens/": TOKENS_PATH,
+  "/admin/users/": USERS_PATH,
+  "/admin/api-keys/": API_KEYS_PATH,
+  "/admin/api-keys/docs/": API_DOCS_PATH,
+  "/admin/notifications/": NOTIFICATIONS_PATH,
+  "/admin/integrations/": INTEGRATIONS_PATH,
+  "/admin/ai/": AI_SETTINGS_PATH,
+  "/admin/server-update/": SERVER_UPDATE_PATH,
+  "/admin/backups/": BACKUPS_PATH,
+  "/admin/plugins/": PLUGINS_PATH,
+  "/admin/certificate-authority/": CERTIFICATE_AUTHORITY_PATH,
+  "/admin/license/": LICENSE_PATH,
+};
 
-/** Email, chat and webhook notifications (ADR-0060, ADR-0077). */
-export const NOTIFICATIONS_PATH = "/admin/notifications/";
-/** Signed events for other tools, like a PSA (ADR-0102). */
-export const INTEGRATIONS_PATH = "/admin/integrations/";
-/** AI setup, global administrators only (ADR-0064). */
-export const AI_SETTINGS_PATH = "/admin/ai/";
-
-/** Updating the central server (ADR-0056). */
-export const SERVER_UPDATE_PATH = "/admin/server-update/";
-/** Backups of the server (ADR-0058). */
-export const BACKUPS_PATH = "/admin/backups/";
-/** Plugins: installing them and trusting their publishers (ADR-0103). */
-export const PLUGINS_PATH = "/admin/plugins/";
-/** Changing the certificate authority of the server (ADR-0088). */
-export const CERTIFICATE_AUTHORITY_PATH = "/admin/certificate-authority/";
-/** The Enterprise license key (ADR-0100). */
-export const LICENSE_PATH = "/admin/license/";
+/** The new place of a moved settings `pathname`, its query and hash kept; null when it did not move. */
+export function movedSettingsHref(pathname: string, search = "", hash = ""): string | null {
+  const path = pathname.endsWith("/") ? pathname : `${pathname}/`;
+  const to = LEGACY_SETTINGS_PATHS[path];
+  return to ? `${to}${search}${hash}` : null;
+}
 
 /** Where the browser downloads the backup `name`: a plain GET with the session cookie. */
 export function backupDownloadHref(name: string): string {
@@ -113,7 +151,7 @@ export function mirrorHref(id: string): string {
 
 /** Link to the page of the relay `id`. */
 export function relayHref(id: string): string {
-  return `/admin/relays/view/?id=${encodeURIComponent(id)}`;
+  return `/settings/relays/view/?id=${encodeURIComponent(id)}`;
 }
 
 /** Update campaigns (ADR-0033). */

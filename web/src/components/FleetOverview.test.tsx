@@ -167,7 +167,7 @@ describe("FleetOverview", () => {
       </As>,
     );
     expect(await screen.findByText("No servers yet")).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: "Add servers" })[0]).toHaveAttribute("href", expect.stringMatching(/^\/admin\/tokens\/?$/));
+    expect(screen.getAllByRole("link", { name: "Add servers" })[0]).toHaveAttribute("href", expect.stringMatching(/^\/settings\/add-servers\/?$/));
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     unmount();
 

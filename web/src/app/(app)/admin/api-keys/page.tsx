@@ -1,9 +1,6 @@
-import type { Metadata } from "next";
+import { MovedPage } from "@/components/MovedPage";
 
-import { ApiKeysPage } from "@/components/ApiKeys";
-
-export const metadata: Metadata = { title: "API keys · MonitorFlow" };
-
-export default function ApiKeysRoute() {
-  return <ApiKeysPage />;
+// Moved under /settings/; old links still work.
+export default function Moved() {
+  return <MovedPage from="/admin/api-keys/" />;
 }

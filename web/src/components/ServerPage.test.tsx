@@ -556,7 +556,7 @@ describe("ServerPage", () => {
     expect(await within(panel).findByText(/MF_UNINSTALL=1 MF_PURGE=1/)).toHaveTextContent(
       "curl -fsSL https://github.com/x/releases/latest/download/install.sh",
     );
-    expect(within(panel).getByRole("link", { name: "Add servers" })).toHaveAttribute("href", expect.stringContaining("/admin/tokens"));
+    expect(within(panel).getByRole("link", { name: "Add servers" })).toHaveAttribute("href", expect.stringContaining("/settings/add-servers"));
   });
 
   it("shows readers of a removed server no uninstall command", async () => {

@@ -45,9 +45,9 @@ describe("AuthGuard", () => {
     const admin = { ...alice, roles: [{ role: "administrator", customer_id: "c1", site_id: null }] };
     stubFetch({ ...SHELL_ROUTES, "GET /api/auth/me": { status: 200, body: admin } });
     render(<AuthGuard>fleet page</AuthGuard>);
-    expect(await screen.findByRole("link", { name: "Relays" })).toHaveAttribute("href", expect.stringMatching(/^\/admin\/relays\/?$/));
-    expect(screen.getByRole("link", { name: "Sites" })).toHaveAttribute("href", expect.stringMatching(/^\/admin\/sites\/?$/));
-    expect(screen.getByRole("link", { name: "Add servers" })).toHaveAttribute("href", expect.stringMatching(/^\/admin\/tokens\/?$/));
+    expect(await screen.findByRole("link", { name: "Relays" })).toHaveAttribute("href", expect.stringMatching(/^\/settings\/relays\/?$/));
+    expect(screen.getByRole("link", { name: "Sites" })).toHaveAttribute("href", expect.stringMatching(/^\/settings\/sites\/?$/));
+    expect(screen.getByRole("link", { name: "Add servers" })).toHaveAttribute("href", expect.stringMatching(/^\/settings\/add-servers\/?$/));
   });
 
   it("shows Campaigns to customer-wide roles only", async () => {

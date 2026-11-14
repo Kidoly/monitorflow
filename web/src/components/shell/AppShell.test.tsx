@@ -42,13 +42,13 @@ describe("AppShell", () => {
       stubFetch({ ...SHELL_ROUTES, ...status(release) });
       render(<AppShell me={admin}>page</AppShell>);
       expect(await screen.findByText("MonitorFlow 0.2.0 is available.")).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "Review and update" })).toHaveAttribute("href", "/admin/server-update");
+      expect(screen.getByRole("link", { name: "Review and update" })).toHaveAttribute("href", "/settings/server-update");
     });
 
     it("stays away without a newer release, on the update page and during an update", async () => {
       for (const [routes, url] of [
         [status(null), "/"],
-        [status(release), "/admin/server-update/"],
+        [status(release), "/settings/server-update/"],
         [status(release, true), "/"],
       ] as const) {
         setUrl(url);
@@ -79,7 +79,7 @@ describe("AppShell", () => {
       expect(await screen.findByText("An emergency change of the certificate authority is under way.")).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "See the certificate authority" })).toHaveAttribute(
         "href",
-        "/admin/certificate-authority",
+        "/settings/certificate-authority",
       );
     });
 
@@ -87,7 +87,7 @@ describe("AppShell", () => {
       for (const [body, url] of [
         [authority(), "/"],
         [authority({ rotation: rotation() }), "/"],
-        [authority({ expires_soon: true }), "/admin/certificate-authority/"],
+        [authority({ expires_soon: true }), "/settings/certificate-authority/"],
       ] as const) {
         setUrl(url);
         const fetchMock = stubFetch(routes(body));
@@ -124,7 +124,7 @@ describe("AppShell", () => {
           "The Enterprise license expired on 30 November 2026. The central server already added keeps running, but no other can be added.",
         ),
       ).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "See the license" })).toHaveAttribute("href", expect.stringContaining("/admin/license"));
+      expect(screen.getByRole("link", { name: "See the license" })).toHaveAttribute("href", expect.stringContaining("/settings/license"));
     });
 
     it("says nothing to a single central server", async () => {
@@ -224,7 +224,7 @@ describe("AppShell", () => {
     expect(within(nav()).getByRole("link", { name: "Relays" })).toHaveAttribute(
       "href",
       // Next's Link drops the trailing slash outside a build with `trailingSlash`.
-      expect.stringMatching(new RegExp(`^/admin/relays/?\\?customer=${ACME}$`)),
+      expect.stringMatching(new RegExp(`^/settings/relays/?\\?customer=${ACME}$`)),
     );
   });
 

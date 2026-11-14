@@ -24,14 +24,14 @@ Black on white, Inter 14 px / 1.5, thin #eaeaea borders, no shadows except menus
 | 03d-server-commands | /servers/view/?id=&tab=commands | command history, output expands under the row |
 | 04-incidents | /incidents/ | filters in URL, Load more 50 |
 | 05-incident | /incidents/view/?id= | same structure as 03b, plus Threshold-when-opened and Timeline, one line for AI remediation |
-| 06-admin-relays | /admin/relays/ and /admin/relays/view/?id= | list, then detail: facts box + "Servers connecting through <relay>" |
-| 07-admin-sites | /admin/sites/ | grouped by customer, inline New site form, permanent-name note |
-| 08-admin-enrollment-tokens | /admin/tokens/ | form on top, success panel below (token shown once, Copy, snippet), table with inline revoke |
+| 06-admin-relays | /settings/relays/ and /settings/relays/view/?id= | list, then detail: facts box + "Servers connecting through <relay>" |
+| 07-admin-sites | /settings/sites/ | grouped by customer, inline New site form, permanent-name note |
+| 08-admin-enrollment-tokens | /settings/add-servers/ | form on top, success panel below (token shown once, Copy, snippet), table with inline revoke |
 | 10-mirrors, 10b-mirror-detail | /admin/mirrors/ | counters, table; detail: snapshots table, runs table with expandable log |
 | 11-campaigns | /updates/campaigns/ | counters, campaigns table, servers-of-running-campaign table |
 | 12-approvals | /remediation/approvals/ | one table for waiting / running / decided; AI reasoning expands under the row, marked untrusted; tier comes from rules |
 | 13-audit-log | /remediation/audit/ | append-only, no edit or delete controls in the DOM |
-| 14-users-roles | /admin/users/ | counters, users table with Grants / Disable |
+| 14-users-roles | /settings/users/ | counters, users table with Grants / Disable |
 
 ## Interaction notes
 
