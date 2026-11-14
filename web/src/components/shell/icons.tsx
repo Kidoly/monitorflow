@@ -63,6 +63,7 @@ const PATHS = {
     </>
   ),
   chevron: <path d="M4 6l4 4 4-4" />,
+  back: <path d="M13 8H3M7 4L3 8l4 4" />,
   scope: (
     <>
       <rect x="3" y="2" width="10" height="12" rx="1" />
