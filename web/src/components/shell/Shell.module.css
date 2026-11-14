@@ -87,10 +87,6 @@
   text-transform: uppercase;
 }
 
-.wideHidden {
-  display: none;
-}
-
 .count {
   margin-left: auto;
   font-size: 12px;
@@ -104,6 +100,62 @@
 .item[aria-current="page"] .count {
   background: var(--bg);
   color: var(--text);
+}
+
+.countWarn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.item:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
+}
+
+/* Settings, pinned under the daily work; the account line follows it. */
+.pinned {
+  margin-top: auto;
+}
+
+.pinned + .foot {
+  margin-top: 0;
+}
+
+/* Inside a settings page */
+.back {
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.settingsTitle {
+  padding: 6px 10px;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.settingsSearch {
+  margin: 6px 0 2px;
+  width: 100%;
+  /* The sidebar is a full-height column that scrolls: nothing in it shrinks. */
+  flex-shrink: 0;
+}
+
+.noMatch {
+  margin: 8px 10px;
+  color: var(--muted);
+}
+
+.ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flag {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .foot {
@@ -255,10 +307,6 @@
     padding: 10px;
   }
 
-  .wideHidden {
-    display: block;
-  }
-
   .heading {
     font-size: 0;
     padding: 0;
@@ -297,6 +345,13 @@
   .signOut:hover .signOutText,
   .signOut:focus-visible .signOutText {
     opacity: 1;
+  }
+
+  .settingsTitle,
+  .settingsSearch,
+  .noMatch,
+  .flag {
+    display: none;
   }
 
   .count {

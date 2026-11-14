@@ -1,28 +1,15 @@
 import type { Me } from "@/lib/api";
 import { administersEverything, isAdministrator, readsCustomers } from "@/lib/me";
 import {
-  API_KEYS_PATH,
   APPROVALS_PATH,
   AUDIT_PATH,
   AUTO_UPDATE_PATH,
-  AI_SETTINGS_PATH,
-  BACKUPS_PATH,
-  PLUGINS_PATH,
   CAMPAIGNS_PATH,
-  CERTIFICATE_AUTHORITY_PATH,
   DASHBOARDS_PATH,
-  INTEGRATIONS_PATH,
-  LICENSE_PATH,
   MIRRORS_PATH,
-  NOTIFICATIONS_PATH,
   ON_CALL_PATH,
-  RELAYS_PATH,
-  SERVER_UPDATE_PATH,
-  GENERAL_SETTINGS_PATH,
+  SETTINGS_PATH,
   SILENCES_PATH,
-  SITES_PATH,
-  TOKENS_PATH,
-  USERS_PATH,
 } from "@/lib/routes";
 
 import type { IconName } from "./icons";
@@ -32,8 +19,6 @@ export interface NavItem {
   /** Null while the page does not exist yet: the item is hidden. */
   href: string | null;
   icon: IconName;
-  /** Only the collapsed sidebar draws the icon (the handoff's Administration items). */
-  iconWhenCollapsed?: boolean;
   /** Extra path prefixes that keep the item current, like server pages under Fleet. */
   alsoCurrent?: string[];
   /** Shows the open incidents count. */
@@ -50,8 +35,9 @@ export interface NavSection {
 }
 
 /**
- * The full navigation of the handoff's route table, in its order. Routes the
- * web interface does not have yet are null and hidden until their page lands.
+ * The daily work of the handoff's route table, in its order. Routes the web
+ * interface does not have yet are null and hidden until their page lands.
+ * Administration pages are under Settings, pinned at the bottom (ADR-0133).
  */
 export const NAVIGATION: NavSection[] = [
   {
@@ -81,73 +67,16 @@ export const NAVIGATION: NavSection[] = [
       { label: "Audit log", href: AUDIT_PATH, icon: "audit" },
     ],
   },
-  {
-    heading: "Administration",
-    items: [
-      { label: "Settings", href: GENERAL_SETTINGS_PATH, icon: "settings", iconWhenCollapsed: true, visible: administersEverything },
-      { label: "Relays", href: RELAYS_PATH, icon: "relays", iconWhenCollapsed: true },
-      { label: "Sites", href: SITES_PATH, icon: "sites", iconWhenCollapsed: true },
-      { label: "Add servers", href: TOKENS_PATH, icon: "tokens", iconWhenCollapsed: true },
-      { label: "Users and roles", href: USERS_PATH, icon: "users", iconWhenCollapsed: true },
-      { label: "API keys", href: API_KEYS_PATH, icon: "tokens", iconWhenCollapsed: true },
-      {
-        label: "Notifications",
-        href: NOTIFICATIONS_PATH,
-        icon: "bell",
-        iconWhenCollapsed: true,
-      },
-      {
-        label: "Integrations",
-        href: INTEGRATIONS_PATH,
-        icon: "integrations",
-        iconWhenCollapsed: true,
-      },
-      {
-        label: "AI",
-        href: AI_SETTINGS_PATH,
-        icon: "ai",
-        iconWhenCollapsed: true,
-        visible: administersEverything,
-      },
-      {
-        label: "Server update",
-        href: SERVER_UPDATE_PATH,
-        icon: "update",
-        iconWhenCollapsed: true,
-        visible: administersEverything,
-      },
-      {
-        label: "Backups",
-        href: BACKUPS_PATH,
-        icon: "backups",
-        iconWhenCollapsed: true,
-        visible: administersEverything,
-      },
-      {
-        label: "Plugins",
-        href: PLUGINS_PATH,
-        icon: "plugin",
-        iconWhenCollapsed: true,
-        visible: administersEverything,
-      },
-      {
-        label: "Certificate authority",
-        href: CERTIFICATE_AUTHORITY_PATH,
-        icon: "authority",
-        iconWhenCollapsed: true,
-        visible: administersEverything,
-      },
-      {
-        label: "License",
-        href: LICENSE_PATH,
-        icon: "license",
-        iconWhenCollapsed: true,
-        visible: administersEverything,
-      },
-    ],
-    visible: isAdministrator,
-  },
 ];
+
+/** The one way to the administration pages, pinned at the bottom of the sidebar. */
+export const SETTINGS_ITEM: NavItem = {
+  label: "Settings",
+  href: SETTINGS_PATH,
+  icon: "settings",
+  // Everything under /settings/ swaps the sidebar for the settings list; the list itself keeps this one.
+  visible: isAdministrator,
+};
 
 /** Whether `item` is the current page's: its path, or a page under it. */
 export function isCurrent(item: NavItem, pathname: string): boolean {
