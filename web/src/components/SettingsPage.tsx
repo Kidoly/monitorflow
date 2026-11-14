@@ -1,22 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { type FormEvent, type ReactNode, useCallback, useState } from "react";
 
 import { type RetentionSettings, type ServerSettings, api, describeError } from "@/lib/api";
 import { formatDuration } from "@/lib/format";
-import { administersEverything, useMe, useMultiCustomer } from "@/lib/me";
-import {
-  AI_SETTINGS_PATH,
-  AUTO_UPDATE_PATH,
-  BACKUPS_PATH,
-  MIRRORS_PATH,
-  INTEGRATIONS_PATH,
-  NOTIFICATIONS_PATH,
-  SERVER_UPDATE_PATH,
-  SITES_PATH,
-  USERS_PATH,
-} from "@/lib/routes";
+import { administersEverything, useMe } from "@/lib/me";
 import { usePolledData } from "@/lib/usePolledData";
 
 import styles from "./AdminPages.module.css";
@@ -29,19 +17,7 @@ import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui
 /** While a retention change runs. */
 const APPLYING_REFRESH_MS = 3_000;
 
-const OTHER_SETTINGS: { label: string; href: string; note: string }[] = [
-  { label: "Users and roles", href: USERS_PATH, note: "Who signs in, and what they can do." },
-  { label: "Sites", href: SITES_PATH, note: "The places your servers are in." },
-  { label: "Notifications", href: NOTIFICATIONS_PATH, note: "Email, Slack, Teams, Discord and webhooks for incidents, approvals and failed updates." },
-  { label: "Integrations", href: INTEGRATIONS_PATH, note: "Signed events for a PSA or your own automation." },
-  { label: "AI", href: AI_SETTINGS_PATH, note: "An API key and a model to diagnose incidents and propose fixes." },
-  { label: "Automatic updates", href: AUTO_UPDATE_PATH, note: "Keep agents and relays on the newest release." },
-  { label: "Server update", href: SERVER_UPDATE_PATH, note: "Update this server, or import a release without Internet." },
-  { label: "Backups", href: BACKUPS_PATH, note: "Daily backups, Back up now, and downloads." },
-  { label: "Mirrors", href: MIRRORS_PATH, note: "Package repositories served from this server." },
-];
-
-/** `/admin/settings/`: global administrators only, like the API (ADR-0069). */
+/** `/settings/general/`: global administrators only, like the API (ADR-0069). */
 export function SettingsPage() {
   const me = useMe();
   if (!administersEverything(me)) {
@@ -55,7 +31,6 @@ export function SettingsPage() {
 }
 
 function Settings() {
-  const multiCustomer = useMultiCustomer();
   const fetcher = useCallback((signal: AbortSignal) => api.serverSettings(signal), []);
   const [applying, setApplying] = useState(false);
   const { data: settings, error, refresh } = usePolledData(
@@ -67,7 +42,7 @@ function Settings() {
 
   return (
     <div className={styles.page}>
-      <PageHeader title="Settings" meta="How this server runs; changes apply without a restart" />
+      <PageHeader title="General" meta="How this server runs; changes apply without a restart" />
       <AddressSection />
       <DefaultInstallSource editable />
       {settings ? (
@@ -81,23 +56,6 @@ function Settings() {
       ) : (
         <LoadingBlock />
       )}
-      <section className={styles.section} aria-labelledby="other-settings">
-        <div className={styles.sectionHead}>
-          <h2 id="other-settings" className={styles.sectionTitle}>
-            More settings
-          </h2>
-        </div>
-        <ul className={styles.linkList}>
-          {OTHER_SETTINGS.map((item) => (
-            <li key={item.href}>
-              <Link href={item.href}>{item.label}</Link>{" "}
-              <span className={styles.dim}>
-                {item.href === SITES_PATH && multiCustomer ? "Customers and the sites their servers belong to." : item.note}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
     </div>
   );
 }

@@ -29,7 +29,7 @@ describe("Button", () => {
 
   it("draws the black button on a link", () => {
     render(
-      <ButtonLink variant="k" href="/admin/tokens/">
+      <ButtonLink variant="k" href="/settings/add-servers/">
         Create an enrollment token
       </ButtonLink>,
     );

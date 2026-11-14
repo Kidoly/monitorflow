@@ -23,7 +23,8 @@ use super::message::Event;
 use super::{Channel, Coverage, Destination, Email};
 
 /// How often the rotation hands off.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = OnCallRotation)]
 #[serde(rename_all = "lowercase")]
 pub enum Rotation {
     Daily,
@@ -250,8 +251,13 @@ impl Schedule {
     }
 }
 
-/// Why the person on call cannot be told: a gap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// Why the person on call cannot be told: a gap. `nobody`: a schedule
+/// without members; `removed`: a removed user's turn; `disabled`;
+/// `no_access`: no longer sees the schedule's place; `no_contact`: no
+/// email address, chat or webhook; `no_mail_server`: only an email
+/// address, and no email channel to send it through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = OnCallGap)]
 #[serde(rename_all = "snake_case")]
 pub enum Problem {
     /// Nobody: a schedule without members.

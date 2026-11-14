@@ -29,7 +29,7 @@ import { Label } from "./ui/StatusLabel";
 const ACTIVE_MS = 3_000;
 const GUIDE = "docs/deploy-server.md";
 
-/** `/admin/server-update/`: global administrators only, like the API. */
+/** `/settings/server-update/`: global administrators only, like the API. */
 export function ServerUpdatePage() {
   const me = useMe();
   if (!administersEverything(me)) {

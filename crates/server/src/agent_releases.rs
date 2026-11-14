@@ -181,15 +181,16 @@ impl ReleaseCache {
 /// holds it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 pub struct CentralRelease {
+    /// Such as `0.9.2`.
     pub version: String,
     /// URL path of its files behind the web interface, without a
     /// trailing slash: `/agent/<version>`.
     pub path: String,
-    /// SHA-256 of its `SHA256SUMS`, hex.
+    /// SHA-256 of `SHA256SUMS`, lowercase hexadecimal.
     pub sums_sha256: String,
-    /// SHA-256 of the installer script, hex; `null` when not cached.
+    /// SHA-256 of `install.sh`; `null` when the cache lacks it.
     pub installer_sha256: Option<String>,
-    /// SHA-256 of the Windows installer, hex; `null` when not cached.
+    /// SHA-256 of the Windows MSI; `null` when the cache lacks it.
     pub msi_sha256: Option<String>,
 }
 

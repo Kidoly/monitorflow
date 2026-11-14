@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Fragment, type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
@@ -12,10 +12,16 @@ import { administersEverything, multiCustomer } from "@/lib/me";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { usePolledData } from "@/lib/usePolledData";
 
+import { insideSettings } from "../settings/catalogue";
+import { attention } from "../settings/status";
+import { useSettingsStatuses } from "../settings/SettingsStatus";
+
 import { Icon } from "./icons";
-import { isCurrent, visibleNavigation } from "./navigation";
+import { SETTINGS_ITEM, isCurrent, visibleNavigation } from "./navigation";
+import { SettingsSidebar } from "./SettingsSidebar";
 import styles from "./Shell.module.css";
 import { ScopeSwitcher } from "./ScopeSwitcher";
+import { StatusStrip } from "./StatusStrip";
 import { ThemeToggle } from "./ThemeToggle";
 import { CertificateAuthorityBanner } from "./CertificateAuthorityBanner";
 import { LicenseBanner } from "./LicenseBanner";
@@ -47,6 +53,7 @@ async function openIncidents(scope: Scope, sites: Site[], signal: AbortSignal): 
  */
 export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   const pathname = usePathname();
+  const search = useSearchParams().toString();
   const router = useRouter();
   const scope = useScope();
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -60,6 +67,13 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
     setOpenedAt(pathname);
     setMenuOpen(false);
   }
+
+  // Where Back leads from a settings page: the last page of the app.
+  const inSettings = insideSettings(pathname);
+  const here = `${pathname}${search ? `?${search}` : ""}`;
+  const [backHref, setBackHref] = useState<string | null>(null);
+  if (!pathname.startsWith("/settings") && backHref !== here) setBackHref(here);
+  const pressing = attention(useSettingsStatuses().statuses);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -136,30 +150,54 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
             MF
           </span>
         </Link>
-        {(multiCustomer(me) || sites.length > 1) && (
-          <ScopeSwitcher customers={customers} sites={sites} multiCustomer={multiCustomer(me)} />
-        )}
-        {visibleNavigation(me).map((section) => (
-          <Fragment key={section.heading}>
-            <div className={styles.heading}>{section.heading}</div>
-            {section.items.map((item) => (
+        {inSettings ? (
+          <SettingsSidebar me={me} pathname={pathname} backHref={backHref ?? scopedHref("/", scope)} />
+        ) : (
+          <>
+            {(multiCustomer(me) || sites.length > 1) && (
+              <ScopeSwitcher customers={customers} sites={sites} multiCustomer={multiCustomer(me)} />
+            )}
+            {visibleNavigation(me).map((section) => (
+              <Fragment key={section.heading}>
+                <div className={styles.heading}>{section.heading}</div>
+                {section.items.map((item) => (
+                  <Link
+                    key={item.label}
+                    href={scopedHref(item.href!, scope)}
+                    className={styles.item}
+                    aria-current={isCurrent(item, pathname) ? "page" : undefined}
+                  >
+                    <Icon name={item.icon} />
+                    <span className={styles.text}>{item.label}</span>
+                    {item.incidentCount && countLabel && (
+                      <span className={styles.count} aria-label={`${countLabel} open incidents`}>
+                        {countLabel}
+                      </span>
+                    )}
+                  </Link>
+                ))}
+              </Fragment>
+            ))}
+            {SETTINGS_ITEM.visible?.(me) && (
               <Link
-                key={item.label}
-                href={scopedHref(item.href!, scope)}
-                className={styles.item}
-                aria-current={isCurrent(item, pathname) ? "page" : undefined}
+                href={scopedHref(SETTINGS_ITEM.href!, scope)}
+                className={cx(styles.item, styles.pinned)}
+                aria-current={isCurrent(SETTINGS_ITEM, pathname) ? "page" : undefined}
               >
-                <Icon name={item.icon} className={cx(item.iconWhenCollapsed && styles.wideHidden)} />
-                <span className={styles.text}>{item.label}</span>
-                {item.incidentCount && countLabel && (
-                  <span className={styles.count} aria-label={`${countLabel} open incidents`}>
-                    {countLabel}
+                <Icon name={SETTINGS_ITEM.icon} />
+                <span className={styles.text}>{SETTINGS_ITEM.label}</span>
+                {pressing && (
+                  <span
+                    className={cx(styles.count, pressing.tone === "warn" && styles.countWarn)}
+                    aria-label={`${pressing.count} ${pressing.count === 1 ? "setting needs" : "settings need"} attention`}
+                  >
+                    {pressing.count}
                   </span>
                 )}
               </Link>
-            ))}
-          </Fragment>
-        ))}
+            )}
+          </>
+        )}
         <div className={styles.foot}>
           <span className={styles.who}>
             {me.username} · {roles}
@@ -177,6 +215,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         <ThemeToggle />
       </nav>
       <main id="main" className={styles.main} tabIndex={-1}>
+        <StatusStrip />
         {administersEverything(me) && (
           <>
             <UpdateBanner />

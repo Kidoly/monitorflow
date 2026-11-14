@@ -153,7 +153,7 @@ The open questions in `docs/product.md`.
 - [ ] Subscription tiers and licensing.
 - [x] Enterprise edition: licensed high availability (ADR-0100). The Enterprise directory `ee/` and its license; an offline license key, checked with a key pair of its own, on an Administration › License page; `install-server.sh --join` to add a central server, which starts only with a license that has room. A missing or expired license stops adding central servers, never monitoring or the ones running.
 - [ ] Billing.
-- [x] Product name: MonitorFlow.
+- [ ] Final product name.
 
 ## Phase 15 — Your choice
 

@@ -122,6 +122,6 @@ describe("offline incidents", () => {
     expect(incidentTitle({ metric: "offline", instance: "" })).toBe("Offline");
     expect(incidentTitle({ metric: "monitorflow_disk_used_ratio", instance: "/var" })).toBe("Disk used /var");
     expect(incidentPeerHref({ server_id: "s1" })).toBe("/servers/view/?id=s1");
-    expect(incidentPeerHref({ server_id: null, relay_id: "r1" })).toBe("/admin/relays/view/?id=r1");
+    expect(incidentPeerHref({ server_id: null, relay_id: "r1" })).toBe("/settings/relays/view/?id=r1");
   });
 });

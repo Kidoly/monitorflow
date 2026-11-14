@@ -498,6 +498,10 @@ db_tests! {
         assert_eq!(detail["follow_up"]["state"], "waiting");
         assert_eq!(detail["follow_up"]["next"], json!(["boss"]));
         assert_eq!(detail["follow_up"]["policy"], "default");
+        // Signed in, a note is required (ADR-0130).
+        let (status, _) = call(&pool, "POST", "/api/incidents/acknowledge", Some(&cookie), Some(ask)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let ask = json!({ "incident_ids": [incident], "note": " replacing the disk " });
         let (status, body) = call(&pool, "POST", "/api/incidents/acknowledge", Some(&cookie), Some(ask.clone())).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["acknowledged"], json!([incident]));
@@ -509,14 +513,18 @@ db_tests! {
         assert_eq!(detail["acknowledged_by"], "alice");
         assert!(detail["acknowledged_at"].is_string());
         assert_eq!(detail["acknowledged_via"], "page");
+        assert_eq!(detail["acknowledged_note"], "replacing the disk");
         assert_eq!(detail["can_acknowledge"], false);
         assert_eq!(detail["follow_up"]["state"], "stopped");
         assert_eq!(detail["follow_up"]["stop_reason"], "acknowledged");
-        let kinds: Vec<String> = timeline(&pool, incident).await.into_iter().map(|(k, _)| k).collect();
+        let events = timeline(&pool, incident).await;
+        let kinds: Vec<&str> = events.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(kinds, ["opened", "acknowledged"]);
+        assert_eq!(events[1].1["note"], "replacing the disk");
         let audited: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM audit_log WHERE action = 'incident.acknowledge' AND target_id = $1
-               AND actor_id = $2 AND details ->> 'via' = 'page'",
+               AND actor_id = $2 AND details ->> 'via' = 'page'
+               AND details ->> 'note' = 'replacing the disk'",
         )
         .bind(incident.to_string())
         .bind(alice.to_string())

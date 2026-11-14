@@ -122,47 +122,74 @@ pub async fn follow_up_view(
     Ok(Some(view))
 }
 
-/// Something a step names, with its name now; `null` once removed.
-#[derive(Debug, Clone, Serialize)]
+/// Something a step names, with its name now.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = FollowUpNamed)]
 pub struct Named {
+    /// The schedule, user or channel.
     pub id: Uuid,
+    /// Its name now: a schedule's name, a username, or a channel's label;
+    /// `null` once removed.
     pub name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// One step of a follow-up, with names.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = FollowUpStep)]
 pub struct StepView {
+    /// Minutes without acknowledgement before telling, counted from the
+    /// step before or from the first message.
     pub after_minutes: u32,
+    /// Schedules whose person on call is told.
     pub on_call: Vec<Named>,
+    /// Users told in person.
     pub users: Vec<Named>,
+    /// Notification channels told.
     pub channels: Vec<Named>,
+    /// Whether the nearest administrators of the incident's place are
+    /// told: of its site, else its customer, else everything.
     pub administrators: bool,
 }
 
 /// A follow-up as the screen shows it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = FollowUpPolicy)]
 pub struct PolicyView {
+    /// The follow-up's ID.
     pub id: Uuid,
     /// The customer it covers, or the customer of its site; `null` for
     /// everything.
     pub customer_id: Option<Uuid>,
+    /// Name of `customer_id`; `null` with it.
     pub customer_name: Option<String>,
+    /// The site it is for; `null` for a whole customer or everything.
     pub site_id: Option<Uuid>,
+    /// Name of `site_id`; `null` with it.
     pub site_name: Option<String>,
+    /// In order; empty tells nobody after the first message.
     pub steps: Vec<StepView>,
+    /// When it was last saved.
     pub updated_at: DateTime<Utc>,
 }
 
 /// A schedule or channel a step may name.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = FollowUpChoice)]
 pub struct Choice {
+    /// The schedule or channel.
     pub id: Uuid,
+    /// Its name, or a channel's label.
     pub name: String,
+    /// The customer it is for, set only for a whole customer; `null`
+    /// for a site or everything.
     pub customer_id: Option<Uuid>,
+    /// The site it is for; `null` for a customer or everything.
     pub site_id: Option<Uuid>,
 }
 
 /// Body of `GET /api/follow-up/policies`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = FollowUpPolicyList)]
 pub struct PolicyList {
     /// Those the user manages.
     pub policies: Vec<PolicyView>,
@@ -170,19 +197,23 @@ pub struct PolicyList {
     pub default_steps: Vec<StepView>,
     /// Schedules and channels the user manages, for the form.
     pub schedules: Vec<Choice>,
+    /// Notification channels the user manages, for the form.
     pub channels: Vec<Choice>,
 }
 
 /// Body of `PUT /api/follow-up/policies`: the steps of one place, replacing
 /// any.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = FollowUpPolicyRequest)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyRequest {
+    /// The customer it is for; with `site_id` also `null`, everything.
     #[serde(default)]
     pub customer_id: Option<Uuid>,
+    /// The site it is for. Not together with `customer_id`.
     #[serde(default)]
     pub site_id: Option<Uuid>,
-    /// In order; empty tells nobody after the first message.
+    /// At most 10, in order; empty tells nobody after the first message.
     pub steps: Vec<Step>,
 }
 
@@ -725,7 +756,8 @@ pub async fn use_link(
         return Err(ApiError::Forbidden);
     }
     let now = Utc::now();
-    let done = follow_up::acknowledge(&mut tx, &allowed, (user, &username), "link", now).await?;
+    let done =
+        follow_up::acknowledge(&mut tx, &allowed, (user, &username), "link", None, now).await?;
     let actor = user.to_string();
     for incident in &done {
         let target = incident.to_string();

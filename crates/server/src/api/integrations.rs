@@ -32,50 +32,69 @@ use crate::notify::Coverage;
 const PAGE_SIZE: i64 = 50;
 
 /// An endpoint as the web interface shows it; never its secret.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = Integration)]
 pub struct EndpointView {
+    /// The integration's ID.
     pub id: Uuid,
+    /// Tells integrations apart, like the tool it sends to.
     pub name: String,
     /// The URL's scheme, host and port: its path and query may hold a
     /// token (ADR-0123).
     pub origin: String,
+    /// The events it gets, in the order of `events` in the list.
     pub events: Vec<String>,
     /// The customer it covers, or the customer of the site it covers;
     /// `null` for everything.
     pub customer_id: Option<Uuid>,
+    /// Name of `customer_id`; `null` with it.
     pub customer_name: Option<String>,
+    /// The site it covers; `null` for a whole customer or everything.
     pub site_id: Option<Uuid>,
+    /// Name of `site_id`; `null` with it.
     pub site_name: Option<String>,
+    /// Whether it may deliver to private and local addresses.
     pub allow_private: bool,
-    /// `on`, `paused` or `disabled` (after a day of failures).
+    /// `on`, `paused` or `disabled` (turned off after a day of failures).
     pub state: String,
+    /// When it was added.
     pub created_at: DateTime<Utc>,
     /// The first failure since the last success; `null` while it works.
     pub failing_since: Option<DateTime<Utc>>,
+    /// The last delivery it accepted; `null` before the first.
     pub last_success_at: Option<DateTime<Utc>>,
     /// Deliveries waiting to be sent or retried.
     pub pending: i64,
-    /// The most recent failure, in plain words.
+    /// The most recent failure of a delivery, in plain words; `null`
+    /// when none failed.
     pub last_error: Option<String>,
 }
 
 /// Body of `GET /api/integrations`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = IntegrationList)]
 pub struct EndpointList {
+    /// Oldest first.
     pub endpoints: Vec<EndpointView>,
     /// Every event an endpoint can ask for, in order.
     pub events: Vec<&'static str>,
 }
 
 /// Body of `POST /api/integrations` and of `PUT` on one.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = IntegrationRequest)]
 #[serde(deny_unknown_fields)]
 pub struct EndpointRequest {
+    /// 1 to 80 characters, trimmed.
     pub name: String,
-    /// On `PUT`, absent or empty keeps the stored one.
+    /// Where events are posted: http or https, without a user or
+    /// password. Write-only: answers show its origin. On `PUT`, absent or
+    /// empty keeps the stored one; another URL gets a new signing secret.
     #[serde(default)]
     pub url: String,
-    /// Absent, `null` or empty: every event.
+    /// Events it gets, from `events` of the list. Absent, `null` or
+    /// empty: every event, including those added later only when saved
+    /// again.
     #[serde(default)]
     pub events: Option<Vec<String>>,
     /// The customer to cover; with `site_id` also `null`, everything.
@@ -91,87 +110,122 @@ pub struct EndpointRequest {
 
 /// Body of `POST /api/integrations` and of
 /// `POST /api/integrations/{id}/secret`: the secret, this once.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = IntegrationWithSecret)]
 pub struct WithSecret {
+    /// The integration.
     pub endpoint: EndpointView,
+    /// The signing secret: `mfwh_` and 64 hex characters. Shown only
+    /// here; keep it in the receiver's secret store.
     pub secret: String,
 }
 
 /// Body of `PUT /api/integrations/{id}`: the secret only when the URL
 /// changed, as a new one, this once.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = IntegrationUpdated)]
 pub struct Updated {
+    /// The integration.
     pub endpoint: EndpointView,
+    /// The new signing secret when the URL changed, shown only here;
+    /// `null` when the URL and its secret stay.
     pub secret: Option<String>,
 }
 
 /// Body of `POST /api/integrations/{id}/state`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = IntegrationStateRequest)]
 #[serde(deny_unknown_fields)]
 pub struct StateRequest {
-    /// `on` or `paused`.
+    /// `on` or `paused`; `disabled` is set only by MonitorFlow.
     pub state: String,
 }
 
 /// Body of `POST /api/integrations/{id}/test`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = IntegrationTest)]
 pub struct TestResult {
+    /// Whether the receiver answered 2xx.
     pub ok: bool,
-    /// The answer's HTTP status, when there was one.
+    /// The answer's HTTP status, when there was one; `null` when it
+    /// could not be reached.
     pub status: Option<u16>,
-    /// Why it failed, in plain words.
+    /// Why it failed, in plain words; `null` when it worked.
     pub error: Option<String>,
 }
 
 /// Body of `POST /api/integrations/{id}/replay`: one event, or every event
 /// of a time range.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = IntegrationReplayRequest)]
 #[serde(deny_unknown_fields)]
 pub struct ReplayRequest {
+    /// The event to send again, its `id`; not with `from` and `to`.
     #[serde(default)]
     pub event_id: Option<Uuid>,
+    /// Start of the range, included.
     #[serde(default)]
     pub from: Option<DateTime<Utc>>,
+    /// End of the range, excluded; now when absent. At most 30 days
+    /// after `from`.
     #[serde(default)]
     pub to: Option<DateTime<Utc>>,
 }
 
 /// Body of `POST /api/integrations/{id}/replay`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = IntegrationReplayResult)]
 pub struct ReplayResult {
     /// Deliveries queued.
     pub queued: u64,
 }
 
 /// Query string of `GET /api/integrations/{id}/deliveries`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct DeliveryParams {
-    /// Only deliveries older than this one, for the next page.
+    /// A delivery `id`: only older ones, for the next page; pass the
+    /// last page's `next_before`.
     pub before: Option<i64>,
 }
 
 /// One delivery of the log.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = IntegrationDelivery)]
 pub struct DeliveryView {
+    /// Grows with each delivery; pages go by it.
     pub id: i64,
+    /// The event's `id`, as in `X-MonitorFlow-Delivery`.
     pub event_id: Uuid,
+    /// The event, like `incident.opened`.
     pub event: String,
+    /// When the event happened.
     pub occurred_at: DateTime<Utc>,
-    /// `pending`, `delivered` or `failed`.
+    /// `pending`, `delivered` or `failed` (given up: a try failed more
+    /// than 24 hours after the event).
     pub state: String,
+    /// Whether it was sent again on request.
     pub replay: bool,
+    /// Tries so far.
     pub attempts: i32,
+    /// The HTTP status of the last try; `null` before the first or
+    /// without an answer.
     pub last_status: Option<i32>,
+    /// Why the last try failed, in plain words; `null` when it worked.
     pub last_error: Option<String>,
+    /// When the last try was made; `null` before the first.
     pub last_attempt_at: Option<DateTime<Utc>>,
     /// When the next try is due, while pending.
     pub next_at: Option<DateTime<Utc>>,
+    /// When it was delivered or given up; `null` while pending.
     pub finished_at: Option<DateTime<Utc>>,
 }
 
 /// Body of `GET /api/integrations/{id}/deliveries`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = IntegrationDeliveryList)]
 pub struct DeliveryList {
+    /// Newest first, at most 50.
     pub deliveries: Vec<DeliveryView>,
     /// Pass as `before` for older ones; `null` at the end.
     pub next_before: Option<i64>,

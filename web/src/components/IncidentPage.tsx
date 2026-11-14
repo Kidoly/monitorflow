@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import {
   ApiError,
@@ -40,6 +40,7 @@ import { type Threshold, TimeChart } from "@/components/ui/TimeChart";
 import { formatClock, formatDay, formatDuration, formatExact, formatShortDate } from "@/components/ui/time";
 import type { Tone } from "@/components/ui/tone";
 
+import { AcknowledgeButton } from "./AcknowledgeButton";
 import styles from "./DetailPages.module.css";
 
 /** The incident page for the `id` query parameter. */
@@ -269,7 +270,7 @@ export function IncidentPage({ id }: { id: string | null }) {
             facts={[
               { label: "Opens", value: `after ${formatSeconds(OFFLINE_AFTER_S)} without contact` },
               { label: "Resolves when", value: "it connects again, its offline alerts are turned off, or it is removed" },
-              { label: "Turn off", value: <>Offline alerts on {host}, or for its site in Administration › Sites</> },
+              { label: "Turn off", value: <>Offline alerts on {host}, or for its site in Settings › Sites</> },
             ]}
           />
         ) : (
@@ -348,7 +349,9 @@ function eventWords(event: IncidentEvent): string {
     case "silence_ended":
       return event.details.notified ? "Silence ended, sent" : "Silence ended, nothing to send";
     case "acknowledged":
-      return typeof event.details.username === "string" ? `Acknowledged by ${event.details.username}` : "Acknowledged";
+      return `${typeof event.details.username === "string" ? `Acknowledged by ${event.details.username}` : "Acknowledged"}${
+        typeof event.details.note === "string" ? `: ${event.details.note}` : ""
+      }`;
     case "followed_up": {
       const told = Array.isArray(event.details.told) ? event.details.told.filter((t) => typeof t === "string") : [];
       const after = typeof event.details.minutes === "number" ? ` after ${minutesText(event.details.minutes)}` : "";
@@ -362,30 +365,21 @@ function eventWords(event: IncidentEvent): string {
  * if nobody does (ADR-0082).
  */
 function Acknowledgement({ incident, now, onDone }: { incident: IncidentDetail; now: Date; onDone: () => void }) {
-  const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
   const followUp = followUpLine(incident, incident.follow_up, (iso) => formatDay(new Date(iso), now));
   if (incident.acknowledged_at) {
     return (
       <Banner tone="plain">
         Acknowledged by <strong>{incident.acknowledged_by ?? "someone"}</strong> {formatDay(new Date(incident.acknowledged_at), now)}
-        {incident.acknowledged_via === "link" && ", from the notification link"}.
+        {incident.acknowledged_via === "link" && ", from the notification link"}
+        {incident.acknowledged_note ? `: ${incident.acknowledged_note}` : "."}
       </Banner>
     );
   }
   if (!incident.can_acknowledge && !followUp) return null;
 
-  async function acknowledge() {
-    setPending(true);
-    setFailure(null);
-    try {
-      await api.acknowledgeIncidents([incident.id]);
-      onDone();
-    } catch (e) {
-      setFailure(describeError(e));
-    } finally {
-      setPending(false);
-    }
+  async function acknowledge(note: string) {
+    await api.acknowledgeIncidents([incident.id], note);
+    onDone();
   }
 
   return (
@@ -393,15 +387,12 @@ function Acknowledgement({ incident, now, onDone }: { incident: IncidentDetail; 
       <div className={styles.acknowledge}>
         {incident.can_acknowledge && (
           <>
-            <Button variant="k" onClick={acknowledge} disabled={pending}>
-              {pending ? "Acknowledging…" : "Acknowledge"}
-            </Button>
+            <AcknowledgeButton variant="k" onAcknowledge={acknowledge} describeError={describeError} />
             <span className={styles.muted}>Says you are on it: nobody else is told next.</span>
           </>
         )}
       </div>
       {followUp && <p className={styles.followUp}>{followUp}</p>}
-      {failure && <p role="alert">{failure}</p>}
     </Banner>
   );
 }

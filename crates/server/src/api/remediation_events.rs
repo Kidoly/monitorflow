@@ -21,7 +21,8 @@ pub const DEFAULT_LIMIT: u32 = 100;
 pub const MAX_LIMIT: u32 = 500;
 
 /// `actor_kind` values, as in `audit_log`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
+#[schema(as = RemediationActorKind)]
 #[serde(rename_all = "snake_case")]
 pub enum ActorKind {
     User,
@@ -42,35 +43,43 @@ impl ActorKind {
 }
 
 /// Query string; every filter is optional.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
     pub customer_id: Option<Uuid>,
     pub site_id: Option<Uuid>,
     pub server_id: Option<Uuid>,
+    /// A remediation incident.
     pub incident_id: Option<Uuid>,
     pub kind: Option<EventKind>,
     pub actor_kind: Option<ActorKind>,
     /// A user ID, `server`, a model or a peer ID.
     pub actor_id: Option<String>,
-    /// Events at or after `from` and before `to`.
+    /// Events at or after this time (RFC 3339).
     pub from: Option<DateTime<Utc>>,
+    /// Events before this time (RFC 3339).
     pub to: Option<DateTime<Utc>>,
-    /// 1 to [`MAX_LIMIT`], default [`DEFAULT_LIMIT`].
+    /// 1 to 500, default 100.
     pub limit: Option<u32>,
+    /// `next_cursor` of the previous page.
     pub cursor: Option<String>,
 }
 
 /// One event with its incident's server. Field names and types are part
 /// of the API contract: add fields, never rename or remove them.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = RemediationEvent)]
 pub struct EventView {
     pub incident_id: Uuid,
     pub seq: i64,
     pub kind: EventKind,
+    /// `user`, `system`, `ai` or `peer`.
     pub actor_kind: String,
+    /// A user ID, `server`, the AI's provider and model, or a peer ID.
     pub actor_id: String,
-    /// The user's name when `actor_kind` is `user`.
+    /// The user's name when `actor_kind` is `user` and the user still
+    /// exists, else `null`.
     pub actor_name: Option<String>,
     /// As stored, without `context.rendered` (`context_sent`) and
     /// `stdout`/`stderr` (`command_result`).
@@ -88,9 +97,13 @@ pub struct EventView {
     pub instance: String,
 }
 
-#[derive(Debug, Serialize)]
+/// Body of `GET /api/remediation/events`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = RemediationEventList)]
 pub struct EventList {
+    /// Newest first.
     pub events: Vec<EventView>,
+    /// Pass as `cursor` for the next page; `null` on the last one.
     pub next_cursor: Option<String>,
 }
 
