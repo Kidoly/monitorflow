@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   ApiError,
@@ -22,7 +22,7 @@ import { metricsError } from "@/lib/charts";
 import { aiCommands, aiSwitch, commandSummary, unsupportedReason } from "@/lib/commandKinds";
 import { isActive } from "@/lib/commands";
 import { formatOs } from "@/lib/format";
-import { administersCustomer, administersSite, modifiesSite, multiCustomer, useMe } from "@/lib/me";
+import { administersCustomer, administersSite, multiCustomer, useMe } from "@/lib/me";
 import { serverHref, siteHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { type SensorValues, sensorRows, valuesBySensor } from "@/lib/sensors";
@@ -42,13 +42,12 @@ import { formatExact } from "@/components/ui/time";
 
 import { AllowCommandsLine } from "./AllowCommands";
 import { serverSiblings } from "./breadcrumbSiblings";
-import { MonitoringSettings } from "./MonitoringSettings";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
 import { ServerCommandsTab } from "./ServerCommandsTab";
 import { RollbackFact } from "./ServerRollback";
 import { ServerLogsTab } from "./ServerLogsTab";
-import { ServerSensorsTab } from "./ServerSensorsTab";
+import { type SensorRules, ServerSensorsTab } from "./ServerSensorsTab";
 import { ServerUpdatesTab } from "./ServerUpdatesTab";
 import { SilenceBar } from "./Silences";
 
@@ -57,7 +56,7 @@ export const COMMANDS_PAGE = 50;
 /** The API's largest page, which caps what a refresh reloads. */
 const MAX_LIMIT = 500;
 
-const TABS = ["sensors", "alerts", "logs", "updates", "commands"] as const;
+const TABS = ["sensors", "logs", "updates", "commands"] as const;
 export type ServerTab = (typeof TABS)[number];
 
 /** The server page for the `id` query parameter. */
@@ -81,6 +80,8 @@ export interface ServerData {
   commands: { commands: Command[]; nextCursor: string | null } | { error: string };
   /** The newest agent release the server holds (ADR-0053); null when none or unreadable. */
   latestAgent: string | null;
+  /** Each sensor's rule and where it comes from, for the Sensors tab. */
+  rules: SensorRules;
 }
 
 /** `promise`, or `fallback(error)` when it fails for another reason than an abort. */
@@ -101,7 +102,11 @@ async function loadServer(id: string, commandLimit: number, signal: AbortSignal)
     return valuesBySensor(all, list);
   });
   const window = recent.then((list) => ("error" in list ? null : { start: list.start, end: list.end }));
-  const [server, config, latest, sparkWindow, incidents, commands, releases] = await Promise.all([
+  const orNull = <T,>(promise: Promise<T>) => settle(promise, () => null);
+  const siteSensors = sensors.then((config) =>
+    "site_id" in config ? orNull(api.siteSensors(config.site_id, signal).then((s) => s.sensors)) : null,
+  );
+  const [server, config, latest, sparkWindow, incidents, commands, releases, thresholds, ownRows, site] = await Promise.all([
     api.server(id, signal),
     sensors,
     values,
@@ -117,8 +122,20 @@ async function loadServer(id: string, commandLimit: number, signal: AbortSignal)
       (e) => ({ error: describeError(e) }),
     ),
     settle(api.agentReleases(signal), () => null),
+    orNull(api.serverThresholds(id, signal).then((t) => t.thresholds)),
+    orNull(api.sensorRows({ kind: "servers", id }, signal).then((r) => r.entries)),
+    siteSensors,
   ]);
-  return { server, sensors: config, values: latest, window: sparkWindow, incidents, commands, latestAgent: releases?.latest ?? null };
+  return {
+    server,
+    sensors: config,
+    values: latest,
+    window: sparkWindow,
+    incidents,
+    commands,
+    latestAgent: releases?.latest ?? null,
+    rules: { thresholds, ownRows, siteSensors: site },
+  };
 }
 
 export function ServerPage({ id }: { id: string | null }) {
@@ -126,6 +143,11 @@ export function ServerPage({ id }: { id: string | null }) {
   const valid = id !== null && UUID.test(id);
   const [params, setParams] = useUrlParams();
   const tab: ServerTab = TABS.find((t) => t === params.get("tab")) ?? "sensors";
+  // Alerts and checks became part of Sensors: old links land there.
+  const oldTab = params.get("tab") === "alerts";
+  useEffect(() => {
+    if (oldTab) setParams({ tab: null });
+  }, [oldTab, setParams]);
   // Commands shown, so a refresh reloads all of them rather than the first page.
   const [commandLimit, setCommandLimit] = useState(COMMANDS_PAGE);
   const fetcher = useCallback((signal: AbortSignal) => loadServer(id ?? "", commandLimit, signal), [id, commandLimit]);
@@ -198,7 +220,6 @@ export function ServerPage({ id }: { id: string | null }) {
         }
         tabs={[
           { id: "sensors", label: "Sensors", extra: "sensors" in sensors ? `· ${rows.length}` : undefined },
-          { id: "alerts", label: "Alerts and checks" },
           { id: "logs", label: "Logs" },
           { id: "updates", label: "Updates" },
           { id: "commands", label: "Commands", extra: active > 0 ? `· ${active} running` : undefined },
@@ -206,9 +227,17 @@ export function ServerPage({ id }: { id: string | null }) {
       />
       <TabPanel idBase="server" id={tab}>
         {tab === "sensors" && (
-          <ServerSensorsTab server={server} sensors={sensors} rows={rows} window={data.window} incidentsFailed={incidents === null} now={updatedAt} />
+          <ServerSensorsTab
+            server={server}
+            sensors={sensors}
+            rows={rows}
+            window={data.window}
+            rules={data.rules}
+            incidentsFailed={incidents === null}
+            now={updatedAt}
+            onChanged={refresh}
+          />
         )}
-        {tab === "alerts" && <ServerAlertsTab server={server} />}
         {tab === "logs" && <ServerLogsTab server={server} />}
         {tab === "updates" && <ServerUpdatesTab server={server} />}
         {tab === "commands" && !server.revoked_at && aiCommands(server) === "off" && <AllowOnThisServer server={server} />}
@@ -224,14 +253,6 @@ export function ServerPage({ id }: { id: string | null }) {
       </TabPanel>
     </Page>
   );
-}
-
-/** The server's alerts and checks, editable by operators of its site. */
-function ServerAlertsTab({ server }: { server: ServerDetail }) {
-  const me = useMe();
-  const { id, site_id: siteId, site_name: siteName, os_family: osFamily } = server;
-  const target = useMemo(() => ({ kind: "server" as const, id, siteId, siteName, osFamily }), [id, siteId, siteName, osFamily]);
-  return <MonitoringSettings target={target} canEdit={!server.revoked_at && modifiesSite(me, server.customer_id, siteId)} />;
 }
 
 function ServerHeading({ server }: { server: ServerDetail }) {

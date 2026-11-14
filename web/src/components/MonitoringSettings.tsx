@@ -181,7 +181,7 @@ function Alerts({ target, data, canEdit, onChanged }: { target: Target; data: Da
 }
 
 /** When checks are slower than the alert reads: "Checked every 1 h, so…". */
-function SlowNote({ durationS, intervalS }: { durationS: number; intervalS: number | undefined }) {
+export function SlowNote({ durationS, intervalS }: { durationS: number; intervalS: number | undefined }) {
   const note = slowAlertNote(durationS, intervalS);
   return note && <span className={cx(admin.dim, styles.note)}>{note}</span>;
 }
@@ -373,7 +373,7 @@ function ThresholdEditor({
   );
 }
 
-function Field({
+export function Field({
   label,
   unit,
   value,
@@ -412,6 +412,30 @@ function Field({
   );
 }
 
+/**
+ * Stops checking `sensor` on the target: a check added there (`own`) goes,
+ * with the alerts set there on its metrics; an inherited one gets a
+ * turned-off row, which "Turn back on" removes.
+ */
+export async function stopChecking(target: Target, sensor: EffectiveSensor, own: boolean): Promise<void> {
+  const owner = ownerOf(target);
+  if (own && sensor.entry_id) {
+    const prefix = `${METRIC_PREFIX}${sensor.name}_`;
+    const { entries } = await api.thresholdRows(owner);
+    await Promise.all(entries.filter((e) => e.metric.startsWith(prefix)).map((e) => api.deleteThreshold(e.id)));
+    await api.deleteSensor(sensor.entry_id);
+    return;
+  }
+  await api.createSensor(owner, {
+    kind: sensor.kind,
+    name: sensor.name,
+    instance: sensor.instance,
+    interval_ms: sensor.interval_ms,
+    params: sensor.params,
+    enabled: false,
+  });
+}
+
 function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Data; canEdit: boolean; onChanged: () => void }) {
   const titleId = useId();
   const [adding, setAdding] = useState(false);
@@ -420,23 +444,7 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
   const here = target.kind === "server" ? "this server" : "this site";
 
   async function remove(sensor: EffectiveSensor) {
-    const owner = ownerOf(target);
-    if (sensor.origin === layer && sensor.entry_id) {
-      // A check added here goes with the alerts set here on its metrics.
-      const prefix = `${METRIC_PREFIX}${sensor.name}_`;
-      const { entries } = await api.thresholdRows(owner);
-      await Promise.all(entries.filter((e) => e.metric.startsWith(prefix)).map((e) => api.deleteThreshold(e.id)));
-      await api.deleteSensor(sensor.entry_id);
-    } else {
-      await api.createSensor(owner, {
-        kind: sensor.kind,
-        name: sensor.name,
-        instance: sensor.instance,
-        interval_ms: sensor.interval_ms,
-        params: sensor.params,
-        enabled: false,
-      });
-    }
+    await stopChecking(target, sensor, sensor.origin === layer && sensor.entry_id !== null);
     onChanged();
   }
 
@@ -528,7 +536,7 @@ function Checks({ target, data, canEdit, onChanged }: { target: Target; data: Da
 }
 
 /** "Built-in checks run every 1 min on every server of Paris", which operators change for the site. */
-function BuiltinInterval({
+export function BuiltinInterval({
   target,
   interval,
   canEdit,
@@ -613,7 +621,7 @@ function inheritedInterval(target: Target, data: Data, sensor: EffectiveSensor):
   return builtin ? data.interval.check_interval_ms : undefined;
 }
 
-function TurnBackOn({ id, onChanged }: { id: string; onChanged: () => void }) {
+export function TurnBackOn({ id, onChanged }: { id: string; onChanged: () => void }) {
   const [error, setError] = useState<string | null>(null);
   return (
     <>
@@ -799,7 +807,7 @@ function CheckForm({
   );
 }
 
-const stringParams = (params: SensorConfigEntry["params"]) =>
+export const stringParams = (params: SensorConfigEntry["params"]) =>
   Object.fromEntries(Object.entries(params).map(([key, value]) => [key, String(value)]));
 
 const initialValues = (type: CheckType) => Object.fromEntries(type.fields.map((f) => [f.key, f.initial ?? ""]));

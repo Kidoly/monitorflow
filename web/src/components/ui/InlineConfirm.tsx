@@ -21,6 +21,9 @@ import styles from "./InlineConfirm.module.css";
  *
  * `layout="row"` is the compact form inside a table row (enrollment tokens):
  * one line with the question, Cancel and the danger button, all 30 px.
+ *
+ * `onClose` makes it open at once, without a trigger, for an action chosen
+ * elsewhere (a row's menu); it is called on Cancel and once confirmed.
  */
 export function InlineConfirm<R extends string>({
   trigger,
@@ -36,6 +39,7 @@ export function InlineConfirm<R extends string>({
   triggerName,
   acknowledge,
   confirmVariant = "danger",
+  onClose,
 }: {
   /** Label of the trigger button: "Revoke web-01…". */
   trigger: string;
@@ -56,8 +60,9 @@ export function InlineConfirm<R extends string>({
   /** Label of a checkbox that must be ticked before confirming. */
   acknowledge?: string;
   confirmVariant?: "danger" | "k";
+  onClose?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(onClose !== undefined);
   const [reason, setReason] = useState<R | "">("");
   const [acknowledged, setAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -67,7 +72,7 @@ export function InlineConfirm<R extends string>({
   const checkRef = useRef<HTMLInputElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   // Focus moves only after the user opened or cancelled, not on first render.
-  const moved = useRef<"open" | "closed" | null>(null);
+  const moved = useRef<"open" | "closed" | null>(onClose ? "open" : null);
 
   useEffect(() => {
     if (moved.current === "open") (selectRef.current ?? checkRef.current ?? confirmRef.current)?.focus();
@@ -86,6 +91,7 @@ export function InlineConfirm<R extends string>({
     setReason("");
     setAcknowledged(false);
     setError(null);
+    onClose?.();
   }
 
   async function submit(event: FormEvent) {
@@ -96,6 +102,7 @@ export function InlineConfirm<R extends string>({
     try {
       await onConfirm(reason || null);
       setOpen(false);
+      onClose?.();
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -104,6 +111,7 @@ export function InlineConfirm<R extends string>({
   }
 
   const size = layout === "row" ? "small" : undefined;
+  if (!open && onClose) return null;
   if (!open) {
     return (
       <Button
