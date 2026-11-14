@@ -972,6 +972,566 @@
         }
       }
     },
+    "/api/v1/notifications/channels": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "List notification channels",
+        "description": "The channels of what the key's maker administers, oldest first, in\nfull: there are few. Administrators only.",
+        "operationId": "list_notification_channels",
+        "responses": {
+          "200": {
+            "description": "The channels",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationChannelList"
+                },
+                "example": {
+                  "channels": [
+                    {
+                      "created_at": "2026-11-02T09:00:00Z",
+                      "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                      "customer_name": "acme",
+                      "follow_up_only": false,
+                      "has_secret": true,
+                      "id": "0c8f3b6e-5d2a-4f1e-9b7c-2d4e6f8a0b1c",
+                      "kind": "email",
+                      "last_error": null,
+                      "last_error_at": null,
+                      "last_sent_at": "2026-11-12T22:41:07Z",
+                      "settings": {
+                        "from": "",
+                        "host": "smtp.example.com",
+                        "port": 587,
+                        "to": [
+                          "ops@example.com"
+                        ],
+                        "username": "alerts@example.com"
+                      },
+                      "site_id": null,
+                      "site_name": null
+                    },
+                    {
+                      "created_at": "2026-11-05T14:30:00Z",
+                      "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                      "customer_name": "acme",
+                      "follow_up_only": true,
+                      "has_secret": true,
+                      "id": "6a1d9e3f-7b4c-4a2e-8f5d-3c1b2a4e6d8f",
+                      "kind": "webhook",
+                      "last_error": "hooks.example.com answered 503 Service Unavailable.",
+                      "last_error_at": "2026-11-13T03:12:44Z",
+                      "last_sent_at": null,
+                      "settings": {
+                        "origin": "https://hooks.example.com"
+                      },
+                      "site_id": "9b2e6a41-3c7d-4e8f-a1b2-c3d4e5f60718",
+                      "site_name": "paris"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Add a notification channel",
+        "description": "Administrators of what it notifies about: everything, the customer of\n`customer_id` or the site of `site_id`. The channel starts hearing of\nwhat it covers at once; send a test to check it. Audited as\n`notification.channel_create`, without the secret and with only the\nhost of a webhook. Not safe to repeat: send `Idempotency-Key` to retry.",
+        "operationId": "create_notification_channel",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationChannelRequest"
+              },
+              "example": {
+                "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                "follow_up_only": false,
+                "kind": "email",
+                "secret": "mail-password",
+                "settings": {
+                  "from": "",
+                  "host": "smtp.example.com",
+                  "port": 587,
+                  "to": [
+                    "ops@example.com"
+                  ],
+                  "username": "alerts@example.com"
+                },
+                "site_id": null
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationChannel"
+                },
+                "example": {
+                  "created_at": "2026-11-02T09:00:00Z",
+                  "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                  "customer_name": "acme",
+                  "follow_up_only": false,
+                  "has_secret": true,
+                  "id": "0c8f3b6e-5d2a-4f1e-9b7c-2d4e6f8a0b1c",
+                  "kind": "email",
+                  "last_error": null,
+                  "last_error_at": null,
+                  "last_sent_at": "2026-11-12T22:41:07Z",
+                  "settings": {
+                    "from": "",
+                    "host": "smtp.example.com",
+                    "port": 587,
+                    "to": [
+                      "ops@example.com"
+                    ],
+                    "username": "alerts@example.com"
+                  },
+                  "site_id": null,
+                  "site_name": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: unknown kind, settings that do not fit it (no recipient, a URL with a password, a chat URL of another service…), a secret over 1024 bytes, a customer and a site together, an unknown customer or site, a plugin not turned on there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: not an administrator of what it would notify about; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/channels/{id}": {
+      "put": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Change a notification channel",
+        "description": "Replaces its kind, settings, what it notifies about and\n`follow_up_only`; the secret\nonly when one is given. Administrators of what it notifies about now\nand of what it will. A stored secret stays only with the place it was\ntyped for: changing the mail server, its port or username, or a\nwebhook's URL, or giving a new chat URL, needs the secret again, or\nthe answer is 400. A webhook `url` left empty keeps the stored one,\nwhich the API never shows. Audited as `notification.channel_update`.\nSafe to repeat.",
+        "operationId": "update_notification_channel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The channel",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationChannelRequest"
+              },
+              "example": {
+                "customer_id": null,
+                "follow_up_only": true,
+                "kind": "webhook",
+                "settings": {
+                  "url": ""
+                },
+                "site_id": "9b2e6a41-3c7d-4e8f-a1b2-c3d4e5f60718"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationChannel"
+                },
+                "example": {
+                  "created_at": "2026-11-05T14:30:00Z",
+                  "customer_id": "4f7d1c2e-0a5b-4c3d-9e8f-1a2b3c4d5e6f",
+                  "customer_name": "acme",
+                  "follow_up_only": true,
+                  "has_secret": true,
+                  "id": "6a1d9e3f-7b4c-4a2e-8f5d-3c1b2a4e6d8f",
+                  "kind": "webhook",
+                  "last_error": "hooks.example.com answered 503 Service Unavailable.",
+                  "last_error_at": "2026-11-13T03:12:44Z",
+                  "last_sent_at": null,
+                  "settings": {
+                    "origin": "https://hooks.example.com"
+                  },
+                  "site_id": "9b2e6a41-3c7d-4e8f-a1b2-c3d4e5f60718",
+                  "site_name": "paris"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid`: as when adding one, or a new destination without its secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: not an administrator of what it would notify about; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such channel, or not one the key's maker administers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Remove a notification channel",
+        "description": "Administrators of what it notifies about. Follow-up steps that name it\nshow it as removed. Audited as `notification.channel_delete`.",
+        "operationId": "delete_notification_channel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The channel",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such channel, or not one the key's maker administers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/channels/{id}/test": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Send a test message",
+        "description": "Sends a test through the channel now and answers whether it went\nthrough, with the error in plain words. A failure is still a 200. The\noutcome becomes the channel's `last_sent_at` or `last_error`. Not\naudited. Administrators of what it notifies about.",
+        "operationId": "test_notification_channel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The channel",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tried",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationChannelTest"
+                },
+                "example": {
+                  "error": "smtp.example.com refused the password for alerts@example.com.",
+                  "ok": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator: `forbidden`; `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no such channel, or not one the key's maker administers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/remediation/approvals": {
       "get": {
         "tags": [
@@ -2837,6 +3397,181 @@
         },
         "additionalProperties": false
       },
+      "NotificationChannel": {
+        "type": "object",
+        "description": "A channel as the web interface shows it. Never its secret: a\nwebhook shows only its origin, and `has_secret` says whether a\npassword, signing secret or chat webhook URL is stored.",
+        "required": [
+          "id",
+          "kind",
+          "settings",
+          "has_secret",
+          "created_at",
+          "follow_up_only"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was added."
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer it covers, or the customer of the site it covers;\n`null` for everything."
+          },
+          "customer_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of `customer_id`; `null` with it."
+          },
+          "follow_up_only": {
+            "type": "boolean",
+            "description": "Hears only follow-up steps that name it, and their resolution\n(ADR-0082)."
+          },
+          "has_secret": {
+            "type": "boolean",
+            "description": "Whether a password, signing secret or chat webhook URL is stored."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The channel's ID."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`email`, `webhook`, `slack`, `teams`, `discord` or `plugin`."
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The last delivery's or test's error, `null` once one works."
+          },
+          "last_error_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When `last_error` happened; `null` with it."
+          },
+          "last_sent_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The last message that went through; `null` before the first."
+          },
+          "settings": {
+            "type": "object",
+            "description": "email: `{\"host\", \"port\", \"username\", \"from\", \"to\"}`; webhook:\n`{\"origin\"}`, the URL's scheme, host and port (ADR-0123); chat:\n`{\"name\", \"host\"}`; plugin: `{\"plugin\", \"name\", \"values\"}`, its\nsecret settings apart (ADR-0103)."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site it covers; `null` for a whole customer or everything."
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of `site_id`; `null` with it."
+          }
+        }
+      },
+      "NotificationChannelList": {
+        "type": "object",
+        "description": "Body of `GET /api/notifications/channels`.",
+        "required": [
+          "channels"
+        ],
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotificationChannel"
+            },
+            "description": "Oldest first."
+          }
+        }
+      },
+      "NotificationChannelRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/notifications/channels` and of `PUT` on one.",
+        "required": [
+          "kind",
+          "settings"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The customer to cover; with `site_id` also `null`, everything."
+          },
+          "follow_up_only": {
+            "type": "boolean",
+            "description": "Only follow-up steps that name it, not every event it covers\n(ADR-0082)."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`email`, `webhook`, `slack`, `teams`, `discord` or `plugin`."
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The SMTP password, webhook signing secret or chat webhook URL, or\na plugin's secret settings as a JSON object of strings; at most\n1024 bytes. Write-only: never returned. On `PUT`, absent, `null`\nor empty keeps the stored one."
+          },
+          "settings": {
+            "type": "object",
+            "description": "email: `{\"host\", \"port\" (587 when absent), \"username\" (empty\nwithout authentication), \"from\" (the username when empty), \"to\"\n(1 to 20 addresses)}`; webhook: `{\"url\"}`, http or https without\na user or password, empty on `PUT` to keep the stored one; chat:\n`{\"name\"}`, at most 80 characters, the URL going in `secret`;\nplugin: `{\"plugin\", \"name\", \"values\"}`, without its secret\nsettings."
+          },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site to cover. Not together with `customer_id`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NotificationChannelTest": {
+        "type": "object",
+        "description": "Body of `POST /api/notifications/channels/{id}/test`.",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed, in plain words; `null` when it went through."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "Whether the test message went through."
+          }
+        }
+      },
       "PendingList": {
         "type": "object",
         "description": "Body of `GET /api/remediation/approvals`.",
@@ -3628,6 +4363,10 @@
     {
       "name": "metrics",
       "description": "Metric queries built by MonitorFlow, never raw PromQL"
+    },
+    {
+      "name": "notifications",
+      "description": "Notification channels: where messages to people go when an incident opens, gets worse or ends, a command waits for approval, an update fails, a backup fails or a new version is out. A channel is an email address list sent through a mail server, a webhook, a chat channel (`slack`, `teams`, `discord`) or a plugin's, and notifies about everything, one customer or one site. Only administrators reach channels, and only those of what they administer: everything takes a global administrator (a key with every reach), a customer an administrator of it, a site an administrator of it or of its customer; others answer 404. Secrets are write-only: the mail password, signing secret, chat webhook URL or plugin secret settings go in `secret` and never come back, a channel says only `has_secret`, and a webhook shows only its URL's origin, as its path and query often hold a token. A channel saved by anyone but a global administrator only sends to public addresses. Every change is in the audit log, with the key's ID. API keys need the `alerts` area. For machines rather than people, use an integration."
     }
   ]
 }

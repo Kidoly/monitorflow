@@ -22,6 +22,9 @@ use utoipa::{Modify, OpenApi, ToSchema};
 use super::ERROR_CODES;
 use super::{approvals, commands, customers, incidents, metrics, servers, silences, sites};
 
+#[path = "openapi_notifications.rs"]
+mod notifications;
+
 /// Every error: a sentence to show and a stable code to branch on.
 #[derive(Serialize, ToSchema)]
 #[schema(as = Error)]
@@ -39,7 +42,9 @@ pub async fn document() -> Json<Document> {
 }
 
 pub fn build() -> Document {
-    ApiDoc::openapi()
+    let mut doc = ApiDoc::openapi();
+    doc.merge(notifications::Doc::openapi());
+    doc
 }
 
 #[derive(OpenApi)]
@@ -192,7 +197,6 @@ fn errors(operation: &mut Operation) {
 // Routes reachable through v1 that the document does not describe yet,
 // in the order ADR-0101 gives. Moving one into the document is additive.
 pub const NOT_YET_DOCUMENTED: &[&str] = &[
-    "/api/notifications/",
     "/api/integrations",
     "/api/on-call/",
     "/api/follow-up/",
