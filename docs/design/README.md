@@ -17,7 +17,7 @@ Black on white, Inter 14 px / 1.5, thin #eaeaea borders, no shadows except menus
 | File | Route | Notes |
 |---|---|---|
 | 01-sign-in | /signin/ | two error states: wrong credentials, server unreachable |
-| 02-fleet | / | counters Online / Critical / Warnings, flat table sorted problems-first, healthy rows collapsible |
+| 02-fleet | / | status strip (every page) instead of counters; servers grouped by site, healthy sites folded to one line (ADR-0130) |
 | 03-server-sensors | /servers/view/?id= | facts box, then the sensor list (Sensor, Status, Last value); tabs Sensors / Updates / Commands |
 | 03b-sensor | /servers/sensor/?id=&sensor= | counters, big chart with thresholds and Opened marker, configuration facts, incidents of this sensor |
 | 03c-server-updates | /servers/view/?id=&tab=updates | patch workflow: Scan now, counters by status, table with Approve / Reject per row, Apply approved |
@@ -81,5 +81,5 @@ Interaction notes — coming next
 ## Rules that are easy to get wrong
 
 - `.btn-k` (black button) is also used on `<a>`: declare it with higher specificity than the global `a` colour rule, or scope link colour with `a:not(.btn)`.
-- Group headers, topology diagrams, side-by-side boxes of different heights and open confirmation dialogs were removed on purpose; do not add them back.
+- Group headers (except the fleet's sites, ADR-0130), topology diagrams, side-by-side boxes of different heights and open confirmation dialogs were removed on purpose; do not add them back.
 - No icons for status, no pills for filters, no cards with shadows. Icons exist only in the sidebar (16 px, 1.6 stroke).

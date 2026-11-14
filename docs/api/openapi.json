@@ -1385,6 +1385,99 @@
         }
       }
     },
+    "/api/v1/servers/summary": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "How many servers are in each state: the counts of the status strip.",
+        "operationId": "server_summary",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "query",
+            "description": "Only the servers of this site.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "description": "Only the servers of this customer's sites.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}": {
       "get": {
         "tags": [
@@ -3134,12 +3227,74 @@
           }
         }
       },
+      "ServerState": {
+        "type": "string",
+        "description": "The one status of a server on the fleet's pages, worst first\n(ADR-0130): a silence wins, then being offline, then the worst open\nincident nobody acknowledged; a server whose open incidents are all\nacknowledged is `acknowledged`, the rest `ok`.",
+        "enum": [
+          "critical",
+          "warning",
+          "acknowledged",
+          "silenced",
+          "offline",
+          "ok"
+        ]
+      },
       "ServerStatus": {
         "type": "string",
         "enum": [
           "online",
           "offline"
         ]
+      },
+      "ServerSummary": {
+        "type": "object",
+        "description": "Body of `GET /api/servers/summary`: how many servers are in each\n[`ServerState`], out of `total`.",
+        "required": [
+          "critical",
+          "warning",
+          "acknowledged",
+          "silenced",
+          "offline",
+          "ok",
+          "total"
+        ],
+        "properties": {
+          "acknowledged": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "critical": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "offline": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "ok": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "silenced": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "warning": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       },
       "ServerView": {
         "type": "object",
@@ -3157,6 +3312,7 @@
           "created_at",
           "status",
           "open_incidents",
+          "state",
           "offline_alerts",
           "site_offline_alerts"
         ],
@@ -3282,6 +3438,10 @@
           },
           "site_offline_alerts": {
             "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ServerState",
+            "description": "Its one status on the fleet's pages (ADR-0130)."
           },
           "status": {
             "$ref": "#/components/schemas/ServerStatus"

@@ -708,6 +708,27 @@ async fn check(ctx: &Ctx, method: &str, path: &str) {
                 "{body}"
             );
         }
+        ("GET", "/api/servers/summary") => {
+            // Counts A's servers only, whatever place it asks for.
+            let (status, mine) = ctx.call(method, path, None).await;
+            assert_eq!(status, StatusCode::OK);
+            let (_, own) = ctx
+                .call(method, &format!("{path}?site_id={}", a.site), None)
+                .await;
+            assert_eq!(mine["total"], own["total"], "{mine} {own}");
+            assert!(mine["total"].as_u64() > Some(0), "{mine}");
+            for query in [
+                format!("site_id={}", b.site),
+                format!("customer_id={}", b.customer),
+            ] {
+                let (status, theirs) = ctx.call(method, &format!("{path}?{query}"), None).await;
+                assert_eq!(
+                    (status, theirs["total"].as_u64()),
+                    (StatusCode::OK, Some(0)),
+                    "{query}"
+                );
+            }
+        }
         ("GET", "/api/sites") => {
             let (status, body) = ctx.call(method, path, None).await;
             assert_eq!(status, StatusCode::OK);

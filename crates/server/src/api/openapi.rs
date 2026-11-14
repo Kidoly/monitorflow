@@ -57,7 +57,7 @@ carry `Idempotency-Key`; the same request again within 24 hours gets the first a
         license(name = "AGPL-3.0-only")
     ),
     paths(
-        list_servers, server, list_sites, list_customers, create_customer, create_site,
+        list_servers, server_summary, server, list_sites, list_customers, create_customer, create_site,
         list_incidents, incident, acknowledge, list_silences, create_silence, end_silence,
         list_commands, create_command, command, list_approvals, approve, reject,
         query, query_range,
@@ -250,6 +250,11 @@ pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[
 #[utoipa::path(get, path = "/api/v1/servers", tag = "servers", params(servers::ListParams),
     responses((status = 200, body = servers::ServerList)))]
 fn list_servers() {}
+
+/// How many servers are in each state: the counts of the status strip.
+#[utoipa::path(get, path = "/api/v1/servers/summary", tag = "servers", params(servers::SummaryParams),
+    responses((status = 200, body = servers::ServerSummary)))]
+fn server_summary() {}
 
 #[utoipa::path(get, path = "/api/v1/servers/{id}", tag = "servers", params(("id" = uuid::Uuid, Path)),
     responses((status = 200, body = servers::ServerDetail)))]

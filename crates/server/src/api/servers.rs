@@ -81,6 +81,42 @@ pub enum Status {
     Offline,
 }
 
+/// The one status of a server on the fleet's pages, worst first
+/// (ADR-0130): a silence wins, then being offline, then the worst open
+/// incident nobody acknowledged; a server whose open incidents are all
+/// acknowledged is `acknowledged`, the rest `ok`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ServerState {
+    Critical,
+    Warning,
+    Acknowledged,
+    Silenced,
+    Offline,
+    Ok,
+}
+
+impl ServerState {
+    /// The state of a server `online` or not, `silenced` or not, with
+    /// `open` incidents of which `unacknowledged` and `critical` (among the
+    /// unacknowledged) nobody acknowledged.
+    pub fn of(silenced: bool, online: bool, open: i64, unacknowledged: i64, critical: i64) -> Self {
+        if silenced {
+            Self::Silenced
+        } else if !online && (unacknowledged > 0 || open == 0) {
+            Self::Offline
+        } else if critical > 0 {
+            Self::Critical
+        } else if unacknowledged > 0 {
+            Self::Warning
+        } else if open > 0 {
+            Self::Acknowledged
+        } else {
+            Self::Ok
+        }
+    }
+}
+
 /// One server. Field names and types are part of the API contract: add
 /// fields, never rename or remove them.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -118,6 +154,8 @@ pub struct ServerView {
     pub via_relay: Option<String>,
     /// Threshold and offline incidents currently open on this server.
     pub open_incidents: i64,
+    /// Its one status on the fleet's pages (ADR-0130).
+    pub state: ServerState,
     /// Whether it opens an incident when offline (ADR-0072); muted when
     /// this or `site_offline_alerts` is `false`.
     pub offline_alerts: bool,
@@ -181,23 +219,134 @@ impl From<CertificateRow> for CertificateView {
     }
 }
 
+/// The open incidents of server `s`, as `o`: all of them, those nobody
+/// acknowledged, and the critical ones among those.
+macro_rules! open_counts {
+    () => {
+        "CROSS JOIN LATERAL (
+         SELECT count(*) AS open_incidents,
+                count(*) FILTER (WHERE a.incident_id IS NULL) AS unacknowledged,
+                count(*) FILTER (WHERE a.incident_id IS NULL
+                                   AND i.severity = 'critical') AS unacknowledged_critical
+         FROM incidents i
+         LEFT JOIN incident_acknowledgements a ON a.incident_id = i.id
+         -- One probe of the partial unique index on open incidents.
+         WHERE i.server_id = s.id AND i.state = 'open') o"
+    };
+}
+
 /// Columns of [`Row`]; callers add the `WHERE` clause.
-const SELECT_SERVERS: &str = "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name,
+const SELECT_SERVERS: &str = concat!(
+    "SELECT s.id, s.peer_id, s.hostname, s.site_id, si.name AS site_name,
             si.customer_id, c.name AS customer_name, s.relay_id,
             s.os_family, s.os_version, s.package_updates, s.command_kinds, s.agent_version,
             s.created_at, s.last_seen_at,
             s.revoked_at, s.offline_alerts, si.offline_alerts AS site_offline_alerts,
             silenced_until(s.id, NULL, s.site_id, si.customer_id) AS silenced_until,
-            -- One probe of the partial unique index on open incidents.
-            (SELECT count(*) FROM incidents i
-             WHERE i.server_id = s.id AND i.state = 'open') AS open_incidents,
+            o.open_incidents, o.unacknowledged, o.unacknowledged_critical,
             -- One probe of the partial index on active certificates.
             (SELECT max(c.not_after) FROM certificates c
              WHERE c.peer_role = 'agent' AND c.peer_id = s.peer_id
                AND c.revoked_at IS NULL) AS cert_not_after
      FROM servers s
      JOIN sites si ON si.id = s.site_id
-     JOIN customers c ON c.id = si.customer_id";
+     JOIN customers c ON c.id = si.customer_id
+     ",
+    open_counts!()
+);
+
+/// Query string of `GET /api/servers/summary`.
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct SummaryParams {
+    /// Only the servers of this site.
+    pub site_id: Option<Uuid>,
+    /// Only the servers of this customer's sites.
+    pub customer_id: Option<Uuid>,
+}
+
+/// Body of `GET /api/servers/summary`: how many servers are in each
+/// [`ServerState`], out of `total`.
+#[derive(Debug, Default, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+pub struct ServerSummary {
+    pub critical: u64,
+    pub warning: u64,
+    pub acknowledged: u64,
+    pub silenced: u64,
+    pub offline: u64,
+    pub ok: u64,
+    pub total: u64,
+}
+
+impl ServerSummary {
+    fn add(&mut self, state: ServerState) {
+        let count = match state {
+            ServerState::Critical => &mut self.critical,
+            ServerState::Warning => &mut self.warning,
+            ServerState::Acknowledged => &mut self.acknowledged,
+            ServerState::Silenced => &mut self.silenced,
+            ServerState::Offline => &mut self.offline,
+            ServerState::Ok => &mut self.ok,
+        };
+        *count += 1;
+        self.total += 1;
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct SummaryRow {
+    peer_id: String,
+    silenced: bool,
+    open_incidents: i64,
+    unacknowledged: i64,
+    unacknowledged_critical: i64,
+}
+
+/// `GET /api/servers/summary`: the servers the user may read, without
+/// removed ones, counted by state, for the status strip of every page
+/// (ADR-0130). Needs at least one role.
+pub async fn summary(
+    State(state): State<ApiState>,
+    user: CurrentUser,
+    params: Result<Query<SummaryParams>, QueryRejection>,
+) -> Result<Json<ServerSummary>, ApiError> {
+    let Query(params) = params.map_err(|r| ApiError::Invalid(r.body_text()))?;
+    if !user.can_read() {
+        return Err(ApiError::Forbidden);
+    }
+    let (all_sites, sites) = user.readable_sites().bind();
+    let rows: Vec<SummaryRow> = sqlx::query_as(concat!(
+        "SELECT s.peer_id,
+                silenced_until(s.id, NULL, s.site_id, si.customer_id) IS NOT NULL AS silenced,
+                o.open_incidents, o.unacknowledged, o.unacknowledged_critical
+         FROM servers s
+         JOIN sites si ON si.id = s.site_id
+         ",
+        open_counts!(),
+        "
+         WHERE ($1 OR s.site_id = ANY($2)) AND s.revoked_at IS NULL
+           AND ($3::uuid IS NULL OR s.site_id = $3)
+           AND ($4::uuid IS NULL OR si.customer_id = $4)",
+    ))
+    .bind(all_sites)
+    .bind(&sites)
+    .bind(params.site_id)
+    .bind(params.customer_id)
+    .fetch_all(&state.pool)
+    .await?;
+    let mut summary = ServerSummary::default();
+    for row in rows {
+        let online = state.registry.live(PeerRole::Agent, &row.peer_id).is_some();
+        summary.add(ServerState::of(
+            row.silenced,
+            online,
+            row.open_incidents,
+            row.unacknowledged,
+            row.unacknowledged_critical,
+        ));
+    }
+    Ok(Json(summary))
+}
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -221,6 +370,8 @@ struct Row {
     site_offline_alerts: bool,
     silenced_until: Option<DateTime<Utc>>,
     open_incidents: i64,
+    unacknowledged: i64,
+    unacknowledged_critical: i64,
     cert_not_after: Option<DateTime<Utc>>,
 }
 
@@ -335,6 +486,13 @@ impl ServerView {
         match live {
             Some(peer) => Self {
                 status: Status::Online,
+                state: ServerState::of(
+                    row.silenced_until.is_some(),
+                    true,
+                    row.open_incidents,
+                    row.unacknowledged,
+                    row.unacknowledged_critical,
+                ),
                 connected_at: Some(peer.connected_at),
                 last_heartbeat: Some(peer.last_seen),
                 via_relay: peer.via_relay,
@@ -347,6 +505,13 @@ impl ServerView {
 
     fn offline(row: Row) -> Self {
         Self {
+            state: ServerState::of(
+                row.silenced_until.is_some(),
+                false,
+                row.open_incidents,
+                row.unacknowledged,
+                row.unacknowledged_critical,
+            ),
             id: row.id,
             peer_id: row.peer_id,
             hostname: row.hostname,
@@ -378,6 +543,43 @@ impl ServerView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_state_per_server_worst_first() {
+        use ServerState::*;
+        // (silenced, online, open, unacknowledged, critical)
+        let cases = [
+            ((true, false, 3, 3, 1), Silenced),
+            ((false, false, 0, 0, 0), Offline),
+            ((false, false, 1, 1, 1), Offline),
+            ((false, false, 1, 0, 0), Acknowledged),
+            ((false, true, 2, 2, 1), Critical),
+            ((false, true, 2, 1, 0), Warning),
+            ((false, true, 2, 0, 0), Acknowledged),
+            ((false, true, 0, 0, 0), Ok),
+        ];
+        for ((silenced, online, open, unacknowledged, critical), want) in cases {
+            assert_eq!(
+                ServerState::of(silenced, online, open, unacknowledged, critical),
+                want,
+                "{silenced} {online} {open} {unacknowledged} {critical}"
+            );
+        }
+        let mut summary = ServerSummary::default();
+        for state in [Critical, Ok, Ok, Offline] {
+            summary.add(state);
+        }
+        assert_eq!(
+            summary,
+            ServerSummary {
+                critical: 1,
+                offline: 1,
+                ok: 2,
+                total: 4,
+                ..Default::default()
+            }
+        );
+    }
 
     #[test]
     fn cursors_round_trip_and_refuse_garbage() {
