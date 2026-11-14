@@ -2642,6 +2642,10 @@ export const api = {
       { signal },
     ),
 
+  /** The first 500 servers of one site, by hostname. */
+  siteServers: (siteId: string, signal?: AbortSignal) =>
+    request<ServerList>(`/api/servers?site_id=${encodeURIComponent(siteId)}&limit=500`, { signal }),
+
   /** Every server the user may read, following `next_cursor` across pages. */
   servers: async (signal?: AbortSignal): Promise<ServerList> => {
     const servers: Server[] = [];

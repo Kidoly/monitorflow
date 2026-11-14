@@ -47,6 +47,7 @@ import { TimeChart } from "@/components/ui/TimeChart";
 import { formatClock, formatDay, formatDuration } from "@/components/ui/time";
 import type { Tone } from "@/components/ui/tone";
 
+import { sensorSiblings, serverSiblings } from "./breadcrumbSiblings";
 import { IntervalControl } from "./IntervalSelect";
 import styles from "./DetailPages.module.css";
 
@@ -72,6 +73,8 @@ interface SensorData {
   thresholds: EffectiveThreshold[] | null;
   /** Why the sensor's last sample is late or missing, in the server's words; null when it is not. */
   late: string | null;
+  /** Every sensor's recent values, for the breadcrumb's list; null when unreadable. */
+  recent: SensorValueList | null;
   /** Every incident of this metric and instance, newest first; null when they could not be read. */
   incidents: Incident[] | null;
   chart: Chart<MetricSeries>;
@@ -120,6 +123,7 @@ async function loadSensor(id: string, metric: string, instance: string, range: R
     thresholds,
     incidents: incidents?.filter((i) => i.metric === metric && i.instance === instance) ?? null,
     late: lateReason(recent, effective, metric, instance),
+    recent,
     chart,
     companions,
     range,
@@ -241,9 +245,10 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
       <Breadcrumb
         parents={[
           { label: "Fleet", href: scopedHref("/", scope) },
-          { label: server.hostname, href: serverLink },
+          { label: server.hostname, href: serverLink, siblings: serverSiblings(server, scope) },
         ]}
         current={title}
+        siblings={config ? sensorSiblings(server, config.sensors, data.recent, { metric, instance }, scope) : undefined}
       />
       <PageHeader
         detail

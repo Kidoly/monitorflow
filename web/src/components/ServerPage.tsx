@@ -41,6 +41,7 @@ import { TabPanel, Tabs } from "@/components/ui/Tabs";
 import { formatExact } from "@/components/ui/time";
 
 import { AllowCommandsLine } from "./AllowCommands";
+import { serverSiblings } from "./breadcrumbSiblings";
 import { MonitoringSettings } from "./MonitoringSettings";
 import { OfflineAlerts } from "./OfflineAlerts";
 import { RemovedPanel, RemovePeer } from "./RemovePeer";
@@ -235,7 +236,13 @@ function ServerAlertsTab({ server }: { server: ServerDetail }) {
 
 function ServerHeading({ server }: { server: ServerDetail }) {
   const scope = useScope();
-  return <Breadcrumb parents={[{ label: "Fleet", href: scopedHref("/", scope) }]} current={server.hostname} />;
+  return (
+    <Breadcrumb
+      parents={[{ label: "Fleet", href: scopedHref("/", scope) }]}
+      current={server.hostname}
+      siblings={serverSiblings(server, scope)}
+    />
+  );
 }
 
 /**
