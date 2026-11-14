@@ -1,0 +1,12 @@
+.reason {
+  color: var(--text);
+}
+
+.short {
+  display: inline-block;
+  max-width: 46ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}

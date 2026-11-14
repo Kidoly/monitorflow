@@ -1,9 +1,6 @@
-import type { Metadata } from "next";
+import { MovedPage } from "@/components/MovedPage";
 
-import { BackupsPage } from "@/components/BackupsPage";
-
-export const metadata: Metadata = { title: "Backups · MonitorFlow" };
-
-export default function BackupsRoute() {
-  return <BackupsPage />;
+// Moved under /settings/; old links still work.
+export default function Moved() {
+  return <MovedPage from="/admin/backups/" />;
 }

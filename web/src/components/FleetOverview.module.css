@@ -18,16 +18,6 @@
   color: var(--muted);
 }
 
-.linkButton {
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: var(--text);
-  text-decoration: underline;
-  cursor: pointer;
-}
-
 /* StatusBadge, kept for the relay pages until their redesign. */
 .online,
 .offline {
@@ -44,4 +34,19 @@
 .offline {
   color: var(--bad);
   background: var(--bad-bg);
+}
+
+/* A silenced or acknowledged row: the problem, then who and why on a line of its own. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+}
+
+.note {
+  font-size: 13px;
+  color: var(--text);
+  white-space: normal;
+  max-width: 56ch;
 }

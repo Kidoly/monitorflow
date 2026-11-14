@@ -54,7 +54,7 @@ describe("OfflineAlerts", () => {
       </As>,
     );
     expect(screen.getByText(/for the whole site/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Sites" })).toHaveAttribute("href", expect.stringMatching(/^\/admin\/sites\/?$/));
+    expect(screen.getByRole("link", { name: "Sites" })).toHaveAttribute("href", expect.stringMatching(/^\/settings\/sites\/?$/));
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });

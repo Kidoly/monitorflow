@@ -1,9 +1,6 @@
-import type { Metadata } from "next";
+import { MovedPage } from "@/components/MovedPage";
 
-import { ServerUpdatePage } from "@/components/ServerUpdatePage";
-
-export const metadata: Metadata = { title: "Server update · MonitorFlow" };
-
-export default function ServerUpdateRoute() {
-  return <ServerUpdatePage />;
+// Moved under /settings/; old links still work.
+export default function Moved() {
+  return <MovedPage from="/admin/server-update/" />;
 }

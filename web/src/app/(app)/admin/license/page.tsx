@@ -1,9 +1,6 @@
-import type { Metadata } from "next";
+import { MovedPage } from "@/components/MovedPage";
 
-import { LicensePage } from "@/components/LicensePage";
-
-export const metadata: Metadata = { title: "License · MonitorFlow" };
-
-export default function LicenseRoute() {
-  return <LicensePage />;
+// Moved under /settings/; old links still work.
+export default function Moved() {
+  return <MovedPage from="/admin/license/" />;
 }

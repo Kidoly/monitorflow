@@ -18,7 +18,7 @@ import { AddRelay, ConfirmRelayNames } from "./AddRelay";
 import { AdminLayout } from "./AdminLayout";
 import styles from "./AdminPages.module.css";
 
-/** `/admin/relays/`: every relay the user reads. */
+/** `/settings/relays/`: every relay the user reads. */
 export function RelayListPage() {
   return <AdminLayout>{(me) => <RelayList me={me} />}</AdminLayout>;
 }

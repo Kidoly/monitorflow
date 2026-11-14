@@ -71,7 +71,7 @@ export function WithCode({ text }: { text: string }) {
 const COMMON_ERRORS = ["400", "401", "403", "404", "429"];
 
 /**
- * `/admin/api-keys/docs/` (ADR-0101): the public API's OpenAPI document,
+ * `/settings/api-keys/docs/` (ADR-0101): the public API's OpenAPI document,
  * which the server generates from its code, as a page.
  */
 export function ApiDocsPage() {

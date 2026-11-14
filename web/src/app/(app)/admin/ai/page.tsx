@@ -1,9 +1,6 @@
-import type { Metadata } from "next";
+import { MovedPage } from "@/components/MovedPage";
 
-import { AiSettingsPage } from "@/components/AiSettings";
-
-export const metadata: Metadata = { title: "AI · MonitorFlow" };
-
-export default function Ai() {
-  return <AiSettingsPage />;
+// Moved under /settings/; old links still work.
+export default function Moved() {
+  return <MovedPage from="/admin/ai/" />;
 }

@@ -25,7 +25,7 @@ import { InlineConfirm } from "./ui/InlineConfirm";
 import { Banner, ErrorState, LoadingBlock, NoPermission, PageHeader } from "./ui/PageState";
 import { Label } from "./ui/StatusLabel";
 
-/** `/admin/ai/`: global administrators only, like the API (ADR-0064). */
+/** `/settings/ai/`: global administrators only, like the API (ADR-0064). */
 export function AiSettingsPage() {
   const me = useMe();
   if (!administersEverything(me)) {

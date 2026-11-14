@@ -17,6 +17,7 @@ const STAMP: &str = "%Y%m%dT%H%M%SZ";
 
 /// Why a backup was taken; part of its file name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum BackupKind {
     /// The automatic one, once a day.
@@ -89,6 +90,7 @@ pub(super) fn check_request(id: &str, requested_by: &str) -> Result<(), String> 
 /// The backups part of `status.json`. Missing in the status of an updater
 /// older than backups.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Backups {
     /// The last backup, running or finished, of any kind.
     pub last: Option<BackupRun>,
@@ -100,13 +102,17 @@ pub struct Backups {
     pub files: Vec<BackupFile>,
 }
 
+/// One backup, running or finished.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct BackupRun {
+    /// The request's ID for one asked for, else the updater's own.
     pub id: String,
     pub kind: BackupKind,
     /// Empty for automatic ones.
     pub requested_by: String,
     pub state: BackupState,
+    /// Why it failed, in plain words; `null` unless `failed`.
     pub error: Option<String>,
     /// What a backup that succeeded left out or noticed.
     #[serde(default)]
@@ -114,10 +120,13 @@ pub struct BackupRun {
     /// The file it wrote.
     pub file: Option<String>,
     pub started_at: DateTime<Utc>,
+    /// `null` while running.
     pub finished_at: Option<DateTime<Utc>>,
 }
 
+/// Where a backup stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum BackupState {
     Running,
@@ -125,9 +134,13 @@ pub enum BackupState {
     Failed,
 }
 
+/// A backup file kept.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct BackupFile {
+    /// `monitorflow-backup-<UTC time>-<kind>.tar.gz`, the name to download.
     pub name: String,
+    /// Bytes.
     pub size: u64,
     pub created_at: DateTime<Utc>,
     pub kind: BackupKind,

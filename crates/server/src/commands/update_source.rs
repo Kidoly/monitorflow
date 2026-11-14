@@ -13,19 +13,25 @@ pub const MAX_URL: usize = 512;
 /// Longest deferral Windows accepts, in days.
 pub const MAX_DEFERRAL_DAYS: u32 = 365;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Where Windows Update takes updates from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = WindowsUpdateOrigin)]
 #[serde(rename_all = "snake_case")]
 pub enum Origin {
     /// Windows Update or Microsoft Update.
     Microsoft,
+    /// A WSUS server, at `wsus_url`.
     Wsus,
     /// Policy turns WSUS on without naming a server.
     WsusWithoutUrl,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// What Windows Update does on its own, as policy sets it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = WindowsUpdateAutomatic)]
 #[serde(rename_all = "snake_case")]
 pub enum Automatic {
+    /// No automatic updates.
     Off,
     /// Tells about updates before downloading them.
     Notify,
@@ -38,7 +44,8 @@ pub enum Automatic {
 }
 
 /// The update source of a Windows server, as the API returns it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = WindowsUpdateSource)]
 pub struct UpdateSource {
     pub origin: Origin,
     /// With `wsus`; with `microsoft`, a server policy names but does not
@@ -56,9 +63,12 @@ pub struct UpdateSource {
     pub no_internet: bool,
     /// With WSUS: these come from Microsoft instead.
     pub quality_from_microsoft: bool,
+    /// With WSUS: feature updates come from Microsoft instead.
     pub feature_from_microsoft: bool,
-    /// Windows Update for Business deferrals, of updates from Microsoft.
+    /// Windows Update for Business deferrals, of updates from Microsoft,
+    /// in days (0 to 365).
     pub quality_deferral_days: u32,
+    /// As `quality_deferral_days`, for feature updates.
     pub feature_deferral_days: u32,
 }
 

@@ -101,7 +101,8 @@ fn url(host: &str, port: u16) -> String {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// What the token enrolls: `agent` for a server, `relay` for a relay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum TokenRole {
     Agent,
@@ -118,20 +119,32 @@ impl From<TokenRole> for PeerRole {
 }
 
 /// Body of `POST /api/tokens`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = EnrollmentTokenRequest)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRequest {
     pub role: TokenRole,
+    /// The ID the server or relay will have: its certificate name, 1 to 64
+    /// ASCII letters, digits, `.`, `_` and `-`. An ID another server or
+    /// relay holds is refused.
     pub peer_id: String,
+    /// The site it joins.
     pub site_id: Uuid,
-    /// Validity in seconds, 60 to 604800; one hour by default.
+    /// Validity in seconds, 60 to 604800 (7 days); 3600 (one hour) when
+    /// absent or `null`.
+    #[schema(minimum = 60, maximum = 604800)]
     pub ttl_s: Option<u64>,
-    /// For relays: DNS names and IP addresses its agents connect to.
+    /// Relays only, at most 16: the DNS names and IP addresses its agents
+    /// connect to, which its certificate will carry. The central server's
+    /// own names and names another site's relay holds are refused. Empty
+    /// for agents.
     #[serde(default)]
     pub server_names: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// `pending` until used or expired; a used token stays `used`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = EnrollmentTokenState)]
 #[serde(rename_all = "lowercase")]
 pub enum TokenState {
     Pending,
@@ -140,21 +153,29 @@ pub enum TokenState {
 }
 
 /// One token, never with its secret.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = EnrollmentToken)]
 pub struct TokenView {
     pub id: Uuid,
+    /// `agent` or `relay`.
     pub role: String,
+    /// The ID the enrolled server or relay gets.
     pub peer_id: String,
     pub site_id: Uuid,
     pub site_name: String,
     pub customer_id: Uuid,
     pub customer_name: String,
+    /// Relay tokens: the names its certificate will carry. Empty for
+    /// agents.
     pub server_names: Vec<String>,
     /// `null` for tokens made with the server CLI.
     pub created_by: Option<Uuid>,
+    /// `null` for tokens made with the server CLI, or when that user was
+    /// deleted.
     pub created_by_username: Option<String>,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    /// When a host enrolled with it; `null` while unused.
     pub used_at: Option<DateTime<Utc>>,
     #[sqlx(try_from = "String")]
     pub state: TokenState,
@@ -184,12 +205,18 @@ impl TryFrom<String> for TokenState {
 /// Body of `POST /api/tokens`: the stored token, its secret string and the
 /// peer configuration it needs. Shown once; nothing returns it again. No
 /// `Debug`, so the secret cannot end up in a log line.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = CreatedEnrollmentToken)]
 pub struct CreatedToken {
     #[serde(flatten)]
     pub view: TokenView,
+    /// The secret: `mfe1.`, 43 characters of base64url, `.`, and the
+    /// pinned SHA-256 of the certificate authority in 43 more. Shown in
+    /// this answer only; MonitorFlow keeps only its hash.
     pub token: String,
+    /// Where the enrolled peer connects, `https://host:port`.
     pub upstream_url: String,
+    /// Where the installer enrolls, `https://host:port`.
     pub enroll_url: String,
     /// The install sources and the default one (ADR-0054).
     pub install: super::settings::AgentInstall,
@@ -199,18 +226,24 @@ pub struct CreatedToken {
 }
 
 /// Query string of `GET /api/tokens`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
+    /// Only tokens in this state.
     pub state: Option<TokenState>,
+    /// 1 to 500, default 100.
     pub limit: Option<u32>,
+    /// `next_cursor` of the previous page.
     pub cursor: Option<String>,
 }
 
 /// Body of `GET /api/tokens`, newest first.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = EnrollmentTokenList)]
 pub struct TokenList {
     pub tokens: Vec<TokenView>,
+    /// Pass as `cursor` for the next page; `null` on the last one.
     pub next_cursor: Option<String>,
 }
 

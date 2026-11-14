@@ -32,7 +32,7 @@ const ACTIVE_MS = 10_000;
 
 const TITLE = "The certificate authority needs a global administrator";
 
-/** `/admin/certificate-authority/`: global administrators only, like the API (ADR-0088). */
+/** `/settings/certificate-authority/`: global administrators only, like the API (ADR-0088). */
 export function CertificateAuthorityPage() {
   const me = useMe();
   if (!administersEverything(me)) {

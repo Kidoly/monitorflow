@@ -17,9 +17,10 @@ use super::sensors::{body, parse_id};
 use super::{ApiError, ApiState};
 
 /// Body of the request and of the answer.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfflineAlerts {
+    /// `false` turns offline incidents off.
     pub enabled: bool,
 }
 

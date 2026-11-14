@@ -22,7 +22,7 @@ use super::{ApiError, ApiState};
 
 /// Body of `GET` and `PUT /api/settings/public-address`, and the
 /// `address` object of a new token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct PublicAddress {
     /// The address in the install commands.
     pub address: String,
@@ -36,6 +36,7 @@ pub struct PublicAddress {
     /// `upstream_url` and `enroll_url` at `address`, with the published
     /// ports.
     pub upstream_url: String,
+    /// Where hosts enroll, at `address`.
     pub enroll_url: String,
 }
 
@@ -146,7 +147,8 @@ pub async fn get(
 }
 
 /// Body of `PUT /api/settings/public-address`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = PublicAddressRequest)]
 #[serde(deny_unknown_fields)]
 pub struct SetRequest {
     /// A DNS name or IP address; `null` or empty goes back to the default.

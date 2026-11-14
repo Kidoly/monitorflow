@@ -30,6 +30,13 @@ reqwest.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 
+# Schemas of the public API's document (feature `openapi`), for the server.
+utoipa = { workspace = true, optional = true }
+
+[features]
+# OpenAPI schemas of the manifest types the server's API answers with (ADR-0101).
+openapi = ["dep:utoipa"]
+
 [dev-dependencies]
 wat = "1"
 tempfile.workspace = true

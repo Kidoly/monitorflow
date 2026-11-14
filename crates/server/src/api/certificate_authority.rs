@@ -18,8 +18,10 @@ use crate::renew::hex;
 /// Peers listed by name; the rest are only counted.
 const MAX_LISTED: usize = 50;
 
-#[derive(Debug, Serialize)]
+/// The certificate authority that issues now, and any change under way.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CaView {
+    /// SHA-256 of the CA certificate, lower-case hex.
     pub fingerprint: String,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -27,6 +29,7 @@ pub struct CaView {
     pub expires_soon: bool,
     /// When a planned change starts by itself if nobody starts one.
     pub auto_change_at: DateTime<Utc>,
+    /// The change under way; `null` when none is.
     pub rotation: Option<RotationView>,
     /// Set when a restore brought back a CA this server had retired.
     pub restored_retired_at: Option<DateTime<Utc>>,
@@ -36,12 +39,19 @@ pub struct CaView {
     pub cut_off: Vec<PeerState>,
 }
 
-#[derive(Debug, Serialize)]
+/// A change of certificate authority under way.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = CaRotation)]
 pub struct RotationView {
-    /// `introduced` or `switched`.
+    /// `introduced`: servers and relays learn to trust the new CA, the old
+    /// one still issues. `switched`: the new one issues, the old one is
+    /// still trusted until it is retired.
     pub stage: Stage,
+    /// Started after a suspected compromise: the old CA is distrusted 24
+    /// hours after the switch.
     pub emergency: bool,
     pub started_at: DateTime<Utc>,
+    /// `null` until `switched`.
     pub switched_at: Option<DateTime<Utc>>,
     /// Emergency: when the old CA stops being trusted.
     pub distrust_at: Option<DateTime<Utc>>,
@@ -55,8 +65,13 @@ pub struct RotationView {
     pub waiting: Vec<PeerState>,
 }
 
-#[derive(Debug, Deserialize)]
+/// Body of `POST /api/certificate-authority/rotation`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = CaRotationRequest)]
 pub struct StartRequest {
+    /// `true` after a suspected compromise of the CA's key: the new CA
+    /// issues at once and the old one is distrusted 24 hours later.
+    /// Default `false`: a planned change, one step at a time.
     #[serde(default)]
     pub emergency: bool,
 }

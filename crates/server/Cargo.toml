@@ -23,12 +23,12 @@ enterprise = ["dep:monitorflow-server-ee"]
 [dependencies]
 monitorflow-server-ee = { workspace = true, optional = true }
 # server-update: checks and requests of server updates (ADR-0056).
-monitorflow-common = { workspace = true, features = ["mirror", "server-update"] }
+monitorflow-common = { workspace = true, features = ["mirror", "server-update", "openapi"] }
 monitorflow-sensors.workspace = true
 # AI remediation loop (ADR-0039, ADR-0043).
 monitorflow-ai.workspace = true
 # Plugins: signed packages and their runtime (ADR-0103).
-monitorflow-plugin.workspace = true
+monitorflow-plugin = { workspace = true, features = ["openapi"] }
 base64.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true

@@ -36,7 +36,8 @@ pub struct Settings {
     pub enabled_locked: bool,
     /// Nothing automatic is queued while paused.
     pub paused: bool,
-    /// Failed updates of one release that halt its rollout, 1 to 1000.
+    /// Failed updates, since a rollout started or was resumed, that halt
+    /// it; 1 to 1000, 2 by default.
     pub failure_threshold: u32,
 }
 
