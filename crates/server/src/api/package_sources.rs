@@ -42,7 +42,8 @@ const NOT_ENABLED: &str = "Mirrors are not enabled on this server.";
 const NO_ADDRESS: &str = "The address of the mirrors isn't set. Set it on the Settings page.";
 
 /// Where a server's packages come from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = SourcesUsing)]
 #[serde(rename_all = "lowercase")]
 pub enum Using {
     /// A mirror of this install.
@@ -51,15 +52,16 @@ pub enum Using {
     Own,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct UsedMirror {
+    /// The mirror's name, like `debian-12`.
     pub name: String,
     /// A snapshot name, or `current` for the newest.
     pub snapshot: String,
 }
 
 /// Body of `GET /api/servers/{id}/sources`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct SourcesStatus {
     pub using: Using,
     /// With [`Using::Mirror`].
@@ -105,8 +107,9 @@ impl SourcesStatus {
 }
 
 /// One server of `GET /api/sites/{id}/sources`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SiteServer {
+    /// The server.
     pub id: Uuid,
     pub hostname: String,
     /// As in the server listing, so Windows rows read differently.
@@ -116,22 +119,29 @@ pub struct SiteServer {
 }
 
 /// Body of `GET /api/sites/{id}/sources`, by host name.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SiteSources {
+    /// Its servers, removed ones left out.
     pub servers: Vec<SiteServer>,
 }
 
-#[derive(Debug, Serialize)]
+/// A server a site's change left alone.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct Skipped {
+    /// The server.
     pub id: Uuid,
     pub hostname: String,
+    /// Why, in a sentence to show.
     pub reason: String,
 }
 
 /// Answer of the site's changes: each server is queued or skipped alone.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SiteChange {
+    /// The servers a command was queued for.
     pub queued: Vec<Uuid>,
+    /// The servers left alone, and why. Servers already as asked are in
+    /// neither list.
     pub skipped: Vec<Skipped>,
 }
 

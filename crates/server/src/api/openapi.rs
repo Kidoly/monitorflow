@@ -279,8 +279,6 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/backups",
     "/api/certificate-authority",
     "/api/campaigns",
-    "/api/thresholds",
-    "/api/sensor_configs",
     "/api/dashboards",
     "/api/dashboard-data",
     "/api/dashboard-metrics",
@@ -294,23 +292,9 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
     "/api/health",
 ];
 
-// Sub-routes of servers and sites not documented yet.
-pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[
-    "/sensors",
-    "/sensor_configs",
-    "/thresholds",
-    "/metrics",
-    "/logs",
-    "/packages",
-    "/rollback",
-    "/sources",
-    "/revoke",
-    "/proxmox",
-    "/offline-alerts",
-    "/check-interval",
-    "/agent-auto-update",
-    "/ai-commands",
-];
+// Sub-routes of servers, sites and relays not documented yet; those of
+// relays are under `/api/relays` above.
+pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[];
 
 #[utoipa::path(get, path = "/api/v1/servers", tag = "servers",
     summary = "List servers",
@@ -422,62 +406,322 @@ spaces at either end: `invalid`", body = ErrorBody),
     ))]
 fn create_site() {}
 
-#[utoipa::path(get, path = "/api/v1/incidents", tag = "alerts", params(incidents::ListParams),
-    responses((status = 200, body = incidents::IncidentList)))]
+#[utoipa::path(get, path = "/api/v1/incidents", tag = "alerts",
+    summary = "List incidents",
+    description = "One page of the incidents of the servers and relays within the key's reach: open ones \
+first, then the newest first. An incident is opened when a threshold is crossed (`metric` is then the \
+metric) or when a server or relay stops reporting (`metric` is `offline`).\n\n\
+**Who**: any role. **Area**: `alerts`.\n\n\
+**Filters**, all optional and ANDed: `state`, `severity` (the current one), `server_id`, `site_id`, `from` \
+and `to` (incidents active at some point between them), and `group` (the incidents one notification sent \
+together, from the link in that notification). A server or site outside the key's reach gives an empty \
+list. Unknown parameters are 400.\n\n\
+**Pages**: `limit` incidents per page, 1 to 500, 100 by default; pass `next_cursor` as `cursor` with the \
+same filters for the next page, `null` on the last one.\n\n\
+A PSA polling for new alerts can ask for `state=open` every minute, and acknowledge what it took.",
+    params(incidents::ListParams),
+    responses(
+        (status = 200, description = "One page of incidents", body = incidents::IncidentList,
+            example = json!({"incidents": [ex::incident()], "next_cursor": null})),
+        (status = 400, description = "A bad filter value, an unknown parameter, `from` after `to`, \
+`limit` out of range or a bad `cursor`: `invalid`", body = ErrorBody),
+    ))]
 fn list_incidents() {}
 
-#[utoipa::path(get, path = "/api/v1/incidents/{id}", tag = "alerts", params(("id" = uuid::Uuid, Path)),
-    responses((status = 200, body = incidents::IncidentDetail)))]
+#[utoipa::path(get, path = "/api/v1/incidents/{id}", tag = "alerts",
+    summary = "Get an incident",
+    description = "One incident with its timeline (`events`, in order), the notifications that sent it \
+together with others, where it was acknowledged, and its follow-up: who is told next if nobody \
+acknowledges it.\n\n\
+**Who**: any role on the site of its server or relay. **Area**: `alerts`.",
+    params(("id" = uuid::Uuid, Path, description = "The incident")),
+    responses(
+        (status = 200, description = "The incident and its timeline", body = incidents::IncidentDetail,
+            example = json!(ex::merge(ex::incident(), json!({
+                "events": [
+                    {"id": 1201, "kind": "opened", "severity": "warning", "value": 0.88,
+                     "occurred_at": "2026-11-14T08:41:00Z", "recorded_at": "2026-11-14T08:41:02Z",
+                     "details": {}},
+                    {"id": 1207, "kind": "escalated", "severity": "critical", "value": 0.96,
+                     "occurred_at": "2026-11-14T09:02:00Z", "recorded_at": "2026-11-14T09:02:01Z",
+                     "details": {}},
+                    {"id": 1208, "kind": "followed_up", "severity": "critical", "value": null,
+                     "occurred_at": "2026-11-14T09:17:00Z", "recorded_at": "2026-11-14T09:17:00Z",
+                     "details": {"step": 1, "steps": 2, "minutes": 15, "told": ["bob"]}}
+                ],
+                "notification_groups": [
+                    {"id": ex::GROUP, "incidents": 2, "created_at": "2026-11-14T09:02:05Z"}
+                ],
+                "acknowledged_via": null,
+                "follow_up": {
+                    "state": "waiting", "stop_reason": null, "step": 1, "steps": 2,
+                    "started_at": "2026-11-14T09:02:05Z", "next_at": "2026-11-14T09:32:05Z",
+                    "next": ["carol"], "policy": "customer"
+                }
+            })))),
+        (status = 404, description = "No such incident, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
 fn incident() {}
 
-/// Says someone is on it, so nobody else is told next. Acknowledging again
-/// changes nothing.
 #[utoipa::path(post, path = "/api/v1/incidents/acknowledge", tag = "alerts",
-    request_body = incidents::AcknowledgeRequest,
-    responses((status = 200, body = incidents::Acknowledged)))]
+    summary = "Acknowledge incidents",
+    description = "Says someone is on these incidents, so the follow-up stops and nobody else is told next. \
+The incidents stay open until what they measure recovers; acknowledging changes nothing else.\n\n\
+**Who**: operator or above (\"Read and change\" access) on the site of every incident. **Area**: `alerts`. \
+They are acknowledged as the key's maker.\n\n\
+The answer lists the incidents this request acknowledged. The others were resolved, or acknowledged \
+already, by anyone. All are checked before anything is written: one that is not found makes the whole \
+request 404, one the key may only read 403. Each one acknowledged is audited as `incident.acknowledge`. \
+Safe to repeat: a second time acknowledges nothing more.",
+    request_body(content = incidents::AcknowledgeRequest,
+        example = json!({"incident_ids": [ex::INCIDENT, ex::INCIDENT_2]})),
+    responses(
+        (status = 200, description = "What this request acknowledged", body = incidents::Acknowledged,
+            example = json!({"acknowledged": [ex::INCIDENT]})),
+        (status = 400, description = "No incident, or more than 500: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key may only read the site of one of them: `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "One of them does not exist or is outside the key's reach: \
+`not_found`", body = ErrorBody),
+    ))]
 fn acknowledge() {}
 
-#[utoipa::path(get, path = "/api/v1/silences", tag = "alerts", params(silences::ListParams),
-    responses((status = 200, body = silences::SilenceList)))]
+#[utoipa::path(get, path = "/api/v1/silences", tag = "alerts",
+    summary = "List silences",
+    description = "The silences that are active or yet to start, the first to start first, in full. A \
+silence stops notifications about a server, a relay, a site, a customer or everything until it ends; \
+incidents still open and show, and what is still open at its end is sent then.\n\n\
+**Who**: any role. **Area**: `alerts`. The key sees the silences of the sites it reaches, of their \
+customers, and those covering everything.\n\n\
+**Filter**: at most one of `server_id`, `relay_id` and `site_id`, for the silences covering it: its own, \
+its site's, its customer's and those covering everything. Unknown parameters are 400.",
+    params(silences::ListParams),
+    responses(
+        (status = 200, description = "Active and upcoming silences", body = silences::SilenceList,
+            example = json!({"silences": [ex::silence()]})),
+        (status = 400, description = "More than one filter, or an unknown parameter: `invalid`",
+            body = ErrorBody),
+        (status = 404, description = "The server, relay or site of the filter does not exist or is \
+outside the key's reach: `not_found`", body = ErrorBody),
+    ))]
 fn list_silences() {}
 
-/// Not safe to repeat: send `Idempotency-Key` to retry.
-#[utoipa::path(post, path = "/api/v1/silences", tag = "alerts", request_body = silences::CreateRequest,
-    responses((status = 201, body = silences::SilenceView)))]
+#[utoipa::path(post, path = "/api/v1/silences", tag = "alerts",
+    summary = "Create a silence",
+    description = "Stops notifications about a server, a relay, a site, a customer or everything, from \
+`starts_at` (now when absent or past) until `ends_at`, at most 30 days later. Use it around a deployment \
+or maintenance.\n\n\
+**Who**, by `scope`: for `server`, `relay` or `site`, operator or above on its site; for `customer`, \
+operator or above on the customer as a whole; for `all`, a global administrator. **Area**: `alerts`. \
+`target_id` is required, except for `all`, which takes none.\n\n\
+`reason` (1 to 200 characters) shows to others, so they know what the silence is for. Audited as \
+`silence.create`. **Not safe to repeat**: each request makes a silence; send `Idempotency-Key` to retry.",
+    request_body(content = silences::CreateRequest, example = json!({
+        "scope": "server", "target_id": ex::SERVER,
+        "starts_at": "2026-11-14T22:00:00Z", "ends_at": "2026-11-15T00:00:00Z",
+        "reason": "Kernel upgrade and reboot"
+    })),
+    responses(
+        (status = 201, description = "The new silence", body = silences::SilenceView,
+            example = json!(ex::silence())),
+        (status = 400, description = "No `target_id` (or one for `all`), no reason or a reason over 200 \
+characters, an end not after the start, or longer than 30 days: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key may only read the target, or may not silence \
+everything: `forbidden`; or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "The target does not exist or is outside the key's reach: \
+`not_found`", body = ErrorBody),
+    ))]
 fn create_silence() {}
 
-#[utoipa::path(post, path = "/api/v1/silences/{id}/end", tag = "alerts", params(("id" = uuid::Uuid, Path)),
-    responses((status = 204, description = "Ended")))]
+#[utoipa::path(post, path = "/api/v1/silences/{id}/end", tag = "alerts",
+    summary = "End a silence",
+    description = "Ends a silence now, or calls it off if it has not started. What it held back and is \
+still open is sent within seconds.\n\n\
+**Who**: whoever could create it: operator or above on its site, or on its customer as a whole, or a \
+global administrator for one covering everything. **Area**: `alerts`.\n\n\
+Audited as `silence.end`. A second request is 409, as the silence is over.",
+    params(("id" = uuid::Uuid, Path, description = "The silence")),
+    responses(
+        (status = 204, description = "Ended"),
+        (status = 403, description = "The key may not end it: `forbidden`; or outside the key's \
+areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such silence, or one the key does not see: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "The silence is already over: `conflict`", body = ErrorBody),
+    ))]
 fn end_silence() {}
 
 #[utoipa::path(get, path = "/api/v1/servers/{id}/commands", tag = "updates",
-    params(("id" = uuid::Uuid, Path), commands::ListParams),
-    responses((status = 200, body = commands::CommandList)))]
+    summary = "List a server's commands",
+    description = "One page of the commands sent to a server, the newest first, without their output: \
+package and agent updates, package source changes, AI commands and snapshots, and campaign steps. Read one for its \
+output.\n\n\
+**Who**: any role on the server's site. **Area**: `updates`.\n\n\
+**Pages**: `limit` commands per page, 1 to 500, 100 by default; pass `next_cursor` as `cursor` for the \
+next page, `null` on the last one. Unknown parameters are 400.",
+    params(("id" = uuid::Uuid, Path, description = "The server"), commands::ListParams),
+    responses(
+        (status = 200, description = "One page of commands", body = commands::CommandList,
+            example = json!({"commands": [ex::command()], "next_cursor": null})),
+        (status = 400, description = "`limit` out of range, a bad `cursor` or an unknown parameter: \
+`invalid`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
 fn list_commands() {}
 
-/// Queues a command for the server's agent. Not safe to repeat: send
-/// `Idempotency-Key` to retry.
 #[utoipa::path(post, path = "/api/v1/servers/{id}/commands", tag = "updates",
-    params(("id" = uuid::Uuid, Path)), request_body = commands::CreateRequest,
-    responses((status = 201, body = commands::CommandDetail), (status = 409, body = ErrorBody)))]
+    summary = "Queue a command",
+    description = "Queues a command for the server's agent. It is sent as soon as the agent is connected and \
+has no other command running, and the agent may start it until `ttl_s` seconds have passed (60 to 604800, \
+one hour by default); after that it is `expired`. Poll `GET /api/v1/commands/{id}` for its end.\n\n\
+- `apply_updates` installs package updates: `packages` (up to 1000 names; empty or absent for every \
+update), `security_only` and `allow_reboot`. Package names are letters, digits and `.+_:-`, not starting \
+with `-`; on Windows servers, KB numbers (`KB5034441`) or update IDs.\n\
+- `self_update` installs another agent version: `version` (like `0.9.3`, required), `allow_downgrade`, and \
+`health_timeout_s` (30 to 3600, 300 by default), how long the new agent has to connect before the old \
+one comes back.\n\n\
+Fields of the other kind are 400. The agent refuses kinds it does not accept (`command_kinds` of the \
+server); the command then ends `failed`.\n\n\
+**Who**: an administrator of the server's customer as a whole: a global administrator or one of that \
+customer. A site administrator may not, and neither may a key that reaches one site. **Area**: \
+`updates`.\n\n\
+Audited as `command.create`. **Not safe to repeat**: each request queues a command; send \
+`Idempotency-Key` to retry.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    request_body(content = commands::CreateRequest, examples(
+        ("apply_updates" = (summary = "Install two package updates",
+            value = json!({"kind": "apply_updates", "packages": ["openssl", "libssl3"], "ttl_s": 3600}))),
+        ("self_update" = (summary = "Update the agent",
+            value = json!({"kind": "self_update", "version": "0.9.3"}))),
+    )),
+    responses(
+        (status = 201, description = "The queued command", body = commands::CommandDetail,
+            example = json!(ex::merge(ex::command(), json!({
+                "state": "queued", "sent_at": null, "started_at": null, "finished_at": null,
+                "exit_code": null, "stdout": null, "stderr": null
+            })))),
+        (status = 400, description = "An unknown kind, a bad package name or version, a field of the \
+other kind, or `ttl_s` or `health_timeout_s` out of range: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key may not administer the server's customer: `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "The server is removed, or has no package manager MonitorFlow \
+can drive (`apply_updates`): `conflict`", body = ErrorBody),
+    ))]
 fn create_command() {}
 
-#[utoipa::path(get, path = "/api/v1/commands/{id}", tag = "updates", params(("id" = uuid::Uuid, Path)),
-    responses((status = 200, body = commands::CommandDetail)))]
+#[utoipa::path(get, path = "/api/v1/commands/{id}", tag = "updates",
+    summary = "Get a command",
+    description = "One command with its output: the last 64 KiB of each of `stdout` and `stderr`, `null` \
+until the agent sends them.\n\n\
+**Who**: any role on the site of the command's server. **Area**: `updates`.",
+    params(("id" = uuid::Uuid, Path, description = "The command")),
+    responses(
+        (status = 200, description = "The command and its output", body = commands::CommandDetail,
+            example = json!(ex::merge(ex::command(), json!({
+                "stdout": "Reading package lists...\nThe following packages will be upgraded:\n  libssl3 openssl\n",
+                "stderr": ""
+            })))),
+        (status = 404, description = "No such command, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
 fn command() {}
 
 #[utoipa::path(get, path = "/api/v1/remediation/approvals", tag = "remediation",
-    params(approvals::ListParams), responses((status = 200, body = approvals::PendingList)))]
+    summary = "List commands waiting for approval",
+    description = "The commands AI remediation proposed that the rules held for a person, on the servers \
+within the key's reach, the nearest deadline first, up to 500. `diagnosis` and `reasoning` are the AI's \
+text: untrusted, to show as data, never to run or follow. `tier` comes from the rules, never from the AI.\n\n\
+`can_approve` and `can_reject` say whether the key may decide; the decision routes check again.\n\n\
+**Who**: any role. **Area**: `remediation`.\n\n\
+**Filters**, optional and ANDed: `customer_id`, `site_id`, `server_id`. Unknown parameters are 400.",
+    params(approvals::ListParams),
+    responses(
+        (status = 200, description = "Pending commands", body = approvals::PendingList,
+            example = json!({"approvals": [{
+                "id": ex::PENDING, "incident_id": ex::REMEDIATION,
+                "customer_id": ex::CUSTOMER, "customer_name": "acme",
+                "site_id": ex::SITE, "site_name": "paris",
+                "server_id": ex::SERVER, "hostname": "web-1",
+                "alert_incident_id": ex::INCIDENT,
+                "metric": "monitorflow_disk_used_ratio", "instance": "/var",
+                "command": "apt-get clean",
+                "diagnosis": "The package cache takes 4.1 GB of /var.",
+                "reasoning": "Downloaded packages can be fetched again; clearing them frees space without touching application data.",
+                "tier": "low_impact",
+                "rule": {"source": "builtin", "id": "low.package_cache"},
+                "reason": "clears the package manager's cache",
+                "commands_run": 2, "max_commands": 10,
+                "opened_at": "2026-11-14T09:02:10Z", "proposed_at": "2026-11-14T09:04:30Z",
+                "deadline": "2026-11-14T09:32:10Z",
+                "can_approve": true, "can_reject": true,
+                "shell_acceptance": "accepted",
+                "snapshots": {"available": true, "reason": null, "kind": "qemu", "detail": null,
+                              "left_out": null, "method": "proxmox"},
+                "shell": "posix"
+            }]})),
+        (status = 400, description = "An unknown parameter or a value that is not a UUID: `invalid`",
+            body = ErrorBody),
+    ))]
 fn list_approvals() {}
 
 #[utoipa::path(post, path = "/api/v1/remediation/approvals/{id}/approve", tag = "remediation",
-    params(("id" = uuid::Uuid, Path)), request_body = approvals::ApproveRequest,
-    responses((status = 200, body = approvals::DecisionView), (status = 409, body = ErrorBody)))]
+    summary = "Approve a command",
+    description = "Runs the proposed command, or the edited `command` sent instead, and lets AI \
+remediation go on. An edited command is checked by the rules again: a forbidden one is 400, and the role \
+needed is that of the riskier of the two.\n\n\
+**Who**: on the server's site, approver or above (\"Approve commands\" access) for a `low_impact` command, \
+administrator (\"Administer\") for a `high_impact` one. **Area**: `remediation`.\n\n\
+The decision goes into the incident's tamper-evident history and is audited as `remediation.approve`. A \
+second decision is 409.",
+    params(("id" = uuid::Uuid, Path, description = "The pending command, `id` of the listing")),
+    request_body(content = approvals::ApproveRequest, examples(
+        ("as_proposed" = (summary = "Run it as proposed", value = json!({}))),
+        ("edited" = (summary = "Run an edited command",
+            value = json!({"command": "apt-get autoclean"}))),
+    )),
+    responses(
+        (status = 200, description = "Approved", body = approvals::DecisionView,
+            example = json!({"id": ex::PENDING, "incident_id": ex::REMEDIATION, "state": "approved",
+                             "command": "apt-get autoclean", "edited": true})),
+        (status = 400, description = "The edited command is empty, over 4096 bytes, has NUL bytes or \
+is forbidden by the rules: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key's access is too low for this command's tier: \
+`forbidden`; or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such pending command, or outside the key's reach: \
+`not_found`", body = ErrorBody),
+        (status = 409, description = "Already decided, the incident no longer waits, its deadline \
+passed, or the server's agent refuses AI commands: `conflict`", body = ErrorBody),
+    ))]
 fn approve() {}
 
 #[utoipa::path(post, path = "/api/v1/remediation/approvals/{id}/reject", tag = "remediation",
-    params(("id" = uuid::Uuid, Path)), request_body = approvals::RejectRequest,
-    responses((status = 200, body = approvals::DecisionView), (status = 409, body = ErrorBody)))]
+    summary = "Reject a command",
+    description = "Drops the proposed command. `reason` (1 to 1000 characters) goes back to the AI, which \
+may propose something else or hand the incident to a person.\n\n\
+**Who**: approver or above (\"Approve commands\" access) on the server's site, whatever the tier. **Area**: \
+`remediation`.\n\n\
+The decision goes into the incident's history and is audited as `remediation.reject`. A second decision \
+is 409.",
+    params(("id" = uuid::Uuid, Path, description = "The pending command, `id` of the listing")),
+    request_body(content = approvals::RejectRequest,
+        example = json!({"reason": "Packages are cached for an offline install tomorrow; free space elsewhere."})),
+    responses(
+        (status = 200, description = "Rejected", body = approvals::DecisionView,
+            example = json!({"id": ex::PENDING, "incident_id": ex::REMEDIATION, "state": "rejected",
+                             "command": "apt-get clean", "edited": false})),
+        (status = 400, description = "No reason, or one over 1000 characters: `invalid`",
+            body = ErrorBody),
+        (status = 403, description = "The key's access is below \"Approve commands\": `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such pending command, or outside the key's reach: \
+`not_found`", body = ErrorBody),
+        (status = 409, description = "Already decided, the incident no longer waits, or its deadline \
+passed: `conflict`", body = ErrorBody),
+    ))]
 fn reject() {}
 
 #[utoipa::path(get, path = "/api/v1/metrics/query", tag = "metrics",
@@ -677,6 +921,40 @@ mod tests {
                 !schemas.contains_key(name),
                 "{name}: give it a unique `#[schema(as = …)]`"
             );
+        }
+    }
+
+    /// What an integrator needs of each operation: a summary, a
+    /// description, and an example of each body it sends or gets back.
+    #[test]
+    fn every_operation_is_described_with_examples() {
+        let doc = serde_json::to_value(build()).unwrap();
+        let has_example = |content: &serde_json::Value| {
+            content["application/json"].get("example").is_some()
+                || content["application/json"].get("examples").is_some()
+        };
+        for (path, item) in doc["paths"].as_object().unwrap() {
+            for (method, op) in item.as_object().unwrap() {
+                let at = format!("{method} {path}");
+                for field in ["summary", "description"] {
+                    let text = op[field].as_str().unwrap_or_default();
+                    assert!(!text.is_empty(), "{at} has no {field}");
+                }
+                assert!(
+                    !op["summary"].as_str().unwrap().contains('\n'),
+                    "{at}: keep the summary to one line"
+                );
+                if let Some(body) = op.get("requestBody") {
+                    assert!(has_example(&body["content"]), "{at}: no request example");
+                }
+                for (status, response) in op["responses"].as_object().unwrap() {
+                    if status.starts_with('2') {
+                        if let Some(content) = response.get("content") {
+                            assert!(has_example(content), "{at}: no example for {status}");
+                        }
+                    }
+                }
+            }
         }
     }
 
