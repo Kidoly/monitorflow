@@ -372,7 +372,7 @@ function ThresholdEditor({
   );
 }
 
-function Field({
+export function Field({
   label,
   unit,
   value,
