@@ -22,9 +22,11 @@ use crate::auto_update::store;
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct SiteView {
     pub id: Uuid,
+    /// Unique across customers; the `site` label of every metric.
     pub name: String,
+    /// Servers of the site, removed ones left out.
     pub server_count: i64,
-    /// Enrolled relays of the site, revoked ones included (ADR-0029).
+    /// Relays of the site, removed ones left out.
     pub relay_count: i64,
     pub customer_id: Uuid,
     pub customer_name: String,
@@ -82,6 +84,7 @@ pub(super) async fn fetch(state: &ApiState, id: Uuid) -> Result<Option<SiteView>
 /// Body of `GET /api/sites`, sorted by name.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SiteList {
+    /// By name.
     pub sites: Vec<SiteView>,
 }
 

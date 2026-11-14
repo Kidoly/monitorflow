@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MonitorFlow public API",
-    "description": "Scripts and integrations use `/api/v1` with an API key made under Admin › API keys: `Authorization: Bearer mfk_…`. A key acts as the administrator who made it, within its reach (everything, a customer or a site), its access and its areas. Lists that can grow take `limit` and `cursor` and answer `next_cursor`, null on the last page. Every error has `error`, plain words, and `code`, stable. Writes may carry `Idempotency-Key`; the same request again within 24 hours gets the first answer with `Idempotent-Replayed: true`. A key makes up to 600 requests a minute; answers carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`, and 429 carries `Retry-After`. See ADR-0101.",
+    "description": "The public API of MonitorFlow, for scripts and integrations: a PSA reading alerts, a chat bot acknowledging them, an Ansible play silencing a server during a deployment. It is the same API the web interface uses, under `/api/v1`, with the same rules about who may see and change what.\n\n## API keys\n\nAn administrator makes a key under **Admin › API keys**: a global administrator for anything, a customer's administrator for that customer, a site's administrator for that site. The key is shown once, when it is made: `mfk_` followed by 43 characters. MonitorFlow keeps only a hash of it, so a lost key cannot be shown again; make another one.\n\nWhat a key may do is chosen when it is made and never changes. To change it, make another key and turn the first one off.\n\n- **Access**: \"Read only\" (viewer, the default), \"Read and change\" (operator), \"Approve commands\" (approver) or \"Administer\" (administrator).\n- **Reach**: everything, one customer or one site. Outside its reach, servers, sites and incidents do not exist for the key: they answer 404, and lists leave them out.\n- **Areas**, all by default: `servers` (servers and relays, their metrics and logs), `alerts` (incidents, silences, on-call, follow-up, sensors, thresholds and check settings, offline alerts, notification channels), `updates` (commands, campaigns, packages, package sources, mirrors, rollback, update settings), `remediation` (AI remediation and AI commands), `dashboards`, and `administration` (everything else). A route outside the key's areas answers 403 `api_key_scope`. Any key may list servers, relays, sites and customers within its reach, to turn names into IDs. Each operation below says which area it belongs to.\n- **Expiry**: 30 days, 90 days, 1 year (the default) or never.\n\nA key acts as the person who made it, narrowed to its reach and access, checked again on every request. It never does more than its maker could at that moment: a maker who loses a role loses it for the key too, a maker who is disabled finds the key refused, and a maker who is deleted takes the key with them. The keys list shows when each key was last used, to the minute. Anyone who could have made a key can turn it off; it stops at its next request.\n\nWhat a key changes is written to the audit log as its maker's action, with the key's ID, so the log tells a person from their script. The secret never appears in the audit log or the server's logs.\n\n## Authentication\n\nSend the key in the `Authorization` header of every request:\n\n```\ncurl -H \"Authorization: Bearer mfk_…\" https://monitorflow.example.com/api/v1/servers\n```\n\nKeys work only under `/api/v1`; the web interface's own paths refuse them. A request with a key needs no CSRF header. A missing, malformed, unknown or expired key, or one whose maker is disabled, answers 401 `unauthenticated`.\n\nSigning in and out, first-run setup, password and acknowledge links, display links and screens, API keys themselves, a person's own on-call contact, and inviting users or issuing their password links are not part of the public API: they answer 404 under `/api/v1`. They are for people in a browser, or they hand out a credential that would outlive the key.\n\n## Versions and changes\n\n`/api/v1` is a contract. Within v1, MonitorFlow only adds: new fields in answers, new optional parameters, new routes, new values of `code`. Fields are never renamed or removed and their types never change. Your client must ignore fields it does not know. When a change would break v1, MonitorFlow keeps the old shape in v1 and makes a v2 only when that becomes unreasonable.\n\nThis document is served by every central server at `/api/v1/openapi.json`, without a key.\n\n## Conventions\n\n- Bodies are JSON objects with `snake_case` field names. Send `Content-Type: application/json`. Bodies are at most 64 KiB; a larger one answers 413. Most routes refuse a body with a field they do not know, with 400 `invalid`.\n- IDs are UUIDs. Times are RFC 3339 in UTC, like `2026-11-14T09:30:00Z`. Durations are in seconds (`_s`) or milliseconds (`_ms`), as the field name says.\n- An ID that is not a UUID answers 404, like an ID that does not exist.\n\n## Pagination\n\nLists that can grow without bound take `limit` and `cursor` and answer `next_cursor`: servers, relays, incidents, commands, campaigns, tokens, remediation incidents and events. Pass `next_cursor` as `cursor` to get the next page, with the same filters; it is `null` on the last page. Cursors are opaque: do not build or change them. A server or incident added between two pages neither repeats nor shifts the others. There are no page numbers or totals.\n\nLists that stay small (sites, customers, silences, approvals, dashboards) answer in full.\n\n## Filters\n\nFilters are query parameters, exact values ANDed together, like `GET /api/v1/incidents?state=open&severity=critical&site_id=…`. A bad value is 400 `invalid`, and so is an unknown parameter on the lists that say so.\n\n## Errors\n\nEvery error answers with a status and a JSON body:\n\n```json\n{\"error\": \"limit must be between 1 and 500\", \"code\": \"invalid\"}\n```\n\n`error` is a sentence in plain words, safe to show to a person; it may change between versions. `code` is stable: branch on it. Codes are only ever added.\n\n| Code | Status | Meaning |\n| --- | --- | --- |\n| `invalid_request` | 400 | The body could not be read as JSON (most routes answer `invalid` instead, with the parser's message) |\n| `invalid` | 400 | A parameter or field is wrong; `error` says which and why |\n| `unauthenticated` | 401 | No key, or one that is unknown, expired or turned off, or whose maker is disabled |\n| `invalid_credentials` | 401 | Wrong username or password (signing in, not in v1) |\n| `forbidden` | 403 | The key's access, or its maker's roles, do not allow this on something it can see |\n| `api_key_scope` | 403 | The route is outside the key's areas |\n| `cross_site` | 403 | A browser request without the CSRF header (sessions only) |\n| `not_found` | 404 | It does not exist, or is outside the key's reach |\n| `conflict` | 409 | The current state does not allow it, like a silence already over; `error` says why |\n| `idempotency_in_progress` | 409 | The first request with this `Idempotency-Key` is still running |\n| `gone` | 410 | A one-time link that was used or expired (not in v1) |\n| `idempotency_key_reused` | 422 | This `Idempotency-Key` was used for another request |\n| `rate_limited` | 429 | Over the key's rate limit |\n| `internal` | 500 | Something failed on the central server; the details are in its log |\n| `metrics_unavailable` | 502 | The metrics database is unreachable, failing or not configured |\n| `logs_unavailable` | 502 | The logs database is unreachable, failing or not configured |\n| `metrics_timeout` | 504 | The metrics database did not answer in time |\n| `logs_timeout` | 504 | The logs database did not answer in time |\n\n## Idempotency keys\n\nA `POST`, `PUT` or `DELETE` made with a key may carry `Idempotency-Key`: 1 to 255 visible ASCII characters, a UUID usually. The first request with a value runs and its answer is kept for 24 hours. The same request again (same method, path, query and body) gets that answer back with `Idempotent-Replayed: true`, instead of running a second time. A script that lost its connection can then retry without opening two silences or queuing two updates.\n\n- The same value with another request answers 422 `idempotency_key_reused`.\n- While the first request is still running, a retry answers 409 `idempotency_in_progress`; try again a moment later.\n- Answers of 500 and above are not kept, so a retry runs again. Answers over 1 MiB are not kept either.\n- Answers that hand out a secret once (tokens, install keys, signing secrets) are not stored: a replay says it was done, without the secret.\n- Values belong to a key: two keys never see each other's answers.\n\nWithout the header, writes behave as usual. Most are safe to repeat anyway, like acknowledging an incident or setting a value; the operations that are not say so.\n\n## Rate limits\n\nEach key may make 600 requests a minute, counted in fixed one-minute windows on each central server. Every answer to a key carries:\n\n- `RateLimit-Limit`: requests allowed in a window, 600.\n- `RateLimit-Remaining`: requests left in the current window.\n- `RateLimit-Reset`: seconds until the window ends.\n\nOver the limit, requests answer 429 `rate_limited` with `Retry-After`, in seconds. Requests made in a browser session are not limited.\n",
     "license": {
       "name": "AGPL-3.0-only"
     },
@@ -38,7 +38,7 @@
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -48,7 +48,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -58,7 +58,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -78,7 +78,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -93,22 +111,33 @@
     "/api/v1/customers": {
       "get": {
         "tags": [
-          "servers"
+          "sites"
         ],
+        "summary": "List customers",
+        "description": "The customers the key sees, sorted by name, in full: those it reaches as a whole, and those with a site it reaches. `site_count` counts only the sites the key reaches. A single company has one customer.\n\n**Who**: any key, whatever its areas. A key whose maker has no role at all is 403.",
         "operationId": "list_customers",
         "responses": {
           "200": {
-            "description": "",
+            "description": "The customers",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CustomerList"
+                },
+                "example": {
+                  "customers": [
+                    {
+                      "id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "name": "acme",
+                      "site_count": 2
+                    }
+                  ]
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -118,7 +147,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -128,7 +157,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -148,7 +177,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -161,18 +208,21 @@
       },
       "post": {
         "tags": [
-          "servers"
+          "sites"
         ],
+        "summary": "Create a customer",
+        "description": "Adds a customer, without sites; add them with `POST /api/v1/customers/{id}/sites`.\n\n**Who**: a global administrator; the key must reach everything with \"Administer\" access. **Area**: `administration`.\n\nNames are 1 to 64 characters, without control characters or spaces at either end, and unique. Audited as `customer.create`. Sending the same name twice is refused with 409, so a retry never makes two customers.",
         "operationId": "create_customer",
         "parameters": [
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
             "required": false,
             "schema": {
               "type": "string",
-              "maxLength": 255
+              "maxLength": 255,
+              "minLength": 1
             }
           }
         ],
@@ -181,6 +231,9 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/NameRequest"
+              },
+              "example": {
+                "name": "acme"
               }
             }
           },
@@ -188,17 +241,22 @@
         },
         "responses": {
           "201": {
-            "description": "",
+            "description": "The new customer",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CustomerView"
+                },
+                "example": {
+                  "id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "name": "acme",
+                  "site_count": 0
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "The name is empty, too long, or has control characters or spaces at either end: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -208,7 +266,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -218,7 +276,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key or its maker is not a global administrator: `forbidden`; or outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -238,7 +296,17 @@
             }
           },
           "409": {
-            "description": "",
+            "description": "A customer has this name already: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
             "content": {
               "application/json": {
                 "schema": {
@@ -248,7 +316,176 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/customers/{id}": {
+      "put": {
+        "tags": [
+          "sites"
+        ],
+        "summary": "Rename a customer",
+        "description": "Changes a customer's name. Only the name changes: its sites, servers, roles and API keys refer to its ID and keep working.\n\n**Who**: a global administrator; the key must reach everything with \"Administer\" access. **Area**: `administration`.\n\nNames are 1 to 64 characters, without control characters or spaces at either end, and unique. Audited as `customer.rename` with the old and new names, unless the name is unchanged. Safe to repeat.",
+        "operationId": "rename_customer",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The customer",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameRequest"
+              },
+              "example": {
+                "name": "acme-europe"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The customer, renamed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerView"
+                },
+                "example": {
+                  "id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "name": "acme-europe",
+                  "site_count": 3
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The name is empty, too long, or has control characters or spaces at either end: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key or its maker is not a global administrator: `forbidden`; or outside the key's areas: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such customer: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another customer has this name: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -263,13 +500,16 @@
     "/api/v1/customers/{id}/sites": {
       "post": {
         "tags": [
-          "servers"
+          "sites"
         ],
+        "summary": "Create a site",
+        "description": "Adds a site to a customer. Servers join it when they are installed with one of its install commands. Sites never move between customers.\n\n**Who**: an administrator of the customer as a whole: a global administrator, or one of that customer. A site administrator may not, and neither may a key that reaches one site. **Area**: `administration`.\n\nNames are 1 to 64 characters, without control characters or spaces at either end, and unique across all customers: the name is the `site` label of every metric. Audited as `site.create`. Sending the same name twice is refused with 409.",
         "operationId": "create_site",
         "parameters": [
           {
             "name": "id",
             "in": "path",
+            "description": "The customer",
             "required": true,
             "schema": {
               "type": "string",
@@ -279,11 +519,12 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
             "required": false,
             "schema": {
               "type": "string",
-              "maxLength": 255
+              "maxLength": 255,
+              "minLength": 1
             }
           }
         ],
@@ -292,6 +533,9 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/NameRequest"
+              },
+              "example": {
+                "name": "paris"
               }
             }
           },
@@ -299,17 +543,28 @@
         },
         "responses": {
           "201": {
-            "description": "",
+            "description": "The new site",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SiteView"
+                },
+                "example": {
+                  "agent_auto_update": null,
+                  "agent_auto_update_effective": true,
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "customer_name": "acme",
+                  "id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "name": "paris",
+                  "offline_alerts": true,
+                  "relay_count": 0,
+                  "server_count": 0
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "The name is empty, too long, or has control characters or spaces at either end: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -319,7 +574,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -329,7 +584,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key sees the customer but may not administer it: `forbidden`; or outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -339,7 +594,7 @@
             }
           },
           "404": {
-            "description": "Not found, or outside the key's reach: `not_found`",
+            "description": "No such customer, or one the key does not see: `not_found`",
             "content": {
               "application/json": {
                 "schema": {
@@ -349,7 +604,17 @@
             }
           },
           "409": {
-            "description": "",
+            "description": "A site has this name already, in any customer: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
             "content": {
               "application/json": {
                 "schema": {
@@ -359,7 +624,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -476,7 +759,7 @@
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -486,7 +769,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -496,7 +779,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -516,7 +799,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -539,11 +840,12 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
             "required": false,
             "schema": {
               "type": "string",
-              "maxLength": 255
+              "maxLength": 255,
+              "minLength": 1
             }
           }
         ],
@@ -569,7 +871,7 @@
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -579,7 +881,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -589,7 +891,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -608,8 +910,46 @@
               }
             }
           },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -650,7 +990,7 @@
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -660,7 +1000,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -670,7 +1010,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -690,7 +1030,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -707,11 +1065,14 @@
         "tags": [
           "metrics"
         ],
+        "summary": "Read a metric now",
+        "description": "The value of one metric of one server at `time` (now by default): one series per instance, or one with `agg`. `query` in the answer is the query MonitorFlow ran, for reference.\n\n`metric` is `monitorflow_` followed by a sensor's metric name, such as `monitorflow_cpu_usage_ratio`; `GET /api/v1/servers/{id}/metrics` lists those a server reported. `instance` is what the sensor watches, like a disk or a service. `lookback` (1 to 172800 seconds) takes the last value within that window, for checks that run less often than every few minutes.\n\n**Who**: any role on the server's site. **Area**: `servers`.\n\nAnswers hold at most 500 series. Unknown parameters are 400.",
         "operationId": "query",
         "parameters": [
           {
             "name": "server_id",
             "in": "query",
+            "description": "The server whose metric to read.",
             "required": true,
             "schema": {
               "type": "string",
@@ -730,6 +1091,7 @@
           {
             "name": "instance",
             "in": "query",
+            "description": "What the sensor watches, like `/var` or `total`; every instance when\nabsent.",
             "required": false,
             "schema": {
               "type": "string"
@@ -748,6 +1110,7 @@
           {
             "name": "agg",
             "in": "query",
+            "description": "Combines the series into one: `avg`, `min`, `max`, `sum` or `count`.",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/Aggregation"
@@ -756,7 +1119,7 @@
           {
             "name": "lookback",
             "in": "query",
-            "description": "Seconds: the last value within this window rather than within\nVictoriaMetrics' default, for checks that run less often (ADR-0097).",
+            "description": "1 to 172800 seconds: the last value within this window rather than within\nVictoriaMetrics' default, for checks that run less often (ADR-0097).",
             "required": false,
             "schema": {
               "type": "integer",
@@ -766,17 +1129,50 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The values",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/QueryResult"
+                },
+                "example": {
+                  "query": "monitorflow_disk_used_ratio{peer=\"web-1\",site=\"paris\"}",
+                  "series": [
+                    {
+                      "labels": {
+                        "__name__": "monitorflow_disk_used_ratio",
+                        "instance": "/",
+                        "peer": "web-1",
+                        "site": "paris"
+                      },
+                      "points": [
+                        [
+                          1763112600,
+                          0.41
+                        ]
+                      ]
+                    },
+                    {
+                      "labels": {
+                        "__name__": "monitorflow_disk_used_ratio",
+                        "instance": "/var",
+                        "peer": "web-1",
+                        "site": "paris"
+                      },
+                      "points": [
+                        [
+                          1763112600,
+                          0.97
+                        ]
+                      ]
+                    }
+                  ]
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A bad metric name, instance or `lookback`, an unknown parameter, more than 500 series, or a query the metrics database refused: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -786,7 +1182,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -796,7 +1192,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -806,7 +1202,7 @@
             }
           },
           "404": {
-            "description": "Not found, or outside the key's reach: `not_found`",
+            "description": "No such server, or outside the key's reach: `not_found`",
             "content": {
               "application/json": {
                 "schema": {
@@ -816,7 +1212,45 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The metrics database is unreachable or not configured: `metrics_unavailable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The metrics database did not answer in time: `metrics_timeout`",
             "content": {
               "application/json": {
                 "schema": {
@@ -833,11 +1267,14 @@
         "tags": [
           "metrics"
         ],
+        "summary": "Read a metric over time",
+        "description": "One metric of one server from `start` to `end` (the last hour by default), a point every `step` seconds (by default the range over 720, at least 1). Points are `[unix seconds, value]`; a value that is not a finite number is `null`.\n\nWithout `rollup`, a point is the last sample before it, so a short spike between two points of a long range does not show. With `rollup` (`avg`, `max`, `min`, `last`), each point summarizes its series over the step before it, before `agg` combines the series: `rollup=max` keeps the spikes.\n\n**Who**: any role on the server's site. **Area**: `servers`.\n\nRanges are at most 31 days and under 11,000 points per series; answers hold at most 500 series. Unknown parameters are 400.",
         "operationId": "query_range",
         "parameters": [
           {
             "name": "server_id",
             "in": "query",
+            "description": "The server whose metric to read.",
             "required": true,
             "schema": {
               "type": "string",
@@ -847,6 +1284,7 @@
           {
             "name": "metric",
             "in": "query",
+            "description": "Full name, `monitorflow_<sensor metric>`.",
             "required": true,
             "schema": {
               "type": "string"
@@ -855,6 +1293,7 @@
           {
             "name": "instance",
             "in": "query",
+            "description": "What the sensor watches, like `/var` or `total`; every instance when\nabsent.",
             "required": false,
             "schema": {
               "type": "string"
@@ -893,6 +1332,7 @@
           {
             "name": "agg",
             "in": "query",
+            "description": "Combines the series into one: `avg`, `min`, `max`, `sum` or `count`.",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/Aggregation"
@@ -910,17 +1350,43 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The series",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/QueryResult"
+                },
+                "example": {
+                  "query": "max(max_over_time(monitorflow_cpu_usage_ratio{peer=\"web-1\",site=\"paris\",instance=\"total\"}[300s]))",
+                  "series": [
+                    {
+                      "labels": {},
+                      "points": [
+                        [
+                          1763109000,
+                          0.22
+                        ],
+                        [
+                          1763109300,
+                          0.35
+                        ],
+                        [
+                          1763109600,
+                          0.91
+                        ],
+                        [
+                          1763109900,
+                          0.3
+                        ]
+                      ]
+                    }
+                  ]
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A bad metric name or instance, `start` not before `end`, a range over 31 days, too many points, a bad `step`, an unknown parameter, more than 500 series, or a query the metrics database refused: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -930,7 +1396,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -940,7 +1406,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -950,7 +1416,7 @@
             }
           },
           "404": {
-            "description": "Not found, or outside the key's reach: `not_found`",
+            "description": "No such server, or outside the key's reach: `not_found`",
             "content": {
               "application/json": {
                 "schema": {
@@ -960,7 +1426,45 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The metrics database is unreachable or not configured: `metrics_unavailable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The metrics database did not answer in time: `metrics_timeout`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1019,7 +1523,7 @@
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1029,7 +1533,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1039,7 +1543,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1059,7 +1563,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1090,11 +1612,12 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
             "required": false,
             "schema": {
               "type": "string",
-              "maxLength": 255
+              "maxLength": 255,
+              "minLength": 1
             }
           }
         ],
@@ -1120,7 +1643,7 @@
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1130,7 +1653,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1140,7 +1663,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1160,7 +1683,17 @@
             }
           },
           "409": {
-            "description": "",
+            "description": "; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1170,7 +1703,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1201,11 +1752,12 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
             "required": false,
             "schema": {
               "type": "string",
-              "maxLength": 255
+              "maxLength": 255,
+              "minLength": 1
             }
           }
         ],
@@ -1231,7 +1783,7 @@
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1241,7 +1793,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1251,7 +1803,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1271,7 +1823,17 @@
             }
           },
           "409": {
-            "description": "",
+            "description": "; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1281,7 +1843,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1298,6 +1878,8 @@
         "tags": [
           "servers"
         ],
+        "summary": "List servers",
+        "description": "One page of the servers within the key's reach, sorted by site name, then hostname, then name. Removed servers are left out; read one by its ID to see it.\n\n**Who**: any key, whatever its areas. A key whose maker has no role at all is 403.\n\n**Pages**: `limit` servers per page, 1 to 1000, 500 by default. Pass `next_cursor` as `cursor` for the next page; it is `null` on the last one. Other query parameters are ignored.\n\n`status` is `online` while the agent has a connection open, directly or through a relay. A connected agent that has no server yet (waiting for approval) is not listed.",
         "operationId": "list_servers",
         "parameters": [
           {
@@ -1323,17 +1905,52 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "One page of servers",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ServerList"
+                },
+                "example": {
+                  "next_cursor": "WyJwYXJpcyIsIndlYi0xIiwid2ViLTEiXQ",
+                  "servers": [
+                    {
+                      "agent_version": "0.9.2",
+                      "cert_not_after": "2027-02-12T06:12:40Z",
+                      "command_kinds": {
+                        "apply_updates": "accepted",
+                        "self_update": "accepted",
+                        "shell": "off"
+                      },
+                      "connected_at": "2026-11-14T06:12:40Z",
+                      "created_at": "2026-09-01T08:00:00Z",
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "customer_name": "acme",
+                      "hostname": "web-1",
+                      "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                      "last_heartbeat": "2026-11-14T09:29:55Z",
+                      "offline_alerts": true,
+                      "open_incidents": 1,
+                      "os_family": "debian",
+                      "os_version": "12",
+                      "package_updates": true,
+                      "peer_id": "web-1",
+                      "relay_id": null,
+                      "revoked_at": null,
+                      "silenced_until": null,
+                      "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "site_name": "paris",
+                      "site_offline_alerts": true,
+                      "status": "online",
+                      "via_relay": null
+                    }
+                  ]
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "`limit` out of range, or a `cursor` that is not one MonitorFlow gave: `invalid`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1343,7 +1960,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1353,7 +1970,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1373,7 +1990,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1390,11 +2025,14 @@
         "tags": [
           "servers"
         ],
+        "summary": "Get a server",
+        "description": "One server: the fields of a listing row, plus the certificate MonitorFlow issued it last and the last time its AI commands were turned on or off from the web interface. A removed server stays readable here, with `revoked_at` set, for its history.\n\n**Who**: any role on the server's site. **Area**: `servers`.",
         "operationId": "server",
         "parameters": [
           {
             "name": "id",
             "in": "path",
+            "description": "The server",
             "required": true,
             "schema": {
               "type": "string",
@@ -1404,17 +2042,57 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The server",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ServerDetail"
+                },
+                "example": {
+                  "agent_version": "0.9.2",
+                  "ai_commands_change": null,
+                  "cert_not_after": "2027-02-12T06:12:40Z",
+                  "certificate": {
+                    "issued_at": "2026-11-14T06:12:40Z",
+                    "not_after": "2027-02-12T06:12:40Z",
+                    "not_before": "2026-11-14T06:12:40Z",
+                    "revocation_reason": null,
+                    "revoked": false,
+                    "revoked_at": null,
+                    "serial": "3f2a9c41d07e"
+                  },
+                  "command_kinds": {
+                    "apply_updates": "accepted",
+                    "self_update": "accepted",
+                    "shell": "off"
+                  },
+                  "connected_at": "2026-11-14T06:12:40Z",
+                  "created_at": "2026-09-01T08:00:00Z",
+                  "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                  "customer_name": "acme",
+                  "hostname": "web-1",
+                  "id": "6f1c2a7e-3b4d-4e8f-9a0b-1c2d3e4f5a6b",
+                  "last_heartbeat": "2026-11-14T09:29:55Z",
+                  "offline_alerts": true,
+                  "open_incidents": 1,
+                  "os_family": "debian",
+                  "os_version": "12",
+                  "package_updates": true,
+                  "peer_id": "web-1",
+                  "relay_id": null,
+                  "revoked_at": null,
+                  "silenced_until": null,
+                  "site_id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                  "site_name": "paris",
+                  "site_offline_alerts": true,
+                  "status": "online",
+                  "via_relay": null
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1424,7 +2102,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1434,7 +2112,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1444,7 +2122,7 @@
             }
           },
           "404": {
-            "description": "Not found, or outside the key's reach: `not_found`",
+            "description": "No such server, or outside the key's reach: `not_found`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1454,7 +2132,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1513,7 +2209,7 @@
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1523,7 +2219,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1533,7 +2229,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1553,7 +2249,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1583,11 +2297,12 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
             "required": false,
             "schema": {
               "type": "string",
-              "maxLength": 255
+              "maxLength": 255,
+              "minLength": 1
             }
           }
         ],
@@ -1613,7 +2328,7 @@
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1623,7 +2338,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1633,7 +2348,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1653,7 +2368,17 @@
             }
           },
           "409": {
-            "description": "",
+            "description": "; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1663,7 +2388,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1722,7 +2465,7 @@
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1732,7 +2475,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1742,7 +2485,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1762,7 +2505,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1783,11 +2544,12 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
             "required": false,
             "schema": {
               "type": "string",
-              "maxLength": 255
+              "maxLength": 255,
+              "minLength": 1
             }
           }
         ],
@@ -1813,7 +2575,7 @@
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1823,7 +2585,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1833,7 +2595,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1852,8 +2614,46 @@
               }
             }
           },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1884,11 +2684,12 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer instead of running twice.",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
             "required": false,
             "schema": {
               "type": "string",
-              "maxLength": 255
+              "maxLength": 255,
+              "minLength": 1
             }
           }
         ],
@@ -1897,7 +2698,7 @@
             "description": "Ended"
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1907,7 +2708,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1917,7 +2718,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1936,8 +2737,46 @@
               }
             }
           },
+          "409": {
+            "description": "The first request with this `Idempotency-Key` is still running: `idempotency_in_progress`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1952,22 +2791,50 @@
     "/api/v1/sites": {
       "get": {
         "tags": [
-          "servers"
+          "sites"
         ],
+        "summary": "List sites",
+        "description": "Every site within the key's reach, sorted by name, in full: sites are few, so this list has no pages. Counts leave out removed servers and relays.\n\n**Who**: any key, whatever its areas. A key whose maker has no role at all is 403.",
         "operationId": "list_sites",
         "responses": {
           "200": {
-            "description": "",
+            "description": "The sites",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SiteList"
+                },
+                "example": {
+                  "sites": [
+                    {
+                      "agent_auto_update": null,
+                      "agent_auto_update_effective": true,
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "customer_name": "acme",
+                      "id": "2b7e1516-28ae-4d2a-a6f7-15880928cf4f",
+                      "name": "paris",
+                      "offline_alerts": true,
+                      "relay_count": 1,
+                      "server_count": 12
+                    },
+                    {
+                      "agent_auto_update": false,
+                      "agent_auto_update_effective": false,
+                      "customer_id": "9c1e5f3a-7b2d-4c8e-8f6a-0d4b3e2a1c5f",
+                      "customer_name": "acme",
+                      "id": "5a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+                      "name": "lyon",
+                      "offline_alerts": true,
+                      "relay_count": 0,
+                      "server_count": 4
+                    }
+                  ]
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid parameters or body: `invalid` or `invalid_request`",
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1977,7 +2844,7 @@
             }
           },
           "401": {
-            "description": "No key, or a key that is unknown, expired or turned off: `unauthenticated`",
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
             "content": {
               "application/json": {
                 "schema": {
@@ -1987,7 +2854,7 @@
             }
           },
           "403": {
-            "description": "The key's role or areas do not allow it: `forbidden` or `api_key_scope`",
+            "description": "The key's access or its maker's roles do not allow it: `forbidden`; the route is outside the key's areas: `api_key_scope`",
             "content": {
               "application/json": {
                 "schema": {
@@ -2007,7 +2874,25 @@
             }
           },
           "429": {
-            "description": "Over the key's rate limit: `rate_limited`, with `Retry-After`",
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
             "content": {
               "application/json": {
                 "schema": {
@@ -2149,13 +3034,15 @@
           },
           "not_before": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Start of validity."
           },
           "revocation_reason": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "`unspecified`, `key_compromise`, `affiliation_changed`,\n`superseded` or `cessation_of_operation`; `null` unless revoked."
           },
           "revoked": {
             "type": "boolean"
@@ -2165,7 +3052,8 @@
               "string",
               "null"
             ],
-            "format": "date-time"
+            "format": "date-time",
+            "description": "`null` unless revoked."
           },
           "serial": {
             "type": "string",
@@ -2386,7 +3274,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/CustomerView"
-            }
+            },
+            "description": "By name."
           }
         }
       },
@@ -2404,7 +3293,8 @@
             "format": "uuid"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Unique."
           },
           "site_count": {
             "type": "integer",
@@ -2447,6 +3337,7 @@
       },
       "Error": {
         "type": "object",
+        "description": "Every error: a sentence to show and a stable code to branch on.",
         "required": [
           "error",
           "code"
@@ -2454,6 +3345,7 @@
         "properties": {
           "code": {
             "type": "string",
+            "description": "Stable; codes are only ever added.",
             "enum": [
               "invalid_request",
               "invalid",
@@ -2476,9 +3368,16 @@
             ]
           },
           "error": {
-            "type": "string"
+            "type": "string",
+            "description": "Plain words, safe to show; may change between versions."
           }
-        }
+        },
+        "examples": [
+          {
+            "code": "not_found",
+            "error": "not found"
+          }
+        ]
       },
       "EventView": {
         "type": "object",
@@ -2832,7 +3731,8 @@
         ],
         "properties": {
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "1 to 64 characters, without control characters or spaces at either\nend."
           }
         },
         "additionalProperties": false
@@ -3010,7 +3910,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SeriesView"
-            }
+            },
+            "description": "At most 500."
           }
         }
       },
@@ -3048,6 +3949,7 @@
         "properties": {
           "labels": {
             "type": "object",
+            "description": "`__name__`, `instance`, `peer` (the server's name) and `site`, or\nnone once aggregated.",
             "additionalProperties": {
               "type": "string"
             },
@@ -3073,7 +3975,8 @@
                   "format": "double"
                 }
               ]
-            }
+            },
+            "description": "`[unix seconds, value]`, oldest first."
           }
         }
       },
@@ -3130,7 +4033,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ServerView"
-            }
+            },
+            "description": "By site name, hostname and name."
           }
         }
       },
@@ -3199,7 +4103,8 @@
           },
           "created_at": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "When it joined."
           },
           "customer_id": {
             "type": "string",
@@ -3210,7 +4115,8 @@
             "type": "string"
           },
           "hostname": {
-            "type": "string"
+            "type": "string",
+            "description": "The machine's host name, as its agent reports it."
           },
           "id": {
             "type": "string",
@@ -3241,7 +4147,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Like `12` or `9.4`; `null` until the agent reports it."
           },
           "package_updates": {
             "type": "boolean",
@@ -3249,21 +4156,23 @@
           },
           "peer_id": {
             "type": "string",
-            "description": "The agent certificate ID."
+            "description": "The agent's name, given when it was installed; the `peer` label of\nits metrics."
           },
           "relay_id": {
             "type": [
               "string",
               "null"
             ],
-            "format": "uuid"
+            "format": "uuid",
+            "description": "The relay its last connection came through; `null` when direct."
           },
           "revoked_at": {
             "type": [
               "string",
               "null"
             ],
-            "format": "date-time"
+            "format": "date-time",
+            "description": "When it was removed; `null` while it is in the fleet."
           },
           "silenced_until": {
             "type": [
@@ -3281,7 +4190,8 @@
             "type": "string"
           },
           "site_offline_alerts": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "The site's own setting."
           },
           "status": {
             "$ref": "#/components/schemas/ServerStatus"
@@ -3469,7 +4379,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SiteView"
-            }
+            },
+            "description": "By name."
           }
         }
       },
@@ -3510,7 +4421,8 @@
             "format": "uuid"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Unique across customers; the `site` label of every metric."
           },
           "offline_alerts": {
             "type": "boolean",
@@ -3519,11 +4431,12 @@
           "relay_count": {
             "type": "integer",
             "format": "int64",
-            "description": "Enrolled relays of the site, revoked ones included (ADR-0029)."
+            "description": "Relays of the site, removed ones left out."
           },
           "server_count": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "Servers of the site, removed ones left out."
           }
         }
       },
@@ -3599,7 +4512,9 @@
     "securitySchemes": {
       "api_key": {
         "type": "http",
-        "scheme": "bearer"
+        "scheme": "bearer",
+        "bearerFormat": "mfk_",
+        "description": "An API key made under Admin › API keys: `Authorization: Bearer mfk_…`. It acts as its maker, narrowed to its reach, access and areas."
       }
     }
   },
@@ -3611,23 +4526,27 @@
   "tags": [
     {
       "name": "servers",
-      "description": "Servers, sites and customers"
+      "description": "The servers MonitorFlow watches: one machine each, with its agent. Lists and details carry the live connection status, open incidents, silences and certificate expiry. Area `servers`; any key may list servers within its reach."
+    },
+    {
+      "name": "sites",
+      "description": "Sites group servers and relays, usually one per place or network; customers own sites. A single company has one customer. Sites and customers are listed by any key within its reach; creating them is in the `administration` area."
     },
     {
       "name": "alerts",
-      "description": "Incidents and silences"
+      "description": "Incidents are opened and resolved by MonitorFlow when a threshold is crossed or a server stops reporting; the API reads and acknowledges them. Silences stop notifications about a server, relay, site, customer or everything for a while. Area `alerts`."
     },
     {
       "name": "updates",
-      "description": "Commands sent to servers"
+      "description": "Commands sent to a server's agent: package updates and agent updates, queued, sent as soon as the agent is connected, with their output. Area `updates`."
     },
     {
       "name": "remediation",
-      "description": "Commands the AI proposed, waiting for a person"
+      "description": "Commands the AI proposed to fix an incident that the rules held for a person: approve, edit or reject them. The AI's text is untrusted and shown as data. Area `remediation`."
     },
     {
       "name": "metrics",
-      "description": "Metric queries built by MonitorFlow, never raw PromQL"
+      "description": "Values a server's sensors reported, now or over a range. You name a server, a metric and optionally an instance; MonitorFlow builds the query itself and never accepts raw PromQL. Area `servers`."
     }
   ]
 }

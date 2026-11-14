@@ -42,6 +42,7 @@ pub struct ListParams {
 /// Body of `GET /api/servers`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ServerList {
+    /// By site name, hostname and name.
     pub servers: Vec<ServerView>,
     /// Pass as `cursor` for the next page; `null` on the last one.
     pub next_cursor: Option<String>,
@@ -86,17 +87,21 @@ pub enum Status {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ServerView {
     pub id: Uuid,
-    /// The agent certificate ID.
+    /// The agent's name, given when it was installed; the `peer` label of
+    /// its metrics.
     pub peer_id: String,
+    /// The machine's host name, as its agent reports it.
     pub hostname: String,
     pub site_id: Uuid,
     pub site_name: String,
     /// Customer of the site (ADR-0026).
     pub customer_id: Uuid,
     pub customer_name: String,
+    /// The relay its last connection came through; `null` when direct.
     pub relay_id: Option<Uuid>,
     /// `debian`, `rhel`, `windows`, or `linux` for any other distribution.
     pub os_family: String,
+    /// Like `12` or `9.4`; `null` until the agent reports it.
     pub os_version: Option<String>,
     /// Whether the host can take package updates and sources (ADR-0063).
     pub package_updates: bool,
@@ -106,7 +111,9 @@ pub struct ServerView {
     pub command_kinds: Option<BTreeMap<String, String>>,
     /// Version reported by the live stream, else the one last stored.
     pub agent_version: Option<String>,
+    /// When it joined.
     pub created_at: DateTime<Utc>,
+    /// When it was removed; `null` while it is in the fleet.
     pub revoked_at: Option<DateTime<Utc>>,
     pub status: Status,
     /// Start of the current stream, when online.
@@ -121,6 +128,7 @@ pub struct ServerView {
     /// Whether it opens an incident when offline (ADR-0072); muted when
     /// this or `site_offline_alerts` is `false`.
     pub offline_alerts: bool,
+    /// The site's own setting.
     pub site_offline_alerts: bool,
     /// While a silence covers it, when the last one ends (ADR-0079).
     pub silenced_until: Option<DateTime<Utc>>,
@@ -148,12 +156,16 @@ pub struct ServerDetail {
 pub struct CertificateView {
     /// Lowercase hexadecimal without leading zeros.
     pub serial: String,
+    /// Start of validity.
     pub not_before: DateTime<Utc>,
     /// Expiry.
     pub not_after: DateTime<Utc>,
     pub issued_at: DateTime<Utc>,
     pub revoked: bool,
+    /// `null` unless revoked.
     pub revoked_at: Option<DateTime<Utc>>,
+    /// `unspecified`, `key_compromise`, `affiliation_changed`,
+    /// `superseded` or `cessation_of_operation`; `null` unless revoked.
     pub revocation_reason: Option<String>,
 }
 
