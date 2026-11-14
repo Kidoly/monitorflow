@@ -21,7 +21,7 @@ import { Page } from "@/components/ui/Page";
 import { EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
-import { formatDuration, formatExact, formatSince } from "@/components/ui/time";
+import { formatDay, formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
 import styles from "./FleetOverview.module.css";
 import { FleetTree, type TreeRow } from "./FleetTree";
@@ -263,6 +263,35 @@ export function FleetOverview() {
  * with its severity when the status does not say it (acknowledged, silenced).
  */
 function Problem({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
+  const note = whoAndWhy(row, now);
+  if (!note) return <What row={row} now={now} scope={scope} />;
+  return (
+    <span className={styles.stack}>
+      {row.incident && <What row={row} now={now} scope={scope} />}
+      <span className={styles.note}>{note}</span>
+    </span>
+  );
+}
+
+/**
+ * "Silenced by alice until 18:00 today: migration", "Acknowledged by bob
+ * 14:02: replacing the disk": who took a silenced or acknowledged server
+ * out of the problems, and why (ADR-0130).
+ */
+function whoAndWhy(row: Pick<Row, "server" | "state">, now: Date): string | null {
+  const { silence, acknowledgement } = row.server;
+  if (row.state === "silenced" && silence) {
+    return `Silenced by ${silence.by ?? "someone"} until ${formatDay(new Date(silence.until), now)}: ${silence.reason}`;
+  }
+  if (row.state === "acknowledged" && acknowledgement) {
+    const said = acknowledgement.note ? `: ${acknowledgement.note}` : "";
+    return `Acknowledged by ${acknowledgement.by} ${formatSince(new Date(acknowledgement.at), now)}${said}`;
+  }
+  return null;
+}
+
+/** The problem itself: "Disk used /var 96.8% · 4 h 20 min". */
+function What({ row, now, scope }: { row: Row; now: Date; scope: Scope }) {
   const { server, incident } = row;
   if (incident) {
     return (

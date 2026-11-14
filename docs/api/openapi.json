@@ -2129,6 +2129,13 @@
               "format": "uuid"
             },
             "description": "1 to [`MAX_LIMIT`] incidents, like a group of a notification."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the user is doing about them, up to 500 characters, shown with\nthe acknowledgement (ADR-0130). Required when signed in; optional\nfor API keys, so older scripts keep working."
           }
         },
         "additionalProperties": false
@@ -2146,6 +2153,30 @@
               "type": "string",
               "format": "uuid"
             }
+          }
+        }
+      },
+      "AcknowledgementNote": {
+        "type": "object",
+        "description": "Who acknowledged a server's latest acknowledged open incident, when,\nand what they said they are doing (ADR-0130).",
+        "required": [
+          "by",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "by": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` from a notification link or a script that sent none."
           }
         }
       },
@@ -2820,6 +2851,13 @@
             ],
             "description": "Who said they are on it, and when (ADR-0082); `null` until someone\ndoes. The name stays when the account is removed."
           },
+          "acknowledged_note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What they said they are doing (ADR-0130); `null` from a\nnotification link, or from an API key that sent none."
+          },
           "can_acknowledge": {
             "type": "boolean",
             "description": "Whether the reader may acknowledge it: open, not acknowledged, and\nthe reader an operator or above of its site."
@@ -3317,6 +3355,17 @@
           "site_offline_alerts"
         ],
         "properties": {
+          "acknowledgement": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AcknowledgementNote",
+                "description": "The latest acknowledgement of its open incidents (ADR-0130);\n`null` when none is acknowledged."
+              }
+            ]
+          },
           "agent_version": {
             "type": [
               "string",
@@ -3421,6 +3470,17 @@
             ],
             "format": "date-time"
           },
+          "silence": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SilenceNote",
+                "description": "That silence: who made it and why (ADR-0130); `null` without one."
+              }
+            ]
+          },
           "silenced_until": {
             "type": [
               "string",
@@ -3482,6 +3542,30 @@
             "items": {
               "$ref": "#/components/schemas/SilenceView"
             }
+          }
+        }
+      },
+      "SilenceNote": {
+        "type": "object",
+        "description": "Who silenced a server, until when and why (ADR-0130).",
+        "required": [
+          "until",
+          "reason"
+        ],
+        "properties": {
+          "by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who made the silence; `null` once the account is removed."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

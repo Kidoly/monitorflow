@@ -13,13 +13,14 @@ import { formatSensorValue } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
 import { replaceParams } from "@/lib/urlState";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
-import { Button, ButtonLink } from "@/components/ui/Button";
+import { ButtonLink } from "@/components/ui/Button";
 import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
 import { Page } from "@/components/ui/Page";
 import { Banner, EmptyState, ErrorState, PageHeader, RefreshLine, StaleBanner } from "@/components/ui/PageState";
 import { Label, StatusLabel } from "@/components/ui/StatusLabel";
 import { formatDay, formatDuration, formatExact, formatSince } from "@/components/ui/time";
 
+import { AcknowledgeButton } from "./AcknowledgeButton";
 import styles from "./IncidentList.module.css";
 
 /** A threshold incident's value; offline ones have none. */
@@ -42,13 +43,11 @@ function SilencedSign({ incident, now }: { incident: Incident; now: Date }) {
 function Acknowledged({
   incident,
   now,
-  pending,
   onAcknowledge,
 }: {
   incident: Incident;
   now: Date;
-  pending: boolean;
-  onAcknowledge: (ids: string[]) => void;
+  onAcknowledge: (ids: string[], note: string) => Promise<void>;
 }) {
   if (incident.state !== "open") return null;
   if (incident.acknowledged_at) {
@@ -56,6 +55,7 @@ function Acknowledged({
       <span className={styles.small}>
         {" "}
         · Acknowledged by {incident.acknowledged_by ?? "someone"} {formatSince(new Date(incident.acknowledged_at), now)}
+        {incident.acknowledged_note && `: ${incident.acknowledged_note}`}
       </span>
     );
   }
@@ -63,9 +63,12 @@ function Acknowledged({
   return (
     <>
       {" "}
-      <Button size="small" disabled={pending} onClick={() => onAcknowledge([incident.id])} aria-label={`Acknowledge ${incident.hostname}`}>
-        Acknowledge
-      </Button>
+      <AcknowledgeButton
+        size="small"
+        name={`Acknowledge ${incident.hostname}`}
+        onAcknowledge={(note) => onAcknowledge([incident.id], note)}
+        describeError={describeError}
+      />
     </>
   );
 }
@@ -122,19 +125,9 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
     [filters, limit],
   );
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher);
-  const [acknowledging, setAcknowledging] = useState(false);
-  const [ackError, setAckError] = useState<string | null>(null);
-  async function acknowledge(ids: string[]) {
-    setAcknowledging(true);
-    setAckError(null);
-    try {
-      await api.acknowledgeIncidents(ids);
-      refresh();
-    } catch (e) {
-      setAckError(describeError(e));
-    } finally {
-      setAcknowledging(false);
-    }
+  async function acknowledge(ids: string[], note: string) {
+    await api.acknowledgeIncidents(ids, note);
+    refresh();
   }
 
   const me = useMe();
@@ -203,7 +196,7 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
         <>
           {i.resolved_at ? `Resolved ${formatSince(new Date(i.resolved_at), now)}` : "Open"}
           <SilencedSign incident={i} now={now} />
-          <Acknowledged incident={i} now={now} pending={acknowledging} onAcknowledge={acknowledge} />
+          <Acknowledged incident={i} now={now} onAcknowledge={acknowledge} />
         </>
       ),
     },
@@ -267,14 +260,17 @@ export function IncidentList({ filters }: { filters: IncidentFilters }) {
           {acknowledgeable.length > 1 && (
             <>
               {" "}
-              <Button size="small" variant="k" disabled={acknowledging} onClick={() => acknowledge(acknowledgeable.map((i) => i.id))}>
-                Acknowledge all {acknowledgeable.length}
-              </Button>
+              <AcknowledgeButton
+                size="small"
+                variant="k"
+                label={`Acknowledge all ${acknowledgeable.length}`}
+                onAcknowledge={(note) => acknowledge(acknowledgeable.map((i) => i.id), note)}
+                describeError={describeError}
+              />
             </>
           )}
         </Banner>
       )}
-      {ackError && <Banner tone="bad">{ackError}</Banner>}
       {!data && error !== null && !isUnauthorized(error) ? (
         <ErrorState what="incidents" error={describeError(error)} onRetry={refresh} />
       ) : data && incidents.length === 0 ? (
