@@ -81,16 +81,16 @@ Every source serves the same signed files, and the installer checks the release 
 **This server.** For sites without Internet access. The server keeps whole releases in its cache, the one self-updates use[^0053], and serves them behind the web interface. Once per release, on a machine with Internet access, download every asset of the release from its GitHub page into one directory: `install.sh`, `SHA256SUMS`, `SHA256SUMS.sig`, `VERSION`, `monitorflow-agent-linux-x86_64`, `monitorflow-agent-linux-aarch64`, `monitorflow-agent.service`, `monitorflow-agent-sudoers`, `monitorflow-agent-windows-x86_64.exe` and `monitorflow-agent-windows-x86_64.msi`. Then choose all of them under Administration › Server update in the web interface. From a shell, copy the directory to the central server and import it ([deploy-server.md](deploy-server.md#agent-releases-on-the-server) for the compose variant):
 
 ```
-monitorflow-server agent-release import --dir ./monitorflow-0.3.0
+monitorflow-server agent-release import --dir ./monitorflow-0.3.1
 monitorflow-server agent-release list
 ```
 
 The import reads only that directory and checks the signature, then every file, before it keeps anything; a release that fails is refused whole. Until a release is imported, the Add servers page says so instead of showing a command, and `https://<web interface>/agent/latest/…` answers 404 with the same advice. The command names the newest imported release and carries the checksums of its `install.sh`, `SHA256SUMS` and MSI:
 
 ```
-f=$(mktemp) && curl -fsSLk -o "$f" https://monitorflow.example.com/agent/0.3.0/install.sh \
+f=$(mktemp) && curl -fsSLk -o "$f" https://monitorflow.example.com/agent/0.3.1/install.sh \
   && echo "<sha256 of install.sh>  $f" | sha256sum -c \
-  && sudo MF_DOWNLOAD_URL=https://monitorflow.example.com/agent/0.3.0 MF_SUMS_SHA256=<sha256 of SHA256SUMS> MF_SERVER=… MF_TOKEN=… sh "$f"; rm -f "$f"
+  && sudo MF_DOWNLOAD_URL=https://monitorflow.example.com/agent/0.3.1 MF_SUMS_SHA256=<sha256 of SHA256SUMS> MF_SERVER=… MF_TOKEN=… sh "$f"; rm -f "$f"
 ```
 
 Servers need not trust the web certificate, which is often issued by Caddy's own CA or a company CA: the checksums come from the page you copied the command from, so `curl -k` cannot let a different file through. The Windows lines download the MSI with `curl.exe -k` (Windows 10 1803, Windows Server 2019 and later) and run `msiexec` only if its checksum matches. On older Windows, copy the MSI to the server and compare `Get-FileHash` with its line in `SHA256SUMS`. The address in the command is the one your browser uses for the web interface; if servers reach it by another name, change it in the command. Servers that do trust the certificate can also use the moving `latest` directory, like a custom URL: `MF_DOWNLOAD_URL=https://<web interface>/agent/latest`.
@@ -175,7 +175,7 @@ An administrator can update agents from MonitorFlow instead of running the insta
 
 The outcome is in `/var/lib/monitorflow/self-update/status.json`, and the watchdog's log is in `journalctl -u monitorflow-agent-self-update`. `/var/lib/monitorflow/self-update` belongs to root; the helper refuses it otherwise.
 
-**Starting an update.** On a server's page, administrators of its customer see "Update agent to …" when the server holds a newer release than the agent runs; the Commands tab follows the update and shows "rolled back to …" if it came back. The API takes the same command: `POST /api/servers/{id}/commands` with `{"kind": "self_update", "version": "0.3.0"}`, and optionally `"allow_downgrade": true` and `"health_timeout_s"` (30 to 3600).
+**Starting an update.** On a server's page, administrators of its customer see "Update agent to …" when the server holds a newer release than the agent runs; the Commands tab follows the update and shows "rolled back to …" if it came back. The API takes the same command: `POST /api/servers/{id}/commands` with `{"kind": "self_update", "version": "0.3.1"}`, and optionally `"allow_downgrade": true` and `"health_timeout_s"` (30 to 3600).
 
 **Many servers at once.** An update campaign can update agents instead of packages: choose "The MonitorFlow agent" and a version in the new campaign form (`agent_version` in `POST /api/campaigns`). Waves, maintenance windows and the failure threshold work as for package updates; a rolled-back server counts as failed.
 
@@ -186,7 +186,7 @@ Updates › Automatic updates (global administrators) shows the version being ro
 **Where agents download from.** The command lists, in order: the mirror listener of the agent's relay, when the relay mirrors and reported its `mirror.public_url` (relays copy the two newest releases the server holds, each cycle of their mirror sync, and check their signature first), the server's own copy at `<mirror_public_url>/agent/<version>/` when it holds that version, then `agent_download_url` (for GitHub, the release of that version; a self-hosted URL as it is, skipped by the agent if it serves another version). For sites without Internet access, give the server a copy of each release on its mirror listener, from a directory holding the release files:
 
 ```
-tar -C ./monitorflow-0.3.0 -cf - . | docker compose exec -T server sh -c 'mkdir -p /tmp/release && tar -C /tmp/release -xf -'
+tar -C ./monitorflow-0.3.1 -cf - . | docker compose exec -T server sh -c 'mkdir -p /tmp/release && tar -C /tmp/release -xf -'
 docker compose exec server monitorflow-server agent-release import --dir /tmp/release
 docker compose exec server monitorflow-server agent-release list
 ```
@@ -229,7 +229,7 @@ The Windows agent is the same binary built for `x86_64-pc-windows-msvc`[^0047]. 
 The package[^0050] does every manual step below: binary, service, failure actions, folders and ACLs, and it registers the `MonitorFlowAgent` event source. In an elevated PowerShell, with a token from the web interface:
 
 ```powershell
-msiexec /i monitorflow-agent-0.3.0-x64.msi /qn /l*v install.log `
+msiexec /i monitorflow-agent-0.3.1-x64.msi /qn /l*v install.log `
   UPSTREAM_URL=https://relay.example.com:7443 ENROLLMENT_TOKEN=mfe1.…
 ```
 
@@ -245,7 +245,7 @@ An invalid URL makes the install fail and roll back; `install.log` has the custo
 
 The package refuses to install when someone other than an administrator made `%ProgramData%\MonitorFlow` or put something in it first, as any user of the server can: the install stops and rolls back (msiexec exits with 1603). Look at what the folder holds and who owns it (`Get-ChildItem -Recurse -Force "$env:ProgramData\MonitorFlow" | Get-Acl | Format-Table Path, Owner`), remove it if it is not yours, or after checking it give it to the administrators with `icacls "$env:ProgramData\MonitorFlow" /setowner *S-1-5-32-544 /T`, then install again.
 
-Installing a newer package upgrades in place: the service restarts with the new binary, and `agent.toml` and the identity are kept. `msiexec /x monitorflow-agent-0.3.0-x64.msi /qn` (or Apps and Features) removes the binary and the service and keeps `%ProgramData%\MonitorFlow`, so a reinstall keeps the same identity. When the service stops on an error, the Application event log has the reason, from the source `MonitorFlowAgent`.
+Installing a newer package upgrades in place: the service restarts with the new binary, and `agent.toml` and the identity are kept. `msiexec /x monitorflow-agent-0.3.1-x64.msi /qn` (or Apps and Features) removes the binary and the service and keeps `%ProgramData%\MonitorFlow`, so a reinstall keeps the same identity. When the service stops on an error, the Application event log has the reason, from the source `MonitorFlowAgent`.
 
 The package does not install the Windows Update service yet[^0050]: add it by hand as in [Windows Update service](#windows-update-service).
 
