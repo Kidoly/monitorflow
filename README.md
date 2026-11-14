@@ -7,16 +7,16 @@ MonitorFlow watches your Linux and Windows servers, tells you when something goe
   <img alt="MonitorFlow architecture: agents on your Linux and Windows servers, and a relay at a remote site, connect out to the central server. The central server runs the web interface, the MonitorFlow server, PostgreSQL, VictoriaMetrics, VictoriaLogs and the updater, and reaches out to an AI provider, package repositories and notification channels." src="docs/images/architecture.png">
 </picture>
 
-**Status: early development.** The one-line installer installs the [latest release](https://github.com/Kidoly/monitorflow/releases/latest), 0.2.0 today. Some features described in `docs/` are only on the `main` branch and come with the next release.
+**Status: early development.** The one-line installer installs the [latest release](https://github.com/Kidoly/monitorflow/releases/latest). Some features described in `docs/` are only on the `main` branch and come with the next release.
 
 ## How it works
 
 - **An agent runs on each server.** It measures CPU, memory, disks, services, ports and logs, and sends them to the central server.
 - **Agents only connect out.** Your servers never accept incoming connections: nothing to open in their firewall. Every connection is encrypted and both sides prove who they are with certificates (this is called mutual TLS, or mTLS).
 - **A relay is optional.** At a remote site, one relay passes on the traffic of the servers behind it, and keeps their data while the link is down.
-- **The central server does the rest.** It stores metrics and logs, opens an alert when a limit is crossed, and notifies you by email or webhook.
+- **The central server does the rest.** It stores metrics and logs, opens an alert when a limit is crossed, and notifies you by email, webhook, Slack, Teams or Discord.
 - **It keeps servers up to date.** It keeps copies of the Debian, Ubuntu and RHEL package repositories and updates servers in waves, during the hours you choose.
-- **An AI can propose fixes, never run them alone.** When an alert opens, an AI (Anthropic's Claude today) can diagnose it and suggest a command. A person approves it before it runs, and everything is written to an audit log.
+- **An AI can propose fixes, never run them alone.** When an alert opens, an AI can diagnose it and suggest a command: Anthropic, OpenAI or any compatible API, or a local model so nothing leaves your network. A person approves it before it runs, and everything is written to an audit log.
 
 ## Get started in 5 minutes
 
@@ -65,11 +65,14 @@ Within seconds, each server appears in the fleet under its own name, online, wit
 
 Most of these are pages under **Administration** in the web interface:
 
-- **Notifications**: get an email or a webhook call when an alert opens or an update fails. Slack, Teams and Discord come with the next release.
+- **Notifications**: get an email, a webhook call, or a Slack, Teams or Discord message when an alert opens or an update fails.
 - **Alerts**: open a server and use its **Sensors** tab to change limits or add checks.
 - **Mirrors** and update campaigns: copy package repositories to the central server and update servers in waves. See [Installing the agent](docs/deploy-agent.md#pointing-a-server-at-the-mirrors).
-- **AI**: paste an Anthropic API key so the AI can diagnose alerts and propose fixes you approve.
+- **AI**: choose a provider (Anthropic, OpenAI or a compatible API, or a local model) so the AI can diagnose alerts and propose fixes you approve.
 - **Backups**: one backup a day, the last 7 kept, and **Back up now**. See [Data and backups](docs/deploy-server.md#data-and-backups).
+- **Dashboards**: build your own, and show them on a wall screen or TV with a display link that needs no sign-in.
+- **API keys** and **Integrations**: drive everything the web interface does through the [public API](docs/api/openapi.json), and send incidents and updates to other tools with signed webhooks. See [Integrations](docs/integrations.md).
+- **Plugins**: add checks and notification channels without changing MonitorFlow. See [Write a plugin](docs/plugins.md).
 - **Server update**: when a new release is out, a banner says so. Click **Check for updates**, then **Update**. A backup is taken first, and it rolls back on its own if something fails. See [Updating](docs/deploy-server.md#updating).
 
 The full guides are [Installing the server](docs/deploy-server.md), [Installing the agent](docs/deploy-agent.md) and [Installing a relay](docs/deploy-relay.md).

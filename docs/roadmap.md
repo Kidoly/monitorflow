@@ -129,7 +129,8 @@ Bring Windows to the level of Linux after Phase 6. The Windows updates list alre
 
 Needed before real customers. Daily backups and restore shipped in Phase 8 (ADR-0058).
 
-- [ ] High availability for the server: moved to Phase 14, as the Enterprise edition (ADR-0100). Several instances on one database are done (ADR-0089).
+- [x] High availability for the server: done in Phase 14, as the Enterprise edition (ADR-0100). Several instances on one database are done (ADR-0089).
+- [x] Security audit of the whole code base, its fixes released in 0.3.1: signed CA bundles and root-helper commands, least-privilege database role, stored secrets sealed, gated release key, and smaller fixes.
 - [x] CA key rotation.
 - [x] TLS between the server and VictoriaMetrics and VictoriaLogs (ADR-0051).
 - [x] Load test on about 1,000 agents.
