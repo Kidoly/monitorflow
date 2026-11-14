@@ -283,6 +283,7 @@ fn errors(operation: &mut Operation) {
 // Routes reachable through v1 that the document does not describe yet,
 // in the order ADR-0101 gives. Moving one into the document is additive.
 pub const NOT_YET_DOCUMENTED: &[&str] = &[
+    "/api/checks",
     "/api/settings/",
     "/api/users",
     "/api/backups",
@@ -301,7 +302,7 @@ pub const NOT_YET_DOCUMENTED: &[&str] = &[
 
 // Sub-routes of servers, sites and relays not documented yet; those of
 // relays are under `/api/relays` above.
-pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &[];
+pub const NOT_YET_DOCUMENTED_UNDER: &[&str] = &["/sensor-values", "/offline-alerts"];
 
 #[utoipa::path(get, path = "/api/v1/servers", tag = "servers",
     summary = "List servers",
@@ -349,7 +350,9 @@ fn server() {}
 strip. Removed servers are left out.\n\n\
 **Who**: any key, whatever its areas.",
     params(servers::SummaryParams),
-    responses((status = 200, description = "The counts", body = servers::ServerSummary)))]
+    responses((status = 200, description = "The counts", body = servers::ServerSummary,
+        example = json!({"critical": 1, "warning": 2, "acknowledged": 0, "silenced": 1, "offline": 0,
+            "ok": 38, "total": 42}))))]
 fn server_summary() {}
 
 #[utoipa::path(get, path = "/api/v1/sites", tag = "sites",
@@ -945,8 +948,10 @@ mod tests {
     #[test]
     fn every_operation_is_described_with_examples() {
         let doc = serde_json::to_value(build()).unwrap();
+        // Only JSON bodies need one: a multipart upload has no useful example.
         let has_example = |content: &serde_json::Value| {
-            content["application/json"].get("example").is_some()
+            content.get("application/json").is_none()
+                || content["application/json"].get("example").is_some()
                 || content["application/json"].get("examples").is_some()
         };
         for (path, item) in doc["paths"].as_object().unwrap() {

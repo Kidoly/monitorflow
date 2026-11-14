@@ -957,7 +957,22 @@ fn mirror_detail() {}
 #[utoipa::path(delete, path = "/api/v1/mirrors/{id}", tag = "mirrors",
     params(("id" = uuid::Uuid, Path, description = "The mirror's `id`")),
     responses(
-        (status = 202, description = "Being deleted", body = mirrors::MirrorView),
+        (status = 202, description = "Being deleted", body = mirrors::MirrorView, example = json!({
+            "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+            "name": "debian-12",
+            "family": "apt",
+            "upstream_url": "https://deb.debian.org/debian",
+            "distribution": "bookworm",
+            "components": ["main", "non-free-firmware"],
+            "architectures": ["amd64"],
+            "sync_interval_s": 86400,
+            "auto_snapshot": true,
+            "created_at": "2026-10-01T12:00:00Z",
+            "deleting_at": "2026-11-14T09:30:00Z",
+            "delete_error": null,
+            "current_snapshot": "20261114T031240Z",
+            "last_run": run_summary("sync", "succeeded")
+        })),
         (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
 key outside the \"updates\" area: `api_key_scope`"),
         (status = 404, body = ErrorBody, description = "No such mirror: `not_found`"),
