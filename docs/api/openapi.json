@@ -1349,7 +1349,7 @@
             }
           },
           "400": {
-            "description": "`invalid_request`: not the expected JSON. `invalid`: `unknown site` for a site of another customer",
+            "description": "`invalid`, with `error` saying why: not the expected JSON, or `unknown site` for a site of another customer",
             "content": {
               "application/json": {
                 "schema": {
@@ -2092,7 +2092,7 @@
             }
           },
           "400": {
-            "description": "`invalid_request`: not the expected JSON. `invalid`: `unknown site` for a site of another customer",
+            "description": "`invalid`, with `error` saying why: not the expected JSON, or `unknown site` for a site of another customer",
             "content": {
               "application/json": {
                 "schema": {
@@ -2323,7 +2323,7 @@
             }
           },
           "400": {
-            "description": "`invalid`: the pattern, tier or description is wrong and `error` says why (an allow rule without `read_only` or `low_impact`, a tier on another kind, a wildcard in an allow rule's program, a program the built-in rules reserve, a cache directory under a system directory), or `unknown site` for a site of another customer",
+            "description": "`invalid`, with `error` saying why: not the expected JSON, a wrong pattern, tier or description (an allow rule without `read_only` or `low_impact`, a tier on another kind, a wildcard in an allow rule's program, a program the built-in rules reserve, a cache directory under a system directory), or `unknown site` for a site of another customer",
             "content": {
               "application/json": {
                 "schema": {

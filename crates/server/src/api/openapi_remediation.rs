@@ -121,8 +121,8 @@ fn list_rules() {}
                 "created_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
                 "created_at": "2026-11-02T09:15:00Z"
             })),
-        (status = 400, body = ErrorBody, description = "`invalid`: the pattern, tier or description \
-is wrong and `error` says why (an allow rule without `read_only` or `low_impact`, a tier on another \
+        (status = 400, body = ErrorBody, description = "`invalid`, with `error` saying why: not the \
+expected JSON, a wrong pattern, tier or description (an allow rule without `read_only` or `low_impact`, a tier on another \
 kind, a wildcard in an allow rule's program, a program the built-in rules reserve, a cache directory \
 under a system directory), or `unknown site` for a site of another customer"),
         (status = 403, body = ErrorBody, description = "`forbidden`: the caller reads the customer \
@@ -206,8 +206,8 @@ fn list_policies() {}
             "updated_by": "9a1b2c3d-4e5f-4a6b-8c7d-6e5f4a3b2c1d",
             "updated_at": "2026-11-04T16:45:30Z"
         })),
-        (status = 400, body = ErrorBody, description = "`invalid_request`: not the expected JSON. \
-`invalid`: `unknown site` for a site of another customer"),
+        (status = 400, body = ErrorBody, description = "`invalid`, with `error` saying why: not the \
+expected JSON, or `unknown site` for a site of another customer"),
         (status = 403, body = ErrorBody, description = "`forbidden`: the caller reads the customer \
 without administering it as a whole. `api_key_scope`: the key lacks the area"),
         (status = 404, body = ErrorBody, description = "`not_found`: a customer the caller does not read"),
@@ -241,8 +241,8 @@ fn set_policy() {}
             "rule": {"source": "builtin", "id": "low.systemctl"},
             "reason": "`systemctl restart` of a service"
         })),
-        (status = 400, body = ErrorBody, description = "`invalid_request`: not the expected JSON. \
-`invalid`: `unknown site` for a site of another customer"),
+        (status = 400, body = ErrorBody, description = "`invalid`, with `error` saying why: not the \
+expected JSON, or `unknown site` for a site of another customer"),
         (status = 404, body = ErrorBody, description = "`not_found`: a customer the caller does not read"),
     ))]
 fn classify() {}
