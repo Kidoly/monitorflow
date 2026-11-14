@@ -7,7 +7,13 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Roles from the `user_roles.role` CHECK constraint (architecture §9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, utoipa::ToSchema,
+)]
+#[schema(
+    description = "From least to most: `viewer` reads, `operator` also changes, `approver` also approves \
+    commands, `administrator` also manages."
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Viewer,
@@ -58,10 +64,12 @@ impl FromStr for Role {
 /// A role granted globally (both IDs null), on one customer and all its
 /// sites (`customer_id`), or on one site (`site_id`). Which sites that
 /// means is resolved by [`super::access::Access`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct RoleGrant {
     pub role: Role,
+    /// `null` unless granted on a customer.
     pub customer_id: Option<Uuid>,
+    /// `null` unless granted on a site.
     pub site_id: Option<Uuid>,
 }
 

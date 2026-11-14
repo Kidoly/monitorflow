@@ -153,8 +153,9 @@ fn offered(model: &str) -> bool {
 /// Body of `GET`, `PUT` and `DELETE /api/settings/ai`. Readable by every
 /// user, since approvals say when AI is off; holds no key, and the address
 /// only for global administrators.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct AiView {
+    /// Whether AI diagnoses incidents and proposes commands.
     pub enabled: bool,
     /// `[ai] enabled = true` in the configuration, which takes precedence
     /// and locks this page.
@@ -162,11 +163,13 @@ pub struct AiView {
     pub provider: AiProviderKind,
     /// Whether an API key is stored, or configured.
     pub has_key: bool,
-    /// The address of an OpenAI-compatible server, often inside the
+    /// The address of an `openai_compatible` server, often inside the
     /// operator's network: null for all but global administrators.
     pub base_url: Option<String>,
+    /// The model it uses.
     pub model: String,
-    /// Anthropic's short list, the default first.
+    /// The short list of `anthropic` models, the default first.
+    #[schema(value_type = Vec<super::openapi_settings::AiModel>)]
     pub models: &'static [Model],
 }
 
@@ -293,19 +296,24 @@ pub async fn get(
 /// Body of `PUT /api/settings/ai`: replaces everything but the key, which
 /// is absent, `null` or empty to keep the stored one. The stored key
 /// belongs to the stored provider: another provider forgets it. For an
-/// OpenAI-compatible server it also belongs to the stored address: another
+/// `openai_compatible` server it also belongs to the stored address: another
 /// address needs the key again, 400 otherwise.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = AiSettingsRequest)]
 #[serde(deny_unknown_fields)]
 pub struct SetRequest {
     /// Absent keeps the stored provider.
     #[serde(default)]
     pub provider: Option<AiProviderKind>,
+    /// The provider's API key, stored sealed and never shown again. Absent,
+    /// `null` or empty keeps the stored one.
     #[serde(default)]
+    #[schema(value_type = Option<String>)]
     pub api_key: Option<Secret>,
     /// Required for `openai_compatible`, ignored otherwise.
     #[serde(default)]
     pub base_url: Option<String>,
+    /// A model id; for `anthropic`, one of `models`.
     pub model: String,
     pub enabled: bool,
 }
@@ -458,15 +466,23 @@ async fn record(
 /// Body of `POST /api/settings/ai/test` and `/models`, what the form
 /// holds. What it leaves out is taken from the stored settings, the key
 /// and address only for the same provider, and the key of an
-/// OpenAI-compatible server only for the stored address.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+/// `openai_compatible` server only for the stored address.
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+#[schema(as = AiTestRequest)]
+#[serde(deny_unknown_fields)]
 pub struct TestRequest {
+    /// Absent uses the stored provider.
+    #[serde(default)]
     pub provider: Option<AiProviderKind>,
     /// Absent or empty uses the stored key.
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
     pub api_key: Option<Secret>,
+    /// For `openai_compatible`; absent uses the stored address.
+    #[serde(default)]
     pub base_url: Option<String>,
     /// Absent tests the stored model.
+    #[serde(default)]
     pub model: Option<String>,
 }
 
@@ -568,7 +584,8 @@ pub async fn test(
 }
 
 /// Body of `POST /api/settings/ai/models`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = AiModelList)]
 pub struct ModelList {
     /// Sorted; empty when the server could not say.
     pub models: Vec<String>,

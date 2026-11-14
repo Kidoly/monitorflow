@@ -32,22 +32,29 @@ const LIFETIME_RANGE: std::ops::RangeInclusive<u64> = 3600..=30 * 24 * 3600;
 const IDLE_RANGE: std::ops::RangeInclusive<u64> = 300..=24 * 3600;
 
 /// A setting of the page.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct Setting<T> {
     /// The value in force.
     pub value: T,
+    /// The value when nothing sets it.
     pub default: T,
     /// The configuration sets it; the page cannot change it.
     pub locked: bool,
 }
 
 /// How long one store keeps data.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[schema(as = Retention)]
 pub struct Stores {
+    /// The metrics store.
     pub metrics: Kept,
+    /// The logs store.
     pub logs: Kept,
+    /// Retention of metrics when nothing sets it, like `90d`.
     pub default_metrics: &'static str,
+    /// Retention of logs when nothing sets it, like `30d`.
     pub default_logs: &'static str,
+    /// Longest retention accepted, in days.
     pub max_days: u32,
     /// A change can be made: the updater runs.
     pub updater_alive: bool,
@@ -58,11 +65,15 @@ pub struct Stores {
 }
 
 /// Body of `GET` and `PUT /api/settings/server`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct ServerSettings {
-    /// Seconds.
+    /// Longest session in the web interface, in seconds.
     pub session_lifetime: Setting<u64>,
+    /// A session unused this long ends, in seconds.
     pub session_idle_timeout: Setting<u64>,
+    /// Base URL agents reach the package mirror at, written into the
+    /// package sources sent to them; a `null` value refuses source
+    /// configuration commands.
     pub mirror_public_url: Setting<Option<String>>,
     /// `null` without an updater that reports it, as outside the compose
     /// deployment: the stores' flags are then not this server's to set.
@@ -148,11 +159,15 @@ pub async fn get(
 
 /// Body of `PUT /api/settings/server`: replaces all three; `null` is the
 /// default.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = ServerSettingsRequest)]
 #[serde(deny_unknown_fields)]
 pub struct SetRequest {
+    /// Seconds, 3600 to 2592000 (30 days).
     pub session_lifetime: Option<u64>,
+    /// Seconds, 300 to 86400, and no longer than the lifetime.
     pub session_idle_timeout: Option<u64>,
+    /// An http or https URL without user, query or fragment.
     pub mirror_public_url: Option<String>,
 }
 
@@ -344,10 +359,13 @@ pub async fn set(
 
 /// Body of `PUT /api/settings/retention`, in days; `null` leaves a store
 /// alone.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[schema(as = RetentionRequest)]
 #[serde(deny_unknown_fields)]
 pub struct RetentionBody {
+    /// Days metrics are kept, 1 to `max_days`.
     pub metrics_days: Option<u32>,
+    /// Days logs are kept, 1 to `max_days`.
     pub logs_days: Option<u32>,
 }
 
