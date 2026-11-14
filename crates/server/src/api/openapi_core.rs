@@ -12,7 +12,8 @@ use utoipa::OpenApi;
 
 use super::openapi::ErrorBody;
 use super::{
-    check_interval, customers, logs, metrics, offline_alerts, proxmox, revoke, sensors, thresholds,
+    ai_commands, check_interval, commands, customers, logs, metrics, offline_alerts,
+    package_sources, packages, proxmox, revoke, rollback, sensors, sites, sources, thresholds,
 };
 
 #[derive(OpenApi)]
@@ -28,6 +29,9 @@ use super::{
         update_threshold, delete_threshold,
         server_metrics, server_logs, revoke_server,
         server_proxmox, set_server_proxmox, clear_server_proxmox, server_proxmox_guests,
+        server_packages, server_rollback, server_sources, configure_server_sources,
+        revert_server_sources, server_use_mirror, site_sources, site_use_mirror, revert_site_sources,
+        site_agent_auto_update, server_ai_commands, site_ai_commands,
     ),
     components(schemas(logs::Level)),
     tags(
@@ -847,3 +851,309 @@ that customer. **Area**: `servers`."),
             body = ErrorBody),
     ))]
 fn server_proxmox_guests() {}
+
+/// A command just queued, of `kind` with `parameters`.
+fn queued(kind: &str, parameters: serde_json::Value) -> serde_json::Value {
+    json!({
+        "id": ex::COMMAND, "server_id": ex::SERVER, "kind": kind, "parameters": parameters,
+        "state": "queued", "issued_at": "2026-11-14T10:00:00Z", "expires_at": "2026-11-15T10:00:00Z",
+        "sent_at": null, "started_at": null, "finished_at": null, "exit_code": null, "error": null,
+        "requested_by": ex::USER, "campaign_id": null, "stdout": null, "stderr": null
+    })
+}
+
+/// A server's package sources on a mirror.
+fn sources_status() -> serde_json::Value {
+    json!({
+        "using": "mirror",
+        "mirrors": [{"name": "debian-12", "snapshot": "current"},
+                    {"name": "debian-12-security", "snapshot": "current"}],
+        "changing_to": null, "failed": null, "campaign": false,
+        "distribution": "debian-12", "problem": null, "add_mirror": false,
+        "windows_update_source": null
+    })
+}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/packages", tag = "updates",
+    summary = "List a server's packages",
+    description = "The packages of the server's latest report, by name and architecture, with the version \
+an upgrade would install. `upgradable=true` keeps those with an upgrade. On Windows servers, the entries are \
+updates: `name` is the KB number or update ID, with `title`, `classification`, `severity` and `size_bytes`. \
+`reported_at` and `reboot_required` are `null` until the agent sent a report.\n\n\
+**Pages**: `limit` packages per page, 1 to 5000, 500 by default; pass `next_cursor` as `cursor` for the next \
+page, `null` on the last one. Unknown parameters are 400.\n\n\
+**Who**: any role on the server's site. **Area**: `updates`.",
+    params(("id" = uuid::Uuid, Path, description = "The server"), packages::ListParams),
+    responses(
+        (status = 200, description = "One page of packages", body = packages::PackageList,
+            example = json!({
+                "reboot_required": false, "reported_at": "2026-11-14T06:00:00Z",
+                "packages": [
+                    {"name": "libssl3", "arch": "amd64", "version": "3.0.14-1~deb12u2",
+                     "upgradable_version": "3.0.15-1~deb12u1", "title": null, "classification": null,
+                     "severity": null, "size_bytes": null, "reboot_required": false},
+                    {"name": "openssl", "arch": "amd64", "version": "3.0.14-1~deb12u2",
+                     "upgradable_version": "3.0.15-1~deb12u1", "title": null, "classification": null,
+                     "severity": null, "size_bytes": null, "reboot_required": false}
+                ],
+                "next_cursor": null
+            })),
+        (status = 400, description = "`limit` out of range, a bad `cursor` or an unknown parameter: \
+`invalid`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn server_packages() {}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/rollback", tag = "updates",
+    summary = "Get what a change on a server can roll back to",
+    description = "What an AI change on the server gets before it runs: a snapshot of its Proxmox VM or \
+container, else a local LVM or ZFS snapshot of its system volumes, else nothing, with why (`snapshots`). It \
+also lists the system volumes of the last report, the mount points a local snapshot leaves out, and the local \
+snapshots MonitorFlow keeps on the machine with when they are deleted.\n\n\
+**Who**: any role on the server's site. **Area**: `updates`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 200, description = "Rollback for the server", body = rollback::RollbackView,
+            example = json!({
+                "server_id": ex::SERVER,
+                "snapshots": {"available": true, "reason": null, "kind": null,
+                              "detail": "LVM snapshot of / and /var", "left_out": null, "method": "lvm"},
+                "not_covered": ["/boot"],
+                "volumes": [
+                    {"mount_point": "/", "fs_type": "ext4", "kind": "lvm", "source": "vg0/root",
+                     "size_bytes": 21474836480u64, "free_bytes": 10737418240u64,
+                     "pool_bytes": 107374182400u64, "metadata_percent": 0.0},
+                    {"mount_point": "/var", "fs_type": "ext4", "kind": "lvm", "source": "vg0/var",
+                     "size_bytes": 53687091200u64, "free_bytes": 10737418240u64,
+                     "pool_bytes": 107374182400u64, "metadata_percent": 0.0}
+                ],
+                "local_snapshots": [],
+                "reported_at": "2026-11-14T06:00:00Z"
+            })),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn server_rollback() {}
+
+#[utoipa::path(get, path = "/api/v1/servers/{id}/sources", tag = "updates",
+    summary = "Get where a server's packages come from",
+    description = "Whether the server takes its packages from MonitorFlow's mirrors (and which) or from \
+its own sources, a change on its way (`changing_to`), why the last change failed, and why it cannot use a \
+mirror (`problem`; `add_mirror` when adding its `distribution` on the Mirrors page would fix it). For a \
+Windows server, `windows_update_source` says where Windows Update takes updates from.\n\n\
+**Who**: any role on the server's site. **Area**: `updates`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 200, description = "Its package sources", body = package_sources::SourcesStatus,
+            example = json!(sources_status())),
+        (status = 404, description = "No such server, removed, or outside the key's reach: \
+`not_found`", body = ErrorBody),
+    ))]
+fn server_sources() {}
+
+#[utoipa::path(post, path = "/api/v1/servers/{id}/sources", tag = "updates",
+    summary = "Point a server at chosen mirrors",
+    description = concat!("Queues a `configure_sources` command pointing the server's package manager at \
+the mirrors named, of its distribution, each at its newest snapshot (`current`) or a published one. `replace` \
+sets the server's other sources aside; `add` keeps them. `POST .../sources/use-mirror` does the same with \
+the mirrors MonitorFlow picks. Audited as `command.create`. **Not safe to repeat**: send \
+`Idempotency-Key` to retry.\n\n\
+**Who**: ", "an administrator of the server's customer as a whole: a global administrator or one of that \
+customer. A site administrator may not, and neither may a key that reaches one site", ". **Area**: `updates`."),
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    request_body(content = sources::ConfigureRequest, example = json!({
+        "mirrors": [{"name": "debian-12"}, {"name": "debian-12-security", "snapshot": "current"}],
+        "mode": "replace"
+    })),
+    responses(
+        (status = 201, description = "The queued command", body = commands::CommandDetail,
+            example = json!(queued("configure_sources", json!({
+                "mirror_base_url": "http://monitorflow.example.com:8081", "family": "FAMILY_APT",
+                "mode": "MODE_REPLACE",
+                "repositories": [{"mirror": "debian-12", "snapshot": "current"},
+                                 {"mirror": "debian-12-security", "snapshot": "current"}],
+                "key_fingerprints": ["0123456789ABCDEF0123456789ABCDEF01234567"]
+            })))),
+        (status = 400, description = "No mirror or too many, an unknown mirror or snapshot, a mirror \
+of another distribution, a Windows server, or `ttl_s` out of range: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key may not administer the server's customer: \
+`forbidden`; or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "The server is removed or has no package manager MonitorFlow \
+can drive, mirrors are not enabled, their address is not set, or their signing key is missing: \
+`conflict`", body = ErrorBody),
+    ))]
+fn configure_server_sources() {}
+
+#[utoipa::path(delete, path = "/api/v1/servers/{id}/sources", tag = "updates",
+    summary = "Put a server's own package sources back",
+    description = concat!("Queues a `revert_sources` command: the server goes back to the package sources \
+it had before MonitorFlow's mirrors. Answers 202 with the command. Audited as `command.create`. Each request \
+queues a command; the agent does nothing when the sources are its own already.\n\n\
+**Who**: ", "an administrator of the server's customer as a whole: a global administrator or one of that \
+customer. A site administrator may not, and neither may a key that reaches one site", ". **Area**: `updates`."),
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 202, description = "The queued command", body = commands::CommandDetail,
+            example = json!(queued("revert_sources", json!({})))),
+        (status = 400, description = "A Windows server: `invalid`", body = ErrorBody),
+        (status = 403, description = "The key may not administer the server's customer: \
+`forbidden`; or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "The server is removed or has no package manager MonitorFlow \
+can drive: `conflict`", body = ErrorBody),
+    ))]
+fn revert_server_sources() {}
+
+#[utoipa::path(post, path = "/api/v1/servers/{id}/sources/use-mirror", tag = "updates",
+    summary = "Point a server at the mirrors of its distribution",
+    description = concat!("Queues a `configure_sources` command pointing the server at the mirrors \
+MonitorFlow has for its distribution, replacing its own sources. 409 says why not when it cannot: it uses a \
+mirror already, a change is on its way, a campaign holds its sources, or no mirror fits its distribution. \
+Audited as `command.create`.\n\n\
+**Who**: ", "an administrator of the server's customer as a whole: a global administrator or one of that \
+customer. A site administrator may not, and neither may a key that reaches one site", ". **Area**: `updates`."),
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    responses(
+        (status = 201, description = "The queued command", body = commands::CommandDetail,
+            example = json!(queued("configure_sources", json!({
+                "mirror_base_url": "http://monitorflow.example.com:8081", "family": "FAMILY_APT",
+                "mode": "MODE_REPLACE",
+                "repositories": [{"mirror": "debian-12", "snapshot": "current"}],
+                "key_fingerprints": ["0123456789ABCDEF0123456789ABCDEF01234567"]
+            })))),
+        (status = 403, description = "The key may not administer the server's customer: \
+`forbidden`; or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "The server cannot use a mirror now, and `error` says why: \
+`conflict`", body = ErrorBody),
+    ))]
+fn server_use_mirror() {}
+
+#[utoipa::path(get, path = "/api/v1/sites/{id}/sources", tag = "updates",
+    summary = "Get where a site's servers take packages from",
+    description = "The package sources of every server of the site, as for one server, with its id, \
+hostname and `os_family`, by hostname.\n\n\
+**Who**: any role on the site. **Area**: `updates`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    responses(
+        (status = 200, description = "Its servers' sources", body = package_sources::SiteSources,
+            example = json!({"servers": [ex::merge(sources_status(), json!({
+                "id": ex::SERVER, "hostname": "web-1", "os_family": "debian"
+            }))]})),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn site_sources() {}
+
+#[utoipa::path(post, path = "/api/v1/sites/{id}/sources/use-mirror", tag = "updates",
+    summary = "Point a site's servers at the mirrors",
+    description = "Does `POST /api/v1/servers/{id}/sources/use-mirror` for every server of the \
+site that does not use a mirror yet. Each server is queued or skipped on its own: the answer lists both, with \
+why each was skipped. Each command is audited as `command.create`. Safe to repeat: servers already on a \
+mirror are left out.\n\n\
+**Who**: an administrator of the site's customer as a whole. **Area**: `updates`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    responses(
+        (status = 200, description = "What was queued and skipped", body = package_sources::SiteChange,
+            example = json!({"queued": [ex::SERVER], "skipped": [
+                {"id": ex::SERVER_2, "hostname": "db-1",
+                 "reason": "An update campaign has this server's package sources for now."}
+            ]})),
+        (status = 403, description = "The key may not administer the site's customer: `forbidden`; \
+or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn site_use_mirror() {}
+
+#[utoipa::path(delete, path = "/api/v1/sites/{id}/sources", tag = "updates",
+    summary = "Put a site's own package sources back",
+    description = "Queues `revert_sources` for every server of the site that uses a mirror. Each server is \
+queued or skipped on its own, with why. Each command is audited as `command.create`. Safe to repeat: \
+servers on their own sources are left out.\n\n\
+**Who**: an administrator of the site's customer as a whole. **Area**: `updates`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    responses(
+        (status = 200, description = "What was queued and skipped", body = package_sources::SiteChange,
+            example = json!({"queued": [ex::SERVER], "skipped": []})),
+        (status = 403, description = "The key may not administer the site's customer: `forbidden`; \
+or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn revert_site_sources() {}
+
+#[utoipa::path(put, path = "/api/v1/sites/{id}/agent-auto-update", tag = "updates",
+    summary = "Turn automatic agent updates on or off for a site",
+    description = "`true` or `false` overrides, for the site's agents, the server-wide setting of \
+automatic agent updates; `null` follows it again. The answer is the site, with \
+`agent_auto_update_effective` saying whether they apply. Audited as `site.agent_auto_update`. Safe to \
+repeat.\n\n\
+**Who**: an administrator of the site's customer as a whole. **Area**: `updates`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    request_body(content = sites::AutoUpdateRequest, examples(
+        ("off" = (summary = "Not on this site", value = json!({"enabled": false}))),
+        ("inherit" = (summary = "Follow the server-wide setting", value = json!({"enabled": null}))),
+    )),
+    responses(
+        (status = 200, description = "The site", body = sites::SiteView,
+            example = json!(ex::merge(ex::site(), json!({
+                "agent_auto_update": false, "agent_auto_update_effective": false
+            })))),
+        (status = 403, description = "The key may not administer the site's customer: `forbidden`; \
+or outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn site_agent_auto_update() {}
+
+#[utoipa::path(post, path = "/api/v1/servers/{id}/ai-commands", tag = "remediation",
+    summary = "Turn a server's AI commands on or off",
+    description = "Queues a signed `ai_commands` command for the server's agent, replacing one still queued. \
+The agent always obeys \"off\". It obeys \"on\" only when its machine allowed AI commands to be turned on from \
+the web interface; otherwise, or when its agent is too old to be switched, the answer is 409 saying what to do \
+on the machine. \"On\" may start within an hour, \"off\" within a week, for a server that is offline.\n\n\
+Audited as `server.ai_commands` and sent to the notification channels covering the server.\n\n\
+**Who**: an administrator of the server's site (or of its customer, or a global one). **Area**: \
+`remediation`.",
+    params(("id" = uuid::Uuid, Path, description = "The server")),
+    request_body(content = ai_commands::SwitchRequest, example = json!({"on": false})),
+    responses(
+        (status = 201, description = "The queued command", body = commands::CommandDetail,
+            example = json!(ex::merge(queued("ai_commands", json!({"on": false})), json!({
+                "expires_at": "2026-11-21T10:00:00Z"
+            })))),
+        (status = 403, description = "The key does not administer the server's site: `forbidden`; or \
+outside the key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such server, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+        (status = 409, description = "The agent would refuse it, and `error` says why and how to allow \
+it: `conflict`", body = ErrorBody),
+    ))]
+fn server_ai_commands() {}
+
+#[utoipa::path(post, path = "/api/v1/sites/{id}/ai-commands", tag = "remediation",
+    summary = "Turn a site's AI commands on or off",
+    description = "Does `POST /api/v1/servers/{id}/ai-commands` for every server of the site whose AI \
+commands are not as asked. Each server is queued or skipped on its own, with why; servers already as asked \
+are in neither list. Each switch is audited and notified as for one server.\n\n\
+**Who**: an administrator of the site (or of its customer, or a global one). **Area**: `remediation`.",
+    params(("id" = uuid::Uuid, Path, description = "The site")),
+    request_body(content = ai_commands::SwitchRequest, example = json!({"on": true})),
+    responses(
+        (status = 200, description = "What was queued and skipped", body = package_sources::SiteChange,
+            example = json!({"queued": [ex::SERVER], "skipped": [
+                {"id": ex::SERVER_2, "hostname": "db-1", "reason": "this server only lets AI commands be \
+turned on on the server itself; to allow it here, run the installer there with MF_AI_COMMANDS_FROM_WEB=1"}
+            ]})),
+        (status = 403, description = "The key does not administer the site: `forbidden`; or outside the \
+key's areas: `api_key_scope`", body = ErrorBody),
+        (status = 404, description = "No such site, or outside the key's reach: `not_found`",
+            body = ErrorBody),
+    ))]
+fn site_ai_commands() {}
