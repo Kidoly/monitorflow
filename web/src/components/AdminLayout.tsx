@@ -6,7 +6,7 @@ import { type Me } from "@/lib/api";
 import { isAdministrator, useMe } from "@/lib/me";
 
 /**
- * `children` for administrators; the sidebar's Administration section is
+ * `children` for administrators; the sidebar's Settings list is
  * the navigation between these pages. Other users get a note instead (the
  * sidebar hides the section from them, so only a direct link lands here);
  * the API refuses them anyway (ADR-0029).
