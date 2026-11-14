@@ -151,6 +151,7 @@ db_tests! {
                 "campaign_windows",
                 "campaigns",
                 "certificates",
+                "check_recommendation_dismissals",
                 "cluster_leases",
                 "commands",
                 "customers",
