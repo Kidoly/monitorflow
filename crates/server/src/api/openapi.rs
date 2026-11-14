@@ -26,6 +26,8 @@ use super::{approvals, commands, customers, incidents, metrics, servers, silence
 mod integrations;
 #[path = "openapi_notifications.rs"]
 mod notifications;
+#[path = "openapi_on_call.rs"]
+mod on_call;
 
 /// Every error: a sentence to show and a stable code to branch on.
 #[derive(Serialize, ToSchema)]
@@ -47,6 +49,7 @@ pub fn build() -> Document {
     let mut doc = ApiDoc::openapi();
     doc.merge(notifications::Doc::openapi());
     doc.merge(integrations::Doc::openapi());
+    doc.merge(on_call::Doc::openapi());
     doc
 }
 
@@ -200,8 +203,6 @@ fn errors(operation: &mut Operation) {
 // Routes reachable through v1 that the document does not describe yet,
 // in the order ADR-0101 gives. Moving one into the document is additive.
 pub const NOT_YET_DOCUMENTED: &[&str] = &[
-    "/api/on-call/",
-    "/api/follow-up/",
     "/api/tokens",
     "/api/install-keys",
     "/api/pending-hosts/",
