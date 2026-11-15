@@ -99,7 +99,7 @@ services:
     restart: unless-stopped
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.155.0@sha256:f60dc268b54ecf87f6e09d740c2b732838aa9193090cc741417c9f6386a130df
+    image: victoriametrics/victoria-metrics:v1.156.0@sha256:da8a90ac0912f16589be2b96a6441a2fca4bca415c83783d972d92e3b5b66970
     <<: *hardening
     # Runs as root, and reads the key and password storage-certs wrote for
     # the server's user, mode 0600.
