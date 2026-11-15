@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect } from "react";
 
+import { t } from "@/i18n";
 import {
   ApiError,
   type EffectiveSensor,
@@ -209,18 +210,24 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
 
   const effective = data?.config ? sensorOf(data.config.sensors, metric) : undefined;
   const title = seriesTitle(effective, metric, instance);
+  const documentTitle = data ? t("sensors.page.documentTitle", { title, host: data.server.hostname }) : null;
   useEffect(() => {
-    if (data) document.title = `${title} on ${data.server.hostname} · MonitorFlow`;
-  }, [data, title]);
+    if (documentTitle) document.title = documentTitle;
+  }, [documentTitle]);
 
   if (!valid || (error instanceof ApiError && error.status === 404)) {
-    return <NotFound title="Sensor not found" actions={<ButtonLink href={scopedHref("/", scope)}>Back to the fleet</ButtonLink>} />;
+    return (
+      <NotFound
+        title={t("sensors.page.notFound")}
+        actions={<ButtonLink href={scopedHref("/", scope)}>{t("sensors.page.backToFleet")}</ButtonLink>}
+      />
+    );
   }
   if (!data || !updatedAt) {
     return error !== null && !isUnauthorized(error) ? (
-      <ErrorState what="the sensor" error={describeError(error)} onRetry={refresh} />
+      <ErrorState what={t("sensors.page.load")} error={describeError(error)} onRetry={refresh} />
     ) : (
-      <LoadingBlock label="Loading sensor" />
+      <LoadingBlock label={t("sensors.page.loading")} />
     );
   }
 
@@ -241,7 +248,7 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
     <Page>
       <Breadcrumb
         parents={[
-          { label: "Fleet", href: scopedHref("/", scope) },
+          { label: t("sensors.page.fleet"), href: scopedHref("/", scope) },
           { label: server.hostname, href: serverLink, siblings: serverSiblings(server, scope) },
         ]}
         current={title}
@@ -256,27 +263,27 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
           <>
             <StatusLabel kind="sensor" value={status} />
             <span className={styles.muted}>
-              on {server.hostname}
-              {effective && ` · ${effective.kind} sensor · every ${formatSeconds(effective.interval_ms / 1000)}`}
+              {t("sensors.page.on", { host: server.hostname })}
+              {effective && t("sensors.page.kind", { kind: effective.kind, interval: formatSeconds(effective.interval_ms / 1000) })}
             </span>
           </>
         }
         meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
-        actions={open && <ButtonLink href={scopedHref(incidentHref(open.id), scope)}>Open incident</ButtonLink>}
+        actions={open && <ButtonLink href={scopedHref(incidentHref(open.id), scope)}>{t("sensors.page.openIncident")}</ButtonLink>}
       />
       {stale && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       <StatTiles
         compact
-        label="Summary"
+        label={t("sensors.page.summary")}
         tiles={[
-          { label: "Current", value: current === null ? "–" : format(current), tone: TONES[status] },
-          { label: `Peak, ${data.range.label}`, value: values.length ? format(Math.max(...values)) : "–" },
+          { label: t("sensors.page.current"), value: current === null ? "–" : format(current), tone: TONES[status] },
+          { label: t("sensors.page.peak", { range: data.range.label }), value: values.length ? format(Math.max(...values)) : "–" },
           {
-            label: `Average, ${data.range.label}`,
+            label: t("sensors.page.average", { range: data.range.label }),
             value: values.length ? format(values.reduce((a, b) => a + b, 0) / values.length) : "–",
           },
           ...(open
-            ? [{ label: `Above ${open.severity} for`, value: formatDuration((now.getTime() - Date.parse(open.opened_at)) / 1000) }]
+            ? [{ label: t(`sensors.page.above.${open.severity}`), value: formatDuration((now.getTime() - Date.parse(open.opened_at)) / 1000) }]
             : []),
         ]}
       />
@@ -284,12 +291,21 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
         <Banner tone="bad">{chart.error}</Banner>
       ) : (
         <TimeChart
-          title="History"
-          subtitle={`${formatClock(new Date(chart.start * 1000)).slice(0, 5)} → ${formatClock(new Date(chart.end * 1000)).slice(0, 5)}${
-            effective && effective.interval_ms > 60_000 ? ` · checked ${every(effective.interval_ms)}` : ""
-          } · hover or use ← → for exact values`}
+          title={t("sensors.page.history")}
+          subtitle={
+            effective && effective.interval_ms > 60_000
+              ? t("sensors.page.subtitleChecked", {
+                  from: formatClock(new Date(chart.start * 1000)).slice(0, 5),
+                  to: formatClock(new Date(chart.end * 1000)).slice(0, 5),
+                  every: every(effective.interval_ms),
+                })
+              : t("sensors.page.subtitle", {
+                  from: formatClock(new Date(chart.start * 1000)).slice(0, 5),
+                  to: formatClock(new Date(chart.end * 1000)).slice(0, 5),
+                })
+          }
           actions={
-            <div role="group" aria-label="Time range" className={styles.segments}>
+            <div role="group" aria-label={t("sensors.page.range")} className={styles.segments}>
               {RANGES.map((r) => (
                 <Button
                   key={r.label}
@@ -310,15 +326,15 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
           max={ratio ? 1 : undefined}
           thresholds={(["warning", "critical"] as const).flatMap((severity) => {
             const value = rule?.[severity];
-            return value === null || value === undefined ? [] : [{ severity, value, label: severity === "warning" ? "Warning" : "Critical" }];
+            return value === null || value === undefined ? [] : [{ severity, value, label: t(`sensors.severity.${severity}`) }];
           })}
-          markers={open ? [{ t: Date.parse(open.opened_at) / 1000, label: `Opened ${formatClock(new Date(open.opened_at)).slice(0, 5)}`, kind: "opened" }] : []}
+          markers={open ? [{ t: Date.parse(open.opened_at) / 1000, label: t("sensors.page.opened", { time: formatClock(new Date(open.opened_at)).slice(0, 5) }), kind: "opened" }] : []}
           band={open && { start: Date.parse(open.opened_at) / 1000, severity: open.severity }}
-          emptyText="No data in this range yet. New points take about 30 seconds to appear."
+          emptyText={t("sensors.page.empty")}
           footer={
             series.length > 0 && (
               <button type="button" className={styles.linkButton} onClick={() => download(title, server.hostname, series)}>
-                Download CSV
+                {t("sensors.page.csv")}
               </button>
             )
           }
@@ -340,16 +356,19 @@ export function SensorPage({ id, sensor, instance }: { id: string | null; sensor
           onEditEnd={() => setParams({ edit: null })}
         />
         <TableBox
-          title="Incidents on this sensor"
+          title={t("sensors.page.incidents")}
           meta={
             incidents &&
-            `${incidents.filter((i) => i.state === "open").length} open · ${incidents.filter((i) => now.getTime() - Date.parse(i.opened_at) <= 30 * DAY).length} in 30 days`
+            t("sensors.page.incidentsMeta", {
+              open: incidents.filter((i) => i.state === "open").length,
+              month: incidents.filter((i) => now.getTime() - Date.parse(i.opened_at) <= 30 * DAY).length,
+            })
           }
         >
           {incidents === null ? (
-            <p>The incidents could not be read. Retrying every 15 seconds.</p>
+            <p>{t("sensors.page.incidentsFailed")}</p>
           ) : incidents.length === 0 ? (
-            <p>No incidents on this sensor.</p>
+            <p>{t("sensors.page.noIncidents")}</p>
           ) : (
             <SensorIncidents incidents={incidents} now={now} format={format} />
           )}
@@ -378,7 +397,7 @@ function CompanionChart({ companion }: { companion: Companion }) {
       format={(v) => formatSensorValue(metric, v)}
       min={0}
       max={unitOf(metric) === "ratio" ? 1 : undefined}
-      emptyText="No data in this range yet."
+      emptyText={t("sensors.page.emptyShort")}
     />
   );
 }
@@ -388,21 +407,21 @@ function SensorIncidents({ incidents, now, format }: { incidents: Incident[]; no
   const columns: Column<Incident>[] = [
     {
       key: "severity",
-      header: "Severity",
+      header: t("sensors.page.severity"),
       cell: (i) =>
         i.state === "open" ? (
           <>
-            <StatusLabel kind="severity" value={i.severity} /> <span className={styles.small}>open</span>
+            <StatusLabel kind="severity" value={i.severity} /> <span className={styles.small}>{t("sensors.page.openWord")}</span>
           </>
         ) : (
           <>
-            <StatusLabel kind="severity" value="resolved" /> <span className={styles.small}>was {i.severity === "critical" ? "Critical" : "Warning"}</span>
+            <StatusLabel kind="severity" value="resolved" /> <span className={styles.small}>{t("sensors.page.was", { severity: t(`sensors.severity.${i.severity}`) })}</span>
           </>
         ),
     },
     {
       key: "opened",
-      header: "Opened",
+      header: t("sensors.page.opened.column"),
       cell: (i) => (
         <Link href={scopedHref(incidentHref(i.id), scope)} className={i.state === "open" ? styles.strong : undefined}>
           {formatDay(new Date(i.opened_at), now)}
@@ -411,12 +430,12 @@ function SensorIncidents({ incidents, now, format }: { incidents: Incident[]; no
     },
     {
       key: "duration",
-      header: "Duration",
+      header: t("sensors.page.duration"),
       cell: (i) => formatDuration(((i.resolved_at ? Date.parse(i.resolved_at) : now.getTime()) - Date.parse(i.opened_at)) / 1000),
     },
-    { key: "peak", header: "Peak", cell: (i) => format(i.peak_value) },
+    { key: "peak", header: t("sensors.page.peakColumn"), cell: (i) => format(i.peak_value) },
   ];
-  return <DataTable bare dense label="Incidents on this sensor" columns={columns} rows={incidents} rowKey={(i) => i.id} rowMuted={(i) => i.state === "resolved"} pageSize={10} />;
+  return <DataTable bare dense label={t("sensors.page.incidents")} columns={columns} rows={incidents} rowKey={(i) => i.id} rowMuted={(i) => i.state === "resolved"} pageSize={10} />;
 }
 
 function download(title: string, hostname: string, series: MetricSeries[]) {
