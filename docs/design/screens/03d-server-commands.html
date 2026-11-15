@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Server web-01: Commands — MonitorFlow</title>
+<title>Server web-01: Commands · MonitorFlow</title>
 </head>
 <body>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
@@ -102,8 +102,8 @@ h1,h2,h3{margin:0}
 </div>
 <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center"><button class="btn">State</button><button class="btn">Period</button><input class="btn" type="search" aria-label="Search" placeholder="Command" style="width: 200px; font-weight: 400"></div>
 <div class="box" style="overflow: auto"><table class="t" aria-label="Commands"><thead><tr><th>Command</th><th>State</th><th>Exit code</th><th>Queued</th><th>By</th><th></th></tr></thead><tbody>
-<tr><td class="host"><b>Security updates, no reboot</b><span>9 packages · snapshot debian-bookworm/2026-10-22-1430</span></td><td><span class="lab l-info">Running</span> <span class="dim">sent 14:20:05</span></td><td class="dim">—</td><td class="dim">Today 14:20</td><td>bob</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Log</button> <button class="btn" style="height: 30px">Cancel</button></td></tr>
-<tr><td class="host"><b>Campaign "Debian security — September", wave 2</b><span>14 packages · rebooted</span></td><td><span class="lab l-ok">Succeeded</span> <span class="dim">02:18</span></td><td>0</td><td class="dim">Yesterday 02:00</td><td>campaign</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Log</button></td></tr>
+<tr><td class="host"><b>Security updates, no reboot</b><span>9 packages · snapshot debian-bookworm/2026-10-22-1430</span></td><td><span class="lab l-info">Running</span> <span class="dim">sent 14:20:05</span></td><td class="dim">Not yet</td><td class="dim">Today 14:20</td><td>bob</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Log</button> <button class="btn" style="height: 30px">Cancel</button></td></tr>
+<tr><td class="host"><b>Campaign "Debian security, September", wave 2</b><span>14 packages · rebooted</span></td><td><span class="lab l-ok">Succeeded</span> <span class="dim">02:18</span></td><td>0</td><td class="dim">Yesterday 02:00</td><td>campaign</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Log</button></td></tr>
 <tr style="background: var(--hl)"><td class="host"><b>Selected: nginx</b><span>1 package</span></td><td><span class="lab l-bad">Failed</span> <span class="dim">09:12:19</span></td><td>100</td><td class="dim">2026-10-15 09:12</td><td>bob</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Hide log</button> <button class="btn" style="height: 30px">Retry</button></td></tr>
 <tr><td colspan="6" style="padding: 12px 20px; background: var(--hl); height: auto; white-space: normal"><pre style="margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.55; white-space: pre; overflow: auto">queued 09:12:00 → sent 09:12:03 → running 09:12:04 → failed 09:12:19 (exit 100)
 Reading package lists...
@@ -111,8 +111,8 @@ Building dependency tree...
 nginx is already the newest version (1.22.1-9).
 E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 41822 (unattended-upgr)
 E: Unable to acquire the dpkg frontend lock</pre></td></tr>
-<tr class="dim"><td class="host"><b>All packages, allow reboot</b><span>23 packages</span></td><td><span class="lab l-nt">Expired</span> <span>agent offline</span></td><td>—</td><td>2026-10-14 18:00</td><td>alice</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Retry</button></td></tr>
-<tr class="dim"><td class="host"><b>All packages, allow reboot</b><span>23 packages</span></td><td><span class="lab l-nt">Cancelled</span></td><td>—</td><td>2026-10-14 17:55</td><td>alice</td><td style="text-align: right; white-space: nowrap"></td></tr>
+<tr class="dim"><td class="host"><b>All packages, allow reboot</b><span>23 packages</span></td><td><span class="lab l-nt">Expired</span> <span>agent offline</span></td><td>None</td><td>2026-10-14 18:00</td><td>alice</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Retry</button></td></tr>
+<tr class="dim"><td class="host"><b>All packages, allow reboot</b><span>23 packages</span></td><td><span class="lab l-nt">Cancelled</span></td><td>None</td><td>2026-10-14 17:55</td><td>alice</td><td style="text-align: right; white-space: nowrap"></td></tr>
 </tbody></table></div>
 </main>
 </div>

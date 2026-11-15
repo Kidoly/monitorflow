@@ -26,6 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/check-numbers.sh
+      - run: scripts/check-typography.sh
       # Installs the toolchain and components named in rust-toolchain.toml,
       # the single source of truth for the Rust version.
       - name: Install Rust toolchain

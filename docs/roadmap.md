@@ -1,8 +1,8 @@
-# Roadmap — task breakdown
+# Roadmap: task breakdown
 
 Each task is sized to be one Claude Code thread on its own branch. Check a task when its PR is merged. Order within a phase matters unless noted.
 
-## Phase 1 — Foundations
+## Phase 1: Foundations
 
 - [x] Repository skeleton: workspace, crates, CI, docs, dev compose.
 - [x] `proto/monitorflow/v1/agent.proto`: Hello, Heartbeat, SampleBatch, Command, CommandResult envelope; build with `tonic-build` in `crates/common`.
@@ -17,7 +17,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] Certificate renewal before expiry, driven by the agent.
 - [x] End-to-end test: start server, enroll agent, see it listed via the API.
 
-## Phase 2 — Monitoring
+## Phase 2: Monitoring
 
 - [x] `sensors`: Sensor trait, Sample type, scheduler.
 - [x] Sensors: cpu, memory, disk (one task each).
@@ -30,7 +30,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] Web: server page with graphs and threshold lines.
 - [x] Web: incidents list and timeline.
 
-## Phase 3 — Relays
+## Phase 3: Relays
 
 - [x] Relay binary: accept agent connections, forward to upstream.
 - [x] Store-and-forward buffer on disk with ordering and bounded size.
@@ -38,7 +38,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] Multi-tenancy: customers, sites, tenancy enforcement in the API.
 - [x] Web: administration of relays and sites.
 
-## Phase 4 — Packages and updates
+## Phase 4: Packages and updates
 
 - [x] Mirror orchestration: aptly for apt, reposync + createrepo_c for dnf; snapshots.
 - [x] Relay mirror sync.
@@ -47,7 +47,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] Agent: apply updates, report packages and reboot-required.
 - [x] Web: campaign creation and progress.
 
-## Phase 5 — AI remediation
+## Phase 5: AI remediation
 
 - [x] AI provider trait and Claude adapter.
 - [x] Context gathering with secret redaction.
@@ -57,7 +57,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] Append-only audit log.
 - [x] Proxmox snapshot integration before change-tier commands.
 
-## Phase 6 — Windows agent
+## Phase 6: Windows agent
 
 Approach in ADR-0047: the same agent binary built for Windows, run as a service under a virtual account.
 
@@ -66,7 +66,7 @@ Approach in ADR-0047: the same agent binary built for Windows, run as a service 
 - [x] Windows Update inventory and installs through update campaigns (ADR-0049).
 - [x] MSI package for the agent: binary, service, account, ACLs, event log source (ADR-0050).
 
-## Phase 7 — Packaging
+## Phase 7: Packaging
 
 - [x] Production compose for the central server: server and web images, PostgreSQL over TLS, install guide, smoke test in CI (ADR-0051).
 - [x] Agent releases: static Linux binaries and the Windows MSI on GitHub Releases, one-line Linux installer that can be self-hosted, install command on the token page, end-to-end test in CI (ADR-0052).
@@ -75,7 +75,7 @@ Approach in ADR-0047: the same agent binary built for Windows, run as a service 
 - [x] Server updates from the web interface: published server, web and updater images whose digests the release signs, an updater container that verifies, backs up PostgreSQL, updates and rolls back, check and update in two clicks, offline path, end-to-end test in CI (ADR-0056).
 - [x] Automatic updates: on by default with site overrides, a canary per site then batches, halt on failures, version compatibility (server ≥ relay ≥ agent); relay releases, installer and self-update with rollback, relays updated before their agents (ADR-0055).
 
-## Phase 8 — Simplicity
+## Phase 8: Simplicity
 
 Everything installable in one line, updatable in two clicks, and usable without reading documentation. Findings, journeys and the reasoning behind each task are in `docs/design/simplicity-audit.md`; tasks are in order of impact, and those without a dependency can run in parallel.
 
@@ -99,14 +99,14 @@ Everything installable in one line, updatable in two clicks, and usable without 
 - [x] Browser certificate without a terminal: ACME when the name is public, otherwise a trust page for the internal CA (ADR, as it is a plaintext listener).
 - [x] Settings page for runtime server settings, and a one-screen "Getting started" at the top of the install guides.
 
-## Phase 9 — Everyday gaps
+## Phase 9: Everyday gaps
 
 Limits already recorded in the ADRs that get in the way of daily use. What the first test on a real host finds is added here.
 
 - [x] Delete a mirror: from the interface, refused or handled while something still uses it, disk space and relay copies reclaimed.
 - [x] Show whether each server accepts commands: reported by the agent, unknown for agents that do not report it, used wherever a command is offered.
 
-## Phase 10 — Notifications
+## Phase 10: Notifications
 
 Reach people outside the web interface. Email and webhook channels shipped in Phase 8 (ADR-0060).
 
@@ -117,7 +117,7 @@ Reach people outside the web interface. Email and webhook channels shipped in Ph
 - [x] Escalation.
 - [x] PagerDuty-style on-call.
 
-## Phase 11 — Windows parity
+## Phase 11: Windows parity
 
 Bring Windows to the level of Linux after Phase 6. The Windows updates list already shows on a server's page (ADR-0049).
 
@@ -125,7 +125,7 @@ Bring Windows to the level of Linux after Phase 6. The Windows updates list alre
 - [x] The file log sensor on Windows, following file IDs through rotation (ADR-0048).
 - [x] The configured update source in the inventory: WSUS URL or Windows Update (ADR-0049).
 
-## Phase 12 — Production hardening
+## Phase 12: Production hardening
 
 Needed before real customers. Daily backups and restore shipped in Phase 8 (ADR-0058).
 
@@ -135,7 +135,7 @@ Needed before real customers. Daily backups and restore shipped in Phase 8 (ADR-
 - [x] TLS between the server and VictoriaMetrics and VictoriaLogs (ADR-0051).
 - [x] Load test on about 1,000 agents.
 
-## Phase 13 — Monitoring depth
+## Phase 13: Monitoring depth
 
 Mostly follow-ups that the ADRs postponed.
 
@@ -146,7 +146,7 @@ Mostly follow-ups that the ADRs postponed.
 - [x] Automatic discovery of Proxmox servers instead of mapping each one by hand (ADR-0044).
 - [x] Custom dashboards.
 
-## Phase 14 — Commercial
+## Phase 14: Commercial
 
 The open questions in `docs/product.md`.
 
@@ -155,7 +155,7 @@ The open questions in `docs/product.md`.
 - [ ] Billing.
 - [ ] Final product name.
 
-## Phase 15 — Your choice
+## Phase 15: Your choice
 
 Let each install pick what suits it instead of a fixed choice.
 
@@ -164,7 +164,7 @@ Let each install pick what suits it instead of a fixed choice.
 - [x] Turn AI commands on and off from the web interface instead of on each server. Turning off always works. Turning on works only for servers installed with "Allow AI commands to be turned on from the web interface", so a compromised central server cannot give itself a shell on servers that did not agree. Administrators only, audited, and shown plainly on the server's page.
 - [x] Show dashboards on a wall screen or TV: full screen without menus, large text, refreshing by itself, cycling through several dashboards, and a display link that needs no sign-in, read-only, tied to one dashboard and revocable. Say plainly on screen when the data is stale.
 
-## Phase 16 — Integrations
+## Phase 16: Integrations
 
 Fit into the tools people already use, for a single company and for MSPs alike (see "Who it is for" in `docs/product.md`).
 

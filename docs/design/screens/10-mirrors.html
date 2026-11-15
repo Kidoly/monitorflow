@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mirrors — MonitorFlow</title>
+<title>Mirrors · MonitorFlow</title>
 </head>
 <body>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
@@ -78,7 +78,7 @@ h1,h2,h3{margin:0}
 <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center"><button class="btn">Family</button><button class="btn">Last run</button><input class="btn" type="search" aria-label="Search" placeholder="Mirror name" style="width: 200px; font-weight: 400"></div>
 <div class="box" style="overflow: auto"><table class="t" aria-label="Mirrors"><thead><tr><th>Mirror</th><th>Last run</th><th>Distribution</th><th>Current snapshot</th><th>Next sync</th><th></th></tr></thead><tbody>
 <tr><td class="host"><a href="#"><b>debian-bookworm</b></a><span>apt · deb.debian.org/debian · main contrib · amd64 arm64</span></td><td><span class="lab l-ok">Succeeded</span> <span class="dim">1 h ago</span></td><td>bookworm, bookworm-security</td><td>2026-10-22-1430</td><td class="dim">20:30</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Sync now</button> <button class="btn" style="height: 30px">Snapshot</button></td></tr>
-<tr><td class="host"><a href="#"><b>ubuntu-noble</b></a><span>apt · archive.ubuntu.com/ubuntu · main universe · amd64</span></td><td><span class="lab l-info">Running</span> <span class="dim">since 14:30</span></td><td>noble, noble-updates, noble-security</td><td>2026-10-22-0830</td><td class="dim">—</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Log</button></td></tr>
+<tr><td class="host"><a href="#"><b>ubuntu-noble</b></a><span>apt · archive.ubuntu.com/ubuntu · main universe · amd64</span></td><td><span class="lab l-info">Running</span> <span class="dim">since 14:30</span></td><td>noble, noble-updates, noble-security</td><td>2026-10-22-0830</td><td class="dim">Not scheduled</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Log</button></td></tr>
 <tr><td class="host"><a href="#"><b>rocky-9</b></a><span>dnf · dl.rockylinux.org/pub/rocky · BaseOS AppStream · x86_64</span></td><td><span class="lab l-bad">Failed</span> <span class="dim">6 h ago · exit 1</span></td><td>9</td><td>2026-10-21-2000</td><td class="dim">02:00</td><td style="text-align: right; white-space: nowrap"><button class="btn" style="height: 30px">Sync now</button> <button class="btn" style="height: 30px">Log</button></td></tr>
 </tbody></table></div>
 <p class="dim" style="margin: 0; font-size: 13px">Open a mirror for its snapshots and run history.</p>

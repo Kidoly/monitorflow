@@ -6,7 +6,7 @@
 <title>MonitorFlow architecture</title>
 <style>
 /* engineered-paper theme (cool near-white, one accent, mono labels)
- * All colors/fonts flow through the :root tokens — tweak tokens, not scattered values. */
+ * All colors/fonts flow through the :root tokens: tweak tokens, not scattered values. */
 :root {
   color-scheme: light;
   --color-paper:   oklch(98.5% 0.004 250);
@@ -19,15 +19,15 @@
   --color-ink:     oklch(24% 0.020 258);
   --color-accent:  oklch(58% 0.20 256);     /* primary-flow edges, one signal color */
   --color-graphite:oklch(24% 0.018 260);    /* dark tile for white/light logos */
-  /* group palette A — warm vendor (e.g. Cloudflare/AWS orange). Retune hue per vendor. */
+  /* group palette A: warm vendor (e.g. Cloudflare/AWS orange). Retune hue per vendor. */
   --color-g1:      oklch(68% 0.15 55);
   --color-g1-soft: oklch(78% 0.12 55);
   --color-g1-ink:  oklch(52% 0.14 50);
   --color-g1-tint: oklch(96.5% 0.015 60 / .5);
-  /* group palette B — accent-family (repo/tooling groups) */
+  /* group palette B: accent-family (repo/tooling groups) */
   --color-accent-soft: oklch(58% 0.20 256 / .45);
   --color-accent-tint: oklch(97% 0.012 256 / .5);
-  /* JP glyphs: name JP faces explicitly — bare sans-serif fallback on Linux picks Chinese-variant CJK */
+  /* JP glyphs: name JP faces explicitly, since a bare sans-serif fallback on Linux picks Chinese-variant CJK */
   --font-display: "Geist", "Hiragino Sans", "Yu Gothic UI", "Noto Sans CJK JP", "Noto Sans JP", ui-sans-serif, system-ui, sans-serif;
   --font-body: "Hiragino Sans", "Yu Gothic UI", "Noto Sans CJK JP", "Noto Sans JP", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -37,7 +37,7 @@
      group tints instead of punching an off-color rectangle through them */
   --color-veil: oklch(98.5% 0.004 250 / .78);
 }
-/* Dark variant: set data-theme="dark" on <html>. Tiles stay white — brand logos are drawn
+/* Dark variant: set data-theme="dark" on <html>. Tiles stay white: brand logos are drawn
    for light grounds. Everything (arrowheads via context-stroke, legend via border-color)
    follows the tokens, so toggling the attribute is all it takes. */
 [data-theme="dark"] {
@@ -81,7 +81,7 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(22px, 
 @media (max-width: 680px) { .head { grid-template-columns: 1fr; align-items:start; } .lede { max-width:none; } }
 
 .scroller { overflow-x: auto; border: 1px solid var(--color-rule-2); border-radius: var(--radius-card); }
-/* CANVAS SIZE: set width/height here AND on svg.edges AND its viewBox — keep the three in sync */
+/* CANVAS SIZE: set width/height here AND on svg.edges AND its viewBox. Keep the three in sync */
 .canvas { position: relative; width: 1260px; height: 790px; background: var(--color-paper);
   background-image:
     linear-gradient(var(--color-rule) 1px, transparent 1px),

@@ -1,4 +1,4 @@
-# MonitorFlow — Architecture
+# MonitorFlow architecture
 
 Status: draft, 2026-10-18. This document is the technical reference for every contributor and every Claude Code thread. Product scope, roadmap and business model live in [product.md](product.md). Changes to a decision below go through an ADR in [adr/](adr/).
 

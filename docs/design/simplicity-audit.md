@@ -402,7 +402,7 @@ That is 9 steps per host, and steps 5–9 repeat for every host. There are 0 doc
 | i. Backup and restore | manual, undocumented restore | 2 | automatic, and 1 command to restore |
 | j. Uninstall server | undocumented | 1 | 1 command |
 
-## Proposal: Phase 8 — Simplicity
+## Proposal for Phase 8: Simplicity
 
 **Principles.** Each task applies them to the screen it touches:
 
