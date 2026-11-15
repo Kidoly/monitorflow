@@ -2,6 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { Server } from "@/lib/api";
 import { As, customerAdmin, single as oneCustomer, viewer } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -88,6 +89,21 @@ describe("FleetOverview", () => {
     // The status strip of the shell replaced the counters.
     expect(screen.queryByRole("group", { name: "Summary, click to filter" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Problems first" })).toBeInTheDocument();
+  });
+
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    const until = new Date(2026, 9, 22, 18, 0).toISOString();
+    const quiet = server({ id: "s6", hostname: "app-1", state: "silenced", silence: { by: "alice", until, reason: "migration" } });
+    stubFetch(reply([quiet, db1, web1]));
+    render(<FleetOverview />);
+    const [web, db] = [...(await screen.findByRole("table", { name: "Serveurs", busy: false })).querySelectorAll("tbody tr[data-row]")];
+    expect(web).toHaveTextContent(/web-1Debian 12 · agent 0\.1\.0 · via relay-paris-1\s*Critique/);
+    expect(db).toHaveTextContent(/agent inconnu\s*Hors ligne\s*Dernier contact 13:51/);
+    expect(screen.getByText(/^En silence par alice jusqu’à aujourd’hui 18:00\s: migration$/)).toBeInTheDocument();
+    expect(screen.getByText(/3 serveurs, 2 en ligne · /)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Problèmes d’abord" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Problème" })).toBeInTheDocument();
   });
 
   it("shows silenced and acknowledged servers after the problems, and filters by status", async () => {

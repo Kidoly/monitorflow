@@ -2,6 +2,7 @@ import type { Message } from "../catalog";
 
 import * as auth from "./auth";
 import * as common from "./common";
+import * as fleet from "./fleet";
 import * as format from "./format";
 import * as shell from "./shell";
 import * as ui from "./ui";
@@ -11,6 +12,7 @@ import * as ui from "./ui";
 export const en = {
   auth: auth.en,
   common: common.en,
+  fleet: fleet.en,
   format: format.en,
   shell: shell.en,
   ui: ui.en,
@@ -19,6 +21,7 @@ export const en = {
 export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   auth: auth.fr,
   common: common.fr,
+  fleet: fleet.fr,
   format: format.fr,
   shell: shell.fr,
   ui: ui.fr,

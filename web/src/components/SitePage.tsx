@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo } from "react";
 
+import { t } from "@/i18n";
 import { api, describeError, isUnauthorized } from "@/lib/api";
 import { modifiesSite, multiCustomer, useMe } from "@/lib/me";
 import { scopedHref } from "@/lib/scope";
@@ -45,25 +46,25 @@ export function SitePage({ id }: { id: string | null }) {
   }, [site]);
 
   if (!valid || (data && !site)) {
-    return <NotFound title="Site not found" actions={<ButtonLink href="/">Back to the fleet</ButtonLink>} />;
+    return <NotFound title={t("fleet.site.notFound")} actions={<ButtonLink href="/">{t("fleet.site.back")}</ButtonLink>} />;
   }
   if (!site || !target) {
     return error !== null && !isUnauthorized(error) ? (
-      <ErrorState what="the site" error={describeError(error)} onRetry={refresh} />
+      <ErrorState what={t("fleet.site.what")} error={describeError(error)} onRetry={refresh} />
     ) : (
-      <LoadingBlock label="Loading site" />
+      <LoadingBlock label={t("fleet.site.loading")} />
     );
   }
   const fleet = scopedHref("/", { customerId: site.customer_id, siteId: site.id });
-  const servers = `${site.server_count} ${site.server_count === 1 ? "server" : "servers"}`;
+  const servers = t("fleet.site.servers", { count: site.server_count });
   return (
     <Page>
-      <Breadcrumb parents={[{ label: "Fleet", href: "/" }]} current={site.name} />
+      <Breadcrumb parents={[{ label: t("fleet.title"), href: "/" }]} current={site.name} />
       <PageHeader
         detail
         title={site.name}
         meta={multiCustomer(me) ? `${site.customer_name} · ${servers}` : servers}
-        actions={<ButtonLink href={fleet}>Show its {servers}</ButtonLink>}
+        actions={<ButtonLink href={fleet}>{t("fleet.site.show", { count: site.server_count })}</ButtonLink>}
       />
       <SilenceBar target={{ scope: "site", id: site.id, name: site.name, customerId: site.customer_id, siteId: site.id }} />
       <MonitoringSettings target={target} canEdit={modifiesSite(me, site.customer_id, site.id)} />
