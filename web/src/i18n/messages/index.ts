@@ -8,6 +8,7 @@ import * as incidents from "./incidents";
 import * as sensors from "./sensors";
 import * as server from "./server";
 import * as shell from "./shell";
+import * as silences from "./silences";
 import * as ui from "./ui";
 
 // One file per area of the interface, English and French side by side.
@@ -21,6 +22,7 @@ export const en = {
   sensors: sensors.en,
   server: server.en,
   shell: shell.en,
+  silences: silences.en,
   ui: ui.en,
 };
 
@@ -33,5 +35,6 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   sensors: sensors.fr,
   server: server.fr,
   shell: shell.fr,
+  silences: silences.fr,
   ui: ui.fr,
 };

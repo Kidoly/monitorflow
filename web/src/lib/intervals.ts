@@ -1,3 +1,5 @@
+import { t } from "@/i18n";
+
 import { formatSeconds } from "./format";
 
 /** Shortest and longest interval the API accepts (ADR-0097). */
@@ -9,14 +11,29 @@ export const INTERVAL_CHOICES = [10_000, 30_000, 60_000, 300_000, 900_000, 3_600
 
 /** Units of an interval typed by hand. */
 export const INTERVAL_UNITS = [
-  { label: "seconds", ms: 1_000 },
-  { label: "minutes", ms: 60_000 },
-  { label: "hours", ms: 3_600_000 },
+  {
+    get label() {
+      return t("sensors.interval.seconds");
+    },
+    ms: 1_000,
+  },
+  {
+    get label() {
+      return t("sensors.interval.minutes");
+    },
+    ms: 60_000,
+  },
+  {
+    get label() {
+      return t("sensors.interval.hours");
+    },
+    ms: 3_600_000,
+  },
 ] as const;
 
 /** "every 30 s", "every 1 h". */
 export function every(ms: number): string {
-  return `every ${formatSeconds(ms / 1000)}`;
+  return t("sensors.facts.every", { interval: formatSeconds(ms / 1000) });
 }
 
 /** The interval typed as `amount` of `unitMs`, or why it is refused. */
@@ -24,7 +41,7 @@ export function customInterval(amount: string, unitMs: number): { ms: number } |
   const value = Number(amount.trim().replace(",", "."));
   const ms = Math.round(value * unitMs);
   if (amount.trim() === "" || !Number.isFinite(value) || ms < MIN_INTERVAL_MS || ms > MAX_INTERVAL_MS) {
-    return { error: "Enter a value from 10 seconds to 24 hours." };
+    return { error: t("sensors.interval.error") };
   }
   return { ms };
 }
@@ -60,5 +77,5 @@ export function alertDelayS(durationS: number, intervalS: number): number {
  */
 export function slowAlertNote(durationS: number, intervalS: number | undefined): string | null {
   if (intervalS === undefined || intervalS <= 60) return null;
-  return `Checked ${every(intervalS * 1000)}, so this alert opens up to ${formatSeconds(alertDelayS(durationS, intervalS))} after the problem starts.`;
+  return t("sensors.interval.slow", { every: every(intervalS * 1000), delay: formatSeconds(alertDelayS(durationS, intervalS)) });
 }
