@@ -60,7 +60,7 @@ Reachable now and described next, in this order: thresholds and check settings, 
 - **Fine-grained scopes per route** (`incidents:acknowledge`). Six areas and four levels already give 24 kinds of key; per-route scopes would make the form a matrix nobody fills in right.
 - **Page numbers and totals.** Above.
 - **Rate limits shared between instances** of the central server. Each instance counts its own, so behind two instances a key gets up to twice the limit; the limit is there to stop accidents, not to bill.
-- **Swagger UI.** A large script served from a CDN or bundled; a short page of our own reads the same document.
+- **Swagger UI.** A large script served from a CDN or bundled; a short page of our own reads the same document. (Replaced by ADR-0135: Swagger UI is now served, built into the binary.)
 
 ## Consequences
 
