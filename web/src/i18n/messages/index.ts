@@ -11,6 +11,7 @@ import * as notifications from "./notifications";
 import * as onCall from "./onCall";
 import * as sensors from "./sensors";
 import * as server from "./server";
+import * as settings from "./settings";
 import * as shell from "./shell";
 import * as silences from "./silences";
 import * as ui from "./ui";
@@ -29,6 +30,7 @@ export const en = {
   onCall: onCall.en,
   sensors: sensors.en,
   server: server.en,
+  settings: settings.en,
   shell: shell.en,
   silences: silences.en,
   ui: ui.en,
@@ -46,6 +48,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   onCall: onCall.fr,
   sensors: sensors.fr,
   server: server.fr,
+  settings: settings.fr,
   shell: shell.fr,
   silences: silences.fr,
   ui: ui.fr,
