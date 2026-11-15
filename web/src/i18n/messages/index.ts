@@ -1,5 +1,6 @@
 import type { Message } from "../catalog";
 
+import * as auth from "./auth";
 import * as common from "./common";
 import * as format from "./format";
 import * as shell from "./shell";
@@ -8,6 +9,7 @@ import * as ui from "./ui";
 // One file per area of the interface, English and French side by side.
 // An area added here is typed into `MessageKey`.
 export const en = {
+  auth: auth.en,
   common: common.en,
   format: format.en,
   shell: shell.en,
@@ -15,6 +17,7 @@ export const en = {
 };
 
 export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
+  auth: auth.fr,
   common: common.fr,
   format: format.fr,
   shell: shell.fr,
