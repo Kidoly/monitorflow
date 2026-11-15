@@ -18,6 +18,7 @@ import * as monitoring from "./monitoring";
 import * as notifications from "./notifications";
 import * as onCall from "./onCall";
 import * as relays from "./relays";
+import * as rollback from "./rollback";
 import * as sensors from "./sensors";
 import * as server from "./server";
 import * as serverUpdate from "./serverUpdate";
@@ -49,6 +50,7 @@ export const en = {
   notifications: notifications.en,
   onCall: onCall.en,
   relays: relays.en,
+  rollback: rollback.en,
   sensors: sensors.en,
   server: server.en,
   serverUpdate: serverUpdate.en,
@@ -79,6 +81,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   notifications: notifications.fr,
   onCall: onCall.fr,
   relays: relays.fr,
+  rollback: rollback.fr,
   sensors: sensors.fr,
   server: server.fr,
   serverUpdate: serverUpdate.fr,
