@@ -7,6 +7,7 @@ import * as fleet from "./fleet";
 import * as followUp from "./followUp";
 import * as format from "./format";
 import * as incidents from "./incidents";
+import * as monitoring from "./monitoring";
 import * as notifications from "./notifications";
 import * as onCall from "./onCall";
 import * as sensors from "./sensors";
@@ -28,6 +29,7 @@ export const en = {
   followUp: followUp.en,
   format: format.en,
   incidents: incidents.en,
+  monitoring: monitoring.en,
   notifications: notifications.en,
   onCall: onCall.en,
   sensors: sensors.en,
@@ -48,6 +50,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   followUp: followUp.fr,
   format: format.fr,
   incidents: incidents.fr,
+  monitoring: monitoring.fr,
   notifications: notifications.fr,
   onCall: onCall.fr,
   sensors: sensors.fr,
