@@ -14,6 +14,7 @@ import * as server from "./server";
 import * as settings from "./settings";
 import * as shell from "./shell";
 import * as silences from "./silences";
+import * as sites from "./sites";
 import * as ui from "./ui";
 import * as users from "./users";
 
@@ -34,6 +35,7 @@ export const en = {
   settings: settings.en,
   shell: shell.en,
   silences: silences.en,
+  sites: sites.en,
   ui: ui.en,
   users: users.en,
 };
@@ -53,6 +55,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   settings: settings.fr,
   shell: shell.fr,
   silences: silences.fr,
+  sites: sites.fr,
   ui: ui.fr,
   users: users.fr,
 };
