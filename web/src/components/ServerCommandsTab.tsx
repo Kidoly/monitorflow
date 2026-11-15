@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { t } from "@/i18n";
 import { type Command, type CommandDetail, api, describeError } from "@/lib/api";
 import { commandLog, describeCommand, lastStepAt } from "@/lib/commands";
 import { useMe } from "@/lib/me";
@@ -84,7 +85,7 @@ export function ServerCommandsTab({
   if ("error" in commands) {
     return (
       <Banner tone="bad">
-        <strong>Could not load the commands:</strong> {commands.error} Retrying automatically.
+        <strong>{t("server.commands.loadFailed")}</strong> {t("server.commands.retrying", { error: commands.error })}
       </Banner>
     );
   }
@@ -109,7 +110,7 @@ export function ServerCommandsTab({
   const columns: Column<Command>[] = [
     {
       key: "command",
-      header: "Command",
+      header: t("server.commands.column.command"),
       cell: (c) => {
         const { title, sub } = describeCommand(c);
         return <PrimaryCell title={title} sub={sub} />;
@@ -117,35 +118,39 @@ export function ServerCommandsTab({
     },
     {
       key: "state",
-      header: "State",
+      header: t("server.commands.column.state"),
       cell: (c) => {
         const at = lastStepAt(c);
         return (
           <>
             <StatusLabel kind="run" value={c.state} />{" "}
             {c.state === "expired" ? (
-              <span className={styles.muted}>agent did not start it</span>
+              <span className={styles.muted}>{t("server.commands.notStarted")}</span>
             ) : (
-              at && <span className={styles.muted}>{c.state === "sent" ? "sent " : ""}{formatClock(new Date(at))}</span>
+              at && (
+                <span className={styles.muted}>
+                  {c.state === "sent" ? t("server.commands.sent", { at: formatClock(new Date(at)) }) : formatClock(new Date(at))}
+                </span>
+              )
             )}
           </>
         );
       },
     },
-    { key: "exit", header: "Exit code", cell: (c) => (c.exit_code === null ? <span className={styles.muted}>—</span> : c.exit_code) },
-    { key: "queued", header: "Queued", className: styles.muted, cell: (c) => formatDay(new Date(c.issued_at), now) },
+    { key: "exit", header: t("server.commands.column.exit"), cell: (c) => c.exit_code },
+    { key: "queued", header: t("server.commands.column.queued"), className: styles.muted, cell: (c) => formatDay(new Date(c.issued_at), now) },
     {
       key: "by",
-      header: "By",
+      header: t("server.commands.column.by"),
       cell: (c) =>
         c.campaign_id ? (
-          <Link href={scopedHref(campaignHref(c.campaign_id), scope)}>campaign</Link>
+          <Link href={scopedHref(campaignHref(c.campaign_id), scope)}>{t("server.commands.campaign")}</Link>
         ) : c.requested_by === null ? (
-          "system"
+          t("server.commands.system")
         ) : c.requested_by === me?.id ? (
           me.username
         ) : (
-          "another user"
+          t("server.commands.anotherUser")
         ),
     },
   ];
@@ -155,43 +160,44 @@ export function ServerCommandsTab({
       <StatTiles
         maxWidth={800}
         tiles={[
-          { label: "Running", value: list.filter((c) => c.state === "running" || c.state === "sent").length, tone: "info", href: tileHref("running"), active: state === "running" },
-          { label: "Queued", value: list.filter((c) => c.state === "queued").length, tone: "neutral", href: tileHref("queued"), active: state === "queued" },
-          { label: "Succeeded, 30 d", value: recent.filter((c) => c.state === "succeeded").length, tone: "ok", href: tileHref("succeeded"), active: state === "succeeded" },
-          { label: "Failed, 30 d", value: recent.filter((c) => c.state === "failed").length, tone: "bad", href: tileHref("failed"), active: state === "failed" },
+          { label: t("server.commands.tile.running"), value: list.filter((c) => c.state === "running" || c.state === "sent").length, tone: "info", href: tileHref("running"), active: state === "running" },
+          { label: t("server.commands.tile.queued"), value: list.filter((c) => c.state === "queued").length, tone: "neutral", href: tileHref("queued"), active: state === "queued" },
+          { label: t("server.commands.tile.succeeded"), value: recent.filter((c) => c.state === "succeeded").length, tone: "ok", href: tileHref("succeeded"), active: state === "succeeded" },
+          { label: t("server.commands.tile.failed"), value: recent.filter((c) => c.state === "failed").length, tone: "bad", href: tileHref("failed"), active: state === "failed" },
         ]}
       />
       <FilterBar
         filters={[
           {
             name: "state",
-            label: "State",
+            label: t("server.commands.filter.state"),
             options: (["queued", "running", "succeeded", "failed", "expired", "cancelled"] as const).map((s) => ({
               value: s,
-              label: s[0]!.toUpperCase() + s.slice(1),
+              label: t(`server.commands.state.${s}`),
             })),
           },
           {
             name: "period",
-            label: "Period",
-            options: [
-              { value: "24h", label: "24 h" },
-              { value: "7d", label: "7 d" },
-              { value: "30d", label: "30 d" },
-            ],
+            label: t("server.commands.filter.period"),
+            options: (["24h", "7d", "30d"] as const).map((value) => ({ value, label: t(`server.commands.period.${value}`) })),
           },
         ]}
-        search={{ name: "q", label: "Search commands", placeholder: "Command", width: 200 }}
+        search={{
+          name: "q",
+          label: t("server.commands.search"),
+          placeholder: t("server.commands.searchPlaceholder"),
+          width: 200,
+        }}
       />
       {list.length === 0 ? (
-        <EmptyState actions={<ButtonLink href={scopedHref(serverHref(serverId, "updates"), scope)}>Open updates</ButtonLink>}>
-          No commands yet. Updates applied to this server show here with their output.
+        <EmptyState actions={<ButtonLink href={scopedHref(serverHref(serverId, "updates"), scope)}>{t("server.commands.openUpdates")}</ButtonLink>}>
+          {t("server.commands.none")}
         </EmptyState>
       ) : shown.length === 0 ? (
-        <NoMatches names={["state", "period", "q"]}>No commands match these filters.</NoMatches>
+        <NoMatches names={["state", "period", "q"]}>{t("server.commands.noMatch")}</NoMatches>
       ) : (
         <DataTable
-          label="Commands"
+          label={t("server.commands.table")}
           columns={columns}
           rows={shown}
           rowKey={(c) => c.id}
@@ -199,19 +205,19 @@ export function ServerCommandsTab({
           rowMuted={(c) => c.state === "expired" || c.state === "cancelled"}
           rowActions={(c) => (
             <Button size="small" aria-expanded={logs.has(c.id)} onClick={() => toggleLog(c)}>
-              {logs.has(c.id) ? "Hide log" : "Log"}
+              {logs.has(c.id) ? t("server.commands.hideLog") : t("server.commands.log")}
             </Button>
           )}
           rowDetail={(c) => {
             const log = logs.get(c.id);
             if (!log) return null;
             return (
-              <pre className={styles.log} aria-label={`Output of ${describeCommand(c).title}`}>
+              <pre className={styles.log} aria-label={t("server.commands.output", { title: describeCommand(c).title })}>
                 {"detail" in log
                   ? commandLog(log.detail, formatClock)
                   : "error" in log
-                    ? `Could not load the output: ${log.error}`
-                    : "Loading the output…"}
+                    ? t("server.commands.outputFailed", { error: log.error })
+                    : t("server.commands.outputLoading")}
               </pre>
             );
           }}
