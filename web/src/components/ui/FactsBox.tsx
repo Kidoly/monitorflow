@@ -1,5 +1,7 @@
 import { type ReactNode, useId } from "react";
 
+import { t } from "@/i18n";
+
 import { cx } from "./cx";
 import styles from "./FactsBox.module.css";
 
@@ -61,7 +63,7 @@ export function FactsBox({
       {children || <Facts facts={facts} columns={columns} />}
       {!children && details.length > 0 && (
         <details className={styles.details}>
-          <summary>Details</summary>
+          <summary>{t("ui.details")}</summary>
           <Facts facts={details} columns={columns} />
         </details>
       )}

@@ -35,7 +35,7 @@ const HOSTS = [
 
 const COLUMNS: Column<Host>[] = [
   { key: "host", header: "Host", cell: (h) => <PrimaryCell title={h.name} href={`/servers/view/?id=${h.name}`} sub="Debian 12" />, sortValue: (h) => h.name },
-  { key: "seen", header: "Last seen", cell: (h) => h.seen ?? "—", sortValue: (h) => h.seen },
+  { key: "seen", header: "Last seen", cell: (h) => h.seen ?? "Never", sortValue: (h) => h.seen },
   { key: "site", header: "Site", cell: () => "paris-dc1" },
 ];
 

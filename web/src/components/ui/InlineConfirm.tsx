@@ -2,6 +2,8 @@
 
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
+import { t } from "@/i18n";
+
 import { Button, type ButtonVariant, buttonClass, fieldClass } from "./Button";
 import { cx } from "./cx";
 import styles from "./InlineConfirm.module.css";
@@ -31,9 +33,9 @@ export function InlineConfirm<R extends string>({
   consequence,
   reasons,
   confirmLabel,
-  pendingLabel = "Working…",
+  pendingLabel = t("ui.confirm.working"),
   onConfirm,
-  describeError = () => "It failed. Try again.",
+  describeError = () => t("ui.confirm.failed"),
   layout = "box",
   triggerVariant = "danger",
   triggerName,
@@ -133,7 +135,7 @@ export function InlineConfirm<R extends string>({
           <strong>{title}</strong> {consequence}
         </span>
         <Button size="small" onClick={cancel} disabled={busy}>
-          Cancel
+          {t("ui.cancel")}
         </Button>
         <button ref={confirmRef} type="submit" className={buttonClass({ variant: "danger", size: "small" })} disabled={busy}>
           {busy ? pendingLabel : confirmLabel}
@@ -153,7 +155,7 @@ export function InlineConfirm<R extends string>({
       </p>
       {reasons && (
         <label className={styles.reason}>
-          <span>Reason</span>
+          <span>{t("ui.confirm.reason")}</span>
           <select
             ref={selectRef}
             className={cx(fieldClass, styles.select)}
@@ -161,7 +163,7 @@ export function InlineConfirm<R extends string>({
             onChange={(e) => setReason(e.target.value as R)}
             disabled={busy}
           >
-            <option value="">Choose a reason…</option>
+            <option value="">{t("ui.confirm.chooseReason")}</option>
             {reasons.map((r) => (
               <option key={r.value} value={r.value}>
                 {r.label}
@@ -184,7 +186,7 @@ export function InlineConfirm<R extends string>({
       )}
       <div className={styles.buttons}>
         <Button onClick={cancel} disabled={busy}>
-          Cancel
+          {t("ui.cancel")}
         </Button>
         <button
           ref={confirmRef}
