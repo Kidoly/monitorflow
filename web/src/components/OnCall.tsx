@@ -2,6 +2,7 @@
 
 import { type FormEvent, useCallback, useState } from "react";
 
+import { rich, t } from "@/i18n";
 import {
   type Contact,
   type ContactRequest,
@@ -13,7 +14,6 @@ import {
   describeError,
   isUnauthorized,
 } from "@/lib/api";
-import { ALL_SITES } from "@/lib/customers";
 import { isAdministrator, multiCustomer, useMe, useMultiCustomer } from "@/lib/me";
 import { channelScopes, scopeValue } from "@/lib/notifications";
 import {
@@ -27,6 +27,7 @@ import {
   problemText,
   timeZones,
   toLocalInput,
+  weekdayName,
   who,
 } from "@/lib/onCall";
 import { useScope } from "@/lib/scope";
@@ -64,11 +65,14 @@ function ContactSection() {
   }
 
   const savedChat = data?.kind && data.kind !== "webhook" && data.kind === also && data.has_secret;
-  const described = data
-    ? [data.email, data.kind && (data.kind === "webhook" ? `a webhook to ${hostOf(data.settings?.url)}` : `${CHAT[data.kind].name}`)]
-        .filter(Boolean)
-        .join(" and ")
-    : "";
+  const ways = data
+    ? [
+        data.email,
+        data.kind &&
+          (data.kind === "webhook" ? t("onCall.contact.webhookTo", { host: hostOf(data.settings?.url) }) : CHAT[data.kind].name),
+      ].filter((way): way is string => Boolean(way))
+    : [];
+  const described = ways.length === 2 ? t("onCall.contact.both", { first: ways[0]!, second: ways[1]! }) : (ways[0] ?? "");
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -84,7 +88,7 @@ function ContactSection() {
       await api.setContact(body);
       setEditing(false);
       setUrl("");
-      setMessage({ tone: "ok", text: "Saved." });
+      setMessage({ tone: "ok", text: t("onCall.contact.saved") });
       refresh();
     } catch (e) {
       setMessage({ tone: "bad", text: describeError(e) });
@@ -101,7 +105,7 @@ function ContactSection() {
       const failed = results.filter((r) => !r.ok);
       setMessage(
         failed.length === 0
-          ? { tone: "ok", text: "Test sent. Check that it arrived." }
+          ? { tone: "ok", text: t("onCall.contact.testSent") }
           : { tone: "bad", text: failed.map((r) => r.error).join(" ") },
       );
       refresh();
@@ -116,9 +120,9 @@ function ContactSection() {
     <section className={admin.section} aria-labelledby="contact-title">
       <div className={admin.sectionHead}>
         <span id="contact-title" className={admin.sectionTitle}>
-          How you are reached
+          {t("onCall.contact.title")}
         </span>
-        <span className={admin.dim}>When you are on call, alerts come to you here. Only you can change it.</span>
+        <span className={admin.dim}>{t("onCall.contact.intro")}</span>
       </div>
       <div className={styles.body}>
         {!data && error !== null ? (
@@ -126,7 +130,7 @@ function ContactSection() {
         ) : editing || (data && !data.email && !data.kind) ? (
           <form className={styles.form} onSubmit={(e) => void save(e)}>
             <label className={admin.field}>
-              Email
+              {t("onCall.contact.email")}
               <input
                 className={fieldClass}
                 type="email"
@@ -137,57 +141,55 @@ function ContactSection() {
               />
             </label>
             <label className={admin.field}>
-              Also by
+              {t("onCall.contact.also")}
               <select className={fieldClass} value={also} onChange={(e) => setAlso(e.target.value as Also)}>
-                <option value="">Email only</option>
+                <option value="">{t("onCall.contact.emailOnly")}</option>
                 {(Object.keys(CHAT) as (keyof typeof CHAT)[]).map((kind) => (
                   <option key={kind} value={kind}>
                     {CHAT[kind].name}
                   </option>
                 ))}
-                <option value="webhook">Webhook</option>
+                <option value="webhook">{t("onCall.contact.webhook")}</option>
               </select>
             </label>
             {also && (
               <label className={admin.field}>
-                {also === "webhook" ? "URL" : `${CHAT[also].name} webhook URL`}
+                {also === "webhook" ? t("onCall.contact.url") : t("onCall.contact.chatUrl", { service: CHAT[also].name })}
                 <input
                   className={fieldClass}
                   type={also === "webhook" ? "url" : "password"}
                   autoComplete="off"
                   value={url}
-                  placeholder={savedChat ? "Saved. Paste a new URL to change it" : also === "webhook" ? "https://…" : CHAT[also].placeholder}
+                  placeholder={savedChat ? t("onCall.contact.savedUrl") : also === "webhook" ? "https://…" : CHAT[also].placeholder}
                   onChange={(e) => setUrl(e.target.value)}
                 />
                 <span className={admin.fieldNote}>
                   {also === "webhook"
-                    ? "A POST with the alert in JSON, as for webhook channels."
-                    : `${chatHelp(also)} A channel or direct messages only you read works best.`}
+                    ? t("onCall.contact.webhookNote")
+                    : t("onCall.contact.chatNote", { help: chatHelp(also) })}
                 </span>
               </label>
             )}
             <div className={admin.formFoot}>
               <Button type="submit" variant="k" disabled={busy}>
-                {busy ? "Saving…" : "Save"}
+                {busy ? t("onCall.saving") : t("onCall.save")}
               </Button>
               {editing && (
                 <Button onClick={() => setEditing(false)} disabled={busy}>
-                  Cancel
+                  {t("onCall.cancel")}
                 </Button>
               )}
             </div>
           </form>
         ) : data ? (
           <div className={styles.contactLine}>
-            <span>
-              By <strong>{described}</strong>.
-            </span>
+            <span>{rich("onCall.contact.by", { how: <strong>{described}</strong> })}</span>
             {data.last_error && <Label tone="bad">{data.last_error}</Label>}
             <Button size="small" onClick={() => edit(data)}>
-              Change
+              {t("onCall.contact.change")}
             </Button>
             <Button size="small" disabled={busy} onClick={() => void test()}>
-              Send test
+              {t("onCall.contact.sendTest")}
             </Button>
           </div>
         ) : null}
@@ -243,7 +245,7 @@ function CoverForm({
     event.preventDefault();
     const start = fromLocalInput(from);
     const end = fromLocalInput(until);
-    if (!user || !end) return setError("Choose who covers and until when.");
+    if (!user || !end) return setError(t("onCall.cover.missing"));
     setBusy(true);
     setError(null);
     try {
@@ -256,13 +258,13 @@ function CoverForm({
   }
 
   return (
-    <form className={styles.form} onSubmit={(e) => void submit(e)} aria-label="Someone else covers">
+    <form className={styles.form} onSubmit={(e) => void submit(e)} aria-label={t("onCall.cover.form")}>
       <div className={admin.formGrid}>
         <label className={admin.field}>
-          Who covers
+          {t("onCall.cover.who")}
           <select className={fieldClass} required value={user} onChange={(e) => setUser(e.target.value)}>
             <option value="" disabled>
-              Choose…
+              {t("onCall.choose")}
             </option>
             {people.map((p) => (
               <option key={p.id} value={p.id}>
@@ -270,23 +272,23 @@ function CoverForm({
               </option>
             ))}
           </select>
-          {turn?.username && <span className={admin.fieldNote}>Instead of {turn.username}.</span>}
+          {turn?.username && <span className={admin.fieldNote}>{t("onCall.cover.insteadOf", { name: turn.username })}</span>}
         </label>
         <label className={admin.field}>
-          From
+          {t("onCall.from")}
           <input className={fieldClass} type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
         </label>
         <label className={admin.field}>
-          Until
+          {t("onCall.until")}
           <input className={fieldClass} type="datetime-local" required value={until} onChange={(e) => setUntil(e.target.value)} />
         </label>
       </div>
       <div className={admin.formFoot}>
         <Button type="submit" variant="k" disabled={busy}>
-          {busy ? "Saving…" : "Cover"}
+          {busy ? t("onCall.saving") : t("onCall.cover.submit")}
         </Button>
         <Button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("onCall.cancel")}
         </Button>
         {error && (
           <p className={admin.formError} role="alert">
@@ -301,11 +303,6 @@ function CoverForm({
 async function loadPlaces(signal: AbortSignal) {
   const [{ customers }, { sites }] = await Promise.all([api.customers(signal), api.sites(signal)]);
   return { customers, sites };
-}
-
-/** "acme" for "All of acme", "everything" for "Everything", "all sites" for "All sites": a place in a sentence. */
-function placeOf(label: string): string {
-  return label === "Everything" || label === ALL_SITES ? label.toLowerCase() : label.replace(/^All of /, "");
 }
 
 /** Creating or editing a schedule: what it covers, who, in which order, and when hand-offs happen. */
@@ -345,11 +342,11 @@ function ScheduleForm({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!chosen) return setError("Choose what this schedule is for.");
+    if (!chosen) return setError(t("onCall.form.missingPlace"));
     setBusy(true);
     setError(null);
     const body: OnCallScheduleRequest = {
-      name: name.trim() || placeOf(chosen.label),
+      name: name.trim() || chosen.place,
       customer_id: chosen.customer_id,
       site_id: chosen.site_id,
       time_zone: zone,
@@ -370,24 +367,24 @@ function ScheduleForm({
 
   const missing = (candidates?.people ?? []).filter((p) => members.some((m) => m.id === p.id) && !p.has_contact);
   return (
-    <form className={styles.form} onSubmit={(e) => void submit(e)} aria-label={schedule ? `Edit ${schedule.name}` : "New schedule"}>
+    <form className={styles.form} onSubmit={(e) => void submit(e)} aria-label={schedule ? t("onCall.form.edit", { name: schedule.name }) : t("onCall.form.new")}>
       <div className={admin.formGrid}>
         <label className={admin.field}>
-          Name
+          {t("onCall.form.name")}
           <input
             className={fieldClass}
             maxLength={80}
             value={name}
-            placeholder={chosen ? placeOf(chosen.label) : "Ops team"}
+            placeholder={chosen ? chosen.place : t("onCall.form.namePlaceholder")}
             onChange={(e) => setName(e.target.value)}
           />
         </label>
         {scopes.length > 1 && (
           <label className={admin.field}>
-            On call for
+            {t("onCall.form.for")}
             <select className={fieldClass} required value={chosen?.value ?? ""} onChange={(e) => setScope(e.target.value)}>
               <option value="" disabled>
-                Choose…
+                {t("onCall.choose")}
               </option>
               {scopes.map((s) => (
                 <option key={s.value} value={s.value}>
@@ -395,32 +392,32 @@ function ScheduleForm({
                 </option>
               ))}
             </select>
-            {chosen && <span className={admin.fieldNote}>Whoever is on call is told of every alert of {placeOf(chosen.label)}.</span>}
+            {chosen && <span className={admin.fieldNote}>{t("onCall.form.forNote", { place: chosen.place })}</span>}
           </label>
         )}
       </div>
       <fieldset className={styles.people}>
-        <legend>People, in turn</legend>
-        {members.length === 0 && <p className={admin.dim}>Nobody yet. Add the people who take turns.</p>}
+        <legend>{t("onCall.form.people")}</legend>
+        {members.length === 0 && <p className={admin.dim}>{t("onCall.form.noPeople")}</p>}
         <ol className={styles.order}>
           {members.map((m, i) => (
             <li key={m.id}>
               <span>{m.username}</span>
-              <Button size="small" disabled={i === 0} aria-label={`Move ${m.username} up`} onClick={() => setMembers(move(members, i, -1))}>
+              <Button size="small" disabled={i === 0} aria-label={t("onCall.form.up", { name: m.username })} onClick={() => setMembers(move(members, i, -1))}>
                 ↑
               </Button>
-              <Button size="small" disabled={i === members.length - 1} aria-label={`Move ${m.username} down`} onClick={() => setMembers(move(members, i, 1))}>
+              <Button size="small" disabled={i === members.length - 1} aria-label={t("onCall.form.down", { name: m.username })} onClick={() => setMembers(move(members, i, 1))}>
                 ↓
               </Button>
-              <Button size="small" aria-label={`Take ${m.username} off`} onClick={() => setMembers(members.filter((x) => x.id !== m.id))}>
-                Remove
+              <Button size="small" aria-label={t("onCall.form.takeOff", { name: m.username })} onClick={() => setMembers(members.filter((x) => x.id !== m.id))}>
+                {t("onCall.remove")}
               </Button>
             </li>
           ))}
         </ol>
         {chosen && (
           <label className={admin.field}>
-            Add someone
+            {t("onCall.form.add")}
             <select
               className={fieldClass}
               value=""
@@ -429,11 +426,10 @@ function ScheduleForm({
                 if (person) setMembers([...members, { id: person.id, username: person.username }]);
               }}
             >
-              <option value="">{addable.length ? "Choose…" : "Nobody else sees all of this"}</option>
+              <option value="">{addable.length ? t("onCall.choose") : t("onCall.form.nobodyElse")}</option>
               {addable.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.username}
-                  {p.has_contact ? "" : " (no email or chat yet)"}
+                  {p.has_contact ? p.username : t("onCall.noContactYet", { name: p.username })}
                 </option>
               ))}
             </select>
@@ -441,37 +437,36 @@ function ScheduleForm({
         )}
         {missing.length > 0 && (
           <p className={admin.fieldNote}>
-            {missing.map((m) => m.username).join(", ")} {missing.length === 1 ? "has" : "have"} not said how to reach them yet: their
-            turns are gaps until they do, on this page.
+            {t("onCall.form.missingContact", { count: missing.length, names: missing.map((m) => m.username).join(", ") })}
           </p>
         )}
       </fieldset>
       <div className={admin.formGrid}>
         <label className={admin.field}>
-          Hand-off
+          {t("onCall.form.handoff")}
           <select className={fieldClass} value={rotation} onChange={(e) => setRotation(e.target.value as typeof rotation)}>
-            <option value="weekly">Every week</option>
-            <option value="daily">Every day</option>
+            <option value="weekly">{t("onCall.form.weekly")}</option>
+            <option value="daily">{t("onCall.form.daily")}</option>
           </select>
         </label>
         {rotation === "weekly" && (
           <label className={admin.field}>
-            On
+            {t("onCall.form.on")}
             <select className={fieldClass} value={day} onChange={(e) => setDay(Number(e.target.value))}>
-              {WEEKDAYS.map((name, i) => (
-                <option key={name} value={i + 1}>
-                  {name}
+              {WEEKDAYS.map((weekday) => (
+                <option key={weekday} value={weekday}>
+                  {weekdayName(weekday)}
                 </option>
               ))}
             </select>
           </label>
         )}
         <label className={admin.field}>
-          At
+          {t("onCall.form.at")}
           <input className={fieldClass} type="time" required value={time} onChange={(e) => setTime(e.target.value)} />
         </label>
         <label className={admin.field}>
-          Time zone
+          {t("onCall.form.zone")}
           <select className={fieldClass} value={zone} onChange={(e) => setZone(e.target.value)}>
             {timeZones(zone).map((z) => (
               <option key={z} value={z}>
@@ -479,18 +474,18 @@ function ScheduleForm({
               </option>
             ))}
           </select>
-          <span className={admin.fieldNote}>Hand-offs keep this local time when clocks change.</span>
+          <span className={admin.fieldNote}>{t("onCall.form.zoneNote")}</span>
         </label>
       </div>
       <p className={admin.fieldNote}>
-        {schedule ? "Whoever is on call now stays on until the next hand-off." : "The first person is on call from the last hand-off, so from now."}
+        {schedule ? t("onCall.form.staysOn") : t("onCall.form.firstNow")}
       </p>
       <div className={admin.formFoot}>
         <Button type="submit" variant="k" disabled={busy || members.length === 0}>
-          {busy ? "Saving…" : schedule ? "Save" : "Create schedule"}
+          {busy ? t("onCall.saving") : schedule ? t("onCall.save") : t("onCall.form.create")}
         </Button>
         <Button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("onCall.cancel")}
         </Button>
         {error && (
           <p className={admin.formError} role="alert">
@@ -513,10 +508,10 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
   const isNow = (turn: OnCallTurn) => turn.starts_at === now?.starts_at;
   const why = (turn: OnCallTurn) => (turn.problem ? problemText(turn.problem, turn.username, place) : "");
   const fallback = schedule.fallback.length
-    ? `${schedule.fallback.join(", ")} ${schedule.fallback.length === 1 ? "is" : "are"} told instead`
+    ? t("onCall.fallback.told", { count: schedule.fallback.length, names: schedule.fallback.join(", ") })
     : schedule.can_manage
-      ? "nobody can be told in person, only the channels"
-      : "the administrators are told instead";
+      ? t("onCall.fallback.channels")
+      : t("onCall.fallback.administrators");
 
   async function removeOverride(id: string) {
     setError(null);
@@ -555,29 +550,30 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
       <div className={styles.body}>
         <div className={styles.nowNext}>
           <div>
-            <span className={styles.label}>On call now</span>
-            <strong className={now?.problem ? styles.bad : undefined}>{now ? who(now) : "Nobody"}</strong>
-            {now && <span className={admin.dim}>until {formatWhen(new Date(now.ends_at))}</span>}
+            <span className={styles.label}>{t("onCall.card.now")}</span>
+            <strong className={now?.problem ? styles.bad : undefined}>{now ? who(now) : t("onCall.nobodyStart")}</strong>
+            {now && <span className={admin.dim}>{t("onCall.card.until", { when: formatWhen(new Date(now.ends_at)) })}</span>}
           </div>
           {next && (
             <div>
-              <span className={styles.label}>Next</span>
+              <span className={styles.label}>{t("onCall.card.next")}</span>
               <strong className={next.problem ? styles.bad : undefined}>{who(next)}</strong>
-              <span className={admin.dim}>from {formatWhen(new Date(next.starts_at))}</span>
+              <span className={admin.dim}>{t("onCall.card.from", { when: formatWhen(new Date(next.starts_at)) })}</span>
             </div>
           )}
         </div>
         {ahead.map((gap) => (
           <Banner key={gap.starts_at} tone={isNow(gap) ? "bad" : "warn"}>
             <strong>
-              {isNow(gap) ? "Now" : `${formatWhen(new Date(gap.starts_at))} to ${formatWhen(new Date(gap.ends_at))}`}: nobody can be
-              told in person.
+              {isNow(gap)
+                ? t("onCall.gap.now")
+                : t("onCall.gap.period", { from: formatWhen(new Date(gap.starts_at)), until: formatWhen(new Date(gap.ends_at)) })}
             </strong>{" "}
-            {why(gap)}. During this gap, {fallback}.
+            {t("onCall.gap.during", { why: why(gap), fallback })}
           </Banner>
         ))}
         {schedule.can_manage && !schedule.mail_host && schedule.members.some((m) => m.problem === "no_mail_server") && (
-          <Banner tone="info">Email to people on call goes out through an email channel. Add one under Notifications.</Banner>
+          <Banner tone="info">{t("onCall.card.mailHost")}</Banner>
         )}
         {covering !== undefined && (
           <CoverForm
@@ -590,18 +586,18 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
             }}
           />
         )}
-        <table className={styles.turns} aria-label={`Coming weeks of ${schedule.name}`}>
+        <table className={styles.turns} aria-label={t("onCall.turns.label", { name: schedule.name })}>
           <thead>
             <tr>
-              <th scope="col">From</th>
-              <th scope="col">Until</th>
-              <th scope="col">On call</th>
+              <th scope="col">{t("onCall.from")}</th>
+              <th scope="col">{t("onCall.until")}</th>
+              <th scope="col">{t("onCall.turns.onCall")}</th>
               <th scope="col">
-                <span className="visually-hidden">Notes</span>
+                <span className="visually-hidden">{t("onCall.turns.notes")}</span>
               </th>
               {schedule.can_manage && (
                 <th scope="col">
-                  <span className="visually-hidden">Actions</span>
+                  <span className="visually-hidden">{t("onCall.turns.actions")}</span>
                 </th>
               )}
             </tr>
@@ -609,20 +605,24 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
           <tbody>
             {schedule.turns.map((turn) => (
               <tr key={turn.starts_at}>
-                <td>{isNow(turn) ? "Now" : formatWhen(new Date(turn.starts_at))}</td>
+                <td>{isNow(turn) ? t("onCall.now") : formatWhen(new Date(turn.starts_at))}</td>
                 <td>{formatWhen(new Date(turn.ends_at))}</td>
                 <td>{who(turn)}</td>
                 <td className={admin.wrap}>
                   {turn.problem ? (
-                    <Label tone="warn">Gap: {why(turn)}</Label>
+                    <Label tone="warn">{t("onCall.gap", { why: why(turn) })}</Label>
                   ) : turn.override_id ? (
-                    <Label tone="info">Covering</Label>
+                    <Label tone="info">{t("onCall.covering")}</Label>
                   ) : null}
                 </td>
                 {schedule.can_manage && (
                   <td>
-                    <Button size="small" aria-label={`Someone else covers ${who(turn)} from ${formatWhen(new Date(turn.starts_at))}`} onClick={() => setCovering(turn)}>
-                      Cover…
+                    <Button
+                      size="small"
+                      aria-label={t("onCall.cover.someoneFor", { who: who(turn), when: formatWhen(new Date(turn.starts_at)) })}
+                      onClick={() => setCovering(turn)}
+                    >
+                      {t("onCall.cover.button")}
                     </Button>
                   </td>
                 )}
@@ -631,13 +631,25 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
           </tbody>
         </table>
         {schedule.overrides.length > 0 && (
-          <ul className={styles.overrides} aria-label="Covering">
+          <ul className={styles.overrides} aria-label={t("onCall.covering")}>
             {schedule.overrides.map((o) => (
               <li key={o.id}>
-                {o.username ?? "A removed user"} covers from {formatWhen(new Date(o.starts_at))} to {formatWhen(new Date(o.ends_at))}.{" "}
+                {t("onCall.cover.line", {
+                  name: o.username ?? t("onCall.removedUserStart"),
+                  from: formatWhen(new Date(o.starts_at)),
+                  until: formatWhen(new Date(o.ends_at)),
+                })}{" "}
                 {schedule.can_manage && (
-                  <Button size="small" aria-label={`Remove ${o.username ?? "the"} cover from ${formatWhen(new Date(o.starts_at))}`} onClick={() => void removeOverride(o.id)}>
-                    Remove
+                  <Button
+                    size="small"
+                    aria-label={
+                      o.username
+                        ? t("onCall.cover.remove", { name: o.username, when: formatWhen(new Date(o.starts_at)) })
+                        : t("onCall.cover.removeUnnamed", { when: formatWhen(new Date(o.starts_at)) })
+                    }
+                    onClick={() => void removeOverride(o.id)}
+                  >
+                    {t("onCall.remove")}
                   </Button>
                 )}
               </li>
@@ -647,13 +659,13 @@ function ScheduleCard({ schedule, several, onChanged }: { schedule: OnCallSchedu
         {error && <p role="alert">{error}</p>}
         {schedule.can_manage && (
           <div className={styles.actions}>
-            <Button onClick={() => setCovering(null)}>Someone else covers…</Button>
-            <Button onClick={() => setEditing(true)}>Edit</Button>
+            <Button onClick={() => setCovering(null)}>{t("onCall.cover.someone")}</Button>
+            <Button onClick={() => setEditing(true)}>{t("onCall.edit")}</Button>
             <InlineConfirm
-              trigger="Delete…"
-              title={`Delete ${schedule.name}?`}
-              consequence="Nobody is told in person about it any more. Channels keep working."
-              confirmLabel={`Delete ${schedule.name}`}
+              trigger={t("onCall.delete.trigger")}
+              title={t("onCall.delete.title", { name: schedule.name })}
+              consequence={t("onCall.delete.consequence")}
+              confirmLabel={t("onCall.delete.confirm", { name: schedule.name })}
               onConfirm={async () => {
                 await api.deleteOnCallSchedule(schedule.id);
                 onChanged();
@@ -685,23 +697,20 @@ export function OnCallPage() {
   return (
     <Page>
       <PageHeader
-        title="On call"
+        title={t("onCall.title")}
         meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
         actions={
           canCreate && (
             <Button variant="k" aria-expanded={adding} onClick={() => setAdding(!adding)}>
-              New schedule
+              {t("onCall.form.new")}
             </Button>
           )
         }
       />
-      <p className={styles.intro}>
-        Whoever is on call is told of each alert in person, by email or chat, besides the channels. People take turns, and someone
-        else can cover a holiday or a swap. Times are shown in your time zone.
-      </p>
+      <p className={styles.intro}>{t("onCall.intro")}</p>
       <ContactSection />
       {adding && (
-        <section className={admin.section} aria-label="New schedule">
+        <section className={admin.section} aria-label={t("onCall.form.new")}>
           <div className={styles.body}>
             <ScheduleForm
               onCancel={() => setAdding(false)}
@@ -715,13 +724,11 @@ export function OnCallPage() {
       )}
       {stale && updatedAt && <StaleBanner error={describeError(error)} updatedAt={updatedAt} failures={failures} onRetry={refresh} />}
       {!data && error !== null && !isUnauthorized(error) ? (
-        <ErrorState what="on-call schedules" error={describeError(error)} onRetry={refresh} />
+        <ErrorState what={t("onCall.what")} error={describeError(error)} onRetry={refresh} />
       ) : data && schedules.length === 0 ? (
         !adding && (
         <EmptyState>
-          {canCreate
-            ? "No schedule yet. Alerts go to the channels only. Create one to tell whoever is on call."
-            : "You are on no schedule. Administrators put people on call."}
+          {canCreate ? t("onCall.empty.admin") : t("onCall.empty.other")}
           </EmptyState>
         )
       ) : (

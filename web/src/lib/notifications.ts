@@ -9,6 +9,8 @@ export interface ChannelScope {
   label: string;
   /** What it means, in plain words. */
   note: string;
+  /** What it covers inside a sentence: "everything", "acme", "all sites", "acme / paris". */
+  place: string;
   customer_id: string | null;
   site_id: string | null;
 }
@@ -21,6 +23,7 @@ function everything(): ChannelScope {
     value: EVERYTHING_VALUE,
     label: t("notifications.scope.everything"),
     note: t("notifications.scope.everythingNote"),
+    place: t("notifications.scope.everythingPlace"),
     customer_id: null,
     site_id: null,
   };
@@ -32,6 +35,7 @@ function customerScope(id: string, name: string, named: boolean): ChannelScope {
     value: `customer:${id}`,
     label: named ? t("notifications.scope.allOf", { name }) : t("notifications.scope.allSites"),
     note: named ? t("notifications.scope.customerNote", { name }) : t("notifications.scope.allSitesNote"),
+    place: named ? name : t("notifications.scope.allSitesPlace"),
     customer_id: id,
     site_id: null,
   };
@@ -42,6 +46,7 @@ function siteScope(id: string, name: string, customer: string, named: boolean): 
     value: `site:${id}`,
     label: named ? `${customer} / ${name}` : name,
     note: t("notifications.scope.siteNote", { name }),
+    place: named ? `${customer} / ${name}` : name,
     customer_id: null,
     site_id: id,
   };
