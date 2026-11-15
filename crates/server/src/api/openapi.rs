@@ -209,7 +209,8 @@ fn idempotency_key(operation: &mut Operation) {
                     .min_length(Some(1))
                     .max_length(Some(255)),
             ))
-            .build(),
+            .build()
+            .into(),
     );
     let responses = &mut operation.responses.responses;
     if let Some(RefOr::T(conflict)) = responses.get_mut("409") {
@@ -280,9 +281,10 @@ fn errors(operation: &mut Operation) {
         limited.headers.insert(
             "Retry-After".into(),
             HeaderBuilder::new()
-                .schema(ObjectBuilder::new().schema_type(Type::Integer))
+                .schema(Some(ObjectBuilder::new().schema_type(Type::Integer)))
                 .description(Some("Seconds until the key's window ends."))
-                .build(),
+                .build()
+                .into(),
         );
     }
 }
@@ -961,6 +963,11 @@ mod tests {
                     assert!(has_example(&body["content"]), "{at}: no request example");
                 }
                 for (status, response) in op["responses"].as_object().unwrap() {
+                    // OpenAPI requires it; utoipa 6 no longer writes an empty one.
+                    assert!(
+                        response.get("$ref").is_some() || response.get("description").is_some(),
+                        "{at}: no description for {status}"
+                    );
                     if status.starts_with('2') {
                         if let Some(content) = response.get("content") {
                             assert!(has_example(content), "{at}: no example for {status}");

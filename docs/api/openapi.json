@@ -19,7 +19,7 @@
         "operationId": "list_agent_releases",
         "responses": {
           "200": {
-            "description": "",
+            "description": "The agent releases this server holds",
             "content": {
               "application/json": {
                 "schema": {
@@ -140,7 +140,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "Imported",
             "content": {
               "application/json": {
                 "schema": {
@@ -283,7 +283,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "Imported",
             "content": {
               "application/json": {
                 "schema": {
@@ -397,7 +397,7 @@
         "operationId": "auto_update_status",
         "responses": {
           "200": {
-            "description": "",
+            "description": "The settings and each rollout",
             "content": {
               "application/json": {
                 "schema": {
@@ -1132,7 +1132,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The campaigns",
             "content": {
               "application/json": {
                 "schema": {
@@ -1546,7 +1546,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The campaign and its servers",
             "content": {
               "application/json": {
                 "schema": {
@@ -1767,7 +1767,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "Paused",
             "content": {
               "application/json": {
                 "schema": {
@@ -2008,7 +2008,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "Resumed",
             "content": {
               "application/json": {
                 "schema": {
@@ -2249,7 +2249,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "Started, or scheduled for its start time",
             "content": {
               "application/json": {
                 "schema": {
@@ -2490,7 +2490,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "Stopped",
             "content": {
               "application/json": {
                 "schema": {
@@ -6403,7 +6403,7 @@
         "operationId": "list_install_keys",
         "responses": {
           "200": {
-            "description": "",
+            "description": "The install keys",
             "content": {
               "application/json": {
                 "schema": {
@@ -6565,7 +6565,7 @@
         },
         "responses": {
           "201": {
-            "description": "",
+            "description": "Created; the key itself is shown this once",
             "content": {
               "application/json": {
                 "schema": {
@@ -9139,7 +9139,7 @@
         "operationId": "list_mirrors",
         "responses": {
           "200": {
-            "description": "",
+            "description": "The mirrors",
             "content": {
               "application/json": {
                 "schema": {
@@ -9425,7 +9425,7 @@
         "operationId": "mirror_catalog",
         "responses": {
           "200": {
-            "description": "",
+            "description": "What can be mirrored",
             "content": {
               "application/json": {
                 "schema": {
@@ -9555,7 +9555,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The mirror and its snapshots",
             "content": {
               "application/json": {
                 "schema": {
@@ -9912,7 +9912,7 @@
         },
         "responses": {
           "202": {
-            "description": "",
+            "description": "Snapshot started",
             "content": {
               "application/json": {
                 "schema": {
@@ -10056,7 +10056,7 @@
         ],
         "responses": {
           "202": {
-            "description": "",
+            "description": "Sync started",
             "content": {
               "application/json": {
                 "schema": {
@@ -13997,7 +13997,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The relays",
             "content": {
               "application/json": {
                 "schema": {
@@ -14145,7 +14145,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The relay",
             "content": {
               "application/json": {
                 "schema": {
@@ -14485,7 +14485,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "Revoked",
             "content": {
               "application/json": {
                 "schema": {
@@ -14648,7 +14648,7 @@
         },
         "responses": {
           "202": {
-            "description": "",
+            "description": "Update queued",
             "content": {
               "application/json": {
                 "schema": {
@@ -15279,7 +15279,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "How the rules classify the command",
             "content": {
               "application/json": {
                 "schema": {
@@ -15501,7 +15501,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The events",
             "content": {
               "application/json": {
                 "schema": {
@@ -15684,7 +15684,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The remediation incidents",
             "content": {
               "application/json": {
                 "schema": {
@@ -15822,7 +15822,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The incident and its steps",
             "content": {
               "application/json": {
                 "schema": {
@@ -16000,7 +16000,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The policies",
             "content": {
               "application/json": {
                 "schema": {
@@ -16273,7 +16273,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The rules",
             "content": {
               "application/json": {
                 "schema": {
@@ -26144,7 +26144,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
+            "description": "The enrollment tokens",
             "content": {
               "application/json": {
                 "schema": {
@@ -26299,7 +26299,7 @@
         },
         "responses": {
           "201": {
-            "description": "",
+            "description": "Created; the token itself is shown this once",
             "content": {
               "application/json": {
                 "schema": {
@@ -27460,11 +27460,11 @@
           "central": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/CentralRelease",
                 "description": "The release `central` commands install; `null` with nothing cached."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -27709,11 +27709,11 @@
           "provider": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AiProviderKind",
                 "description": "Absent keeps the stored provider."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -27748,11 +27748,11 @@
           "provider": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AiProviderKind",
                 "description": "Absent uses the stored provider."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -27874,11 +27874,11 @@
           "rollout": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AutoUpdateRollout",
                 "description": "The rollout of `target`, once its first update was queued."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -28066,11 +28066,11 @@
           "phase": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AutoUpdateSitePhase",
                 "description": "`null` when automatic updates do not apply to it or it has\nnothing to update."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -28324,11 +28324,11 @@
           "last": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/BackupRun",
                 "description": "The last backup, running or finished, of any kind."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -28588,11 +28588,11 @@
           "rotation": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/CaRotation",
                 "description": "The change under way; `null` when none is."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -28693,11 +28693,11 @@
           "sources": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/CampaignSources",
                 "description": "The pinned snapshots, if any (ADR-0038)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -28928,11 +28928,11 @@
           "sources": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/CampaignSources",
                 "description": "Snapshots to pin every server to during its update (ADR-0038)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -29464,11 +29464,11 @@
           "latest": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/LatestRelease",
                 "description": "`null` when the release could not be fetched or verified."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -31301,11 +31301,11 @@
               "follow_up": {
                 "oneOf": [
                   {
-                    "type": "null"
-                  },
-                  {
                     "$ref": "#/components/schemas/FollowUpView",
                     "description": "Who is told next if nobody acknowledges (ADR-0082); `null` when no\nfollow-up started: a warning, or not sent yet."
+                  },
+                  {
+                    "type": "null"
                   }
                 ]
               },
@@ -32267,11 +32267,11 @@
           "license": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/LicenseTerms",
                 "description": "What the installed key says; `null` without a key or when it no\nlonger verifies."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -32530,11 +32530,11 @@
           "disk": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/Disk",
                 "description": "The disk of `mirror_dir`; `null` when unknown."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -32848,11 +32848,11 @@
               "last_run": {
                 "oneOf": [
                   {
-                    "type": "null"
-                  },
-                  {
                     "$ref": "#/components/schemas/MirrorRunSummary",
                     "description": "`null` before the first run."
+                  },
+                  {
+                    "type": "null"
                   }
                 ]
               }
@@ -33151,11 +33151,11 @@
           "problem": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/OnCallGap",
                 "description": "Why they could not be told now; `null` when they can be."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -33305,22 +33305,22 @@
           "next": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/OnCallTurn",
                 "description": "The next one who takes over; `null` when nobody else does within\nthe horizon."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "now": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/OnCallTurn",
                 "description": "Who is on call now; `null` only without members."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -33466,11 +33466,11 @@
           "problem": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/OnCallGap",
                 "description": "Why this person cannot be told: the period is a gap. `null` when\nthey can be."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -33608,11 +33608,11 @@
           "combine": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/PanelCombine",
                 "description": "Charts and figures."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -33649,11 +33649,11 @@
           "order": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/PanelOrder",
                 "description": "Top lists."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -34216,11 +34216,11 @@
           "update": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/PluginUpdate",
                 "description": "Set when it replaces an installed version."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -34780,11 +34780,11 @@
           "mapping": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ProxmoxMapping",
                 "description": "The VM or container the server runs in; `null` when not mapped."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -34957,11 +34957,11 @@
           "last_update": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/RelayCommand",
                 "description": "Its latest self-update; `null` if it never had one."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -35146,11 +35146,11 @@
               "certificate": {
                 "oneOf": [
                   {
-                    "type": "null"
-                  },
-                  {
                     "$ref": "#/components/schemas/CertificateView",
                     "description": "The certificate issued last to the relay, revoked or not."
+                  },
+                  {
+                    "type": "null"
                   }
                 ]
               },
@@ -35275,11 +35275,11 @@
           "mirror": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ImageRef",
                 "description": "The mirror tools (ADR-0067); not in older releases."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -35932,11 +35932,11 @@
           "tier": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/Tier",
                 "description": "`read_only` or `low_impact` for an `allow` rule; `null` or absent\nfor the other kinds."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -36038,11 +36038,11 @@
           "reason": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/RevocationReason",
                 "description": "`unspecified` when absent; recorded in the revocation list."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -36437,22 +36437,22 @@
               "ai_commands_change": {
                 "oneOf": [
                   {
-                    "type": "null"
-                  },
-                  {
                     "$ref": "#/components/schemas/AiCommandsChange",
                     "description": "The last time AI commands were turned on or off from the web\ninterface, `null` if never (ADR-0098)."
+                  },
+                  {
+                    "type": "null"
                   }
                 ]
               },
               "certificate": {
                 "oneOf": [
                   {
-                    "type": "null"
-                  },
-                  {
                     "$ref": "#/components/schemas/CertificateView",
                     "description": "The certificate issued last to this agent, revoked or not; `null`\nwhen the CA never issued one (a server row created by hand)."
+                  },
+                  {
+                    "type": "null"
                   }
                 ]
               }
@@ -36500,11 +36500,11 @@
           "retention": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/Retention",
                 "description": "`null` without an updater that reports it, as outside the compose\ndeployment: the stores' flags are then not this server's to set."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -36670,11 +36670,11 @@
           "acknowledgement": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AcknowledgementNote",
                 "description": "The latest acknowledgement of its open incidents (ADR-0130);\n`null` when none is acknowledged."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -36790,11 +36790,11 @@
           "silence": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SilenceNote",
                 "description": "That silence: who made it and why (ADR-0130); `null` without one."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -37452,11 +37452,11 @@
           "kind": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/GuestKind",
                 "description": "The mapped guest's kind, so the reason can say VM or container."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -37494,11 +37494,11 @@
               "kept": {
                 "oneOf": [
                   {
-                    "type": "null"
-                  },
-                  {
                     "$ref": "#/components/schemas/SnapshotKept",
                     "description": "Why it stays."
+                  },
+                  {
+                    "type": "null"
                   }
                 ]
               }
@@ -37536,11 +37536,11 @@
           "changing_to": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SourcesUsing",
                 "description": "A change on its way to the server; `null` when none."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -37579,11 +37579,11 @@
           "windows_update_source": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/WindowsUpdateSource",
                 "description": "Windows servers: where Windows Update takes updates from, from the\nlatest package report. `null` on Linux and until an agent that\nreports it sends a report (ADR-0086)."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -38061,11 +38061,11 @@
           "available": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AvailableRelease",
                 "description": "A newer release the last check saw."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -38088,22 +38088,22 @@
           "update": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/UpdateRun",
                 "description": "The last update, running or finished."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "updater": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/UpdaterView",
                 "description": "What the updater last reported; `None` when it never did."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -38130,11 +38130,11 @@
           "running": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/RunningServer",
                 "description": "What runs now; `null` before the updater first looked."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -38384,11 +38384,11 @@
           "automatic": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/WindowsUpdateAutomatic",
                 "description": "`null` when policy leaves it to Windows."
+              },
+              {
+                "type": "null"
               }
             ]
           },
