@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { Banner } from "@/components/ui/PageState";
+import { t } from "@/i18n";
 import { api } from "@/lib/api";
 import { authorityNotice } from "@/lib/certificateAuthority";
 import { CERTIFICATE_AUTHORITY_PATH } from "@/lib/routes";
@@ -29,7 +30,7 @@ export function CertificateAuthorityBanner() {
   return (
     <div className={styles.notice}>
       <Banner tone={urgent ? "bad" : "warn"}>
-        <strong>{notice}</strong> <Link href={CERTIFICATE_AUTHORITY_PATH}>See the certificate authority</Link>
+        <strong>{notice}</strong> <Link href={CERTIFICATE_AUTHORITY_PATH}>{t("shell.authority.see")}</Link>
       </Banner>
     </div>
   );

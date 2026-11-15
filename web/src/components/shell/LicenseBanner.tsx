@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { Banner } from "@/components/ui/PageState";
+import { t } from "@/i18n";
 import { api } from "@/lib/api";
 import { licenseNotice } from "@/lib/license";
 import { LICENSE_PATH } from "@/lib/routes";
@@ -27,7 +28,7 @@ export function LicenseBanner() {
   return (
     <div className={styles.notice}>
       <Banner tone={view?.state === "expires_soon" ? "warn" : "bad"}>
-        <strong>{notice}</strong> <Link href={LICENSE_PATH}>See the license</Link>
+        <strong>{notice}</strong> <Link href={LICENSE_PATH}>{t("shell.license.see")}</Link>
       </Banner>
     </div>
   );

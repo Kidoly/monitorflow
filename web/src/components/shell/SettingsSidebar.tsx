@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, useId, useState } from "react";
 
+import { t } from "@/i18n";
 import type { Me } from "@/lib/api";
 import { SETTINGS_PATH } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
@@ -34,19 +35,19 @@ export function SettingsSidebar({ me, pathname, backHref }: { me: Me; pathname: 
     <>
       <Link href={backHref} className={cx(styles.item, styles.back)}>
         <Icon name="back" />
-        <span className={styles.text}>Back</span>
+        <span className={styles.text}>{t("shell.settings.back")}</span>
       </Link>
       <Link href={scopedHref(SETTINGS_PATH, scope)} className={styles.settingsTitle}>
-        Settings
+        {t("shell.nav.settings")}
       </Link>
       <label htmlFor={searchId} className="visually-hidden">
-        Search settings
+        {t("shell.settings.search")}
       </label>
       <input
         id={searchId}
         type="search"
         className={cx(fieldClass, styles.settingsSearch)}
-        placeholder="Search settings…"
+        placeholder={t("shell.settings.searchPlaceholder")}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
@@ -59,7 +60,7 @@ export function SettingsSidebar({ me, pathname, backHref }: { me: Me; pathname: 
         autoComplete="off"
         spellCheck={false}
       />
-      {groups.length === 0 && <p className={styles.noMatch}>No settings match.</p>}
+      {groups.length === 0 && <p className={styles.noMatch}>{t("shell.settings.noMatch")}</p>}
       {groups.map((group) => (
         <Fragment key={group.heading}>
           <div className={styles.heading}>{group.heading}</div>
@@ -77,7 +78,7 @@ export function SettingsSidebar({ me, pathname, backHref }: { me: Me; pathname: 
                 {needsAttention(status) && (
                   <span className={styles.flag}>
                     <Label tone={status!.tone} small>
-                      {status!.tone === "bad" ? "Critical" : "Warning"}
+                      {status!.tone === "bad" ? t("common.state.critical") : t("common.state.warning")}
                     </Label>
                   </span>
                 )}

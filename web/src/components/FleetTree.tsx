@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Fragment, type ReactNode, useState } from "react";
 
 import type { ServerState } from "@/lib/api";
-import { SERVER_STATES, STATE_WORDS } from "@/lib/serverState";
+import { SERVER_STATES, STATE_TONES, stateWord } from "@/lib/serverState";
 import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { type Column, type SortState, nextSort, sortRows } from "@/components/ui/DataTable";
@@ -216,7 +216,8 @@ function Pills<T extends TreeRow>({ rows, href }: { rows: T[]; href: (state: Ser
   for (const state of SERVER_STATES) {
     const of = rows.filter((r) => r.state === state);
     if (of.length === 0) continue;
-    const [word, tone] = STATE_WORDS[state];
+    const word = stateWord(state);
+    const tone = STATE_TONES[state];
     const lone = of.length === 1 && NAMED.includes(state) ? of[0]! : null;
     pills.push(
       <li key={state}>

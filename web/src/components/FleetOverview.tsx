@@ -11,7 +11,7 @@ import { administersCustomer, multiCustomer, useMe } from "@/lib/me";
 import { incidentsHref, serverHref, TOKENS_PATH } from "@/lib/routes";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
 import { formatSensorValue } from "@/lib/sensors";
-import { isServerState, SERVER_STATES, STATE_WORDS, serverState, stateHref } from "@/lib/serverState";
+import { isServerState, SERVER_STATES, STATE_TONES, serverState, stateWord, stateHref } from "@/lib/serverState";
 import { REFRESH_MS, usePolledData } from "@/lib/usePolledData";
 import { useUrlParams } from "@/lib/urlState";
 import { Button, ButtonLink } from "@/components/ui/Button";
@@ -82,7 +82,7 @@ function toRows(fleet: Fleet, now: Date): Row[] {
     const rank = state === "ok" && certificateWarning ? CERTIFICATE_RANK : RANK[state];
     const what = incident
       ? `${incidentTitle(incident)}${isOffline(incident) ? "" : ` ${formatSensorValue(incident.metric, incident.last_value)}`}`
-      : STATE_WORDS[state][0];
+      : stateWord(state);
     return {
       key: server.id,
       customer: { id: server.customer_id, name: server.customer_name },
@@ -164,7 +164,7 @@ export function FleetOverview() {
     {
       key: "status",
       header: "Status",
-      cell: (r) => <Label tone={STATE_WORDS[r.state][1]}>{STATE_WORDS[r.state][0]}</Label>,
+      cell: (r) => <Label tone={STATE_TONES[r.state]}>{stateWord(r.state)}</Label>,
       sortValue: (r) => SERVER_STATES.indexOf(r.state),
     },
     { key: "problem", header: "Problem", cell: (r) => <Problem row={r} now={now} scope={scope} /> },
@@ -212,7 +212,7 @@ export function FleetOverview() {
               {
                 name: "state",
                 label: "Status",
-                options: SERVER_STATES.map((value) => ({ value, label: STATE_WORDS[value][0] })),
+                options: SERVER_STATES.map((value) => ({ value, label: stateWord(value) })),
               },
               ...(scope.siteId ? [] : [{ name: "site", label: "Site", options: sites.map(([value, label]) => ({ value, label })) }]),
               { name: "os", label: "OS", options: families.map((f) => ({ value: f, label: formatOs(f, null) })) },

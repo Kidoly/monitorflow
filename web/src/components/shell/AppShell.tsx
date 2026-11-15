@@ -7,6 +7,7 @@ import { Fragment, type ReactNode, useCallback, useEffect, useState } from "reac
 import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { Label } from "@/components/ui/StatusLabel";
+import { t } from "@/i18n";
 import { type Customer, LOGIN_PATH, type Me, type Site, api, describeError, isAbortError } from "@/lib/api";
 import { administersEverything, multiCustomer } from "@/lib/me";
 import { type Scope, scopedHref, useScope } from "@/lib/scope";
@@ -21,6 +22,7 @@ import { SETTINGS_ITEM, isCurrent, visibleNavigation } from "./navigation";
 import { SettingsSidebar } from "./SettingsSidebar";
 import styles from "./Shell.module.css";
 import { ScopeSwitcher } from "./ScopeSwitcher";
+import { LanguageSelect } from "./LanguageSelect";
 import { StatusStrip } from "./StatusStrip";
 import { ThemeToggle } from "./ThemeToggle";
 import { CertificateAuthorityBanner } from "./CertificateAuthorityBanner";
@@ -106,21 +108,25 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
       await api.logout();
       router.replace(LOGIN_PATH);
     } catch (e) {
-      setError(`Sign-out failed. ${describeError(e)}`);
+      setError(t("shell.signOutFailed", { error: describeError(e) }));
     }
   }
 
-  const roles = [...new Set(me.roles.map((grant) => grant.role))].join(", ") || "no role";
+  const roles =
+    [...new Set(me.roles.map((grant) => grant.role))].map((role) => t(`common.role.${role}`)).join(", ") ||
+    t("common.role.none");
+  // "500+" counts as many.
+  const openCount = countLabel ? parseInt(countLabel, 10) : 0;
 
   return (
     <div className={styles.app}>
       <a href="#main" className={styles.skip}>
-        Skip to content
+        {t("shell.skip")}
       </a>
       <div className={styles.topBar}>
         <Button
           className={styles.menuButton}
-          aria-label="Menu"
+          aria-label={t("shell.menu")}
           aria-expanded={menuOpen}
           aria-controls="main-nav"
           onClick={() => setMenuOpen((open) => !open)}
@@ -132,7 +138,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         </Link>
         {countLabel && (
           <Link href={scopedHref("/incidents/?state=open", scope)} className={styles.topCount}>
-            <Label tone="bad">{countLabel} open</Label>
+            <Label tone="bad">{t("shell.open.short", { count: openCount, label: countLabel })}</Label>
           </Link>
         )}
       </div>
@@ -159,7 +165,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
             )}
             {visibleNavigation(me).map((section) => (
               <Fragment key={section.heading}>
-                <div className={styles.heading}>{section.heading}</div>
+                <div className={styles.heading}>{t(section.heading)}</div>
                 {section.items.map((item) => (
                   <Link
                     key={item.label}
@@ -168,9 +174,9 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
                     aria-current={isCurrent(item, pathname) ? "page" : undefined}
                   >
                     <Icon name={item.icon} />
-                    <span className={styles.text}>{item.label}</span>
+                    <span className={styles.text}>{t(item.label)}</span>
                     {item.incidentCount && countLabel && (
-                      <span className={styles.count} aria-label={`${countLabel} open incidents`}>
+                      <span className={styles.count} aria-label={t("shell.open.incidents", { count: openCount, label: countLabel })}>
                         {countLabel}
                       </span>
                     )}
@@ -185,11 +191,11 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
                 aria-current={isCurrent(SETTINGS_ITEM, pathname) ? "page" : undefined}
               >
                 <Icon name={SETTINGS_ITEM.icon} />
-                <span className={styles.text}>{SETTINGS_ITEM.label}</span>
+                <span className={styles.text}>{t(SETTINGS_ITEM.label)}</span>
                 {pressing && (
                   <span
                     className={cx(styles.count, pressing.tone === "warn" && styles.countWarn)}
-                    aria-label={`${pressing.count} ${pressing.count === 1 ? "setting needs" : "settings need"} attention`}
+                    aria-label={t("shell.settings.attention", { count: pressing.count })}
                   >
                     {pressing.count}
                   </span>
@@ -204,7 +210,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           </span>
           <button type="button" className={styles.signOut} onClick={() => void signOut()}>
             <Icon name="signOut" />
-            <span className={styles.signOutText}>Sign out</span>
+            <span className={styles.signOutText}>{t("shell.signOut")}</span>
           </button>
         </div>
         {error && (
@@ -213,6 +219,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           </p>
         )}
         <ThemeToggle />
+        <LanguageSelect />
       </nav>
       <main id="main" className={styles.main} tabIndex={-1}>
         <StatusStrip />

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { Banner } from "@/components/ui/PageState";
+import { t } from "@/i18n";
 import { api } from "@/lib/api";
 import { SERVER_UPDATE_PATH } from "@/lib/routes";
 import { inProgress } from "@/lib/serverUpdate";
@@ -27,8 +28,9 @@ export function UpdateBanner() {
   return (
     <div className={styles.notice}>
       <Banner tone="info">
-        <strong>MonitorFlow {view.available.version} is available.</strong> This server runs {view.running_version}.{" "}
-        <Link href={SERVER_UPDATE_PATH}>Review and update</Link>
+        <strong>{t("shell.update.available", { version: view.available.version })}</strong>{" "}
+        {t("shell.update.running", { version: view.running_version })}{" "}
+        <Link href={SERVER_UPDATE_PATH}>{t("shell.update.review")}</Link>
       </Banner>
     </div>
   );

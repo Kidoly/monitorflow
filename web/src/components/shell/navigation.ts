@@ -1,3 +1,4 @@
+import type { PlainKey } from "@/i18n";
 import type { Me } from "@/lib/api";
 import { administersEverything, isAdministrator, readsCustomers } from "@/lib/me";
 import {
@@ -15,7 +16,7 @@ import {
 import type { IconName } from "./icons";
 
 export interface NavItem {
-  label: string;
+  label: PlainKey;
   /** Null while the page does not exist yet: the item is hidden. */
   href: string | null;
   icon: IconName;
@@ -28,7 +29,7 @@ export interface NavItem {
 }
 
 export interface NavSection {
-  heading: string;
+  heading: PlainKey;
   items: NavItem[];
   /** UX only: the API refuses what the roles do not allow. */
   visible?: (me: Me) => boolean;
@@ -41,37 +42,37 @@ export interface NavSection {
  */
 export const NAVIGATION: NavSection[] = [
   {
-    heading: "Monitoring",
+    heading: "shell.nav.monitoring",
     items: [
-      { label: "Fleet", href: "/", icon: "fleet", alsoCurrent: ["/servers/"] },
-      { label: "Dashboards", href: DASHBOARDS_PATH, icon: "dashboards" },
-      { label: "Incidents", href: "/incidents/", icon: "incidents", incidentCount: true },
-      { label: "Silences", href: SILENCES_PATH, icon: "bell" },
-      { label: "On call", href: ON_CALL_PATH, icon: "users" },
+      { label: "shell.nav.fleet", href: "/", icon: "fleet", alsoCurrent: ["/servers/"] },
+      { label: "shell.nav.dashboards", href: DASHBOARDS_PATH, icon: "dashboards" },
+      { label: "shell.nav.incidents", href: "/incidents/", icon: "incidents", incidentCount: true },
+      { label: "shell.nav.silences", href: SILENCES_PATH, icon: "bell" },
+      { label: "shell.nav.onCall", href: ON_CALL_PATH, icon: "users" },
     ],
   },
   {
-    heading: "Updates",
+    heading: "shell.nav.updates",
     items: [
-      { label: "Mirrors", href: MIRRORS_PATH, icon: "mirrors", visible: administersEverything },
-      { label: "Automatic updates", href: AUTO_UPDATE_PATH, icon: "campaigns", visible: administersEverything },
+      { label: "shell.nav.mirrors", href: MIRRORS_PATH, icon: "mirrors", visible: administersEverything },
+      { label: "shell.nav.automaticUpdates", href: AUTO_UPDATE_PATH, icon: "campaigns", visible: administersEverything },
       // The handoff moves it to /updates/campaigns/ with its redesign.
-      { label: "Campaigns", href: CAMPAIGNS_PATH, icon: "campaigns" },
+      { label: "shell.nav.campaigns", href: CAMPAIGNS_PATH, icon: "campaigns" },
     ],
     visible: readsCustomers,
   },
   {
-    heading: "Remediation",
+    heading: "shell.nav.remediation",
     items: [
-      { label: "Approvals", href: APPROVALS_PATH, icon: "approvals" },
-      { label: "Audit log", href: AUDIT_PATH, icon: "audit" },
+      { label: "shell.nav.approvals", href: APPROVALS_PATH, icon: "approvals" },
+      { label: "shell.nav.audit", href: AUDIT_PATH, icon: "audit" },
     ],
   },
 ];
 
 /** The one way to the administration pages, pinned at the bottom of the sidebar. */
 export const SETTINGS_ITEM: NavItem = {
-  label: "Settings",
+  label: "shell.nav.settings",
   href: SETTINGS_PATH,
   icon: "settings",
   // Everything under /settings/ swaps the sidebar for the settings list; the list itself keeps this one.

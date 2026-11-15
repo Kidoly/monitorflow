@@ -6,14 +6,14 @@ import { useCallback } from "react";
 
 import { cx } from "@/components/ui/cx";
 import { toneClass } from "@/components/ui/StatusLabel";
+import { t } from "@/i18n";
+import { activeLocale } from "@/i18n/locale";
 import { api } from "@/lib/api";
 import { scopedHref, useScope } from "@/lib/scope";
-import { SERVER_STATES, STATE_WORDS, stateHref } from "@/lib/serverState";
+import { SERVER_STATES, STATE_TONES, stateHref } from "@/lib/serverState";
 import { usePolledData } from "@/lib/usePolledData";
 
 import styles from "./StatusStrip.module.css";
-
-const number = new Intl.NumberFormat("en");
 
 /**
  * The servers of the scope by state, at the top of every page (ADR-0130).
@@ -36,11 +36,11 @@ export function StatusStrip() {
   if (!data || data.total === 0) return null;
 
   return (
-    <nav aria-label="Servers by status" className={styles.strip}>
+    <nav aria-label={t("shell.status.label")} className={styles.strip}>
       <ul className={styles.list}>
         {SERVER_STATES.map((state) => {
           const count = data[state];
-          const [word, tone] = STATE_WORDS[state];
+          const tone = STATE_TONES[state];
           const active = current === state;
           const tinted = count > 0 && state !== "ok";
           return (
@@ -50,7 +50,7 @@ export function StatusStrip() {
                 className={cx(styles.item, tinted && toneClass(tone), tinted && styles.tinted, active && styles.active)}
                 aria-current={active ? "page" : undefined}
               >
-                <span className={styles.count}>{number.format(count)}</span> {word}
+                <span className={styles.count}>{count.toLocaleString(activeLocale())}</span> {t(`common.state.${state}`)}
               </Link>
             </li>
           );
