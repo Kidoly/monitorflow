@@ -167,7 +167,7 @@ fn list_example() -> serde_json::Value {
 /// parameters and bad values are 400.
 #[utoipa::path(get, path = "/api/v1/campaigns", tag = "campaigns",
     params(campaigns::ListParams),
-    responses((status = 200, body = campaigns::CampaignList, example = list_example)))]
+    responses((status = 200, description = "The campaigns", body = campaigns::CampaignList, example = list_example)))]
 fn list_campaigns() {}
 
 /// Create a campaign
@@ -244,7 +244,7 @@ fn create_campaign() {}
 #[utoipa::path(get, path = "/api/v1/campaigns/{id}", tag = "campaigns",
     params(("id" = uuid::Uuid, Path, description = "The campaign")),
     responses(
-        (status = 200, body = campaigns::CampaignDetail, example = running),
+        (status = 200, description = "The campaign and its servers", body = campaigns::CampaignDetail, example = running),
         (status = 404, body = ErrorBody, description = "`not_found`: no such campaign, or one of a \
 customer the caller does not read as a whole"),
     ))]
@@ -266,7 +266,7 @@ fn campaign() {}
 #[utoipa::path(post, path = "/api/v1/campaigns/{id}/start", tag = "campaigns",
     params(("id" = uuid::Uuid, Path, description = "The campaign")),
     responses(
-        (status = 200, body = campaigns::CampaignDetail, example = scheduled),
+        (status = 200, description = "Started, or scheduled for its start time", body = campaigns::CampaignDetail, example = scheduled),
         (status = 403, body = ErrorBody, description = "`forbidden`: the caller reads the customer \
 without administering it as a whole. `api_key_scope`: the key lacks the area"),
         (status = 404, body = ErrorBody, description = "`not_found`: no such campaign, or one of a \
@@ -289,7 +289,7 @@ fn start_campaign() {}
 #[utoipa::path(post, path = "/api/v1/campaigns/{id}/pause", tag = "campaigns",
     params(("id" = uuid::Uuid, Path, description = "The campaign")),
     responses(
-        (status = 200, body = campaigns::CampaignDetail, example = paused),
+        (status = 200, description = "Paused", body = campaigns::CampaignDetail, example = paused),
         (status = 403, body = ErrorBody, description = "`forbidden`: the caller reads the customer \
 without administering it as a whole. `api_key_scope`: the key lacks the area"),
         (status = 404, body = ErrorBody, description = "`not_found`: no such campaign, or one of a \
@@ -310,7 +310,7 @@ fn pause_campaign() {}
 #[utoipa::path(post, path = "/api/v1/campaigns/{id}/resume", tag = "campaigns",
     params(("id" = uuid::Uuid, Path, description = "The campaign")),
     responses(
-        (status = 200, body = campaigns::CampaignDetail, example = running),
+        (status = 200, description = "Resumed", body = campaigns::CampaignDetail, example = running),
         (status = 403, body = ErrorBody, description = "`forbidden`: the caller reads the customer \
 without administering it as a whole. `api_key_scope`: the key lacks the area"),
         (status = 404, body = ErrorBody, description = "`not_found`: no such campaign, or one of a \
@@ -332,7 +332,7 @@ fn resume_campaign() {}
 #[utoipa::path(post, path = "/api/v1/campaigns/{id}/stop", tag = "campaigns",
     params(("id" = uuid::Uuid, Path, description = "The campaign")),
     responses(
-        (status = 200, body = campaigns::CampaignDetail, example = stopped),
+        (status = 200, description = "Stopped", body = campaigns::CampaignDetail, example = stopped),
         (status = 403, body = ErrorBody, description = "`forbidden`: the caller reads the customer \
 without administering it as a whole. `api_key_scope`: the key lacks the area"),
         (status = 404, body = ErrorBody, description = "`not_found`: no such campaign, or one of a \

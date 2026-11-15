@@ -48,7 +48,7 @@ pub struct Doc;
 /// Needs a global administrator role and the key area "updates".
 #[utoipa::path(get, path = "/api/v1/auto-update", tag = "automatic updates",
     responses(
-        (status = 200, body = auto_update::StatusView, example = json!({
+        (status = 200, description = "The settings and each rollout", body = auto_update::StatusView, example = json!({
             "settings": {
                 "enabled": true, "enabled_locked": false, "paused": false, "failure_threshold": 2
             },

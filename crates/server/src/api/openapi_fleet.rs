@@ -176,7 +176,7 @@ fn created_key() -> serde_json::Value {
 /// otherwise, also for a site's administrator.
 #[utoipa::path(get, path = "/api/v1/tokens", tag = "enrollment", params(tokens::ListParams),
     responses(
-        (status = 200, body = tokens::TokenList, example = json!({
+        (status = 200, description = "The enrollment tokens", body = tokens::TokenList, example = json!({
             "tokens": [token_view("used", Some("2026-11-14T09:04:12Z"))],
             "next_cursor": null
         })),
@@ -225,7 +225,7 @@ fn list_tokens() {}
         }))),
     )),
     responses(
-        (status = 201, body = tokens::CreatedToken, example = json!(created_token())),
+        (status = 201, description = "Created; the token itself is shown this once", body = tokens::CreatedToken, example = json!(created_token())),
         (status = 400, body = ErrorBody, description = "A field is missing, unknown or out of \
 range, `peer_id` is not a valid ID, `server_names` on an agent token or a name that is not a DNS name \
 or IP address: `invalid`"),
@@ -271,7 +271,7 @@ fn delete_token() {}
 /// otherwise, also for a site's administrator.
 #[utoipa::path(get, path = "/api/v1/install-keys", tag = "enrollment",
     responses(
-        (status = 200, body = install_keys::KeyList, example = json!({
+        (status = 200, description = "The install keys", body = install_keys::KeyList, example = json!({
             "keys": [key_view("active")],
             "pending_hosts": [{
                 "peer_id": "web-2",
@@ -325,7 +325,7 @@ fn list_install_keys() {}
         }))),
     )),
     responses(
-        (status = 201, body = install_keys::CreatedKey, example = json!(created_key())),
+        (status = 201, description = "Created; the key itself is shown this once", body = install_keys::CreatedKey, example = json!(created_key())),
         (status = 400, body = ErrorBody, description = "A field is missing, unknown or out of \
 range: `invalid`"),
         (status = 403, body = ErrorBody, description = "The caller does not administer the site's \
@@ -455,7 +455,7 @@ fn relay() -> serde_json::Value {
 /// whatever its areas, to turn names into IDs.
 #[utoipa::path(get, path = "/api/v1/relays", tag = "relays", params(servers::ListParams),
     responses(
-        (status = 200, body = relays::RelayList, example = json!({
+        (status = 200, description = "The relays", body = relays::RelayList, example = json!({
             "relays": [relay()],
             "next_cursor": null
         })),
@@ -474,7 +474,7 @@ fn list_relays() {}
 #[utoipa::path(get, path = "/api/v1/relays/{id}", tag = "relays",
     params(("id" = uuid::Uuid, Path, description = "The relay's `id`")),
     responses(
-        (status = 200, body = relays::RelayDetail, example = json!({
+        (status = 200, description = "The relay", body = relays::RelayDetail, example = json!({
             "id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
             "peer_id": "relay-paris",
             "name": "relay-paris",
@@ -542,7 +542,7 @@ fn relay_detail() {}
     params(("id" = uuid::Uuid, Path, description = "The relay's `id`")),
     request_body(content = revoke::RevokeRequest, example = json!({ "reason": "cessation_of_operation" })),
     responses(
-        (status = 200, body = revoke::Revoked, example = json!({
+        (status = 200, description = "Revoked", body = revoke::Revoked, example = json!({
             "revoked_at": "2026-11-14T10:05:00Z",
             "reason": "cessation_of_operation",
             "serials": ["3f9a1c0b7e2d", "1b2c3d4e5f60"],
@@ -576,7 +576,7 @@ fn revoke_relay() {}
         "health_timeout_s": 300
     })),
     responses(
-        (status = 202, body = relay_commands::RelayCommand, example = json!(relay_command("queued"))),
+        (status = 202, description = "Update queued", body = relay_commands::RelayCommand, example = json!(relay_command("queued"))),
         (status = 400, body = ErrorBody, description = "`version` is not like `0.9.2`, \
 `health_timeout_s` is out of range, or a field is unknown: `invalid`"),
         (status = 403, body = ErrorBody, description = "The caller does not administer the relay's \
@@ -627,7 +627,7 @@ fn confirm_relay_names() {}
 /// "updates" area.
 #[utoipa::path(get, path = "/api/v1/agent-releases", tag = "agent releases",
     responses(
-        (status = 200, body = commands::AgentReleases, example = json!({
+        (status = 200, description = "The agent releases this server holds", body = commands::AgentReleases, example = json!({
             "versions": ["0.10.0-rc.1", "0.9.2", "0.9.1"],
             "latest": "0.9.2"
         })),
@@ -671,7 +671,7 @@ struct ReleaseUpload {
 #[utoipa::path(post, path = "/api/v1/agent-releases/import", tag = "agent releases",
     request_body(content = ReleaseUpload, content_type = "multipart/form-data"),
     responses(
-        (status = 200, body = release_import::ImportResult, example = json!({
+        (status = 200, description = "Imported", body = release_import::ImportResult, example = json!({
             "version": "0.9.2",
             "missing": ["monitorflow-agent-windows-x86_64.exe", "monitorflow-agent-windows-x86_64.msi"]
         })),
@@ -701,7 +701,7 @@ fn import_release() {}
         "url": "https://downloads.example.com/monitorflow/v0.9.2/"
     })),
     responses(
-        (status = 200, body = release_import::ImportResult, example = json!({
+        (status = 200, description = "Imported", body = release_import::ImportResult, example = json!({
             "version": "0.9.2",
             "missing": []
         })),
@@ -809,7 +809,7 @@ fn sources_status() -> serde_json::Value {
 /// reach everything, the "updates" area.
 #[utoipa::path(get, path = "/api/v1/mirrors", tag = "mirrors",
     responses(
-        (status = 200, body = mirrors::MirrorList, example = json!({
+        (status = 200, description = "The mirrors", body = mirrors::MirrorList, example = json!({
             "mirrors": [mirror()],
             "keep_snapshots": 3
         })),
@@ -827,7 +827,7 @@ fn list_mirrors() {}
 /// Global administrators only, as for the list.
 #[utoipa::path(get, path = "/api/v1/mirrors/catalog", tag = "mirrors",
     responses(
-        (status = 200, body = mirrors::Catalog, example = json!({
+        (status = 200, description = "What can be mirrored", body = mirrors::Catalog, example = json!({
             "tools": { "available": true, "problem": null },
             "disk": { "free_bytes": 412316860416u64, "total_bytes": 1000204886016u64 },
             "distributions": [
@@ -893,7 +893,7 @@ fn add_mirrors() {}
 #[utoipa::path(get, path = "/api/v1/mirrors/{id}", tag = "mirrors",
     params(("id" = uuid::Uuid, Path, description = "The mirror's `id`")),
     responses(
-        (status = 200, body = mirrors::MirrorDetail, example = json!({
+        (status = 200, description = "The mirror and its snapshots", body = mirrors::MirrorDetail, example = json!({
             "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
             "name": "debian-12",
             "family": "apt",
@@ -993,7 +993,7 @@ fn delete_mirror() {}
 #[utoipa::path(post, path = "/api/v1/mirrors/{id}/sync", tag = "mirrors",
     params(("id" = uuid::Uuid, Path, description = "The mirror's `id`")),
     responses(
-        (status = 202, body = mirrors::RunSummary, example = json!(run_summary("sync", "running"))),
+        (status = 202, description = "Sync started", body = mirrors::RunSummary, example = json!(run_summary("sync", "running"))),
         (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
 key outside the \"updates\" area: `api_key_scope`"),
         (status = 404, body = ErrorBody, description = "No such mirror: `not_found`"),
@@ -1014,7 +1014,7 @@ fn sync_mirror() {}
     params(("id" = uuid::Uuid, Path, description = "The mirror's `id`")),
     request_body(content = mirrors::SnapshotRequest, example = json!({ "name": "before-upgrade" })),
     responses(
-        (status = 202, body = mirrors::RunSummary, example = json!(run_summary("snapshot", "running"))),
+        (status = 202, description = "Snapshot started", body = mirrors::RunSummary, example = json!(run_summary("snapshot", "running"))),
         (status = 400, body = ErrorBody, description = "An invalid `name`, or an unknown field: \
 `invalid`. A name another snapshot of the mirror has makes the run fail instead."),
         (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
@@ -1037,7 +1037,7 @@ fn snapshot_mirror() {}
 #[utoipa::path(get, path = "/api/v1/servers/{id}/sources", tag = "package sources",
     params(("id" = uuid::Uuid, Path, description = "The server's `id`")),
     responses(
-        (status = 200, body = package_sources::SourcesStatus, example = json!(sources_status())),
+        (status = 200, description = "The server's package sources", body = package_sources::SourcesStatus, example = json!(sources_status())),
         (status = 403, body = ErrorBody, description = "The caller has no role: `forbidden`; a key \
 outside the \"updates\" area: `api_key_scope`"),
         (status = 404, body = ErrorBody, description = "No such server, removed, or of a site the \
@@ -1066,7 +1066,7 @@ fn server_sources() {}
         "mode": "replace"
     })),
     responses(
-        (status = 201, body = commands::CommandDetail, example = json!(command("configure_sources"))),
+        (status = 201, description = "Command queued", body = commands::CommandDetail, example = json!(command("configure_sources"))),
         (status = 400, body = ErrorBody, description = "No mirror or more than 32, an unknown \
 mirror or snapshot, a mirror of another family, `ttl_s` out of range, or a Windows server: `invalid`"),
         (status = 403, body = ErrorBody, description = "The caller does not administer the server's \
@@ -1090,7 +1090,7 @@ fn configure_server_sources() {}
 #[utoipa::path(delete, path = "/api/v1/servers/{id}/sources", tag = "package sources",
     params(("id" = uuid::Uuid, Path, description = "The server's `id`")),
     responses(
-        (status = 202, body = commands::CommandDetail, example = json!(command("revert_sources"))),
+        (status = 202, description = "Revert queued", body = commands::CommandDetail, example = json!(command("revert_sources"))),
         (status = 400, body = ErrorBody, description = "A Windows server: `invalid`"),
         (status = 403, body = ErrorBody, description = "The caller does not administer the server's \
 customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`"),
@@ -1115,7 +1115,7 @@ fn revert_server_sources() {}
 #[utoipa::path(post, path = "/api/v1/servers/{id}/sources/use-mirror", tag = "package sources",
     params(("id" = uuid::Uuid, Path, description = "The server's `id`")),
     responses(
-        (status = 201, body = commands::CommandDetail, example = json!(command("configure_sources"))),
+        (status = 201, description = "Command queued", body = commands::CommandDetail, example = json!(command("configure_sources"))),
         (status = 403, body = ErrorBody, description = "The caller does not administer the server's \
 customer: `forbidden`; a key outside the \"updates\" area: `api_key_scope`"),
         (status = 404, body = ErrorBody, description = "No such server, or of a site the caller \
@@ -1135,7 +1135,7 @@ fn server_use_mirror() {}
 #[utoipa::path(get, path = "/api/v1/sites/{id}/sources", tag = "package sources",
     params(("id" = uuid::Uuid, Path, description = "The site's `id`")),
     responses(
-        (status = 200, body = package_sources::SiteSources, example = json!({
+        (status = 200, description = "Each server's package sources", body = package_sources::SiteSources, example = json!({
             "servers": [{
                 "id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d",
                 "hostname": "web-1",
@@ -1172,7 +1172,7 @@ fn site_sources() {}
 #[utoipa::path(post, path = "/api/v1/sites/{id}/sources/use-mirror", tag = "package sources",
     params(("id" = uuid::Uuid, Path, description = "The site's `id`")),
     responses(
-        (status = 200, body = package_sources::SiteChange, example = json!({
+        (status = 200, description = "Queued or skipped, server by server", body = package_sources::SiteChange, example = json!({
             "queued": ["5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d"],
             "skipped": [{
                 "id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
@@ -1199,7 +1199,7 @@ fn site_use_mirror() {}
 #[utoipa::path(delete, path = "/api/v1/sites/{id}/sources", tag = "package sources",
     params(("id" = uuid::Uuid, Path, description = "The site's `id`")),
     responses(
-        (status = 200, body = package_sources::SiteChange, example = json!({
+        (status = 200, description = "Queued or skipped, server by server", body = package_sources::SiteChange, example = json!({
             "queued": ["5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d"],
             "skipped": []
         })),

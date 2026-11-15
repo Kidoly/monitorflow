@@ -51,7 +51,7 @@ pub struct Doc;
 /// paginated: a customer has few rules.
 #[utoipa::path(get, path = "/api/v1/remediation/rules", tag = "risk rules",
     params(remediation::ListParams),
-    responses((status = 200, body = remediation::RuleList, example = json!({
+    responses((status = 200, description = "The rules", body = remediation::RuleList, example = json!({
         "rules": [{
             "id": "6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5b",
             "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
@@ -162,7 +162,7 @@ fn delete_rule() {}
 /// "remediation". Not paginated.
 #[utoipa::path(get, path = "/api/v1/remediation/policies", tag = "risk rules",
     params(remediation::PolicyParams),
-    responses((status = 200, body = remediation::PolicyList, example = json!({
+    responses((status = 200, description = "The policies", body = remediation::PolicyList, example = json!({
         "policies": [{
             "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
             "site_id": null,
@@ -236,7 +236,7 @@ fn set_policy() {}
         "shell": "posix"
     })),
     responses(
-        (status = 200, body = Decision, example = json!({
+        (status = 200, description = "How the rules classify the command", body = Decision, example = json!({
             "tier": "low_impact",
             "rule": {"source": "builtin", "id": "low.systemctl"},
             "reason": "`systemctl restart` of a service"
@@ -261,7 +261,7 @@ fn classify() {}
 /// and bad values are 400.
 #[utoipa::path(get, path = "/api/v1/remediation/incidents", tag = "remediation",
     params(remediation_incidents::ListParams),
-    responses((status = 200, body = remediation_incidents::IncidentList, example = json!({
+    responses((status = 200, description = "The remediation incidents", body = remediation_incidents::IncidentList, example = json!({
         "incidents": [{
             "id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
             "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
@@ -308,7 +308,7 @@ fn list_incidents() {}
 #[utoipa::path(get, path = "/api/v1/remediation/incidents/{id}", tag = "remediation",
     params(("id" = uuid::Uuid, Path, description = "The remediation incident")),
     responses(
-        (status = 200, body = remediation_incidents::IncidentDetail, example = json!({
+        (status = 200, description = "The incident and its steps", body = remediation_incidents::IncidentDetail, example = json!({
             "id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
             "customer_id": "0b8e6f3a-1c2d-4e5f-9a8b-7c6d5e4f3a2b",
             "customer_name": "acme",
@@ -393,7 +393,7 @@ fn incident() {}
 /// `limit` and `cursor`; unknown parameters and bad values are 400.
 #[utoipa::path(get, path = "/api/v1/remediation/events", tag = "remediation",
     params(remediation_events::ListParams),
-    responses((status = 200, body = remediation_events::EventList, example = json!({
+    responses((status = 200, description = "The events", body = remediation_events::EventList, example = json!({
         "events": [{
             "incident_id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
             "seq": 2,
