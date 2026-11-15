@@ -19,3 +19,11 @@ Les guides existent aussi [en anglais](../README.md).
 - [Comment surveiller l'espace disque de serveurs Linux et Windows](surveiller-espace-disque.md) : Soyez prévenu avant qu'un disque se remplisse et arrête vos services : alertes par disque à 85 % et 95 % d'office, et alertes de disque lent.
 - [Comment surveiller les erreurs des fichiers journaux sous Linux et Windows](surveiller-fichiers-journaux.md) : Soyez alerté quand une erreur, un échec de connexion ou un motif choisi apparaît dans un fichier journal, et lisez les journaux système au même endroit.
 - [Comment tout surveiller avec votre propre script (Bash ou PowerShell)](surveiller-avec-votre-script.md) : Transformez un script shell ou PowerShell en vérification avec alerte : codes de sortie pour OK, avertissement et critique, lignes nom=valeur en métriques.
+
+## Bases de données
+
+- [Comment surveiller PostgreSQL](surveiller-postgresql.md) : Soyez alerté quand PostgreSQL s'arrête ou n'accepte plus de connexions sur un serveur Linux, avec deux vérifications du catalogue MonitorFlow.
+- [Comment surveiller MySQL et MariaDB](surveiller-mysql-mariadb.md) : Soyez alerté quand MySQL ou MariaDB s'arrête ou n'accepte plus de connexions, avec les vérifications de service et de port du catalogue MonitorFlow.
+- [Comment surveiller Redis](surveiller-redis.md) : Soyez alerté quand Redis s'arrête ou n'accepte plus de connexions sur un serveur Linux, avec les vérifications de service et de port de MonitorFlow.
+- [Comment surveiller MongoDB](surveiller-mongodb.md) : Soyez alerté quand MongoDB s'arrête ou n'accepte plus de connexions sur un serveur Linux, avec les vérifications du service mongod et du port 27017.
+- [Comment surveiller SQL Server](surveiller-sql-server.md) : Soyez alerté quand une instance SQL Server s'arrête ou refuse les connexions sous Windows, avec les vérifications du service MSSQLSERVER et du port 1433.

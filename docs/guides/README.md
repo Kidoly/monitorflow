@@ -19,3 +19,11 @@ Guides are also available [in French](fr/README.md).
 - [How to monitor disk space on Linux and Windows servers](monitor-disk-space.md): Get warned before a disk fills up and stops your services: per-disk alerts at 85% and 95% out of the box, plus slow-disk alerts.
 - [How to monitor log files for errors on Linux and Windows](monitor-log-files.md): Get alerted when an error, a failed login or any pattern you choose appears in a log file, and read your servers' system logs in one place.
 - [How to monitor anything with your own script (Bash or PowerShell)](monitor-with-your-own-script.md): Turn any shell or PowerShell script into a check with an alert: exit codes for OK, warning and critical, and name=value lines as metrics.
+
+## Databases
+
+- [How to monitor PostgreSQL](monitor-postgresql.md): Get alerted when PostgreSQL stops or stops accepting connections on a Linux server, with two checks from the MonitorFlow catalogue.
+- [How to monitor MySQL and MariaDB](monitor-mysql-mariadb.md): Get alerted when MySQL or MariaDB stops or stops accepting connections, with the service and port checks of the MonitorFlow catalogue.
+- [How to monitor Redis](monitor-redis.md): Get alerted when Redis stops or stops accepting connections on a Linux server, with the service and port checks of MonitorFlow.
+- [How to monitor MongoDB](monitor-mongodb.md): Get alerted when MongoDB stops or stops accepting connections on a Linux server, with the mongod service and port 27017 checks of MonitorFlow.
+- [How to monitor SQL Server](monitor-sql-server.md): Get alerted when a SQL Server instance stops or stops accepting connections on Windows, with the MSSQLSERVER service and port 1433 checks.
