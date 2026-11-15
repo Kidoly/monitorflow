@@ -11,6 +11,7 @@ import {
   type WindowDraft,
   WEEKDAYS,
   campaignTargets,
+  weekdayName,
   emptyDraft,
   newWindow,
   planWaves,
@@ -439,14 +440,14 @@ function WindowRow({
     <div className={own.row} role="group" aria-label={label}>
       {window.kind === "weekly" ? (
         <>
-          {WEEKDAYS.map((day, i) => (
+          {WEEKDAYS.map((day) => (
             <label key={day} className={own.inline}>
               <input
                 type="checkbox"
-                checked={window.weekdays.includes(i + 1)}
-                onChange={(e) => set({ weekdays: toggle(window.weekdays, i + 1, e.target.checked) })}
+                checked={window.weekdays.includes(day)}
+                onChange={(e) => set({ weekdays: toggle(window.weekdays, day, e.target.checked) })}
               />
-              {day}
+              {weekdayName(day)}
             </label>
           ))}
           <label className={own.fld}>

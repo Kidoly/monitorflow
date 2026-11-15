@@ -1,5 +1,8 @@
 // Mirror display helpers without React (ADR-0030).
 
+import { t } from "@/i18n";
+import { activeLocale } from "@/i18n/locale";
+
 import type { Mirror, MirrorRunSummary } from "./api";
 
 /** `https://deb.debian.org/debian/` reads `deb.debian.org/debian`. */
@@ -62,12 +65,15 @@ export function nextSync(
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** "20:30" today, "23 Oct 02:00" another day, in local time. */
+/** "20:30" today, "23 Oct 02:00" another day ("23 oct. 02:00" in French), in local time. */
 export function shortTime(date: Date, now: Date): string {
   const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  return date.toDateString() === now.toDateString() ? time : `${date.getDate()} ${MONTHS[date.getMonth()]} ${time}`;
+  if (date.toDateString() === now.toDateString()) return time;
+  // American English abbreviates every month to three letters; British English says "Sept".
+  const locale = activeLocale() === "en" ? "en-US" : activeLocale();
+  const month = date.toLocaleString(locale, { month: "short" });
+  return `${t("format.shortDate", { day: String(date.getDate()), month })} ${time}`;
 }
 
 /** "2026-10-22 08:00", local. */

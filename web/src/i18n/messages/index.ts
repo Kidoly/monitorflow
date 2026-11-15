@@ -3,6 +3,7 @@ import type { Message } from "../catalog";
 import * as auth from "./auth";
 import * as authority from "./authority";
 import * as backups from "./backups";
+import * as campaigns from "./campaigns";
 import * as checks from "./checks";
 import * as common from "./common";
 import * as fleet from "./fleet";
@@ -31,6 +32,7 @@ export const en = {
   auth: auth.en,
   authority: authority.en,
   backups: backups.en,
+  campaigns: campaigns.en,
   checks: checks.en,
   common: common.en,
   fleet: fleet.en,
@@ -58,6 +60,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   auth: auth.fr,
   authority: authority.fr,
   backups: backups.fr,
+  campaigns: campaigns.fr,
   checks: checks.fr,
   common: common.fr,
   fleet: fleet.fr,
