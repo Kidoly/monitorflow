@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { type Command, type EffectiveSensors, type ServerDetail, setUnauthorizedHandler } from "@/lib/api";
 import { As, customerAdmin, me, single } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -210,6 +211,24 @@ describe("ServerPage", () => {
       "href",
       expect.stringMatching(new RegExp(`^/servers/sensor/?\\?id=${ID}&sensor=disk_used_ratio&instance=%2Fvar$`)),
     );
+  });
+
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    stubFetch(routes());
+    render(<ServerPage id={ID} />);
+    await heading();
+    expect(screen.getByRole("navigation", { name: "Fil d’Ariane" })).toHaveTextContent("Parc/web-1");
+    const facts = document.querySelector("dl")!;
+    expect(facts).toHaveTextContent(/Dernier contact\s*il y a 12 s/);
+    expect(facts).toHaveTextContent(/Connecté depuis\s*2026-10-19 02:14/);
+    expect(facts).toHaveTextContent(/Certificat\s*Valide, se renouvelle automatiquement/);
+    expect(screen.getByRole("tab", { name: "Capteurs · 3" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Commandes · 1 en cours" })).toBeInTheDocument();
+    expect(screen.getByText("Configuration à jour").parentElement).toHaveTextContent(/appliquée il y a 3 min/);
+    const table = screen.getByRole("table", { name: "Capteurs" });
+    expect(within(table).getByRole("columnheader", { name: "Dernière valeur" })).toBeInTheDocument();
+    expect(within(table).getByRole("img", { name: "CPU usage, dernière heure" })).toBeInTheDocument();
   });
 
   it("shows configuration drift and missing sensors", async () => {
