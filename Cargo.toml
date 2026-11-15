@@ -45,6 +45,8 @@ tokio-stream = { version = "0.1", features = ["net"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 # OpenAPI document of the public API, generated from the code (ADR-0101).
 utoipa = { version = "=6.0.0", features = ["uuid", "chrono"] }
+# Swagger UI for the public API, its files built into the binary (ADR-0135).
+utoipa-swagger-ui = { version = "10", default-features = false, features = ["axum", "vendored"] }
 tower = { version = "0.5", features = ["util"] }
 # Static files of the mirror listener.
 tower-http = { version = "0.7", features = ["fs"] }

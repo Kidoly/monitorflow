@@ -120,4 +120,10 @@ describe("ApiDocsPage", () => {
     expect(screen.queryByText("Not found")).not.toBeInTheDocument();
     expect(screen.getByText("cursor", { selector: "code" })).toBeInTheDocument();
   });
+
+  it("opens Swagger UI to try the API", async () => {
+    stubFetch({ "GET /api/v1/openapi.json": { status: 200, body: DOC } });
+    render(<ApiDocsPage />);
+    expect(await screen.findByRole("link", { name: "Try it out" })).toHaveAttribute("href", "/api/v1/swagger/");
+  });
 });

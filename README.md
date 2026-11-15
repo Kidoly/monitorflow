@@ -71,7 +71,7 @@ Most of these are pages under **Administration** in the web interface:
 - **AI**: choose a provider (Anthropic, OpenAI or a compatible API, or a local model) so the AI can diagnose alerts and propose fixes you approve.
 - **Backups**: one backup a day, the last 7 kept, and **Back up now**. See [Data and backups](docs/deploy-server.md#data-and-backups).
 - **Dashboards**: build your own, and show them on a wall screen or TV with a display link that needs no sign-in.
-- **API keys** and **Integrations**: drive everything the web interface does through the [public API](docs/api/openapi.json), and send incidents and updates to other tools with signed webhooks. See [Integrations](docs/integrations.md).
+- **API keys** and **Integrations**: drive everything the web interface does through the [public API](docs/api/openapi.json), which you can try from Swagger UI at `/api/v1/swagger/` on your server, and send incidents and updates to other tools with signed webhooks. See [Integrations](docs/integrations.md).
 - **Plugins**: add checks and notification channels without changing MonitorFlow. See [Write a plugin](docs/plugins.md).
 - **Server update**: when a new release is out, a banner says so. Click **Check for updates**, then **Update**. A backup is taken first, and it rolls back on its own if something fails. See [Updating](docs/deploy-server.md#updating).
 

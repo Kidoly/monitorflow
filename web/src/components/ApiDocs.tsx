@@ -6,6 +6,7 @@ import { useCallback } from "react";
 import { type OpenApiDocument, type OpenApiOperation, type OpenApiSchema, api, describeError } from "@/lib/api";
 import { API_KEYS_PATH } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
+import { buttonClass } from "@/components/ui/Button";
 
 import admin from "./AdminPages.module.css";
 import { ErrorState, LoadingBlock, PageHeader } from "./ui/PageState";
@@ -85,6 +86,12 @@ export function ApiDocsPage() {
           Version 1 at <code>/api/v1</code> · <a href="/api/v1/openapi.json">OpenAPI document</a> ·{" "}
           <Link href={API_KEYS_PATH}>API keys</Link>
         </>
+      }
+      actions={
+        // Served by the central server, not this app: a plain link (ADR-0135).
+        <a className={buttonClass({ variant: "k" })} href="/api/v1/swagger/" target="_blank" rel="noopener">
+          Try it out
+        </a>
       }
     />
   );

@@ -14,6 +14,7 @@ use axum::http::{Extensions, HeaderName, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
 use axum::Router;
+use utoipa_swagger_ui::{Config, SwaggerUi};
 use uuid::Uuid;
 
 use super::{idempotency, openapi, router, ApiError, ApiState};
@@ -64,11 +65,26 @@ pub fn app(state: ApiState) -> Router {
     let v1 = inner.clone();
     Router::new()
         .route(&format!("{PREFIX}/openapi.json"), get(openapi::document))
+        .merge(swagger_ui())
         .route(
             &format!("{PREFIX}/{{*rest}}"),
             any(move |request: Request| handle(state.clone(), v1.clone(), request)),
         )
         .merge(inner)
+}
+
+/// Swagger UI at `/api/v1/swagger/`, to try the API in a browser
+/// (ADR-0135). It reads the document above and sends requests with the key
+/// pasted under Authorize; its files are built into the binary, never
+/// loaded from elsewhere, and it asks no outside validator.
+fn swagger_ui<S: Clone + Send + Sync + 'static>() -> Router<S> {
+    let config = Config::new([format!("{PREFIX}/openapi.json")])
+        .try_it_out_enabled(true)
+        .validator_url("none")
+        .persist_authorization(false);
+    SwaggerUi::new(format!("{PREFIX}/swagger"))
+        .config(config)
+        .into()
 }
 
 pub(super) fn is_v1(extensions: &Extensions) -> bool {

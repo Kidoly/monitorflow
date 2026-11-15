@@ -48,6 +48,7 @@ tower-http.workspace = true
 tower.workspace = true
 # OpenAPI document of the public API (ADR-0101).
 utoipa.workspace = true
+utoipa-swagger-ui.workspace = true
 argon2.workspace = true
 rpassword.workspace = true
 sqlx.workspace = true

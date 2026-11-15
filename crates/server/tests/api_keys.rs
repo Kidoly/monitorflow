@@ -616,4 +616,24 @@ db_tests! {
         assert_eq!(doc["info"]["version"], "1");
         assert!(doc["paths"]["/api/v1/incidents/acknowledge"]["post"].is_object());
     }
+
+    #[sqlx::test]
+    async fn swagger_ui_is_served_from_the_binary(pool: PgPool) {
+        let w = world(&pool).await;
+        let get = |uri: &str| Request::get(uri).body(Body::empty()).unwrap();
+        let response = w.app.clone().oneshot(get("/api/v1/swagger")).await.unwrap();
+        assert!(response.status().is_redirection());
+        assert_eq!(response.headers()["location"], "/api/v1/swagger/");
+        let response = w.app.clone().oneshot(get("/api/v1/swagger/")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = w.app.clone().oneshot(get("/api/v1/swagger/swagger-initializer.js")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let script = String::from_utf8(body.to_vec()).unwrap();
+        assert!(script.contains("/api/v1/openapi.json"), "{script}");
+        assert!(script.contains("\"validatorUrl\": \"none\""), "{script}");
+        // Other paths under v1 still need a key.
+        let response = w.app.clone().oneshot(get("/api/v1/servers")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
 }
