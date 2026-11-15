@@ -1,3 +1,6 @@
+import { t } from "@/i18n";
+import { activeLocale } from "@/i18n/locale";
+
 const OS_NAMES: Record<string, string> = {
   almalinux: "AlmaLinux",
   arch: "Arch Linux",
@@ -24,7 +27,6 @@ export function formatOs(family: string, version: string | null): string {
   return /^\d/.test(first) ? `${osName(family)} ${version}` : [osName(first), ...rest].join(" ");
 }
 
-const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["day", 86_400],
@@ -37,14 +39,14 @@ export function formatRelative(iso: string, now: Date): string {
   const seconds = Math.round((new Date(iso).getTime() - now.getTime()) / 1000);
   for (const [unit, size] of UNITS) {
     if (Math.abs(seconds) >= size) {
-      return relative.format(Math.trunc(seconds / size), unit);
+      return new Intl.RelativeTimeFormat(activeLocale(), { numeric: "auto" }).format(Math.trunc(seconds / size), unit);
     }
   }
-  return "just now";
+  return t("format.justNow");
 }
 
 export function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("en", { dateStyle: "medium", timeStyle: "medium" });
+  return new Date(iso).toLocaleString(activeLocale(), { dateStyle: "medium", timeStyle: "medium" });
 }
 
 /** How a metric's values read, from its name's last word (ADR-0015). */
@@ -59,39 +61,42 @@ export function unitOf(metric: string): Unit {
   return "number";
 }
 
-const BINARY_UNITS = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
+/** The binary units, from bytes (0) to exbibytes (6), in the active language: "KiB", "Kio". */
+const BINARY_UNITS = 7;
+
+const binaryUnit = (exponent: number) => t(`format.bytes.${exponent as 0 | 1 | 2 | 3 | 4 | 5 | 6}`);
 
 /** The power of 1024 to show `bytes` in: 1536 gives 1 (KiB). */
 export function binaryExponent(bytes: number): number {
   const exponent = Math.floor(Math.log(Math.abs(bytes)) / Math.log(1024));
-  return Number.isFinite(exponent) ? Math.min(Math.max(exponent, 0), BINARY_UNITS.length - 1) : 0;
+  return Number.isFinite(exponent) ? Math.min(Math.max(exponent, 0), BINARY_UNITS - 1) : 0;
 }
 
 /** `1536` gives `1.5 KiB`; `exponent` forces the unit, for axis ticks. */
 export function formatBytes(bytes: number, exponent = binaryExponent(bytes)): string {
   const value = bytes / 1024 ** exponent;
-  return `${formatNumber(value, exponent === 0 ? 0 : 1)} ${BINARY_UNITS[exponent]}`;
+  return `${formatNumber(value, exponent === 0 ? 0 : 1)} ${binaryUnit(exponent)}`;
 }
 
-/** A 0 to 1 ratio as a percentage: `0.853` gives `85.3%`. */
+/** A 0 to 1 ratio as a percentage: `0.853` gives `85.3%`, `85,3 %` in French. */
 export function formatPercent(ratio: number): string {
-  return `${formatNumber(ratio * 100, 1)}%`;
+  return ratio.toLocaleString(activeLocale(), { style: "percent", maximumFractionDigits: 1 });
 }
 
 export function formatNumber(value: number, maximumFractionDigits = 2): string {
-  return value.toLocaleString("en", { maximumFractionDigits });
+  return value.toLocaleString(activeLocale(), { maximumFractionDigits });
 }
 
 /** A duration in seconds, in the largest unit that keeps it at least 1. */
 export function formatSeconds(seconds: number): string {
-  for (const [unit, size] of [["d", 86_400], ["h", 3_600], ["min", 60]] as const) {
+  for (const [unit, size] of [["day", 86_400], ["hour", 3_600], ["minute", 60]] as const) {
     if (Math.abs(seconds) >= size) {
-      return `${formatNumber(seconds / size, 1)} ${unit}`;
+      return `${formatNumber(seconds / size, 1)} ${t(`format.unit.${unit}`)}`;
     }
   }
   return Math.abs(seconds) >= 1 || seconds === 0
-    ? `${formatNumber(seconds, 1)} s`
-    : `${formatNumber(seconds * 1000, 1)} ms`;
+    ? `${formatNumber(seconds, 1)} ${t("format.unit.second")}`
+    : `${formatNumber(seconds * 1000, 1)} ${t("format.unit.millisecond")}`;
 }
 
 /** `value` in `unit`, or a dash when there is none. */
@@ -106,7 +111,7 @@ export function formatValue(value: number | null | undefined, unit: Unit): strin
       // Short enough for a chart's axis: 954 MiB/s, not 953.7 MiB/s.
       const exponent = binaryExponent(value);
       const scaled = value / 1024 ** exponent;
-      return scaled >= 100 ? `${formatNumber(scaled, 0)} ${formatBytes(value).split(" ")[1]}/s` : `${formatBytes(value)}/s`;
+      return scaled >= 100 ? `${formatNumber(scaled, 0)} ${binaryUnit(exponent)}/s` : `${formatBytes(value)}/s`;
     }
     case "per_second":
       return `${formatNumber(value, value < 10 ? 1 : 0)}/s`;
@@ -119,9 +124,8 @@ export function formatValue(value: number | null | undefined, unit: Unit): strin
 
 /** A duration in plain words, in the largest unit it fits exactly: `12 hours`, `90 minutes`. */
 export function formatDuration(seconds: number): string {
-  const words = (count: number, unit: string) => `${count} ${unit}${count === 1 ? "" : "s"}`;
-  if (seconds >= 86_400 && seconds % 86_400 === 0) return words(seconds / 86_400, "day");
-  if (seconds >= 3_600 && seconds % 3_600 === 0) return words(seconds / 3_600, "hour");
-  if (seconds >= 60 && seconds % 60 === 0) return words(seconds / 60, "minute");
-  return words(seconds, "second");
+  if (seconds >= 86_400 && seconds % 86_400 === 0) return t("format.days", { count: seconds / 86_400 });
+  if (seconds >= 3_600 && seconds % 3_600 === 0) return t("format.hours", { count: seconds / 3_600 });
+  if (seconds >= 60 && seconds % 60 === 0) return t("format.minutes", { count: seconds / 60 });
+  return t("format.seconds", { count: seconds });
 }

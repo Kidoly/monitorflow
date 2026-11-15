@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import type { AddedServer, License, LicenseView } from "./api";
+
 import { centralServers, formatDay, licenseNotice, licenseSummary } from "./license";
 
 const license: License = {
@@ -23,6 +26,8 @@ describe("license", () => {
   it("formats days in UTC", () => {
     expect(formatDay("2027-11-30")).toBe("30 November 2027");
     expect(formatDay("2027-01-01")).toBe("1 January 2027");
+    setActiveLocale("fr");
+    expect(formatDay("2027-11-30")).toBe("30 novembre 2027");
   });
 
   it("counts central servers", () => {

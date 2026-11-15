@@ -1,3 +1,5 @@
+import { dateLocale } from "@/i18n/locale";
+
 import type { OnCallProblem, OnCallSchedule, OnCallTurn } from "./api";
 import { ALL_SITES } from "./customers";
 
@@ -48,18 +50,16 @@ export function gaps(schedule: Pick<OnCallSchedule, "turns">): OnCallTurn[] {
   return schedule.turns.filter((turn) => turn.problem !== null);
 }
 
-const WHEN = new Intl.DateTimeFormat("en-GB", {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hourCycle: "h23",
-});
-
-/** "Mon 9 Nov, 09:00", in the browser's time zone. */
+/** "Mon 9 Nov, 09:00", "lun. 9 nov., 09:00", in the browser's time zone. */
 export function formatWhen(date: Date): string {
-  return WHEN.format(date);
+  return date.toLocaleString(dateLocale(), {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
 }
 
 /** Who is on call in a turn, for a sentence: "alice", or "nobody" in a gap without a person. */

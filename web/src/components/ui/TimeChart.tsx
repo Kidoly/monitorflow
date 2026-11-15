@@ -6,6 +6,8 @@ import { formatNumber } from "@/lib/format";
 
 import { niceTicks, nearestIndex, segments, timeTicks } from "./chartScale";
 import { cx } from "./cx";
+import { dateLocale } from "@/i18n/locale";
+
 import { formatClock } from "./time";
 import styles from "./TimeChart.module.css";
 
@@ -118,7 +120,7 @@ export function TimeChart({
   const daily = end - start > 86_400;
   const timeText = (t: number) => {
     const d = new Date(t * 1000);
-    return daily ? `${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })} ${formatClock(d).slice(0, 5)}` : formatClock(d);
+    return daily ? `${d.toLocaleDateString(dateLocale(), { day: "2-digit", month: "short" })} ${formatClock(d).slice(0, 5)}` : formatClock(d);
   };
 
   const summary = [

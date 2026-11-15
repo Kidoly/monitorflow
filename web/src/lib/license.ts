@@ -1,9 +1,10 @@
 import type { LicenseView } from "./api";
 import type { Tone } from "@/components/ui/tone";
+import { dateLocale } from "@/i18n/locale";
 
-/** `2027-11-30` as "30 November 2027": licenses count in whole UTC days. */
+/** `2027-11-30` as "30 November 2027", "30 novembre 2027": licenses count in whole UTC days. */
 export function formatDay(day: string): string {
-  return new Date(`${day}T00:00:00Z`).toLocaleDateString("en-GB", {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString(dateLocale(), {
     day: "numeric",
     month: "long",
     year: "numeric",

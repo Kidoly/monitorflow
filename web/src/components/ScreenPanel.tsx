@@ -3,7 +3,7 @@
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
 import type { DashboardData, Panel, PanelData } from "@/lib/api";
-import { unitOf } from "@/lib/format";
+import { formatNumber, unitOf } from "@/lib/format";
 import { incidentTitle } from "@/lib/incidents";
 import { formatSensorValue } from "@/lib/sensors";
 import { niceTicks, segments, timeTicks } from "@/components/ui/chartScale";
@@ -178,7 +178,7 @@ export function ScreenPanel({
       return (
         <Frame panel={panel}>
           <p className={styles.figure}>
-            {data.value === null ? "–" : panel.combine === "count" ? data.value.toLocaleString("en") : format(data.value)}
+            {data.value === null ? "–" : panel.combine === "count" ? formatNumber(data.value) : format(data.value)}
           </p>
           <p className={styles.muted}>
             {data.value === null ? "No recent value" : `${data.servers} ${data.servers === 1 ? "server" : "servers"}`}

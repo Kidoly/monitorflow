@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import type { DashboardData, Panel, PanelData } from "@/lib/api";
-import { unitOf } from "@/lib/format";
+import { formatNumber, unitOf } from "@/lib/format";
 import { incidentTitle } from "@/lib/incidents";
 import { incidentHref, sensorHref } from "@/lib/routes";
 import { type Scope, scopedHref } from "@/lib/scope";
@@ -109,7 +109,7 @@ export function DashboardPanel({
             {data.value === null
               ? "–"
               : panel.combine === "count"
-                ? data.value.toLocaleString("en")
+                ? formatNumber(data.value)
                 : format(data.value)}
           </p>
           <p className={styles.muted}>
