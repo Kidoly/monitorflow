@@ -1,3 +1,5 @@
+import { type PlainKey, t } from "@/i18n";
+
 import { type CheckType, CHECK_TYPES, checkName, pluginCheckTypes } from "./alerts";
 import { type CheckUsage, type UsablePlugin } from "./api";
 
@@ -12,17 +14,25 @@ export type Purpose = "availability" | "performance" | "disk" | "services" | "lo
 export type System = "linux" | "windows" | "proxmox";
 export type Technology = "agent" | "script" | "port" | "plugin";
 
+/** A filter choice whose label is read in the active language when shown. */
+const option = <T extends string>(value: T, key: PlainKey) => ({
+  value,
+  get label() {
+    return t(key);
+  },
+});
+
 export const PURPOSES: { value: Purpose; label: string }[] = [
-  { value: "availability", label: "Availability" },
-  { value: "performance", label: "Performance" },
-  { value: "disk", label: "Disk" },
-  { value: "services", label: "Services" },
-  { value: "databases", label: "Databases" },
-  { value: "web", label: "Web" },
-  { value: "containers", label: "Containers" },
-  { value: "logs", label: "Logs" },
-  { value: "network", label: "Network" },
-  { value: "updates", label: "Updates" },
+  option("availability", "checks.purpose.availability"),
+  option("performance", "checks.purpose.performance"),
+  option("disk", "checks.purpose.disk"),
+  option("services", "checks.purpose.services"),
+  option("databases", "checks.purpose.databases"),
+  option("web", "checks.purpose.web"),
+  option("containers", "checks.purpose.containers"),
+  option("logs", "checks.purpose.logs"),
+  option("network", "checks.purpose.network"),
+  option("updates", "checks.purpose.updates"),
 ];
 
 export const SYSTEMS: { value: System; label: string }[] = [
@@ -32,10 +42,10 @@ export const SYSTEMS: { value: System; label: string }[] = [
 ];
 
 export const TECHNOLOGIES: { value: Technology; label: string }[] = [
-  { value: "agent", label: "Built into the agent" },
-  { value: "port", label: "Port" },
-  { value: "script", label: "Script" },
-  { value: "plugin", label: "Plugin" },
+  option("agent", "checks.technology.agent"),
+  option("port", "checks.technology.port"),
+  option("script", "checks.technology.script"),
+  option("plugin", "checks.technology.plugin"),
 ];
 
 export interface CatalogueEntry {
@@ -66,44 +76,62 @@ function prefill(base: CheckType, title: string, values: Record<string, string>,
   };
 }
 
-type Template = Omit<CatalogueEntry, "type" | "keywords" | "technology"> & { keywords?: string[] };
+type Template = Omit<CatalogueEntry, "type" | "keywords" | "technology" | "title" | "description"> & { keywords?: string[] };
 
-const service = (t: Template, unit: string, hint?: string): CatalogueEntry => ({
-  keywords: [],
-  ...t,
-  technology: "agent",
-  type: prefill(kind("systemd"), t.title, { units: unit }, hint ? { units: hint } : {}),
-});
+/** An entry's words in the active language, by its ID. */
+const text = (id: string, part: "title" | "description" | "hint") => t(`checks.entry.${id}.${part}` as PlainKey);
 
-const winService = (t: Template, name: string): CatalogueEntry => ({
-  keywords: [],
-  ...t,
-  technology: "agent",
-  type: prefill(kind("windows_service"), t.title, { services: name }),
-});
+/**
+ * An entry whose title, description and prefilled form are read when
+ * shown, so the list is built once and follows the language.
+ */
+function entry(
+  spec: Template,
+  technology: Technology,
+  keywords: string[],
+  type: (title: string) => CheckType | null,
+  title: () => string = () => text(spec.id, "title"),
+): CatalogueEntry {
+  return {
+    ...spec,
+    keywords,
+    technology,
+    get title() {
+      return title();
+    },
+    get description() {
+      return text(spec.id, "description");
+    },
+    get type() {
+      return type(title());
+    },
+  };
+}
 
-const port = (t: Template, number: number): CatalogueEntry => ({
-  ...t,
-  keywords: [...(t.keywords ?? []), String(number), "tcp"],
-  technology: "port",
-  type: prefill(kind("port"), t.title, { port: String(number) }),
-});
+/** One of the kinds of check itself, titled as the Add a check form names it. */
+const plainKind = (spec: Template, technology: Technology, name: string): CatalogueEntry =>
+  entry(spec, technology, spec.keywords ?? [], () => kind(name), () => kind(name).label);
 
-const logLines = (t: Template, path: string, pattern: string): CatalogueEntry => ({
-  keywords: [],
-  ...t,
-  technology: "agent",
-  type: prefill(kind("log"), t.title, { path, pattern }),
-});
+const service = (spec: Template, unit: string, hint = false): CatalogueEntry =>
+  entry(spec, "agent", spec.keywords ?? [], (title) =>
+    prefill(kind("systemd"), title, { units: unit }, hint ? { units: text(spec.id, "hint") } : {}),
+  );
 
-const eventLog = (t: Template, channel: string): CatalogueEntry => ({
-  keywords: [],
-  ...t,
-  technology: "agent",
-  type: prefill(kind("eventlog"), t.title, { channel }),
-});
+const winService = (spec: Template, name: string): CatalogueEntry =>
+  entry(spec, "agent", spec.keywords ?? [], (title) => prefill(kind("windows_service"), title, { services: name }));
 
-const always = (t: Template): CatalogueEntry => ({ keywords: [], ...t, technology: "agent", type: null });
+const port = (spec: Template, number: number): CatalogueEntry =>
+  entry(spec, "port", [...(spec.keywords ?? []), String(number), "tcp"], (title) =>
+    prefill(kind("port"), title, { port: String(number) }),
+  );
+
+const logLines = (spec: Template, path: string, pattern: string): CatalogueEntry =>
+  entry(spec, "agent", spec.keywords ?? [], (title) => prefill(kind("log"), title, { path, pattern }));
+
+const eventLog = (spec: Template, channel: string): CatalogueEntry =>
+  entry(spec, "agent", spec.keywords ?? [], (title) => prefill(kind("eventlog"), title, { channel }));
+
+const always = (spec: Template): CatalogueEntry => entry(spec, "agent", spec.keywords ?? [], () => null);
 
 /** Proxmox VE is Debian: Linux checks run there too, and a Linux server is offered the Proxmox ones. */
 const LINUX: System[] = ["linux"];
@@ -111,83 +139,74 @@ const ANY: System[] = ["linux", "windows", "proxmox"];
 
 export const CATALOGUE: CatalogueEntry[] = [
   // What every server runs already: found by a search, never added twice.
-  always({ id: "cpu", title: "CPU usage", description: "Share of the processors in use, and the load on Linux.", purposes: ["performance"], systems: ANY, keywords: ["processor", "load"] }),
-  always({ id: "memory", title: "Memory", description: "Available memory and swap.", purposes: ["performance"], systems: ANY, keywords: ["ram", "swap", "page file"] }),
-  always({ id: "disk", title: "Disk space", description: "Space and inodes used on each disk.", purposes: ["disk"], systems: ANY, keywords: ["free space", "full", "filesystem", "mount"] }),
-  always({ id: "diskio", title: "Disk activity", description: "How busy and how slow each disk is.", purposes: ["disk", "performance"], systems: ANY, keywords: ["io", "latency", "wait"] }),
+  always({ id: "cpu", purposes: ["performance"], systems: ANY, keywords: ["processor", "load"] }),
+  always({ id: "memory", purposes: ["performance"], systems: ANY, keywords: ["ram", "swap", "page file"] }),
+  always({ id: "disk", purposes: ["disk"], systems: ANY, keywords: ["free space", "full", "filesystem", "mount"] }),
+  always({ id: "diskio", purposes: ["disk", "performance"], systems: ANY, keywords: ["io", "latency", "wait"] }),
 
   // The kinds themselves, for anything the templates do not name.
-  { id: "port", title: CHECK_TYPES[0]!.label, description: "Connects to a TCP port on this server or another machine.", purposes: ["availability", "network"], systems: ANY, technology: "port", keywords: ["tcp", "reachable", "connect"], type: kind("port") },
-  { id: "service", title: kind("systemd").label, description: "A systemd service, socket or timer is active.", purposes: ["services", "availability"], systems: LINUX, technology: "agent", keywords: ["systemd", "unit", "daemon"], type: kind("systemd") },
-  { id: "windows-service", title: kind("windows_service").label, description: "A Windows service is running.", purposes: ["services", "availability"], systems: ["windows"], technology: "agent", keywords: ["service"], type: kind("windows_service") },
-  { id: "log", title: kind("log").label, description: "Counts lines matching a pattern in a log file.", purposes: ["logs"], systems: ANY, technology: "agent", keywords: ["pattern", "regex", "grep"], type: kind("log") },
-  { id: "eventlog", title: kind("eventlog").label, description: "Errors and critical events of a Windows event log.", purposes: ["logs"], systems: ["windows"], technology: "agent", keywords: ["event viewer"], type: kind("eventlog") },
-  { id: "script", title: "Your own script", description: "A script installed in the agent's scripts folder, read as OK, warning or critical.", purposes: ["availability"], systems: ANY, technology: "script", keywords: ["nagios", "custom", "plugin", "powershell"], type: kind("script") },
+  plainKind({ id: "port", purposes: ["availability", "network"], systems: ANY, keywords: ["tcp", "reachable", "connect"] }, "port", "port"),
+  plainKind({ id: "service", purposes: ["services", "availability"], systems: LINUX, keywords: ["systemd", "unit", "daemon"] }, "agent", "systemd"),
+  plainKind({ id: "windows-service", purposes: ["services", "availability"], systems: ["windows"], keywords: ["service"] }, "agent", "windows_service"),
+  plainKind({ id: "log", purposes: ["logs"], systems: ANY, keywords: ["pattern", "regex", "grep"] }, "agent", "log"),
+  plainKind({ id: "eventlog", purposes: ["logs"], systems: ["windows"], keywords: ["event viewer"] }, "agent", "eventlog"),
+  entry({ id: "script", purposes: ["availability"], systems: ANY }, "script", ["nagios", "custom", "plugin", "powershell"], () => kind("script")),
 
   // Linux services.
-  service({ id: "ssh-service", title: "SSH server running", description: "The SSH service is active.", purposes: ["services", "availability"], systems: LINUX, keywords: ["sshd", "openssh", "remote access"] }, "ssh", "ssh on Debian and Ubuntu, sshd on RHEL and Rocky."),
-  service({ id: "cron-service", title: "Cron running", description: "Scheduled jobs keep running.", purposes: ["services"], systems: LINUX, keywords: ["crond", "scheduled", "jobs"] }, "cron", "cron on Debian and Ubuntu, crond on RHEL and Rocky."),
-  service({ id: "time-service", title: "Time sync running", description: "The clock stays synchronised.", purposes: ["services", "network"], systems: LINUX, keywords: ["ntp", "chrony", "timesyncd", "clock"] }, "chrony", "chrony on most systems, systemd-timesyncd on others."),
-  service({ id: "nginx-service", title: "nginx running", description: "The nginx web server is active.", purposes: ["services", "web"], systems: LINUX, keywords: ["http", "reverse proxy"] }, "nginx"),
-  service({ id: "apache-service", title: "Apache running", description: "The Apache web server is active.", purposes: ["services", "web"], systems: LINUX, keywords: ["httpd", "apache2", "http"] }, "apache2", "apache2 on Debian and Ubuntu, httpd on RHEL and Rocky."),
-  service({ id: "postgresql-service", title: "PostgreSQL running", description: "The PostgreSQL database server is active.", purposes: ["services", "databases"], systems: LINUX, keywords: ["postgres", "sql", "database"] }, "postgresql"),
-  service({ id: "mysql-service", title: "MySQL or MariaDB running", description: "The MySQL or MariaDB database server is active.", purposes: ["services", "databases"], systems: LINUX, keywords: ["mariadb", "sql", "database"] }, "mariadb", "mariadb, mysql, or mysqld on RHEL and Rocky."),
-  service({ id: "redis-service", title: "Redis running", description: "The Redis server is active.", purposes: ["services", "databases"], systems: LINUX, keywords: ["cache", "key value"] }, "redis-server", "redis-server on Debian and Ubuntu, redis on RHEL and Rocky."),
-  service({ id: "mongodb-service", title: "MongoDB running", description: "The MongoDB server is active.", purposes: ["services", "databases"], systems: LINUX, keywords: ["mongod", "nosql", "database"] }, "mongod"),
-  service({ id: "docker-service", title: "Docker running", description: "The Docker engine is active.", purposes: ["services", "containers"], systems: LINUX, keywords: ["dockerd", "container engine"] }, "docker"),
-  service({ id: "containerd-service", title: "containerd running", description: "The containerd runtime is active.", purposes: ["services", "containers"], systems: LINUX, keywords: ["kubernetes", "runtime"] }, "containerd"),
-  service({ id: "postfix-service", title: "Postfix running", description: "The Postfix mail server is active.", purposes: ["services"], systems: LINUX, keywords: ["mail", "smtp", "mta"] }, "postfix"),
-  service({ id: "fail2ban-service", title: "fail2ban running", description: "fail2ban keeps banning abusive addresses.", purposes: ["services", "network"], systems: LINUX, keywords: ["security", "ban", "brute force"] }, "fail2ban"),
-  service({ id: "pve-cluster-service", title: "Proxmox cluster service running", description: "pve-cluster, which holds the cluster's configuration, is active.", purposes: ["services", "availability"], systems: ["proxmox"], keywords: ["pve", "cluster", "pmxcfs"] }, "pve-cluster"),
-  service({ id: "pveproxy-service", title: "Proxmox web interface running", description: "pveproxy, the Proxmox web interface and API, is active.", purposes: ["services", "web"], systems: ["proxmox"], keywords: ["pve", "api", "gui"] }, "pveproxy"),
+  service({ id: "ssh-service", purposes: ["services", "availability"], systems: LINUX, keywords: ["sshd", "openssh", "remote access"] }, "ssh", true),
+  service({ id: "cron-service", purposes: ["services"], systems: LINUX, keywords: ["crond", "scheduled", "jobs"] }, "cron", true),
+  service({ id: "time-service", purposes: ["services", "network"], systems: LINUX, keywords: ["ntp", "chrony", "timesyncd", "clock"] }, "chrony", true),
+  service({ id: "nginx-service", purposes: ["services", "web"], systems: LINUX, keywords: ["http", "reverse proxy"] }, "nginx"),
+  service({ id: "apache-service", purposes: ["services", "web"], systems: LINUX, keywords: ["httpd", "apache2", "http"] }, "apache2", true),
+  service({ id: "postgresql-service", purposes: ["services", "databases"], systems: LINUX, keywords: ["postgres", "sql", "database"] }, "postgresql"),
+  service({ id: "mysql-service", purposes: ["services", "databases"], systems: LINUX, keywords: ["mariadb", "sql", "database"] }, "mariadb", true),
+  service({ id: "redis-service", purposes: ["services", "databases"], systems: LINUX, keywords: ["cache", "key value"] }, "redis-server", true),
+  service({ id: "mongodb-service", purposes: ["services", "databases"], systems: LINUX, keywords: ["mongod", "nosql", "database"] }, "mongod"),
+  service({ id: "docker-service", purposes: ["services", "containers"], systems: LINUX, keywords: ["dockerd", "container engine"] }, "docker"),
+  service({ id: "containerd-service", purposes: ["services", "containers"], systems: LINUX, keywords: ["kubernetes", "runtime"] }, "containerd"),
+  service({ id: "postfix-service", purposes: ["services"], systems: LINUX, keywords: ["mail", "smtp", "mta"] }, "postfix"),
+  service({ id: "fail2ban-service", purposes: ["services", "network"], systems: LINUX, keywords: ["security", "ban", "brute force"] }, "fail2ban"),
+  service({ id: "pve-cluster-service", purposes: ["services", "availability"], systems: ["proxmox"], keywords: ["pve", "cluster", "pmxcfs"] }, "pve-cluster"),
+  service({ id: "pveproxy-service", purposes: ["services", "web"], systems: ["proxmox"], keywords: ["pve", "api", "gui"] }, "pveproxy"),
 
   // Windows services.
-  winService({ id: "iis-service", title: "IIS running", description: "The IIS web server is running.", purposes: ["services", "web"], systems: ["windows"], keywords: ["w3svc", "http", "web server"] }, "W3SVC"),
-  winService({ id: "mssql-service", title: "SQL Server running", description: "The default SQL Server instance is running.", purposes: ["services", "databases"], systems: ["windows"], keywords: ["mssql", "database", "sql"] }, "MSSQLSERVER"),
-  winService({ id: "ad-service", title: "Active Directory running", description: "Active Directory Domain Services are running.", purposes: ["services", "availability"], systems: ["windows"], keywords: ["ntds", "domain controller", "ldap"] }, "NTDS"),
-  winService({ id: "dns-service", title: "DNS Server running", description: "The Windows DNS Server service is running.", purposes: ["services", "network"], systems: ["windows"], keywords: ["dns"] }, "DNS"),
-  winService({ id: "w32time-service", title: "Windows Time running", description: "The clock stays synchronised.", purposes: ["services", "network"], systems: ["windows"], keywords: ["ntp", "time", "clock"] }, "W32Time"),
-  winService({ id: "wuauserv-service", title: "Windows Update running", description: "The Windows Update service can run.", purposes: ["services", "updates"], systems: ["windows"], keywords: ["wuauserv", "patches"] }, "wuauserv"),
-  winService({ id: "spooler-service", title: "Print Spooler running", description: "The print spooler of a print server is running.", purposes: ["services"], systems: ["windows"], keywords: ["printer", "print server"] }, "Spooler"),
+  winService({ id: "iis-service", purposes: ["services", "web"], systems: ["windows"], keywords: ["w3svc", "http", "web server"] }, "W3SVC"),
+  winService({ id: "mssql-service", purposes: ["services", "databases"], systems: ["windows"], keywords: ["mssql", "database", "sql"] }, "MSSQLSERVER"),
+  winService({ id: "ad-service", purposes: ["services", "availability"], systems: ["windows"], keywords: ["ntds", "domain controller", "ldap"] }, "NTDS"),
+  winService({ id: "dns-service", purposes: ["services", "network"], systems: ["windows"], keywords: ["dns"] }, "DNS"),
+  winService({ id: "w32time-service", purposes: ["services", "network"], systems: ["windows"], keywords: ["ntp", "time", "clock"] }, "W32Time"),
+  winService({ id: "wuauserv-service", purposes: ["services", "updates"], systems: ["windows"], keywords: ["wuauserv", "patches"] }, "wuauserv"),
+  winService({ id: "spooler-service", purposes: ["services"], systems: ["windows"], keywords: ["printer", "print server"] }, "Spooler"),
 
   // Ports.
-  port({ id: "ssh-port", title: "SSH answers", description: "Port 22 accepts connections.", purposes: ["availability", "network"], systems: LINUX, keywords: ["ssh", "remote access"] }, 22),
-  port({ id: "http-port", title: "Web server answers (HTTP)", description: "Port 80 accepts connections.", purposes: ["availability", "web"], systems: ANY, keywords: ["http", "website"] }, 80),
-  port({ id: "https-port", title: "Web server answers (HTTPS)", description: "Port 443 accepts connections.", purposes: ["availability", "web"], systems: ANY, keywords: ["https", "tls", "ssl", "website"] }, 443),
-  port({ id: "postgresql-port", title: "PostgreSQL answers", description: "Port 5432 accepts connections.", purposes: ["availability", "databases"], systems: LINUX, keywords: ["postgres", "database"] }, 5432),
-  port({ id: "mysql-port", title: "MySQL or MariaDB answers", description: "Port 3306 accepts connections.", purposes: ["availability", "databases"], systems: ANY, keywords: ["mariadb", "database"] }, 3306),
-  port({ id: "mssql-port", title: "SQL Server answers", description: "Port 1433 accepts connections.", purposes: ["availability", "databases"], systems: ["windows"], keywords: ["mssql", "database"] }, 1433),
-  port({ id: "redis-port", title: "Redis answers", description: "Port 6379 accepts connections.", purposes: ["availability", "databases"], systems: LINUX, keywords: ["cache"] }, 6379),
-  port({ id: "mongodb-port", title: "MongoDB answers", description: "Port 27017 accepts connections.", purposes: ["availability", "databases"], systems: LINUX, keywords: ["mongod", "database"] }, 27017),
-  port({ id: "smtp-port", title: "Mail server answers (SMTP)", description: "Port 25 accepts connections.", purposes: ["availability", "network"], systems: ANY, keywords: ["mail", "smtp", "postfix", "exchange"] }, 25),
-  port({ id: "dns-port", title: "DNS server answers", description: "Port 53 accepts TCP connections.", purposes: ["availability", "network"], systems: ANY, keywords: ["dns", "bind", "named"] }, 53),
-  port({ id: "ldap-port", title: "LDAP answers", description: "Port 389 accepts connections.", purposes: ["availability", "network"], systems: ANY, keywords: ["directory", "active directory"] }, 389),
-  port({ id: "smb-port", title: "File sharing answers (SMB)", description: "Port 445 accepts connections.", purposes: ["availability", "network"], systems: ANY, keywords: ["smb", "cifs", "samba", "file server", "share"] }, 445),
-  port({ id: "nfs-port", title: "NFS answers", description: "Port 2049 accepts connections.", purposes: ["availability", "network", "disk"], systems: LINUX, keywords: ["nfs", "file server", "share"] }, 2049),
-  port({ id: "rdp-port", title: "Remote Desktop answers", description: "Port 3389 accepts connections.", purposes: ["availability", "network"], systems: ["windows"], keywords: ["rdp", "remote access"] }, 3389),
-  port({ id: "proxmox-port", title: "Proxmox web interface answers", description: "Port 8006 accepts connections.", purposes: ["availability", "web"], systems: ["proxmox"], keywords: ["pve", "api", "gui"] }, 8006),
+  port({ id: "ssh-port", purposes: ["availability", "network"], systems: LINUX, keywords: ["ssh", "remote access"] }, 22),
+  port({ id: "http-port", purposes: ["availability", "web"], systems: ANY, keywords: ["http", "website"] }, 80),
+  port({ id: "https-port", purposes: ["availability", "web"], systems: ANY, keywords: ["https", "tls", "ssl", "website"] }, 443),
+  port({ id: "postgresql-port", purposes: ["availability", "databases"], systems: LINUX, keywords: ["postgres", "database"] }, 5432),
+  port({ id: "mysql-port", purposes: ["availability", "databases"], systems: ANY, keywords: ["mariadb", "database"] }, 3306),
+  port({ id: "mssql-port", purposes: ["availability", "databases"], systems: ["windows"], keywords: ["mssql", "database"] }, 1433),
+  port({ id: "redis-port", purposes: ["availability", "databases"], systems: LINUX, keywords: ["cache"] }, 6379),
+  port({ id: "mongodb-port", purposes: ["availability", "databases"], systems: LINUX, keywords: ["mongod", "database"] }, 27017),
+  port({ id: "smtp-port", purposes: ["availability", "network"], systems: ANY, keywords: ["mail", "smtp", "postfix", "exchange"] }, 25),
+  port({ id: "dns-port", purposes: ["availability", "network"], systems: ANY, keywords: ["dns", "bind", "named"] }, 53),
+  port({ id: "ldap-port", purposes: ["availability", "network"], systems: ANY, keywords: ["directory", "active directory"] }, 389),
+  port({ id: "smb-port", purposes: ["availability", "network"], systems: ANY, keywords: ["smb", "cifs", "samba", "file server", "share"] }, 445),
+  port({ id: "nfs-port", purposes: ["availability", "network", "disk"], systems: LINUX, keywords: ["nfs", "file server", "share"] }, 2049),
+  port({ id: "rdp-port", purposes: ["availability", "network"], systems: ["windows"], keywords: ["rdp", "remote access"] }, 3389),
+  port({ id: "proxmox-port", purposes: ["availability", "web"], systems: ["proxmox"], keywords: ["pve", "api", "gui"] }, 8006),
 
   // Logs.
-  logLines({ id: "syslog-errors", title: "Errors in syslog", description: "Lines with “error” in /var/log/syslog.", purposes: ["logs"], systems: LINUX, keywords: ["system log"] }, "/var/log/syslog", "error"),
-  logLines({ id: "ssh-failures", title: "Failed SSH logins", description: "Failed password attempts in /var/log/auth.log.", purposes: ["logs", "network"], systems: LINUX, keywords: ["security", "brute force", "auth"] }, "/var/log/auth.log", "Failed password"),
-  logLines({ id: "oom-kills", title: "Out of memory kills", description: "The kernel killing processes for lack of memory, in /var/log/kern.log.", purposes: ["logs", "performance"], systems: LINUX, keywords: ["oom", "kernel", "memory"] }, "/var/log/kern.log", "Out of memory|oom-kill"),
-  logLines({ id: "nginx-errors", title: "nginx critical errors", description: "Critical lines of the nginx error log.", purposes: ["logs", "web"], systems: LINUX, keywords: ["http", "error log"] }, "/var/log/nginx/error.log", "\\[(crit|alert|emerg)\\]"),
-  eventLog({ id: "system-events", title: "Errors in the System event log", description: "Critical and error events of the System log.", purposes: ["logs"], systems: ["windows"], keywords: ["event viewer"] }, "System"),
-  eventLog({ id: "application-events", title: "Errors in the Application event log", description: "Critical and error events of the Application log.", purposes: ["logs"], systems: ["windows"], keywords: ["event viewer"] }, "Application"),
+  logLines({ id: "syslog-errors", purposes: ["logs"], systems: LINUX, keywords: ["system log"] }, "/var/log/syslog", "error"),
+  logLines({ id: "ssh-failures", purposes: ["logs", "network"], systems: LINUX, keywords: ["security", "brute force", "auth"] }, "/var/log/auth.log", "Failed password"),
+  logLines({ id: "oom-kills", purposes: ["logs", "performance"], systems: LINUX, keywords: ["oom", "kernel", "memory"] }, "/var/log/kern.log", "Out of memory|oom-kill"),
+  logLines({ id: "nginx-errors", purposes: ["logs", "web"], systems: LINUX, keywords: ["http", "error log"] }, "/var/log/nginx/error.log", "\\[(crit|alert|emerg)\\]"),
+  eventLog({ id: "system-events", purposes: ["logs"], systems: ["windows"], keywords: ["event viewer"] }, "System"),
+  eventLog({ id: "application-events", purposes: ["logs"], systems: ["windows"], keywords: ["event viewer"] }, "Application"),
 
   // Scripts people already have.
-  {
-    id: "apt-updates",
-    title: "Pending updates (check_apt)",
-    description: "Warns when packages wait to be installed. Needs check_apt, from the monitoring plugins package, linked into the agent's scripts folder.",
-    purposes: ["updates"],
-    systems: LINUX,
-    technology: "script",
-    keywords: ["apt", "patches", "nagios", "security updates"],
-    type: prefill(kind("script"), "Pending updates (check_apt)", { script: "check_apt" }, {
-      script: "Link /usr/lib/nagios/plugins/check_apt into the agent's scripts folder first.",
-    }),
-  },
+  entry({ id: "apt-updates", purposes: ["updates"], systems: LINUX }, "script", ["apt", "patches", "nagios", "security updates"], (title) =>
+    prefill(kind("script"), title, { script: "check_apt" }, { script: text("apt-updates", "hint") }),
+  ),
 ];
 
 /** Shown as "Common checks" while nothing is used yet. */
@@ -302,6 +321,6 @@ export function mostUsed(entries: CatalogueEntry[], usage: CheckUsage[], limit =
 
 /** "Linux, Proxmox · Port": the facts under an entry's title. */
 export function entryFacts(entry: CatalogueEntry): string {
-  const systems = entry.systems.length === SYSTEMS.length ? "Any system" : entry.systems.map((s) => label(SYSTEMS, s)).join(", ");
+  const systems = entry.systems.length === SYSTEMS.length ? t("checks.anySystem") : entry.systems.map((s) => label(SYSTEMS, s)).join(", ");
   return `${systems} · ${label(TECHNOLOGIES, entry.technology)}`;
 }

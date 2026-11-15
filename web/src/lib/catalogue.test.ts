@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
+
 import { checkName } from "./alerts";
 import type { UsablePlugin } from "./api";
 import { CATALOGUE, COMMON, NO_FILTERS, entriesFor, entryFacts, filterEntries, mostUsed, pluginEntries } from "./catalogue";
@@ -23,6 +25,22 @@ describe("the check catalogue", () => {
   it("has unique ids, and common checks that exist", () => {
     expect(new Set(ids(CATALOGUE)).size).toBe(CATALOGUE.length);
     for (const id of COMMON) expect(ids(CATALOGUE)).toContain(id);
+  });
+
+  it("has every title, description and hint in French, read when shown", () => {
+    setActiveLocale("fr");
+    for (const entry of CATALOGUE) {
+      expect(entry.title, entry.id).not.toMatch(/^checks\./);
+      expect(entry.description, entry.id).not.toMatch(/^checks\./);
+      for (const field of entry.type?.fields ?? []) expect(field.hint ?? "", `${entry.id}.${field.key}`).not.toMatch(/^checks\./);
+    }
+    const ssh = CATALOGUE.find((e) => e.id === "ssh-service")!;
+    expect(ssh.title).toBe("Serveur SSH actif");
+    expect(ssh.type?.label).toBe("Serveur SSH actif");
+    expect(ssh.type?.fields[0]?.hint).toBe("ssh sous Debian et Ubuntu, sshd sous RHEL et Rocky.");
+    expect(CATALOGUE.find((e) => e.id === "port")!.title).toBe("Un port répond");
+    expect(entryFacts(ssh)).toBe("Linux · Intégré à l’agent");
+    expect(ids(filterEntries(CATALOGUE, { ...NO_FILTERS, query: "base de donnees" }))).toContain("postgresql-service");
   });
 
   it("prefills each template's form with values that pass its own checks", () => {
