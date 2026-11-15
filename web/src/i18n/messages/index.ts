@@ -13,6 +13,7 @@ import * as license from "./license";
 import * as monitoring from "./monitoring";
 import * as notifications from "./notifications";
 import * as onCall from "./onCall";
+import * as relays from "./relays";
 import * as sensors from "./sensors";
 import * as server from "./server";
 import * as serverUpdate from "./serverUpdate";
@@ -39,6 +40,7 @@ export const en = {
   monitoring: monitoring.en,
   notifications: notifications.en,
   onCall: onCall.en,
+  relays: relays.en,
   sensors: sensors.en,
   server: server.en,
   serverUpdate: serverUpdate.en,
@@ -64,6 +66,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   monitoring: monitoring.fr,
   notifications: notifications.fr,
   onCall: onCall.fr,
+  relays: relays.fr,
   sensors: sensors.fr,
   server: server.fr,
   serverUpdate: serverUpdate.fr,
