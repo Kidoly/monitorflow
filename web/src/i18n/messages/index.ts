@@ -15,6 +15,7 @@ import * as settings from "./settings";
 import * as shell from "./shell";
 import * as silences from "./silences";
 import * as ui from "./ui";
+import * as users from "./users";
 
 // One file per area of the interface, English and French side by side.
 // An area added here is typed into `MessageKey`.
@@ -34,6 +35,7 @@ export const en = {
   shell: shell.en,
   silences: silences.en,
   ui: ui.en,
+  users: users.en,
 };
 
 export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
@@ -52,4 +54,5 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   shell: shell.fr,
   silences: silences.fr,
   ui: ui.fr,
+  users: users.fr,
 };
