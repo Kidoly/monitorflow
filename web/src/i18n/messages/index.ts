@@ -1,6 +1,7 @@
 import type { Message } from "../catalog";
 
 import * as auth from "./auth";
+import * as authority from "./authority";
 import * as backups from "./backups";
 import * as checks from "./checks";
 import * as common from "./common";
@@ -25,6 +26,7 @@ import * as users from "./users";
 // An area added here is typed into `MessageKey`.
 export const en = {
   auth: auth.en,
+  authority: authority.en,
   backups: backups.en,
   checks: checks.en,
   common: common.en,
@@ -48,6 +50,7 @@ export const en = {
 
 export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   auth: auth.fr,
+  authority: authority.fr,
   backups: backups.fr,
   checks: checks.fr,
   common: common.fr,
