@@ -154,7 +154,7 @@ The open questions in `docs/product.md`.
 - [x] Enterprise edition: licensed high availability (ADR-0100). The Enterprise directory `ee/` and its license; an offline license key, checked with a key pair of its own, on an Administration › License page; `install-server.sh --join` to add a central server, which starts only with a license that has room. A missing or expired license stops adding central servers, never monitoring or the ones running.
 - [ ] Billing.
 - [ ] Final product name.
-- [ ] "How to monitor" guides in English and French for the showcase website, to bring search traffic: about 25 subjects from the check catalogue, in `docs/guides/`.
+- [x] "How to monitor" guides in English and French for the showcase website, to bring search traffic: about 25 subjects from the check catalogue, in `docs/guides/`.
 
 ## Phase 15 — Your choice
 
