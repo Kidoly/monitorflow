@@ -10,6 +10,7 @@ import * as campaigns from "./campaigns";
 import * as checks from "./checks";
 import * as common from "./common";
 import * as dashboards from "./dashboards";
+import * as display from "./display";
 import * as fleet from "./fleet";
 import * as followUp from "./followUp";
 import * as format from "./format";
@@ -48,6 +49,7 @@ export const en = {
   checks: checks.en,
   common: common.en,
   dashboards: dashboards.en,
+  display: display.en,
   fleet: fleet.en,
   followUp: followUp.en,
   format: format.en,
@@ -85,6 +87,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   checks: checks.fr,
   common: common.fr,
   dashboards: dashboards.fr,
+  display: display.fr,
   fleet: fleet.fr,
   followUp: followUp.fr,
   format: format.fr,
