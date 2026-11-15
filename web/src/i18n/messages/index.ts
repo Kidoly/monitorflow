@@ -12,6 +12,7 @@ import * as format from "./format";
 import * as incidents from "./incidents";
 import * as install from "./install";
 import * as license from "./license";
+import * as mirrors from "./mirrors";
 import * as monitoring from "./monitoring";
 import * as notifications from "./notifications";
 import * as onCall from "./onCall";
@@ -41,6 +42,7 @@ export const en = {
   incidents: incidents.en,
   install: install.en,
   license: license.en,
+  mirrors: mirrors.en,
   monitoring: monitoring.en,
   notifications: notifications.en,
   onCall: onCall.en,
@@ -69,6 +71,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   incidents: incidents.fr,
   install: install.fr,
   license: license.fr,
+  mirrors: mirrors.fr,
   monitoring: monitoring.fr,
   notifications: notifications.fr,
   onCall: onCall.fr,
