@@ -6,6 +6,7 @@ import * as common from "./common";
 import * as fleet from "./fleet";
 import * as format from "./format";
 import * as incidents from "./incidents";
+import * as notifications from "./notifications";
 import * as sensors from "./sensors";
 import * as server from "./server";
 import * as shell from "./shell";
@@ -21,6 +22,7 @@ export const en = {
   fleet: fleet.en,
   format: format.en,
   incidents: incidents.en,
+  notifications: notifications.en,
   sensors: sensors.en,
   server: server.en,
   shell: shell.en,
@@ -35,6 +37,7 @@ export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
   fleet: fleet.fr,
   format: format.fr,
   incidents: incidents.fr,
+  notifications: notifications.fr,
   sensors: sensors.fr,
   server: server.fr,
   shell: shell.fr,

@@ -40,7 +40,7 @@ import { Label } from "@/components/ui/StatusLabel";
 
 import admin from "./AdminPages.module.css";
 import { FollowUpSection } from "./FollowUp";
-import { CHAT } from "./NotificationsAdmin";
+import { CHAT, chatHelp } from "./NotificationsAdmin";
 import styles from "./OnCall.module.css";
 
 type Also = NonNullable<Contact["kind"]> | "";
@@ -162,7 +162,7 @@ function ContactSection() {
                 <span className={admin.fieldNote}>
                   {also === "webhook"
                     ? "A POST with the alert in JSON, as for webhook channels."
-                    : `${CHAT[also].help} A channel or direct messages only you read works best.`}
+                    : `${chatHelp(also)} A channel or direct messages only you read works best.`}
                 </span>
               </label>
             )}
