@@ -1,5 +1,6 @@
 import type { Message } from "../catalog";
 
+import * as ai from "./ai";
 import * as apiKeys from "./apiKeys";
 import * as auth from "./auth";
 import * as authority from "./authority";
@@ -34,6 +35,7 @@ import * as users from "./users";
 // One file per area of the interface, English and French side by side.
 // An area added here is typed into `MessageKey`.
 export const en = {
+  ai: ai.en,
   apiKeys: apiKeys.en,
   auth: auth.en,
   authority: authority.en,
@@ -67,6 +69,7 @@ export const en = {
 };
 
 export const fr: { [A in keyof typeof en]: Record<string, Message> } = {
+  ai: ai.fr,
   apiKeys: apiKeys.fr,
   auth: auth.fr,
   authority: authority.fr,
