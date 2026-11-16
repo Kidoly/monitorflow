@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "mirror")]
 pub mod index;
 #[cfg(feature = "mirror")]
+pub mod origin;
+#[cfg(feature = "mirror")]
 pub mod packages;
 #[cfg(feature = "mirror")]
 pub mod repo;

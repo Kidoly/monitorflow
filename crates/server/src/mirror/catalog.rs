@@ -248,6 +248,7 @@ impl Distribution {
                 },
                 sync_interval_s: Some(DAILY_S),
                 auto_snapshot: true,
+                mode: Default::default(),
             })
             .collect()
     }

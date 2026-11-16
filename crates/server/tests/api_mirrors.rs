@@ -184,6 +184,7 @@ fn dnf(name: &str) -> MirrorSpec {
         architectures: vec![],
         sync_interval_s: Some(86_400),
         auto_snapshot: true,
+        mode: Default::default(),
     }
 }
 

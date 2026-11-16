@@ -34,7 +34,7 @@ pub mod tools;
 pub use jobs::{Job, JobError, JobKind, Mirrors};
 pub use layout::Layout;
 pub use model::{
-    Family, Mirror, MirrorSpec, Run, RunKind, RunState, Snapshot, SnapshotState, Trigger,
+    Family, Mirror, MirrorSpec, Mode, Run, RunKind, RunState, Snapshot, SnapshotState, Trigger,
 };
 pub use runner::{CommandRunner, Invocation, Output, RunError, Runner, Tool};
 pub use store::{MirrorLock, StoreError};

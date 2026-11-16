@@ -32693,6 +32693,7 @@
           "components",
           "architectures",
           "auto_snapshot",
+          "mode",
           "created_at"
         ],
         "properties": {
@@ -32741,6 +32742,10 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/MirrorMode",
+            "description": "What its next sync downloads (ADR-0142)."
           },
           "name": {
             "type": "string",
@@ -32879,6 +32884,14 @@
             }
           }
         }
+      },
+      "MirrorMode": {
+        "type": "string",
+        "description": "What a sync downloads (ADR-0142): every package, or only the indexes,\npackages being fetched when first asked for.",
+        "enum": [
+          "full",
+          "on_demand"
+        ]
       },
       "MirrorRun": {
         "type": "object",
@@ -37555,7 +37568,8 @@
           "mirror_id",
           "name",
           "state",
-          "created_at"
+          "created_at",
+          "mode"
         ],
         "properties": {
           "created_at": {
@@ -37576,6 +37590,10 @@
           "mirror_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/MirrorMode",
+            "description": "The mode it was built in: an on-demand snapshot holds indexes only."
           },
           "name": {
             "type": "string",

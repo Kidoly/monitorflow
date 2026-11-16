@@ -186,6 +186,10 @@ struct AddMirror {
     /// Do not publish a snapshot at the end of each sync.
     #[arg(long)]
     no_auto_snapshot: bool,
+    /// `full` downloads every package; `on-demand` only the indexes, each
+    /// package being fetched when first asked for (ADR-0142).
+    #[arg(long, default_value = "full", value_parser = ["full", "on-demand"])]
+    mode: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1017,6 +1021,7 @@ async fn mirror_command(
                 architectures: args.architectures,
                 sync_interval_s: args.interval.0,
                 auto_snapshot: !args.no_auto_snapshot,
+                mode: args.mode.parse().map_err(anyhow::Error::msg)?,
             };
             let created = mirror::store::create(&pool, &spec, ("system", "cli")).await?;
             println!("created mirror {} ({})", created.name, created.id);

@@ -6,12 +6,16 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use monitorflow_common::mirror::store::Store;
+
 use super::model::{Family, Mirror};
 
 /// File name of the public signing key under `keys/`.
 pub const PUBLIC_KEY: &str = "monitorflow-archive.asc";
 /// Directory of the tools sidecar's socket under `mirror_dir` (ADR-0067).
 pub const TOOLS_DIR: &str = "tools";
+/// Directory of the working trees of on-demand mirrors (ADR-0142).
+pub const ONDEMAND_WORK: &str = "ondemand-work";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
@@ -78,6 +82,24 @@ impl Layout {
         self.root.join("dnf-work").join(&mirror.name)
     }
 
+    /// Working tree of an on-demand mirror: the indexes of its last sync
+    /// (ADR-0142); not served.
+    pub fn ondemand_work(&self, mirror: &Mirror) -> PathBuf {
+        self.root.join(ONDEMAND_WORK).join(&mirror.name)
+    }
+
+    /// Where an on-demand sync builds the next working tree.
+    pub fn ondemand_staging(&self, mirror: &Mirror) -> PathBuf {
+        self.root
+            .join(ONDEMAND_WORK)
+            .join(format!(".new-{}", mirror.name))
+    }
+
+    /// The content store of on-demand mirrors (ADR-0142); not served.
+    pub fn store(&self) -> Store {
+        Store::under(&self.root)
+    }
+
     /// dnf's cache of upstream metadata in the sidecar (`reposync.sh`).
     pub fn dnf_cache(&self) -> PathBuf {
         self.root.join("dnf-work").join(".cache")
@@ -93,6 +115,8 @@ impl Layout {
             std::fs::create_dir_all(dir)?;
         }
         std::fs::create_dir_all(self.root.join("dnf-work"))?;
+        std::fs::create_dir_all(self.root.join(ONDEMAND_WORK))?;
+        self.store().create()?;
         let gnupg = self.gnupg();
         std::fs::create_dir_all(&gnupg)?;
         std::fs::set_permissions(&gnupg, std::fs::Permissions::from_mode(0o700))?;

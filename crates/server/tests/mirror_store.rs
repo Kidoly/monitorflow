@@ -35,6 +35,7 @@ fn apt(name: &str) -> MirrorSpec {
         architectures: vec!["amd64".into()],
         sync_interval_s: Some(3600),
         auto_snapshot: true,
+        mode: Default::default(),
     }
 }
 
@@ -154,14 +155,14 @@ db_tests! {
         .unwrap_err();
         assert_eq!(code(error), UNIQUE_VIOLATION);
         store::set_output(&pool, run.id, "$ aptly mirror update\n").await.unwrap();
-        let snapshot = store::insert_snapshot(&mut lock, "s1").await.unwrap();
+        let snapshot = store::insert_snapshot(&mut lock, "s1", Default::default()).await.unwrap();
         assert_eq!(snapshot.state, SnapshotState::Creating);
         assert!(matches!(
-            store::insert_snapshot(&mut lock, "s1").await,
+            store::insert_snapshot(&mut lock, "s1", Default::default()).await,
             Err(StoreError::Duplicate("snapshot"))
         ));
         assert!(matches!(
-            store::insert_snapshot(&mut lock, "current").await,
+            store::insert_snapshot(&mut lock, "current", Default::default()).await,
             Err(StoreError::Invalid(_))
         ));
         let published = store::publish_snapshot(&pool, snapshot.id, Some(42)).await.unwrap();
@@ -176,16 +177,16 @@ db_tests! {
 
         // A failed snapshot's name can be retried; a published one's not.
         let run = lock.start_run(RunKind::Snapshot, Trigger::Manual, None).await.unwrap();
-        let failed = store::insert_snapshot(&mut lock, "s2").await.unwrap();
+        let failed = store::insert_snapshot(&mut lock, "s2", Default::default()).await.unwrap();
         store::fail_snapshot(&pool, failed.id, "gpg: no secret key").await.unwrap();
         let failed_run = store::finish_run(&pool, run.id, "", Some("gpg: no secret key"), None)
             .await
             .unwrap();
         assert_eq!(failed_run.state, RunState::Failed);
-        let retried = store::insert_snapshot(&mut lock, "s2").await.unwrap();
+        let retried = store::insert_snapshot(&mut lock, "s2", Default::default()).await.unwrap();
         assert_eq!((retried.id, retried.state, retried.error), (failed.id, SnapshotState::Creating, None));
         assert!(matches!(
-            store::insert_snapshot(&mut lock, "s1").await,
+            store::insert_snapshot(&mut lock, "s1", Default::default()).await,
             Err(StoreError::Duplicate(_))
         ));
         lock.release().await;
@@ -210,7 +211,7 @@ db_tests! {
         let mirror = store::create(&pool, &apt("m"), ("system", "cli")).await.unwrap();
         let mut lock = MirrorLock::try_acquire(&pool, mirror.id).await.unwrap().unwrap();
         let run = lock.start_run(RunKind::Snapshot, Trigger::Schedule, None).await.unwrap();
-        let snapshot = store::insert_snapshot(&mut lock, "s").await.unwrap();
+        let snapshot = store::insert_snapshot(&mut lock, "s", Default::default()).await.unwrap();
         // The process dies: its session ends, the rows stay `running`.
         lock.release().await;
 

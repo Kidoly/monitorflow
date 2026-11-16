@@ -267,7 +267,7 @@ impl Job {
     /// Creates, publishes and records one snapshot, then moves `current`.
     async fn snapshot(&mut self, name: Option<String>) -> Result<Uuid, Failed> {
         let name = name.unwrap_or_else(|| model::snapshot_name_at(Utc::now()));
-        let snapshot = store::insert_snapshot(&mut self.lock, &name)
+        let snapshot = store::insert_snapshot(&mut self.lock, &name, self.mirror.mode)
             .await
             .map_err(|e| match e {
                 StoreError::Duplicate(_) => Failed(format!("snapshot `{name}` already exists")),

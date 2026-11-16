@@ -228,6 +228,7 @@ pub(crate) mod tests {
             architectures: vec!["amd64".into()],
             sync_interval_s: None,
             auto_snapshot: true,
+            mode: Default::default(),
             created_at: Utc::now(),
             deleting_at: None,
             delete_error: None,

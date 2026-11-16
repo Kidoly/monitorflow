@@ -452,6 +452,7 @@ mod tests {
                     error: None,
                     created_at: at,
                     published_at: Some(at),
+                    mode: Default::default(),
                 }
             })
             .collect()

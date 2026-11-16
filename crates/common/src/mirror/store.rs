@@ -92,8 +92,17 @@ impl Store {
         &self.root
     }
 
+    /// Creates the store's directories, leaving what they hold. Blocking.
+    pub fn create(&self) -> io::Result<()> {
+        for dir in [INDEX, PACKAGES, TEMP] {
+            std::fs::create_dir_all(self.root.join(dir))?;
+        }
+        Ok(())
+    }
+
     /// Creates the store's directories and empties `.tmp`, which only a
-    /// process stopped mid-download leaves anything in. Blocking.
+    /// process stopped mid-download leaves anything in: call it before
+    /// anything downloads. Blocking.
     pub fn prepare(&self) -> io::Result<()> {
         for dir in [INDEX, PACKAGES] {
             std::fs::create_dir_all(self.root.join(dir))?;
