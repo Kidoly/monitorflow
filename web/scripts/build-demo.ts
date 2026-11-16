@@ -5,7 +5,8 @@
 //   npm run build:demo
 //
 // NEXT_PUBLIC_MONITORFLOW_SITE_URL, when set, is where the banner's
-// "Website" link leads.
+// "Website" link leads. NEXT_PUBLIC_MONITORFLOW_BASE_PATH, such as /demo,
+// serves the demo under that path of another site instead of at the root.
 
 import { spawnSync } from "node:child_process";
 

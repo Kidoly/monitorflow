@@ -10,12 +10,13 @@ npm ci
 npm run build:demo   # static files in web/out
 ```
 
-`npm run build:demo` is the normal build with `NEXT_PUBLIC_MONITORFLOW_DEMO=1`. Two environment variables are read at build time:
+`npm run build:demo` is the normal build with `NEXT_PUBLIC_MONITORFLOW_DEMO=1`. Three environment variables are read at build time:
 
 | Variable | Effect |
 | --- | --- |
 | `NEXT_PUBLIC_MONITORFLOW_DEMO` | `1` builds the demo. `npm run build:demo` sets it. |
 | `NEXT_PUBLIC_MONITORFLOW_SITE_URL` | Where the banner's "Website" link leads. Default `https://monitorflow.eu`. |
+| `NEXT_PUBLIC_MONITORFLOW_BASE_PATH` | A path such as `/demo` to serve the demo under another site, as the website does at `/demo/`. Empty serves it at the root of its own address. Ignored outside a demo build: the product is always served at its root. |
 
 To look at it, serve `web/out` with any static file server, for example `python3 -m http.server -d web/out 4173`.
 
