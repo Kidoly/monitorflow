@@ -10,6 +10,8 @@
 //! helpers, which are Unix only (ADR-0047, ADR-0049).
 
 #[cfg(unix)]
+pub mod app_update;
+#[cfg(unix)]
 pub mod apply;
 #[cfg(unix)]
 pub mod apt;
@@ -19,7 +21,13 @@ pub mod configure;
 pub mod dnf;
 pub mod exec;
 #[cfg(unix)]
+pub mod flatpak;
+#[cfg(unix)]
+pub mod snap;
+#[cfg(unix)]
 pub mod sources;
+#[cfg(unix)]
+pub mod third_party;
 #[cfg(unix)]
 pub mod update;
 pub mod windows_update;

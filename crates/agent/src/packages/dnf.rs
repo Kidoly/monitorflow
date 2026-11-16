@@ -55,6 +55,10 @@ impl PackageManager for Dnf {
         Some(crate::snapshots::storage(&self.tools).await)
     }
 
+    async fn third_party(&self) -> super::ThirdParty {
+        super::third_party::collect(&self.tools).await
+    }
+
     async fn reboot_required(&self) -> Result<bool, PackageError> {
         let run = self
             .tools
