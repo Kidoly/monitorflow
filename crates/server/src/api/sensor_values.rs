@@ -34,7 +34,7 @@ pub const SPARKLINE_POINTS: i64 = 30;
 const MIN_LATE_S: i64 = 300;
 
 /// Body of `GET /api/servers/{id}/sensor-values`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SensorValues {
     /// The sparklines' range and step, in Unix seconds.
     pub start: i64,
@@ -44,7 +44,7 @@ pub struct SensorValues {
 }
 
 /// One sensor, by its name and configured instance.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SensorValue {
     pub name: String,
     /// `""` when the sensor is not limited to one instance.
@@ -58,11 +58,13 @@ pub struct SensorValue {
 }
 
 /// One instance of a sensor's metric.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SeriesValue {
     /// `""` for a metric without instances.
     pub instance: String,
-    /// `[unix seconds, value]` from `start` to `end`.
+    /// `[unix seconds, value]` from `start` to `end`; the value is null
+    /// for a step without a sample.
+    #[schema(value_type = Vec<Vec<Option<f64>>>)]
     pub points: Vec<(f64, Option<f64>)>,
     pub last_value: Option<f64>,
     pub last_at: Option<DateTime<Utc>>,

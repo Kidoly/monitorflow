@@ -1,5 +1,6 @@
 .app {
-  min-height: 100vh;
+  /* The static demo's banner sits above (docs/demo.md); 0 otherwise. */
+  min-height: calc(100vh - var(--demo-banner-h));
   display: flex;
   align-items: stretch;
 }
@@ -29,8 +30,8 @@
   border-right: 1px solid var(--border);
   background: var(--sidebar);
   position: sticky;
-  top: 0;
-  height: 100vh;
+  top: var(--demo-banner-h);
+  height: calc(100vh - var(--demo-banner-h));
   overflow-y: auto;
 }
 

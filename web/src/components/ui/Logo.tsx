@@ -1,3 +1,5 @@
+import { asset } from "@/lib/basePath";
+
 import styles from "./Logo.module.css";
 
 /**
@@ -11,9 +13,9 @@ export function Logo({ size = 24 }: { size?: number }) {
   return (
     <span className={styles.logo} style={{ width: size, height: size }} aria-hidden="true">
       {/* eslint-disable-next-line @next/next/no-img-element -- static export, no image optimisation */}
-      <img className={styles.light} src={`/brand/slime-violette${small}.svg`} alt="" width={size} height={size} />
+      <img className={styles.light} src={asset(`/brand/slime-violette${small}.svg`)} alt="" width={size} height={size} />
       {/* eslint-disable-next-line @next/next/no-img-element -- static export, no image optimisation */}
-      <img className={styles.dark} src={`/brand/slime-sombre${small}.svg`} alt="" width={size} height={size} />
+      <img className={styles.dark} src={asset(`/brand/slime-sombre${small}.svg`)} alt="" width={size} height={size} />
     </span>
   );
 }
