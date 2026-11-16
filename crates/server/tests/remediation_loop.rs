@@ -71,6 +71,8 @@ enum Reply {
     },
     /// Keeps the command, unanswered, until [`TestAgent::answer`].
     Hold,
+    /// Refuses the command without running it, saying why.
+    Refuse(&'static str),
 }
 
 /// An agent on a real stream: checks each command's signature and
@@ -468,6 +470,16 @@ async fn run_agent(
                     Some(Reply::Hold) => {
                         held.insert(shell.command, c.command_id);
                     }
+                    Some(Reply::Refuse(error)) => {
+                        send(CommandResult {
+                            command_id: c.command_id.clone(),
+                            exit_code: -1,
+                            status: CommandStatus::Rejected as i32,
+                            error: (*error).into(),
+                            ..CommandResult::default()
+                        })
+                        .await;
+                    }
                     None => panic!("unscripted command {:?}", shell.command),
                 }
             }
@@ -730,8 +742,18 @@ db_tests! {
             "state_change", "context_sent",
             "ai_proposal", "classification", "approval", "command_queued", "command_result",
             "ai_proposal", "classification", "approval", "snapshot", "command_queued", "command_result",
-            "ai_proposal", "note", "state_change",
+            "ai_proposal", "note",
         ]);
+        // The note that closes it records the state change too: no second event for the same moment.
+        assert_eq!(
+            of_kind(&events, "note")[0],
+            &serde_json::json!({
+                "text": "the sensor returned to normal",
+                "code": "sensor_normal",
+                "from": "running",
+                "to": "resolved",
+            })
+        );
         let classifications = of_kind(&events, "classification");
         assert_eq!(classifications[0]["tier"], "read_only");
         assert_eq!(classifications[1]["tier"], "low_impact");
@@ -1082,6 +1104,8 @@ db_tests! {
         running.stop().await;
         assert_eq!(h.agent.seen(), ["df -h"]);
         assert_eq!(last_escalation(&h).await, "the command limit of 1 was reached");
+        let escalation = of_kind(&h.events().await, "escalation")[0].clone();
+        assert_eq!((escalation["code"].as_str(), escalation["limit"].as_i64()), (Some("command_limit"), Some(1)));
         assert!(ai.requests()[0].system_prompt.contains("At most 1 commands"));
         h.close().await;
     }
@@ -1100,6 +1124,32 @@ db_tests! {
         let result = of_kind(&events, "command_result")[0];
         assert_eq!(result["exit_code"], Value::Null);
         assert!(result["error"].as_str().unwrap().starts_with("no result within"));
+        assert_eq!(result["error_code"], "no_result");
+        assert!(result["limit"].as_i64().unwrap() > 0);
+        h.close().await;
+    }
+
+    #[sqlx::test]
+    async fn a_refused_command_escalates_in_one_event_without_repeating_why(pool: PgPool) {
+        monitorflow_server::secrets::install_for_tests();
+        let refusal = "shell commands are disabled on this agent (commands.shell)";
+        let h = Harness::start(&pool, &[("uptime", Reply::Refuse(refusal))]).await;
+        let ai = Arc::new(MockProvider::new([Step::run("load", "uptime", "load")]));
+        let running = h.remediation(&ai, settings());
+        h.wait_state("escalated").await;
+        running.stop().await;
+        let events = h.events().await;
+        let tail: Vec<_> = kinds(&events).into_iter().rev().take(2).collect();
+        assert_eq!(tail, ["escalation", "command_result"]);
+        assert_eq!(of_kind(&events, "command_result")[0]["error"], refusal);
+        let escalation = of_kind(&events, "escalation")[0];
+        // `reason` keeps the full English sentence for existing clients;
+        // `code` lets the web interface say it without quoting the agent again.
+        assert_eq!(escalation["reason"], format!("the command did not run to completion: {refusal}"));
+        assert_eq!(escalation["code"], "incomplete");
+        assert_eq!(escalation.get("detail"), None);
+        assert_eq!((escalation["from"].as_str(), escalation["to"].as_str()), (Some("running"), Some("escalated")));
+        assert!(of_kind(&events, "state_change").iter().all(|p| p["to"] != "escalated"));
         h.close().await;
     }
 
@@ -1240,6 +1290,7 @@ db_tests! {
         assert!(of_kind(&h.events().await, "command_queued").is_empty());
         assert!(h.agent.seen().is_empty());
         assert!(last_escalation(&h).await.contains("MF_ALLOW_COMMANDS=1"));
+        assert_eq!(of_kind(&h.events().await, "escalation")[0]["code"], "commands_off");
         h.close().await;
     }
 
@@ -1333,7 +1384,7 @@ db_tests! {
         assert_eq!(kinds(&events), [
             "state_change", "context_sent", "ai_proposal", "classification", "state_change",
             "edit", "approval", "state_change", "snapshot", "command_queued", "command_result",
-            "ai_proposal", "note", "state_change",
+            "ai_proposal", "note",
         ]);
         assert_eq!(events[6].actor_kind, "user");
         let requests = ai.requests();

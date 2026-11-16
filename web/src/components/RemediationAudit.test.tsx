@@ -68,13 +68,42 @@ describe("RemediationAudit", () => {
     const rows = within(await table()).getAllByRole("row");
     expect(rows).toHaveLength(3);
     expect(rows[1]).toHaveTextContent(/agent agent-web-1\s*Command result\s*web-1paris · Disk used \/var, event 9\s*Exit code 0, 120 ms$/);
-    expect(rows[2]).toHaveTextContent(/dave\s*Approval\s*web-1.*Approved: systemctl reload nginx$/);
+    // Details say only what the event's name does not: here, the command.
+    expect(rows[2]).toHaveTextContent(/dave\s*Approval\s*web-1.*event 6\s*systemctl reload nginx$/);
     expect(within(rows[2]!).getByRole("link", { name: "Disk used /var, event 6" })).toHaveAttribute(
       "href",
       expect.stringMatching(new RegExp(`^/remediation/audit/?\\?incident=${INCIDENT_ID}$`)),
     );
     expect(screen.getByText(/Choose an incident in the Target column to verify its chain/)).toBeInTheDocument();
     expect(screen.getByText("Showing 2 events · 50 per page")).toBeInTheDocument();
+    // The sidebar links the approvals: the header does not repeat it.
+    expect(screen.queryByRole("link", { name: "Approvals" })).not.toBeInTheDocument();
+  });
+
+  it("shows a refused command once, and its escalation without repeating why", async () => {
+    const refused = event({
+      seq: 9,
+      kind: "command_result",
+      actor_kind: "peer",
+      actor_id: "agent-web-1",
+      payload: { exit_code: null, error: "shell commands are disabled on this agent (commands.shell)", duration_ms: 5 },
+    });
+    const escalation = event({
+      seq: 10,
+      kind: "escalation",
+      payload: {
+        reason: "the command did not run to completion: shell commands are disabled on this agent (commands.shell)",
+        code: "incomplete",
+        from: "running",
+        to: "escalated",
+      },
+    });
+    stubFetch({ ...SERVERS, [`GET /api/remediation/events?limit=${PAGE_SIZE}`]: events([escalation, refused]) });
+    render(<RemediationAuditView />);
+    const rows = within(await table()).getAllByRole("row");
+    expect(rows[1]).toHaveTextContent(/Escalation.*The command did not complete$/);
+    expect(rows[1]).not.toHaveTextContent(/disabled/);
+    expect(rows[2]).toHaveTextContent(/Command result.*Did not complete: AI commands are off on this agent\./);
   });
 
   it("verifies the chain of the incident it is filtered to", async () => {

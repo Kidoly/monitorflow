@@ -388,6 +388,14 @@ fn incident() {}
 /// and command output (`stdout`, `stderr`); read the incident for them
 /// and to verify its chain.
 ///
+/// The `escalation` (escalated, failed) or `note` (resolved) that closes
+/// an incident also records its state change, as `from` and `to` in its
+/// payload, with no separate `state_change`. It has a stable `code`
+/// (like `duration_limit`, `incomplete` or `commands_off`), `detail` for
+/// untranslatable words and `limit` for a limit's number, next to the
+/// English `reason` (`text` for a note). A `command_result` with no
+/// result in time has `error_code` `no_result` and `limit`, its seconds.
+///
 /// Needs any role and the key area "remediation". Filters are ANDed; a
 /// filter outside the caller's sites gives an empty list. Paginated with
 /// `limit` and `cursor`; unknown parameters and bad values are 400.

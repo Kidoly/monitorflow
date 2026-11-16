@@ -15839,7 +15839,7 @@
           "remediation"
         ],
         "summary": "List remediation events",
-        "description": "The remediation audit log: the events of every remediation incident on\nthe sites the caller reads, newest first, across incidents. Each event\ncarries its incident's customer, site, server, metric and instance.\n`payload` leaves out the context sent to the AI (`context.rendered`)\nand command output (`stdout`, `stderr`); read the incident for them\nand to verify its chain.\n\nNeeds any role and the key area \"remediation\". Filters are ANDed; a\nfilter outside the caller's sites gives an empty list. Paginated with\n`limit` and `cursor`; unknown parameters and bad values are 400.",
+        "description": "The remediation audit log: the events of every remediation incident on\nthe sites the caller reads, newest first, across incidents. Each event\ncarries its incident's customer, site, server, metric and instance.\n`payload` leaves out the context sent to the AI (`context.rendered`)\nand command output (`stdout`, `stderr`); read the incident for them\nand to verify its chain.\n\nThe `escalation` (escalated, failed) or `note` (resolved) that closes\nan incident also records its state change, as `from` and `to` in its\npayload, with no separate `state_change`. It has a stable `code`\n(like `duration_limit`, `incomplete` or `commands_off`), `detail` for\nuntranslatable words and `limit` for a limit's number, next to the\nEnglish `reason` (`text` for a note). A `command_result` with no\nresult in time has `error_code` `no_result` and `limit`, its seconds.\n\nNeeds any role and the key area \"remediation\". Filters are ANDed; a\nfilter outside the caller's sites gives an empty list. Paginated with\n`limit` and `cursor`; unknown parameters and bad values are 400.",
         "operationId": "list_events",
         "parameters": [
           {
@@ -22288,6 +22288,7 @@
                   "model": "local-model",
                   "models": [
                     {
+                      "fit": "recommended",
                       "id": "model-large",
                       "name": "Model Large",
                       "note": "Recommended: the best diagnoses"
@@ -22431,6 +22432,7 @@
                   "model": "local-model",
                   "models": [
                     {
+                      "fit": "recommended",
                       "id": "model-large",
                       "name": "Model Large",
                       "note": "Recommended: the best diagnoses"
@@ -22578,6 +22580,7 @@
                   "model": "model-large",
                   "models": [
                     {
+                      "fit": "recommended",
                       "id": "model-large",
                       "name": "Model Large",
                       "note": "Recommended: the best diagnoses"
@@ -28271,9 +28274,14 @@
         "required": [
           "id",
           "name",
-          "note"
+          "note",
+          "fit"
         ],
         "properties": {
+          "fit": {
+            "type": "string",
+            "description": "`note` as a stable code to word it in another language:\n`recommended`, `half_price` or `cheapest`; new codes may be added."
+          },
           "id": {
             "type": "string",
             "description": "The id to send as `model`."
@@ -28284,7 +28292,7 @@
           },
           "note": {
             "type": "string",
-            "description": "When to pick it, in a few words."
+            "description": "When to pick it, in a few words, in English."
           }
         }
       },

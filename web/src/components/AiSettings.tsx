@@ -6,6 +6,7 @@ import { type FormEvent, Fragment, useCallback, useEffect, useId, useState } fro
 import { rich, t } from "@/i18n";
 import {
   type AiForm as AiFormBody,
+  type AiModel,
   type AiProvider,
   type AiSettings,
   type ChannelTestResult,
@@ -37,10 +38,6 @@ export function AiSettingsPage() {
   return <Ai />;
 }
 
-function modelName(settings: AiSettings, id: string): string {
-  return settings.models.find((m) => m.id === id)?.name ?? id;
-}
-
 /** The choices of AI, in their order on the page; their words are `ai.provider.*` (ADR-0096). */
 const PROVIDERS: AiProvider[] = ["anthropic", "openai", "openai_compatible"];
 
@@ -58,15 +55,30 @@ function host(url: string | null): string {
   }
 }
 
-/** What AI runs with, as the banner says it. */
+/** What AI runs with, for a configuration the form does not show. */
 function describeAi(settings: AiSettings): string {
   switch (settings.provider) {
     case "anthropic":
-      return modelName(settings, settings.model);
+      return settings.models.find((m) => m.id === settings.model)?.name ?? settings.model;
     case "openai":
       return t("ai.fromOpenAi", { model: settings.model });
     case "openai_compatible":
       return t("ai.onHost", { model: settings.model, host: host(settings.base_url) });
+  }
+}
+
+/** When to pick `model`, in the page's language; the server's English for a code this page does not know. */
+function modelNote(model: AiModel | undefined): string | undefined {
+  if (!model) return undefined;
+  switch (model.fit) {
+    case "recommended":
+      return t("ai.fit.recommended");
+    case "half_price":
+      return t("ai.fit.half_price");
+    case "cheapest":
+      return t("ai.fit.cheapest");
+    default:
+      return model.note;
   }
 }
 
@@ -90,23 +102,24 @@ function Ai() {
       {header}
       {settings.enabled ? (
         <Banner tone="ok">
-          {rich("ai.onBanner", { on: <strong>{t("ai.on")}</strong>, ai: describeAi(settings) })}
+          <strong>{t("ai.on")}</strong>
         </Banner>
       ) : (
         <Banner tone="plain">{rich("ai.offBanner", { off: <strong>{t("ai.off")}</strong> })}</Banner>
       )}
-      {settings.from_config ? <FromConfig /> : <AiForm settings={settings} onSaved={setSaved} />}
+      {settings.from_config ? <FromConfig settings={settings} /> : <AiForm settings={settings} onSaved={setSaved} />}
       {settings.enabled && <AllowCommands />}
     </div>
   );
 }
 
 /** The configuration wins: the page only tests what it sets. */
-function FromConfig() {
+function FromConfig({ settings }: { settings: AiSettings }) {
   const [test, setTest] = useState<TestState>(null);
   return (
     <section className={styles.panel} aria-label={t("ai.fromConfigLabel")}>
       <p>{rich("ai.fromConfig", { section: <code>[ai]</code>, line: <code>enabled = true</code> })}</p>
+      <p>{t("ai.configModel", { ai: describeAi(settings) })}</p>
       <div className={styles.formFoot}>
         <TestButton onResult={setTest} body={{ api_key: null, model: "" }} />
         <TestLine test={test} />
@@ -197,7 +210,7 @@ function AiForm({ settings, onSaved }: { settings: AiSettings; onSaved: (setting
   const moved = local && settings.has_key && provider === settings.provider && !sameAddress(baseUrl, settings.base_url);
   const hasKey = settings.has_key && provider === settings.provider && !moved;
   const canUse = local ? baseUrl.trim() !== "" && model.trim() !== "" : hasKey || key.trim() !== "";
-  const note = provider === "anthropic" ? settings.models.find((m) => m.id === model)?.note : undefined;
+  const note = provider === "anthropic" ? modelNote(settings.models.find((m) => m.id === model)) : undefined;
   const form: AiFormBody = { provider, api_key: key || null, base_url: local ? baseUrl : null, model };
 
   useEffect(() => {
@@ -425,8 +438,10 @@ function AllowCommands() {
 /** Which servers run AI's commands now, and what stops the others. */
 function ServersAccepting({ servers }: { servers: Server[] }) {
   const named = (state: Acceptance) => servers.filter((s) => aiCommands(s) === state);
+  const accepted = named("accepted").length;
   const groups: [string, Server[]][] = [
-    [t("ai.group.off"), named("off")],
+    // With none on, listing every server adds nothing to "none accepts".
+    [t("ai.group.off"), accepted === 0 ? [] : named("off")],
     [t("ai.group.unknown"), named("unknown")],
     [t("ai.group.unsupported"), named("unsupported")],
   ];
@@ -434,7 +449,9 @@ function ServersAccepting({ servers }: { servers: Server[] }) {
     <>
       <p className={styles.footnote}>
         <strong>
-          {t("ai.accepting", { accepted: named("accepted").length, count: servers.length })}
+          {accepted === 0
+            ? t("ai.noneAccepting")
+            : t("ai.accepting", { accepted, count: servers.length })}
         </strong>
       </p>
       {groups

@@ -7,18 +7,17 @@ export const en = {
   "provider.anthropic": "Anthropic (Claude)",
   "provider.openai": "OpenAI",
   "provider.openai_compatible": "Another or a local model",
-  "providerNote.anthropic": "Claude models, run by Anthropic. Incident data, with secrets removed, is sent to Anthropic.",
-  "providerNote.openai": "GPT models, run by OpenAI. Incident data, with secrets removed, is sent to OpenAI.",
+  "providerNote.anthropic": "Incident data, with secrets removed, is sent to Anthropic.",
+  "providerNote.openai": "Incident data, with secrets removed, is sent to OpenAI.",
   "providerNote.openai_compatible":
     "A model on your own network with Ollama, llama.cpp, vLLM or LM Studio, so nothing leaves it; or any service that speaks OpenAI's API, like Mistral, LiteLLM or Azure OpenAI.",
   fromOpenAi: "{model} from OpenAI",
   onHost: "{model} on {host}",
+  configModel: "Model: {ai}",
   title: "AI",
   meta: "Diagnoses incidents and proposes commands to fix them",
   what: "the AI settings",
-  on: "AI is on",
-  onBanner:
-    "{on} with {ai}. It looks at each new incident and proposes commands; risky ones wait in Approvals, and every step is in the audit log.",
+  on: "AI is on.",
   off: "AI is off.",
   offBanner: "{off} Pick which AI to use, enter what it needs, press Test, then Enable AI. There is nothing to restart.",
   fromConfigLabel: "Set by the configuration",
@@ -44,6 +43,9 @@ export const en = {
   "keyNote.openai": "Create one at platform.openai.com. Stored on this server, never shown again.",
   "keyNote.openai_compatible": "Stored on this server, never shown again.",
   model: "Model",
+  "fit.recommended": "Recommended: the best diagnoses",
+  "fit.half_price": "Half the price, for most incidents",
+  "fit.cheapest": "Cheapest, for simple incidents",
   localNote:
     "Small local models diagnose less well than large ones. Every command they propose goes through the same rules and approvals, so at worst an incident reaches a person sooner. Give the model a context of {tokens} tokens or more (for Ollama, {setting}).",
   save: "Save",
@@ -68,7 +70,8 @@ export const en = {
     one: "{accepted} of {count} server accepts AI commands.",
     other: "{accepted} of {count} servers accept AI commands.",
   },
-  "group.off": "Off, turn them on from their page:",
+  noneAccepting: "No server accepts AI commands.",
+  "group.off": "Off:",
   "group.unknown": "Not known yet, they say once updated, which happens by itself:",
   "group.unsupported": "Their agent is too old for AI commands, it updates by itself:",
 } as const satisfies Catalog;
@@ -79,20 +82,17 @@ export const fr: Translation<typeof en> = {
   "provider.anthropic": "Anthropic (Claude)",
   "provider.openai": "OpenAI",
   "provider.openai_compatible": "Un autre modèle ou un modèle local",
-  "providerNote.anthropic":
-    "Modèles Claude, exécutés par Anthropic. Les données des incidents, sans les secrets, sont envoyées à Anthropic.",
-  "providerNote.openai":
-    "Modèles GPT, exécutés par OpenAI. Les données des incidents, sans les secrets, sont envoyées à OpenAI.",
+  "providerNote.anthropic": "Les données des incidents, sans les secrets, sont envoyées à Anthropic.",
+  "providerNote.openai": "Les données des incidents, sans les secrets, sont envoyées à OpenAI.",
   "providerNote.openai_compatible":
     "Un modèle sur votre propre réseau avec Ollama, llama.cpp, vLLM ou LM Studio, pour que rien n’en sorte ; ou tout service qui parle l’API d’OpenAI, comme Mistral, LiteLLM ou Azure OpenAI.",
   fromOpenAi: "{model} d’OpenAI",
   onHost: "{model} sur {host}",
+  configModel: "Modèle : {ai}",
   title: "IA",
   meta: "Diagnostique les incidents et propose des commandes pour les corriger",
   what: "les paramètres de l’IA",
-  on: "L’IA est active",
-  onBanner:
-    "{on} avec {ai}. Elle examine chaque nouvel incident et propose des commandes ; les risquées attendent dans Approbations, et chaque étape figure dans le journal d’audit.",
+  on: "L’IA est active.",
   off: "L’IA est désactivée.",
   offBanner:
     "{off} Choisissez l’IA à utiliser, saisissez ce qu’elle demande, cliquez sur Tester, puis sur Activer l’IA. Rien à redémarrer.",
@@ -119,6 +119,9 @@ export const fr: Translation<typeof en> = {
   "keyNote.openai": "Créez-en une sur platform.openai.com. Gardée sur ce serveur, jamais réaffichée.",
   "keyNote.openai_compatible": "Gardée sur ce serveur, jamais réaffichée.",
   model: "Modèle",
+  "fit.recommended": "Recommandé : les meilleurs diagnostics",
+  "fit.half_price": "Moitié prix, pour la plupart des incidents",
+  "fit.cheapest": "Le moins cher, pour les incidents simples",
   localNote:
     "Les petits modèles locaux diagnostiquent moins bien que les grands. Chaque commande qu’ils proposent passe par les mêmes règles et approbations : au pire, un incident arrive plus tôt à une personne. Donnez au modèle un contexte de {tokens} jetons ou plus (pour Ollama, {setting}).",
   save: "Enregistrer",
@@ -143,7 +146,8 @@ export const fr: Translation<typeof en> = {
     one: "{accepted} serveur sur {count} accepte les commandes IA.",
     other: "{accepted} serveurs sur {count} acceptent les commandes IA.",
   },
-  "group.off": "Désactivées, activez-les depuis leur page :",
+  noneAccepting: "Aucun serveur n’accepte les commandes IA.",
+  "group.off": "Désactivées :",
   "group.unknown": "Pas encore connu, ils le diront une fois à jour, ce qui se fait tout seul :",
   "group.unsupported": "Leur agent est trop ancien pour les commandes IA, il se met à jour tout seul :",
 };

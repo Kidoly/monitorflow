@@ -228,7 +228,7 @@ function Plugins() {
         />
       )}
       {data.plugins.length === 0 ? (
-        <EmptyState title={t("plugins.emptyTitle")}>{t("plugins.emptyBody")}</EmptyState>
+        <EmptyState title={t("plugins.emptyTitle")} />
       ) : (
         <section className={styles.section} aria-label={t("plugins.installed")}>
           <DataTable bare label={t("plugins.installed")} columns={columns} rows={data.plugins} rowKey={(p) => p.id} />

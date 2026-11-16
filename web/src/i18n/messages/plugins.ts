@@ -35,7 +35,6 @@ export const en = {
     "Plugins add checks and notification channels. Each is signed by its publisher and runs in a sandbox: it reads no files and runs no programs, and reaches only the addresses it shows here. To make your own, see {guide}.",
   guide: "Write a plugin",
   emptyTitle: "No plugin installed",
-  emptyBody: "Upload a .mfplugin file above. Plugins from your own publishers need their key under Publishers first.",
   installed: "Installed plugins",
   install: "Install a plugin",
   file: "Plugin file",
@@ -109,8 +108,6 @@ export const fr: Translation<typeof en> = {
     "Les plugins ajoutent des contrôles et des canaux de notification. Chacun est signé par son éditeur et s’exécute dans un bac à sable : il ne lit aucun fichier, ne lance aucun programme et ne joint que les adresses affichées ici. Pour écrire le vôtre, voir {guide}.",
   guide: "Écrire un plugin",
   emptyTitle: "Aucun plugin installé",
-  emptyBody:
-    "Envoyez un fichier .mfplugin ci-dessus. Les plugins de vos propres éditeurs demandent d’abord leur clé sous Éditeurs.",
   installed: "Plugins installés",
   install: "Installer un plugin",
   file: "Fichier du plugin",

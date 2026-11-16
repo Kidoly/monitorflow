@@ -39,8 +39,11 @@ pub(super) struct AiModel {
     id: String,
     /// Its name to show.
     name: String,
-    /// When to pick it, in a few words.
+    /// When to pick it, in a few words, in English.
     note: String,
+    /// `note` as a stable code to word it in another language:
+    /// `recommended`, `half_price` or `cheapest`; new codes may be added.
+    fit: String,
 }
 
 /// Body of `POST /api/settings/ai/test`.
@@ -144,7 +147,7 @@ fn ai_example() -> serde_json::Value {
         "has_key": false,
         "base_url": "http://llm.example.com:8080/v1",
         "model": "local-model",
-        "models": [{ "id": "model-large", "name": "Model Large", "note": "Recommended: the best diagnoses" }]
+        "models": [{ "id": "model-large", "name": "Model Large", "note": "Recommended: the best diagnoses", "fit": "recommended" }]
     })
 }
 
@@ -193,7 +196,7 @@ fn set_ai() {}
         (status = 200, description = "The AI settings as they now stand", body = ai::AiView, example = json!({
             "enabled": false, "from_config": false, "provider": "anthropic", "has_key": false,
             "base_url": null, "model": "model-large",
-            "models": [{ "id": "model-large", "name": "Model Large", "note": "Recommended: the best diagnoses" }]
+            "models": [{ "id": "model-large", "name": "Model Large", "note": "Recommended: the best diagnoses", "fit": "recommended" }]
         })),
         (status = 409, body = ErrorBody, description = "Set by the configuration: `conflict`"),
     ))]

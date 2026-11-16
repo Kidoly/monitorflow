@@ -33,8 +33,9 @@ function settings(overrides: Partial<AiSettings> = {}): AiSettings {
     base_url: null,
     model: "claude-opus-5-5",
     models: [
-      { id: "claude-opus-5-5", name: "Claude Opus 5.5", note: "Recommended: the best diagnoses" },
-      { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", note: "Half the price, for most incidents" },
+      { id: "claude-opus-5-5", name: "Claude Opus 5.5", note: "Recommended: the best diagnoses", fit: "recommended" },
+      { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", note: "Half the price, for most incidents", fit: "half_price" },
+      { id: "claude-next", name: "Claude Next", note: "From a newer server" },
     ],
     ...overrides,
   };
@@ -68,6 +69,10 @@ describe("AiSettingsPage", () => {
     stubFetch({ [`GET ${AI}`]: ok(settings()) });
     page();
     expect(await screen.findByText("L’IA est désactivée.")).toBeInTheDocument();
+    // The model's note comes from the server in English, as a code too.
+    expect(screen.getByText(/^Recommandé\s: les meilleurs diagnostics$/)).toBeInTheDocument();
+    // The option label already names the vendor: the note says only where the data goes.
+    expect(screen.getByText(/^Les données des incidents, sans les secrets, sont envoyées à Anthropic\.$/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Activer l’IA" })).toBeDisabled();
     expect(screen.getByLabelText(/^Clé d’API Anthropic/)).toBeInTheDocument();
     await user.click(screen.getByLabelText("Un autre modèle ou un modèle local"));
@@ -102,7 +107,9 @@ describe("AiSettingsPage", () => {
     expect(sent(fetchMock, "POST")).toEqual({ provider: "anthropic", api_key: "sk-ant-1", base_url: null, model: "claude-sonnet-5-5" });
 
     await user.click(screen.getByRole("button", { name: "Enable AI" }));
-    expect(await screen.findByText(/with Claude Sonnet 5.5/)).toBeInTheDocument();
+    // The banner says only that AI is on: the subtitle says what it does, the form names the model.
+    expect(await screen.findByText("AI is on.")).toBeInTheDocument();
+    expect(screen.queryByText(/with Claude/)).not.toBeInTheDocument();
     expect(sent(fetchMock, "PUT")).toEqual({
       provider: "anthropic",
       api_key: "sk-ant-1",
@@ -139,11 +146,38 @@ describe("AiSettingsPage", () => {
     });
     page();
     expect(await screen.findByText("1 of 5 servers accept AI commands.")).toBeInTheDocument();
-    expect(screen.getByText(/^Off, turn them on from their page/)).toHaveTextContent(/web-2$/);
+    expect(screen.getByText(/^Off:/)).toHaveTextContent(/web-2$/);
     expect(screen.getByRole("link", { name: "web-2" })).toHaveAttribute("href", expect.stringContaining("id=2&tab=commands"));
     // Not reporting is its own group, even from an agent that reports other kinds.
     expect(screen.getByText(/^Not known yet/)).toHaveTextContent(/web-3, web-5$/);
     expect(screen.getByText(/^Their agent is too old/)).toHaveTextContent(/web-4$/);
+  });
+
+  it("says no server accepts AI commands without listing them all", async () => {
+    stubFetch({
+      [`GET ${AI}`]: ok(settings({ enabled: true, has_key: true })),
+      "GET /api/settings/agent-install": install,
+      "GET /api/settings/public-address": address,
+      "GET /api/servers": {
+        status: 200,
+        body: {
+          servers: ["1", "2"].map((id) => ({ id, hostname: `web-${id}`, command_kinds: { shell: "off" } })),
+          next_cursor: null,
+        },
+      },
+    });
+    page();
+    expect(await screen.findByText("No server accepts AI commands.")).toBeInTheDocument();
+    expect(screen.queryByText(/^Off:/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "web-1" })).not.toBeInTheDocument();
+  });
+
+  it("falls back to the server's note for a model it does not know", async () => {
+    const user = userEvent.setup();
+    stubFetch({ [`GET ${AI}`]: ok(settings()) });
+    page();
+    await user.selectOptions(await screen.findByLabelText(/Model/), "claude-next");
+    expect(screen.getByText("From a newer server")).toBeInTheDocument();
   });
 
   it("still says where to turn them on when the servers cannot be read", async () => {
@@ -204,7 +238,8 @@ describe("AiSettingsPage", () => {
     });
     page();
     expect(await screen.findByText(/takes precedence over this page/)).toBeInTheDocument();
-    expect(screen.getByText(/with claude-custom/)).toBeInTheDocument();
+    // No form to show the model: the configuration's panel names it.
+    expect(screen.getByText("Model: claude-custom")).toBeInTheDocument();
     expect(screen.queryByLabelText(/Anthropic API key/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Turn off AI" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Test" }));
@@ -239,7 +274,8 @@ describe("AiSettingsPage", () => {
     await user.click(screen.getByRole("button", { name: "Test" }));
     expect(await screen.findByText("The model answered.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Enable AI" }));
-    expect(await screen.findByText(/with llama3.1:8b on ollama.lan:11434/)).toBeInTheDocument();
+    expect(await screen.findByText("AI is on.")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Model/)).toHaveValue("llama3.1:8b");
     expect(sent(fetchMock, "PUT")).toEqual({
       provider: "openai_compatible",
       api_key: null,

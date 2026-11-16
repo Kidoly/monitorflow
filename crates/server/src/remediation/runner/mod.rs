@@ -16,6 +16,7 @@
 //! escalate. Context and outputs are redacted before the AI or the audit
 //! trail sees them (ADR-0040).
 
+mod closing;
 mod drive;
 pub mod hook;
 pub mod progress;
@@ -34,6 +35,7 @@ use tokio::task::JoinSet;
 use tokio::time::{interval, MissedTickBehavior};
 use uuid::Uuid;
 
+use self::closing::CloseReason;
 use self::hook::{ChangeHook, NoSnapshot};
 use super::audit::{self, AuditError, IncidentState, NewIncident};
 use super::context::{Backends, Limits};
@@ -240,20 +242,16 @@ impl Remediation {
                     pool,
                     id,
                     IncidentState::Resolved,
-                    "the sensor returned to normal",
+                    &CloseReason::SensorNormal,
                     drive::Pending::Cancel,
                 )
                 .await?;
             } else if chrono::Utc::now() >= incident.deadline() {
-                let reason = format!(
-                    "the duration limit of {} s was reached",
-                    incident.max_duration_s
-                );
                 drive::close(
                     pool,
                     id,
                     IncidentState::Escalated,
-                    &reason,
+                    &CloseReason::DurationLimit(incident.max_duration_s.into()),
                     drive::Pending::Expire,
                 )
                 .await?;

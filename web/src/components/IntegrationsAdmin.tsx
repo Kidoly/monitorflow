@@ -132,7 +132,7 @@ function Integrations() {
   }
 
   const header = (
-    <PageHeader title={t("integrations.title")} meta={t("integrations.meta")} />
+    <PageHeader title={t("integrations.title")} />
   );
   if (error instanceof ApiError && error.status === 403) {
     return (
@@ -206,9 +206,7 @@ function Integrations() {
           }}
         />
       ) : data.endpoints.length === 0 ? (
-        <EmptyState title={t("integrations.emptyTitle")} actions={add}>
-          {t("integrations.emptyBody")}
-        </EmptyState>
+        <EmptyState title={t("integrations.emptyTitle")} actions={add} />
       ) : (
         <div className={styles.buttonRow}>{add}</div>
       )}
@@ -535,7 +533,7 @@ function IntegrationForm({
           maxLength={80}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="HaloPSA"
+          placeholder={t("integrations.namePlaceholder")}
         />,
       )}
       {field(

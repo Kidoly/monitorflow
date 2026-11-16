@@ -278,3 +278,17 @@ async fn api_key_file_is_trimmed_and_checked() {
         .to_string();
     assert!(message.contains("missing"), "{message}");
 }
+
+#[test]
+fn every_model_has_a_known_fit() {
+    // The web interface words each code itself; a new code needs a
+    // translation there before it ships.
+    for model in MODELS {
+        assert!(
+            ["recommended", "half_price", "cheapest"].contains(&model.fit),
+            "{}",
+            model.id
+        );
+    }
+    assert_eq!(MODELS[0].fit, "recommended");
+}

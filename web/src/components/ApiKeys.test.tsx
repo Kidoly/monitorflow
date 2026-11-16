@@ -13,7 +13,7 @@ const root = me({ role: "administrator", customer_id: null, site_id: null });
 
 const KEY: ApiKey = {
   id: "k1",
-  name: "HaloPSA",
+  name: "Ticketing",
   prefix: "abcd1234",
   role: "operator",
   customer_id: null,
@@ -127,8 +127,11 @@ describe("ApiKeysPage", () => {
       </As>,
     );
     expect(await screen.findByText("No API keys yet")).toBeInTheDocument();
+    // The subtitle says what keys are for; the empty state does not repeat it.
+    expect(screen.getByText(/^For scripts and other tools/)).toBeInTheDocument();
+    expect(screen.queryByText(/use MonitorFlow as you would/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "New API key" }));
-    await userEvent.type(screen.getByLabelText("What is it for?"), "HaloPSA");
+    await userEvent.type(screen.getByLabelText("What is it for?"), "Ticketing");
     await userEvent.selectOptions(screen.getByLabelText(/^Access/), "operator");
     await userEvent.click(screen.getByLabelText("Only some areas"));
     // One customer (ADR-0104): no customer in the reaches or the words.
@@ -141,7 +144,7 @@ describe("ApiKeysPage", () => {
     expect(screen.getByText(/it is shown only once/)).toBeInTheDocument();
     const post = fetchMock.mock.calls.find((c) => c[1]?.method === "POST");
     expect(JSON.parse(String(post?.[1]?.body))).toEqual({
-      name: "HaloPSA",
+      name: "Ticketing",
       role: "operator",
       expires: "1y",
       areas: ["alerts"],
@@ -184,7 +187,7 @@ describe("ApiKeysPage", () => {
         <ApiKeysPage />
       </As>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "Turn off HaloPSA" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Turn off Ticketing" }));
     await userEvent.click(screen.getByRole("button", { name: "Turn off" }));
     expect(fetchMock.mock.calls.some((c) => String(c[0]) === "/api/api-keys/k1" && c[1]?.method === "DELETE")).toBe(
       true,

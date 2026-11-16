@@ -25,7 +25,7 @@ import {
   eventSummary,
 } from "@/lib/remediation";
 import { t } from "@/i18n";
-import { APPROVALS_PATH, auditHref, incidentsHref, serverHref } from "@/lib/routes";
+import { auditHref, incidentsHref, serverHref } from "@/lib/routes";
 import { scopedHref, useScope } from "@/lib/scope";
 import { seriesTitle } from "@/lib/sensors";
 import { usePolledData } from "@/lib/usePolledData";
@@ -142,7 +142,6 @@ export function RemediationAudit({ filters }: { filters: AuditFilters }) {
       <PageHeader
         title={t("remediation.audit.title")}
         meta={<RefreshLine updatedAt={updatedAt} stale={stale} />}
-        actions={<ButtonLink href={scopedHref(APPROVALS_PATH, scope)}>{t("remediation.audit.approvals")}</ButtonLink>}
       />
       <FilterBar
         filters={[
