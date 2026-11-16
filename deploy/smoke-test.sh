@@ -189,11 +189,13 @@ get mirrors/catalog >"$work/catalog" || true
 check "mirror tools answer" jq -e '.tools.available' "$work/catalog"
 check "the catalog lists distributions with a size" jq -e '.distributions | length > 0 and all(.size_bytes > 0)' "$work/catalog"
 check "the disk's free space is known" jq -e '.disk.free_bytes > 0' "$work/catalog"
-# Only where it does not fit: elsewhere this would start a real sync.
+# Only where a full copy does not fit: elsewhere this would start a real
+# sync. Full mode is asked for, as on demand (the default) needs only the
+# indexes and fits.
 if jq -e '.disk.free_bytes < (.distributions[] | select(.id == "debian-13").size_bytes)' "$work/catalog" >/dev/null; then
-    code=$(post mirrors '{"distribution": "debian-13"}')
+    code=$(post mirrors '{"distribution": "debian-13", "mode": "full"}')
     check "a distribution too big for the disk is refused" test "$code" = 409
-    check "and the answer says so" jq -e '.error | test("needs about [0-9]+ GiB and this server has [0-9]+ GiB free")' "$work/answer"
+    check "and the answer says so" jq -e '.error | test("needs about [0-9]+ GiB and this server has [0-9.]+ GiB free")' "$work/answer"
 fi
 not_mounted() {
     ! docker inspect -f '{{json .Mounts}}' "$(compose ps -q mirror)" | grep -q serverdata
