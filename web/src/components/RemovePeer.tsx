@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 
+import { rich, t } from "@/i18n";
 import { InlineConfirm } from "@/components/ui/InlineConfirm";
 import { CopyButton } from "@/components/ui/SecretField";
 import { formatExact } from "@/components/ui/time";
@@ -31,20 +32,16 @@ export function RemovePeer({
 }) {
   return (
     <InlineConfirm
-      trigger={`Remove ${name}…`}
-      title={`Remove ${name}?`}
-      consequence={
-        `It stops connecting${kind === "relays" ? ", with the agents it forwards," : ""} and leaves every list. ` +
-        "Its open incidents close and its history is kept. You can add it back later with the install command. " +
-        "The next screen shows how to uninstall it from the machine."
-      }
-      confirmLabel={`Remove ${name}`}
-      pendingLabel="Removing…"
+      trigger={t("server.remove.trigger", { name })}
+      title={t("server.remove.title", { name })}
+      consequence={kind === "relays" ? t("server.remove.consequenceRelay") : t("server.remove.consequence")}
+      confirmLabel={t("server.remove.confirm", { name })}
+      pendingLabel={t("server.remove.removing")}
       onConfirm={async () => {
         await api.revoke(kind, id, "cessation_of_operation");
         onRemoved();
       }}
-      describeError={(e) => `Not removed. ${describeError(e)}`}
+      describeError={(e) => t("server.remove.failed", { error: describeError(e) })}
     />
   );
 }
@@ -81,34 +78,38 @@ export function RemovedPanel({
   }, [canAdminister, kind, osFamily]);
 
   return (
-    <section className={styles.confirm} aria-label="Removed">
+    <section className={styles.confirm} aria-label={t("server.remove.label")}>
       <p>
-        <strong>{name} was removed</strong> on {formatExact(new Date(removedAt)).slice(0, 16)}. It no longer connects, and
-        its history stays here.
+        <strong>{t("server.remove.removed", { name })}</strong>
+        {t("server.remove.removedAt", { at: formatExact(new Date(removedAt)).slice(0, 16) })}
       </p>
       {canAdminister && (
         <>
           <p id={labelId}>
-            Run this on {name} {osFamily === "windows" ? "in an elevated PowerShell" : "as a user with sudo"} to uninstall
-            the {kind}:
+            {kind === "relay"
+              ? t(osFamily === "windows" ? "server.remove.runRelayWindows" : "server.remove.runRelay", { name })
+              : t(osFamily === "windows" ? "server.remove.runAgentWindows" : "server.remove.runAgent", { name })}
           </p>
           {command && (
             <div className={pageStyles.snippet}>
               <pre className={pageStyles.code} aria-labelledby={labelId}>
                 {command}
               </pre>
-              <CopyButton text={command} name="Copy the uninstall command" size="small" className={pageStyles.snippetCopy} />
+              <CopyButton text={command} name={t("server.remove.copy")} size="small" className={pageStyles.snippetCopy} />
             </div>
           )}
           {error && (
             <p className={styles.error} role="alert">
-              The command could not be loaded. {error}
+              {t("server.remove.loadFailed", { error })}
             </p>
           )}
           <p>
-            To add it back, uninstall it first, then run the install command from{" "}
-            <Link href={TOKENS_PATH}>Add servers</Link> on the machine
-            {kind === "relay" && ` with the name ${name}`}. It returns in the same site, with its history.
+            {kind === "relay"
+              ? rich("server.remove.addBackRelay", {
+                  link: <Link href={TOKENS_PATH}>{t("server.remove.addServers")}</Link>,
+                  name,
+                })
+              : rich("server.remove.addBack", { link: <Link href={TOKENS_PATH}>{t("server.remove.addServers")}</Link> })}
           </p>
         </>
       )}

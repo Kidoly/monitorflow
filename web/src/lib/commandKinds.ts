@@ -1,14 +1,11 @@
+import { t } from "@/i18n";
+
 import type { Server } from "./api";
 
 /** What an agent does with one kind of command; `unknown` is neither yes nor no (ADR-0076). */
 export type Acceptance = "accepted" | "off" | "unsupported" | "unknown";
 
-const KINDS: [string, string][] = [
-  ["apply_updates", "package updates"],
-  ["configure_sources", "package sources"],
-  ["self_update", "agent updates"],
-  ["shell", "AI commands"],
-];
+const KINDS = ["apply_updates", "configure_sources", "self_update", "shell"] as const;
 
 /** `word` as the API gave it; anything else, or nothing, is unknown. */
 export function acceptance(word: string | null | undefined): Acceptance {
@@ -34,10 +31,13 @@ export function commandSummary(server: Reporting): string | null {
   const kinds = server.command_kinds;
   if (!kinds) return null;
   const named = (state: (a: Acceptance) => boolean) =>
-    KINDS.filter(([kind]) => state(acceptance(kinds[kind]))).map(([, name]) => name);
+    KINDS.filter((kind) => state(acceptance(kinds[kind]))).map((kind) => t(`server.kinds.${kind}`));
   const accepts = named((a) => a === "accepted");
   const refuses = named((a) => a === "off" || a === "unsupported");
-  return [accepts.length > 0 && `Accepts ${accepts.join(", ")}.`, refuses.length > 0 && `Refuses ${refuses.join(", ")}.`]
+  return [
+    accepts.length > 0 && t("server.kinds.accepts", { kinds: accepts.join(", ") }),
+    refuses.length > 0 && t("server.kinds.refuses", { kinds: refuses.join(", ") }),
+  ]
     .filter(Boolean)
     .join(" ");
 }
@@ -48,5 +48,5 @@ export function commandSummary(server: Reporting): string | null {
  */
 export const unsupportedReason = (osFamily: string) =>
   osFamily === "windows"
-    ? "Its agent is too old for AI commands on Windows. It updates by itself."
-    : "This system does not run AI commands yet.";
+    ? t("server.kinds.windowsTooOld")
+    : t("server.kinds.notYet");

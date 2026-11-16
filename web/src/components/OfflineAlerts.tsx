@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { rich, t } from "@/i18n";
 import { api, describeError } from "@/lib/api";
 import { formatSeconds } from "@/lib/format";
 import { OFFLINE_AFTER_S } from "@/lib/incidents";
@@ -38,9 +39,9 @@ export function OfflineAlerts({ kind, target, onChanged }: { kind: Kind; target:
   if (target.site_offline_alerts === false) {
     return (
       <>
-        <Label tone="neutral">Off</Label>{" "}
+        <Label tone="neutral">{t("server.offline.off")}</Label>{" "}
         <span className={styles.muted}>
-          for the whole site, in <Link href={SITES_PATH}>Sites</Link>
+          {rich("server.offline.wholeSite", { link: <Link href={SITES_PATH}>{t("server.offline.sites")}</Link> })}
         </span>
       </>
     );
@@ -57,16 +58,18 @@ export function OfflineAlerts({ kind, target, onChanged }: { kind: Kind; target:
       setBusy(false);
     }
   }
-  const who = kind === "sites" ? "a server or relay here" : "it";
+  const duration = formatSeconds(OFFLINE_AFTER_S);
   return (
     <>
-      <Label tone={on ? "ok" : "neutral"}>{on ? "On" : "Off"}</Label>{" "}
+      <Label tone={on ? "ok" : "neutral"}>{on ? t("server.offline.on") : t("server.offline.off")}</Label>{" "}
       <span className={styles.muted}>
-        {on ? `critical incident when ${who} sends nothing for ${formatSeconds(OFFLINE_AFTER_S)}` : "no incident when offline"}
+        {on
+          ? t(kind === "sites" ? "server.offline.whenSite" : "server.offline.when", { duration })
+          : t("server.offline.none")}
       </span>{" "}
       {modifiesSite(me, target.customer_id, target.site_id) && (
         <Button size="small" disabled={busy} onClick={() => void change()}>
-          {on ? "Turn off" : "Turn on"}
+          {on ? t("server.offline.turnOff") : t("server.offline.turnOn")}
         </Button>
       )}
       {error && <span role="alert"> {error}</span>}

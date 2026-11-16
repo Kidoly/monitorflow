@@ -2,6 +2,7 @@
 
 import { type ReactNode, useState } from "react";
 
+import { t } from "@/i18n";
 import { type ParamChanges, useUrlParams } from "@/lib/urlState";
 
 import { Button, buttonClass, fieldClass } from "./Button";
@@ -49,7 +50,7 @@ export function FilterBar({
   search,
   onChange,
   trailing,
-  label = "Filters",
+  label = t("ui.filters.label"),
 }: {
   filters: Filter[];
   search?: SearchField;
@@ -149,7 +150,7 @@ export function NoMatches({ names, title, children }: { names: string[]; title?:
   const [, setParams] = useUrlParams();
   const clear = () => setParams(Object.fromEntries(names.map((name) => [name, null])));
   return (
-    <EmptyState title={title} actions={<Button onClick={clear}>Clear filters</Button>}>
+    <EmptyState title={title} actions={<Button onClick={clear}>{t("ui.filters.clear")}</Button>}>
       {children}
     </EmptyState>
   );

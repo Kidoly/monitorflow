@@ -1,3 +1,5 @@
+import { t } from "@/i18n";
+
 import { ApiError, type Rollup, describeError } from "./api";
 import { rollupFor } from "./metrics";
 
@@ -42,8 +44,8 @@ export function chartWindow(range: Range, metric: string, intervalS: number, now
 /** What to tell the user about a failed metric request. */
 export function metricsError(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 502) return "The metrics backend is unavailable. Retrying every 15 seconds.";
-    if (error.status === 504) return "The metrics backend timed out. Try a shorter range.";
+    if (error.status === 502) return t("ui.metrics.unavailable");
+    if (error.status === 504) return t("ui.metrics.timedOut");
   }
   return describeError(error);
 }

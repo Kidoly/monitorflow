@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 
+import { t } from "@/i18n";
 import { useUrlParams } from "@/lib/urlState";
 
 import { Button } from "./Button";
@@ -202,7 +203,7 @@ export function DataTable<T>({
               })}
               {rowActions && (
                 <th className={styles.actionsHead}>
-                  <span className="visually-hidden">Actions</span>
+                  <span className="visually-hidden">{t("ui.table.actions")}</span>
                 </th>
               )}
             </tr>
@@ -247,7 +248,7 @@ export function DataTable<T>({
       </div>
       {!loading && (more || summary) && (
         <div className={styles.more}>
-          {more && <Button onClick={loadMore}>Load more</Button>}
+          {more && <Button onClick={loadMore}>{t("ui.table.loadMore")}</Button>}
           {summary && <p className={styles.summary}>{summary(shown.length, ordered.length)}</p>}
         </div>
       )}

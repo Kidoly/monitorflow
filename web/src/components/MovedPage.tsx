@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
 import { LoadingBlock } from "@/components/ui/PageState";
+import { t } from "@/i18n";
 import { LEGACY_SETTINGS_PATHS, movedSettingsHref } from "@/lib/routes";
 
 /**
@@ -17,5 +18,5 @@ export function MovedPage({ from }: { from: keyof typeof LEGACY_SETTINGS_PATHS }
     const { search, hash } = window.location;
     router.replace(movedSettingsHref(from, search, hash) ?? "/");
   }, [from, router]);
-  return <LoadingBlock label="Opening Settings" />;
+  return <LoadingBlock label={t("auth.moved")} />;
 }

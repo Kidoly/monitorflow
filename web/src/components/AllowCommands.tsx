@@ -2,6 +2,7 @@
 
 import { useCallback } from "react";
 
+import { t } from "@/i18n";
 import { api } from "@/lib/api";
 import { WINDOWS_ALLOW_COMMANDS, WINDOWS_ALLOW_FROM_WEB, allowCommandsCommand } from "@/lib/install";
 import { usePolledData } from "@/lib/usePolledData";
@@ -38,10 +39,10 @@ function LinuxLine({ fromWeb }: { fromWeb: boolean }) {
 function Snippet({ text }: { text: string }) {
   return (
     <div className={styles.snippet}>
-      <pre className={styles.code} aria-label="Command that allows AI commands">
+      <pre className={styles.code} aria-label={t("server.allow.snippet")}>
         {text}
       </pre>
-      <CopyButton text={text} name="Copy the command" size="small" className={styles.snippetCopy} />
+      <CopyButton text={text} name={t("server.allow.copy")} size="small" className={styles.snippetCopy} />
     </div>
   );
 }

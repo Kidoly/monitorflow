@@ -1,3 +1,4 @@
+import { missingText } from "./Missing";
 import { formatAgo, formatClock, formatExact } from "./time";
 
 /**
@@ -8,7 +9,7 @@ import { formatAgo, formatClock, formatExact } from "./time";
  */
 export function RelativeTime({ value, now, stale }: { value: string | Date; now: Date; stale?: boolean }) {
   const date = typeof value === "string" ? new Date(value) : value;
-  if (Number.isNaN(date.getTime())) return <>—</>;
+  if (Number.isNaN(date.getTime())) return <>{missingText("unknown")}</>;
   const exact = formatExact(date);
   return (
     <time dateTime={date.toISOString()} title={exact}>

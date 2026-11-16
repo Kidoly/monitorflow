@@ -6,6 +6,8 @@
  * removing a server or relay (ADR-0062).
  */
 
+import { t } from "@/i18n";
+
 import type { AgentInstall, InstallSource, PublicAddress } from "./api";
 
 /** Port of the enrollment listener the agent assumes without `enroll_url`. */
@@ -13,12 +15,11 @@ const DEFAULT_ENROLL_PORT = "7445";
 
 const MSI = "monitorflow-agent-windows-x86_64.msi";
 
-/** The words for each source, in the order offered. */
-export const SOURCE_WORDS: Record<InstallSource, string> = {
-  github: "GitHub",
-  central: "This server",
-  custom: "Custom URL",
-};
+/** The sources, in the order offered. */
+export const SOURCES: readonly InstallSource[] = ["github", "central", "custom"];
+
+/** The words for a source, in the active language. */
+export const sourceWord = (source: InstallSource): string => t(`install.source.${source}`);
 
 export interface InstallTarget {
   token: string;
@@ -77,9 +78,9 @@ export function endpoints(target: InstallTarget, relay = ""): { server: string; 
 /** Why `central` offers nothing, or `null` when it can be used. */
 export function centralUnavailable(install: AgentInstall, origin: string): string | null {
   if (!install.central) {
-    return "This server holds no agent release yet. A global administrator imports one under Settings › Server update.";
+    return t("install.unavailable.noRelease");
   }
-  if (!isHttpsOrigin(origin)) return `Installs from this server need the web interface on HTTPS; this page is on ${origin}.`;
+  if (!isHttpsOrigin(origin)) return t("install.unavailable.https", { origin });
   return null;
 }
 
@@ -90,11 +91,11 @@ function base(install: AgentInstall, source: InstallSource, origin: string): { u
       return { url: install.github_url.replace(/\/+$/, "") };
     case "custom":
       if (!install.custom_url) {
-        return { unavailable: "No custom URL is set. A global administrator sets one under Default install source." };
+        return { unavailable: t("install.unavailable.noCustom") };
       }
       return isSafeUrl(install.custom_url)
         ? { url: install.custom_url.replace(/\/+$/, "") }
-        : { unavailable: "The custom URL has characters a shell would interpret; set a plain https URL." };
+        : { unavailable: t("install.unavailable.unsafe") };
     case "central": {
       const why = centralUnavailable(install, origin);
       return why || !install.central ? { unavailable: why ?? "" } : { url: `${origin}${install.central.path}` };
@@ -198,7 +199,7 @@ function runInstaller(
   const central = install.central;
   if (source === "central" && central) {
     if (!central.installer_sha256) {
-      return { unavailable: `The release ${central.version} on this server has no install.sh; import a complete release.` };
+      return { unavailable: t("install.unavailable.noInstallSh", { version: central.version }) };
     }
     const vars = env([`MF_DOWNLOAD_URL=${url}`, `MF_SUMS_SHA256=${central.sums_sha256}`]);
     return { text: pinnedInstaller(url, central.installer_sha256, vars) };
@@ -278,7 +279,7 @@ export function windowsInstallCommand(
   const central = target.install.central;
   if (source === "central" && central) {
     if (!central.msi_sha256) {
-      return { unavailable: `The release ${central.version} on this server has no MSI; import a complete release.` };
+      return { unavailable: t("install.unavailable.noMsi", { version: central.version }) };
     }
     // One block, so a mismatch stops it even when pasted line by line.
     return {

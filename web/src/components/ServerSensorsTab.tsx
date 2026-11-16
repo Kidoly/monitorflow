@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 
+import { rich, t } from "@/i18n";
 import {
   type EffectiveSensor,
   type EffectiveSensors,
@@ -79,7 +80,7 @@ export function ServerSensorsTab({
   if ("error" in sensors) {
     return (
       <Banner tone="bad">
-        <strong>Could not load the sensor configuration:</strong> {sensors.error} Retrying automatically.
+        <strong>{t("server.sensors.loadFailed")}</strong> {t("server.sensors.retrying", { error: sensors.error })}
       </Banner>
     );
   }
@@ -92,12 +93,12 @@ export function ServerSensorsTab({
     // A sensor's rule is edited on the page of the metric it alerts on (disk activity: its wait).
     const ruleMetric = rule?.metric ?? row.metric;
     const items: RowMenuItem[] = [];
-    if (canEdit) items.push({ label: "Edit", href: scopedHref(sensorHref(server.id, ruleMetric, row.instance, true), scope) });
-    items.push({ label: "Open chart", href: scopedHref(sensorHref(server.id, row.metric, row.instance), scope) });
+    if (canEdit) items.push({ label: t("server.sensors.edit"), href: scopedHref(sensorHref(server.id, ruleMetric, row.instance, true), scope) });
+    items.push({ label: t("server.sensors.openChart"), href: scopedHref(sensorHref(server.id, row.metric, row.instance), scope) });
     // One disk of several mutes its alert, which needs one to mute.
     const muting = perInstance(row.sensor, row.instance);
     if (canEdit && (!muting || rule?.enabled)) {
-      const label = !muting && own(row.sensor, rules.siteSensors) ? "Remove…" : "Turn off…";
+      const label = !muting && own(row.sensor, rules.siteSensors) ? t("server.sensors.remove") : t("server.sensors.turnOff");
       items.push({ label, onSelect: () => setConfirming(row.key), danger: true });
     }
     return items;
@@ -106,7 +107,7 @@ export function ServerSensorsTab({
   const columns: Column<SensorRow>[] = [
     {
       key: "sensor",
-      header: "Sensor",
+      header: t("server.sensors.column.sensor"),
       cell: (row) => (
         <PrimaryCell
           title={row.title}
@@ -117,14 +118,14 @@ export function ServerSensorsTab({
     },
     {
       key: "status",
-      header: "Status",
+      header: t("server.sensors.column.status"),
       cell: (row) =>
-        row.waiting ? <Label tone="neutral">Waiting for first value</Label> : <StatusLabel kind="sensor" value={row.status} />,
+        row.waiting ? <Label tone="neutral">{t("server.sensors.waiting")}</Label> : <StatusLabel kind="sensor" value={row.status} />,
     },
-    { key: "message", header: "Message", cell: (row) => <Reason short text={row.reason ?? row.error} /> },
+    { key: "message", header: t("server.sensors.column.message"), cell: (row) => <Reason short text={row.reason ?? row.error} /> },
     {
       key: "trend",
-      header: "Last hour",
+      header: t("server.sensors.column.lastHour"),
       cell: (row) =>
         window ? (
           <Sparkline
@@ -133,21 +134,21 @@ export function ServerSensorsTab({
             end={window.end}
             ratio={unitOf(row.metric) === "ratio"}
             tone={TONES[row.status]}
-            label={`${row.title}, last hour`}
+            label={t("server.sensors.sparkline", { title: row.title })}
           />
         ) : null,
     },
-    { key: "value", header: "Last value", cell: (row) => <LastValue row={row} now={now} /> },
+    { key: "value", header: t("server.sensors.column.lastValue"), cell: (row) => <LastValue row={row} now={now} /> },
     {
       key: "rule",
-      header: "Rule",
-      cell: (row) => (rules.thresholds ? <RuleCell sensors={sensors.sensors} row={row} rule={ruleOfRow(row)} /> : "—"),
+      header: t("server.sensors.column.rule"),
+      cell: (row) => (rules.thresholds ? <RuleCell sensors={sensors.sensors} row={row} rule={ruleOfRow(row)} /> : null),
     },
   ];
 
   const addButton = canEdit && !adding && (
     <Button variant="k" onClick={() => setAdding(true)}>
-      Add a check
+      {t("server.sensors.add")}
     </Button>
   );
   const off = rules.ownRows?.filter((r) => !r.enabled) ?? [];
@@ -156,17 +157,17 @@ export function ServerSensorsTab({
     <div className={styles.tab}>
       <Drift config={sensors} now={now} />
       {incidentsFailed && (
-        <Banner tone="warn">Open incidents could not be read: statuses show OK or Unknown until they load.</Banner>
+        <Banner tone="warn">{t("server.sensors.incidentsFailed")}</Banner>
       )}
       {rows.length === 0 ? (
-        <EmptyState actions={addButton || undefined}>No sensors: every default is turned off for this server.</EmptyState>
+        <EmptyState actions={addButton || undefined}>{t("server.sensors.none")}</EmptyState>
       ) : (
         <DataTable
-          label="Sensors"
+          label={t("server.sensors.table")}
           columns={columns}
           rows={rows}
           rowKey={(row) => row.key}
-          rowActions={(row) => <RowMenu label={`Actions for ${row.title}`} items={menuItems(row)} />}
+          rowActions={(row) => <RowMenu label={t("server.sensors.actions", { title: row.title })} items={menuItems(row)} />}
           rowDetail={(row) =>
             confirming === row.key && (
               <TurnOff
@@ -205,8 +206,8 @@ export function ServerSensorsTab({
         </div>
       )}
       {off.length > 0 && (
-        <section className={styles.offList} aria-label="Turned off on this server">
-          <h3 className={styles.offTitle}>Turned off on this server</h3>
+        <section className={styles.offList} aria-label={t("server.sensors.offList")}>
+          <h3 className={styles.offTitle}>{t("server.sensors.offList")}</h3>
           <ul>
             {off.map((row) => (
               <li key={row.id}>
@@ -218,8 +219,7 @@ export function ServerSensorsTab({
         </section>
       )}
       <p className={styles.note}>
-        Problems first, then by name. The line shows the last hour. Open a sensor for its chart and history; change
-        its rule from its ⋯ menu.
+        {t("server.sensors.note")}
       </p>
     </div>
   );
@@ -269,18 +269,18 @@ function TurnOff({
 }) {
   const common = {
     layout: "row" as const,
-    trigger: "Turn off…",
-    pendingLabel: "Saving…",
-    describeError: (e: unknown) => `It was not changed. ${describeError(e)}`,
+    trigger: t("server.sensors.turnOff"),
+    pendingLabel: t("server.sensors.saving"),
+    describeError: (e: unknown) => t("server.sensors.notChanged", { error: describeError(e) }),
     onClose,
   };
   if (perInstance(row.sensor, row.instance) && rule) {
     return (
       <InlineConfirm
         {...common}
-        title={`Turn off alerts for ${row.title} on ${hostname}?`}
-        consequence="Its values are still recorded. Turn it back on from its page."
-        confirmLabel="Turn off"
+        title={t("server.sensors.offAlertsTitle", { title: row.title, hostname })}
+        consequence={t("server.sensors.offAlertsConsequence")}
+        confirmLabel={t("server.sensors.turnOffConfirm")}
         onConfirm={async () => {
           const { metric, comparison, warning, critical, duration_s, hysteresis } = rule;
           await saveThreshold(
@@ -297,9 +297,9 @@ function TurnOff({
   return (
     <InlineConfirm
       {...common}
-      title={removing ? `Remove ${title} and its alert?` : `Stop checking ${title} on this server?`}
-      consequence={removing ? "" : "You can turn it back on here."}
-      confirmLabel={removing ? "Remove" : "Turn off"}
+      title={removing ? t("server.sensors.removeTitle", { title }) : t("server.sensors.stopTitle", { title })}
+      consequence={removing ? "" : t("server.sensors.stopConsequence")}
+      confirmLabel={removing ? t("server.sensors.removeConfirm") : t("server.sensors.turnOffConfirm")}
       onConfirm={async () => {
         await stopChecking(target, row.sensor, removing);
         onChanged();
@@ -321,7 +321,10 @@ function LastValue({ row, now }: { row: SensorRow; now: Date }) {
         <span className={styles.muted}>
           {" · "}
           {other && `${metricTitle(incident.metric)} · `}
-          since {formatSince(new Date(incident.opened_at), now)}, {formatDuration((now.getTime() - Date.parse(incident.opened_at)) / 1000)}
+          {t("server.sensors.since", {
+            since: formatSince(new Date(incident.opened_at), now),
+            duration: formatDuration((now.getTime() - Date.parse(incident.opened_at)) / 1000),
+          })}
         </span>
       )}
     </>
@@ -333,27 +336,25 @@ function Drift({ config, now }: { config: EffectiveSensors; now: Date }) {
   if (config.applied_revision === null) {
     return (
       <p className={styles.drift}>
-        <Label tone="neutral">Waiting for the agent</Label>
-        <span>it has not confirmed a configuration yet.</span>
+        <Label tone="neutral">{t("server.sensors.waitingAgent")}</Label>
+        <span>{t("server.sensors.notConfirmed")}</span>
       </p>
     );
   }
   if (config.in_sync) {
     return (
       <p className={styles.drift}>
-        <Label tone="ok">Configuration up to date</Label>
+        <Label tone="ok">{t("server.sensors.upToDate")}</Label>
         {config.applied_at && (
-          <span>
-            applied <RelativeTime value={config.applied_at} now={now} />.
-          </span>
+          <span>{rich("server.sensors.applied", { when: <RelativeTime value={config.applied_at} now={now} /> })}</span>
         )}
       </p>
     );
   }
   return (
     <p className={styles.drift}>
-      <Label tone="warn">Configuration out of date</Label>
-      <span>a connected agent gets the new one within about 10 seconds.</span>
+      <Label tone="warn">{t("server.sensors.outOfDate")}</Label>
+      <span>{t("server.sensors.soon")}</span>
     </p>
   );
 }

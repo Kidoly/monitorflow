@@ -6,6 +6,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { Banner } from "@/components/ui/PageState";
+import { rich, t } from "@/i18n";
 import {
   ApiError,
   LOGIN_PATH,
@@ -94,36 +95,38 @@ export function WelcomeForm() {
         <h1 className={styles.brand}>MonitorFlow</h1>
         {owner === null ? (
           <div className={styles.box}>
-            <h2 className={styles.title}>Link no longer valid</h2>
+            <h2 className={styles.title}>{t("auth.welcome.invalidTitle")}</h2>
             <Banner tone="warn">
-              <strong>This link cannot be used.</strong> It was already used, replaced by a newer one, or expired.
+              <strong>{t("auth.welcome.invalid")}</strong> {t("auth.welcome.invalidText")}
             </Banner>
             <p className={styles.text}>
-              Ask your administrator for a new link. If you already chose a password, <Link href={LOGIN_PATH}>sign in</Link>
-              .
+              {rich("auth.welcome.askNew", {
+                signIn: <Link href={LOGIN_PATH}>{t("auth.welcome.signIn")}</Link>,
+              })}
             </p>
           </div>
         ) : owner === undefined && !failure ? null : (
           <form className={styles.box} onSubmit={onSubmit} aria-labelledby="welcome-title">
             <h2 id="welcome-title" className={styles.title}>
-              {owner?.invited === false ? "Choose a new password" : "Welcome to MonitorFlow"}
+              {owner?.invited === false ? t("auth.welcome.newPassword") : t("auth.welcome.title")}
             </h2>
             {owner && (
               <p className={styles.text}>
-                {owner.invited ? "Choose a password for " : "Your account is "}
-                <strong>{owner.username}</strong>. You will be signed in right after.
+                {rich(owner.invited ? "auth.welcome.invited" : "auth.welcome.reset", {
+                  username: <strong>{owner.username}</strong>,
+                })}
               </p>
             )}
             {failure?.kind === "mismatch" && (
               <Banner tone="bad">
-                <strong>The passwords differ.</strong> Type the same password twice.
+                <strong>{t("auth.mismatch.title")}</strong> {t("auth.mismatch.text")}
               </Banner>
             )}
             {failure?.kind === "other" && <Banner tone="bad">{failure.message}</Banner>}
             {/* Lets password managers save the username with the password. */}
             <input type="hidden" name="username" autoComplete="username" value={owner?.username ?? ""} />
             <label className={styles.label}>
-              Password
+              {t("auth.password")}
               <input
                 className={styles.input}
                 name="password"
@@ -137,10 +140,10 @@ export function WelcomeForm() {
               />
             </label>
             <p id="password-hint" className={styles.hint}>
-              At least {MIN_PASSWORD_LENGTH} characters.
+              {t("auth.passwordHint", { count: MIN_PASSWORD_LENGTH })}
             </p>
             <label className={styles.label}>
-              Confirm password
+              {t("auth.confirmPassword")}
               <input
                 className={styles.input}
                 name="confirm"
@@ -153,7 +156,7 @@ export function WelcomeForm() {
               />
             </label>
             <Button className={styles.submit} variant="k" size="large" type="submit" disabled={pending}>
-              {pending ? "Saving…" : "Save and sign in"}
+              {pending ? t("auth.welcome.saving") : t("auth.welcome.save")}
             </Button>
           </form>
         )}
