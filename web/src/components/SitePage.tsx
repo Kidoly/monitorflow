@@ -59,7 +59,7 @@ export function SitePage({ id }: { id: string | null }) {
   const servers = t("fleet.site.servers", { count: site.server_count });
   return (
     <Page>
-      <Breadcrumb parents={[{ label: t("fleet.title"), href: "/" }]} current={site.name} />
+      <Breadcrumb parents={[{ label: t("fleet.title"), href: "/" }]} />
       <PageHeader
         detail
         title={site.name}

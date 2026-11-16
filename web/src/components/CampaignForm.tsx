@@ -143,7 +143,7 @@ export function CampaignForm({ me }: { me: Me }) {
 
   return (
     <div className={own.page}>
-      <Breadcrumb parents={[{ label: t("campaigns.label"), href: CAMPAIGNS_PATH }]} current={t("campaigns.newCampaign")} />
+      <Breadcrumb parents={[{ label: t("campaigns.label"), href: CAMPAIGNS_PATH }]} />
       <PageHeader detail title={t("campaigns.newCampaign")} meta={t("campaigns.form.meta")} />
       <form className={own.form} onSubmit={submit} aria-label={t("campaigns.newCampaign")} noValidate>
         <div className={own.grid}>

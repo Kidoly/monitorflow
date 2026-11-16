@@ -122,7 +122,7 @@ export function CampaignPage({ id, me }: { id: string | null; me: Me }) {
 
   return (
     <div className={own.page}>
-      <Breadcrumb parents={[{ label: t("campaigns.label"), href: CAMPAIGNS_PATH }]} current={campaign.name} />
+      <Breadcrumb parents={[{ label: t("campaigns.label"), href: CAMPAIGNS_PATH }]} />
       <PageHeader
         detail
         title={campaign.name}

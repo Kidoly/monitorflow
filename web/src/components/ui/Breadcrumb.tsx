@@ -30,9 +30,12 @@ export interface Crumb {
 }
 
 /**
- * "Fleet › web-01 ▾ › Disk used ▾": links to the parents, then the current
- * page, which carries `aria-current="page"`. A crumb with `siblings` gets
- * a ▾ that lists them, to jump to one without going back.
+ * "Fleet › web-01 ▾ › ▾": links to the parents. The page's own name is
+ * left out when the title right below says it; pass `current` only for
+ * something the title does not show (an incident's short id), and it
+ * carries `aria-current="page"`. A crumb with `siblings` gets a ▾ that
+ * lists them, to jump to one without going back; the current page's
+ * siblings get a ▾ of their own at the end.
  */
 export function Breadcrumb({
   parents,
@@ -40,27 +43,32 @@ export function Breadcrumb({
   siblings,
 }: {
   parents: Crumb[];
-  current: string;
+  current?: string;
   /** The current page's siblings. */
   siblings?: Siblings;
 }) {
+  const last = current !== undefined || siblings !== undefined;
   return (
     <nav className={styles.crumb} aria-label={t("ui.breadcrumb.label")}>
-      {parents.map((parent) => (
+      {parents.map((parent, i) => (
         <Fragment key={parent.href}>
           <span className={styles.item}>
             <Link href={parent.href}>{parent.label}</Link>
             {parent.siblings && <SiblingMenu siblings={parent.siblings} />}
           </span>
-          <span aria-hidden="true">›</span>
+          {(last || i < parents.length - 1) && <span aria-hidden="true">›</span>}
         </Fragment>
       ))}
-      <span className={styles.item}>
-        <span className={styles.current} aria-current="page">
-          {current}
+      {last && (
+        <span className={styles.item}>
+          {current !== undefined && (
+            <span className={styles.current} aria-current="page">
+              {current}
+            </span>
+          )}
+          {siblings && <SiblingMenu siblings={siblings} />}
         </span>
-        {siblings && <SiblingMenu siblings={siblings} />}
-      </span>
+      )}
     </nav>
   );
 }

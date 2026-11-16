@@ -188,7 +188,7 @@ describe("ServerPage", () => {
     expect(screen.getByRole("status", { name: "Loading server" })).toBeInTheDocument();
     await heading();
     await vi.waitFor(() => expect(document.title).toBe("web-1 · MonitorFlow"));
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Fleet›web-1");
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent(/^Fleet›▾$/);
     const facts = document.querySelector("dl")!;
     expect(facts).toHaveTextContent(/Site\s*paris · acme/);
     expect(facts).toHaveTextContent(/Last seen\s*12 s ago/);
@@ -230,7 +230,7 @@ describe("ServerPage", () => {
     stubFetch(routes());
     render(<ServerPage id={ID} />);
     await heading();
-    expect(screen.getByRole("navigation", { name: "Fil d’Ariane" })).toHaveTextContent("Parc›web-1");
+    expect(screen.getByRole("navigation", { name: "Fil d’Ariane" })).toHaveTextContent(/^Parc›▾$/);
     const facts = document.querySelector("dl")!;
     expect(facts).toHaveTextContent(/Dernier contact\s*il y a 12 s/);
     expect(facts).toHaveTextContent(/Connecté depuis\s*2026-10-19 02:14/);

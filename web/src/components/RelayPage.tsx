@@ -241,11 +241,11 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
   const fetcher = useCallback((signal: AbortSignal) => load(id ?? "", signal), [id]);
   const { data, error, stale, failures, updatedAt, refresh } = usePolledData(fetcher, { enabled: valid });
 
-  const crumb = (current: string) => <Breadcrumb parents={[{ label: t("relays.title"), href: RELAYS_PATH }]} current={current} />;
+  const crumb = <Breadcrumb parents={[{ label: t("relays.title"), href: RELAYS_PATH }]} />;
   if (!valid || data === null) {
     return (
       <div className={styles.page}>
-        {crumb(t("relays.notFound"))}
+        {crumb}
         <NotFound
           title={t("relays.notFound.title")}
           actions={<ButtonLink href={RELAYS_PATH}>{t("relays.back")}</ButtonLink>}
@@ -256,7 +256,7 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
   if (!data) {
     return (
       <div className={styles.page}>
-        {crumb(t("relays.relay"))}
+        {crumb}
         {error ? (
           <ErrorState what={t("relays.whatOne")} error={describeError(error)} onRetry={refresh} />
         ) : (
@@ -352,7 +352,7 @@ export function RelayPage({ id, me }: { id: string | null; me: Me }) {
 
   return (
     <div className={styles.page}>
-      {crumb(relay.peer_id)}
+      {crumb}
       <PageHeader
         detail
         title={relay.peer_id}

@@ -428,7 +428,6 @@ function DashboardPage({ id, ready, isNew }: { id: string | null; ready: string 
     <Page>
       <Breadcrumb
         parents={[{ label: t("dashboards.list.title"), href: scopedHref(DASHBOARDS_PATH, scope) }]}
-        current={shown.name || t("dashboards.view.new")}
       />
       <PageHeader
         detail

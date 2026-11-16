@@ -384,7 +384,6 @@ function ServerHeading({ server }: { server: ServerDetail }) {
   return (
     <Breadcrumb
       parents={[{ label: t("server.fleet"), href: scopedHref("/", scope) }]}
-      current={server.hostname}
       siblings={serverSiblings(server, scope)}
     />
   );
