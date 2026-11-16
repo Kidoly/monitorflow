@@ -35,7 +35,7 @@ describe("settings catalogue", () => {
   });
 
   it("words the sites line for one customer or several", () => {
-    const sites = (user: typeof global) => visibleSettings(user)[0]!.entries[0]!.description(user);
+    const sites = (user: typeof global) => visibleSettings(user)[0]!.entries[0]!.description!(user);
     expect(sites(global)).toMatch(/Customers/);
     expect(sites(single(global))).not.toMatch(/ustomer/);
   });

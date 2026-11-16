@@ -126,16 +126,8 @@ function MirrorList() {
   const [adding, setAdding] = useState(false);
   const [added, setAdded] = useState<string | null>(null);
 
-  const meta = (
-    <>
-      {t("mirrors.globalOnly")}
-      {(updatedAt !== null || error !== null) && (
-        <>
-          {" · "}
-          <RefreshLine updatedAt={updatedAt} stale={stale} />
-        </>
-      )}
-    </>
+  const meta = (updatedAt !== null || error !== null) && (
+    <RefreshLine updatedAt={updatedAt} stale={stale} />
   );
   const openAdd = () => {
     setAdded(null);

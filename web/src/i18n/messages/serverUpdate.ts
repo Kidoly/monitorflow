@@ -26,7 +26,6 @@ export const en = {
   noPermissionCustomers: "The server is shared by every customer. Ask a global administrator for a role.",
   noPermissionSites: "The server is shared by all sites. Ask a global administrator for a role.",
   title: "Server update",
-  meta: "Global administrators only",
   what: "the update status",
   reconnecting:
     "Reconnecting… The server and the web interface restart during an update. This page keeps asking and shows the result once they are back.",
@@ -150,7 +149,6 @@ export const fr: Translation<typeof en> = {
   noPermissionCustomers: "Le serveur est partagé par tous les clients. Demandez un rôle à un administrateur global.",
   noPermissionSites: "Le serveur est partagé par tous les sites. Demandez un rôle à un administrateur global.",
   title: "Mise à jour du serveur",
-  meta: "Administrateurs globaux uniquement",
   what: "l’état de la mise à jour",
   reconnecting:
     "Reconnexion… Le serveur et l’interface web redémarrent pendant une mise à jour. Cette page continue de les interroger et affiche le résultat à leur retour.",

@@ -119,6 +119,26 @@ export function ruleSummary(shape: Shape, rule: EffectiveThreshold | undefined, 
   return parts.join(" · ");
 }
 
+/**
+ * The same rule for a table cell: "1 min · > 70% / 80% · 5 min" (interval,
+ * warning / critical, how long), with `ruleSummary` as its tooltip.
+ */
+export function ruleCompact(shape: Shape, rule: EffectiveThreshold | undefined, intervalMs: number): string {
+  const parts = [formatSeconds(intervalMs / 1000)];
+  if (!rule) {
+    parts.push(t("sensors.summary.noAlert"));
+  } else if (!rule.enabled) {
+    parts.push(t("sensors.summary.off"));
+  } else if (shape.type === "event") {
+    parts.push(t(rule.critical !== null ? "sensors.summary.event.critical" : "sensors.summary.event.warning", { brief: shape.brief }));
+  } else {
+    const limits = [rule.warning, rule.critical].filter((v): v is number => v !== null).map((v) => value(shape, v));
+    if (limits.length > 0) parts.push(`${SIGNS[rule.comparison]} ${limits.join(" / ")}`);
+  }
+  if (rule?.enabled && rule.duration_s > 0) parts.push(formatSeconds(rule.duration_s));
+  return parts.join(" · ");
+}
+
 /** Where a change applies: one instance of this server, this server, or every server of its site. */
 export type ApplyTo = "sensor" | "server" | "site";
 

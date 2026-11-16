@@ -85,7 +85,6 @@ describe("FleetOverview", () => {
     expect(second).toHaveTextContent(/db-1RHEL 9 · agent unknown\s*Offline\s*Last contact 13:51/);
     expect(third).toHaveTextContent(/mail-1.*OK\s*Warning\s+Certificate: Renewal late, expires in 1 day/);
     expect(within(first!).getByRole("link", { name: "web-1" })).toHaveAttribute("href", expect.stringMatching(/^\/servers\/view\/?\?id=s1$/));
-    expect(screen.getByText(/3 servers, 2 online · Updated 14:32:05, refreshes every 15 seconds/)).toBeInTheDocument();
     // The status strip of the shell replaced the counters.
     expect(screen.queryByRole("group", { name: "Summary, click to filter" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Problems first" })).toBeInTheDocument();
@@ -101,7 +100,6 @@ describe("FleetOverview", () => {
     expect(web).toHaveTextContent(/web-1Debian 12 · agent 0\.1\.0 · via relay-paris-1\s*Critique/);
     expect(db).toHaveTextContent(/agent inconnu\s*Hors ligne\s*Dernier contact 13:51/);
     expect(screen.getByText(/^En silence par alice jusqu’à aujourd’hui 18:00\s: migration$/)).toBeInTheDocument();
-    expect(screen.getByText(/3 serveurs, 2 en ligne · /)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Problèmes d’abord" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Problème" })).toBeInTheDocument();
   });
@@ -145,7 +143,6 @@ describe("FleetOverview", () => {
     const shown = await rows();
     expect(shown).toHaveLength(1);
     expect(shown[0]).toHaveTextContent("db-2");
-    expect(screen.getByText(/1 server, 0 online/)).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Status" })).toHaveValue("offline");
 
     await userEvent.click(screen.getByRole("button", { name: "Clear" }));
@@ -300,10 +297,11 @@ describe("FleetOverview", () => {
       [OPEN]: { status: 200, body: { incidents: [], next_cursor: null } },
     });
     render(<FleetOverview />);
-    expect(await screen.findByText(/1 server, 1 online/)).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "web-1" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "db-1" })).not.toBeInTheDocument();
 
     await act(() => vi.advanceTimersByTimeAsync(REFRESH_MS));
-    expect(await screen.findByText(/2 servers, 1 online/)).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "db-1" })).toBeInTheDocument();
 
     await act(() => vi.advanceTimersByTimeAsync(REFRESH_MS));
     expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(/Refresh failed.*last data received/);
