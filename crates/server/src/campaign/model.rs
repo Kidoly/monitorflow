@@ -309,6 +309,7 @@ impl UpdateSpec {
             packages: self.packages.clone(),
             security_only: self.security_only,
             allow_reboot: self.allow_reboot,
+            ..ApplyUpdates::default()
         }
         .encode_to_vec()
     }

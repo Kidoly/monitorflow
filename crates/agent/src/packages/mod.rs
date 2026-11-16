@@ -182,6 +182,8 @@ impl Reports {
             collected_at_unix_ms: unix_ms(),
             windows_update_source,
             storage,
+            third_party: Vec::new(),
+            managers: Vec::new(),
         }));
         true
     }

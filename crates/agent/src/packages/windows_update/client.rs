@@ -357,6 +357,7 @@ mod tests {
             packages: vec!["KB5034441".into()],
             security_only: true,
             allow_reboot,
+            ..ApplyUpdates::default()
         };
         let fake = || Fake {
             install: Some(installed(&[("KB5034441", Outcome::Succeeded)], true)),

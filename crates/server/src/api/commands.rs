@@ -252,6 +252,7 @@ fn check(request: &CreateRequest) -> Result<(Vec<u8>, Duration), ApiError> {
         packages: request.packages.clone(),
         security_only: request.security_only,
         allow_reboot: request.allow_reboot,
+        ..ApplyUpdates::default()
     }
     .encode_to_vec();
     Ok((payload, ttl))

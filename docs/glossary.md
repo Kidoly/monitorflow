@@ -37,6 +37,8 @@ The words MonitorFlow uses with people: on screen, in the installers, in the CLI
 | Set by | Défini par | Where a setting comes from; under Details | origin | `origin` |
 | Update source | Source des mises à jour | Where a Windows server takes its updates from: Microsoft (Windows Update) or a WSUS server, as its policy sets it. "Updates come from WSUS at http://wsus.example:8530" | update server, WU endpoint, upstream | `windows_update_source` |
 | Monthly updates | Mises à jour mensuelles | Windows quality updates: the security and fix updates Microsoft releases each month | quality updates, cumulative updates (on screen) | `quality_from_microsoft`, `quality_deferral_days` |
+| OS updates | Mises à jour du système | Updates the operating system's own manager offers: apt, dnf or Windows Update | system packages, native updates | `include_os`, `skip_os`, `server_packages` |
+| Third-party apps | Applications tierces | Software installed and updated by a third-party package manager: winget on Windows, Flatpak and Snap on Linux. Name the manager when there is one: "winget: 3 updates" | non-OS packages, 3rd-party software | `third_party`, `server_third_party_packages` |
 | Batch | Lot | Part of the servers of a campaign, updated together | wave | `waves` |
 | Rollback | Retour arrière | What a change gets before it runs: a snapshot to go back to. "Rollback: LVM snapshot of / and /var"; without one, "Rollback limited" and why, like "/ is on plain ext4" | restore point, backup | `snapshots`, `/rollback` |
 | Snapshot | Instantané | A copy of a server's system volumes (or its Proxmox VM) taken before a change, deleted after a day (classic LVM) or a week | checkpoint, LV, dataset (on screen) | `take_snapshot`, `server_storage` |

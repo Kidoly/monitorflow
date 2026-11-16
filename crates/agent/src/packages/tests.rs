@@ -155,6 +155,7 @@ fn payload(packages: &[&str], security_only: bool, allow_reboot: bool) -> Vec<u8
         packages: packages.iter().map(|p| p.to_string()).collect(),
         security_only,
         allow_reboot,
+        ..ApplyUpdates::default()
     }
     .encode_to_vec()
 }

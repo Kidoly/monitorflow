@@ -247,6 +247,8 @@ db_tests! {
             collected_at_unix_ms: 1_800_000_000_000,
             windows_update_source: None,
             storage: None,
+            third_party: Vec::new(),
+            managers: Vec::new(),
         };
         assert!(store.replace("agent-1", &first).await.unwrap());
         let report = PackageReport {
@@ -261,6 +263,8 @@ db_tests! {
             collected_at_unix_ms: 1_800_000_060_000,
             windows_update_source: None,
             storage: None,
+            third_party: Vec::new(),
+            managers: Vec::new(),
         };
         assert!(store.replace("agent-1", &report).await.unwrap());
         // Older or unknown: ignored.
@@ -464,6 +468,8 @@ db_tests! {
             collected_at_unix_ms: 1_800_000_000_000,
             windows_update_source: None,
             storage: None,
+            third_party: Vec::new(),
+            managers: Vec::new(),
         };
         // Agents before ADR-0086 say nothing of the update source.
         assert!(PackageStore::new(pool.clone()).replace("agent-2", &report).await.unwrap());

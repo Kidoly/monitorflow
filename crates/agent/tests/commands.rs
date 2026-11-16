@@ -325,6 +325,8 @@ db_tests! {
             collected_at_unix_ms: 1_800_000_000_000,
             windows_update_source: None,
             storage: None,
+            third_party: Vec::new(),
+            managers: Vec::new(),
         }));
         let deadline = tokio::time::Instant::now() + TIMEOUT;
         loop {

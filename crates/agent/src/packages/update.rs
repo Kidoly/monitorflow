@@ -351,6 +351,7 @@ mod tests {
             packages: packages.iter().map(|p| p.to_string()).collect(),
             security_only,
             allow_reboot: true,
+            ..ApplyUpdates::default()
         };
         for (request, expected, json) in [
             (

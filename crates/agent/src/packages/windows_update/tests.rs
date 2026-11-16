@@ -122,6 +122,7 @@ fn apply_updates_maps_to_installs() {
         packages: names(packages),
         security_only,
         allow_reboot: false,
+        ..ApplyUpdates::default()
     };
     assert_eq!(
         Request::install(&apply(&[], false)),
@@ -367,6 +368,7 @@ mod signed {
             packages: names(packages),
             security_only: false,
             allow_reboot,
+            ..ApplyUpdates::default()
         }
         .encode_to_vec()
     }
