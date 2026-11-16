@@ -7,7 +7,7 @@ use sqlx::pool::PoolConnection;
 use sqlx::{PgExecutor, PgPool, Postgres};
 use uuid::Uuid;
 
-use super::model::{Invalid, Mirror, MirrorSpec, Run, RunKind, Snapshot, Trigger};
+use super::model::{Invalid, Mirror, MirrorSpec, Mode, Run, RunKind, Snapshot, Trigger};
 use crate::api::audit::{self, Event};
 
 const UNIQUE_VIOLATION: &str = "23505";
@@ -26,9 +26,9 @@ pub enum StoreError {
 }
 
 pub(super) const MIRROR_COLUMNS: &str = "id, name, family, upstream_url, distribution, components,
-     architectures, sync_interval_s, auto_snapshot, created_at, deleting_at, delete_error";
+     architectures, sync_interval_s, auto_snapshot, mode, created_at, deleting_at, delete_error";
 const SNAPSHOT_COLUMNS: &str =
-    "id, mirror_id, name, state, size_bytes, error, created_at, published_at";
+    "id, mirror_id, name, state, size_bytes, error, created_at, published_at, mode";
 const RUN_COLUMNS: &str = "id, mirror_id, kind, trigger, requested_by, state, snapshot_id,
      output, error, started_at, finished_at";
 
@@ -48,8 +48,8 @@ pub async fn create(
     // SQL-safe: interpolates only the constant MIRROR_COLUMNS.
     let mirror: Mirror = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO mirrors (name, family, upstream_url, distribution, components,
-                              architectures, sync_interval_s, auto_snapshot)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING {MIRROR_COLUMNS}"
+                              architectures, sync_interval_s, auto_snapshot, mode)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING {MIRROR_COLUMNS}"
     )))
     .bind(&spec.name)
     .bind(spec.family)
@@ -59,6 +59,7 @@ pub async fn create(
     .bind(&spec.architectures)
     .bind(spec.sync_interval_s)
     .bind(spec.auto_snapshot)
+    .bind(spec.mode)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
@@ -79,12 +80,47 @@ pub async fn create(
                 "name": mirror.name,
                 "family": mirror.family,
                 "upstream_url": mirror.upstream_url,
+                "mode": mirror.mode,
             }),
         },
     )
     .await?;
     tx.commit().await?;
     Ok(mirror)
+}
+
+/// Sets the mode of `mirror`'s next sync (ADR-0142), audited as
+/// `mirror.mode` when it changes.
+pub async fn set_mode(
+    pool: &PgPool,
+    mirror: &Mirror,
+    mode: Mode,
+    actor: (&str, &str),
+) -> Result<Mirror, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    // SQL-safe: interpolates only the constant MIRROR_COLUMNS.
+    let updated: Mirror = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "UPDATE mirrors SET mode = $2 WHERE id = $1 RETURNING {MIRROR_COLUMNS}"
+    )))
+    .bind(mirror.id)
+    .bind(mode)
+    .fetch_one(&mut *tx)
+    .await?;
+    if mirror.mode != mode {
+        audit::record(
+            &mut *tx,
+            Event {
+                actor_kind: actor.0,
+                actor_id: actor.1,
+                action: "mirror.mode",
+                target: Some(("mirror", &mirror.id.to_string())),
+                details: json!({ "name": mirror.name, "from": mirror.mode, "to": mode }),
+            },
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(updated)
 }
 
 /// Every mirror, by name.
@@ -381,20 +417,26 @@ pub async fn finish_run(
     .await
 }
 
-/// Inserts a snapshot in state `creating`, or takes over a failed or
-/// removed one of the same name. Needs the mirror's lock.
-pub async fn insert_snapshot(lock: &mut MirrorLock, name: &str) -> Result<Snapshot, StoreError> {
+/// Inserts a snapshot in state `creating`, built in `mode`, or takes over
+/// a failed or removed one of the same name. Needs the mirror's lock.
+pub async fn insert_snapshot(
+    lock: &mut MirrorLock,
+    name: &str,
+    mode: Mode,
+) -> Result<Snapshot, StoreError> {
     super::model::validate_snapshot_name(name)?;
     // SQL-safe: interpolates only the constant SNAPSHOT_COLUMNS.
     let row: Option<Snapshot> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO mirror_snapshots (mirror_id, name) VALUES ($1, $2)
+        "INSERT INTO mirror_snapshots (mirror_id, name, mode) VALUES ($1, $2, $3)
          ON CONFLICT (mirror_id, name) DO UPDATE
-             SET state = 'creating', error = NULL, size_bytes = NULL, created_at = now()
+             SET state = 'creating', error = NULL, size_bytes = NULL, created_at = now(),
+                 mode = $3
              WHERE mirror_snapshots.state IN ('failed', 'pruned')
          RETURNING {SNAPSHOT_COLUMNS}"
     )))
     .bind(lock.mirror_id)
     .bind(name)
+    .bind(mode)
     .fetch_optional(&mut *lock.conn)
     .await?;
     row.ok_or(StoreError::Duplicate("snapshot"))

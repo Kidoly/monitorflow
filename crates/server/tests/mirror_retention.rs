@@ -228,6 +228,7 @@ async fn create_named(pool: &PgPool, name: &str, family: Family) -> Mirror {
         architectures: vec!["amd64".into()],
         sync_interval_s: None,
         auto_snapshot: false,
+        mode: Default::default(),
     };
     store::create(pool, &spec, ("system", "test"))
         .await
@@ -590,6 +591,7 @@ db_tests! {
                 architectures: Vec::new(),
                 sync_interval_s: None,
                 auto_snapshot: false,
+                mode: Default::default(),
             }
         };
         let other = store::create(&pool, &spec, ("system", "test")).await.unwrap();
@@ -875,6 +877,7 @@ db_tests! {
                     architectures: Vec::new(),
                     sync_interval_s: None,
                     auto_snapshot: false,
+                    mode: Default::default(),
                 }
             },
             ("system", "test"),

@@ -16,6 +16,11 @@
 //! listener's process can read more than it serves. A `current` link
 //! resolves inside and works; a link out, or a served directory that is
 //! itself a link, is 404.
+//!
+//! A file missing from an on-demand snapshot (ADR-0142) that its package
+//! list names is served from the content store, fetched first if needed,
+//! by [`OnDemand`]: 502 when the upstream fails or sends something else,
+//! 404 when nobody has it.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -30,7 +35,10 @@ use axum::Router;
 use tokio::net::TcpListener;
 use tower_http::services::ServeFile;
 
-use super::{Family, Index, INDEX_PATH, PUBLIC_KEY};
+use super::demand::{DemandError, OnDemand};
+use super::{
+    is_mirror_name, is_snapshot_name, read_current, Family, Index, CURRENT, INDEX_PATH, PUBLIC_KEY,
+};
 
 /// Directory and URL path of the agent releases.
 pub const AGENT_DIR: &str = "agent";
@@ -72,24 +80,34 @@ impl Served {
 
 /// The routes over `served`.
 pub fn router(served: &Served) -> Router {
-    let dir = |root: &Path| {
+    router_with(served, None)
+}
+
+/// The routes over `served`, fetching the packages of on-demand snapshots
+/// with `ondemand` (ADR-0142).
+pub fn router_with(served: &Served, ondemand: Option<OnDemand>) -> Router {
+    let dir = |root: &Path, family: Option<Family>| {
         get(file).with_state(Tree {
             base: served.base.clone(),
             root: root.to_owned(),
             fixed: None,
+            family,
+            ondemand: family.and(ondemand.clone()),
         })
     };
     let keys = served.public_key.parent().unwrap_or(Path::new(""));
     Router::new()
-        .route("/apt/{*path}", dir(&served.apt))
-        .route("/dnf/{*path}", dir(&served.dnf))
-        .route(&format!("/{AGENT_DIR}/{{*path}}"), dir(&served.agent))
+        .route("/apt/{*path}", dir(&served.apt, Some(Family::Apt)))
+        .route("/dnf/{*path}", dir(&served.dnf, Some(Family::Dnf)))
+        .route(&format!("/{AGENT_DIR}/{{*path}}"), dir(&served.agent, None))
         .route(
             &format!("/keys/{PUBLIC_KEY}"),
             get(file).with_state(Tree {
                 base: served.base.clone(),
                 root: keys.to_owned(),
                 fixed: Some(PUBLIC_KEY),
+                family: None,
+                ondemand: None,
             }),
         )
         .route(INDEX_PATH, get(index).with_state(served.clone()))
@@ -103,6 +121,10 @@ struct Tree {
     base: PathBuf,
     root: PathBuf,
     fixed: Option<&'static str>,
+    /// The family of a package tree.
+    family: Option<Family>,
+    /// Fetches what on-demand snapshots of this tree miss.
+    ondemand: Option<OnDemand>,
 }
 
 /// A file checked to be inside its served directory.
@@ -181,9 +203,22 @@ async fn file(State(tree): State<Tree>, request: Request) -> Response {
         return StatusCode::NOT_FOUND.into_response();
     };
     let mime = mime_guess::from_path(&named).first_or_octet_stream();
-    let found = tokio::task::spawn_blocking(move || tree.contained(&named)).await;
-    let Ok(Some(found)) = found else {
-        return StatusCode::NOT_FOUND.into_response();
+    let (checked, wanted) = (tree.clone(), named.clone());
+    let found = tokio::task::spawn_blocking(move || checked.contained(&wanted)).await;
+    let found = match found {
+        Ok(Some(found)) => found,
+        _ => match on_demand(&tree, &named).await {
+            Ok(Some(stored)) => Contained {
+                path: stored,
+                _open: None,
+            },
+            Ok(None) | Err(DemandError::Missing) => return StatusCode::NOT_FOUND.into_response(),
+            Err(DemandError::Upstream(_)) => return StatusCode::BAD_GATEWAY.into_response(),
+            Err(DemandError::Local(error)) => {
+                tracing::warn!(%error, "cannot serve an on-demand package");
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        },
     };
     // `found` stays open until the file is opened again through it.
     match ServeFile::new_with_mime(&found.path, &mime)
@@ -196,6 +231,49 @@ async fn file(State(tree): State<Tree>, request: Request) -> Response {
             StatusCode::NOT_FOUND.into_response()
         }
     }
+}
+
+/// The stored file of `named`, `<mirror>/<snapshot>/<path>` below a
+/// package tree, when its snapshot is on demand and lists the path.
+async fn on_demand(tree: &Tree, named: &Path) -> Result<Option<PathBuf>, DemandError> {
+    let (Some(family), Some(ondemand)) = (tree.family, &tree.ondemand) else {
+        return Ok(None);
+    };
+    let Some(named) = named.to_str() else {
+        return Ok(None);
+    };
+    let mut parts = named.splitn(3, '/');
+    let (Some(mirror), Some(snapshot), Some(rest)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return Ok(None);
+    };
+    if !is_mirror_name(mirror) {
+        return Ok(None);
+    }
+    let (checked, mirror_name, asked) = (tree.clone(), mirror.to_owned(), snapshot.to_owned());
+    // The real snapshot, `current` resolved, when it is a directory that
+    // resolves inside the served one.
+    let resolved = tokio::task::spawn_blocking(move || {
+        let dir = checked.root.join(&mirror_name);
+        let name = if asked == CURRENT {
+            read_current(&dir)?
+        } else {
+            asked
+        };
+        if !is_snapshot_name(&name) {
+            return None;
+        }
+        let real = std::fs::canonicalize(dir.join(&name)).ok()?;
+        (real.starts_with(checked.real_root()?) && real.is_dir()).then_some((name, real))
+    })
+    .await
+    .map_err(|e| DemandError::Local(e.to_string()))?;
+    let Some((snapshot, dir)) = resolved else {
+        return Ok(None);
+    };
+    ondemand
+        .package(family, mirror, &snapshot, &dir, rest)
+        .await
 }
 
 async fn index(State(served): State<Served>) -> Response {
@@ -234,7 +312,17 @@ pub async fn serve(
     served: Served,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
-    axum::serve(listener, router(&served))
+    serve_with(listener, served, None, shutdown).await
+}
+
+/// Serves [`router_with`] on `listener` until `shutdown` resolves.
+pub async fn serve_with(
+    listener: TcpListener,
+    served: Served,
+    ondemand: Option<OnDemand>,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    axum::serve(listener, router_with(&served, ondemand))
         .with_graceful_shutdown(shutdown)
         .await
 }
@@ -292,6 +380,8 @@ mod tests {
             base: base.clone(),
             root: served.dnf.clone(),
             fixed: None,
+            family: None,
+            ondemand: None,
         };
         let read = |tree: &Tree, path: &str| {
             let found = tree.contained(Path::new(path))?;
@@ -324,12 +414,16 @@ mod tests {
             base: base.clone(),
             root: base.join("aptly/public"),
             fixed: None,
+            family: None,
+            ondemand: None,
         };
         assert_eq!(read(&linked, "key.pem"), None);
         let outside = Tree {
             base,
             root: dir.path().join("ca"),
             fixed: None,
+            family: None,
+            ondemand: None,
         };
         assert_eq!(read(&outside, "key.pem"), None);
     }

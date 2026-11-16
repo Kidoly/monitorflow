@@ -4,18 +4,21 @@
 //! fails the run, never the caller. Deleting the mirror stops its job at
 //! the tool it is running (ADR-0075).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use chrono::Utc;
+use monitorflow_common::mirror::demand::{OnDemand, Source};
+use monitorflow_common::mirror::evict::Outcome;
 use sqlx::PgPool;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::layout::{self, Layout};
-use super::model::{self, Family, Invalid, Mirror, Run, RunKind, Trigger};
+use super::model::{self, Family, Invalid, Mirror, Mode, Run, RunKind, Trigger};
 use super::runner::{keep_tail, Invocation, Runner, OUTPUT_TAIL};
 use super::store::{self, MirrorLock, StoreError};
-use super::{apt, dnf, signing};
+use super::{apt, dnf, ondemand, signing};
 
 /// How often a running tool looks for its mirror being deleted.
 const WATCH: Duration = Duration::from_secs(5);
@@ -53,6 +56,11 @@ pub struct Mirrors {
     pool: PgPool,
     runner: Arc<dyn Runner>,
     layout: Layout,
+    ondemand: OnDemand,
+    /// Told when a download made the on-demand store grow.
+    grew: Arc<Notify>,
+    /// The outcome of the last eviction, for the Mirrors page.
+    last_eviction: Arc<Mutex<Option<Outcome>>>,
 }
 
 /// A job holding its mirror's lock, ready to execute.
@@ -67,11 +75,48 @@ pub struct Job {
 
 impl Mirrors {
     pub fn new(pool: PgPool, runner: Arc<dyn Runner>, layout: Layout) -> Self {
+        let grew = Arc::new(Notify::new());
+        let told = grew.clone();
+        let ondemand = OnDemand::with_hook(
+            layout.store(),
+            Source::Origin(ondemand::client()),
+            Some(Box::new(move |_| told.notify_one())),
+        );
         Self {
             pool,
             runner,
             layout,
+            ondemand,
+            grew,
+            last_eviction: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Ends when a download has made the on-demand store grow since the
+    /// last call.
+    pub async fn grew(&self) {
+        self.grew.notified().await
+    }
+
+    /// The outcome of the last eviction pass, `None` before the first.
+    pub fn last_eviction(&self) -> Option<Outcome> {
+        *self
+            .last_eviction
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(super) fn set_last_eviction(&self, outcome: Outcome) {
+        *self
+            .last_eviction
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(outcome);
+    }
+
+    /// Fetches the packages of on-demand snapshots, for the listener and
+    /// prefetching alike, which share their downloads (ADR-0142).
+    pub fn ondemand(&self) -> &OnDemand {
+        &self.ondemand
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -181,6 +226,14 @@ impl Job {
             Ok(snapshot) => (None, snapshot),
             Err(Failed(error)) => (Some(error), None),
         };
+        if self.mirror.mode == Mode::OnDemand && snapshot.is_some() {
+            // Pending updates the new snapshot lists, without holding the
+            // job (ADR-0142).
+            let (mirrors, mirror) = (self.mirrors.clone(), self.mirror.clone());
+            tokio::spawn(async move {
+                super::prefetch::after_sync(&mirrors, &mirror).await;
+            });
+        }
         let output = keep_tail(&self.log, OUTPUT_TAIL);
         let pool = self.mirrors.pool.clone();
         let finished =
@@ -241,6 +294,9 @@ impl Job {
         let layout = self.mirrors.layout.clone();
         let prepared = layout.clone();
         Self::blocking(move || prepared.prepare()).await?;
+        if self.mirror.mode == Mode::OnDemand {
+            return self.sync_on_demand(&layout).await;
+        }
         match self.mirror.family {
             Family::Apt => {
                 let existing = self.step(apt::list(&layout)).await?;
@@ -264,10 +320,40 @@ impl Job {
         Ok(())
     }
 
+    /// Downloads the indexes only (ADR-0142), the upstream's `Release`
+    /// verified with gpg before anything it lists is read.
+    async fn sync_on_demand(&mut self, layout: &Layout) -> Result<(), Failed> {
+        self.log
+            .push_str(&format!("# indexes of {}\n", self.mirror.upstream_url));
+        let mut staging = ondemand::Staging::start(layout, &self.mirror).await?;
+        match self.mirror.family {
+            Family::Apt => {
+                let (release, signature) = staging.apt_roots().await?;
+                let status = self
+                    .step(signing::verify_upstream(layout, &signature, &release))
+                    .await?;
+                if !signing::verified(&status) {
+                    return Err(Failed(
+                        "the upstream's Release is not signed by a key of upstream-keyring.gpg"
+                            .into(),
+                    ));
+                }
+                staging.apt_indexes().await?;
+            }
+            Family::Dnf => staging.dnf().await?,
+        }
+        let stats = staging.finish().await?;
+        self.log.push_str(&format!(
+            "{} index files downloaded ({} bytes), {} already stored, {} packages listed\n",
+            stats.downloaded, stats.bytes, stats.reused, stats.packages
+        ));
+        Ok(())
+    }
+
     /// Creates, publishes and records one snapshot, then moves `current`.
     async fn snapshot(&mut self, name: Option<String>) -> Result<Uuid, Failed> {
         let name = name.unwrap_or_else(|| model::snapshot_name_at(Utc::now()));
-        let snapshot = store::insert_snapshot(&mut self.lock, &name)
+        let snapshot = store::insert_snapshot(&mut self.lock, &name, self.mirror.mode)
             .await
             .map_err(|e| match e {
                 StoreError::Duplicate(_) => Failed(format!("snapshot `{name}` already exists")),
@@ -293,8 +379,25 @@ impl Job {
         let key = signing::the_key(&keys)?;
         let dir = layout.mirror_dir(&self.mirror);
         let published = dir.join(name);
-        match self.mirror.family {
-            Family::Apt => {
+        match (self.mirror.mode, self.mirror.family) {
+            (Mode::OnDemand, family) => {
+                let building = dir.join(format!(".creating-{name}"));
+                let (l, m, b) = (layout.clone(), self.mirror.clone(), building.clone());
+                Self::blocking(move || ondemand::stage_snapshot(&l, &m, &b)).await?;
+                let signed = ondemand::signed_file(&self.mirror, &building);
+                match family {
+                    Family::Apt => {
+                        self.step(signing::clearsign(&signed, &key)).await?;
+                        self.step(signing::detach_sign(&signed, &key)).await?;
+                    }
+                    Family::Dnf => {
+                        self.step(dnf::sign_repomd(&building, &key)).await?;
+                    }
+                }
+                let target = published.clone();
+                Self::blocking(move || std::fs::rename(building, target)).await?;
+            }
+            (Mode::Full, Family::Apt) => {
                 for cleanup in apt::cleanup(&layout, &self.mirror, name) {
                     // Absent objects are the normal case; only the log
                     // shows these.
@@ -307,7 +410,7 @@ impl Job {
                 self.step(apt::publish(&layout, &self.mirror, name, &key))
                     .await?;
             }
-            Family::Dnf => {
+            (Mode::Full, Family::Dnf) => {
                 let work = layout.dnf_work(&self.mirror);
                 let building = dir.join(format!(".creating-{name}"));
                 let target = building.clone();

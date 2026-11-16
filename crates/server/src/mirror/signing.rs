@@ -39,6 +39,77 @@ pub fn fingerprints(colons: &str) -> Vec<String> {
     found
 }
 
+/// Checks the detached signature `signature` of `file` against the
+/// upstream archive keys, as aptly did before publishing (ADR-0142): only
+/// that keyring, whatever trust the signing home holds, with the status
+/// lines on stdout for [`verified`].
+pub fn verify_upstream(layout: &Layout, signature: &Path, file: &Path) -> Invocation {
+    let mut args: Vec<std::ffi::OsString> = [
+        "--batch",
+        "--no-default-keyring",
+        "--trust-model",
+        "always",
+        "--status-fd",
+        "1",
+        "--keyring",
+    ]
+    .map(Into::into)
+    .into();
+    args.push(layout.upstream_keyring().into());
+    args.push("--verify".into());
+    args.push(signature.into());
+    args.push(file.into());
+    Invocation::new(Tool::Gpg, args)
+}
+
+/// Whether the status lines of a successful [`verify_upstream`] report a
+/// valid signature: gpg also ends well on some outcomes that are not one.
+pub fn verified(status: &str) -> bool {
+    status.lines().any(|l| l.starts_with("[GNUPG:] VALIDSIG "))
+        && !status
+            .lines()
+            .any(|l| l.starts_with("[GNUPG:] BADSIG ") || l.starts_with("[GNUPG:] ERRSIG "))
+}
+
+/// Signs the apt `Release` file at `release` with `key` into `InRelease`
+/// (clear-signed) next to it.
+pub fn clearsign(release: &Path, key: &str) -> Invocation {
+    let out = release.with_file_name("InRelease");
+    let mut args: Vec<std::ffi::OsString> = [
+        "--batch",
+        "--yes",
+        "--local-user",
+        key,
+        "--digest-algo",
+        "SHA512",
+        "--output",
+    ]
+    .map(Into::into)
+    .into();
+    args.extend([out.into(), "--clearsign".into(), release.into()]);
+    Invocation::new(Tool::Gpg, args)
+}
+
+/// Signs the apt `Release` file at `release` with `key` into `Release.gpg`
+/// (detached, armored) next to it.
+pub fn detach_sign(release: &Path, key: &str) -> Invocation {
+    let out = release.with_file_name("Release.gpg");
+    let mut args: Vec<std::ffi::OsString> = [
+        "--batch",
+        "--yes",
+        "--local-user",
+        key,
+        "--digest-algo",
+        "SHA512",
+        "--armor",
+        "--output",
+    ]
+    .map(Into::into)
+    .into();
+    args.extend([out.into(), "--detach-sign".into(), release.into()]);
+    Invocation::new(Tool::Gpg, args)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum KeyError {
     #[error("no signing key: create one with `monitorflow-server mirror key generate` or import one with `mirror key import`")]
@@ -168,6 +239,29 @@ mod tests {
 
     use super::*;
     use crate::mirror::Output;
+
+    #[test]
+    fn upstream_and_release_signature_command_lines() {
+        let layout = Layout::new("/srv/m");
+        let release = Path::new("/srv/m/w/dists/x/Release");
+        assert_eq!(
+            verify_upstream(&layout, Path::new("/s/Release.gpg"), Path::new("/s/Release")).to_string(),
+            "gpg --batch --no-default-keyring --trust-model always --status-fd 1 --keyring /srv/m/upstream-keyring.gpg --verify /s/Release.gpg /s/Release"
+        );
+        assert_eq!(
+            clearsign(release, "FPR").to_string(),
+            "gpg --batch --yes --local-user FPR --digest-algo SHA512 --output /srv/m/w/dists/x/InRelease --clearsign /srv/m/w/dists/x/Release"
+        );
+        assert_eq!(
+            detach_sign(release, "FPR").to_string(),
+            "gpg --batch --yes --local-user FPR --digest-algo SHA512 --armor --output /srv/m/w/dists/x/Release.gpg --detach-sign /srv/m/w/dists/x/Release"
+        );
+        let good = "[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG A B\n[GNUPG:] VALIDSIG ABC 2026-11-16\n";
+        assert!(verified(good));
+        assert!(!verified("[GNUPG:] NEWSIG\n[GNUPG:] NO_PUBKEY A\n"));
+        assert!(!verified(&format!("{good}[GNUPG:] BADSIG C D\n")));
+        assert!(!verified(""));
+    }
 
     /// gpg holding at most one key, set by `--quick-generate-key` or by an
     /// `--import` of a file whose name says what it holds.

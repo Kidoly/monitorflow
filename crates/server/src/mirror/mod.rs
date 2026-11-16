@@ -11,17 +11,24 @@
 //! [`scheduler`]. [`http`] serves the result; [`relays`] records the
 //! copies relays serve (ADR-0037). [`tools`] reaches the tools in their
 //! sidecar container and [`catalog`] lists the distributions an
-//! administrator can add in one click (ADR-0067). [`retention`] removes
+//! administrator can add in one click (ADR-0067). [`ondemand`] syncs a
+//! mirror's indexes only, its packages fetched when asked for
+//! (ADR-0142), [`cache`] keeps what they fetch under a cap and
+//! [`prefetch`] fetches pending updates ahead.
+//! [`retention`] removes
 //! the snapshots nothing needs (ADR-0074), and with them what [`removal`]
 //! was asked to delete (ADR-0075).
 
 pub mod apt;
+pub mod cache;
 pub mod catalog;
 pub mod dnf;
 pub mod http;
 pub mod jobs;
 pub mod layout;
 pub mod model;
+pub mod ondemand;
+pub mod prefetch;
 pub mod relays;
 pub mod removal;
 pub mod retention;
@@ -34,7 +41,7 @@ pub mod tools;
 pub use jobs::{Job, JobError, JobKind, Mirrors};
 pub use layout::Layout;
 pub use model::{
-    Family, Mirror, MirrorSpec, Run, RunKind, RunState, Snapshot, SnapshotState, Trigger,
+    Family, Mirror, MirrorSpec, Mode, Run, RunKind, RunState, Snapshot, SnapshotState, Trigger,
 };
 pub use runner::{CommandRunner, Invocation, Output, RunError, Runner, Tool};
 pub use store::{MirrorLock, StoreError};

@@ -46,6 +46,7 @@ Each task is sized to be one Claude Code thread on its own branch. Check a task 
 - [x] Campaigns: model, waves, maintenance windows, stop on failure.
 - [x] Agent: apply updates, report packages and reboot-required.
 - [x] Web: campaign creation and progress.
+- [ ] On-demand mirrors (ADR-0142): indexes only, packages fetched on first request and kept under a storage cap, prefetched for campaigns and pending updates, in cascade on relays. Full mirrors stay available.
 
 ## Phase 5: AI remediation
 

@@ -85,9 +85,12 @@
 //! | PUT | `/api/settings/public-address` | global administrator | body [`public_address::SetRequest`]; 200 [`public_address::PublicAddress`]; audited |
 //! | POST | `/api/auto-update/rollouts/{kind}/{version}/resume` | global administrator | resumes a halted rollout; audited |
 //! | GET | `/api/mirrors` | global administrator | [`mirrors::MirrorList`], see below |
-//! | POST | `/api/mirrors` | global administrator | body `{"distribution"}`, an `id` of the catalog; 201 [`mirrors::MirrorList`] of the mirrors created; 409 when the mirror tools are not running, the disk is too small or it is already added |
+//! | POST | `/api/mirrors` | global administrator | body `{"distribution", "mode"?}`, an `id` of the catalog and `on_demand` (default) or `full`; 201 [`mirrors::MirrorList`] of the mirrors created; 409 when the mirror tools are not running, the disk is too small or it is already added |
+//! | GET | `/api/mirrors/cache` | global administrator | [`mirrors::Cache`]: the storage cap of on-demand mirrors and what they use (ADR-0142) |
+//! | PUT | `/api/mirrors/cache` | global administrator | body [`mirrors::SetCacheRequest`], `{"cap_bytes"}` or `null` for the default; 200 [`mirrors::Cache`]; audited `mirror.cache_cap` |
 //! | GET | `/api/mirrors/catalog` | global administrator | [`mirrors::Catalog`]: the distributions with their size estimate, the free disk space and whether the mirror tools answer |
 //! | GET | `/api/mirrors/{id}` | global administrator | [`mirrors::MirrorDetail`]: a listing item plus `snapshots`, each with why it stays, the last `runs`, and `used_by`, what keeps it from being deleted |
+//! | PATCH | `/api/mirrors/{id}` | global administrator | body [`mirrors::UpdateRequest`], `{"mode"}`; 200 the listing item; 409 while it is being removed; audited `mirror.mode` (ADR-0142) |
 //! | DELETE | `/api/mirrors/{id}` | global administrator | 202 with the listing item once the mirror is being deleted, in the background, until its detail answers 404; 409 saying what still uses it (ADR-0075) |
 //! | POST | `/api/mirrors/{id}/sync` | global administrator | 202 [`mirrors::RunSummary`] of the started sync; 409 while busy |
 //! | POST | `/api/mirrors/{id}/snapshots` | global administrator | body `{"name"?}`; 202 [`mirrors::RunSummary`]; 409 while busy or never synced |
@@ -1070,8 +1073,14 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/mirrors", get(mirrors::list).post(mirrors::add))
         .route("/api/mirrors/catalog", get(mirrors::catalog))
         .route(
+            "/api/mirrors/cache",
+            get(mirrors::cache).put(mirrors::set_cache),
+        )
+        .route(
             "/api/mirrors/{id}",
-            get(mirrors::detail).delete(mirrors::delete),
+            get(mirrors::detail)
+                .patch(mirrors::update)
+                .delete(mirrors::delete),
         )
         .route("/api/mirrors/{id}/sync", post(mirrors::sync))
         .route("/api/mirrors/{id}/snapshots", post(mirrors::snapshot))

@@ -72,6 +72,7 @@ fn dnf(name: &str, interval: Option<i32>) -> MirrorSpec {
         architectures: vec![],
         sync_interval_s: interval,
         auto_snapshot: false,
+        mode: Default::default(),
     }
 }
 

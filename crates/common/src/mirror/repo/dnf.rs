@@ -10,7 +10,7 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
 use super::compress::{self, Compression};
-use super::meta::{join, Algorithm, Checksum, Entry, MetaError};
+use super::meta::{join, Algorithm, Checksum, Entry, MetaError, Package};
 
 pub const REPOMD: &str = "repodata/repomd.xml";
 /// Signed files of a repository, not listed in `repomd.xml` itself, all
@@ -29,13 +29,26 @@ pub fn repomd(reader: impl BufRead) -> Result<Vec<Metadata>, MetaError> {
     let records = records(REPOMD, reader, "data", Size::Element)?;
     Ok(records
         .into_iter()
-        .map(|(kind, entry)| Metadata { kind, entry })
+        .map(|r| Metadata {
+            kind: r.kind,
+            entry: r.package.entry,
+        })
         .collect())
 }
 
 /// The packages the `primary` metadata at `path` lists, decompressed by
 /// its extension (`.xml`, `.gz`, `.xz`, `.bz2`, `.zst`). Blocking.
 pub fn primary(file: &str, path: &Path) -> Result<Vec<Entry>, MetaError> {
+    Ok(primary_packages(file, path)?
+        .into_iter()
+        .map(|p| p.entry)
+        .collect())
+}
+
+/// As [`primary`], with each package's name, version and architecture
+/// (ADR-0142). The version is `[epoch:]version-release`, the epoch left
+/// out when it is 0, as `rpm -q` writes it. Blocking.
+pub fn primary_packages(file: &str, path: &Path) -> Result<Vec<Package>, MetaError> {
     if !Compression::of(file).1.ends_with(".xml") {
         return Err(MetaError::invalid(file, "unsupported compression"));
     }
@@ -45,7 +58,7 @@ pub fn primary(file: &str, path: &Path) -> Result<Vec<Entry>, MetaError> {
         "package",
         Size::Attribute,
     )?;
-    Ok(records.into_iter().map(|(_, entry)| entry).collect())
+    Ok(records.into_iter().map(|r| r.package).collect())
 }
 
 /// Where a record keeps its size: `<size>N</size>` in `repomd.xml`,
@@ -63,16 +76,26 @@ struct Record {
     checksum: Option<String>,
     size: Option<String>,
     location: Option<String>,
+    name: Option<String>,
+    arch: Option<String>,
+    version: Option<String>,
 }
 
-/// The `(type, entry)` of every `<tag>` element in `reader`: its direct
-/// `checksum`, `size` and `location` children.
+/// A record read: its `type` attribute, and the package it describes.
+#[derive(Debug)]
+struct Read {
+    kind: String,
+    package: Package,
+}
+
+/// Every `<tag>` element in `reader`: its `type`, and its direct
+/// `checksum`, `size`, `location`, `name`, `arch` and `version` children.
 fn records(
     file: &str,
     reader: impl BufRead,
     tag: &str,
     size_in: Size,
-) -> Result<Vec<(String, Entry)>, MetaError> {
+) -> Result<Vec<Read>, MetaError> {
     let fail = |reason: String| MetaError::invalid(file, reason);
     let attr = |e: &BytesStart, name: &str| -> Result<Option<String>, MetaError> {
         match e.try_get_attribute(name).map_err(|e| fail(e.to_string()))? {
@@ -123,6 +146,21 @@ fn records(
                                 r.size = attr(e, "package")?;
                             }
                             "size" => text_of = (!empty).then_some("size"),
+                            "name" => text_of = (!empty).then_some("name"),
+                            "arch" => text_of = (!empty).then_some("arch"),
+                            "version" => {
+                                let release = attr(e, "rel")?.unwrap_or_default();
+                                let version = attr(e, "ver")?.unwrap_or_default();
+                                let version = match attr(e, "epoch")?.as_deref() {
+                                    None | Some("0") | Some("") => version,
+                                    Some(epoch) => format!("{epoch}:{version}"),
+                                };
+                                r.version = Some(if release.is_empty() {
+                                    version
+                                } else {
+                                    format!("{version}-{release}")
+                                });
+                            }
                             "location" => {
                                 if attr(e, "xml:base")?.is_some() {
                                     return Err(fail(
@@ -156,6 +194,8 @@ fn records(
                 match text_of.take() {
                     Some("checksum") => r.checksum = Some(text.trim().to_owned()),
                     Some("size") => r.size = Some(text.trim().to_owned()),
+                    Some("name") => r.name = Some(text.trim().to_owned()),
+                    Some("arch") => r.arch = Some(text.trim().to_owned()),
                     _ => {}
                 }
             }
@@ -170,7 +210,7 @@ fn records(
     Ok(entries)
 }
 
-fn entry(file: &str, r: Record) -> Result<(String, Entry), MetaError> {
+fn entry(file: &str, r: Record) -> Result<Read, MetaError> {
     let fail = |what: &str| MetaError::invalid(file, format!("{what} of `{}`", r.kind));
     let location = r.location.as_deref().ok_or_else(|| fail("no location"))?;
     let algorithm = r
@@ -193,7 +233,15 @@ fn entry(file: &str, r: Record) -> Result<(String, Entry), MetaError> {
         size,
         checksum,
     };
-    Ok((r.kind, entry))
+    Ok(Read {
+        kind: r.kind,
+        package: Package {
+            entry,
+            name: r.name.unwrap_or_default(),
+            version: r.version.unwrap_or_default(),
+            arch: r.arch.unwrap_or_default(),
+        },
+    })
 }
 
 #[cfg(test)]
@@ -252,12 +300,17 @@ mod tests {
 <metadata xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm" packages="2">
 <package type="rpm">
   <name>a</name>
+  <arch>x86_64</arch>
+  <version epoch="0" ver="1" rel="1"/>
   <checksum type="sha256" pkgid="YES">{H1}</checksum>
   <size package="3" installed="10" archive="12"/>
   <location href="Packages/a/a-1-1.x86_64.rpm"/>
   <format><rpm:license>MIT</rpm:license><rpm:header-range start="1" end="2"/><file>/usr/bin/a</file></format>
 </package>
 <package type="rpm">
+  <name>b+c</name>
+  <arch>noarch</arch>
+  <version epoch="2" ver="2" rel="1"/>
   <checksum type="sha512" pkgid="YES">{H1}{H1}</checksum>
   <size package="5"/>
   <location href="Packages/b/b&amp;c-2-1.noarch.rpm"/>
@@ -275,6 +328,13 @@ mod tests {
 
         let expected = primary("p.xml", &plain).unwrap();
         assert_eq!(expected.len(), 2);
+        let packages = primary_packages("p.xml", &plain).unwrap();
+        let what: Vec<_> = packages
+            .iter()
+            .map(|p| (p.name.as_str(), p.version.as_str(), p.arch.as_str()))
+            .collect();
+        assert_eq!(what, [("a", "1-1", "x86_64"), ("b+c", "2:2-1", "noarch")]);
+        assert_eq!(packages[0].entry, expected[0]);
         assert_eq!(expected[0].path, "Packages/a/a-1-1.x86_64.rpm");
         assert_eq!(expected[0].size, 3);
         assert_eq!(expected[1].path, "Packages/b/b&c-2-1.noarch.rpm");
@@ -453,7 +513,10 @@ mod tests {
         let xml = xml.replace("Packages/a/a-1-1", "Packages/\u{e9}/\u{e9}-1-1");
         let reader = std::io::BufReader::with_capacity(1, xml.as_bytes());
         let records = records("p.xml", reader, "package", Size::Attribute).unwrap();
-        assert_eq!(records[0].1.path, "Packages/\u{e9}/\u{e9}-1-1.x86_64.rpm");
+        assert_eq!(
+            records[0].package.entry.path,
+            "Packages/\u{e9}/\u{e9}-1-1.x86_64.rpm"
+        );
     }
 
     /// quick-xml buffers an event whole, so a huge one is bounded by the

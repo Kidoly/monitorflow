@@ -10,7 +10,9 @@ use monitorflow_common::client::renew::{Renewal, RenewalSettings};
 use monitorflow_common::client::shutdown::{self, Shutdown};
 use monitorflow_common::config::{self, RelayConfig};
 use monitorflow_common::logging;
+use monitorflow_common::mirror::repo::fetch::Fetcher;
 use monitorflow_common::mirror::serve;
+use monitorflow_common::mirror::store::Store;
 use monitorflow_common::proto::v1::RelayMirrors;
 use monitorflow_relay::buffer::{Buffer, BufferSettings};
 use monitorflow_relay::control::{Control, ControlSettings};
@@ -304,10 +306,31 @@ async fn start_mirrors(
             )
         })?;
     tracing::info!(listen = %config.mirror_listen_addr, dir = %config.mirror_dir().display(), "serving mirrors");
+    // Packages of on-demand snapshots, from the upstream's listener at the
+    // same URL (ADR-0142).
+    let root = config.mirror_dir();
+    let upstream = Fetcher::new(
+        &config.mirror_upstream_url(),
+        Duration::from_secs(config.mirror.request_timeout),
+    )
+    .context("cannot build the on-demand client")?;
+    let store = Store::under(&root);
+    tokio::task::spawn_blocking(move || store.prepare())
+        .await?
+        .with_context(|| format!("cannot prepare the on-demand store in {}", root.display()))?;
+    let (ondemand, grew) = mirror::cache::ondemand(&config.mirror_dir(), upstream);
+    tokio::spawn(mirror::cache::run(
+        config.mirror_dir(),
+        config.mirror.cache_max_bytes,
+        grew,
+        stop.clone(),
+    ));
     let mut until_stopped = stop.clone();
     tokio::spawn(async move {
         let shutdown = async move { until_stopped.wait().await };
-        if let Err(error) = serve::serve(mirror_listener, served, shutdown).await {
+        if let Err(error) =
+            serve::serve_with(mirror_listener, served, Some(ondemand), shutdown).await
+        {
             tracing::error!(%error, "mirror listener failed");
         }
     });

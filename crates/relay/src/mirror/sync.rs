@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use monitorflow_common::config::DEFAULT_MIRROR_MAX_SNAPSHOT_BYTES;
+use monitorflow_common::mirror::packages::{ListError, PackageList, PACKAGES};
 use monitorflow_common::mirror::{
     is_snapshot_name, read_current, swap_current, write_atomically, Family, IndexMirror,
     PinnedSnapshot,
@@ -79,6 +80,8 @@ pub enum SyncError {
     Unsigned(String),
     #[error("{0} is listed twice with different sizes or checksums")]
     Conflict(String),
+    #[error(transparent)]
+    List(#[from] ListError),
     #[error("the snapshot lists more than {limit} bytes (mirror.max_snapshot_bytes)")]
     TooLarge { limit: u64 },
     #[error(transparent)]
@@ -268,7 +271,7 @@ impl Syncer {
                             let path = run.staging.join(&name);
                             packages.extend(
                                 tokio::task::spawn_blocking(move || {
-                                    apt::read_packages(&name, &path)
+                                    apt::read_package_list(&name, &path)
                                 })
                                 .await??,
                             );
@@ -293,15 +296,24 @@ impl Syncer {
                     .ok_or_else(|| SyncError::Missing("primary metadata".into()))?
                     .entry;
                 let path = run.staging.join(&primary.path);
-                tokio::task::spawn_blocking(move || dnf::primary(&primary.path, &path)).await??
+                tokio::task::spawn_blocking(move || dnf::primary_packages(&primary.path, &path))
+                    .await??
             }
         };
-        self.obtain(&run, packages, false, &mut progress).await?;
+        // On demand (ADR-0142): no package is copied; the list says what
+        // the listener may fetch from the upstream, checked against it.
+        let list = if mirror.on_demand {
+            Some(PackageList::new(packages)?)
+        } else {
+            let entries = packages.into_iter().map(|p| p.entry).collect();
+            self.obtain(&run, entries, false, &mut progress).await?;
+            None
+        };
 
         let staging = run.staging.clone();
         let stats = progress.stats;
         tokio::task::spawn_blocking(move || {
-            publish(&dir, &staging, &snapshot, progress.done, swap)
+            publish(&dir, &staging, &snapshot, progress.done, list, swap)
         })
         .await??;
         Ok(Outcome::Synced(stats))
@@ -591,9 +603,14 @@ fn publish(
     staging: &Path,
     snapshot: &str,
     files: BTreeMap<String, Stored>,
+    packages: Option<PackageList>,
     swap: bool,
 ) -> Result<(), SyncError> {
     remove_unlisted(staging, staging, &files)?;
+    if let Some(packages) = packages {
+        let path = staging.join(PACKAGES);
+        packages.write(&path).map_err(io(&path))?;
+    }
     let manifest = Manifest {
         files: files.into_values().collect(),
     };

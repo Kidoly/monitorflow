@@ -35,6 +35,7 @@ async fn serves_the_fixed_layout_and_nothing_else() {
     tokio::spawn(http::serve(
         listener,
         layout.clone(),
+        None,
         std::future::pending(),
     ));
     let client = reqwest::Client::new();

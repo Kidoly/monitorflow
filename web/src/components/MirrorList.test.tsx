@@ -129,15 +129,38 @@ describe("MirrorListPage", () => {
       tools: { available: true, problem: null },
       disk: { free_bytes: 200 * GIB, total_bytes: 1000 * GIB },
       distributions: [
-        { id: "debian-13", name: "Debian 13 (trixie)", family: "apt", size_bytes: 150 * GIB, added: false, problem: null },
-        { id: "rocky-9", name: "Rocky Linux 9", family: "dnf", size_bytes: 60 * GIB, added: true, problem: null },
+        {
+          id: "debian-13",
+          name: "Debian 13 (trixie)",
+          family: "apt",
+          size_bytes: 150 * GIB,
+          on_demand_size_bytes: 5 * GIB,
+          index_bytes: GIB,
+          added: false,
+          problem: null,
+          on_demand_problem: null,
+        },
+        {
+          id: "rocky-9",
+          name: "Rocky Linux 9",
+          family: "dnf",
+          size_bytes: 60 * GIB,
+          on_demand_size_bytes: 8 * GIB,
+          index_bytes: 2 * GIB,
+          added: true,
+          problem: null,
+          on_demand_problem: null,
+        },
         {
           id: "ubuntu-24.04",
           name: "Ubuntu 24.04 LTS (noble)",
           family: "apt",
           size_bytes: 280 * GIB,
+          on_demand_size_bytes: 6 * GIB,
+          index_bytes: GIB,
           added: false,
           problem: "Ubuntu 24.04 LTS (noble) needs about 280 GiB and this server has 200 GiB free.",
+          on_demand_problem: null,
         },
       ],
       ...overrides,
@@ -161,18 +184,28 @@ describe("MirrorListPage", () => {
 
       const table = await screen.findByRole("table", { name: "Distributions" });
       expect(screen.getByText(/200 GiB free of 1,000 GiB on this server/)).toBeInTheDocument();
-      expect(within(table).getByText("about 150 GiB")).toBeInTheDocument();
+      // Both sizes, on demand chosen (ADR-0142).
+      expect(within(table).getByText("about 150 GiB full, about 5 GiB on demand")).toBeInTheDocument();
       expect(within(table).getByText("Added")).toBeInTheDocument();
-      // The server's English sentence is not shown: the column and the
-      // header already give both numbers.
+      expect(screen.getByRole("radio", { name: /^On demand/ })).toBeChecked();
+      expect(screen.getByText(/a package never fetched cannot be installed/)).toBeInTheDocument();
+      // On demand, Ubuntu fits: its indexes do.
+      expect(within(table).getByRole("button", { name: "Add Ubuntu 24.04 LTS (noble)" })).toBeEnabled();
+      // In full, it does not. The server's English sentence is not shown:
+      // the column and the header already give both numbers.
+      await user.click(screen.getByRole("radio", { name: /^Full/ }));
       expect(within(table).getByText("Not enough free space")).toBeInTheDocument();
       expect(screen.queryByText(/needs about 280 GiB/)).not.toBeInTheDocument();
       expect(within(table).queryByRole("button", { name: /Ubuntu/ })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("radio", { name: /^On demand/ }));
 
       await user.click(within(table).getByRole("button", { name: "Add Debian 13 (trixie)" }));
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/mirrors",
-        expect.objectContaining({ method: "POST", body: JSON.stringify({ distribution: "debian-13" }) }),
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ distribution: "debian-13", mode: "on_demand" }),
+        }),
       );
       expect(await screen.findByRole("status")).toHaveTextContent(
         "Debian 13 (trixie) added. The first sync starts within a minute",
@@ -196,8 +229,11 @@ describe("MirrorListPage", () => {
                 name: "Debian 13 (trixie)",
                 family: "apt",
                 size_bytes: 150 * GIB,
+                on_demand_size_bytes: 5 * GIB,
+                index_bytes: GIB,
                 added: false,
                 problem: "Debian 13 (trixie) needs about 150 GiB and this server has 3.3 GiB free.",
+                on_demand_problem: null,
               },
             ],
           }),
@@ -211,6 +247,8 @@ describe("MirrorListPage", () => {
       await user.click(await screen.findByRole("button", { name: "Ajouter un miroir" }));
       const table = await screen.findByRole("table", { name: "Distributions" });
       expect(screen.getByText(/3,3\sGio libres sur 20\sGio/)).toBeInTheDocument();
+      expect(within(table).getByText(/environ 150\sGio en complet, environ 5\sGio à la demande/)).toBeInTheDocument();
+      await user.click(screen.getByRole("radio", { name: /^Complet/ }));
       expect(within(table).getByText("Pas assez d’espace libre")).toBeInTheDocument();
       expect(screen.queryByText(/needs about/)).not.toBeInTheDocument();
     });
@@ -255,6 +293,50 @@ describe("MirrorListPage", () => {
         "Debian 13 (trixie) needs about 150 GiB and this server has 90 GiB free.",
       );
     });
+  });
+
+  it("shows the on-demand storage against its cap and sets the cap", async () => {
+    const user = userEvent.setup();
+    const GIB = 1024 ** 3;
+    const cache = (overrides = {}) => ({
+      cap_bytes: 100 * GIB,
+      default_cap_bytes: 100 * GIB,
+      cap_set: false,
+      used_bytes: 12.5 * GIB,
+      index_bytes: 1.5 * GIB,
+      package_bytes: 11 * GIB,
+      packages: 2817,
+      over_cap: false,
+      ...overrides,
+    });
+    const fetchMock = stubFetch({
+      "GET /api/mirrors": { status: 200, body: { mirrors: mirrors(), keep_snapshots: 7 } },
+      "GET /api/mirrors/cache": [{ status: 200, body: cache() }, { status: 200, body: cache({ cap_bytes: 50 * GIB, cap_set: true, over_cap: true }) }],
+      "PUT /api/mirrors/cache": { status: 200, body: cache({ cap_bytes: 50 * GIB, cap_set: true }) },
+    });
+    render(
+      <As user={globalAdmin}>
+        <MirrorListPage />
+      </As>,
+    );
+    const section = await screen.findByRole("region", { name: "On-demand storage" });
+    expect(section).toHaveTextContent("12.5 GiB of 100 GiB used. 2,817 packages kept.");
+    expect(section).toHaveTextContent("used in the last 14 days");
+    const field = within(section).getByRole("textbox", { name: "Cap (GiB)" });
+    await user.clear(field);
+    await user.type(field, "0.5");
+    expect(within(section).getByRole("button", { name: "Save the cap" })).toBeDisabled();
+    expect(section).toHaveTextContent("The cap is at least 1 GiB.");
+    await user.clear(field);
+    await user.type(field, "50");
+    await user.click(within(section).getByRole("button", { name: "Save the cap" }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/mirrors/cache",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ cap_bytes: 50 * GIB }) }),
+    );
+    expect(await within(section).findByText("Cap saved.")).toBeInTheDocument();
+    expect(await within(section).findByText(/The cap is smaller than what campaigns/)).toBeInTheDocument();
+    expect(within(section).getByRole("button", { name: "Use the default (100 GiB)" })).toBeInTheDocument();
   });
 
   it("marks a mirror being removed and starts nothing on it", async () => {

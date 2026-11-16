@@ -186,6 +186,10 @@ struct AddMirror {
     /// Do not publish a snapshot at the end of each sync.
     #[arg(long)]
     no_auto_snapshot: bool,
+    /// `on-demand` downloads only the indexes, each package being fetched
+    /// when first asked for (ADR-0142); `full` downloads every package.
+    #[arg(long, default_value = "on-demand", value_parser = ["full", "on-demand"])]
+    mode: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -638,9 +642,14 @@ async fn main() -> anyhow::Result<()> {
                 .context("API server")
         },
         async {
-            mirror::http::serve(mirror_listener, mirrors.layout().clone(), until_stopped())
-                .await
-                .context("mirror server")
+            mirror::http::serve(
+                mirror_listener,
+                mirrors.layout().clone(),
+                Some(mirrors.ondemand().clone()),
+                until_stopped(),
+            )
+            .await
+            .context("mirror server")
         },
         async {
             mirror::scheduler::run(
@@ -655,6 +664,14 @@ async fn main() -> anyhow::Result<()> {
         async {
             mirror::retention::run(mirrors.clone(), mirror::retention::EVERY, until_stopped())
                 .await;
+            Ok(())
+        },
+        async {
+            mirror::cache::run(mirrors.clone(), until_stopped()).await;
+            Ok(())
+        },
+        async {
+            mirror::prefetch::run(mirrors.clone(), until_stopped()).await;
             Ok(())
         },
         async {
@@ -1017,6 +1034,7 @@ async fn mirror_command(
                 architectures: args.architectures,
                 sync_interval_s: args.interval.0,
                 auto_snapshot: !args.no_auto_snapshot,
+                mode: args.mode.parse().map_err(anyhow::Error::msg)?,
             };
             let created = mirror::store::create(&pool, &spec, ("system", "cli")).await?;
             println!("created mirror {} ({})", created.name, created.id);

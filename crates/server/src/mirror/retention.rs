@@ -23,7 +23,7 @@ use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
-use super::model::{Family, Mirror, Snapshot, SnapshotState};
+use super::model::{Family, Mirror, Mode, Snapshot, SnapshotState};
 use super::runner::{Invocation, RunError};
 use super::store::{self, RetentionLock};
 use super::{apt, layout, removal, Layout, Mirrors};
@@ -161,8 +161,17 @@ pub struct Plan {
 
 /// `snapshots`, all those of `mirror` newest first, sorted out. `link` is
 /// the snapshot the `current` link names: a crash between moving it and
-/// recording the snapshot leaves it on one that is not published.
-pub fn plan(mirror: &str, snapshots: &[Snapshot], link: Option<&str>, uses: &InUse) -> Plan {
+/// recording the snapshot leaves it on one that is not published. `mode`
+/// is the mirror's: once it is on demand, full snapshots are no longer
+/// kept for being among the newest, so a switch frees the disk at the
+/// next pass rather than after a week (ADR-0142).
+pub fn plan(
+    mirror: &str,
+    mode: Mode,
+    snapshots: &[Snapshot],
+    link: Option<&str>,
+    uses: &InUse,
+) -> Plan {
     let latest = snapshots
         .iter()
         .filter(|s| s.state == SnapshotState::Published)
@@ -187,7 +196,9 @@ pub fn plan(mirror: &str, snapshots: &[Snapshot], link: Option<&str>, uses: &InU
             Some(Kept::Server)
         } else if uses.relays.contains(&key) {
             Some(Kept::Relay)
-        } else if published <= KEEP_SNAPSHOTS {
+        } else if published <= KEEP_SNAPSHOTS
+            && !(mode == Mode::OnDemand && snapshot.mode == Mode::Full)
+        {
             Some(Kept::Newest)
         } else {
             None
@@ -213,7 +224,14 @@ pub async fn kept(
     let snapshots = store::snapshots(pool, mirror.id, ALL).await?;
     let uses = InUse::load(&mut *pool.acquire().await?).await?;
     let link = link(layout, mirror).await;
-    Ok(plan(&mirror.name, &snapshots, link.as_deref(), &uses).kept)
+    Ok(plan(
+        &mirror.name,
+        mirror.mode,
+        &snapshots,
+        link.as_deref(),
+        &uses,
+    )
+    .kept)
 }
 
 async fn link(layout: Option<&Layout>, mirror: &Mirror) -> Option<String> {
@@ -236,7 +254,14 @@ async fn plans(
         }
         let snapshots = store::snapshots(&mut *conn, mirror.id, ALL).await?;
         let link = link(Some(layout), &mirror).await;
-        let remove = plan(&mirror.name, &snapshots, link.as_deref(), &uses).remove;
+        let remove = plan(
+            &mirror.name,
+            mirror.mode,
+            &snapshots,
+            link.as_deref(),
+            &uses,
+        )
+        .remove;
         if !remove.is_empty() {
             plans.push((mirror, remove));
         }
@@ -284,7 +309,8 @@ async fn drop_files(
 ) -> Result<(), RetentionError> {
     let dir = mirrors.layout().mirror_dir(mirror);
     for snapshot in snapshots {
-        if mirror.family == Family::Apt {
+        // An on-demand snapshot is only its directory (ADR-0142).
+        if mirror.family == Family::Apt && snapshot.mode == Mode::Full {
             for command in apt::cleanup(mirrors.layout(), mirror, &snapshot.name) {
                 if let Err(error) = mirrors.runner().run(&command).await {
                     tracing::warn!(%error, %command, "cannot run a snapshot cleanup");
@@ -355,6 +381,18 @@ async fn finish(pool: &PgPool, mirror: &Mirror, removed: &[Snapshot]) -> Result<
     Ok(())
 }
 
+/// Whether `mirror` has full snapshots other than those being removed.
+async fn has_full(pool: &PgPool, mirror: &Mirror) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM mirror_snapshots
+                        WHERE mirror_id = $1 AND mode = 'full'
+                          AND state NOT IN ('pruning', 'pruned'))",
+    )
+    .bind(mirror.id)
+    .fetch_one(pool)
+    .await
+}
+
 /// The pass once it holds the lock: returns the snapshots removed.
 async fn pass(mirrors: &Mirrors) -> Result<usize, RetentionError> {
     let chosen = choose(mirrors).await?;
@@ -362,13 +400,28 @@ async fn pass(mirrors: &Mirrors) -> Result<usize, RetentionError> {
     let mut removed = 0;
     for (mirror, snapshots) in chosen {
         drop_files(mirrors, &mirror, &snapshots).await?;
-        if mirror.family == Family::Apt {
-            apt_mirrors.push((mirror, snapshots));
-        } else {
-            finish(mirrors.pool(), &mirror, &snapshots).await?;
-            removed += snapshots.len();
+        if mirror.mode == Mode::OnDemand
+            && snapshots.iter().any(|s| s.mode == Mode::Full)
+            && !has_full(mirrors.pool(), &mirror).await?
+        {
+            removal::retire_full(mirrors, &mirror).await?;
+        }
+        let (aptly, plain): (Vec<_>, Vec<_>) = snapshots
+            .into_iter()
+            .partition(|s| mirror.family == Family::Apt && s.mode == Mode::Full);
+        if !plain.is_empty() {
+            finish(mirrors.pool(), &mirror, &plain).await?;
+            removed += plain.len();
+        }
+        if !aptly.is_empty() {
+            apt_mirrors.push((mirror, aptly));
         }
     }
+    // Index files only the removed on-demand snapshots linked.
+    let store = mirrors.layout().store();
+    tokio::task::spawn_blocking(move || store.sweep_indexes())
+        .await
+        .map_err(std::io::Error::other)??;
     if !apt_mirrors.is_empty() {
         free_aptly_pool(mirrors, &apt_mirrors).await?;
         for (mirror, snapshots) in &apt_mirrors {
@@ -452,6 +505,7 @@ mod tests {
                     error: None,
                     created_at: at,
                     published_at: Some(at),
+                    mode: Default::default(),
                 }
             })
             .collect()
@@ -468,11 +522,37 @@ mod tests {
     #[test]
     fn the_newest_are_kept_and_older_ones_go() {
         let all = snapshots(KEEP_SNAPSHOTS + 2);
-        let plan = plan("m", &all, Some("s0"), &InUse::default());
+        let plan = plan("m", Mode::Full, &all, Some("s0"), &InUse::default());
         assert_eq!(removed(&plan), ["s7", "s8"]);
         assert_eq!(plan.kept[&all[0].id], Kept::Current);
         assert_eq!(plan.kept[&all[6].id], Kept::Newest);
         assert_eq!(plan.kept.len(), KEEP_SNAPSHOTS);
+    }
+
+    #[test]
+    fn full_snapshots_go_once_a_mirror_is_on_demand_unless_used() {
+        // s0 and s1 on demand, the older ones full.
+        let mut all = snapshots(5);
+        for s in &mut all[..2] {
+            s.mode = Mode::OnDemand;
+        }
+        let uses = InUse {
+            campaigns: HashSet::from([pair("s3")]),
+            ..InUse::default()
+        };
+        let plan = plan("m", Mode::OnDemand, &all, Some("s0"), &uses);
+        assert_eq!(removed(&plan), ["s2", "s4"]);
+        assert_eq!(plan.kept[&all[1].id], Kept::Newest);
+        assert_eq!(plan.kept[&all[3].id], Kept::Campaign);
+        // Before its first on-demand snapshot, the full current stays.
+        let full = snapshots(3);
+        let plan = plan_of(&full);
+        assert_eq!(removed(&plan), ["s1", "s2"]);
+        assert_eq!(plan.kept[&full[0].id], Kept::Current);
+    }
+
+    fn plan_of(all: &[Snapshot]) -> Plan {
+        plan("m", Mode::OnDemand, all, Some("s0"), &InUse::default())
     }
 
     #[test]
@@ -483,7 +563,7 @@ mod tests {
             servers: [pair("s8"), pair("s7")].into(),
             relays: [pair("s9"), ("other".to_owned(), "s10".to_owned())].into(),
         };
-        let plan = plan("m", &all, Some("s0"), &uses);
+        let plan = plan("m", Mode::Full, &all, Some("s0"), &uses);
         assert_eq!(removed(&plan), ["s10"]);
         assert_eq!(plan.kept[&all[7].id], Kept::Campaign);
         assert_eq!(plan.kept[&all[8].id], Kept::Server);
@@ -495,7 +575,7 @@ mod tests {
         // An older snapshot published last is what `current` names.
         let mut all = snapshots(KEEP_SNAPSHOTS + 2);
         all[8].published_at = Some(Utc::now() + Days::days(1));
-        let found = plan("m", &all, None, &InUse::default());
+        let found = plan("m", Mode::Full, &all, None, &InUse::default());
         assert_eq!(removed(&found), ["s7"]);
         assert_eq!(found.kept[&all[8].id], Kept::Current);
 
@@ -503,7 +583,7 @@ mod tests {
         let mut all = snapshots(2);
         all[1].state = SnapshotState::Failed;
         all[1].published_at = None;
-        let found = plan("m", &all, Some("s1"), &InUse::default());
+        let found = plan("m", Mode::Full, &all, Some("s1"), &InUse::default());
         assert!(removed(&found).is_empty());
         assert_eq!(found.kept[&all[1].id], Kept::Current);
     }
@@ -517,7 +597,7 @@ mod tests {
         for snapshot in &mut all[1..] {
             snapshot.published_at = None;
         }
-        let plan = plan("m", &all, Some("s0"), &InUse::default());
+        let plan = plan("m", Mode::Full, &all, Some("s0"), &InUse::default());
         assert_eq!(removed(&plan), ["s1", "s3"]);
         assert_eq!(plan.kept.len(), 1);
     }

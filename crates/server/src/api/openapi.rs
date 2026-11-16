@@ -863,6 +863,7 @@ mod tests {
                 ("POST", &item.post),
                 ("PUT", &item.put),
                 ("DELETE", &item.delete),
+                ("PATCH", &item.patch),
             ] {
                 if op.is_some() {
                     ops.insert((method.to_owned(), path.clone()));

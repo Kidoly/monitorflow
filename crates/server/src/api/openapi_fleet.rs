@@ -21,7 +21,7 @@ use crate::relay_commands;
         revoke_install_key, approve_pending_host, reject_pending_host,
         list_relays, relay_detail, revoke_relay, update_relay, confirm_relay_names,
         list_agent_releases, import_release, import_release_from_url,
-        list_mirrors, mirror_catalog, add_mirrors, mirror_detail, delete_mirror, sync_mirror,
+        list_mirrors, mirror_catalog, mirror_cache, set_mirror_cache, add_mirrors, mirror_detail, update_mirror, delete_mirror, sync_mirror,
         snapshot_mirror, server_sources, configure_server_sources, revert_server_sources,
         server_use_mirror, site_sources, site_use_mirror, site_revert_sources,
     ),
@@ -842,6 +842,50 @@ key outside the \"updates\" area: `api_key_scope`"),
     ))]
 fn mirror_catalog() {}
 
+/// Read the storage cap of on-demand mirrors
+///
+/// What on-demand mirrors keep (ADR-0142): their indexes and the packages
+/// fetched so far, against the cap the least recently used packages are
+/// evicted under. `over_cap` says the last eviction could not get under
+/// it, because campaigns and the current snapshots hold more.
+///
+/// Global administrators only, as for the list.
+#[utoipa::path(get, path = "/api/v1/mirrors/cache", tag = "mirrors",
+    responses(
+        (status = 200, description = "The cap and the use", body = mirrors::Cache, example = json!({
+            "cap_bytes": 107374182400u64, "default_cap_bytes": 107374182400u64, "cap_set": false,
+            "used_bytes": 5368709120u64, "index_bytes": 1073741824u64,
+            "package_bytes": 4294967296u64, "packages": 2817, "over_cap": false
+        })),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 409, body = ErrorBody, description = "Mirrors are not enabled on this server: `conflict`"),
+    ))]
+fn mirror_cache() {}
+
+/// Set the storage cap of on-demand mirrors
+///
+/// At least 1 GiB, or `null` for the default (100 GiB, or half the disk
+/// when smaller). A lower cap evicts at once. Audited as
+/// `mirror.cache_cap`.
+///
+/// Global administrators only, as for the list.
+#[utoipa::path(put, path = "/api/v1/mirrors/cache", tag = "mirrors",
+    request_body(content = mirrors::SetCacheRequest, example = json!({ "cap_bytes": 53687091200u64 })),
+    responses(
+        (status = 200, description = "The cap and the use after it", body = mirrors::Cache,
+            example = json!({
+                "cap_bytes": 53687091200u64, "default_cap_bytes": 107374182400u64, "cap_set": true,
+                "used_bytes": 5368709120u64, "index_bytes": 1073741824u64,
+                "package_bytes": 4294967296u64, "packages": 2817, "over_cap": false
+            })),
+        (status = 400, body = ErrorBody, description = "Below 1 GiB: `invalid`"),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 409, body = ErrorBody, description = "Mirrors are not enabled on this server: `conflict`"),
+    ))]
+fn set_mirror_cache() {}
+
 /// Add a distribution to the mirrors
 ///
 /// Creates the mirrors a distribution of the catalog needs (its main and
@@ -980,6 +1024,45 @@ key outside the \"updates\" area: `api_key_scope`"),
 sentence names them), or what uses it could not be checked: `conflict`"),
     ))]
 fn delete_mirror() {}
+
+/// Switch a mirror between full and on demand
+///
+/// Sets what the mirror's next sync downloads (ADR-0142): `full`, every
+/// package, or `on_demand`, only the indexes, each package being fetched
+/// from the upstream the first time a server asks for it. Snapshots made
+/// before keep their mode and stay served; once a mirror is on demand,
+/// its full snapshots that nothing uses go at the next retention pass.
+/// Nothing is downloaded until the next sync. Audited as `mirror.mode`.
+///
+/// Global administrators only, as for the list.
+#[utoipa::path(patch, path = "/api/v1/mirrors/{id}", tag = "mirrors",
+    params(("id" = uuid::Uuid, Path, description = "The mirror's `id`")),
+    request_body(content = mirrors::UpdateRequest, example = json!({ "mode": "on_demand" })),
+    responses(
+        (status = 200, description = "The mirror", body = mirrors::MirrorView, example = json!({
+            "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+            "name": "debian-12",
+            "family": "apt",
+            "upstream_url": "https://deb.debian.org/debian",
+            "distribution": "bookworm",
+            "components": ["main", "non-free-firmware"],
+            "architectures": ["amd64"],
+            "sync_interval_s": 86400,
+            "auto_snapshot": true,
+            "mode": "on_demand",
+            "created_at": "2026-10-01T12:00:00Z",
+            "deleting_at": null,
+            "delete_error": null,
+            "current_snapshot": "20261114T031240Z",
+            "last_run": run_summary("sync", "succeeded")
+        })),
+        (status = 400, body = ErrorBody, description = "Not a mode: `invalid`"),
+        (status = 403, body = ErrorBody, description = "Not a global administrator: `forbidden`; a \
+key outside the \"updates\" area: `api_key_scope`"),
+        (status = 404, body = ErrorBody, description = "No such mirror: `not_found`"),
+        (status = 409, body = ErrorBody, description = "It is being removed: `conflict`"),
+    ))]
+fn update_mirror() {}
 
 /// Sync a mirror now
 ///

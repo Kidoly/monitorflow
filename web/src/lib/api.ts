@@ -1963,6 +1963,8 @@ export interface Mirror {
   /** Null: synced only on request. */
   sync_interval_s: number | null;
   auto_snapshot: boolean;
+  /** What the next sync downloads (ADR-0142). */
+  mode: MirrorMode;
   created_at: string;
   /** Set while the mirror is being removed (ADR-0075). */
   deleting_at: string | null;
@@ -1979,15 +1981,38 @@ export interface MirrorList {
   keep_snapshots: number;
 }
 
+/** `full` copies every package; `on_demand` only the indexes, packages being fetched when first asked for (ADR-0142). */
+export type MirrorMode = "full" | "on_demand";
+
 /** One distribution of `GET /api/mirrors/catalog` (ADR-0067). */
 export interface MirrorDistribution {
   id: string;
   name: string;
   family: "apt" | "dnf";
+  /** In full mode. */
   size_bytes: number;
+  /** On demand: indexes and the packages a fleet typically installs (ADR-0142). */
+  on_demand_size_bytes: number;
+  /** What on demand needs at least. */
+  index_bytes: number;
   added: boolean;
-  /** Why it cannot be added now, in a sentence. */
+  /** Why it cannot be added in full mode now, in an English sentence. */
   problem: string | null;
+  /** Why it cannot be added on demand now, in an English sentence. */
+  on_demand_problem: string | null;
+}
+
+/** `GET /api/mirrors/cache`: the storage cap of on-demand mirrors (ADR-0142). */
+export interface MirrorCache {
+  cap_bytes: number;
+  default_cap_bytes: number;
+  cap_set: boolean;
+  used_bytes: number;
+  index_bytes: number;
+  package_bytes: number;
+  packages: number;
+  /** The last eviction could not get under the cap. */
+  over_cap: boolean;
 }
 
 export interface MirrorCatalog {
@@ -2203,7 +2228,7 @@ export function setUnauthorizedHandler(handler: () => void): () => void {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   /** Sent as multipart, instead of `body`; the browser sets the content type. */
   form?: FormData;
@@ -3439,10 +3464,28 @@ export const api = {
     request<MirrorCatalog>("/api/mirrors/catalog", { signal }),
 
   /** Adds every mirror of a distribution; 409 says why not in a sentence. */
-  addMirror: (distribution: string) =>
+  addMirror: (distribution: string, mode: MirrorMode = "on_demand") =>
     request<MirrorList>("/api/mirrors", {
       method: "POST",
-      body: { distribution },
+      body: { distribution, mode },
+    }),
+
+  /** Sets what a mirror's next sync downloads (ADR-0142). */
+  setMirrorMode: (id: string, mode: MirrorMode) =>
+    request<Mirror>(`/api/mirrors/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: { mode },
+    }),
+
+  /** The storage cap of on-demand mirrors and what they use. */
+  mirrorCache: (signal?: AbortSignal) =>
+    request<MirrorCache>("/api/mirrors/cache", { signal }),
+
+  /** Sets the cap, `null` for the default; a lower cap evicts at once. */
+  setMirrorCache: (capBytes: number | null) =>
+    request<MirrorCache>("/api/mirrors/cache", {
+      method: "PUT",
+      body: { cap_bytes: capBytes },
     }),
 
   mirror: (id: string, signal?: AbortSignal) =>

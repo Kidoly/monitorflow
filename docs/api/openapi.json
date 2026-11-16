@@ -9431,6 +9431,260 @@
         }
       }
     },
+    "/api/v1/mirrors/cache": {
+      "get": {
+        "tags": [
+          "mirrors"
+        ],
+        "summary": "Read the storage cap of on-demand mirrors",
+        "description": "What on-demand mirrors keep (ADR-0142): their indexes and the packages\nfetched so far, against the cap the least recently used packages are\nevicted under. `over_cap` says the last eviction could not get under\nit, because campaigns and the current snapshots hold more.\n\nGlobal administrators only, as for the list.",
+        "operationId": "mirror_cache",
+        "responses": {
+          "200": {
+            "description": "The cap and the use",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorCache"
+                },
+                "example": {
+                  "cap_bytes": 107374182400,
+                  "cap_set": false,
+                  "default_cap_bytes": 107374182400,
+                  "index_bytes": 1073741824,
+                  "over_cap": false,
+                  "package_bytes": 4294967296,
+                  "packages": 2817,
+                  "used_bytes": 5368709120
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter or the body is wrong: `invalid`, or `invalid_request`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Mirrors are not enabled on this server: `conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "mirrors"
+        ],
+        "summary": "Set the storage cap of on-demand mirrors",
+        "description": "At least 1 GiB, or `null` for the default (100 GiB, or half the disk\nwhen smaller). A lower cap evicts at once. Audited as\n`mirror.cache_cap`.\n\nGlobal administrators only, as for the list.",
+        "operationId": "set_mirror_cache",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetMirrorCacheRequest"
+              },
+              "example": {
+                "cap_bytes": 53687091200
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The cap and the use after it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorCache"
+                },
+                "example": {
+                  "cap_bytes": 53687091200,
+                  "cap_set": true,
+                  "default_cap_bytes": 107374182400,
+                  "index_bytes": 1073741824,
+                  "over_cap": false,
+                  "package_bytes": 4294967296,
+                  "packages": 2817,
+                  "used_bytes": 5368709120
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Below 1 GiB: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or outside the key's reach: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Mirrors are not enabled on this server: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/mirrors/catalog": {
       "get": {
         "tags": [
@@ -9833,6 +10087,182 @@
           },
           "409": {
             "description": "Servers or campaigns still use it (the sentence names them), or what uses it could not be checked: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "This `Idempotency-Key` was used for another request: `idempotency_key_reused`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Over the key's rate limit: `rate_limited`; `Retry-After` says in how many seconds to try again",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the key's window ends."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something failed on the central server: `internal`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "mirrors"
+        ],
+        "summary": "Switch a mirror between full and on demand",
+        "description": "Sets what the mirror's next sync downloads (ADR-0142): `full`, every\npackage, or `on_demand`, only the indexes, each package being fetched\nfrom the upstream the first time a server asks for it. Snapshots made\nbefore keep their mode and stay served; once a mirror is on demand,\nits full snapshots that nothing uses go at the next retention pass.\nNothing is downloaded until the next sync. Audited as `mirror.mode`.\n\nGlobal administrators only, as for the list.",
+        "operationId": "update_mirror",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The mirror's `id`",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 255 visible ASCII characters, a UUID usually. The same request again within 24 hours gets the first answer, with `Idempotent-Replayed: true`, instead of running twice.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMirrorRequest"
+              },
+              "example": {
+                "mode": "on_demand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The mirror",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorView"
+                },
+                "example": {
+                  "architectures": [
+                    "amd64"
+                  ],
+                  "auto_snapshot": true,
+                  "components": [
+                    "main",
+                    "non-free-firmware"
+                  ],
+                  "created_at": "2026-10-01T12:00:00Z",
+                  "current_snapshot": "20261114T031240Z",
+                  "delete_error": null,
+                  "deleting_at": null,
+                  "distribution": "bookworm",
+                  "family": "apt",
+                  "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+                  "last_run": {
+                    "error": null,
+                    "finished_at": "2026-11-14T03:12:40Z",
+                    "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+                    "kind": "sync",
+                    "requested_by": "user:9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+                    "snapshot_id": null,
+                    "started_at": "2026-11-14T03:00:00Z",
+                    "state": "succeeded",
+                    "trigger": "manual"
+                  },
+                  "mode": "on_demand",
+                  "name": "debian-12",
+                  "sync_interval_s": 86400,
+                  "upstream_url": "https://deb.debian.org/debian"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a mode: `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No key, or a key that is unknown, expired or turned off, or whose maker is disabled: `unauthenticated`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a global administrator: `forbidden`; a key outside the \"updates\" area: `api_key_scope`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such mirror: `not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It is being removed: `conflict`; or `idempotency_in_progress` while the first request with this `Idempotency-Key` is still running",
             "content": {
               "application/json": {
                 "schema": {
@@ -27622,6 +28052,17 @@
           "distribution": {
             "type": "string",
             "description": "An `id` of the catalog."
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MirrorMode",
+                "description": "`on_demand` (the default) or `full` (ADR-0142)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -29501,6 +29942,8 @@
           "name",
           "family",
           "size_bytes",
+          "on_demand_size_bytes",
+          "index_bytes",
           "added"
         ],
         "properties": {
@@ -29515,21 +29958,40 @@
             "type": "string",
             "description": "What `POST /api/v1/mirrors` takes, such as `debian-12`."
           },
+          "index_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What on demand needs at least: the indexes, in bytes.",
+            "minimum": 0
+          },
           "name": {
             "type": "string",
             "description": "Its name on screen, such as `Debian 12`."
+          },
+          "on_demand_problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it cannot be added on demand now: too little free space even\nfor its indexes."
+          },
+          "on_demand_size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "About what they take on demand (ADR-0142): indexes and the packages\na fleet typically installs, in bytes.",
+            "minimum": 0
           },
           "problem": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Why it cannot be added now: too little free space."
+            "description": "Why it cannot be added in full mode now: too little free space."
           },
           "size_bytes": {
             "type": "integer",
             "format": "int64",
-            "description": "About what its mirrors take on disk, in bytes.",
+            "description": "About what its mirrors take on disk in full mode, in bytes.",
             "minimum": 0
           }
         }
@@ -32693,6 +33155,7 @@
           "components",
           "architectures",
           "auto_snapshot",
+          "mode",
           "created_at"
         ],
         "properties": {
@@ -32742,6 +33205,10 @@
             "type": "string",
             "format": "uuid"
           },
+          "mode": {
+            "$ref": "#/components/schemas/MirrorMode",
+            "description": "What its next sync downloads (ADR-0142)."
+          },
           "name": {
             "type": "string",
             "description": "Unique, such as `debian-12-security`; servers' sources name it."
@@ -32757,6 +33224,63 @@
           "upstream_url": {
             "type": "string",
             "description": "The repository it copies."
+          }
+        }
+      },
+      "MirrorCache": {
+        "type": "object",
+        "description": "Body of `GET /api/mirrors/cache` (ADR-0142).",
+        "required": [
+          "cap_bytes",
+          "default_cap_bytes",
+          "cap_set",
+          "used_bytes",
+          "index_bytes",
+          "package_bytes",
+          "packages",
+          "over_cap"
+        ],
+        "properties": {
+          "cap_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The cap in force, in bytes.",
+            "minimum": 0
+          },
+          "cap_set": {
+            "type": "boolean",
+            "description": "Whether an administrator set the cap."
+          },
+          "default_cap_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The default: 100 GiB, or half the disk when smaller.",
+            "minimum": 0
+          },
+          "index_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "over_cap": {
+            "type": "boolean",
+            "description": "The last eviction could not get under the cap: campaigns and the\ncurrent snapshots hold more. `false` before the first one."
+          },
+          "package_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "packages": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "used_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What on-demand mirrors hold: indexes and packages, in bytes.",
+            "minimum": 0
           }
         }
       },
@@ -32879,6 +33403,14 @@
             }
           }
         }
+      },
+      "MirrorMode": {
+        "type": "string",
+        "description": "What a sync downloads (ADR-0142): every package, or only the indexes,\npackages being fetched when first asked for.",
+        "enum": [
+          "full",
+          "on_demand"
+        ]
       },
       "MirrorRun": {
         "type": "object",
@@ -37074,6 +37606,22 @@
           }
         }
       },
+      "SetMirrorCacheRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/mirrors/cache`.",
+        "properties": {
+          "cap_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "At least 1 GiB, in bytes; `null` for the default.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "Setting_Option_String": {
         "type": "object",
         "description": "A setting of the page.",
@@ -37555,7 +38103,8 @@
           "mirror_id",
           "name",
           "state",
-          "created_at"
+          "created_at",
+          "mode"
         ],
         "properties": {
           "created_at": {
@@ -37576,6 +38125,10 @@
           "mirror_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/MirrorMode",
+            "description": "The mode it was built in: an on-demand snapshot holds indexes only."
           },
           "name": {
             "type": "string",
@@ -38330,6 +38883,20 @@
             "description": "In the metric's unit: a ratio from 0 to 1 for `_ratio` metrics."
           }
         }
+      },
+      "UpdateMirrorRequest": {
+        "type": "object",
+        "description": "Body of `PATCH /api/mirrors/{id}`.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/MirrorMode",
+            "description": "What the next sync downloads (ADR-0142)."
+          }
+        },
+        "additionalProperties": false
       },
       "UpdateRun": {
         "type": "object",

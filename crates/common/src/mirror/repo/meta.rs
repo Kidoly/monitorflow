@@ -95,6 +95,13 @@ impl Checksum {
     }
 }
 
+impl Checksum {
+    /// The digest in lowercase hex.
+    pub fn hex(&self) -> &str {
+        &self.hex
+    }
+}
+
 impl fmt::Display for Checksum {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.algorithm.name(), self.hex)
@@ -190,6 +197,17 @@ pub struct Entry {
     pub path: String,
     pub size: u64,
     pub checksum: Checksum,
+}
+
+/// A package an index lists (ADR-0142): its file, and what `apt` or `dnf`
+/// call it. `version` is as the package manager writes it, empty when the
+/// index does not say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Package {
+    pub entry: Entry,
+    pub name: String,
+    pub version: String,
+    pub arch: String,
 }
 
 /// A relative path whose segments are all plain names: not empty, not

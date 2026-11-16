@@ -857,6 +857,10 @@ pub struct RelayMirrorConfig {
     /// Largest total size of one snapshot, as its metadata lists it; a
     /// larger one fails the sync before anything past the limit is fetched.
     pub max_snapshot_bytes: u64,
+    /// Cap of the packages kept for on-demand mirrors (ADR-0142), in bytes;
+    /// unset is 100 GiB or half the disk of `mirror_dir`, whichever is
+    /// smaller.
+    pub cache_max_bytes: Option<u64>,
 }
 
 const MIN_MIRROR_SYNC_INTERVAL: u64 = 60;
@@ -877,6 +881,7 @@ impl Default for RelayMirrorConfig {
             max_downloads: 4,
             request_timeout: 600,
             max_snapshot_bytes: DEFAULT_MIRROR_MAX_SNAPSHOT_BYTES,
+            cache_max_bytes: None,
         }
     }
 }
@@ -893,7 +898,8 @@ impl RelayMirrorConfig {
         env.set("mirror.keep_snapshots", &mut self.keep_snapshots)?;
         env.set("mirror.max_downloads", &mut self.max_downloads)?;
         env.set("mirror.request_timeout", &mut self.request_timeout)?;
-        env.set("mirror.max_snapshot_bytes", &mut self.max_snapshot_bytes)
+        env.set("mirror.max_snapshot_bytes", &mut self.max_snapshot_bytes)?;
+        env.set_opt("mirror.cache_max_bytes", &mut self.cache_max_bytes)
     }
 
     fn validate(&self, check: &Check<'_>) -> Result<(), ConfigError> {
@@ -932,7 +938,11 @@ impl RelayMirrorConfig {
             ));
         }
         check.positive("mirror.request_timeout", self.request_timeout)?;
-        check.positive("mirror.max_snapshot_bytes", self.max_snapshot_bytes)
+        check.positive("mirror.max_snapshot_bytes", self.max_snapshot_bytes)?;
+        if let Some(bytes) = self.cache_max_bytes {
+            check.positive("mirror.cache_max_bytes", bytes)?;
+        }
+        Ok(())
     }
 }
 

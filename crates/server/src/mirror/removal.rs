@@ -307,6 +307,20 @@ async fn clean_aptly(mirrors: &Mirrors, dropped: &[Mirror]) -> Result<(), Retent
     Ok(())
 }
 
+/// Drops what full syncs of `mirror` kept once it is on demand and its
+/// last full snapshot goes (ADR-0142): its aptly mirrors, whose packages
+/// the pass's `aptly db cleanup` then frees, or its dnf working tree.
+pub(super) async fn retire_full(mirrors: &Mirrors, mirror: &Mirror) -> Result<(), RetentionError> {
+    tracing::info!(mirror = %mirror.name, "dropping the full copy of a mirror now on demand");
+    match mirror.family {
+        Family::Apt => drop_aptly(mirrors, mirror).await,
+        Family::Dnf => {
+            let (layout, gone) = (mirrors.layout().clone(), mirror.clone());
+            Ok(blocking(move || remove_dnf_work(&layout, &gone)).await?)
+        }
+    }
+}
+
 /// Takes `mirror` out of service: relays are told, its aptly objects
 /// dropped, its files gone. An apt mirror's packages wait for
 /// [`clean_aptly`].
@@ -326,6 +340,13 @@ async fn take_down(mirrors: &Mirrors, mirror: &Mirror) -> Result<(), RetentionEr
         if gone.family == Family::Dnf {
             remove_dnf_work(&layout, &gone)?;
         }
+        // Its on-demand working trees (ADR-0142), whatever its mode now;
+        // index files only they linked go with the store's sweep.
+        let work = layout.ondemand_work(&gone);
+        layout::remove_tree(&work)?;
+        layout::remove_tree(&layout.ondemand_staging(&gone))?;
+        layout::remove_tree(&work.with_file_name(format!(".old-{}", gone.name)))?;
+        layout.store().sweep_indexes()?;
         Ok(())
     })
     .await?;

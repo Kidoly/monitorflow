@@ -32,6 +32,13 @@ tower-http = { workspace = true, optional = true }
 percent-encoding = { workspace = true, optional = true }
 mime_guess = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+# Reading and fetching repositories (feature `mirror`): checksums, the
+# compressions of their metadata and dnf's XML, all pure Rust.
+flate2 = { workspace = true, optional = true }
+ruzstd = { workspace = true, optional = true }
+lzma-rust2 = { workspace = true, optional = true }
+bzip2 = { workspace = true, optional = true }
+quick-xml = { workspace = true, optional = true }
 # Server updates (feature `server-update`), for the server and the updater.
 reqwest = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
@@ -45,7 +52,7 @@ windows-sys = { workspace = true }
 
 [features]
 # Serving mirror content (ADR-0030, ADR-0034), for the server and relays.
-mirror = ["dep:axum", "dep:tower-http", "dep:percent-encoding", "dep:mime_guess", "dep:serde_json"]
+mirror = ["dep:axum", "dep:tower-http", "dep:percent-encoding", "dep:mime_guess", "dep:serde_json", "dep:reqwest", "dep:flate2", "dep:ruzstd", "dep:lzma-rust2", "dep:bzip2", "dep:quick-xml"]
 # Server updates (ADR-0056): release images, sources, the updater's files.
 server-update = ["dep:reqwest", "dep:chrono", "dep:rustix", "dep:serde_json"]
 # OpenAPI schemas of the types the server's API answers with (ADR-0101).
@@ -57,10 +64,17 @@ rcgen = { workspace = true, features = ["x509-parser"] }
 pem.workspace = true
 tempfile.workspace = true
 reqwest.workspace = true
+# The xz encoder writes the tests' fixtures only.
+lzma-rust2 = { workspace = true, features = ["encoder"] }
+crc.workspace = true
 
 [build-dependencies]
 tonic-prost-build.workspace = true
 
 [[test]]
 name = "mirror_serve"
+required-features = ["mirror"]
+
+[[test]]
+name = "mirror_on_demand"
 required-features = ["mirror"]

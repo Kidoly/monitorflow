@@ -55,6 +55,56 @@ impl FromStr for Family {
     }
 }
 
+/// What a sync downloads (ADR-0142): every package, or only the indexes,
+/// packages being fetched when first asked for.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    serde::Deserialize,
+    sqlx::Type,
+    utoipa::ToSchema,
+)]
+#[schema(as = MirrorMode)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+pub enum Mode {
+    #[default]
+    Full,
+    OnDemand,
+}
+
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::OnDemand => "on_demand",
+        }
+    }
+}
+
+impl fmt::Display for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for Mode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "full" => Ok(Self::Full),
+            "on_demand" | "on-demand" => Ok(Self::OnDemand),
+            _ => Err(format!("unknown mode `{s}`, expected full or on_demand")),
+        }
+    }
+}
+
 /// A mirror to create.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirrorSpec {
@@ -71,6 +121,7 @@ pub struct MirrorSpec {
     pub sync_interval_s: Option<i32>,
     /// Publish a snapshot at the end of every successful sync.
     pub auto_snapshot: bool,
+    pub mode: Mode,
 }
 
 /// Why a mirror or snapshot was refused; safe to show.
@@ -217,6 +268,8 @@ pub struct Mirror {
     pub sync_interval_s: Option<i32>,
     /// Whether each successful sync publishes a snapshot.
     pub auto_snapshot: bool,
+    /// What its next sync downloads (ADR-0142).
+    pub mode: Mode,
     pub created_at: DateTime<Utc>,
     /// Being deleted since then (ADR-0075).
     pub deleting_at: Option<DateTime<Utc>>,
@@ -253,6 +306,8 @@ pub struct Snapshot {
     pub created_at: DateTime<Utc>,
     /// `null` until published.
     pub published_at: Option<DateTime<Utc>>,
+    /// The mode it was built in: an on-demand snapshot holds indexes only.
+    pub mode: Mode,
 }
 
 /// `sync` copies the upstream repository; `snapshot` publishes what the
@@ -322,6 +377,7 @@ mod tests {
             architectures: vec!["amd64".into()],
             sync_interval_s: Some(86_400),
             auto_snapshot: true,
+            mode: Default::default(),
         }
     }
 
@@ -335,7 +391,26 @@ mod tests {
             architectures: vec!["x86_64".into(), "noarch".into()],
             sync_interval_s: None,
             auto_snapshot: false,
+            mode: Default::default(),
         }
+    }
+
+    #[test]
+    fn modes_read_and_write_as_the_api_and_the_cli_say_them() {
+        assert_eq!(Mode::default(), Mode::Full);
+        for (text, mode) in [
+            ("full", Mode::Full),
+            ("on_demand", Mode::OnDemand),
+            ("on-demand", Mode::OnDemand),
+        ] {
+            assert_eq!(text.parse::<Mode>(), Ok(mode));
+        }
+        assert!("partial".parse::<Mode>().is_err());
+        assert_eq!(Mode::OnDemand.to_string(), "on_demand");
+        assert_eq!(
+            serde_json::to_string(&Mode::OnDemand).unwrap(),
+            r#""on_demand""#
+        );
     }
 
     #[test]

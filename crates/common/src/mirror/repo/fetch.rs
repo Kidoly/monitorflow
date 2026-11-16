@@ -79,17 +79,33 @@ pub struct Fetcher {
 
 impl Fetcher {
     /// `base` is the upstream's mirror listener, `http://host:7480`;
-    /// `timeout` bounds connecting and every wait for more data.
+    /// `timeout` bounds connecting and every wait for more data. Requests
+    /// say they come from a relay.
     pub fn new(base: &str, timeout: Duration) -> Result<Self, reqwest::Error> {
+        Self::with_agent(base, timeout, "monitorflow-relay")
+    }
+
+    /// As [`Self::new`], naming the program `agent` in the `User-Agent`
+    /// header, with this version.
+    pub fn with_agent(base: &str, timeout: Duration, agent: &str) -> Result<Self, reqwest::Error> {
         let client = reqwest::Client::builder()
             .connect_timeout(timeout)
-            .user_agent(concat!("monitorflow-relay/", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("{agent}/{}", crate::VERSION))
             .build()?;
         Ok(Self {
             client,
             base: base.trim_end_matches('/').to_owned(),
             timeout,
         })
+    }
+
+    /// The same client and timeout, at another base URL.
+    pub fn at(&self, base: &str) -> Self {
+        Self {
+            client: self.client.clone(),
+            base: base.trim_end_matches('/').to_owned(),
+            timeout: self.timeout,
+        }
     }
 
     /// URL of `path` (`/`-separated), each segment percent-encoded.

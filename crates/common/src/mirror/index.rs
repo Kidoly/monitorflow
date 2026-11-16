@@ -10,6 +10,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::packages::PACKAGES;
 use super::{is_mirror_name, is_snapshot_name, read_current, Family, Served, PINNED, REMOVED};
 
 /// Format version of the index.
@@ -52,6 +53,10 @@ pub struct IndexMirror {
     /// Absent from indexes of older upstreams.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pinned: Vec<PinnedSnapshot>,
+    /// The `current` snapshot holds indexes only, its packages fetched on
+    /// demand (ADR-0142). Absent when false, so older relays copy it whole.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub on_demand: bool,
 }
 
 /// A snapshot other than `current` that downstream relays must hold.
@@ -61,6 +66,9 @@ pub struct PinnedSnapshot {
     /// As [`IndexMirror::distributions`], for this snapshot.
     #[serde(default)]
     pub distributions: Vec<String>,
+    /// As [`IndexMirror::on_demand`], for this snapshot.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub on_demand: bool,
 }
 
 impl IndexMirror {
@@ -73,6 +81,7 @@ impl IndexMirror {
             current: pinned.name.clone(),
             distributions: pinned.distributions.clone(),
             pinned: Vec::new(),
+            on_demand: pinned.on_demand,
         }
     }
 }
@@ -186,12 +195,14 @@ impl Index {
                     }
                     if let Some(distributions) = distributions_of(family, &path)? {
                         pinned.push(PinnedSnapshot {
+                            on_demand: path.join(PACKAGES).is_file(),
                             name,
                             distributions,
                         });
                     }
                 }
                 mirrors.push(IndexMirror {
+                    on_demand: snapshot.join(PACKAGES).is_file(),
                     family,
                     name,
                     current,
@@ -361,6 +372,8 @@ mod tests {
         std::fs::create_dir_all(apt.join("ubuntu/.sync-s1/dists/noble")).unwrap();
         std::fs::create_dir_all(dnf.join("rocky9/s2/repodata")).unwrap();
         std::fs::create_dir_all(dnf.join("rocky9/s0/repodata")).unwrap();
+        // `s0` is on demand (ADR-0142).
+        std::fs::write(dnf.join("rocky9/s0/.packages"), "").unwrap();
         swap_current(&dnf.join("rocky9"), "s2").unwrap();
         // Pinned: an existing snapshot, current itself, a missing one and
         // an invalid name.
@@ -376,6 +389,9 @@ mod tests {
         let index = Index::scan(&served).unwrap();
         let json = serde_json::to_vec(&index).unwrap();
         assert_eq!(Index::parse(&json).unwrap(), index);
+        // Additive: false is left out, so older relays see what they knew.
+        let text = String::from_utf8(json).unwrap();
+        assert_eq!(text.matches("on_demand").count(), 1, "{text}");
         assert_eq!(
             index.mirrors,
             [
@@ -385,6 +401,7 @@ mod tests {
                     current: "s1".into(),
                     distributions: vec!["bookworm".into()],
                     pinned: vec![],
+                    on_demand: false,
                 },
                 IndexMirror {
                     family: Family::Dnf,
@@ -394,7 +411,9 @@ mod tests {
                     pinned: vec![PinnedSnapshot {
                         name: "s0".into(),
                         distributions: vec![],
+                        on_demand: true,
                     }],
+                    on_demand: false,
                 },
             ]
         );

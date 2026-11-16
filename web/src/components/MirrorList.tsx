@@ -11,6 +11,7 @@ import { mirrorHref } from "@/lib/routes";
 import { usePolledData } from "@/lib/usePolledData";
 
 import { AddMirror } from "./AddMirror";
+import { MirrorCache } from "./MirrorCache";
 import styles from "./Mirrors.module.css";
 import { Button } from "./ui/Button";
 import { type Column, DataTable, PrimaryCell, useUrlSort } from "./ui/DataTable";
@@ -279,6 +280,7 @@ function MirrorList() {
           rowActions={(m) => <MirrorButtons mirror={m} jobs={jobs} />}
         />
       )}
+      <MirrorCache />
       <p className={styles.note}>{t("mirrors.openHint")}</p>
       <p className={styles.note}>{retentionText(data.keep_snapshots)}</p>
     </div>

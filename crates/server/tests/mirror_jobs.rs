@@ -162,6 +162,7 @@ async fn create(pool: &PgPool, family: Family, auto_snapshot: bool) -> Mirror {
             architectures: vec!["amd64".into()],
             sync_interval_s: None,
             auto_snapshot,
+            mode: Default::default(),
         },
         Family::Dnf => MirrorSpec {
             name: "rocky".into(),
@@ -172,6 +173,7 @@ async fn create(pool: &PgPool, family: Family, auto_snapshot: bool) -> Mirror {
             architectures: vec!["x86_64".into(), "noarch".into()],
             sync_interval_s: None,
             auto_snapshot,
+            mode: Default::default(),
         },
     };
     store::create(pool, &spec, ("system", "test"))
