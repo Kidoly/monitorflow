@@ -447,7 +447,10 @@ db_tests! {
         assert_eq!(count, 1);
 
         // Another key's value is its own; another request with the value is refused.
-        let theirs = w.once("/api/v1/silences", &other, "run-1", silence.clone()).await;
+        // (Its own reason: the same silence again would be the first one, ADR-0079.)
+        let mut theirs = silence.clone();
+        theirs["reason"] = json!("their deploy");
+        let theirs = w.once("/api/v1/silences", &other, "run-1", theirs).await;
         assert!(theirs.status() == StatusCode::CREATED && !replayed(&theirs));
         let mut changed = silence.clone();
         changed["reason"] = json!("other");
