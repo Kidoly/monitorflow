@@ -10,6 +10,8 @@
 //! helpers, which are Unix only (ADR-0047, ADR-0049).
 
 #[cfg(unix)]
+pub mod app_update;
+#[cfg(unix)]
 pub mod apply;
 #[cfg(unix)]
 pub mod apt;

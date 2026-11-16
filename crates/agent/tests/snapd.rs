@@ -188,3 +188,39 @@ async fn absent_snapd() {
     let error = snap.inventory().await.unwrap_err().to_string();
     assert!(error.contains("cannot reach snapd"), "{error}");
 }
+
+/// The root helper refreshes only the snaps snapd lists as installed, and
+/// notes the others.
+#[tokio::test]
+async fn the_helper_refreshes_installed_snaps_only() {
+    use monitorflow_agent::packages::app_update;
+    use monitorflow_agent::packages::update::Outcome;
+    use monitorflow_sensors::testing::write_executable;
+
+    let dir = TempDir::new().unwrap();
+    let (socket, _) = fake_snapd(&dir, HashMap::from([("/v2/snaps", (200, SNAPS))]));
+    let calls = dir.path().join("calls");
+    let snap = dir.path().join("snap");
+    write_executable(
+        &snap,
+        &format!("#!/bin/sh\necho \"$*\" >> '{}'\n", calls.display()),
+        0o755,
+    );
+    let tools = Tools {
+        snap,
+        snapd_socket: socket,
+        ..Tools::default()
+    };
+    let named = ["example-app".to_owned(), "example-gone".to_owned()];
+    let mut outcome = Outcome::default();
+    app_update::run(PackageManager::Snap, &named, &tools, &mut outcome).await;
+    assert!(outcome.error.is_none(), "{:?}", outcome.error);
+    assert_eq!(
+        outcome.notes,
+        [(0, "snap: not installed: example-gone".to_owned())]
+    );
+    assert_eq!(
+        std::fs::read_to_string(&calls).unwrap(),
+        "refresh example-app\n"
+    );
+}
