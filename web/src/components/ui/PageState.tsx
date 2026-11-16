@@ -108,6 +108,17 @@ export function LoadingBlock({ label = t("ui.page.loading") }: { label?: string 
   );
 }
 
+/** Skeleton lines inside a box that already exists (a menu, a log, a panel). */
+export function SkeletonLines({ label = t("ui.page.loading"), lines = 3 }: { label?: string; lines?: number }) {
+  return (
+    <div className={styles.skelLines} aria-busy="true" aria-label={label} role="status">
+      {Array.from({ length: lines }, (_, i) => (
+        <div key={i} className={styles.skel} style={{ width: `${[60, 90, 75, 85][i % 4]}%` }} />
+      ))}
+    </div>
+  );
+}
+
 /** Nothing to list yet: a title, one sentence, and the action that comes next. */
 export function EmptyState({ title, children, actions }: { title?: string; children?: ReactNode; actions?: ReactNode }) {
   return (

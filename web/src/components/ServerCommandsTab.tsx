@@ -13,7 +13,7 @@ import { useUrlParams } from "@/lib/urlState";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { type Column, DataTable, PrimaryCell } from "@/components/ui/DataTable";
 import { FilterBar, NoMatches } from "@/components/ui/FilterBar";
-import { Banner, EmptyState } from "@/components/ui/PageState";
+import { Banner, EmptyState, SkeletonLines } from "@/components/ui/PageState";
 import { StatusLabel } from "@/components/ui/StatusLabel";
 import { StatTiles } from "@/components/ui/StatTiles";
 import { formatClock, formatDay } from "@/components/ui/time";
@@ -211,13 +211,14 @@ export function ServerCommandsTab({
           rowDetail={(c) => {
             const log = logs.get(c.id);
             if (!log) return null;
+            if (!("detail" in log) && !("error" in log)) return <SkeletonLines label={t("server.commands.outputLoading")} />;
             return (
               <pre className={styles.log} aria-label={t("server.commands.output", { title: describeCommand(c).title })}>
                 {"detail" in log
                   ? commandLog(log.detail, formatClock)
                   : "error" in log
                     ? t("server.commands.outputFailed", { error: log.error })
-                    : t("server.commands.outputLoading")}
+                    : null}
               </pre>
             );
           }}
