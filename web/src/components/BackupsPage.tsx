@@ -128,13 +128,11 @@ function Backups() {
           </Banner>
         )
       )}
-      <Banner tone="warn">
-        {multiCustomer(me) ? t("backups.secret") : t("backups.secretOne")}
-      </Banner>
       <section className={styles.box} aria-labelledby="status-title">
         <div className={styles.boxHeader}>
-          <h2 id="status-title" className={styles.title}>
-            <Label tone={tone}>{summary}</Label>
+          {/* "Backed up." is what the last backup time already says: only a problem shows. */}
+          <h2 id="status-title" className={tone === "ok" ? "visually-hidden" : styles.title}>
+            {tone === "ok" ? summary : <Label tone={tone}>{summary}</Label>}
           </h2>
           {data.enabled && backUpButton}
         </div>
@@ -160,7 +158,12 @@ function Backups() {
           ]}
         />
       </section>
-      <Files view={data} now={now} action={data.enabled ? backUpButton : null} />
+      <Files
+        view={data}
+        now={now}
+        action={data.enabled ? backUpButton : null}
+        secret={multiCustomer(me) ? t("backups.secret") : t("backups.secretOne")}
+      />
       <section className={styles.box} aria-labelledby="restore-title">
         <h2 id="restore-title" className={styles.title}>
           {t("backups.restore.title")}
@@ -173,7 +176,9 @@ function Backups() {
   );
 }
 
-function Files({ view, now, action }: { view: BackupsView; now: Date; action: React.ReactNode }) {
+function Files({ view, now, action, secret }: { view: BackupsView; now: Date; action: React.ReactNode; secret: string }) {
+  // The file is a secret: Download says so first, then offers the file.
+  const [confirming, setConfirming] = useState<string | null>(null);
   if (view.files.length === 0) {
     return (
       <EmptyState title={t("backups.empty.title")} actions={action}>
@@ -192,11 +197,31 @@ function Files({ view, now, action }: { view: BackupsView; now: Date; action: Re
       columns={columns}
       rows={view.files}
       rowKey={(f) => f.name}
+      rowDetail={(f) =>
+        confirming === f.name && (
+          <div className={styles.confirm} role="group" aria-label={t("backups.download")}>
+            <Banner tone="warn">{secret}</Banner>
+            <div className={styles.confirmActions}>
+              <a
+                className={buttonClass({ size: "small", variant: "k" })}
+                href={backupDownloadHref(f.name)}
+                download={f.name}
+                onClick={() => setConfirming(null)}
+              >
+                {t("backups.downloadFile", { name: f.name })}
+              </a>
+              <Button size="small" onClick={() => setConfirming(null)}>
+                {t("backups.cancel")}
+              </Button>
+            </div>
+          </div>
+        )
+      }
       rowActions={(f) =>
         view.downloads ? (
-          <a className={buttonClass({ size: "small" })} href={backupDownloadHref(f.name)} download={f.name}>
+          <Button size="small" aria-expanded={confirming === f.name} onClick={() => setConfirming(confirming === f.name ? null : f.name)}>
             {t("backups.download")}
-          </a>
+          </Button>
         ) : view.host_dir ? (
           <span className={styles.dim}>{t("backups.inHostDir")}</span>
         ) : (
