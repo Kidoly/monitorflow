@@ -20,6 +20,9 @@ use serde::{Deserialize, Serialize};
 
 use super::windows_update::{InstallResult, Outcome};
 
+#[cfg(windows)]
+pub mod run;
+
 /// The module that runs winget in the system context.
 pub const MODULE: &str = "Microsoft.WinGet.Client";
 /// winget's store source, never used (ADR-0138).

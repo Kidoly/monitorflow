@@ -262,7 +262,7 @@ pub fn read() -> Result<WindowsUpdateSource, String> {
 
 /// `HKLM\path`, or `None` when it does not exist.
 #[cfg(windows)]
-fn open(path: &str) -> Result<Option<windows_registry::Key>, String> {
+pub(crate) fn open(path: &str) -> Result<Option<windows_registry::Key>, String> {
     /// `HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)`.
     const NOT_FOUND: u32 = 0x8007_0002;
     match windows_registry::LOCAL_MACHINE.open(path) {

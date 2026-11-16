@@ -1063,6 +1063,7 @@ mod update_service {
         authorized, pipe, pipe_sddl, service_sid, wua, Reply, Request, SelfUpdated, AGENT_SERVICE,
         PIPE_NAME, SERVICE_NAME,
     };
+    use monitorflow_agent::packages::winget;
     use monitorflow_agent::self_update::swap::{self, Scm, Swapped, Watched};
     use monitorflow_common::config::{self, LogConfig};
     use monitorflow_common::logging;
@@ -1190,7 +1191,10 @@ mod update_service {
                     let handle = |request: &Request| match checked(request) {
                         Err(error) => Reply::Error(error),
                         Ok(Request::SelfUpdate(request)) => self_update(&request),
-                        Ok(other) => wua::handle(&other),
+                        // winget requests first (ADR-0139), then Windows Update.
+                        Ok(other) => {
+                            winget::run::handle(&other).unwrap_or_else(|| wua::handle(&other))
+                        }
                     };
                     pipe::serve(PIPE_NAME, &sddl, handle, stop).await?;
                     Ok(())
