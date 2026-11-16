@@ -2,6 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import { REFRESH_MS } from "@/lib/usePolledData";
 import { As, me } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -50,6 +51,17 @@ describe("ApprovalQueue", () => {
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reject…" })).toBeInTheDocument();
+  });
+
+  it("speaks French when that is the language", async () => {
+    setActiveLocale("fr");
+    stubFetch({ [LIST]: list(pending()) });
+    render(<ApprovalQueue />);
+    await screen.findByRole("table", { name: "Commandes en attente d’approbation" });
+    await userEvent.click(await screen.findByRole("button", { name: "Examiner la commande pour web-1" }));
+    expect(await screen.findByText("Raisonnement de l’IA")).toBeInTheDocument();
+    expect(screen.getAllByText("reste 20 min 5 s", { exact: false }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Approuver" })).toBeInTheDocument();
   });
 
   it("says which shell runs the command", async () => {

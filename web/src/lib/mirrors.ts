@@ -12,24 +12,22 @@ export function upstreamText(url: string): string {
 
 /** What retention keeps (ADR-0074), for the Mirrors pages. */
 export function retentionText(keep: number): string {
-  return (
-    `Each mirror keeps its ${keep} newest snapshots. Older ones are removed by themselves and their disk space is freed, ` +
-    "unless something still needs them: the current snapshot, a snapshot an update campaign is pinned to, " +
-    "or one a relay or a server is still using."
-  );
+  return t("mirrors.retention", { keep });
 }
 
 /** "every 12 h", "every 15 min"; null is manual syncs only. */
 export function intervalText(seconds: number | null): string {
-  if (seconds === null) return "manual syncs only";
+  if (seconds === null) return t("mirrors.manualOnly");
   for (const [size, unit] of [
-    [86_400, "d"],
-    [3_600, "h"],
-    [60, "min"],
+    [86_400, "day"],
+    [3_600, "hour"],
+    [60, "minute"],
   ] as const) {
-    if (seconds >= size && seconds % size === 0) return `every ${seconds / size} ${unit}`;
+    if (seconds >= size && seconds % size === 0) {
+      return t("mirrors.every", { amount: `${seconds / size} ${t(`format.unit.${unit}`)}` });
+    }
   }
-  return `every ${Math.round(seconds / 60)} min`;
+  return t("mirrors.every", { amount: `${Math.round(seconds / 60)} ${t("format.unit.minute")}` });
 }
 
 /**
@@ -42,7 +40,7 @@ export function describeMirror(mirror: Mirror, { distribution = false } = {}): s
     upstreamText(mirror.upstream_url),
     distribution && mirror.distribution,
     mirror.components.join(" "),
-    mirror.architectures.length > 0 ? mirror.architectures.join(" ") : "all architectures",
+    mirror.architectures.length > 0 ? mirror.architectures.join(" ") : t("mirrors.allArchitectures"),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -85,7 +83,8 @@ export function minuteText(iso: string): string {
 /** "42 s", "4 min 12 s", "9 min 02 s", "1 h 05 min". */
 export function durationText(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
-  if (s < 60) return `${s} s`;
-  if (s < 3600) return `${Math.floor(s / 60)} min ${pad(s % 60)} s`;
-  return `${Math.floor(s / 3600)} h ${pad(Math.floor((s % 3600) / 60))} min`;
+  const [sec, min, hour] = [t("format.unit.second"), t("format.unit.minute"), t("format.unit.hour")];
+  if (s < 60) return `${s} ${sec}`;
+  if (s < 3600) return `${Math.floor(s / 60)} ${min} ${pad(s % 60)} ${sec}`;
+  return `${Math.floor(s / 3600)} ${hour} ${pad(Math.floor((s % 3600) / 60))} ${min}`;
 }

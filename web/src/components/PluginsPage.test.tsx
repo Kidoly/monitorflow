@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setActiveLocale } from "@/i18n/locale";
 import type { Customer, InstalledPlugin, PluginInspection, Site } from "@/lib/api";
 import { As, customerAdmin, me, single } from "@/test/admin";
 import { stubFetch } from "@/test/fetch";
@@ -95,6 +96,18 @@ describe("PluginsPage", () => {
     expect(within(table).getByText("2 channel(s)")).toBeInTheDocument();
   });
 
+  it("speaks French, what plugins ask for staying as the server says it", async () => {
+    setActiveLocale("fr");
+    stubFetch(routes([plugin()]));
+    renderPage();
+    const table = await screen.findByRole("table", { name: "Plugins installés" });
+    expect(within(table).getByText(/Canal de notification · signé par Acme IT/)).toBeInTheDocument();
+    expect(within(table).getByText("Connects to the address in its Server setting")).toBeInTheDocument();
+    expect(within(table).getByText("Partout")).toBeInTheDocument();
+    expect(within(table).getByText("2 canaux")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Éditeurs" })).toBeInTheDocument();
+  });
+
   it("shows what a file asks for before installing it, then asks where to use it", async () => {
     const user = userEvent.setup();
     const installed = plugin({ id: "p2", name: "http-json", kind: "check", title: "Web address", places: [] });
@@ -184,6 +197,13 @@ describe("placeChoices", () => {
       true,
     );
     expect(msp.map((c) => c.label)).toEqual(["Every customer", "All of acme", "All of globex", "acme / main", "globex / hq"]);
+  });
+
+  it("speaks French", () => {
+    setActiveLocale("fr");
+    const choices = placeChoices([customer("c1", "acme")], [site("s1", "main", "c1", "acme")], true);
+    expect(choices.map((c) => c.label)).toEqual(["Tous les clients", "Tout acme", "acme / main"]);
+    expect(placesSummary(plugin({ places: [] }), false)).toBe("Nulle part pour l’instant");
   });
 });
 
